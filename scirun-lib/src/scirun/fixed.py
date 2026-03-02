@@ -1,48 +1,5 @@
-"""Fixed metadata wrapper for for_each inputs."""
+"""Fixed metadata wrapper — re-exported from scifor for backwards compatibility."""
 
-from typing import Any
+from scifor.fixed import Fixed
 
-
-class Fixed:
-    """
-    Wrapper to specify fixed metadata overrides for an input.
-
-    Use this when an input should be loaded with different metadata
-    than the current iteration's metadata.
-
-    Example:
-        # Always load baseline from session="BL", regardless of current session
-        for_each(
-            compare_to_baseline,
-            inputs={
-                "baseline": Fixed(StepLength, session="BL"),
-                "current": StepLength,
-            },
-            outputs=[Delta],
-            subject=subjects,
-            session=sessions,
-        )
-    """
-
-    def __init__(self, var_type: type, **fixed_metadata: Any):
-        """
-        Args:
-            var_type: The variable type to load (must have a .load() method)
-            **fixed_metadata: Metadata values that override the iteration metadata
-        """
-        self.var_type = var_type
-        self.fixed_metadata = fixed_metadata
-
-    def to_key(self) -> str:
-        """Return a canonical string for use as a version key."""
-        from .column_selection import ColumnSelection
-        if isinstance(self.var_type, ColumnSelection):
-            inner_key = self.var_type.to_key()
-        else:
-            inner_key = getattr(self.var_type, '__name__', repr(self.var_type))
-        sorted_kv = ", ".join(
-            f"{k}={v!r}" for k, v in sorted(self.fixed_metadata.items())
-        )
-        if sorted_kv:
-            return f"Fixed({inner_key}, {sorted_kv})"
-        return f"Fixed({inner_key})"
+__all__ = ["Fixed"]

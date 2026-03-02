@@ -3,6 +3,9 @@
 This package provides utilities for running functions over combinations
 of metadata, automatically loading inputs and saving outputs.
 
+Most classes are now defined in scifor and re-exported here for
+backwards compatibility.
+
 Example:
     from scirun import for_each, Fixed
 

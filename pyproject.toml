@@ -29,6 +29,7 @@ dependencies = [
     "scipathgen>=0.1.0",
     "canonicalhash>=0.1.0",
     "sciduckdb>=0.1.0",
+    "scifor>=0.1.0",
     "scirun>=0.1.0",
 ]
 

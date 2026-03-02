@@ -41,8 +41,9 @@ from .exceptions import (
     UnsavedIntermediateError,
 )
 
-# Re-export from scirun
-from scirun import Fixed, Merge, for_each
+# Re-export from scirun (for_each) and scifor (wrappers)
+from scirun import for_each
+from scifor import Fixed, Merge, ColumnSelection, PathInput, Col, MatFile, CsvFile, set_schema, get_schema
 
 from .thunk import ThunkOutput, Thunk, thunk
 from .variable import BaseVariable
@@ -60,6 +61,14 @@ __all__ = [
     "for_each",
     "Fixed",
     "Merge",
+    "ColumnSelection",
+    "PathInput",
+    # Standalone / DataFrame support
+    "Col",
+    "MatFile",
+    "CsvFile",
+    "set_schema",
+    "get_schema",
     # Thunk system
     "thunk",
     "Thunk",

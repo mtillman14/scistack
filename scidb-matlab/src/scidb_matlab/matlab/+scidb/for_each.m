@@ -183,16 +183,23 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     distribute = opts.distribute;
     distribute_key = '';
     if distribute
-        if isempty(opts.db)
-            dist_db = py.scidb.database.get_database();
+        % Try scifor.get_schema() first (works in both DB and standalone modes),
+        % then fall back to querying the database.
+        scifor_keys = scifor.get_schema();
+        if ~isempty(scifor_keys)
+            schema_keys = scifor_keys;
         else
-            dist_db = opts.db;
+            if isempty(opts.db)
+                dist_db = py.scidb.database.get_database();
+            else
+                dist_db = opts.db;
+            end
+            py_schema_keys = cell(dist_db.dataset_schema_keys);
+            for sk = 1:numel(py_schema_keys)
+                py_schema_keys{sk} = string(py_schema_keys{sk});
+            end
+            schema_keys = [py_schema_keys{:}];
         end
-        schema_keys = cell(dist_db.dataset_schema_keys);
-        for sk = 1:numel(schema_keys)
-            schema_keys{sk} = string(schema_keys{sk});
-        end
-        schema_keys = [schema_keys{:}];
 
         iter_keys_in_schema = schema_keys(ismember(schema_keys, meta_keys));
         if isempty(iter_keys_in_schema)
@@ -378,6 +385,11 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
             % Merge loads constituents individually — skip preloading
             if isa(var_spec, 'scidb.Merge')
+                continue;
+            end
+
+            % Table inputs are already in memory — skip preloading
+            if istable(var_spec) || (isa(var_spec, 'scidb.Fixed') && istable(var_spec.var_type))
                 continue;
             end
 
@@ -576,6 +588,42 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                     'Fixed cannot wrap a Merge. Use Fixed on individual constituents inside the Merge instead: Merge(Fixed(VarA(), ...), VarB())');
             end
 
+            % --- Handle plain MATLAB table inputs ---
+            if istable(var_spec)
+                schema_keys_for_filter = scifor.get_schema();
+                wants_table_t = ~isempty(as_table_set) && ismember(string(input_names{p}), as_table_set);
+                try
+                    loaded{p} = filter_table_for_combo(var_spec, metadata, schema_keys_for_filter, wants_table_t);
+                catch err
+                    fprintf('[skip] %s: failed to filter table input %s: %s\n', ...
+                        metadata_str, input_names{p}, err.message);
+                    load_failed = true;
+                    break;
+                end
+                continue;
+            end
+
+            % --- Handle Fixed(table, ...) ---
+            if isa(var_spec, 'scidb.Fixed') && istable(var_spec.var_type)
+                schema_keys_for_filter = scifor.get_schema();
+                fixed_meta_t = var_spec.fixed_metadata;
+                fixed_fields_t = fieldnames(fixed_meta_t);
+                override_meta = metadata;
+                for fti = 1:numel(fixed_fields_t)
+                    override_meta.(fixed_fields_t{fti}) = fixed_meta_t.(fixed_fields_t{fti});
+                end
+                wants_table_t = ~isempty(as_table_set) && ismember(string(input_names{p}), as_table_set);
+                try
+                    loaded{p} = filter_table_for_combo(var_spec.var_type, override_meta, schema_keys_for_filter, wants_table_t);
+                catch err
+                    fprintf('[skip] %s: failed to filter Fixed table input %s: %s\n', ...
+                        metadata_str, input_names{p}, err.message);
+                    load_failed = true;
+                    break;
+                end
+                continue;
+            end
+
             % Determine var_inst for table conversion
             if isa(var_spec, 'scidb.Fixed')
                 var_inst = var_spec.var_type;
@@ -692,7 +740,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         % Only unwrap loadable inputs, not constants.
         if ~isa(fn, 'scidb.Thunk')
             for p = 1:n_inputs
-                if loadable_idx(p) && ~istable(loaded{p})
+                if loadable_idx(p) && ~istable(loaded{p}) && ~isnumeric(loaded{p})
                     loaded{p} = scidb.internal.unwrap_input(loaded{p});
                 end
             end
@@ -1269,15 +1317,76 @@ end
 % Local helper functions
 % =========================================================================
 
+function result = filter_table_for_combo(tbl, metadata, schema_keys, as_table)
+%FILTER_TABLE_FOR_COMBO  Filter a MATLAB table to rows matching the combo metadata.
+%
+%   If the table has schema key columns → filter rows.
+%   If not → return as-is (constant table).
+%
+%   After filtering:
+%   - 1 row, 1 non-schema-key column, not as_table → extract scalar/value
+%   - otherwise → return sub-table
+
+    col_names = string(tbl.Properties.VariableNames);
+    schema_keys_in_tbl = intersect(col_names, schema_keys);
+
+    if isempty(schema_keys_in_tbl)
+        % Constant table — pass unchanged
+        result = tbl;
+        return;
+    end
+
+    % Build row mask
+    mask = true(height(tbl), 1);
+    for k = 1:numel(schema_keys_in_tbl)
+        key = schema_keys_in_tbl(k);
+        if isfield(metadata, char(key))
+            val = metadata.(char(key));
+            col_data = tbl.(char(key));
+            if isnumeric(col_data)
+                mask = mask & (col_data == val);
+            else
+                mask = mask & (string(col_data) == string(val));
+            end
+        end
+    end
+
+    sub = tbl(mask, :);
+
+    if as_table
+        result = sub;
+        return;
+    end
+
+    % Determine data columns (non-schema-key columns)
+    data_cols = setdiff(col_names, schema_keys, 'stable');
+
+    if height(sub) == 1 && numel(data_cols) == 1
+        % Extract scalar value
+        val = sub.(char(data_cols(1)));
+        if iscell(val)
+            result = val{1};
+        else
+            result = val;
+        end
+    else
+        result = sub;
+    end
+end
+
+
 function tf = is_loadable(var_spec)
 %IS_LOADABLE  Check if an input spec is a loadable type.
 %   Returns true for BaseVariable instances, Fixed wrappers, PathInput,
-%   and Merge wrappers.
+%   Merge wrappers, and MATLAB tables (handled as per-combo inputs when
+%   they contain schema key columns, or as constants otherwise).
 %   Returns false for plain constants (numeric, string, logical, etc.).
     tf = isa(var_spec, 'scidb.BaseVariable') ...
       || isa(var_spec, 'scidb.Fixed') ...
       || isa(var_spec, 'scidb.PathInput') ...
-      || isa(var_spec, 'scidb.Merge');
+      || isa(var_spec, 'scidb.Merge') ...
+      || istable(var_spec) ...
+      || (isa(var_spec, 'scidb.Fixed') && istable(var_spec.var_type));
 end
 
 

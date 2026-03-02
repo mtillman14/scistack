@@ -381,6 +381,15 @@ def configure_database(
     for cls in BaseVariable._all_subclasses.values():
         db.register(cls)
     db.set_current_db()
+
+    # Propagate schema keys to scifor so that DataFrame detection and
+    # distribute=True work identically in DB-backed and standalone modes.
+    try:
+        import scifor
+        scifor.set_schema(list(dataset_schema_keys))
+    except ImportError:
+        pass
+
     return db
 
 

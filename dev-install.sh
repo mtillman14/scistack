@@ -8,6 +8,7 @@ echo "Installing all SciDB packages in editable mode..."
 pip install -e ./canonical-hash
 pip install -e ./path-gen
 pip install -e ./pipelinedb-lib
+pip install -e ./scifor
 pip install -e ./scirun-lib
 pip install -e ./sciduck
 

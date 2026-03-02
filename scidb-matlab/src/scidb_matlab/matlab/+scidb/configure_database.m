@@ -53,4 +53,8 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
             'configure_database() did not produce a valid DatabaseManager.');
     end
 
+    % Propagate schema keys to scifor so that table-input detection and
+    % distribute=true work identically in DB-backed and standalone modes.
+    scifor.set_schema(dataset_schema_keys);
+
 end

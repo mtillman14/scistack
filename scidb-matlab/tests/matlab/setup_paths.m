@@ -23,6 +23,7 @@ function setup_paths()
         fullfile(workspace_root, 'sciduck', 'src')
         fullfile(workspace_root, 'pipelinedb-lib', 'src')
         fullfile(workspace_root, 'path-gen', 'src')
+        fullfile(workspace_root, 'scifor', 'src')
         fullfile(workspace_root, 'scirun-lib', 'src')
         fullfile(workspace_root, 'scidb-matlab', 'src')
     };
