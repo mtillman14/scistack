@@ -1,4 +1,4 @@
-function for_each(fn, inputs, outputs, varargin)
+function result_tbl = for_each(fn, inputs, outputs, varargin)
 %SCIDB.FOR_EACH  Execute a function for all combinations of metadata.
 %
 %   scidb.for_each(@FN, INPUTS, OUTPUTS, Name, Value, ...)
@@ -53,8 +53,17 @@ function for_each(fn, inputs, outputs, varargin)
 %                       Example: where=Side() == "R"
 %       (any other)   - Metadata iterables (numeric or string arrays)
 %
+%   Returns:
+%       result_tbl - MATLAB table with metadata columns and one column per
+%                   output type (named after the class). When all outputs
+%                   are tables, metadata is replicated per row and data
+%                   columns are expanded inline (flatten mode). Otherwise
+%                   each combination becomes one row with output data in a
+%                   cell column (nested mode). Returns [] for dry_run or
+%                   parallel mode.
+%
 %   Example:
-%       scidb.for_each(@filter_data, ...
+%       result = scidb.for_each(@filter_data, ...
 %           struct('step_length', StepLength(), ...
 %                  'smoothing',   0.2), ...
 %           {FilteredStepLength()}, ...
@@ -75,6 +84,9 @@ function for_each(fn, inputs, outputs, varargin)
 %           {Delta()}, ...
 %           subject=[1 2 3], ...
 %           session=["A" "B"]);
+
+    % Default return value
+    result_tbl = [];
 
     % --- Parse options vs metadata name-value pairs ---
     [meta_args, opts] = split_options(varargin{:});
@@ -479,11 +491,13 @@ function for_each(fn, inputs, outputs, varargin)
             where_nv);
         fprintf('\n[done] completed=%d, skipped=%d, total=%d\n', ...
             completed, skipped, total);
+        result_tbl = [];
         return;
     end
 
     completed = 0;
     skipped = 0;
+    collected_rows = {};
 
     % Batch save: accumulate data+metadata in py.list objects, flush after
     % the loop via for_each_batch_save.  Thunks have lineage that requires
@@ -716,6 +730,9 @@ function for_each(fn, inputs, outputs, varargin)
             continue;
         end
 
+        % Collect result for return value
+        collected_rows{end+1} = {metadata, result}; %#ok<AGROW>
+
         % --- Save outputs (include constants in metadata) ---
         if do_save
             if strlength(distribute_key) > 0
@@ -838,9 +855,140 @@ function for_each(fn, inputs, outputs, varargin)
     fprintf('\n');
     if dry_run
         fprintf('[dry-run] would process %d iterations\n', total);
+        result_tbl = [];
     else
         fprintf('[done] completed=%d, skipped=%d, total=%d\n', ...
             completed, skipped, total);
+        result_tbl = results_to_output_table(collected_rows, outputs);
+    end
+end
+
+
+% =========================================================================
+% Return value helpers
+% =========================================================================
+
+function tbl = results_to_output_table(collected_rows, outputs)
+%RESULTS_TO_OUTPUT_TABLE  Build a combined MATLAB table from all for_each results.
+%
+%   collected_rows: cell array of {metadata_struct, result_cell} for each
+%                   successful function call.
+%   outputs: cell array of output type instances (used for column naming).
+%
+%   Returns a MATLAB table with metadata columns + one column per output type.
+%
+%   Flatten mode (all outputs are tables):
+%     Metadata is replicated per data row; output table columns are expanded
+%     inline. Multiple output tables are concatenated horizontally per
+%     combination, then all combinations are stacked vertically.
+%
+%   Nested mode (otherwise):
+%     One row per combination. Each output value is stored in a cell column
+%     named after the output class.
+
+    n_rows = numel(collected_rows);
+    n_outputs = numel(outputs);
+
+    if n_rows == 0
+        tbl = table();
+        return;
+    end
+
+    % Derive output column names from class name (last dotted component)
+    output_names = cell(1, n_outputs);
+    for o = 1:n_outputs
+        parts = strsplit(class(outputs{o}), '.');
+        output_names{o} = parts{end};
+    end
+
+    % Check whether all output values across all rows are tables (flatten mode)
+    all_tables = true;
+    for r = 1:n_rows
+        if ~all_tables; break; end
+        result = collected_rows{r}{2};
+        for o = 1:min(n_outputs, numel(result))
+            val = result{o};
+            % Unwrap ThunkOutput to inspect underlying data
+            if isa(val, 'scidb.ThunkOutput') || isa(val, 'scidb.BaseVariable')
+                val = val.data;
+            end
+            if ~istable(val)
+                all_tables = false;
+                break;
+            end
+        end
+    end
+
+    if all_tables
+        % Flatten mode: replicate metadata per data row, expand output columns
+        parts = cell(n_rows, 1);
+        for r = 1:n_rows
+            metadata = collected_rows{r}{1};
+            result   = collected_rows{r}{2};
+
+            % Unwrap and horizontally concatenate all output tables
+            combined_data = table();
+            for o = 1:min(n_outputs, numel(result))
+                val = result{o};
+                if isa(val, 'scidb.ThunkOutput') || isa(val, 'scidb.BaseVariable')
+                    val = val.data;
+                end
+                combined_data = [combined_data, val]; %#ok<AGROW>
+            end
+            nr = height(combined_data);
+
+            % Build metadata table with one replicated row per data row
+            meta_tbl = table();
+            meta_fields = fieldnames(metadata);
+            for f = 1:numel(meta_fields)
+                val = metadata.(meta_fields{f});
+                if isnumeric(val) && isscalar(val)
+                    meta_tbl.(meta_fields{f}) = repmat(val, nr, 1);
+                elseif ischar(val) || (isstring(val) && isscalar(val))
+                    meta_tbl.(meta_fields{f}) = repmat(string(val), nr, 1);
+                else
+                    meta_tbl.(meta_fields{f}) = repmat({val}, nr, 1);
+                end
+            end
+            parts{r} = [meta_tbl, combined_data];
+        end
+        tbl = vertcat(parts{:});
+    else
+        % Nested mode: one row per combination
+        tbl = table();
+        meta_fields = fieldnames(collected_rows{1}{1});
+
+        % Metadata columns
+        for f = 1:numel(meta_fields)
+            col_data = cell(n_rows, 1);
+            for r = 1:n_rows
+                metadata = collected_rows{r}{1};
+                if isfield(metadata, meta_fields{f})
+                    col_data{r} = metadata.(meta_fields{f});
+                else
+                    col_data{r} = {missing};
+                end
+            end
+            tbl.(meta_fields{f}) = normalize_cell_column(col_data);
+        end
+
+        % Output columns
+        for o = 1:n_outputs
+            col_data = cell(n_rows, 1);
+            for r = 1:n_rows
+                result = collected_rows{r}{2};
+                if o <= numel(result)
+                    val = result{o};
+                    if isa(val, 'scidb.ThunkOutput') || isa(val, 'scidb.BaseVariable')
+                        val = val.data;
+                    end
+                    col_data{r} = val;
+                else
+                    col_data{r} = {missing};
+                end
+            end
+            tbl.(output_names{o}) = col_data;
+        end
     end
 end
 
