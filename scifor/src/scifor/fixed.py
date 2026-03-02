@@ -1,66 +1,36 @@
-"""Fixed metadata wrapper for for_each inputs."""
+"""Fixed metadata wrapper for DataFrame inputs in for_each."""
 
 from typing import Any
 
 
 class Fixed:
     """
-    Wrapper to specify fixed metadata overrides for an input.
+    Wrapper to specify fixed metadata overrides for a DataFrame input.
 
-    Use this when an input should be loaded with different metadata
+    Use this when an input should be filtered with different metadata
     than the current iteration's metadata.
 
-    Works with both variable types (classes with .load()) and plain
-    DataFrames (filtered per-iteration using schema key columns).
+    Works with plain DataFrames (filtered per-iteration using schema key columns).
 
     Example:
-        # Always load baseline from session="BL", regardless of current session
+        # Always filter baseline to session="pre", regardless of current session
         for_each(
             compare_to_baseline,
             inputs={
-                "baseline": Fixed(StepLength, session="BL"),
-                "current": StepLength,
+                "baseline": Fixed(raw_df, session="pre"),
+                "current": raw_df,
             },
-            outputs=[Delta],
             subject=subjects,
             session=sessions,
         )
-
-        # DataFrame input fixed to session="baseline"
-        for_each(
-            compare,
-            inputs={
-                "baseline": Fixed(raw_df, session="baseline"),
-                "current":  raw_df,
-            },
-            outputs=[],
-            subject=[1, 2],
-            session=["post"],
-        )
     """
 
-    def __init__(self, var_type: Any, **fixed_metadata: Any):
+    def __init__(self, data: Any, **fixed_metadata: Any):
         """
         Args:
-            var_type: The variable type to load (must have a .load() method)
-                      or a pandas DataFrame to filter per iteration.
-            **fixed_metadata: Metadata values that override the iteration metadata
+            data: A pandas DataFrame to filter per iteration,
+                  or another scifor wrapper (Merge, ColumnSelection).
+            **fixed_metadata: Metadata values that override the iteration metadata.
         """
-        self.var_type = var_type
+        self.data = data
         self.fixed_metadata = fixed_metadata
-
-    def to_key(self) -> str:
-        """Return a canonical string for use as a version key."""
-        from .column_selection import ColumnSelection
-        if isinstance(self.var_type, ColumnSelection):
-            inner_key = self.var_type.to_key()
-        elif isinstance(self.var_type, type):
-            inner_key = self.var_type.__name__
-        else:
-            inner_key = repr(self.var_type)
-        sorted_kv = ", ".join(
-            f"{k}={v!r}" for k, v in sorted(self.fixed_metadata.items())
-        )
-        if sorted_kv:
-            return f"Fixed({inner_key}, {sorted_kv})"
-        return f"Fixed({inner_key})"

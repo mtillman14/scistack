@@ -1,10 +1,11 @@
-"""SciRun: Batch execution utilities for data pipelines.
+"""SciRun: DB-backed batch execution utilities for data pipelines.
 
 This package provides utilities for running functions over combinations
-of metadata, automatically loading inputs and saving outputs.
+of metadata, automatically loading inputs from a database and saving outputs.
 
-Most classes are now defined in scifor and re-exported here for
-backwards compatibility.
+The wrapper classes (Fixed, Merge, ColumnSelection) in this package work
+with variable types (classes with .load()/.save()). For standalone
+DataFrame usage, see scifor.
 
 Example:
     from scirun import for_each, Fixed

@@ -1,72 +1,53 @@
-"""Merge input wrapper for for_each: combines multiple variables into one DataFrame."""
+"""Merge input wrapper for for_each: combines multiple DataFrames into one."""
 
 from typing import Any
 
 
 class Merge:
     """
-    Combines 2+ variable inputs into a single pandas DataFrame for use
+    Combines 2+ DataFrame inputs into a single pandas DataFrame for use
     in for_each() inputs.
 
-    Each constituent is loaded individually per iteration and merged
-    column-wise. DataFrame variables contribute all their columns.
-    Array and scalar variables are added as a column named after their
-    variable class name.
+    Each constituent is filtered individually per iteration and merged
+    column-wise.
 
     Constituents can be:
-    - Variable types (classes with .load())
-    - Fixed wrappers (loaded with overridden metadata)
-    - ColumnSelection wrappers (MyVar["col"] or MyVar[["a", "b"]])
-    - Combinations: Fixed(MyVar["col"], session="BL")
-
-    Each constituent must match exactly one record per iteration.
+    - Plain pandas DataFrames
+    - Fixed wrappers (DataFrames with overridden metadata)
+    - ColumnSelection wrappers (DataFrame with column extraction)
 
     Example:
         for_each(
             analyze,
             inputs={
-                "combined": Merge(GaitData, ForceData),
+                "combined": Merge(gait_df, force_df),
             },
-            outputs=[Result],
             subject=[1, 2, 3],
         )
 
-        # With Fixed and ColumnSelection
+        # With Fixed
         for_each(
             analyze,
             inputs={
                 "combined": Merge(
-                    GaitData["force"],
-                    Fixed(PareticSide, session="BL"),
+                    gait_df,
+                    Fixed(paretic_df, session="BL"),
                 ),
             },
-            outputs=[Result],
             subject=[1, 2, 3],
             session=["A", "B"],
         )
     """
 
-    def __init__(self, *var_specs: Any):
-        if len(var_specs) < 2:
+    def __init__(self, *tables: Any):
+        if len(tables) < 2:
             raise ValueError(
-                f"Merge requires at least 2 variable inputs, got {len(var_specs)}."
+                f"Merge requires at least 2 inputs, got {len(tables)}."
             )
-        for spec in var_specs:
-            if isinstance(spec, Merge):
+        for t in tables:
+            if isinstance(t, Merge):
                 raise TypeError("Cannot nest Merge inside another Merge.")
-        self.var_specs = var_specs
-
-    def to_key(self) -> str:
-        """Return a canonical string for use as a version key."""
-        parts = []
-        for spec in self.var_specs:
-            if hasattr(spec, 'to_key'):
-                parts.append(spec.to_key())
-            elif isinstance(spec, type):
-                parts.append(spec.__name__)
-            else:
-                parts.append(repr(spec))
-        return f"Merge({', '.join(parts)})"
+        self.tables = tables
 
     @property
     def __name__(self) -> str:
@@ -75,13 +56,13 @@ class Merge:
         from .fixed import Fixed
 
         parts = []
-        for spec in self.var_specs:
+        for spec in self.tables:
             if isinstance(spec, Fixed):
-                inner = spec.var_type
+                inner = spec.data
                 if isinstance(inner, ColumnSelection):
                     inner_name = inner.__name__
                 else:
-                    inner_name = getattr(inner, '__name__', type(inner).__name__)
+                    inner_name = _display_name(inner)
                 fixed_str = ", ".join(
                     f"{k}={v}" for k, v in spec.fixed_metadata.items()
                 )
@@ -89,5 +70,16 @@ class Merge:
             elif isinstance(spec, ColumnSelection):
                 parts.append(spec.__name__)
             else:
-                parts.append(getattr(spec, '__name__', type(spec).__name__))
+                parts.append(_display_name(spec))
         return f"Merge({', '.join(parts)})"
+
+
+def _display_name(obj: Any) -> str:
+    """Get a display name for an object."""
+    try:
+        import pandas as pd
+        if isinstance(obj, pd.DataFrame):
+            return f"DataFrame{list(obj.columns)}"
+    except ImportError:
+        pass
+    return getattr(obj, '__name__', type(obj).__name__)

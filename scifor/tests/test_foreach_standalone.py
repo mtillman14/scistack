@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 
 import scifor
-from scifor import set_schema, for_each, Fixed, Col
+from scifor import set_schema, for_each, Fixed, Merge, ColumnSelection, Col
 
 
 def setup_function():
@@ -25,18 +25,6 @@ def make_df(subjects=(1, 2), sessions=("pre", "post"), data_col="emg"):
     return pd.DataFrame(rows)
 
 
-class MockOutput:
-    saved = []
-
-    @classmethod
-    def save(cls, data, **metadata):
-        cls.saved.append({"data": data, "metadata": metadata})
-
-    @classmethod
-    def reset(cls):
-        cls.saved = []
-
-
 # ---------------------------------------------------------------------------
 # DataFrame detection
 # ---------------------------------------------------------------------------
@@ -48,7 +36,6 @@ def test_per_combo_df_detected():
     results = for_each(
         lambda emg: emg,
         inputs={"emg": df},
-        outputs=[],
         subject=[1, 2],
         session=["pre", "post"],
     )
@@ -68,7 +55,6 @@ def test_constant_df_passed_unchanged():
     for_each(
         fn,
         inputs={"coeffs_input": coeffs},
-        outputs=[],
         subject=[1, 2],
         session=["pre"],
     )
@@ -78,7 +64,7 @@ def test_constant_df_passed_unchanged():
 
 
 def test_per_combo_df_single_value_extracted():
-    """1 row, 1 data column → scalar extracted."""
+    """1 row, 1 data column -> scalar extracted."""
     set_schema(["subject"])
     df = pd.DataFrame({"subject": [1, 2], "value": [10.0, 20.0]})
     received = []
@@ -87,12 +73,12 @@ def test_per_combo_df_single_value_extracted():
         received.append(x)
         return x
 
-    for_each(fn, inputs={"x": df}, outputs=[], subject=[1, 2])
+    for_each(fn, inputs={"x": df}, subject=[1, 2])
     assert received == [10.0, 20.0]
 
 
 def test_per_combo_df_multiple_rows_passed_as_df():
-    """Multiple matching rows → sub-DataFrame passed."""
+    """Multiple matching rows -> sub-DataFrame passed."""
     set_schema(["subject"])
     df = pd.DataFrame({
         "subject": [1, 1, 2, 2],
@@ -105,8 +91,9 @@ def test_per_combo_df_multiple_rows_passed_as_df():
         received_shapes.append(data.shape)
         return 0
 
-    for_each(fn, inputs={"data": df}, outputs=[], subject=[1, 2])
-    assert received_shapes == [(2, 3), (2, 3)]
+    for_each(fn, inputs={"data": df}, subject=[1, 2])
+    # After dropping schema col "subject", we get 2 data cols: trial, emg
+    assert received_shapes == [(2, 2), (2, 2)]
 
 
 def test_as_table_forces_dataframe():
@@ -119,7 +106,7 @@ def test_as_table_forces_dataframe():
         received.append(x)
         return 0
 
-    for_each(fn, inputs={"x": df}, outputs=[], subject=[1, 2], as_table=True)
+    for_each(fn, inputs={"x": df}, subject=[1, 2], as_table=True)
     assert all(isinstance(r, pd.DataFrame) for r in received)
 
 
@@ -143,7 +130,6 @@ def test_fixed_dataframe():
             "baseline": Fixed(df, session="pre"),
             "current": df,
         },
-        outputs=[],
         subject=[1],
         session=["pre", "post"],
     )
@@ -165,7 +151,6 @@ def test_empty_list_resolved_from_df():
     results = for_each(
         lambda emg: emg,
         inputs={"emg": df},
-        outputs=[],
         subject=[],
         session=["pre"],
     )
@@ -179,7 +164,6 @@ def test_empty_list_no_df_raises():
         for_each(
             lambda: None,
             inputs={},
-            outputs=[],
             subject=[],
         )
 
@@ -195,12 +179,53 @@ def test_return_df_metadata_columns():
     result = for_each(
         lambda emg: emg * 2,
         inputs={"emg": df},
-        outputs=[],
         subject=[1],
         session=["pre", "post"],
     )
     assert "subject" in result.columns
     assert "session" in result.columns
+
+
+def test_return_df_uses_output_names():
+    """Result DataFrame uses output_names for output columns."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 2], "value": [10.0, 20.0]})
+    result = for_each(
+        lambda x: x * 2,
+        inputs={"x": df},
+        output_names=["doubled_value"],
+        subject=[1, 2],
+    )
+    assert "doubled_value" in result.columns
+    assert list(result["doubled_value"]) == [20.0, 40.0]
+
+
+def test_return_df_multiple_outputs():
+    """Multiple outputs with output_names."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 2], "value": [10.0, 20.0]})
+    result = for_each(
+        lambda x: (x * 2, x * 3),
+        inputs={"x": df},
+        output_names=["doubled", "tripled"],
+        subject=[1, 2],
+    )
+    assert "doubled" in result.columns
+    assert "tripled" in result.columns
+
+
+def test_return_df_auto_output_names():
+    """output_names=3 auto-generates output_1, output_2, output_3."""
+    set_schema(["subject"])
+    result = for_each(
+        lambda: (1, 2, 3),
+        inputs={},
+        output_names=3,
+        subject=[1],
+    )
+    assert "output_1" in result.columns
+    assert "output_2" in result.columns
+    assert "output_3" in result.columns
 
 
 # ---------------------------------------------------------------------------
@@ -213,30 +238,27 @@ def test_distribute_requires_schema():
         for_each(
             lambda: [1, 2, 3],
             inputs={},
-            outputs=[],
             distribute=True,
             subject=[1],
         )
 
 
-def test_distribute_saves_pieces():
-    """distribute=True splits output and saves each piece separately."""
+def test_distribute_splits_into_result_table():
+    """distribute=True splits output and expands result table rows."""
     set_schema(["subject", "trial"])
-    MockOutput.reset()
 
     def fn():
         return np.array([10.0, 20.0, 30.0])
 
-    for_each(
+    result = for_each(
         fn,
         inputs={},
-        outputs=[MockOutput],
         distribute=True,
         subject=[1],
     )
-    # 3 pieces saved with trial=1,2,3
-    assert len(MockOutput.saved) == 3
-    trials = [s["metadata"]["trial"] for s in MockOutput.saved]
+    # 3 pieces with trial=1,2,3
+    assert len(result) == 3
+    trials = list(result["trial"])
     assert sorted(trials) == [1, 2, 3]
 
 
@@ -250,34 +272,12 @@ def test_dry_run_returns_none(capsys):
     result = for_each(
         lambda x: x,
         inputs={"x": df},
-        outputs=[],
         subject=[1, 2],
         dry_run=True,
     )
     assert result is None
     captured = capsys.readouterr()
     assert "[dry-run]" in captured.out
-
-
-# ---------------------------------------------------------------------------
-# save=False
-# ---------------------------------------------------------------------------
-
-def test_save_false_does_not_call_save():
-    set_schema(["subject"])
-    MockOutput.reset()
-
-    def fn():
-        return 42
-
-    for_each(
-        fn,
-        inputs={},
-        outputs=[MockOutput],
-        save=False,
-        subject=[1],
-    )
-    assert MockOutput.saved == []
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +295,6 @@ def test_pass_metadata():
     for_each(
         fn,
         inputs={},
-        outputs=[],
         pass_metadata=True,
         subject=[1, 2],
     )
@@ -317,37 +316,170 @@ def test_constant_scalar_input():
     for_each(
         fn,
         inputs={"x": 1.0, "alpha": 0.5},
-        outputs=[],
         subject=[1, 2],
     )
     assert received == [0.5, 0.5]
 
 
 # ---------------------------------------------------------------------------
-# Load failure skips iteration gracefully
+# where= with Col filters
 # ---------------------------------------------------------------------------
 
-def test_load_failure_skips(capsys):
+def test_where_col_filter():
+    """where= filters DataFrame rows after combo filtering."""
     set_schema(["subject"])
+    df = pd.DataFrame({
+        "subject": [1, 1, 1],
+        "speed": [0.5, 1.5, 2.5],
+        "value": [10.0, 20.0, 30.0],
+    })
+    received = []
 
-    class FailingInput:
-        __name__ = "FailingInput"
+    def fn(data):
+        received.append(data)
+        return 0
 
-        @staticmethod
-        def load(**meta):
-            if meta.get("subject") == 2:
-                raise RuntimeError("no data")
-            return 42
-
-    def fn(x):
-        return x
-
-    result = for_each(
+    for_each(
         fn,
-        inputs={"x": FailingInput},
-        outputs=[],
+        inputs={"data": df},
+        where=Col("speed") > 1.0,
+        as_table=True,
+        subject=[1],
+    )
+    assert len(received) == 1
+    assert len(received[0]) == 2  # Only speed > 1.0 rows
+
+
+# ---------------------------------------------------------------------------
+# Merge
+# ---------------------------------------------------------------------------
+
+def test_merge_two_dataframes():
+    """Merge combines two DataFrames column-wise per combo."""
+    set_schema(["subject"])
+    df1 = pd.DataFrame({"subject": [1, 2], "force": [10.0, 20.0]})
+    df2 = pd.DataFrame({"subject": [1, 2], "emg": [0.1, 0.2]})
+    received = []
+
+    def fn(combined):
+        received.append(combined)
+        return 0
+
+    for_each(
+        fn,
+        inputs={"combined": Merge(df1, df2)},
         subject=[1, 2],
     )
+    assert len(received) == 2
+    # Each merged result should have both data columns
+    assert "force" in received[0].columns
+    assert "emg" in received[0].columns
+
+
+# ---------------------------------------------------------------------------
+# ColumnSelection
+# ---------------------------------------------------------------------------
+
+def test_column_selection_single():
+    """ColumnSelection extracts a single column as array."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 2], "speed": [1.5, 2.5], "force": [10.0, 20.0]})
+    received = []
+
+    def fn(speed):
+        received.append(speed)
+        return 0
+
+    for_each(
+        fn,
+        inputs={"speed": ColumnSelection(df, ["speed"])},
+        subject=[1, 2],
+    )
+    assert len(received) == 2
+    np.testing.assert_array_equal(received[0], np.array([1.5]))
+    np.testing.assert_array_equal(received[1], np.array([2.5]))
+
+
+def test_column_selection_multiple():
+    """ColumnSelection with multiple columns returns sub-DataFrame."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 2], "a": [1.0, 2.0], "b": [3.0, 4.0], "c": [5.0, 6.0]})
+    received = []
+
+    def fn(data):
+        received.append(data)
+        return 0
+
+    for_each(
+        fn,
+        inputs={"data": ColumnSelection(df, ["a", "b"])},
+        subject=[1, 2],
+    )
+    assert len(received) == 2
+    assert isinstance(received[0], pd.DataFrame)
+    assert list(received[0].columns) == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+def test_function_error_skips(capsys):
+    """Function errors skip the iteration gracefully."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 2], "value": [10.0, 20.0]})
+    call_count = [0]
+
+    def fn(x):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise ValueError("bad")
+        return x
+
+    result = for_each(fn, inputs={"x": df}, subject=[1, 2])
     out = capsys.readouterr().out
     assert "[skip]" in out
-    assert len(result) == 1  # only subject=1 succeeded
+    assert len(result) == 1  # only subject=2 succeeded
+
+
+# ---------------------------------------------------------------------------
+# Result table structure
+# ---------------------------------------------------------------------------
+
+def test_result_table_default_output_name():
+    """Default output column is 'output'."""
+    set_schema(["subject"])
+    result = for_each(
+        lambda: 42,
+        inputs={},
+        subject=[1, 2],
+    )
+    assert "output" in result.columns
+    assert list(result["output"]) == [42, 42]
+
+
+def test_all_skipped_returns_empty_df():
+    """When all iterations fail, result is an empty DataFrame."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 2], "value": [1.0, 2.0]})
+
+    def always_fails(x):
+        raise ValueError("always")
+
+    result = for_each(always_fails, inputs={"x": df}, subject=[1, 2])
+    assert isinstance(result, pd.DataFrame)
+    assert len(result) == 0
+
+
+def test_flatten_mode_dataframe_outputs():
+    """When fn returns DataFrames, metadata is replicated per row."""
+    set_schema(["subject"])
+    result = for_each(
+        lambda: pd.DataFrame({"val": [10.0, 20.0, 30.0]}),
+        inputs={},
+        subject=[1, 2],
+    )
+    # 2 subjects * 3 rows each = 6 total rows
+    assert len(result) == 6
+    assert "subject" in result.columns
+    assert "val" in result.columns

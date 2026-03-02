@@ -1,140 +1,405 @@
-# Plan: Split MATLAB `for_each.m` into standalone + DB layers
+# Plan: scifor.for_each as Pure Loop Orchestrator (No I/O)
 
-## Context
+## Design Philosophy
 
-`scifor.for_each()` in MATLAB currently contains the **entire** 2612-line implementation — both standalone features (table inputs, CsvFile, MatFile) and database features (BaseVariable, Thunk, preloading, batch save, parallel mode). This doesn't match the Python architecture where `scifor.for_each()` is a standalone core engine and `scirun.for_each()` is a thin DB wrapper that delegates to it. The goal is to mirror that clean split so `scifor` is a genuinely standalone package.
+**scifor.for_each()** is a **pure nested-loop orchestrator**. It:
+- Accepts **data** (MATLAB tables, constants) — not loadable objects
+- Iterates over metadata combinations
+- Filters/slices tables per combination
+- Calls the user function with the sliced data
+- Collects and returns results
+- Does **NO I/O** — no `.load()`, no `.save()`, no database, no file operations, no Python bridge calls
 
-## Design
+**scidb.for_each()** is the **DB I/O layer**. It:
+- Loads all input variables from the database into MATLAB tables
+- Converts scidb wrappers → scifor wrappers (e.g. `scidb.Fixed(BaseVar)` → `scifor.Fixed(loaded_table)`)
+- Handles DB-specific concerns (empty-list resolve, combo pre-filtering, version keys, Thunk, parallel, batch save)
+- Delegates the core iteration to `scifor.for_each()`
+- Saves results back to DB output variables
 
-### Target architecture
+This **completely separates** nested-loop orchestration from data I/O.
+
+---
+
+## scifor.for_each() — New Interface
+
+### Signature
+
+```matlab
+result_tbl = scifor.for_each(fn, inputs, varargin)
+%   fn      - Function handle
+%   inputs  - Struct mapping parameter names to:
+%               MATLAB tables     → filtered per combo by metadata columns
+%               scifor.Fixed()    → table filtered with overridden metadata
+%               scifor.Merge()    → multiple tables merged column-wise
+%               constants         → passed unchanged (numeric, string, struct, etc.)
+%   varargin - Name-value pairs:
+%               Metadata iterables: subject=[1 2 3], session=["A" "B"]
+%               Options: dry_run, distribute, where, pass_metadata, as_table,
+%                        output_names, _all_combos
+```
+
+### Key changes from current
+
+1. **No `outputs` parameter** — scifor doesn't save anything. Functions just return values, scifor collects them.
+2. **No `.load()` calls** — all inputs are already data (tables or constants).
+3. **No `.save()` calls** — results are collected and returned as a table, caller saves if needed.
+4. **No `preload`/`parallel`/`db`/`save` options** — these are DB concerns, moved to scidb.for_each.
+5. **New `output_names` option** — optional cell array of strings to name result columns (defaults to `output_1`, `output_2`, etc.). Replaces the current approach of naming columns after output variable class names.
+6. **`where=` uses scifor.Col filters** — filters table rows, not database queries. (scidb applies its own scidb.Filter during load, before delegating.)
+
+### What stays in scifor.for_each
+
+- Cartesian product of metadata iterables
+- Table filtering per combo (`filter_table_for_combo`)
+- `scifor.Fixed(table, key=val)` — filter with overridden metadata
+- `scifor.Merge(table1, table2)` — column-wise table merge
+- `scifor.ColumnSelection(table, cols)` — column extraction from table
+- `distribute=` — split results by lowest schema level
+- `where=` — scifor.Col-based table row filtering
+- `dry_run=` — preview iterations without executing
+- `pass_metadata=` — pass metadata as trailing NV args to fn
+- `as_table=` — convert multi-row filtered results to table format
+- `_all_combos` extension point — accept pre-built combo list from scidb
+- Result collection → return as MATLAB table
+- All standalone helpers: `cartesian_product`, `split_for_distribute`, `is_metadata_compatible`, `format_value`, etc.
+
+### What's removed from scifor.for_each
+
+| Removed | Lines | Moves to |
+|---------|-------|----------|
+| Empty-list resolve via `py.scidb.database.get_database().distinct_schema_values()` | 157-180 | scidb.for_each |
+| Schema combo pre-filtering via `filter_db.distinct_schema_combinations()` | 276-341 | scidb.for_each |
+| `build_config_nv()` / ForEachConfig version keys | 262-264, 2465-2529 | scidb.for_each |
+| Preloading phase (`load_and_extract`, `preloaded_maps`) | 361-490 | scidb.for_each (becomes "load all data upfront") |
+| Batch save accumulation + flush | 519-526, 859-900 | scidb.for_each |
+| Per-iteration `.save()` calls | 855-883 | scidb.for_each |
+| Per-iteration `.load()` calls on BaseVariable | 656-676 | scidb.for_each (load upfront, pass tables) |
+| Parallel execution (`run_parallel` + parfor) | 493-508, 1048-1313 | scidb.for_each |
+| Thunk detection + special handling | 116-117, 741-747, 753 | scidb.for_each |
+| All `py.*` calls | throughout | scidb.for_each |
+| All `scidb.internal.*` calls | throughout | scidb.for_each |
+| `scidb.PathInput` handling | 382-384 | scidb.for_each |
+| `outputs` parameter + `n_outputs` | line 1, 267 | scidb.for_each |
+| `preload`/`parallel`/`db`/`save`/`where` (db Filter) options | split_options | scidb.for_each |
+
+---
+
+## scifor.Fixed — New Class
+
+```matlab
+classdef Fixed
+    % scifor.Fixed  Specify fixed metadata overrides for a table input.
+    %
+    %   Wraps a MATLAB table with metadata overrides. When scifor.for_each
+    %   filters this input for a combo, it uses the fixed metadata values
+    %   instead of the iteration values for the specified keys.
+    %
+    %   Example:
+    %       scifor.for_each(@compare, ...
+    %           struct('baseline', scifor.Fixed(data_table, session="BL"), ...
+    %                  'current',  data_table), ...
+    %           subject=[1 2 3], session=["A" "B"])
+    %
+    properties (SetAccess = private)
+        data            % MATLAB table (the actual data)
+        fixed_metadata  struct  % Metadata overrides
+    end
+end
+```
+
+Note: the property is `data` (not `var_type` like scidb.Fixed) because it holds a table, not a variable type.
+
+---
+
+## scifor.Merge — New Class
+
+```matlab
+classdef Merge
+    % scifor.Merge  Combine multiple tables into a single table input.
+    %
+    %   Wraps 2+ MATLAB tables. For each combo, scifor.for_each filters
+    %   each table individually, then merges them column-wise (inner join
+    %   on common schema key columns, or simple horzcat for single-row results).
+    %
+    %   Constituents can be:
+    %   - MATLAB tables
+    %   - scifor.Fixed(table, ...) wrappers
+    %
+    %   Example:
+    %       scifor.for_each(@analyze, ...
+    %           struct('data', scifor.Merge(gait_table, force_table)), ...
+    %           subject=[1 2 3])
+    %
+    properties (SetAccess = private)
+        tables  cell  % Cell array of table specs (tables or Fixed wrappers)
+    end
+end
+```
+
+---
+
+## scifor.ColumnSelection — New Class (or enhancement)
+
+```matlab
+classdef ColumnSelection
+    % scifor.ColumnSelection  Extract specific columns from a table input.
+    %
+    %   After filtering the table for the current combo, extracts only the
+    %   specified columns. Single column → returns the column values (array).
+    %   Multiple columns → returns a sub-table.
+    %
+    %   Example:
+    %       scifor.for_each(@fn, ...
+    %           struct('speed', scifor.ColumnSelection(data_table, "speed")), ...
+    %           subject=[1 2 3])
+    %
+    properties (SetAccess = private)
+        data     % MATLAB table
+        columns  % String array of column names to extract
+    end
+end
+```
+
+---
+
+## scidb.for_each() — Rewrite as DB Wrapper
+
+### Signature (mostly unchanged from user perspective)
+
+```matlab
+result_tbl = scidb.for_each(fn, inputs, outputs, varargin)
+%   fn      - Function handle or scidb.Thunk
+%   inputs  - Struct mapping parameter names to BaseVariable instances,
+%             scidb.Fixed wrappers, scidb.Merge wrappers, or constants
+%   outputs - Cell array of BaseVariable instances for output types
+%   varargin - Metadata iterables + options (preload, parallel, db, where, etc.)
+```
+
+### Implementation flow
 
 ```
-scifor.for_each()          — standalone core engine (~1200 lines)
-  Duck-typed .load()/.save(), table filtering, CsvFile/MatFile,
-  constants, Fixed, Merge, distribute, dry-run, result collection.
-  Extension points: _extra_save_metadata, _all_combos
-
-scidb.for_each()           — DB wrapper (~400-500 lines)
-  Pre-processing: empty-list resolve, schema propagation,
-  ForEachConfig version keys, schema combo filtering.
-  Optimizations: preloading via proxy, batch save via proxy, parallel branch.
-  Delegates to scifor.for_each() for the core loop.
+scidb.for_each(@fn, inputs, outputs, subject=[1 2 3], session=["A" "B"])
+│
+├─ 1. Parse options (preload, parallel, db, where, save, + metadata iterables)
+├─ 2. Resolve empty lists: [] → db.distinct_schema_values()
+├─ 3. Set schema: scifor.set_schema(db.dataset_schema_keys)
+├─ 4. Build ForEachConfig version keys
+├─ 5. Pre-filter combos: db.distinct_schema_combinations() → _all_combos
+│
+├─ 6. PARALLEL BRANCH (if parallel=true):
+│     Run 3-phase loop entirely within scidb (no delegation to scifor)
+│     Return early
+│
+├─ 7. LOAD ALL INPUTS → TABLES:
+│     For each loadable input:
+│       BaseVariable    → bulk load all records → MATLAB table with metadata columns
+│       Fixed(BaseVar)  → bulk load with fixed overrides → table
+│       Merge(vars...)  → bulk load each constituent → tables
+│       PathInput       → per-combo load → table (or handle separately)
+│       table inputs    → pass through unchanged
+│       constants       → pass through unchanged
+│
+├─ 8. CONVERT TO SCIFOR INPUTS:
+│     scidb.Fixed(BaseVar, session="BL")  →  scifor.Fixed(loaded_table, session="BL")
+│     scidb.Merge(VarA, VarB)             →  scifor.Merge(loaded_table_a, loaded_table_b)
+│     BaseVariable                         →  loaded_table
+│
+├─ 9. HANDLE THUNK:
+│     If fn is scidb.Thunk, wrap in a plain function that handles lineage
+│
+├─ 10. DELEGATE TO scifor.for_each():
+│      result_tbl = scifor.for_each(fn_wrapped, scifor_inputs, ...
+│          output_names=output_class_names, ...
+│          _all_combos=filtered_combos, ...
+│          metadata_iterables...)
+│
+├─ 11. SAVE RESULTS:
+│      Iterate over result_tbl rows
+│      For each row + each output:
+│        output_var.save(data, metadata..., version_keys...)
+│      Or batch save for efficiency
+│
+└─ 12. RETURN result_tbl
 ```
 
-### Key design decision: proxy objects instead of extension-point parameters
+### Key design points
 
-In Python, scifor.for_each always calls `.load()` per iteration with no preloading, and `.save()` per iteration with no batching. The MATLAB preloading and batch save are performance optimizations for DB mode only.
+**Loading strategy**: scidb always loads ALL records for each input variable upfront (equivalent to current `preload=true`). This produces MATLAB tables with metadata columns that scifor can filter per combo. The `preload=false` option is removed (or kept as a legacy no-op with a warning). If memory is a concern, users should iterate at a finer granularity.
 
-Rather than adding `_preloaded` parameters to scifor.for_each, **scidb.for_each will wrap inputs/outputs in proxy objects**:
+**Batch save is natural**: Since scifor returns all results at once in the result table, scidb can save them all in one batch — no proxy objects needed. This is simpler than the current incremental batch accumulation.
 
-- **`PreloadedVariable`** — wraps a BaseVariable, preloads all data upfront, `.load()` returns from memory cache
-- **`BatchSaveProxy`** — wraps an output object, `.save()` accumulates to Python lists, flushed after the loop
+**Parallel stays in scidb**: The parfor branch doesn't delegate to scifor. It does its own per-worker loading and saving, since workers can't share pre-loaded tables across process boundaries.
 
-This means scifor.for_each needs **zero knowledge of preloading or batch save** — it just calls `.load()` and `.save()` via duck-typing. Extension points needed:
-- `_extra_save_metadata` — cell array of NV pairs merged into every `.save()` call
-- `_all_combos` — pre-built combo list, bypasses cartesian product
+**Thunk wrapping**: scidb wraps Thunk functions in a plain function handle before passing to scifor. The wrapper handles lineage tracking. scifor sees a regular function.
 
-## Files to create
+---
+
+## What Happens to CsvFile / MatFile?
+
+CsvFile and MatFile are I/O classes — they load/save files. Since scifor.for_each no longer does I/O, they **cannot be direct inputs to scifor.for_each**.
+
+**Option chosen**: CsvFile/MatFile remain in the scifor package as standalone utilities. Users who want to use them with for_each load the data first:
+
+```matlab
+% Load all data into a table, then use for_each on the table
+all_data = table();
+for subj = [1,2,3]
+    for sess = ["A","B"]
+        row = scifor.CsvFile("data/{subject}/{session}.csv").load(subject=subj, session=sess);
+        row.subject = subj; row.session = sess;
+        all_data = [all_data; row];
+    end
+end
+result = scifor.for_each(@fn, struct('data', all_data), subject=[1 2 3], session=["A" "B"])
+```
+
+This is verbose but keeps scifor.for_each pure. A convenience helper could be added later (e.g. `scifor.load_all(CsvFile, subject=[1 2 3], session=["A" "B"])` → table).
+
+---
+
+## Empty-List Resolution
+
+Currently, `subject=[]` queries the database for all distinct values. In pure scifor:
+- **scifor.for_each**: `subject=[]` means "infer from the table columns." If an input table has a `subject` column, extract all distinct values from it. If no table input has that column, error.
+- **scidb.for_each**: `subject=[]` queries the database as before, then passes the resolved list to scifor.
+
+---
+
+## Files to Create
 
 ### `+scifor/Fixed.m` (~50 lines)
-Copy of `+scidb/Fixed.m` in the `scifor` namespace. Same properties (`var_type`, `fixed_metadata`), same constructor. Standalone users write `scifor.Fixed(csv_file, session="BL")`.
+New class wrapping a MATLAB table + fixed metadata struct. Property: `data` (table), `fixed_metadata` (struct).
 
-### `+scifor/unwrap_input.m` (~25 lines)
-Duck-typed unwrapping: if `~istable(x) && ~isnumeric(x) && ~isstruct(x) && isprop(x, 'data')`, return `x.data`. Otherwise return `x` unchanged. Replaces the scidb-specific `scidb.internal.unwrap_input`.
+### `+scifor/Merge.m` (~50 lines)
+New class wrapping 2+ table specs. Property: `tables` (cell array of tables or Fixed wrappers).
 
-## Files to modify
+### `+scifor/ColumnSelection.m` (~40 lines)
+New class wrapping a table + column names. Properties: `data` (table), `columns` (string array).
 
-### `+scifor/for_each.m` — rewrite as standalone core (~1200 lines)
+## Files to Modify
 
-**Remove all DB-specific code:**
-- Empty-list resolve via `py.scidb.database.get_database().distinct_schema_values()` (lines 157-180) → replace with table-column scanning
-- Schema combo filtering via `filter_db.distinct_schema_combinations()` (lines 276-341)
-- `build_config_nv()` call (line 262-264) → config keys come from `_extra_save_metadata`
-- Preloading phase (lines 361-490)
-- Batch save setup/accumulation/flush (lines 519-526, 859-900)
-- Parallel branch (lines 493-507, helper lines 1048-1313)
+### `+scifor/for_each.m` — Rewrite as pure orchestrator (~800-1000 lines, down from 2612)
+
+**Remove entirely:**
 - All `py.*` calls
 - All `scidb.internal.*` calls
+- `outputs` parameter
+- `preload`/`parallel`/`db`/`save`/`where` (scidb.Filter) options from `split_options`
+- Empty-list DB resolve → replace with table-column inference
+- Schema combo pre-filtering via DB
+- ForEachConfig version keys
+- Preloading phase
+- Batch save accumulation + flush
+- Per-iteration `.load()` / `.save()` calls
+- Parallel `run_parallel` + parfor
+- Thunk-specific handling
+- `has_pathinput()` helper
+- `build_config_nv()` / `serialize_loadable_inputs()` / `input_spec_to_key()` helpers
+- `merge_constituents()` (current version calls `.load()` on vars) → replace with pure-table merge
 
-**Rewrite for duck-typing:**
-- `is_loadable()`: `istable(x) || is_fixed_like(x) || is_merge_like(x) || has_load_method(x)`
-  - `is_fixed_like(x)`: checks for `.var_type` and `.fixed_metadata` properties (works with both `scifor.Fixed` and `scidb.Fixed`)
-  - `has_load_method(x)`: checks `ismethod(x, 'load')` — works for CsvFile, MatFile, BaseVariable, PreloadedVariable
-- Loading: call `x.load(meta_nv{:})` on any loadable object
-- Unwrapping: `scifor.unwrap_input()` (duck-typed `.data` check)
-- Saving: `out.save(data, save_nv{:})` on any output with `.save()`
-- Thunk detection: soft `isa(fn, 'scidb.Thunk')` in try/catch, defaults to false
+**Rewrite:**
+- `is_loadable()` → `is_data_input()`: detects tables, scifor.Fixed, scifor.Merge, scifor.ColumnSelection
+- Input loading loop → input *filtering* loop: for each combo, filter tables by metadata columns
+- `merge_constituents()` → `merge_tables()`: filter each table in a Merge, join column-wise
+- `results_to_output_table()` → rebuild to use `output_names` instead of output class names
+- `split_options()` → remove DB options, add `output_names`, `_all_combos`
+- `format_inputs()` / `format_outputs()` / `print_dry_run_iteration()` → adapt for tables
+- Empty-list resolve → scan input table columns for distinct values
+- Unwrapping → no longer needed (inputs are already raw data)
 
-**Add extension points:**
-- `_extra_save_metadata`: parsed in `split_options`, merged into `save_nv`
-- `_all_combos`: parsed in `split_options`, bypasses `cartesian_product()`
+**Keep as-is:**
+- `cartesian_product()`
+- `filter_table_for_combo()`
+- `split_for_distribute()`
+- `is_metadata_compatible()`
+- `normalize_cell_column()`, `cartesian_indices()`, `format_value()`
 
-**Keep (standalone helpers):**
-- `split_options()` — add `_extra_save_metadata`, `_all_combos`
-- `filter_table_for_combo()` — unchanged
-- `cartesian_product()` — unchanged
-- `split_for_distribute()` — unchanged
-- `is_metadata_compatible()` — unchanged
-- `normalize_cell_column()`, `cartesian_indices()`, `format_value()` — unchanged
-- `fe_multi_result_to_table()` — rewrite with duck-typed unwrapping
-- `apply_column_selection()` — rewrite with duck-typed unwrapping
-- `results_to_output_table()` — rewrite with duck-typed unwrapping
-- `print_dry_run_iteration()` — rewrite with duck-typed display
-- `format_inputs()`, `format_outputs()` — rewrite with duck-typing
-- Merge helpers (`merge_constituents`, `merge_by_schema_keys`, etc.) — adapt to use `scifor.get_schema()` instead of DB
-- `build_meta_key()`, `result_meta_key()`, `combo_meta_key()` — keep
+### `+scidb/for_each.m` — Rewrite as full DB wrapper (~600-800 lines)
 
-### `+scidb/for_each.m` — rewrite as DB wrapper (~400-500 lines)
+Currently a 10-line passthrough. Becomes a substantial function that:
 
-Following the Python `scirun.for_each()` pattern, this function:
+1. Parses options (including DB-specific: `preload`, `parallel`, `db`, `where`, `save`)
+2. Resolves empty metadata lists via DB
+3. Propagates schema
+4. Builds ForEachConfig version keys
+5. Pre-filters combos via DB
+6. Handles parallel branch (moved from scifor, stays self-contained)
+7. Loads all input variables → MATLAB tables
+8. Converts scidb wrappers → scifor wrappers
+9. Delegates to scifor.for_each
+10. Saves results to output variables (batch or per-row)
 
-1. **Parses options** — extracts `parallel`, `preload`, `db`, `where` + all metadata from varargin
-2. **Resolves empty metadata lists** — `py.scidb.database.get_database().distinct_schema_values()`
-3. **Propagates schema** — `scifor.set_schema(db.dataset_schema_keys)`
-4. **Builds ForEachConfig version keys** — `build_config_nv()` (moved here)
-5. **Pre-filters schema combos** — `filter_db.distinct_schema_combinations()`, builds `_all_combos`
-6. **Parallel branch** — if `parallel=true`, runs the 3-phase loop directly (moved `run_parallel` here), does NOT delegate to scifor
-7. **Wraps inputs in PreloadedVariable proxies** — if `preload=true`, bulk-loads via `py.scidb_matlab.bridge.load_and_extract()`, wraps each BaseVariable in a proxy that returns from cache
-8. **Wraps outputs in BatchSaveProxy** — for non-Thunk functions, wraps outputs so `.save()` accumulates
-9. **Delegates** to `scifor.for_each()` with `_extra_save_metadata` and `_all_combos`
-10. **Flushes batch save proxies** after scifor returns
-
-**Moved helpers (local functions):**
+**Moved helpers (from scifor → scidb local functions):**
 - `build_config_nv()`, `serialize_loadable_inputs()`, `input_spec_to_key()`, `format_repr()`
-- `run_parallel()` (full parallel execution)
+- `run_parallel()` (full parallel execution, ~270 lines)
 - `schema_str()` (for DB combo filtering)
 - `has_pathinput()` (checks `scidb.PathInput`)
-- PreloadedVariable / BatchSaveProxy logic (inline or as local helper classes)
+- Preloading logic (adapted to produce tables instead of ThunkOutput arrays)
+- Batch save logic (reads from result_tbl, saves to DB)
 
-## Files NOT changed
+## Files NOT Changed
 
-- `+scidb/Fixed.m` — stays as-is. Duck-typing in scifor.for_each means it works with both `scifor.Fixed` and `scidb.Fixed`.
-- `+scidb/Merge.m` — stays as-is, same reasoning.
-- `+scifor/Col.m`, `ColFilter.m`, `CompoundFilter.m`, `NotFilter.m`, `CsvFile.m`, `MatFile.m`, `set_schema.m`, `get_schema.m` — no changes needed.
+- `+scidb/Fixed.m` — stays as-is (wraps BaseVariable, used by scidb.for_each)
+- `+scidb/Merge.m` — stays as-is (wraps BaseVariables, used by scidb.for_each)
+- `+scifor/Col.m`, `ColFilter.m`, `CompoundFilter.m`, `NotFilter.m` — no changes
+- `+scifor/CsvFile.m`, `+scifor/MatFile.m` — no changes (standalone I/O utilities, just not used as for_each inputs)
+- `+scifor/set_schema.m`, `+scifor/get_schema.m`, `+scifor/schema_store_.m` — no changes
+
+---
 
 ## Tests
 
 ### New: `TestSciforForEach.m` — standalone for_each tests (no database)
 - Table input filtering by schema keys
-- CsvFile as input + output through for_each
-- MatFile as input + output through for_each
 - Constants passed through unchanged
 - `scifor.Fixed(table, key=val)` filtering
-- `scifor.Fixed(CsvFile(...), key=val)` loading
+- `scifor.Merge(table1, table2)` merging
+- `scifor.ColumnSelection(table, col)` extraction
 - Distribute with table outputs
 - Dry-run mode
-- Empty-list resolve from table columns
-- Result table structure
+- Empty-list inference from table columns
+- Multi-output with `output_names`
+- `where=scifor.Col("speed") > 1.5` filtering
+- `pass_metadata=true`
+- Result table structure (metadata cols + output cols)
 
 ### Existing: `TestForEach.m` — should pass as-is
-All existing DB tests call `scidb.for_each()` which now wraps scifor. No test changes expected, but we run the full suite to verify.
+All existing DB tests call `scidb.for_each()` which is now a proper wrapper. The interface is unchanged from the caller's perspective.
 
 ### Existing: `TestScifor.m` — add tests
 - `scifor.Fixed` constructor and properties
-- `scifor.Fixed` with table and CsvFile inputs
+- `scifor.Merge` constructor and properties
+- `scifor.ColumnSelection` constructor and properties
+
+---
+
+## Resolved Design Decisions
+
+### `as_table=` semantics
+
+`as_table=` still exists and the convention is unchanged:
+- **`as_table=true`**: The function receives a table with metadata columns + data column(s). This is the mechanism to pass metadata to the called function when needed.
+- **`as_table=false`** (default): The subset of data matching the current combo is unwrapped and passed directly to the function — as a table if that's the data's type, or as any other type as appropriate. Metadata is not included; data unwrapping is performed if appropriate.
+
+Thunk-specific as_table handling is scidb's concern, not scifor's.
+
+### Function output count
+
+scifor needs to know the output count because MATLAB requires specifying `nargout` at call time (`[out1, out2] = fn(...)`). The `output_names` parameter serves double duty:
+- **Names** the result table columns
+- **Implicitly provides the count** (`numel(output_names)`)
+- Defaults to `{"output"}` (single output) if not specified
+- Can also accept a plain number (e.g. `output_names=3`) for auto-named outputs (`output_1`, `output_2`, `output_3`)
+
+### Table metadata columns
+
+Convention: loaded tables passed to scifor MUST include schema key columns alongside data columns. When scidb bulk-loads a variable, the resulting table has columns like `[subject, session, <data_col_1>, <data_col_2>, ...]`. scifor uses the schema key columns (via `scifor.get_schema()`) to filter rows per combo. After filtering, when `as_table=false`, scifor drops the schema key columns and passes only the data columns to the function.
+
+---
 
 ## Verification
 
-1. Run existing MATLAB test suite (`TestForEach`, `TestScifor`, etc.) to verify no regressions
-2. Run new `TestSciforForEach` tests to verify standalone behavior
+1. Run new `TestSciforForEach` tests for standalone behavior
+2. Run existing MATLAB test suite (`TestForEach`, `TestScifor`, etc.) to verify no regressions
 3. Run Python tests (`scifor/tests/`, `scirun-lib/tests/`) to verify Python side is unaffected

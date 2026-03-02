@@ -59,8 +59,6 @@ class ForEachConfig:
 
         Only includes loadable inputs (variable types, Fixed, ColumnSelection,
         Merge) — constants are already included in save_metadata directly.
-        Plain constant values are excluded here since they're added to
-        save_metadata as their own keys.
         """
         from .foreach import _is_loadable
 

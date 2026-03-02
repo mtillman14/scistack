@@ -1,7 +1,6 @@
 """scifor: Standalone for_each batch execution for data pipelines.
 
-Works with plain DataFrames, file I/O, or any .load()/.save() protocol.
-No database required.
+Works with plain DataFrames. No database required.
 
 Example:
     import pandas as pd
@@ -18,7 +17,6 @@ Example:
     result = for_each(
         lambda signal: signal.mean(),
         inputs={"signal": raw_df},
-        outputs=[],
         subject=[1, 2],
         session=["pre", "post"],
     )
