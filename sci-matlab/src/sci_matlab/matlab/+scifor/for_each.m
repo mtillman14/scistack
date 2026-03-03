@@ -527,8 +527,14 @@ function result = extract_data(tbl, schema_keys, as_table)
             result = val;
         end
     elseif ~isempty(data_cols) && numel(data_cols) < numel(col_names)
-        % Return sub-table with data columns only
-        result = tbl(:, cellstr(data_cols));
+        sub_tbl = tbl(:, cellstr(data_cols));
+        % If all data columns are numeric, return as numeric array (vector or matrix)
+        all_numeric = all(cellfun(@(c) isnumeric(sub_tbl.(c)), cellstr(data_cols)));
+        if all_numeric
+            result = table2array(sub_tbl);
+        else
+            result = sub_tbl;
+        end
     else
         result = tbl;
     end
@@ -1133,7 +1139,7 @@ function col = normalize_cell_column(col_data)
     all_string = true;
     for i = 1:n
         v = col_data{i};
-        if ~(isnumeric(v) && isscalar(v))
+        if ~((isnumeric(v) || islogical(v)) && isscalar(v))
             all_scalar_numeric = false;
         end
         if ~(isstring(v) || ischar(v))

@@ -141,7 +141,7 @@ classdef TestScifor < matlab.unittest.TestCase
                 'VariableNames', {'freq_low', 'freq_high'});
 
             received = {};
-            fn = @(c) deal(received{end+1} = c, []);  %#ok<NASGU>
+            fn = @(c) deal(received{end+1} == c, []);  %#ok<NASGU>
 
             % We can't run scidb.for_each without a DB, so test the helper directly
             result = filter_table_for_combo_test(coeffs, struct('subject', 1, 'session', 'pre'), ...

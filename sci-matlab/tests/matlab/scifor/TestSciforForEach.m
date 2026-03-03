@@ -59,17 +59,22 @@ classdef TestSciforForEach < matlab.unittest.TestCase
             tc.verifyEqual(result.output, [10.0; 20.0]);
         end
 
-        function test_per_combo_multiple_rows_passed_as_table(tc)
+        function test_per_combo_multiple_rows_passed_as_vector(tc)
         %   Multiple matching rows -> sub-table passed.
             scifor.set_schema(["subject"]);
 
             tbl = table([1;1;2;2], [1;2;1;2], [1.0;2.0;3.0;4.0], ...
                 'VariableNames', {'subject','trial','emg'});
 
-            result = scifor.for_each(@(data) height(data), ...
+            result = scifor.for_each(@(data) length(data), ...
                 struct('data', tbl), ...
                 subject=[1 2]);
             tc.verifyEqual(result.output, [2; 2]);
+
+            result = scifor.for_each(@(data) isnumeric(data), ...
+                struct('data', tbl), ...
+                subject=[1 2]);
+            tc.verifyEqual(result.output, [true; true]);
         end
     end
 
@@ -92,18 +97,33 @@ classdef TestSciforForEach < matlab.unittest.TestCase
             tc.verifyEqual(result.output, [1; 1]);
         end
 
-        function test_as_table_false_drops_schema_cols(tc)
+        function test_as_table_false_with_one_column_is_not_table(tc)
         %   Default (as_table=false): schema key columns dropped, scalar extracted.
             scifor.set_schema(["subject"]);
 
             tbl = table([1;2], [10.0;20.0], 'VariableNames', {'subject','value'});
 
             % With as_table=false (default), 1 row + 1 data col -> scalar
-            result = scifor.for_each(@(x) x, ...
+            result = scifor.for_each(@(x) x + 2, ...
                 struct('x', tbl), ...
-                subject=[1 2]);
-            % Scalars are collected directly
-            tc.verifyEqual(result.output, [10.0; 20.0]);
+                subject=[]);
+            tbl2 = tbl;
+            tbl2.value = tbl2.value + 2;
+            tc.verifyEqual(result, tbl2);
+        end
+
+        function test_as_table_false_with_multiple_data_columns_is_table(tc)
+        %   Default (as_table=false): schema key columns dropped, scalar extracted.
+            scifor.set_schema(["subject"]);
+
+            tbl = table([1;2], [10.0;20.0], [20.0;30.0], 'VariableNames', {'subject','value1','value2'});
+
+            % With as_table=false (default), 1 row + 1 data col -> scalar
+            result = scifor.for_each(@(x) height(x), ...
+                struct('x', tbl), ...
+                subject=[]);
+            % Table is returned
+            tc.verifyEqual(result.output, [1; 1]);
         end
 
         function test_as_table_specific_inputs(tc)
