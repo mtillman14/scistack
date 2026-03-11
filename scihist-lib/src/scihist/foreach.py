@@ -9,7 +9,6 @@ def for_each(
     outputs: list[type],
     dry_run: bool = False,
     save: bool = True,
-    pass_metadata: bool | None = None,
     as_table: list[str] | bool | None = None,
     db=None,
     distribute: bool = False,
@@ -33,7 +32,6 @@ def for_each(
         outputs: List of output types/objects with ``.save()``.
         dry_run: If True, only print what would happen without executing.
         save: If True (default), save each function run's output with lineage.
-        pass_metadata: If True, pass metadata values as keyword arguments to fn.
         as_table: Controls which inputs are passed as full DataFrames.
         db: Optional database instance.
         distribute: If True, split outputs and save each piece at the schema
@@ -61,7 +59,6 @@ def for_each(
         outputs,
         dry_run=dry_run,
         save=False,
-        pass_metadata=pass_metadata,
         as_table=as_table,
         db=db,
         distribute=distribute,

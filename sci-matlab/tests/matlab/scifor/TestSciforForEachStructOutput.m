@@ -195,18 +195,6 @@ classdef TestSciforForEachStructOutput < matlab.unittest.TestCase
             tc.verifyEqual(r2.output(1).y, 2);
         end
 
-        function test_struct_array_with_pass_metadata(tc)
-        %   pass_metadata + struct output → struct array.
-            scifor.set_schema(["subject"]);
-
-            result = scifor.for_each( ...
-                @(varargin) struct('key', varargin{1}, 'val', varargin{2}), ...
-                struct(), pass_metadata=true, subject=[1 2]);
-
-            tc.verifyTrue(isstruct(result.output));
-            tc.verifyEqual(numel(result.output), 2);
-        end
-
         function test_struct_array_with_distribute(tc)
         %   distribute + struct output: each element distributed, and if
         %   all distributed pieces are scalar structs with same fields,

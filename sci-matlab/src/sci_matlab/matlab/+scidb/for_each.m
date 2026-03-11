@@ -23,7 +23,6 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %       dry_run       - If true, preview without executing (default: false)
 %       save          - If true, save outputs (default: true)
 %       preload       - If true, pre-load all inputs (default: true)
-%       pass_metadata - If true, pass metadata as trailing NV args (default: auto)
 %       parallel      - If true, use 3-phase parallel execution (default: false)
 %       distribute    - If true, split outputs by element/row (default: false)
 %       db            - Optional DatabaseManager for load/save operations
@@ -65,13 +64,6 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         where_nv = {};
     else
         where_nv = {'where', where_filter};
-    end
-
-    % Auto-detect pass_metadata
-    if isempty(opts.pass_metadata)
-        should_pass_metadata = false;
-    else
-        should_pass_metadata = opts.pass_metadata;
     end
 
     % Get function name for display
@@ -156,7 +148,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
     % Build ForEachConfig version keys
     config_nv = build_config_nv(fn_name, inputs, input_names, loadable_idx, ...
-        where_filter, opts.distribute, as_table_raw, opts.pass_metadata);
+        where_filter, opts.distribute, as_table_raw);
 
     % Parse outputs cell array
     n_outputs = numel(outputs);
@@ -249,7 +241,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
             meta_keys, meta_values, input_names, loadable_idx, ...
             constant_names, constant_values, constant_nv, config_nv, ...
-            as_table_raw, should_pass_metadata, fn_name, do_save, ...
+            as_table_raw, fn_name, do_save, ...
             db_nv, where_nv, opts);
         fprintf('\n[done] completed=%d, skipped=%d, total=%d\n', ...
             completed, skipped, total);
@@ -312,8 +304,6 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     scifor_opts = {};
     scifor_opts{end+1} = 'dry_run';
     scifor_opts{end+1} = dry_run;
-    scifor_opts{end+1} = 'pass_metadata';
-    scifor_opts{end+1} = should_pass_metadata;
     scifor_opts{end+1} = 'distribute';
     scifor_opts{end+1} = opts.distribute;
     scifor_opts{end+1} = 'output_names';
@@ -619,7 +609,7 @@ end
 function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
     meta_keys, meta_values, input_names, loadable_idx, ...
     constant_names, constant_values, constant_nv, config_nv, ...
-    as_table_raw, should_pass_metadata, fn_name, do_save, db_nv, where_nv, opts)
+    as_table_raw, fn_name, do_save, db_nv, where_nv, opts)
 %RUN_PARALLEL  Three-phase parallel execution for for_each.
 
     n_inputs = numel(input_names);
@@ -873,11 +863,7 @@ function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
 
     parfor j = 1:n_resolved
         try
-            if should_pass_metadata
-                r = fn(par_inputs{j}{:}, par_meta_nv{j}{:});
-            else
-                r = fn(par_inputs{j}{:});
-            end
+            r = fn(par_inputs{j}{:});
             if ~iscell(r); r = {r}; end
             results_par{j} = r;
         catch err
@@ -1124,7 +1110,7 @@ end
 % =========================================================================
 
 function nv = build_config_nv(fn_name, inputs, input_names, loadable_idx, ...
-    where_filter, distribute, as_table_raw, pass_metadata)
+    where_filter, distribute, as_table_raw)
 %BUILD_CONFIG_NV  Build ForEachConfig version keys.
     nv = {};
 
@@ -1155,10 +1141,6 @@ function nv = build_config_nv(fn_name, inputs, input_names, loadable_idx, ...
         nv{end+1} = strjoin(sort(as_table_raw), ',');
     end
 
-    if ~isempty(pass_metadata) && islogical(pass_metadata) && pass_metadata
-        nv{end+1} = '__pass_metadata';
-        nv{end+1} = true;
-    end
 end
 
 
@@ -1282,7 +1264,6 @@ function [meta_args, opts] = split_options(varargin)
     opts.dry_run = false;
     opts.save = true;
     opts.preload = true;
-    opts.pass_metadata = [];
     opts.as_table = string.empty;
     opts.db = [];
     opts.parallel = false;
@@ -1303,9 +1284,6 @@ function [meta_args, opts] = split_options(varargin)
                     i = i + 2; continue;
                 case "preload"
                     opts.preload = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "pass_metadata"
-                    opts.pass_metadata = logical(varargin{i+1});
                     i = i + 2; continue;
                 case "as_table"
                     val = varargin{i+1};

@@ -180,17 +180,6 @@ classdef TestSciforForEachCategorical < matlab.unittest.TestCase
             tc.verifyTrue(iscategorical(result.trial));
         end
 
-        function test_categorical_with_pass_metadata(tc)
-        %   categorical + pass_metadata: metadata columns are categorical.
-            scifor.set_schema(["subject"]);
-
-            result = scifor.for_each( ...
-                @(varargin) varargin{2}, struct(), ...
-                pass_metadata=true, subject=[1 2], categorical=true);
-
-            tc.verifyTrue(iscategorical(result.subject));
-        end
-
         function test_categorical_with_output_names(tc)
         %   categorical + output_names: metadata is categorical, named
         %   output column is not.

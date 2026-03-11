@@ -2,7 +2,7 @@ classdef TestSciforForEach < matlab.unittest.TestCase
 %TESTSCIFORFOREACH  Tests for scifor.for_each in standalone (no-DB) mode.
 %
 %   Tests the pure loop orchestrator: table filtering, Fixed, Merge,
-%   ColumnSelection, distribute, dry_run, pass_metadata, where, as_table,
+%   ColumnSelection, distribute, dry_run, where, as_table,
 %   output_names, empty-list resolution, and result table structure.
 %
 %   NOTE: classdef test methods cannot contain nested function definitions
@@ -513,25 +513,6 @@ classdef TestSciforForEach < matlab.unittest.TestCase
                 struct('x', tbl), ...
                 dry_run=true, subject=[1 2]);
             tc.verifyTrue(isempty(result));
-        end
-    end
-
-    % =====================================================================
-    % pass_metadata
-    % =====================================================================
-
-    methods (Test)
-        function test_pass_metadata(tc)
-        %   pass_metadata=true passes metadata as trailing NV args.
-            scifor.set_schema(["subject"]);
-
-            % With empty struct, fn receives only metadata NV pairs:
-            % fn('subject', 1) -> varargin = {'subject', 1}
-            result = scifor.for_each(@(varargin) varargin{2}, ...
-                struct(), ...
-                pass_metadata=true, subject=[1 2]);
-
-            tc.verifyEqual(result.output, [1; 2]);
         end
     end
 

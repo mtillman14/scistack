@@ -7,7 +7,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
 %   - Multiple outputs via varargout
 %   - output_names interaction
 %   - Edge cases (empty, dry_run, skipped)
-%   - Feature interactions (distribute, pass_metadata, where, Fixed, Merge)
+%   - Feature interactions (distribute, where, Fixed, Merge)
 
     methods (TestMethodSetup)
         function resetSchema(~)
@@ -56,8 +56,10 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
         %   String scalar output → string column.
             scifor.set_schema(["subject"]);
 
-            result = scifor.for_each(@(varargin) "hello", ...
-                struct(), pass_metadata=true, subject=[1 2]);
+            tbl = table([1;2], ["hello";"hello"], ...
+                'VariableNames', {'subject','value'});
+            result = scifor.for_each(@(val) val, ...
+                struct('val', tbl), subject=[1 2]);
 
             tc.verifyTrue(ismember('output', result.Properties.VariableNames));
             tc.verifyEqual(result.output, ["hello"; "hello"]);
@@ -564,17 +566,6 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
             tc.verifyEqual(height(result), 5);
             tc.verifyTrue(ismember('A', result.Properties.VariableNames));
             tc.verifyTrue(ismember('B', result.Properties.VariableNames));
-        end
-
-        function test_pass_metadata_with_output_table(tc)
-        %   pass_metadata=true works correctly with output table structure.
-            scifor.set_schema(["subject"]);
-
-            result = scifor.for_each( ...
-                @(varargin) varargin{2}, ...
-                struct(), pass_metadata=true, subject=[1 2]);
-
-            tc.verifyEqual(result.output, [1; 2]);
         end
 
         function test_where_filter_with_output_table(tc)

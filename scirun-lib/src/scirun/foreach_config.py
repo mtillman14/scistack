@@ -25,14 +25,12 @@ class ForEachConfig:
         where=None,
         distribute: bool = False,
         as_table=None,
-        pass_metadata=None,
     ):
         self.fn = fn
         self.inputs = inputs
         self.where = where
         self.distribute = distribute
         self.as_table = as_table
-        self.pass_metadata = pass_metadata
 
     def to_version_keys(self) -> dict:
         """Return dict of config keys to merge into save_metadata."""
@@ -50,8 +48,6 @@ class ForEachConfig:
                 keys["__as_table"] = sorted(self.as_table)
             elif self.as_table is True:
                 keys["__as_table"] = True
-        if self.pass_metadata is not None:
-            keys["__pass_metadata"] = self.pass_metadata
         return keys
 
     def _serialize_inputs(self) -> str:

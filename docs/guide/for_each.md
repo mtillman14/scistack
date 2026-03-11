@@ -461,7 +461,6 @@ scidb.for_each(@pure_matlab_fn, ...
     | `outputs` | — | `list` of variable types for outputs |
     | `dry_run` | `False` | Preview without executing |
     | `save` | `True` | Save outputs after each iteration |
-    | `pass_metadata` | `None` | Pass iteration metadata as keyword arguments to `fn` (auto-detects from `generates_file`) |
     | `as_table` | `None` | Convert multi-result inputs to DataFrame: `True` (all), list of names, or `None` |
     | `distribute` | `False` | Split outputs by element/row into the next schema level |
     | `db` | `None` | Use a specific `DatabaseManager` instead of the global database |
@@ -477,7 +476,6 @@ scidb.for_each(@pure_matlab_fn, ...
     | `dry_run` | `false` | Preview without executing |
     | `save` | `true` | Save outputs after each iteration |
     | `preload` | `true` | Bulk-load all input data in one query per variable type before iterating (faster but uses more memory) |
-    | `pass_metadata` | `[]` | Pass iteration metadata as trailing name-value arguments to `fn` |
     | `as_table` | `[]` | Convert multi-result inputs to table: `true` (all), string array of names, or `[]` |
     | `distribute` | `false` | Split outputs by element/row into the next schema level |
     | `parallel` | `false` | Use 3-phase parfor execution (pure MATLAB functions only) |

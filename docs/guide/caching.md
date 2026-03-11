@@ -142,25 +142,20 @@ result = plot_signal(data, subject=1, session="A")
 
 ### With `for_each`
 
-When used with `for_each`, a `generates_file` function automatically receives
-the current metadata values as keyword arguments, so it can use them for file
-naming:
+When used with `for_each`, a `generates_file` function can receive
+the current metadata values by using `as_table=True`, which keeps schema key
+columns in the input DataFrames:
 
 ```python
 for_each(
     plot_signal,
     inputs={"data": ProcessedData},
     outputs=[Figure],
+    as_table=True,
     subject=subjects,
     session=sessions,
 )
 ```
-
-This behavior can be controlled explicitly with the `pass_metadata` parameter:
-
-- `pass_metadata=True` — always pass metadata as kwargs (even for regular functions)
-- `pass_metadata=False` — never pass metadata as kwargs (even for `generates_file` functions)
-- `pass_metadata=None` (default) — auto-detect from `generates_file`
 
 ## Best Practices
 

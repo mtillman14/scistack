@@ -14,7 +14,6 @@ def for_each(
     fn: Callable,
     inputs: dict[str, Any],
     dry_run: bool = False,
-    pass_metadata: bool | None = None,
     as_table: list[str] | bool | None = None,
     distribute: bool = False,
     where=None,
@@ -34,7 +33,6 @@ def for_each(
         inputs: Dict mapping parameter names to DataFrames, Fixed wrappers,
                 Merge wrappers, ColumnSelection wrappers, or constant values.
         dry_run: If True, only print what would happen without executing.
-        pass_metadata: If True, pass metadata values as keyword arguments to fn.
         as_table: Controls which DataFrame inputs keep schema key columns.
                   True = all; list of names = selected; False/None = none.
         distribute: If True, split outputs by element/row and expand them
@@ -128,7 +126,6 @@ def for_each(
 
     total = len(all_combos)
     fn_name = getattr(fn, "__name__", repr(fn))
-    should_pass_metadata = pass_metadata if pass_metadata is not None else getattr(fn, 'generates_file', False)
 
     if dry_run:
         print(f"[dry-run] for_each({fn_name})")
@@ -146,7 +143,7 @@ def for_each(
         metadata_str = ", ".join(f"{k}={v}" for k, v in metadata.items())
 
         if dry_run:
-            _print_dry_run_iteration(inputs, metadata, constant_inputs, should_pass_metadata, distribute_key)
+            _print_dry_run_iteration(inputs, metadata, constant_inputs, distribute_key)
             completed += 1
             continue
 
@@ -178,10 +175,7 @@ def for_each(
         filtered_inputs.update(constant_inputs)
 
         try:
-            if should_pass_metadata:
-                result = _call_fn(fn, filtered_inputs, n_outputs, metadata)
-            else:
-                result = _call_fn(fn, filtered_inputs, n_outputs)
+            result = _call_fn(fn, filtered_inputs, n_outputs)
         except Exception as e:
             print(f"[skip] {metadata_str}: {fn_name} raised: {e}")
             traceback.print_exc()
@@ -219,10 +213,8 @@ def for_each(
         return _results_to_output_dataframe(collected_rows, resolved_output_names)
 
 
-def _call_fn(fn, kwargs, n_outputs, extra_kwargs=None):
+def _call_fn(fn, kwargs, n_outputs):
     """Call fn with the right number of output captures."""
-    if extra_kwargs:
-        kwargs = {**kwargs, **extra_kwargs}
     return fn(**kwargs)
 
 
@@ -619,7 +611,6 @@ def _print_dry_run_iteration(
     inputs: dict[str, Any],
     metadata: dict[str, Any],
     constant_inputs: dict[str, Any],
-    pass_metadata: bool = False,
     distribute: str | None = None,
 ) -> None:
     """Print what would happen for one iteration in dry-run mode."""
@@ -650,9 +641,6 @@ def _print_dry_run_iteration(
             print(f"  filter {param_name} with {metadata}")
         else:
             print(f"  constant {param_name} = {var_spec!r}")
-
-    if pass_metadata:
-        print(f"  pass metadata: {metadata_str}")
 
     if distribute is not None:
         print(f"  distribute by '{distribute}' (1-based indexing)")

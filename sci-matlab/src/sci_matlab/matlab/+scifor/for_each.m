@@ -31,8 +31,6 @@ function varargout = for_each(fn, inputs, varargin)
 %
 %   Name-Value Arguments:
 %       dry_run       - If true, preview without executing (default: false)
-%       pass_metadata - If true, pass metadata as trailing name-value
-%                       arguments to fn (default: false)
 %       as_table      - If true, keep schema key columns when passing
 %                       filtered tables. Can be a string array of specific
 %                       input names. (default: false)
@@ -75,13 +73,6 @@ function varargout = for_each(fn, inputs, varargin)
     as_table_raw = opts.as_table;
     distribute = opts.distribute;
     where_filter = opts.where;
-
-    % Auto-detect pass_metadata
-    if isempty(opts.pass_metadata)
-        should_pass_metadata = false;
-    else
-        should_pass_metadata = opts.pass_metadata;
-    end
 
     % Get function name for display
     if isa(fn, 'function_handle')
@@ -293,7 +284,7 @@ function varargout = for_each(fn, inputs, varargin)
         % --- Dry-run iteration ---
         if dry_run
             print_dry_run_iteration(inputs, input_names, data_idx, ...
-                metadata, metadata_str, should_pass_metadata, distribute_key);
+                metadata, metadata_str, distribute_key);
             completed = completed + 1;
             continue;
         end
@@ -340,25 +331,13 @@ function varargout = for_each(fn, inputs, varargin)
         try
             if n_outputs == 0
                 % Zero-output function (e.g. plotting side-effects only)
-                if should_pass_metadata
-                    fn(loaded{:}, meta_nv{:});
-                else
-                    fn(loaded{:});
-                end
+                fn(loaded{:});
                 result = {};
             elseif n_outputs > 1
                 result = cell(1, n_outputs);
-                if should_pass_metadata
-                    [result{1:n_outputs}] = fn(loaded{:}, meta_nv{:});
-                else
-                    [result{1:n_outputs}] = fn(loaded{:});
-                end
+                [result{1:n_outputs}] = fn(loaded{:});
             else
-                if should_pass_metadata
-                    result = fn(loaded{:}, meta_nv{:});
-                else
-                    result = fn(loaded{:});
-                end
+                result = fn(loaded{:});
                 if ~iscell(result)
                     result = {result};
                 end
@@ -1096,7 +1075,6 @@ end
 function [meta_args, opts] = split_options(varargin)
 %SPLIT_OPTIONS  Separate known option flags from metadata name-value pairs.
     opts.dry_run = false;
-    opts.pass_metadata = [];
     opts.as_table = string.empty;
     opts.distribute = false;
     opts.where = [];
@@ -1112,10 +1090,6 @@ function [meta_args, opts] = split_options(varargin)
             switch lower(string(key))
                 case "dry_run"
                     opts.dry_run = logical(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "pass_metadata"
-                    opts.pass_metadata = logical(varargin{i+1});
                     i = i + 2;
                     continue;
                 case "as_table"
@@ -1218,7 +1192,7 @@ end
 
 
 function print_dry_run_iteration(inputs, input_names, data_idx, ...
-    metadata, metadata_str, pass_metadata, distribute_key)
+    metadata, metadata_str, distribute_key)
 %PRINT_DRY_RUN_ITERATION  Show what would happen for one iteration.
     fprintf('[dry-run] %s:\n', metadata_str);
 
@@ -1264,10 +1238,6 @@ function print_dry_run_iteration(inputs, input_names, data_idx, ...
         else
             fprintf('  constant %s = %s\n', input_names{p}, format_value(var_spec));
         end
-    end
-
-    if pass_metadata
-        fprintf('  pass metadata: %s\n', metadata_str);
     end
 
     if strlength(distribute_key) > 0

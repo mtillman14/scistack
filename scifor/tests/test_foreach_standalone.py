@@ -283,25 +283,6 @@ def test_dry_run_returns_none(capsys):
     assert "[dry-run]" in captured.out
 
 
-# ---------------------------------------------------------------------------
-# pass_metadata
-# ---------------------------------------------------------------------------
-
-def test_pass_metadata():
-    set_schema(["subject"])
-    received_meta = []
-
-    def fn(subject):
-        received_meta.append(subject)
-        return subject
-
-    for_each(
-        fn,
-        inputs={},
-        pass_metadata=True,
-        subject=[1, 2],
-    )
-    assert received_meta == [1, 2]
 
 
 # ---------------------------------------------------------------------------
