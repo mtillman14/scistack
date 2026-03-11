@@ -357,6 +357,94 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
             tc.verifyEqual(result.output, 103);
         end
 
+        function test_as_table_with_single_column_selection(tc)
+        %   as_table=true + single ColumnSelection returns table with
+        %   schema cols + selected data column, not a raw vector.
+            scifor.set_schema(["subject"]);
+
+            tbl = table([1;1;2;2], [10;20;30;40], [0.1;0.2;0.3;0.4], ...
+                'VariableNames', {'subject','signal','noise'});
+
+            received = [];
+
+            function result = capture(data)
+                received = data;
+                result = 0;
+            end
+
+            scifor.for_each(@capture, ...
+                struct('data', scifor.ColumnSelection(tbl, "signal")), ...
+                as_table=true, subject=[1 2]);
+
+            % Must be a table (as_table controls this)
+            tc.verifyTrue(istable(received), ...
+                'as_table=true should produce a table even with column selection');
+            % Must have schema column
+            tc.verifyTrue(ismember('subject', received.Properties.VariableNames), ...
+                'Table should contain subject metadata column');
+            % Must have selected data column
+            tc.verifyTrue(ismember('signal', received.Properties.VariableNames), ...
+                'Table should contain the selected data column');
+            % Must NOT have unselected data column
+            tc.verifyFalse(ismember('noise', received.Properties.VariableNames), ...
+                'Table should NOT contain unselected data columns');
+        end
+
+        function test_as_table_with_multi_column_selection(tc)
+        %   as_table=true + multi ColumnSelection returns table with
+        %   schema cols + selected data columns only.
+            scifor.set_schema(["subject"]);
+
+            tbl = table([1;1;2;2], [1;2;3;4], [10;20;30;40], [100;200;300;400], ...
+                'VariableNames', {'subject','a','b','c'});
+
+            received = [];
+
+            function result = capture(data)
+                received = data;
+                result = 0;
+            end
+
+            scifor.for_each(@capture, ...
+                struct('data', scifor.ColumnSelection(tbl, ["a" "b"])), ...
+                as_table=true, subject=[1 2]);
+
+            % Must be a table
+            tc.verifyTrue(istable(received));
+            % Must have schema col + selected cols
+            tc.verifyTrue(ismember('subject', received.Properties.VariableNames));
+            tc.verifyTrue(ismember('a', received.Properties.VariableNames));
+            tc.verifyTrue(ismember('b', received.Properties.VariableNames));
+            % Must NOT have unselected col
+            tc.verifyFalse(ismember('c', received.Properties.VariableNames));
+        end
+
+        function test_as_table_false_column_selection_returns_vector(tc)
+        %   as_table=false (default) + single ColumnSelection returns
+        %   a plain vector, NOT a table — preserving existing behavior.
+            scifor.set_schema(["subject"]);
+
+            tbl = table([1;1;2;2], [10;20;30;40], [0.1;0.2;0.3;0.4], ...
+                'VariableNames', {'subject','signal','noise'});
+
+            received = [];
+
+            function result = capture(data)
+                received = data;
+                result = 0;
+            end
+
+            scifor.for_each(@capture, ...
+                struct('data', scifor.ColumnSelection(tbl, "signal")), ...
+                subject=[1 2]);
+
+            % Without as_table, single column selection returns a vector
+            tc.verifyFalse(istable(received), ...
+                'as_table=false + column selection should return a vector, not a table');
+            tc.verifyTrue(isnumeric(received), ...
+                'as_table=false + column selection should return a numeric vector');
+        end
+
     end
 
     % =====================================================================

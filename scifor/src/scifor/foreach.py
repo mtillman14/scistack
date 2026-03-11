@@ -1,5 +1,6 @@
 """Pure for_each loop — works with DataFrames only, no I/O."""
 
+import traceback
 from itertools import product
 from typing import Any, Callable
 
@@ -161,6 +162,7 @@ def for_each(
                 )
             except Exception as e:
                 print(f"[skip] {metadata_str}: failed to filter {param_name}: {e}")
+                traceback.print_exc()
                 filter_failed = True
                 break
 
@@ -182,6 +184,7 @@ def for_each(
                 result = _call_fn(fn, filtered_inputs, n_outputs)
         except Exception as e:
             print(f"[skip] {metadata_str}: {fn_name} raised: {e}")
+            traceback.print_exc()
             skipped += 1
             continue
 
@@ -330,6 +333,10 @@ def _prepare_input(
     filtered = _apply_where_filter(filtered, where)
 
     if column_selection is not None:
+        if as_table:
+            # Keep schema columns alongside selected data columns
+            keep = [c for c in filtered.columns if c in schema_keys] + column_selection
+            return filtered[keep]
         return _apply_column_selection(filtered, column_selection)
 
     return _extract_data(filtered, schema_keys, as_table)

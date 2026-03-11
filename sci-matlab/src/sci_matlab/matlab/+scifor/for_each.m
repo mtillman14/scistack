@@ -324,6 +324,7 @@ function varargout = for_each(fn, inputs, varargin)
             catch err
                 fprintf('[skip] %s: failed to filter %s: %s\n', ...
                     metadata_str, input_names{p}, err.message);
+                fprintf('%s\n', getReport(err, 'extended'));
                 filter_failed = true;
                 break;
             end
@@ -359,6 +360,7 @@ function varargout = for_each(fn, inputs, varargin)
         catch err
             fprintf('[skip] %s: %s raised: %s\n', ...
                 metadata_str, fn_name, err.message);
+            fprintf('%s\n', getReport(err, 'extended'));
             skipped = skipped + 1;
             continue;
         end
@@ -399,6 +401,7 @@ function varargout = for_each(fn, inputs, varargin)
                 catch err2
                     fprintf('[error] %s: cannot distribute output %d: %s\n', ...
                         metadata_str, o, err2.message);
+                    fprintf('%s\n', getReport(err2, 'extended'));
                     continue;
                 end
             end
@@ -509,7 +512,14 @@ function result = prepare_input(var_spec, metadata, schema_keys, as_table, where
 
     % Column selection
     if ~isempty(col_sel)
-        result = apply_column_selection_on_table(filtered, col_sel);
+        if as_table
+            % Keep schema columns alongside selected data columns
+            schema_cols = intersect(string(filtered.Properties.VariableNames), schema_keys, 'stable');
+            keep_cols = [schema_cols(:)', col_sel(:)'];
+            result = filtered(:, cellstr(keep_cols));
+        else
+            result = apply_column_selection_on_table(filtered, col_sel);
+        end
         return;
     end
 
