@@ -279,34 +279,40 @@ classdef BaseVariable < dynamicprops
         %
         %   RESULT = TypeClass().load(Name, Value, ...)
         %
-        %   Returns a scidb.ThunkOutput with .data, .record_id, .metadata,
-        %   matching the return type of scidb.Thunk calls.  The Python
-        %   BaseVariable shadow is stored in .py_obj so that lineage
-        %   tracking works when the result is passed to another thunk or
-        %   re-saved.
+        %   When multiple records match, returns a MATLAB table by default
+        %   (as_table=true). When as_table=false, returns only the raw data
+        %   values (numeric array or cell array depending on data types).
+        %   When exactly one record matches, returns a single result.
         %
         %   Name-Value Arguments:
         %       Any metadata key-value pairs (e.g. subject=1, session="A")
-        %       version  - Specific record_id to load (default "latest")
-        %       as_table - If true, return a MATLAB table when multiple
-        %                  results match (default false)
-        %       db       - Optional DatabaseManager to use instead of the
-        %                  global database
+        %       version     - Specific record_id to load (default "latest")
+        %       as_table    - If true, return a MATLAB table when multiple
+        %                     results match. If false, return raw data
+        %                     values only. (default true)
+        %       categorical - If true, convert metadata columns in the
+        %                     result table to categorical (default false).
+        %                     Only applies when as_table=true.
+        %       db          - Optional DatabaseManager to use instead of the
+        %                     global database
         %
         %   Example:
-        %       raw = RawSignal().load(subject=1, session="A");
-        %       disp(raw.data);
+        %       % Load as table (default)
+        %       tbl = RawSignal().load(subject=1);
         %
-        %       % Load as table
-        %       tbl = RawSignal().load(as_table=true, subject=1);
+        %       % Load as table with categorical metadata
+        %       tbl = RawSignal().load(categorical=true, subject=1);
+        %
+        %       % Load raw data only (no table, no metadata)
+        %       data = RawSignal().load(as_table=false, subject=1);
         %
         %       % Load from a specific database
-        %       raw = RawSignal().load(db=db2, subject=1, session="A");
+        %       tbl = RawSignal().load(db=db2, subject=1);
 
             type_name = class(obj);
             py_class = scidb.internal.ensure_registered(type_name);
 
-            [metadata_args, version, as_table, db_val, where] = split_load_args(varargin{:});
+            [metadata_args, version, as_table, db_val, where, categorical_flag] = split_load_args(varargin{:});
             py_metadata = scidb.internal.metadata_to_pydict(metadata_args{:});
 
             if isempty(db_val)
@@ -318,7 +324,8 @@ classdef BaseVariable < dynamicprops
             % If loading by specific version, always return single
             if version ~= "latest"
                 py_var = py_db.load(py_class, py_metadata, version=char(version));
-                result = scidb.BaseVariable.wrap_py_var(py_var);
+                wrapped = scidb.BaseVariable.wrap_py_var(py_var);
+                result = wrapped.data;
                 return;
             end
 
@@ -342,11 +349,16 @@ classdef BaseVariable < dynamicprops
                 results_arr = scidb.BaseVariable.wrap_py_vars_batch(bulk);
 
                 if n == 1
-                    result = results_arr(1);
+                    result = results_arr(1).data;
                 elseif as_table
-                    result = multi_result_to_table(results_arr, type_name);
+                    result = multi_result_to_table(results_arr, type_name, categorical_flag);
                 else
-                    result = results_arr;
+                    % as_table=false: return raw data only (no ThunkOutput wrappers)
+                    raw = cell(n, 1);
+                    for k = 1:n
+                        raw{k} = results_arr(k).data;
+                    end
+                    result = normalize_data_column(raw);
                 end
             end
 
@@ -381,7 +393,7 @@ classdef BaseVariable < dynamicprops
             type_name = class(obj);
             py_class = scidb.internal.ensure_registered(type_name);
 
-            [metadata_args, py_version_id, as_table, db_val, where] = scidb.internal.split_load_all_args(varargin{:});
+            [metadata_args, py_version_id, as_table, db_val, where, categorical_flag] = scidb.internal.split_load_all_args(varargin{:});
             py_metadata = scidb.internal.metadata_to_pydict(metadata_args{:});
 
             if isempty(db_val)
@@ -403,7 +415,7 @@ classdef BaseVariable < dynamicprops
             results_arr = scidb.BaseVariable.wrap_py_vars_batch(bulk);
 
             if as_table && numel(results_arr) > 1
-                results = multi_result_to_table(results_arr, type_name);
+                results = multi_result_to_table(results_arr, type_name, categorical_flag);
             else
                 results = results_arr;
             end
@@ -816,12 +828,13 @@ end
 % Local helper functions
 % =========================================================================
 
-function [metadata_args, version, as_table, db, where] = split_load_args(varargin)
-%SPLIT_LOAD_ARGS  Separate 'version', 'as_table', 'db', and 'where' from metadata args.
+function [metadata_args, version, as_table, db, where, categorical_flag] = split_load_args(varargin)
+%SPLIT_LOAD_ARGS  Separate 'version', 'as_table', 'db', 'where', and 'categorical' from metadata args.
     version = "latest";
-    as_table = false;
+    as_table = true;
     db = [];
     where = [];
+    categorical_flag = false;
     metadata_args = {};
 
     i = 1;
@@ -840,6 +853,9 @@ function [metadata_args, version, as_table, db, where] = split_load_args(varargi
             i = i + 2;
         elseif strcmpi(key, 'where') && i < numel(varargin)
             where = varargin{i+1};
+            i = i + 2;
+        elseif strcmpi(key, 'categorical') && i < numel(varargin)
+            categorical_flag = logical(varargin{i+1});
             i = i + 2;
         else
             metadata_args{end+1} = varargin{i};   %#ok<AGROW>
@@ -875,7 +891,7 @@ function [remaining, db] = extract_db(args)
 end
 
 
-function tbl = multi_result_to_table(results, type_name)
+function tbl = multi_result_to_table(results, type_name, categorical_flag)
 %MULTI_RESULT_TO_TABLE  Convert an array of ThunkOutput to a MATLAB table.
     n = numel(results);
 
@@ -909,6 +925,16 @@ function tbl = multi_result_to_table(results, type_name)
             tbl.(meta_fields{f}) = string(col_data);
         else
             tbl.(meta_fields{f}) = col_data;
+        end
+    end
+
+    % Convert metadata columns to categorical if requested
+    if categorical_flag
+        for f = 1:numel(meta_fields)
+            col = tbl.(meta_fields{f});
+            str_col = string(col);
+            unique_vals = unique(str_col, 'stable');
+            tbl.(meta_fields{f}) = categorical(str_col, unique_vals);
         end
     end
 

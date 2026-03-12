@@ -210,7 +210,8 @@ classdef TestWhereFilter < matlab.unittest.TestCase
             StepLength().save(0.55, db=obj.db, subject=2);
 
             result = StepLength().load(where=Side() == "R", db=obj.db);
-            obj.assertEqual(result.metadata.subject, 2);
+            % Only subject=2 matches Side=="R"; its StepLength is 0.55
+            obj.assertEqual(result, 0.55);
         end
 
     end

@@ -71,7 +71,7 @@ classdef TestConfigureDatabase < matlab.unittest.TestCase
             % Verify database is functional
             RawSignal().save(42, 'subject', 1);
             result = RawSignal().load('subject', 1);
-            testCase.verifyEqual(result.data, 42);
+            testCase.verifyEqual(result, 42);
         end
 
         function test_absolute_paths(testCase)
@@ -79,7 +79,7 @@ classdef TestConfigureDatabase < matlab.unittest.TestCase
             scidb.configure_database(db_path, ["subject"]);
             RawSignal().save([1 2 3], 'subject', 1);
             result = RawSignal().load('subject', 1);
-            testCase.verifyEqual(result.data, [1; 2; 3]);
+            testCase.verifyEqual(result, [1; 2; 3]);
         end
 
         function test_lineage_mode_ephemeral(testCase)
@@ -138,11 +138,11 @@ classdef TestConfigureDatabase < matlab.unittest.TestCase
 
             db1.set_current_db();
             loaded = RawSignal().load('subject', 1);
-            testCase.verifyEqual(loaded.data, [1; 2; 3]);
+            testCase.verifyEqual(loaded, [1; 2; 3]);
 
             db2.set_current_db();
             loaded = RawSignal().load('subject', 1);
-            testCase.verifyEqual(loaded.data, [4; 5; 6]);
+            testCase.verifyEqual(loaded, [4; 5; 6]);
 
             db1.close();
             db2.close();

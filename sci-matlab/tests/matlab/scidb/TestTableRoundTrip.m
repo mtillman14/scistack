@@ -64,10 +64,10 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('B'), "DOUBLE");
 
             result = TableVar().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 3);
-            testCase.verifyEqual(result.data.A, [1;2;3], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.B, [4;5;6], 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 3);
+            testCase.verifyEqual(result.A, [1;2;3], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.B, [4;5;6], 'AbsTol', 1e-10);
         end
 
         function test_save_multirow_cell_ragged_vectors(testCase)
@@ -85,10 +85,10 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('b'), "DOUBLE");
 
             result = CellTableVar().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 3);
-            testCase.verifyEqual(result.data.a, t.a, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.b, t.b, 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 3);
+            testCase.verifyEqual(result.a, t.a, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.b, t.b, 'AbsTol', 1e-10);
 
         end
 
@@ -107,10 +107,10 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('b'), "DOUBLE");
 
             result = CellTableVar().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 3);
-            testCase.verifyEqual(result.data.a, t.a, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.b, t.b, 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 3);
+            testCase.verifyEqual(result.a, t.a, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.b, t.b, 'AbsTol', 1e-10);
 
         end
 
@@ -126,11 +126,11 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('b'), "DOUBLE[]");
 
             result = ColumnarStructVar().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(isstruct(result.data));
-            testCase.verifyEqual(length(result.data.a), 3);
-            testCase.verifyEqual(length(result.data.b), 3);
-            testCase.verifyEqual(result.data.a, [1;2;3], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.b, [4;5;6], 'AbsTol', 1e-10);
+            testCase.verifyTrue(isstruct(result));
+            testCase.verifyEqual(length(result.a), 3);
+            testCase.verifyEqual(length(result.b), 3);
+            testCase.verifyEqual(result.a, [1;2;3], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.b, [4;5;6], 'AbsTol', 1e-10);
         end
 
         function test_save_2D_columnar_dict(testCase)
@@ -145,11 +145,11 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('b'), "DOUBLE[][]");
 
             result = ColumnarStructVar2D().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(isstruct(result.data));
-            testCase.verifyEqual(size(result.data.a), [2, 3]);
-            testCase.verifyEqual(size(result.data.b), [2, 3]);
-            testCase.verifyEqual(result.data.a, [1 2 3; 1.1 2.1 3.1], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.b, [4 5 6; 4.1 5.1 6.1], 'AbsTol', 1e-10);
+            testCase.verifyTrue(isstruct(result));
+            testCase.verifyEqual(size(result.a), [2, 3]);
+            testCase.verifyEqual(size(result.b), [2, 3]);
+            testCase.verifyEqual(result.a, [1 2 3; 1.1 2.1 3.1], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.b, [4 5 6; 4.1 5.1 6.1], 'AbsTol', 1e-10);
         end
 
         function test_save_multirow_scalar_string(testCase)
@@ -162,9 +162,9 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('name'), "VARCHAR");
 
             result = TableVar().load('subject', 2, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 3);
-            testCase.verifyEqual(result.data.name, ["alice"; "bob"; "carol"]);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 3);
+            testCase.verifyEqual(result.name, ["alice"; "bob"; "carol"]);
         end
 
         function test_save_onerow_scalar_double(testCase)
@@ -176,9 +176,9 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('x'), "DOUBLE");
 
             result = TableVar().load('subject', 3, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 1);
-            testCase.verifyEqual(result.data.x, 42.0, 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 1);
+            testCase.verifyEqual(result.x, 42.0, 'AbsTol', 1e-10);
         end
 
         function test_save_onerow_scalar_string(testCase)
@@ -190,9 +190,9 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('label'), "VARCHAR");
 
             result = TableVar().load('subject', 4, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 1);
-            testCase.verifyEqual(result.data.label, "hello");
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 1);
+            testCase.verifyEqual(result.label, "hello");
         end
 
         function test_save_multirow_matrix_column(testCase)
@@ -206,9 +206,9 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('vec'), "DOUBLE[]");
 
             result = TableVar().load('subject', 5, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 3);
-            testCase.verifyEqual(result.data.vec, [1,2,3; 4,5,6; 7,8,9], 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 3);
+            testCase.verifyEqual(result.vec, [1,2,3; 4,5,6; 7,8,9], 'AbsTol', 1e-10);
         end
 
         function test_save_multirow_mixed_columns(testCase)
@@ -222,10 +222,10 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('tag'), "VARCHAR");
 
             result = TableVar().load('subject', 6, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 3);
-            testCase.verifyEqual(result.data.val, [10;20;30], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.tag, ["x"; "y"; "z"]);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 3);
+            testCase.verifyEqual(result.val, [10;20;30], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.tag, ["x"; "y"; "z"]);
         end
 
         % =================================================================
@@ -249,10 +249,10 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(types('tag'), "VARCHAR");
 
             result = TableVar().load('subject', 10, 'session', 'B');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 3);
-            testCase.verifyEqual(result.data.val, [10;20;30], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.tag, ["x"; "y"; "z"]);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 3);
+            testCase.verifyEqual(result.val, [10;20;30], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.tag, ["x"; "y"; "z"]);
         end
 
         % =================================================================
@@ -275,10 +275,10 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             % Row k → session k; each record is a 1-row table.
             for sess = 1:3
                 result = TableVar().load('subject', 20, 'session', sess);
-                testCase.verifyTrue(istable(result.data));
-                testCase.verifyEqual(height(result.data), 1);
-                testCase.verifyEqual(result.data.A, t.A(sess), 'AbsTol', 1e-10);
-                testCase.verifyEqual(result.data.B, t.B(sess), 'AbsTol', 1e-10);
+                testCase.verifyTrue(istable(result));
+                testCase.verifyEqual(height(result), 1);
+                testCase.verifyEqual(result.A, t.A(sess), 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.B, t.B(sess), 'AbsTol', 1e-10);
             end
         end
 
@@ -297,9 +297,9 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             expected = ["alice", "bob", "carol"];
             for sess = 1:3
                 result = TableVar().load('subject', 21, 'session', sess);
-                testCase.verifyTrue(istable(result.data));
-                testCase.verifyEqual(height(result.data), 1);
-                testCase.verifyEqual(result.data.name, expected(sess));
+                testCase.verifyTrue(istable(result));
+                testCase.verifyEqual(height(result), 1);
+                testCase.verifyEqual(result.name, expected(sess));
             end
         end
 
@@ -321,7 +321,7 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
 
             for sess = 1:3
                 result = TableVar().load('subject', 22, 'session', sess);
-                testCase.verifyEqual(result.data.val, t.val(sess), 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.val, t.val(sess), 'AbsTol', 1e-10);
             end
         end
 

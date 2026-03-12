@@ -54,13 +54,13 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
             ScalarVar().save_from_table(tbl, "MyVar", ["subject","session"]);
 
             v1 = ScalarVar().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(v1.data, 0.5, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v1, 0.5, 'AbsTol', 1e-10);
 
             v2 = ScalarVar().load('subject', 1, 'session', 'B');
-            testCase.verifyEqual(v2.data, 0.6, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v2, 0.6, 'AbsTol', 1e-10);
 
             v3 = ScalarVar().load('subject', 2, 'session', 'A');
-            testCase.verifyEqual(v3.data, 0.7, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v3, 0.7, 'AbsTol', 1e-10);
         end
 
         function test_record_ids_are_unique(testCase)
@@ -79,10 +79,10 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
                 'session', 'X');
 
             v1 = ScalarVar().load('subject', 1, 'session', 'X');
-            testCase.verifyEqual(v1.data, 0.5, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v1, 0.5, 'AbsTol', 1e-10);
 
             v2 = ScalarVar().load('subject', 2, 'session', 'X');
-            testCase.verifyEqual(v2.data, 0.6, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v2, 0.6, 'AbsTol', 1e-10);
         end
 
         % --- Idempotency ---
@@ -109,7 +109,7 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
             ScalarVar().save_from_table(tbl, "MyVar", ["subject","session"]);
 
             v1 = ScalarVar().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(v1.data, 100);
+            testCase.verifyEqual(v1, 100);
         end
 
         % --- Many rows ---
@@ -127,10 +127,10 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
 
             % Spot-check a few values
             v = ScalarVar().load('subject', 1, 'session', '1');
-            testCase.verifyEqual(v.data, 0.1, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v, 0.1, 'AbsTol', 1e-10);
 
             v = ScalarVar().load('subject', 10, 'session', '20');
-            testCase.verifyEqual(v.data, n * 0.1, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v, n * 0.1, 'AbsTol', 1e-10);
         end
 
         % --- Numeric metadata ---
@@ -141,7 +141,7 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
             ScalarVar().save_from_table(tbl, "MyVar", ["subject","session"]);
 
             v = ScalarVar().load('subject', 2, 'session', 2);
-            testCase.verifyEqual(v.data, 0.4, 'AbsTol', 1e-10);
+            testCase.verifyEqual(v, 0.4, 'AbsTol', 1e-10);
         end
 
         % --- Empty table ---
@@ -161,7 +161,7 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
             ScalarVar().save_from_table(tbl, "MyVar", ["subject","session"]);
 
             v = ScalarVar().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(string(v.data), "hello");
+            testCase.verifyEqual(string(v), "hello");
         end
 
     end

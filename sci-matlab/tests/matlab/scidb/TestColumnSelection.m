@@ -66,7 +66,7 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result.data, 3.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result, 3.0, 'AbsTol', 1e-10);
         end
 
         function test_single_numeric_column_returns_array_not_table(testCase)
@@ -83,8 +83,8 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyFalse(istable(result.data));
-            testCase.verifyEqual(result.data, [7.0; 8.0; 9.0], 'AbsTol', 1e-10);
+            testCase.verifyFalse(istable(result));
+            testCase.verifyEqual(result, [7.0; 8.0; 9.0], 'AbsTol', 1e-10);
         end
 
         function test_mixed_type_columns_subtable_has_correct_width(testCase)
@@ -101,7 +101,7 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result.data, 2.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result, 2.0, 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------
@@ -121,9 +121,9 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyFalse(istable(result.data));
-            testCase.verifyEqual(numel(result.data), 1);
-            testCase.verifyEqual(double(result.data), 42.0, 'AbsTol', 1e-10);
+            testCase.verifyFalse(istable(result));
+            testCase.verifyEqual(numel(result), 1);
+            testCase.verifyEqual(double(result), 42.0, 'AbsTol', 1e-10);
         end
 
         function test_single_row_multiple_columns_gives_one_row_table(testCase)
@@ -140,11 +140,11 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(height(result.data), 1);
-            testCase.verifyEqual(width(result.data), 2);
-            testCase.verifyEqual(result.data.Properties.VariableNames, {'pi_col', 'e_col'});
-            testCase.verifyEqual(result.data.pi_col, 3.14, 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(height(result), 1);
+            testCase.verifyEqual(width(result), 2);
+            testCase.verifyEqual(result.Properties.VariableNames, {'pi_col', 'e_col'});
+            testCase.verifyEqual(result.pi_col, 3.14, 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------
@@ -165,10 +165,10 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(width(result.data), 3);
-            testCase.verifyEqual(result.data.Properties.VariableNames, {'a', 'b', 'c'});
-            testCase.verifyFalse(ismember('d', result.data.Properties.VariableNames));
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(width(result), 3);
+            testCase.verifyEqual(result.Properties.VariableNames, {'a', 'b', 'c'});
+            testCase.verifyFalse(ismember('d', result.Properties.VariableNames));
         end
 
         function test_select_all_columns_by_name(testCase)
@@ -185,12 +185,12 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyEqual(width(result.data), 2);
-            testCase.verifyTrue(ismember('x_col', result.data.Properties.VariableNames));
-            testCase.verifyTrue(ismember('y_col', result.data.Properties.VariableNames));
+            testCase.verifyTrue(istable(result));
+            testCase.verifyEqual(width(result), 2);
+            testCase.verifyTrue(ismember('x_col', result.Properties.VariableNames));
+            testCase.verifyTrue(ismember('y_col', result.Properties.VariableNames));
             % Values must be correct too
-            testCase.verifyEqual(result.data.x_col, [10.0; 20.0], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.x_col, [10.0; 20.0], 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------
@@ -212,8 +212,8 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            names = result.data.Properties.VariableNames;
+            testCase.verifyTrue(istable(result));
+            names = result.Properties.VariableNames;
             testCase.verifyEqual(names{1}, 'c');  % c must come first
             testCase.verifyEqual(names{2}, 'a');  % a must come second
             testCase.verifyFalse(ismember('b', names));
@@ -258,7 +258,7 @@ classdef TestColumnSelection < matlab.unittest.TestCase
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
             % sum([1;2;3]) = 6
-            testCase.verifyEqual(result.data, 6.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result, 6.0, 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------
@@ -280,7 +280,7 @@ classdef TestColumnSelection < matlab.unittest.TestCase
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
             % sum([10; 20; 30]) = 60
-            testCase.verifyEqual(result.data, 60.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result, 60.0, 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------
@@ -303,7 +303,7 @@ classdef TestColumnSelection < matlab.unittest.TestCase
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
             % sum([5; 6; 7]) = 18
-            testCase.verifyEqual(result.data, 18.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result, 18.0, 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------
@@ -327,8 +327,8 @@ classdef TestColumnSelection < matlab.unittest.TestCase
 
             r1 = ProcessedSignal().load('subject', 1, 'session', 'A');
             r2 = ProcessedSignal().load('subject', 2, 'session', 'A');
-            testCase.verifyEqual(r1.data, 3.0, 'AbsTol', 1e-10);   % sum([1;2])
-            testCase.verifyEqual(r2.data, 7.0, 'AbsTol', 1e-10);   % sum([3;4])
+            testCase.verifyEqual(r1, 3.0, 'AbsTol', 1e-10);   % sum([1;2])
+            testCase.verifyEqual(r2, 7.0, 'AbsTol', 1e-10);   % sum([3;4])
         end
 
         % -----------------------------------------------------------------
@@ -355,16 +355,16 @@ classdef TestColumnSelection < matlab.unittest.TestCase
             r2 = ProcessedSignal().load('subject', 2, 'session', 'A');
 
             % Subject 1: columns a and b, no column c
-            testCase.verifyTrue(istable(r1.data));
-            testCase.verifyEqual(width(r1.data), 2);
-            testCase.verifyFalse(ismember('c', r1.data.Properties.VariableNames));
-            testCase.verifyEqual(r1.data.a, [1.0; 2.0], 'AbsTol', 1e-10);
-            testCase.verifyEqual(r1.data.b, [10.0; 20.0], 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(r1));
+            testCase.verifyEqual(width(r1), 2);
+            testCase.verifyFalse(ismember('c', r1.Properties.VariableNames));
+            testCase.verifyEqual(r1.a, [1.0; 2.0], 'AbsTol', 1e-10);
+            testCase.verifyEqual(r1.b, [10.0; 20.0], 'AbsTol', 1e-10);
 
             % Subject 2: same columns, different values
-            testCase.verifyTrue(istable(r2.data));
-            testCase.verifyEqual(r2.data.a, [3.0; 4.0], 'AbsTol', 1e-10);
-            testCase.verifyEqual(r2.data.b, [30.0; 40.0], 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(r2));
+            testCase.verifyEqual(r2.a, [3.0; 4.0], 'AbsTol', 1e-10);
+            testCase.verifyEqual(r2.b, [30.0; 40.0], 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------
@@ -386,7 +386,7 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result.data, 600.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result, 600.0, 'AbsTol', 1e-10);
         end
 
         function test_multi_column_values_are_correct(testCase)
@@ -403,10 +403,10 @@ classdef TestColumnSelection < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result.data));
-            testCase.verifyFalse(ismember('b', result.data.Properties.VariableNames));
-            testCase.verifyEqual(result.data.a, [5.0; 6.0], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.data.c, [500.0; 600.0], 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result));
+            testCase.verifyFalse(ismember('b', result.Properties.VariableNames));
+            testCase.verifyEqual(result.a, [5.0; 6.0], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.c, [500.0; 600.0], 'AbsTol', 1e-10);
         end
 
     end

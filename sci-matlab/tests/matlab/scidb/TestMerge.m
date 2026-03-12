@@ -73,7 +73,7 @@ classdef TestMerge < matlab.unittest.TestCase
 
             result = MergedResult().load('subject', 1, 'session', 'A');
             % Schema keys (subject, session) + GaitData (side, force) + PareticSide = 5 cols
-            testCase.verifyEqual(result.data, 5);
+            testCase.verifyEqual(result, 5);
         end
 
         function test_merge_two_arrays(testCase)
@@ -88,7 +88,7 @@ classdef TestMerge < matlab.unittest.TestCase
 
             result = MergedResult().load('subject', 1, 'session', 'A');
             % Schema keys (subject, session) + two arrays → 4 columns
-            testCase.verifyEqual(result.data, 4);
+            testCase.verifyEqual(result, 4);
         end
 
         function test_merge_table_and_scalar(testCase)
@@ -107,7 +107,7 @@ classdef TestMerge < matlab.unittest.TestCase
 
             result = MergedResult().load('subject', 1, 'session', 'A');
             % Schema keys (subject, session) + 1 table col + 1 scalar col = 4
-            testCase.verifyEqual(result.data, 4);
+            testCase.verifyEqual(result, 4);
         end
 
         function test_merge_multiple_iterations(testCase)
@@ -127,8 +127,8 @@ classdef TestMerge < matlab.unittest.TestCase
             r1 = MergedResult().load('subject', 1, 'session', 'A');
             r2 = MergedResult().load('subject', 2, 'session', 'A');
             % Schema keys (subject, session) + 2 data cols = 4
-            testCase.verifyEqual(r1.data, 4);
-            testCase.verifyEqual(r2.data, 4);
+            testCase.verifyEqual(r1, 4);
+            testCase.verifyEqual(r2, 4);
         end
 
         % --- Merge with Fixed ---
@@ -159,8 +159,8 @@ classdef TestMerge < matlab.unittest.TestCase
             r_a = MergedResult().load('subject', 1, 'session', 'A');
             r_b = MergedResult().load('subject', 1, 'session', 'B');
             % Schema keys (subject, session) + 2 data cols = 4
-            testCase.verifyEqual(r_a.data, 4);
-            testCase.verifyEqual(r_b.data, 4);
+            testCase.verifyEqual(r_a, 4);
+            testCase.verifyEqual(r_b, 4);
         end
 
         % --- Merge with column selection ---
@@ -183,7 +183,7 @@ classdef TestMerge < matlab.unittest.TestCase
 
             result = MergedResult().load('subject', 1, 'session', 'A');
             % Schema keys (subject, session) + 1 selected col + 1 PareticSide col = 4
-            testCase.verifyEqual(result.data, 4);
+            testCase.verifyEqual(result, 4);
         end
 
         % --- Dry run ---
@@ -219,7 +219,7 @@ classdef TestMerge < matlab.unittest.TestCase
             result = MergedResult().load('subject', 1);
             % Inner join on [subject, session] → 2 rows
             % Columns: subject, session, RawSignal, ProcessedSignal → 4 cols
-            testCase.verifyEqual(result.data, [2, 4]');
+            testCase.verifyEqual(result, [2, 4]');
         end
 
         function test_merge_multi_record_inner_join_drops_unmatched(testCase)
@@ -237,7 +237,7 @@ classdef TestMerge < matlab.unittest.TestCase
 
             result = MergedResult().load('subject', 1);
             % Inner join drops session C → 2 rows, 4 cols
-            testCase.verifyEqual(result.data, [2, 4]');
+            testCase.verifyEqual(result, [2, 4]');
         end
 
         function test_merge_mixed_single_and_multi_record(testCase)
@@ -260,7 +260,7 @@ classdef TestMerge < matlab.unittest.TestCase
 
             result = MergedResult().load('subject', 1);
             % Fixed broadcasts: 2 rows (sessions A, B), 4 cols
-            testCase.verifyEqual(result.data, [2, 4]');
+            testCase.verifyEqual(result, [2, 4]');
         end
 
         % --- Error cases ---
