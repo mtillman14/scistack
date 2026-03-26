@@ -2,7 +2,7 @@
 # Install all packages in editable mode (dependency order)
 set -e
 
-echo "Installing all SciDB packages in editable mode..."
+echo "Installing all SciStack packages in editable mode..."
 
 # Layer 0: no internal deps
 pip install -e ./canonical-hash

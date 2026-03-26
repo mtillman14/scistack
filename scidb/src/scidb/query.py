@@ -1,4 +1,4 @@
-"""DuckDB query interface for analytical queries on SciDB data."""
+"""DuckDB query interface for analytical queries on SciStack data."""
 
 from typing import TYPE_CHECKING
 
@@ -10,9 +10,9 @@ if TYPE_CHECKING:
 
 class QueryInterface:
     """
-    DuckDB-powered query interface for SciDB.
+    DuckDB-powered query interface for SciStack.
 
-    Since SciDB now uses DuckDB as its storage backend, queries run directly
+    Since SciStack now uses DuckDB as its storage backend, queries run directly
     against the database tables.
 
     Example:

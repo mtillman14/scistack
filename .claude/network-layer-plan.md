@@ -1,10 +1,10 @@
 Here is Claude's plan:
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-Plan: Network Layer for SciDB (scidb-net package)
+Plan: Network Layer for SciStack (scidb-net package)
 
 Context
 
-SciDB currently uses local DuckDB + SQLite files accessed directly. We need a client-server layer so users can work over a network. The architecture is already well-factored: all DB access goes through
+SciStack currently uses local DuckDB + SQLite files accessed directly. We need a client-server layer so users can work over a network. The architecture is already well-factored: all DB access goes through
 DatabaseManager, which delegates to SciDuck (DuckDB) and PipelineDB (SQLite). The plan is a single HTTP server + client, using Arrow IPC for DataFrames/arrays and JSON for metadata.
 
 Package Structure

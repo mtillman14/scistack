@@ -1,6 +1,6 @@
 # Database
 
-The `DatabaseManager` handles all storage operations. SciDB uses DuckDB (via SciDuck) for data and lineage storage.
+The `DatabaseManager` handles all storage operations. SciStack uses DuckDB (via SciDuck) for data and lineage storage.
 
 ## Configuration
 
@@ -144,7 +144,7 @@ Caching is handled automatically through `Thunk.query`, which is set to the `Dat
 
 ## Database Schema
 
-SciDB uses a single DuckDB database for both data and lineage:
+SciStack uses a single DuckDB database for both data and lineage:
 
 | Table               | Purpose                     |
 |---------------------|-----------------------------|

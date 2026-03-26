@@ -1,5 +1,5 @@
 """
-SciDB Debug Example 1: Core Concepts
+SciStack Debug Example 1: Core Concepts
 =====================================
 
 This script demonstrates the fundamental building blocks of scidb:

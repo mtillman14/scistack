@@ -1,6 +1,6 @@
 # Computation Caching
 
-SciDB automatically caches computation results. When you save a variable produced by a thunked function, the result is cached. Future identical computations are skipped automatically.
+SciStack automatically caches computation results. When you save a variable produced by a thunked function, the result is cached. Future identical computations are skipped automatically.
 
 ## How Caching Works
 

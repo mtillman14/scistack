@@ -1,6 +1,6 @@
 # scidb-net
 
-Network client-server layer for SciDB. Wraps `DatabaseManager` behind a FastAPI server and provides a drop-in HTTP client so existing `BaseVariable.save()`/`.load()` and thunk caching work transparently over the network.
+Network client-server layer for SciStack. Wraps `DatabaseManager` behind a FastAPI server and provides a drop-in HTTP client so existing `BaseVariable.save()`/`.load()` and thunk caching work transparently over the network.
 
 ## How It Works
 
@@ -27,7 +27,7 @@ All existing user code works unchanged. The only difference is a single
 ## Prerequisites
 
 - Python 3.10+
-- An existing SciDB project with variable definitions (subclasses of `BaseVariable`)
+- An existing SciStack project with variable definitions (subclasses of `BaseVariable`)
 - Network access between client and server machines
 
 ## Installation

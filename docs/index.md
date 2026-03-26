@@ -1,8 +1,8 @@
-# SciDB
+# SciStack
 
 **Scientific Data Versioning Framework**
 
-SciDB is a lightweight database framework for scientific computing that provides automatic versioning, provenance tracking, and computation caching using DuckDB for data storage and SQLite for lineage persistence.
+SciStack is a lightweight database framework for scientific computing that provides automatic versioning, provenance tracking, and computation caching using DuckDB for data storage and SQLite for lineage persistence.
 
 ## Key Features
 
@@ -53,9 +53,9 @@ provenance = db.get_provenance(TimeSeries, subject=1, session="normalized")
 print(provenance["function_name"])  # "normalize"
 ```
 
-## Why SciDB?
+## Why SciStack?
 
-| Problem                                   | SciDB Solution                                |
+| Problem                                   | SciStack Solution                                |
 | ----------------------------------------- | --------------------------------------------- |
 | "Which version of this data did I use?"   | Content-based hashing ensures reproducibility |
 | "What processing produced this result?"   | Automatic lineage tracking via `@thunk`       |

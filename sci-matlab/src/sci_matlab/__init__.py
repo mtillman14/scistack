@@ -1,8 +1,8 @@
-"""MATLAB bridge for SciDB.
+"""MATLAB bridge for SciStack.
 
 Provides proxy classes that satisfy the duck-typing contracts of
 thunk-lib's Thunk/PipelineThunk/ThunkOutput, allowing MATLAB functions
-to participate in the SciDB lineage system without modifying any
+to participate in the SciStack lineage system without modifying any
 existing Python packages.
 
 Usage from MATLAB (via py. interface):

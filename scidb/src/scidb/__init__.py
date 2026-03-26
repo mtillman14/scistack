@@ -1,5 +1,5 @@
 """
-SciDB: Scientific Data Versioning Framework
+SciStack: Scientific Data Versioning Framework
 
 A lightweight database framework for scientific computing that provides:
 - Type-safe serialization of numpy arrays, DataFrames, and custom types
@@ -28,7 +28,7 @@ from .exceptions import (
     NotFoundError,
     NotRegisteredError,
     ReservedMetadataKeyError,
-    SciDBError,
+    SciStackError,
     UnsavedIntermediateError,
 )
 
@@ -68,7 +68,7 @@ __all__ = [
     # Filter utilities
     "raw_sql",
     # Exceptions
-    "SciDBError",
+    "SciStackError",
     "NotRegisteredError",
     "NotFoundError",
     "DatabaseNotConfiguredError",

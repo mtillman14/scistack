@@ -189,15 +189,15 @@ Structured provenance information.
 - `get_raw_value(data)`: Unwrap `ThunkOutput` or return as-is
 - `canonical_hash(obj)`: Deterministic hash for any Python object (re-exported from `canonicalhash`)
 
-## Integration with SciDB
+## Integration with SciStack
 
-Thunk is designed to work seamlessly with [SciDB](https://github.com/mtillman14/general-sqlite-database), a scientific data versioning framework. When used together, SciDB provides a `QueryByMetadata` backend that enables automatic caching:
+Thunk is designed to work seamlessly with [SciStack](https://github.com/mtillman14/general-sqlite-database), a scientific data versioning framework. When used together, SciStack provides a `QueryByMetadata` backend that enables automatic caching:
 
 ```python
 from scidb import BaseVariable
 from thunk import Thunk, thunk
 
-# SciDB sets up Thunk.query for cache lookups
+# SciStack sets up Thunk.query for cache lookups
 # Thunk.query = QueryByMetadata(...)
 
 @thunk

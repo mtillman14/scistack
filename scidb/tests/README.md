@@ -1,4 +1,4 @@
-# SciDB Test Suite
+# SciStack Test Suite
 
 Comprehensive pytest-compatible test suite for scidb implementation.
 

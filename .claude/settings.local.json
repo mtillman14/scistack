@@ -24,7 +24,13 @@
       "Bash(mkdir -p /workspace/scihist-lib/src/scihist && cp -r /workspace/scirun-lib/src/scirun/* /workspace/scihist-lib/src/scihist/ 2>/dev/null; ls /workspace/scihist-lib/src/)",
       "Bash(echo \"=== Root tests \\(scidb layer\\) ===\" && ls /workspace/sci-matlab/tests/matlab/*.m | xargs -I{} basename {} && echo \"\" && echo \"=== scihist/ tests ===\" && ls /workspace/sci-matlab/tests/matlab/scihist/*.m | xargs -I{} basename {})",
       "Bash(git show:*)",
-      "Bash(git rm:*)"
+      "Bash(git rm:*)",
+      "Bash(find /workspace -type f \\\\\\( -name \"*.py\" -o -name \"*.md\" -o -name \"*.toml\" -o -name \"*.txt\" -o -name \"*.m\" -o -name \"*.yaml\" -o -name \"*.yml\" -o -name \"*.json\" -o -name \"*.sh\" \\\\\\) \\\\\n  -not -path \"*/others_projects/*\" \\\\\n  -not -path \"*/.git/*\" \\\\\n  -not -path \"*/dist/*\" \\\\\n  | xargs sed -i \\\\\n    -e 's/SCIDB/SCIDB/g' \\\\\n    -e 's/SciStack/SciStack/g' \\\\\n    -e 's/scidb/scidb/g')",
+      "Bash(git mv scidb/src/scidb scidb/src/scidb && git mv scidb/src/scidb.egg-info scidb/src/scidb.egg-info)",
+      "Bash(git mv scidb-net/src/scidbnet scidb-net/src/scidbnet)",
+      "Bash(git mv \"sci-matlab/src/sci_matlab/matlab/+scidb\" \"sci-matlab/src/sci_matlab/matlab/+scidb\" && git mv sci-matlab/tests/matlab/scidb sci-matlab/tests/matlab/scidb)",
+      "Bash(\\\\\n  git mv scidb/src/scidb scidb/src/scidb && \\\\\n  git mv scidb/src/scidb.egg-info scidb/src/scidb.egg-info && \\\\\n  git mv scidb-net/src/scidbnet scidb-net/src/scidbnet && \\\\\n  git mv \"sci-matlab/src/sci_matlab/matlab/+scidb\" \"sci-matlab/src/sci_matlab/matlab/+scidb\" && \\\\\n  git mv sci-matlab/tests/matlab/scidb sci-matlab/tests/matlab/scidb)",
+      "Bash(find /workspace -type f \\\\\\( -name \"*.py\" -o -name \"*.md\" -o -name \"*.toml\" -o -name \"*.txt\" -o -name \"*.m\" -o -name \"*.yaml\" -o -name \"*.yml\" -o -name \"*.json\" -o -name \"*.sh\" \\\\\\) \\\\\n  -not -path \"*/others_projects/*\" \\\\\n  -not -path \"*/.git/*\" \\\\\n  -not -path \"*/dist/*\" \\\\\n  | xargs sed -i \\\\\n    -e 's/SCIDB/SCIDB/g' \\\\\n    -e 's/scidb/scidb/g')"
     ]
   }
 }

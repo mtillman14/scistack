@@ -114,14 +114,14 @@ from thunk import Thunk
 Thunk.query = None
 ```
 
-## Integration with SciDB
+## Integration with SciStack
 
-When used with SciDB, the `QueryByMetadata` class is set as the query backend:
+When used with SciStack, the `QueryByMetadata` class is set as the query backend:
 
 ```python
 from thunk import Thunk
 
-# SciDB sets up Thunk.query for lineage-based cache lookups
+# SciStack sets up Thunk.query for lineage-based cache lookups
 # Thunk.query = QueryByMetadata(...)
 
 @thunk

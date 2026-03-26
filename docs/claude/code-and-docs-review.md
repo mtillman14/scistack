@@ -1,6 +1,6 @@
 # Code and Documentation Review
 
-This file documents bugs, incomplete features, and conceptual issues found during a comprehensive review of the SciDB codebase (February 2026). Issues are organized by severity.
+This file documents bugs, incomplete features, and conceptual issues found during a comprehensive review of the SciStack codebase (February 2026). Issues are organized by severity.
 
 ---
 
@@ -167,7 +167,7 @@ Passing `subject=[]` to `for_each` automatically uses all distinct subject value
 
 ### 13. The difference between schema keys and version keys is underexplained
 
-The concept that `dataset_schema_keys` defines "location in the dataset" and all other metadata keys are "version keys" (computational variants) is central to how SciDB works. It affects how `load()` returns results, how `list_versions()` groups entries, and how queries work. The existing quickstart mentions it briefly but the implication for `load()` behavior is not spelled out.
+The concept that `dataset_schema_keys` defines "location in the dataset" and all other metadata keys are "version keys" (computational variants) is central to how SciStack works. It affects how `load()` returns results, how `list_versions()` groups entries, and how queries work. The existing quickstart mentions it briefly but the implication for `load()` behavior is not spelled out.
 
 **Fix:** Expand the Database guide's schema key section with a worked example showing the same data saved with different version keys, and how `load()` returns the latest version at the schema location.
 

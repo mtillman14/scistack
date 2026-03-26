@@ -1,10 +1,10 @@
 # Walkthrough: VO2 Max Pipeline
 
-This walkthrough follows the `examples/vo2max/pipeline.py` example step by step, explaining not just *how* to use SciDB but *why* the framework is designed the way it is.
+This walkthrough follows the `examples/vo2max/pipeline.py` example step by step, explaining not just *how* to use SciStack but *why* the framework is designed the way it is.
 
 The example simulates a common scientific workflow: loading raw physiological data from a VO2 max exercise test, combining signals, computing derived metrics, and saving everything with full provenance tracking.
 
-## The Problem SciDB Solves
+## The Problem SciStack Solves
 
 A typical scientific data pipeline looks like this:
 
@@ -13,9 +13,9 @@ A typical scientific data pipeline looks like this:
 3. Compute derived metrics (rolling averages, peaks)
 4. Save results
 
-Without SciDB, you'd save results as loose files (`results_v2_final_FINAL.csv`) and have no systematic way to answer: "What processing produced this number?" or "Did I already compute this?"
+Without SciStack, you'd save results as loose files (`results_v2_final_FINAL.csv`) and have no systematic way to answer: "What processing produced this number?" or "Did I already compute this?"
 
-SciDB answers both questions automatically through two mechanisms:
+SciStack answers both questions automatically through two mechanisms:
 - **Lineage tracking** records what function and inputs produced each result
 - **Content-based caching** skips redundant computations
 
@@ -125,7 +125,7 @@ The key insight: your function code stays clean. `combine_signals` receives plai
 When you call `combine_signals(time_data, hr_data, vo2_data)` where each argument is a ThunkOutput from `load_csv()`, the decorator automatically extracts the `.data` from each before calling your function. This means:
 
 - Your function signature uses normal types (`np.ndarray`, `pd.DataFrame`)
-- You can test functions outside SciDB with plain data
+- You can test functions outside SciStack with plain data
 - The lineage tracking is completely transparent to the function body
 
 ### Why are constants recorded in lineage?
@@ -145,7 +145,7 @@ db = configure_database(
 )
 ```
 
-SciDB stores both data and lineage in a single DuckDB file. Data is stored in columnar format with native array types, and the lineage DAG is stored alongside it for transactional consistency.
+SciStack stores both data and lineage in a single DuckDB file. Data is stored in columnar format with native array types, and the lineage DAG is stored alongside it for transactional consistency.
 
 ### What are `dataset_schema_keys`?
 
@@ -238,7 +238,7 @@ print(prov["inputs"])         # [{name: "rolling_vo2", kind: "thunk_output", ...
 
 ### Two levels of provenance
 
-SciDB provides two complementary views, both stored in the same SQLite database:
+SciStack provides two complementary views, both stored in the same SQLite database:
 
 **Schema-blind (pipeline structure):** What does the computation graph look like in general?
 

@@ -1,4 +1,4 @@
-"""Python bridge for MATLAB-SciDB integration.
+"""Python bridge for MATLAB-SciStack integration.
 
 Provides proxy classes that satisfy the duck-typing contracts of
 thunk-lib's Thunk, PipelineThunk, and ThunkOutput classes.  This allows

@@ -1,6 +1,6 @@
 # Variables
 
-Variables are the core data type in SciDB. Every piece of data you store is wrapped in a `BaseVariable` subclass.
+Variables are the core data type in SciStack. Every piece of data you store is wrapped in a `BaseVariable` subclass.
 
 ## Defining a Variable Type
 

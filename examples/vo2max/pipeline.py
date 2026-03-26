@@ -2,7 +2,7 @@
 VO2 Max Test Pipeline
 =====================
 
-Demonstrates a complete data processing pipeline using the SciDB framework.
+Demonstrates a complete data processing pipeline using the SciStack framework.
 Loads raw physiological data from a simulated VO2 max test, combines the
 signals, computes rolling averages, and extracts peak metrics.
 

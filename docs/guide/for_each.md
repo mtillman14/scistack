@@ -1,6 +1,6 @@
 # Batch Processing with `for_each`
 
-`for_each` is SciDB's batch execution engine. It runs a function over every combination of metadata values, automatically loading inputs from the database and saving outputs back — with graceful skipping when data is missing.
+`for_each` is SciStack's batch execution engine. It runs a function over every combination of metadata values, automatically loading inputs from the database and saving outputs back — with graceful skipping when data is missing.
 
 ## The Core Idea
 

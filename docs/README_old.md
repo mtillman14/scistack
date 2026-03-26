@@ -1,4 +1,4 @@
-# SciDB
+# SciStack
 
 Scientific Data Versioning Framework with provenance tracking.
 
@@ -19,13 +19,13 @@ User Code
     │                                                 │
     ▼                                                 ▼
 BaseVariable                                      @thunk functions
-(in SciDB)                                        (from thunk-lib)
+(in SciStack)                                        (from thunk-lib)
     │                                                 │
     │ .save() / .load()                               │ returns ThunkOutput
     │                                                 │
     ▼                                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                        SciDB Integration Layer                  │
+│                        SciStack Integration Layer                  │
 │  - Bridges data storage and lineage                             │
 │  - Provides find_by_lineage for cache lookups                   │
 └────────────────┬────────────────────────┬───────────────────────┘
@@ -107,7 +107,7 @@ db.save_lineage(
 records = db.find_by_lineage_hash("def456")
 ```
 
-## Integration Layer: SciDB
+## Integration Layer: SciStack
 
 Bridges SciDuck (data) and PipelineDB (lineage) with the BaseVariable abstraction. Provides:
 

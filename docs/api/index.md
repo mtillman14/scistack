@@ -1,6 +1,6 @@
 # API Reference
 
-SciDB's public API spans three packages that work together. The same concepts and nearly identical method names are available in both Python and MATLAB.
+SciStack's public API spans three packages that work together. The same concepts and nearly identical method names are available in both Python and MATLAB.
 
 ## Package Overview
 

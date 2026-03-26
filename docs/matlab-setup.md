@@ -1,6 +1,6 @@
 # MATLAB Setup
 
-SciDB works natively in MATLAB via a thin wrapper around the Python package. All hashing, database operations, and lineage tracking are performed by Python under the hood — MATLAB is the user-facing layer.
+SciStack works natively in MATLAB via a thin wrapper around the Python package. All hashing, database operations, and lineage tracking are performed by Python under the hood — MATLAB is the user-facing layer.
 
 ## Requirements
 
@@ -65,8 +65,8 @@ scidb.configure_database("test.duckdb", ["subject", "session"], "pipeline.db");
 % Define a variable type
 % (In a real project, this goes in its own .m file — see below)
 
-% Should print: "SciDB is ready"
-fprintf("SciDB is ready\n");
+% Should print: "SciStack is ready"
+fprintf("SciStack is ready\n");
 ```
 
 ## Defining Variable Types
@@ -133,7 +133,7 @@ which scidb.BaseVariable
 ```
 
 **Type errors when passing data to Python:**
-MATLAB and Python have different numeric defaults. MATLAB integers may need explicit casting. SciDB handles most common cases automatically, but if you see conversion errors, try:
+MATLAB and Python have different numeric defaults. MATLAB integers may need explicit casting. SciStack handles most common cases automatically, but if you see conversion errors, try:
 ```matlab
 data = double(data);  % Ensure float64 for numpy compatibility
 ```

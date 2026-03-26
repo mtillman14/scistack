@@ -1,6 +1,6 @@
 # Variables API — `BaseVariable`
 
-`BaseVariable` is the foundation of SciDB. Every piece of data you store is an instance of a `BaseVariable` subclass. The subclass name becomes the database table name; the class itself has no required properties or methods for the common case.
+`BaseVariable` is the foundation of SciStack. Every piece of data you store is an instance of a `BaseVariable` subclass. The subclass name becomes the database table name; the class itself has no required properties or methods for the common case.
 
 ## Defining a Variable Type
 

@@ -1,37 +1,37 @@
 """Custom exceptions for scidb."""
 
 
-class SciDBError(Exception):
+class SciStackError(Exception):
     """Base exception for all scidb errors."""
 
     pass
 
 
-class NotRegisteredError(SciDBError):
+class NotRegisteredError(SciStackError):
     """Raised when trying to save/load an unregistered variable type."""
 
     pass
 
 
-class NotFoundError(SciDBError):
+class NotFoundError(SciStackError):
     """Raised when no matching data is found for the given metadata."""
 
     pass
 
 
-class DatabaseNotConfiguredError(SciDBError):
+class DatabaseNotConfiguredError(SciStackError):
     """Raised when trying to use implicit database before configuration."""
 
     pass
 
 
-class ReservedMetadataKeyError(SciDBError):
+class ReservedMetadataKeyError(SciStackError):
     """Raised when user tries to use a reserved metadata key."""
 
     pass
 
 
-class UnsavedIntermediateError(SciDBError):
+class UnsavedIntermediateError(SciStackError):
     """Raised when strict lineage mode detects an unsaved intermediate variable.
 
     In strict mode, all upstream BaseVariables must be saved before saving

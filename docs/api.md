@@ -303,7 +303,7 @@ Provenance data structure.
 
 | Exception                    | Description                                  |
 | ---------------------------- | -------------------------------------------- |
-| `SciDBError`                 | Base exception                               |
+| `SciStackError`                 | Base exception                               |
 | `NotRegisteredError`         | Loading a type that was never saved          |
 | `NotFoundError`              | No matching data                             |
 | `DatabaseNotConfiguredError` | Global DB not configured                     |

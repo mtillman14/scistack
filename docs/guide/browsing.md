@@ -1,6 +1,6 @@
 # Browsing and Exporting Data
 
-SciDB stores data in a DuckDB database file using native DuckDB types (arrays, JSON, etc.). This means you can inspect data directly using DBeaver or any DuckDB-compatible viewer.
+SciStack stores data in a DuckDB database file using native DuckDB types (arrays, JSON, etc.). This means you can inspect data directly using DBeaver or any DuckDB-compatible viewer.
 
 This guide covers how to browse and export your data.
 

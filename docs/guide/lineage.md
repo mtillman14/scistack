@@ -1,6 +1,6 @@
 # Lineage Tracking
 
-SciDB automatically tracks data provenance using the `@thunk` decorator. When you save data produced by a thunked function, the lineage is captured automatically.
+SciStack automatically tracks data provenance using the `@thunk` decorator. When you save data produced by a thunked function, the lineage is captured automatically.
 
 ## The `@thunk` Decorator
 
@@ -73,7 +73,7 @@ NormalizedData.save(normalized, subject=1, stage="normalized")
 
 ## Two Levels of Lineage
 
-SciDB provides two complementary views of provenance, both stored in the same
+SciStack provides two complementary views of provenance, both stored in the same
 lineage table (PipelineDB/SQLite):
 
 ### Schema-blind: Pipeline Structure

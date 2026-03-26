@@ -1,17 +1,17 @@
 """Exceptions for the scidb network layer."""
 
 
-class SciDBNetError(Exception):
+class SciStackNetError(Exception):
     """Base exception for scidb-net errors."""
     pass
 
 
-class NetworkError(SciDBNetError):
+class NetworkError(SciStackNetError):
     """Raised when an HTTP request fails (connection error, timeout, etc.)."""
     pass
 
 
-class ServerError(SciDBNetError):
+class ServerError(SciStackNetError):
     """Raised when the server returns an error response."""
 
     def __init__(self, message: str, status_code: int | None = None):
@@ -19,6 +19,6 @@ class ServerError(SciDBNetError):
         super().__init__(message)
 
 
-class SerializationError(SciDBNetError):
+class SerializationError(SciStackNetError):
     """Raised when data serialization or deserialization fails."""
     pass

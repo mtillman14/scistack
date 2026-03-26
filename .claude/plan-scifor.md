@@ -3,18 +3,18 @@
 ## Motivation
 
 `for_each` is currently implemented in `scirun-lib` and is tightly coupled to
-SciDB's database layer. The core loop logic — iterating over metadata
+SciStack's database layer. The core loop logic — iterating over metadata
 combinations, dispatching inputs, collecting outputs — has value independent of
 any database. This plan extracts that logic into a new standalone package
 (`scifor`) that works with plain DataFrames (Python) / tables (MATLAB), file
-I/O, or any custom `.load()`/`.save()` implementation. SciDB becomes a consumer
+I/O, or any custom `.load()`/`.save()` implementation. SciStack becomes a consumer
 of `scifor`, adding DB-specific features on top.
 
 **Goals:**
 - Identical user-facing API with and without a database
 - Minimal code duplication between DB and standalone modes
-- No new concepts required for existing SciDB users (zero breaking changes)
-- Gradual adoption path: use `scifor` standalone, migrate to SciDB later
+- No new concepts required for existing SciStack users (zero breaking changes)
+- Gradual adoption path: use `scifor` standalone, migrate to SciStack later
 
 ---
 
@@ -111,7 +111,7 @@ Col("side") == "R"                         # ColFilter
 `ColFilter` is applied as a pandas boolean mask inside the DataFrame filtering logic
 (not inside a `.load()` call, since DataFrame inputs are handled natively).
 
-SciDB's `VariableFilter`, `ColumnFilter`, `InFilter`, `CompoundFilter`, `NotFilter`,
+SciStack's `VariableFilter`, `ColumnFilter`, `InFilter`, `CompoundFilter`, `NotFilter`,
 `RawFilter` are unchanged and continue resolving to schema_ids via DuckDB.
 
 `RawFilter` / `raw_sql()` has no standalone equivalent.

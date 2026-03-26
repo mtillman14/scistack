@@ -1,5 +1,5 @@
 function db = configure_database(dataset_db_path, dataset_schema_keys, options)
-%SCIDB.CONFIGURE_DATABASE  Set up the SciDB database connection.
+%SCIDB.CONFIGURE_DATABASE  Set up the SciStack database connection.
 %
 %   db = scidb.configure_database(DB_PATH, SCHEMA_KEYS)
 %   configures the global database connection with DuckDB for data and

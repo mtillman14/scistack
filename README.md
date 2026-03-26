@@ -1,8 +1,8 @@
-# SciDB
+# SciStack
 
 ## Better Research Tools, Better Research Outcomes
 
-SciDB is a database framework purpose-built for scientific data analysis. It gives you a structured, versioned, and queryable home for every piece of data your pipeline produces — from raw signals to final results — with near zero infrastructure code on your part, and **zero changes to your analysis code**.
+SciStack is a database framework purpose-built for scientific data analysis. It gives you a structured, versioned, and queryable home for every piece of data your pipeline produces — from raw signals to final results — with near zero infrastructure code on your part, and **zero changes to your analysis code**.
 
 It works natively in both **Python** and **MATLAB**.
 
@@ -14,13 +14,13 @@ That infrastructure code is never the point. But it eats weeks of your time, it'
 
 **Scientists want to focus on the science, not data management.**
 
-SciDB replaces all of it with three ideas:
+SciStack replaces all of it with three ideas:
 
 - **Named variable types** — instead of files on disk, your data lives in typed database tables you can query by metadata
 - **Automatic lineage** — a simple decorator records exactly what function and inputs produced each result
-- **Computation caching** — if you've already computed something, SciDB knows and skips it
+- **Computation caching** — if you've already computed something, SciStack knows and skips it
 
-With SciDB, your analysis scripts contain _only_ analysis logic. The infrastructure is handled for you.
+With SciStack, your analysis scripts contain _only_ analysis logic. The infrastructure is handled for you.
 
 ## Quick Start
 
@@ -53,7 +53,7 @@ db = configure_database(
 )
 ```
 
-`dataset_schema_keys` describes the structure of your experiment. If your data is organized by subject and session, say so — SciDB uses this to let you save and query data naturally.
+`dataset_schema_keys` describes the structure of your experiment. If your data is organized by subject and session, say so — SciStack uses this to let you save and query data naturally.
 
 ### Define Your Variable Types
 
@@ -72,7 +72,7 @@ class MaxActivation(BaseVariable):
     pass
 ```
 
-That's it. No configuration, no serialization code. SciDB handles numpy arrays, scalars, lists, dicts, and DataFrames natively.
+That's it. No configuration, no serialization code. SciStack handles numpy arrays, scalars, lists, dicts, and DataFrames natively.
 
 ### Save and Load Data
 
@@ -91,7 +91,7 @@ print(raw.data)  # your numpy array
 
 Which function created that variable? Were the most recent settings used the last time I ran this?
 
-Wrap your analysis functions with `@thunk` and SciDB records which functions produced what **and the input variable values** — automatically:
+Wrap your analysis functions with `@thunk` and SciStack records which functions produced what **and the input variable values** — automatically:
 
 ```python
 from scidb import thunk
@@ -131,11 +131,11 @@ from scidb.thunk import Thunk
 compute_max = Thunk(compute_max)
 ```
 
-**Run the same pipeline again and every step is skipped** — SciDB recognizes the same function + same inputs and returns the cached result instantly.
+**Run the same pipeline again and every step is skipped** — SciStack recognizes the same function + same inputs and returns the cached result instantly.
 
 ## Scaling Up with `for_each()`
 
-Real experiments can have dozens of subjects and conditions, or thousands. SciDB can handle it all, using `for_each()` runs your pipeline over every combination automatically:
+Real experiments can have dozens of subjects and conditions, or thousands. SciStack can handle it all, using `for_each()` runs your pipeline over every combination automatically:
 
 ```python
 from scidb import for_each
@@ -215,7 +215,7 @@ No folder traversal. No filename parsing. No `results_v2_final_FINAL.csv`. Just 
 
 ### Your Data Is Not Locked Away
 
-Worried that putting data in a database means you can't see or inspect it? Don't be. SciDB uses [DuckDB](https://duckdb.org/) under the hood, and every variable type gets a human-readable **view** that you can query directly with SQL — in DBeaver, the DuckDB CLI, or any tool that speaks SQL.
+Worried that putting data in a database means you can't see or inspect it? Don't be. SciStack uses [DuckDB](https://duckdb.org/) under the hood, and every variable type gets a human-readable **view** that you can query directly with SQL — in DBeaver, the DuckDB CLI, or any tool that speaks SQL.
 
 For example, the `MaxActivation` view looks like this:
 
@@ -241,7 +241,7 @@ Your data is always one SQL query or visualization away — no Python or MATLAB 
 
 ## Works in MATLAB Too
 
-SciDB isn't Python-only. The entire framework works in MATLAB with a nearly identical API:
+SciStack isn't Python-only. The entire framework works in MATLAB with a nearly identical API:
 
 ```matlab
 % One-time setup
@@ -340,7 +340,7 @@ print(df.groupby("session")["data"].mean())
 
 That's the entire pipeline. No file I/O code. No path management. No version tracking logic. Just the science.
 
-Want to change the function logic? SciDB will automatically detect the change, and will re-run that processing step on the next run of the script. Want to change a setting to the function? SciDB will detect that too, and re-run the processing step. Data will be saved to the database, **and the previous data will be preserved**. Understanding the effect of analysis decisions on our results has never been easier.
+Want to change the function logic? SciStack will automatically detect the change, and will re-run that processing step on the next run of the script. Want to change a setting to the function? SciStack will detect that too, and re-run the processing step. Data will be saved to the database, **and the previous data will be preserved**. Understanding the effect of analysis decisions on our results has never been easier.
 
 ```python
 for_each(
@@ -361,11 +361,11 @@ filtered_force0_3 = FilteredForce.load(smoothing=0.3) # Returns all subjects, se
 
 ## The Bigger Picture: Shareable Pipelines
 
-By abstracting away all infrastructure — file paths, storage formats, naming conventions — SciDB decouples your analysis logic from your local environment. Your pipeline code contains _only_ the scientific computation.
+By abstracting away all infrastructure — file paths, storage formats, naming conventions — SciStack decouples your analysis logic from your local environment. Your pipeline code contains _only_ the scientific computation.
 
 This opens the door to **truly portable, shareable data processing pipelines.** When a pipeline is just a sequence of typed functions with declared inputs and outputs, it can be shared, reproduced, and built upon by anyone — regardless of how their data is organized on disk.
 
-Today, sharing a pipeline means sharing a pile of scripts with hardcoded paths and implicit assumptions. With SciDB, the pipeline _is_ the science, and the infrastructure adapts to wherever it runs.
+Today, sharing a pipeline means sharing a pile of scripts with hardcoded paths and implicit assumptions. With SciStack, the pipeline _is_ the science, and the infrastructure adapts to wherever it runs.
 
 ## Learn More
 

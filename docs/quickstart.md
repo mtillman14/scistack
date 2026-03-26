@@ -1,6 +1,6 @@
 # Quickstart
 
-Get started with SciDB in 5 minutes.
+Get started with SciStack in 5 minutes.
 
 ## Installation
 

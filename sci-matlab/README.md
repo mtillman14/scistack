@@ -1,6 +1,6 @@
 # sci-matlab
 
-MATLAB wrapper for the SciDB scientific data versioning framework.
+MATLAB wrapper for the SciStack scientific data versioning framework.
 
 Provides `scidb.BaseVariable` and `scidb.Thunk` for MATLAB, with full lineage tracking and caching. All hashing, lineage computation, and database operations are delegated to Python via MATLAB's `py.` interface — the MATLAB layer is a thin wrapper.
 

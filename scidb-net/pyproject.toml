@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "scidb-net"
 version = "0.1.0"
-description = "Network client-server layer for SciDB"
+description = "Network client-server layer for SciStack"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"

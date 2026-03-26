@@ -1,5 +1,5 @@
 """
-SciDB Debug Example 2: Advanced Features
+SciStack Debug Example 2: Advanced Features
 =========================================
 
 This script demonstrates advanced scidb capabilities:

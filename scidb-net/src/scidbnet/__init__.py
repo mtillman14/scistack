@@ -1,4 +1,4 @@
-"""scidb-net: Network client-server layer for SciDB.
+"""scidb-net: Network client-server layer for SciStack.
 
 Provides:
     - ``create_app()`` — build a FastAPI server wrapping a DatabaseManager
@@ -21,7 +21,7 @@ __all__ = [
 
 
 def configure_remote_database(base_url: str, timeout: float = 30.0) -> RemoteDatabaseManager:
-    """Configure SciDB to use a remote server.
+    """Configure SciStack to use a remote server.
 
     Sets ``Thunk.query`` and the thread-local database to a
     ``RemoteDatabaseManager`` so that all existing user code
@@ -29,7 +29,7 @@ def configure_remote_database(base_url: str, timeout: float = 30.0) -> RemoteDat
     transparently over the network.
 
     Args:
-        base_url: URL of the SciDB server (e.g. ``"http://localhost:8000"``).
+        base_url: URL of the SciStack server (e.g. ``"http://localhost:8000"``).
         timeout: HTTP request timeout in seconds.
 
     Returns:

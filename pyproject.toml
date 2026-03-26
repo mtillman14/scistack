@@ -3,55 +3,57 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "scihist"
+name = "scidb"
 version = "0.1.0"
-description = "Lineage-tracked batch execution for scientific data pipelines"
+description = "Scientific data pipeline framework — versioning, lineage, and caching for research workflows"
 readme = "README.md"
-license = "MIT"
+license = {text = "MIT"}
 requires-python = ">=3.9"
-authors = [
-    { name = "SciStack Contributors" }
-]
 keywords = [
-    "batch",
-    "pipeline",
+    "scientific-computing",
+    "data-management",
     "lineage",
     "provenance",
-    "data-science",
-    "automation",
+    "pipeline",
+    "reproducibility",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
-    "Typing :: Typed",
+    "Topic :: Database",
 ]
 dependencies = [
     "scidb>=0.1.0",
-    "thunk>=0.1.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
+matlab = [
+    "sci-matlab>=0.1.0",
 ]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "/src",
+net = [
+    "scidb-net>=0.1.0",
+]
+all = [
+    "sci-matlab>=0.1.0",
+    "scidb-net>=0.1.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scihist"]
+packages = ["src/scidb"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
+[tool.hatch.build.targets.sdist]
+include = [
+    "README.md",
+    "pyproject.toml",
+]

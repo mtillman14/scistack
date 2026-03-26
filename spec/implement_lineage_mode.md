@@ -61,7 +61,7 @@ When `lineage_mode="ephemeral"`:
 Added to `src/scidb/exceptions.py`:
 
 ```python
-class UnsavedIntermediateError(SciDBError):
+class UnsavedIntermediateError(SciStackError):
     """Raised when strict mode detects an unsaved intermediate variable."""
     pass
 ```

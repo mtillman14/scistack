@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SciDB Pipeline Demo
+SciStack Pipeline Demo
 ===================
 
 This script demonstrates all features of the scidb framework:
@@ -178,7 +178,7 @@ def create_sample_csv(path: Path) -> None:
 
 def main():
     print("=" * 70)
-    print("SciDB Pipeline Demo")
+    print("SciStack Pipeline Demo")
     print("=" * 70)
 
     # Create temporary directory for demo

@@ -1,4 +1,4 @@
-"""Tests for the MATLAB-SciDB Python bridge.
+"""Tests for the MATLAB-SciStack Python bridge.
 
 These tests verify that the proxy classes satisfy the duck-typing
 contracts of thunk-lib without requiring MATLAB.

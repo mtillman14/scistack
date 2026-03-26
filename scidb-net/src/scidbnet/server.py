@@ -73,7 +73,7 @@ def create_app(
     Returns:
         Configured FastAPI application.
     """
-    app = FastAPI(title="SciDB Server", version="0.1.0")
+    app = FastAPI(title="SciStack Server", version="0.1.0")
 
     db = DatabaseManager(
         dataset_db_path=dataset_db_path,
