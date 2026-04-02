@@ -113,7 +113,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                 mat_vals{j} = scidb.internal.from_python(mat_vals{j});
             end
             if isempty(mat_vals)
-                fprintf('[warn] no values found for ''%s'' in database, 0 iterations\n', ...
+                scidb.Log.warn('no values found for ''%s'' in database, 0 iterations', ...
                     meta_keys(i));
             end
             meta_values{i} = mat_vals;
@@ -290,11 +290,25 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
             removed = original_count - numel(filtered_combos);
             if removed > 0
-                fprintf('[info] filtered %d non-existent schema combinations (from %d to %d)\n', ...
+                scidb.Log.info('filtered %d non-existent schema combinations (from %d to %d)', ...
                     removed, original_count, numel(filtered_combos));
             end
         end
     end
+
+    % --- Log start banner ---
+    meta_parts_log = cell(1, numel(meta_keys));
+    for mk = 1:numel(meta_keys)
+        meta_parts_log{mk} = sprintf('%s=[%d values]', meta_keys(mk), numel(meta_values{mk}));
+    end
+    if isempty(meta_parts_log)
+        meta_summary_log = 'no metadata';
+    else
+        meta_summary_log = strjoin(meta_parts_log, ', ');
+    end
+    scidb.Log.info('%s', repmat('=', 1, 64));
+    scidb.Log.info('for_each(%s) — %s', fn_name, meta_summary_log);
+    scidb.Log.info('%s', repmat('=', 1, 64));
 
     % --- Parallel branch ---
     if opts.parallel && ~dry_run
@@ -304,8 +318,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             constant_names, constant_values, constant_nv, config_nv, ...
             as_table_raw, fn_name, do_save, ...
             db_nv, where_nv, opts);
-        fprintf('\n[done] completed=%d, skipped=%d, total=%d\n', ...
-            completed, skipped, total);
+        scidb.Log.info('%s', repmat('-', 1, 64));
+        scidb.Log.info('for_each(%s) done: completed=%d, skipped=%d, total=%d', ...
+            fn_name, completed, skipped, total);
+        scidb.Log.info('%s', repmat('=', 1, 64));
         result_tbl = [];
         return;
     end
@@ -339,7 +355,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         try
             scifor_inputs.(param_name) = convert_input(var_spec, py_db, where_nv, db_nv);
         catch err
-            fprintf('[error] failed to load input ''%s'': %s\n', param_name, err.message);
+            scidb.Log.err('failed to load input ''%s'': %s', param_name, err.message);
             result_tbl = [];
             return;
         end
@@ -414,6 +430,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         [result_tables{1:n_out}] = scifor.for_each(fn, scifor_inputs, ...
             scifor_opts{:}, scifor_meta_nv{:});
     catch err
+        scidb.Log.err('for_each(%s) failed: %s', fn_name, err.message);
+        scidb.Log.info('%s', repmat('=', 1, 64));
         % Re-throw scifor errors with scidb prefix
         if startsWith(err.identifier, 'scifor:')
             new_id = strrep(err.identifier, 'scifor:', 'scidb:');
@@ -432,6 +450,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     end
 
     if isempty(result_tbl) || dry_run
+        scidb.Log.info('%s', repmat('-', 1, 64));
+        scidb.Log.info('for_each(%s) done', fn_name);
+        scidb.Log.info('%s', repmat('=', 1, 64));
         return;
     end
 
@@ -444,6 +465,11 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             end
         end
     end
+
+    % --- Log end banner ---
+    scidb.Log.info('%s', repmat('-', 1, 64));
+    scidb.Log.info('for_each(%s) done', fn_name);
+    scidb.Log.info('%s', repmat('=', 1, 64));
 
     % --- Flatten nested table outputs for return ---
     % _nest_table_outputs was forced for saving; un-nest for caller
@@ -543,6 +569,18 @@ function tbl = thunk_outputs_to_table(results, var_inst)
 %   Produces a table with metadata columns + data columns, suitable for
 %   scifor.for_each to filter per combo.
     n = numel(results);
+    scidb.Log.debug('thunk_outputs_to_table: %d results for %s', n, class(var_inst));
+
+    % Strip internal metadata keys (x__fn, x__inputs, constant keys, etc.)
+    for i = 1:n
+        results(i).metadata = strip_internal_meta(results(i).metadata);
+    end
+
+    if n > 0
+        meta_fields_dbg = fieldnames(results(1).metadata);
+        scidb.Log.debug('  metadata fields after strip: [%s]', strjoin(meta_fields_dbg, ', '));
+        scidb.Log.debug('  first data item: %s %s', class(results(1).data), format_size(results(1).data));
+    end
 
     % Check if all data items are tables
     all_tables = true;
@@ -634,6 +672,12 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
 %SAVE_RESULTS  Save results from the result table to output variable types.
     n_outputs = numel(outputs);
 
+    scidb.Log.debug('save_results: %d outputs, result_tbl=%dx%d', ...
+        n_outputs, height(result_tbl), width(result_tbl));
+    for o_dbg = 1:n_outputs
+        scidb.Log.debug('  output %d: %s (%s)', o_dbg, output_names{o_dbg}, class(outputs{o_dbg}));
+    end
+
     % Determine which columns are metadata vs data
     all_col_names = result_tbl.Properties.VariableNames;
     output_col_present = ismember(output_names, all_col_names);
@@ -648,6 +692,9 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
     end
     data_cols = setdiff(all_col_names, meta_cols, 'stable');
 
+    scidb.Log.debug('save_results: meta_cols=[%s], data_cols=[%s]', ...
+        strjoin(meta_cols, ', '), strjoin(data_cols, ', '));
+
     % Batch save: accumulate data+metadata, flush once
     batch_accum = cell(1, n_outputs);
     for o = 1:n_outputs
@@ -658,6 +705,7 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
 
     if all(output_col_present)
         % Standard mode: one row = one save operation
+        scidb.Log.debug('save_results: standard mode, %d rows to accumulate', height(result_tbl));
         for ri = 1:height(result_tbl)
             row = result_tbl(ri, :);
 
@@ -682,13 +730,16 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
                     output_value = output_value{1};
                 end
 
+                scidb.Log.debug('  row %d, output %s: %s %s', ...
+                    ri, output_names{o}, class(output_value), format_size(output_value));
+
                 try
                     batch_accum{o}.py_data.append(scidb.internal.to_python(output_value));
                     batch_accum{o}.py_metas.append(scidb.internal.metadata_to_pydict(save_nv{:}));
                     batch_accum{o}.count = batch_accum{o}.count + 1;
                 catch err
                     meta_str = format_save_meta(save_nv);
-                    fprintf('[error] %s: failed to convert for batch: %s\n', meta_str, err.message);
+                    scidb.Log.err('%s: failed to convert for batch: %s', meta_str, err.message);
                 end
             end
         end
@@ -696,6 +747,8 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
         % Flatten mode: group rows by metadata, save each group as one table
         group_keys = build_row_group_keys(result_tbl, meta_cols);
         [unique_keys, ~, group_idx] = unique(group_keys, 'stable');
+        scidb.Log.debug('save_results: flatten mode, %d groups from %d rows', ...
+            numel(unique_keys), height(result_tbl));
 
         for gi = 1:numel(unique_keys)
             rows = find(group_idx == gi);
@@ -722,7 +775,7 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
                     batch_accum{o}.count = batch_accum{o}.count + 1;
                 catch err
                     meta_str = format_save_meta(save_nv);
-                    fprintf('[error] %s: failed to convert for batch: %s\n', meta_str, err.message);
+                    scidb.Log.err('%s: failed to convert for batch: %s', meta_str, err.message);
                 end
             end
         end
@@ -733,10 +786,12 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
         if batch_accum{o}.count > 0
             type_name = class(outputs{o});
             scidb.internal.ensure_registered(type_name);
+            scidb.Log.debug('save_results: flushing %s — %d items to for_each_batch_save', ...
+                type_name, batch_accum{o}.count);
             py.sci_matlab.bridge.for_each_batch_save( ...
                 type_name, batch_accum{o}.py_data, ...
                 batch_accum{o}.py_metas, py_db);
-            fprintf('[save] %s: %d items (batch)\n', type_name, batch_accum{o}.count);
+            scidb.Log.info('[save] %s: %d items (batch)', type_name, batch_accum{o}.count);
         end
     end
 end
@@ -978,7 +1033,7 @@ function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
     end
 
     % ---- Phase A: Pre-resolve all inputs (serial) ----
-    fprintf('[parallel] Phase A: pre-resolving %d combinations...\n', total);
+    scidb.Log.info('[parallel] Phase A: pre-resolving %d combinations...', total);
 
     all_inputs = cell(1, total);
     all_meta_nv = cell(1, total);
@@ -1051,7 +1106,7 @@ function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
                     idx = preloaded_maps{p}(key_str);
                     loaded{p} = preloaded_results{p}(idx);
                 else
-                    fprintf('[skip] %s: no data found for %s (%s)\n', ...
+                    scidb.Log.info('[skip] %s: no data found for %s (%s)', ...
                         metadata_str, input_names{p}, class(var_inst));
                     load_failed = true;
                     break;
@@ -1070,7 +1125,7 @@ function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
                 try
                     loaded{p} = var_inst.load(load_nv{:}, db_nv{:}, where_nv{:});
                 catch err
-                    fprintf('[skip] %s: failed to load %s: %s\n', ...
+                    scidb.Log.info('[skip] %s: failed to load %s: %s', ...
                         metadata_str, input_names{p}, err.message);
                     load_failed = true;
                     break;
@@ -1103,11 +1158,11 @@ function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
     end
 
     n_resolved = sum(resolve_ok);
-    fprintf('[parallel] Phase A done: %d resolved, %d skipped\n', ...
+    scidb.Log.info('[parallel] Phase A done: %d resolved, %d skipped', ...
         n_resolved, total - n_resolved);
 
     % ---- Phase B: parfor compute ----
-    fprintf('[parallel] Phase B: computing %d items with parfor...\n', n_resolved);
+    scidb.Log.info('[parallel] Phase B: computing %d items with parfor...', n_resolved);
 
     resolved_indices = find(resolve_ok);
     par_inputs = cell(1, n_resolved);
@@ -1145,17 +1200,17 @@ function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
                 m_parts{end+1} = sprintf('%s=%s', meta_keys(k), string(val)); %#ok<AGROW>
             end
         end
-        fprintf('[skip] %s: %s raised: %s\n', ...
+        scidb.Log.info('[skip] %s: %s raised: %s', ...
             strjoin(m_parts, ', '), fn_name, compute_errors{j});
     end
 
     n_computed = sum(compute_ok);
-    fprintf('[parallel] Phase B done: %d succeeded, %d failed\n', ...
+    scidb.Log.info('[parallel] Phase B done: %d succeeded, %d failed', ...
         n_computed, n_resolved - n_computed);
 
     % ---- Phase C: Batch save ----
     if do_save && n_computed > 0
-        fprintf('[parallel] Phase C: batch saving %d results...\n', n_computed);
+        scidb.Log.info('[parallel] Phase C: batch saving %d results...', n_computed);
 
         for o = 1:n_outputs
             type_name = class(outputs{o});
@@ -1179,9 +1234,11 @@ function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
             end
 
             if save_count > 0
+                scidb.Log.debug('[parallel] save_batch: flushing %s — %d items', ...
+                    type_name, save_count);
                 py.sci_matlab.bridge.for_each_batch_save( ...
                     type_name, py_data, py_metas, py_db);
-                fprintf('[save] %s: %d items (batch)\n', type_name, save_count);
+                scidb.Log.info('[save] %s: %d items (batch)', type_name, save_count);
             end
         end
     end
@@ -1213,6 +1270,42 @@ function tf = is_metadata_compatible(val)
       || (isstring(val) && isscalar(val)) ...
       || ischar(val) ...
       || isstruct(val);
+end
+
+
+function cleaned = strip_internal_meta(metadata)
+%STRIP_INTERNAL_META  Remove internal version keys and constant keys from metadata.
+%   Mirrors Python's _stringify_meta() in foreach.py.
+%   Drops fields starting with 'x__' (MATLAB's jsondecode sanitizes '__' -> 'x__')
+%   and fields that came from constants (stored in x__constants / __constants).
+    fnames = fieldnames(metadata);
+
+    % Parse constant keys from __constants JSON (may be stored as x__constants)
+    const_keys = {};
+    for cfield = ["x__constants", "x___constants"]
+        if isfield(metadata, cfield)
+            try
+                decoded = jsondecode(metadata.(char(cfield)));
+                const_keys = fieldnames(decoded);
+            catch
+            end
+            break;
+        end
+    end
+
+    cleaned = struct();
+    for i = 1:numel(fnames)
+        f = fnames{i};
+        % Drop fields starting with x__ (internal version keys)
+        if numel(f) >= 3 && f(1) == 'x' && f(2) == '_' && f(3) == '_'
+            continue;
+        end
+        % Drop fields that came from constants
+        if ~isempty(const_keys) && ismember(f, const_keys)
+            continue;
+        end
+        cleaned.(f) = metadata.(f);
+    end
 end
 
 
@@ -1384,6 +1477,25 @@ function nv = build_config_nv(fn_name, inputs, input_names, loadable_idx, ...
     if ~strcmp(inputs_json, '{}')
         nv{end+1} = '__inputs';
         nv{end+1} = inputs_json;
+    end
+
+    % Serialize constant input NAMES as __constants JSON
+    % strip_internal_meta() only needs the keys to know which fields to drop;
+    % storing full values would duplicate large structs on every record.
+    const_struct = struct();
+    has_const = false;
+    for p = 1:numel(input_names)
+        if ~loadable_idx(p)
+            val = inputs.(input_names{p});
+            if is_metadata_compatible(val)
+                const_struct.(input_names{p}) = true;
+                has_const = true;
+            end
+        end
+    end
+    if has_const
+        nv{end+1} = '__constants';
+        nv{end+1} = jsonencode(const_struct);
     end
 
     if ~isempty(where_filter)
@@ -1583,3 +1695,19 @@ end
 % =========================================================================
 % Utility
 % =========================================================================
+
+function s = format_size(val)
+%FORMAT_SIZE  Format the size of a value for debug logging.
+    if istable(val)
+        s = sprintf('%dx%d', height(val), width(val));
+    elseif isnumeric(val) || islogical(val)
+        sz = size(val);
+        s = sprintf('%s', mat2str(sz));
+    elseif ischar(val) || isstring(val)
+        s = sprintf('len=%d', strlength(string(val)));
+    elseif iscell(val)
+        s = sprintf('{%d}', numel(val));
+    else
+        s = sprintf('<%s>', class(val));
+    end
+end

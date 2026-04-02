@@ -49,4 +49,8 @@ function db = configure_database(dataset_db_path, dataset_schema_keys)
     % distribute=true work identically in DB-backed and standalone modes.
     scifor.set_schema(dataset_schema_keys);
 
+    % Set log file path next to the database file
+    [db_dir, ~, ~] = fileparts(dataset_db_path);
+    scidb.Log.set_path(fullfile(db_dir, 'scidb.log'));
+
 end

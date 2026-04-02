@@ -177,7 +177,7 @@ def register_matlab_variable(type_name: str, schema_version: int = 1):
     return surrogate
 
 
-def for_each_batch_save(type_name, data_list, metadata_list, db=None):
+def for_each_batch_save(type_name, data_list, metadata_list, db=None, profile=False):
     """Batch save for for_each parallel results.
 
     Each element in data_list is a single data value (already converted via
@@ -194,12 +194,15 @@ def for_each_batch_save(type_name, data_list, metadata_list, db=None):
         One metadata dict per result row.
     db : DatabaseManager or None
         Optional database; uses global default when None.
+    profile : bool
+        If True, pass profile=True to save_batch for timing diagnostics.
 
     Returns
     -------
     str
         Newline-joined record IDs.
     """
+    import sys
     from scidb.variable import BaseVariable
     from scidb.database import get_database
 
@@ -216,7 +219,12 @@ def for_each_batch_save(type_name, data_list, metadata_list, db=None):
     for i in range(len(data_list)):
         data_items.append((data_list[i], dict(metadata_list[i])))
 
-    return "\n".join(_db.save_batch(cls, data_items))
+    n_items = len(data_items)
+    if profile or n_items > 0:
+        total_size = sum(sys.getsizeof(d) for d, _ in data_items)
+        print(f"[bridge] for_each_batch_save: {n_items} items, ~{total_size} bytes (shallow)")
+
+    return "\n".join(_db.save_batch(cls, data_items, profile=bool(profile)))
 
 
 def save_batch_bridge(type_name, data_values, metadata_keys, metadata_columns, common_metadata=None, db=None):

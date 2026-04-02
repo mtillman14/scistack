@@ -20,6 +20,7 @@ def for_each(
     where=None,
     output_names: list[str] | int | None = None,
     _all_combos: list[dict] | None = None,
+    _log_fn: "Callable[[str], None] | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -131,6 +132,39 @@ def for_each(
     total = len(all_combos)
     fn_name = getattr(fn, "__name__", repr(fn))
 
+    # Start banner
+    display_keys = [k for k in keys if not k.startswith("__")]
+    meta_summary = ", ".join(
+        f"{k}=[{len(metadata_iterables[k])} values]"
+        for k in display_keys
+    ) if display_keys else "no metadata"
+    print(f"\n{'=' * 64}")
+    print(f"  for_each({fn_name}) — {total} iteration{'s' if total != 1 else ''}")
+    print(f"  {meta_summary}")
+    print(f"{'=' * 64}")
+
+    # Detailed config: inputs
+    print(f"  inputs: {_format_inputs(inputs)}")
+
+    # Detailed config: metadata actual values
+    for k in display_keys:
+        vals = metadata_iterables[k]
+        formatted = ", ".join(repr(v) for v in vals)
+        print(f"  {k}=[{formatted}]")
+
+    # Detailed config: non-default options
+    _opts_parts = []
+    if dry_run:
+        _opts_parts.append("dry_run=True")
+    if distribute:
+        _opts_parts.append("distribute=True")
+    if as_table:
+        _opts_parts.append(f"as_table={as_table!r}")
+    if where is not None:
+        _opts_parts.append(f"where={where!r}")
+    if _opts_parts:
+        print(f"  options: {', '.join(_opts_parts)}")
+
     if dry_run:
         print(f"[dry-run] for_each({fn_name})")
         print(f"[dry-run] {total} iterations over: {keys}")
@@ -162,7 +196,10 @@ def for_each(
                     var_spec, metadata, schema_keys, wants_table, where
                 )
             except Exception as e:
-                print(f"[skip] {metadata_str}: failed to filter {param_name}: {e}")
+                msg = f"[skip] {metadata_str}: failed to filter {param_name}: {e}"
+                print(msg)
+                if _log_fn is not None:
+                    _log_fn(msg)
                 traceback.print_exc()
                 filter_failed = True
                 break
@@ -173,7 +210,10 @@ def for_each(
 
         # Call the function
         all_param_names = list(filtered_inputs.keys()) + list(constant_inputs.keys())
-        print(f"[run] {metadata_str}: {fn_name}({', '.join(all_param_names)})")
+        msg = f"[run] {metadata_str}: {fn_name}({', '.join(all_param_names)})"
+        print(msg)
+        if _log_fn is not None:
+            _log_fn(msg)
 
         # Merge constants into function arguments
         filtered_inputs.update(constant_inputs)
@@ -181,7 +221,10 @@ def for_each(
         try:
             result = _call_fn(fn, filtered_inputs, n_outputs)
         except Exception as e:
-            print(f"[skip] {metadata_str}: {fn_name} raised: {e}")
+            msg = f"[skip] {metadata_str}: {fn_name} raised: {e}"
+            print(msg)
+            if _log_fn is not None:
+                _log_fn(msg)
             traceback.print_exc()
             skipped += 1
             continue
@@ -196,7 +239,10 @@ def for_each(
                 try:
                     pieces = _split_for_distribute(output_value)
                 except TypeError as e:
-                    print(f"[error] {metadata_str}: cannot distribute: {e}")
+                    msg = f"[error] {metadata_str}: cannot distribute: {e}"
+                    print(msg)
+                    if _log_fn is not None:
+                        _log_fn(msg)
                     continue
 
                 for i, piece in enumerate(pieces):
@@ -208,12 +254,14 @@ def for_each(
         completed += 1
 
     # Summary
-    print()
+    print(f"{'─' * 64}")
     if dry_run:
-        print(f"[dry-run] would process {total} iterations")
+        print(f"  [dry-run] would process {total} iterations")
+        print(f"{'=' * 64}\n")
         return None
     else:
-        print(f"[done] completed={completed}, skipped={skipped}, total={total}")
+        print(f"  done: completed={completed}, skipped={skipped}, total={total}")
+        print(f"{'=' * 64}\n")
         return _results_to_output_dataframe(collected_rows, resolved_output_names)
 
 

@@ -815,21 +815,22 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
     methods (Test)
 
         function test_pathinput_as_constant_input(tc)
-        %   PathInput treated as constant alongside a table input.
+        %   PathInput resolved per-combo alongside a table input.
             scifor.set_schema(["subject"]);
 
             tbl = table([1;2], [10;20], 'VariableNames', {'subject','value'});
             pi = scifor.PathInput("{subject}/data.mat", root_folder="/data");
 
-            % fn receives (data_scalar, pathInput_object)
+            % fn receives (data_scalar, resolved_path_string)
             result = scifor.for_each( ...
-                @(data, fp) data + strlength(fp.load('subject', 1)), ...
+                @(data, fp) data + strlength(fp), ...
                 struct('data', tbl, 'fp', pi), ...
                 subject=[1 2]);
 
-            % PathInput is constant — same object every iteration
-            path_len = strlength(string(fullfile("/data", "1", "data.mat")));
-            tc.verifyEqual(result.output, [10 + path_len; 20 + path_len]);
+            % PathInput resolved per-combo with current metadata
+            path_len_1 = strlength(string(fullfile("/data", "1", "data.mat")));
+            path_len_2 = strlength(string(fullfile("/data", "2", "data.mat")));
+            tc.verifyEqual(result.output, [10 + path_len_1; 20 + path_len_2]);
         end
 
         function test_pathinput_with_where_filter(tc)
@@ -840,16 +841,16 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
                 'VariableNames', {'subject','speed','value'});
             pi = scifor.PathInput("{subject}/out.csv", root_folder="/results");
 
-            % where filters table rows; PathInput is constant, untouched
+            % where filters table rows; PathInput resolved to string
             result = scifor.for_each( ...
-                @(data, fp) sum(data) + double(isa(fp, 'scifor.PathInput')), ...
+                @(data, fp) sum(data) + double(isstring(fp)), ...
                 struct('data', scifor.ColumnSelection(tbl, "value"), 'fp', pi), ...
                 where=scifor.Col("speed") > 1.0, ...
                 subject=[1]);
 
             % ColumnSelection extracts "value" column as vector after where
             % After where: speed>1.0 keeps value=[20;30]
-            % sum([20;30]) = 50, isa check = 1 -> 51
+            % sum([20;30]) = 50, isstring check = 1 -> 51
             tc.verifyEqual(result.output, 51);
         end
 
@@ -877,7 +878,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
             pi = scifor.PathInput("{subject}/data.mat", root_folder="/data");
 
             result = scifor.for_each( ...
-                @(fp) strlength(fp.load('subject', 1)), ...
+                @(fp) strlength(fp), ...
                 struct('fp', pi), ...
                 output_names={"path_len"}, subject=[1 2]);
 
@@ -893,9 +894,9 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
             tbl2 = table([1;2], [0.1;0.2], 'VariableNames', {'subject','emg'});
             pi = scifor.PathInput("{subject}/raw.mat", root_folder="/data");
 
-            % fn receives (force_scalar, emg_scalar, pathInput, constant)
+            % fn receives (force_scalar, emg_scalar, resolved_path, constant)
             result = scifor.for_each( ...
-                @(f, e, fp, k) f + e + k + double(isa(fp, 'scifor.PathInput')), ...
+                @(f, e, fp, k) f + e + k + double(isstring(fp)), ...
                 struct('f', tbl1, 'e', tbl2, 'fp', pi, 'k', 100), ...
                 subject=[1 2]);
 
@@ -905,7 +906,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
         end
 
         function test_pathinput_with_merge_and_where(tc)
-        %   PathInput constant + Merge data input + where filter.
+        %   PathInput resolved + Merge data input + where filter.
             scifor.set_schema(["subject"]);
 
             tbl1 = table([1;1;1], [0.5;1.5;2.5], [10;20;30], ...
@@ -915,7 +916,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
             pi = scifor.PathInput("{subject}/log.txt", root_folder="/logs");
 
             result = scifor.for_each( ...
-                @(combined, fp) sum(combined.force) + double(isa(fp, 'scifor.PathInput')), ...
+                @(combined, fp) sum(combined.force) + double(isstring(fp)), ...
                 struct('combined', scifor.Merge( ...
                     scifor.ColumnSelection(tbl1, ["speed" "force"]), ...
                     scifor.ColumnSelection(tbl2, "emg")), ...
@@ -924,8 +925,29 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
                 subject=[1]);
 
             % After where: speed=1.5 (force=20) and speed=2.5 (force=30)
-            % sum(force) = 50, isa = 1 -> 51
+            % sum(force) = 50, isstring = 1 -> 51
             tc.verifyEqual(result.output, 51);
+        end
+
+        function test_pathinput_resolved_per_combo(tc)
+        %   PathInput as sole input resolves template per metadata combo.
+        %   This is the primary use case: user passes PathInput with
+        %   template placeholders, and for_each resolves the path for
+        %   each iteration using the current metadata values.
+            scifor.set_schema(["pass"]);
+
+            pi = scifor.PathInput("/data/EMG/{pass}.mat");
+
+            result = scifor.for_each( ...
+                @(fp) fp, ...
+                struct('filePath', pi), ...
+                pass=1:3);
+
+            % Each iteration should receive a resolved path string
+            tc.verifyEqual(height(result), 3);
+            tc.verifyEqual(result.output(1), "/data/EMG/1.mat");
+            tc.verifyEqual(result.output(2), "/data/EMG/2.mat");
+            tc.verifyEqual(result.output(3), "/data/EMG/3.mat");
         end
 
     end

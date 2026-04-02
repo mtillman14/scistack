@@ -81,8 +81,6 @@ function varargout = for_each(fn, inputs, varargin)
         fn_name = 'unknown';
     end
 
-    disp(['Starting for_each(' fn_name ')'])
-
     % Get schema keys
     schema_keys = scifor.get_schema();
 
@@ -250,6 +248,57 @@ function varargout = for_each(fn, inputs, varargin)
 
     total = numel(combos);
 
+    % --- Start banner ---
+    meta_parts_banner = cell(1, numel(meta_keys));
+    for mk = 1:numel(meta_keys)
+        meta_parts_banner{mk} = sprintf('%s=[%d values]', meta_keys(mk), numel(meta_values{mk}));
+    end
+    if isempty(meta_parts_banner)
+        meta_summary = 'no metadata';
+    else
+        meta_summary = strjoin(meta_parts_banner, ', ');
+    end
+    fprintf('\n%s\n', repmat('=', 1, 64));
+    if total == 1
+        fprintf('  for_each(%s) — 1 iteration\n', fn_name);
+    else
+        fprintf('  for_each(%s) — %d iterations\n', fn_name, total);
+    end
+    fprintf('  %s\n', meta_summary);
+    fprintf('%s\n', repmat('=', 1, 64));
+
+    % --- Detailed config: inputs ---
+    fprintf('  inputs: %s\n', format_inputs(inputs, input_names, data_idx));
+
+    % --- Detailed config: metadata actual values ---
+    for mk2 = 1:numel(meta_keys)
+        if ~startsWith(meta_keys(mk2), "__")
+            fprintf('  %s=%s\n', meta_keys(mk2), format_meta_values(meta_values{mk2}));
+        end
+    end
+
+    % --- Detailed config: non-default options ---
+    opt_parts = {};
+    if dry_run
+        opt_parts{end+1} = 'dry_run=true';
+    end
+    if distribute
+        opt_parts{end+1} = 'distribute=true';
+    end
+    if ~isempty(as_table_raw)
+        if islogical(as_table_raw) && isscalar(as_table_raw) && as_table_raw
+            opt_parts{end+1} = 'as_table=true';
+        elseif isstring(as_table_raw)
+            opt_parts{end+1} = sprintf('as_table=[%s]', strjoin(as_table_raw, ', '));
+        end
+    end
+    if ~isempty(where_filter)
+        opt_parts{end+1} = sprintf('where=%s', class(where_filter));
+    end
+    if ~isempty(opt_parts)
+        fprintf('  options: %s\n', strjoin(opt_parts, ', '));
+    end
+
     % --- Dry-run header ---
     if dry_run
         fprintf('[dry-run] for_each(%s)\n', fn_name);
@@ -360,11 +409,15 @@ function varargout = for_each(fn, inputs, varargin)
                 loaded{p} = prepare_input(var_spec, metadata, effective_keys, wants_table, where_filter);
             catch err
                 if strcmp(err.identifier, 'scifor:NoData')
-                    fprintf('[skip] %s: no data for %s\n', ...
+                    skip_msg = sprintf('[skip] %s: no data for %s', ...
                         metadata_str, input_names{p});
                 else
-                    fprintf('[skip] %s: failed to filter %s: %s\n', ...
+                    skip_msg = sprintf('[skip] %s: failed to filter %s: %s', ...
                         metadata_str, input_names{p}, err.message);
+                end
+                fprintf('%s\n', skip_msg);
+                if ~isempty(opts.log_fn)
+                    opts.log_fn(skip_msg);
                 end
                 filter_failed = true;
                 break;
@@ -377,8 +430,12 @@ function varargout = for_each(fn, inputs, varargin)
         end
 
         % --- Call the function ---
-        fprintf('[run] %s: %s(%s)\n', metadata_str, fn_name, ...
+        run_msg = sprintf('[run] %s: %s(%s)', metadata_str, fn_name, ...
             strjoin(string(input_names'), ', '));
+        fprintf('%s\n', run_msg);
+        if ~isempty(opts.log_fn)
+            opts.log_fn(run_msg);
+        end
 
         try
             if n_outputs == 0
@@ -405,8 +462,12 @@ function varargout = for_each(fn, inputs, varargin)
                 result = {fn(loaded{:})};
             end
         catch err
-            fprintf('[skip] %s: %s raised: %s\n', ...
+            skip_msg = sprintf('[skip] %s: %s raised: %s', ...
                 metadata_str, fn_name, err.message);
+            fprintf('%s\n', skip_msg);
+            if ~isempty(opts.log_fn)
+                opts.log_fn(skip_msg);
+            end
             skipped = skipped + 1;
             continue;
         end
@@ -454,8 +515,12 @@ function varargout = for_each(fn, inputs, varargin)
                         end
                     end
                 catch err2
-                    fprintf('[error] %s: cannot distribute output %d: %s\n', ...
+                    err_msg = sprintf('[error] %s: cannot distribute output %d: %s', ...
                         metadata_str, o, err2.message);
+                    fprintf('%s\n', err_msg);
+                    if ~isempty(opts.log_fn)
+                        opts.log_fn(err_msg);
+                    end
                     continue;
                 end
             end
@@ -470,9 +535,10 @@ function varargout = for_each(fn, inputs, varargin)
     end
 
     % --- Summary ---
-    fprintf('\n');
+    fprintf('%s\n', repmat('-', 1, 64));
     if dry_run
-        fprintf('[dry-run] would process %d iterations\n', total);
+        fprintf('  [dry-run] would process %d iterations\n', total);
+        fprintf('%s\n\n', repmat('=', 1, 64));
         for o = 1:nargout
             varargout{o} = [];
         end
@@ -480,8 +546,9 @@ function varargout = for_each(fn, inputs, varargin)
             varargout{1} = [];
         end
     else
-        fprintf('[done] completed=%d, skipped=%d, total=%d\n', ...
+        fprintf('  done: completed=%d, skipped=%d, total=%d\n', ...
             completed, skipped, total);
+        fprintf('%s\n\n', repmat('=', 1, 64));
         if n_outputs == 0
             % Zero-output function: nothing to collect
             if nargout > 0
@@ -1218,7 +1285,8 @@ function [meta_args, opts] = split_options(varargin)
     opts.output_names = {};
     opts.all_combos = [];
     opts.nest_table_outputs = false;
-    opts.resolve_pathinput = false;
+    opts.resolve_pathinput = true;
+    opts.log_fn = [];
 
     meta_args = {};
     i = 1;
@@ -1276,6 +1344,10 @@ function [meta_args, opts] = split_options(varargin)
                     continue;
                 case "_resolve_pathinput"
                     opts.resolve_pathinput = logical(varargin{i+1});
+                    i = i + 2;
+                    continue;
+                case "_log_fn"
+                    opts.log_fn = varargin{i+1};
                     i = i + 2;
                     continue;
             end
@@ -1413,6 +1485,29 @@ function s = format_value(val)
             s = sprintf('<%s>', class(val));
         end
     end
+end
+
+
+function s = format_meta_values(vals)
+%FORMAT_META_VALUES  Format a cell array of metadata values for display.
+%   {1, 2, 3} -> "[1, 2, 3]"
+%   {'pre', 'post'} -> "[pre, post]"
+    if isempty(vals)
+        s = '[]';
+        return;
+    end
+    parts = cell(1, numel(vals));
+    for i = 1:numel(vals)
+        v = vals{i};
+        if isnumeric(v)
+            parts{i} = sprintf('%g', v);
+        elseif ischar(v) || isstring(v)
+            parts{i} = char(string(v));
+        else
+            parts{i} = char(string(v));
+        end
+    end
+    s = ['[' strjoin(parts, ', ') ']'];
 end
 
 
