@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scistack-gui"
+version = "0.1.0"
+description = "GUI for SciStack pipelines"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "scidb",
+    "jupyter_client>=8.0.0",
+    "ipykernel>=6.0.0",
+    "duckdb>=0.9.0",
+]
+
+[project.scripts]
+scistack-gui = "scistack_gui.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scistack_gui"]
