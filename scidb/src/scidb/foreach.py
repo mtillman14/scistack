@@ -82,6 +82,7 @@ def for_each(
     distribute: bool = False,
     where=None,
     _inject_combo_metadata: bool = False,
+    _pre_combo_hook: "Callable[[dict], bool] | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -111,6 +112,10 @@ def for_each(
         where: Optional filter; passed to .load() calls on DB-backed inputs.
         _inject_combo_metadata: If True, inject current-combo metadata keys
                     as extra kwargs to fn (used by scihist for generates_file).
+        _pre_combo_hook: Internal use only. Called with each fully-expanded
+                    combo dict before inputs are loaded. If it returns True
+                    the combo is skipped entirely (no load, no call, no save).
+                    Used by scihist.for_each to implement skip_computed.
         **metadata_iterables: Iterables of metadata values to combine.
 
     Returns:
@@ -297,6 +302,11 @@ def for_each(
                 full_combos.append(full_combo)
         else:
             full_combos.append(combo)
+
+    # Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
+    # combos where the hook returns True.
+    if _pre_combo_hook is not None:
+        full_combos = [c for c in full_combos if not _pre_combo_hook(c)]
 
     # Temporarily extend scifor's schema to include __rid_* keys so _filter_df_for_combo
     # treats them as schema columns (not data columns), giving single-row filtered DFs.

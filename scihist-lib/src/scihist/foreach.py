@@ -13,6 +13,7 @@ def for_each(
     db=None,
     distribute: bool = False,
     where=None,
+    skip_computed: bool = True,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -37,6 +38,9 @@ def for_each(
         distribute: If True, split outputs and save each piece at the schema
                     level below the deepest iterated key.
         where: Optional filter; passed to .load() calls on DB-backed inputs.
+        skip_computed: If True (default), skip combos whose outputs already exist
+                    and whose full upstream provenance graph is unchanged. Pass
+                    False to force re-computation of every combo.
         **metadata_iterables: Iterables of metadata values to combine.
 
     Returns:
@@ -51,6 +55,19 @@ def for_each(
 
     # Wrap LineageFcn in a plain callable for scidb.for_each
     fn_plain = _make_plain(fn)
+
+    # Build the pre-combo skip hook when skip_computed is enabled.
+    pre_combo_hook = None
+    if skip_computed and not dry_run and outputs:
+        active_db = db
+        if active_db is None:
+            try:
+                from scidb.database import get_database
+                active_db = get_database()
+            except Exception:
+                active_db = None
+        if active_db is not None:
+            pre_combo_hook = _build_skip_hook(fn, outputs, active_db)
 
     # Delegate to scidb.for_each with save=False (we handle saves ourselves).
     # For generates_file functions, inject combo metadata as kwargs so fn receives
@@ -67,6 +84,7 @@ def for_each(
         distribute=distribute,
         where=where,
         _inject_combo_metadata=_inject_meta,
+        _pre_combo_hook=pre_combo_hook,
         **metadata_iterables,
     )
 
@@ -79,6 +97,76 @@ def for_each(
         _save_with_lineage(result_tbl, outputs, output_names, db)
 
     return result_tbl
+
+
+def _build_skip_hook(fn: "LineageFcn", outputs: list, db) -> Callable[[dict], bool]:
+    """Return a pre-combo hook that returns True when a combo can be skipped.
+
+    A combo is skipped when:
+    1. Every output type already has a record for this combo.
+    2. Walking get_upstream_provenance() from the output record, every
+       function hash still matches and every input record_id in _lineage.inputs
+       matches the current latest record for that variable variant.
+    """
+    schema_keys: set = set(db.dataset_schema_keys)
+
+    def _combo_str(schema_combo: dict) -> str:
+        return ", ".join(f"{k}={v}" for k, v in sorted(schema_combo.items()))
+
+    def _should_skip(combo: dict) -> bool:
+        # Strip __rid_* and other internal keys — only schema keys for DB lookups.
+        schema_combo = {k: v for k, v in combo.items()
+                        if k in schema_keys}
+
+        # Step 1: all outputs must exist.
+        output_record_id = None
+        for OutputCls in outputs:
+            rid = db.find_record_id(OutputCls, schema_combo)
+            if rid is None:
+                return False  # output missing → compute
+            output_record_id = rid  # use the last output's record for provenance
+
+        # Step 2: walk the full upstream provenance graph.
+        try:
+            nodes = db.get_upstream_provenance(output_record_id)
+        except Exception:
+            return False  # provenance lookup failed → compute to be safe
+
+        for node in nodes:
+            node_rid = node["record_id"]
+
+            # a. Function hash check (only meaningful for computed nodes).
+            if node["depth"] == 0:
+                # This is the output node — compare against the function we're
+                # about to run.
+                stored_hash = db.get_function_hash_for_record(node_rid)
+                if stored_hash is None:
+                    # No lineage record: output was not saved via scihist.
+                    # Cannot verify provenance → recompute.
+                    return False
+                if stored_hash != fn.hash:
+                    print(f"[recompute] {_combo_str(schema_combo)} — function changed")
+                    return False
+
+            # b. Input record_id check via _lineage.inputs.
+            lineage_inputs = db.get_lineage_inputs(node_rid)
+            for inp in lineage_inputs:
+                if inp.get("source_type") != "variable":
+                    continue  # thunks / constants handled by hash check
+                used_rid = inp.get("record_id")
+                if not used_rid:
+                    continue
+                current_rid = db.get_latest_record_id_for_variant(used_rid)
+                if current_rid != used_rid:
+                    var_type = inp.get("type", "unknown")
+                    print(f"[recompute] {_combo_str(schema_combo)} — "
+                          f"upstream {var_type} updated")
+                    return False
+
+        print(f"[skip] {_combo_str(schema_combo)}")
+        return True
+
+    return _should_skip
 
 
 def _make_plain(lineage_fn) -> Callable:

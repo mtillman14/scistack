@@ -2350,6 +2350,82 @@ class DatabaseManager:
         )
         return len(rows) > 0 and bool(rows[0][0])
 
+    def find_record_id(self, variable_class: type, metadata: dict) -> str | None:
+        """Lightweight lookup returning the record_id of the latest record for
+        a variable + metadata combination, without loading any data.
+
+        Returns None if no matching record exists.
+        """
+        nested = self._split_metadata(metadata)
+        rows = self._find_record(variable_class.__name__, nested_metadata=nested,
+                                 version_id="latest")
+        if rows.empty:
+            return None
+        return rows.iloc[0]["record_id"]
+
+    def get_latest_record_id_for_variant(self, used_record_id: str) -> str | None:
+        """Given a record_id, find the most recently saved record that shares the
+        same (variable_name, schema_id, version_keys).
+
+        This is the "current latest" for that specific variable variant —
+        the same record that load(..., version_id="latest") would return.
+        Returns None if the record no longer exists.
+        """
+        rows = self._duck._fetchdf(
+            "SELECT variable_name, schema_id, version_keys "
+            "FROM _record_metadata WHERE record_id = ? LIMIT 1",
+            [used_record_id],
+        )
+        if rows.empty:
+            return None
+
+        vn = rows.iloc[0]["variable_name"]
+        sid = int(rows.iloc[0]["schema_id"])
+        vk = rows.iloc[0]["version_keys"]
+
+        latest = self._duck._fetchdf(
+            "SELECT record_id FROM _record_metadata "
+            "WHERE variable_name = ? AND schema_id = ? AND version_keys IS NOT DISTINCT FROM ? "
+            "AND COALESCE(excluded, FALSE) = FALSE "
+            "ORDER BY timestamp DESC LIMIT 1",
+            [vn, sid, vk],
+        )
+        if latest.empty:
+            return None
+        return latest.iloc[0]["record_id"]
+
+    def get_function_hash_for_record(self, record_id: str) -> str | None:
+        """Return the function_hash stored in _lineage for a record, or None.
+
+        Used by scihist.for_each's skip_computed check to detect whether the
+        function that produced a record has changed since it was saved.
+        """
+        rows = self._duck._fetchall(
+            "SELECT function_hash FROM _lineage WHERE output_record_id = ?",
+            [record_id],
+        )
+        return rows[0][0] if rows and rows[0][0] else None
+
+    def get_lineage_inputs(self, record_id: str) -> list[dict]:
+        """Return the list of input descriptors stored in _lineage for a record.
+
+        Each entry is a dict as written by scilineage's ClassifiedInput.to_lineage_dict().
+        Entries with ``source_type == "variable"`` carry a ``record_id`` field
+        that identifies the exact input record used when this output was saved.
+
+        Returns an empty list if no lineage row exists for the record.
+        """
+        rows = self._duck._fetchall(
+            "SELECT inputs FROM _lineage WHERE output_record_id = ?",
+            [record_id],
+        )
+        if not rows or not rows[0][0]:
+            return []
+        try:
+            return json.loads(rows[0][0])
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     # -------------------------------------------------------------------------
     # Export Methods
     # -------------------------------------------------------------------------
