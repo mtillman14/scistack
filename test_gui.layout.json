@@ -1,22 +1,62 @@
 {
-  "fn__compute_max_vo2": {
-    "x": 783.0347954230235,
-    "y": 270.84463743932037
+  "positions": {
+    "fn__compute_max_vo2": {
+      "x": 778.0031010371958,
+      "y": 275.0782929712064
+    },
+    "var__RawVO2": {
+      "x": -46.03056318373358,
+      "y": 272.724238859345
+    },
+    "fn__compute_rolling_vo2": {
+      "x": 223.28252238847125,
+      "y": 264.3486879683297
+    },
+    "var__RollingVO2": {
+      "x": 498.69823128782,
+      "y": 265.5644858848791
+    },
+    "var__MaxVO2": {
+      "x": 1047.3161866094006,
+      "y": 263.2757274680421
+    },
+    "fn__compute_max_hr": {
+      "x": 260.8361398985396,
+      "y": 3.61928639842633
+    },
+    "fn__for_each": {
+      "x": 992.5952010947294,
+      "y": -90.8012376268885
+    },
+    "var__RawHeartRate__cgn3dp": {
+      "x": 71.99509184791006,
+      "y": -131.57373663781988
+    }
   },
-  "var__RawVO2": {
-    "x": -46.03056318373358,
-    "y": 272.724238859345
-  },
-  "fn__compute_rolling_vo2": {
-    "x": 244.0,
-    "y": 266.0
-  },
-  "var__RollingVO2": {
-    "x": 498.69823128782,
-    "y": 265.5644858848791
-  },
-  "var__MaxVO2": {
-    "x": 1062.594997661756,
-    "y": 276.81702460061854
+  "manual_nodes": {
+    "fn__compute_max_hr": {
+      "type": "functionNode",
+      "label": "compute_max_hr"
+    },
+    "fn__compute_rolling_vo2": {
+      "type": "functionNode",
+      "label": "compute_rolling_vo2"
+    },
+    "fn__for_each": {
+      "type": "functionNode",
+      "label": "for_each"
+    },
+    "fn__compute_max_vo2": {
+      "type": "functionNode",
+      "label": "compute_max_vo2"
+    },
+    "var__MaxVO2": {
+      "type": "variableNode",
+      "label": "MaxVO2"
+    },
+    "var__RawHeartRate__cgn3dp": {
+      "type": "variableNode",
+      "label": "RawHeartRate"
+    }
   }
 }

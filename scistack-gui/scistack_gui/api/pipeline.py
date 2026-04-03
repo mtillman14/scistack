@@ -15,6 +15,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends
 from scidb.database import DatabaseManager
 from scistack_gui.db import get_db
+from scistack_gui import layout as layout_store
 
 router = APIRouter()
 
@@ -143,6 +144,19 @@ def _build_graph(db: DatabaseManager) -> dict:
                     "source": f"fn__{fn}",
                     "target": f"var__{out_type}",
                 })
+
+    # Merge in manually-placed nodes that aren't already present from DB data.
+    existing_ids = {n["id"] for n in nodes}
+    for node_id, meta in layout_store.get_manual_nodes().items():
+        if node_id not in existing_ids:
+            nodes.append({
+                "id": node_id,
+                "type": meta["type"],
+                "position": {"x": 0, "y": 0},
+                "data": {"label": meta["label"],
+                         **({"variants": [], "total_records": 0}
+                            if meta["type"] == "variableNode" else {})},
+            })
 
     return {"nodes": nodes, "edges": edges}
 

@@ -5,12 +5,13 @@
  *   - Run button: posts to /api/run with the checked variants from connected
  *     input nodes, then streams output via WebSocket.
  *   - Spinner while running.
- *   - Output log shown below the button while/after running.
+ *   - Run output is sent to the sidebar Runs tab via RunLogContext.
  */
 
 import { useState, useCallback, useRef } from 'react'
 import { Handle, Position, useReactFlow } from '@xyflow/react'
 import { useWebSocket } from '../../hooks/useWebSocket'
+import { useRunLog } from '../../context/RunLogContext'
 import type { Variant } from './VariableNode'
 
 interface FunctionNodeData {
@@ -25,7 +26,7 @@ interface Props {
 export default function FunctionNode({ id, data }: Props) {
   const { getNodes, getEdges } = useReactFlow()
   const [running, setRunning] = useState(false)
-  const [output, setOutput] = useState<string[]>([])
+  const { startRun, appendLine, finishRun } = useRunLog()
   // Ref (not state) so the WebSocket handler always sees the current value
   // without waiting for a React re-render — critical when the pipeline
   // finishes before the first render cycle completes.
@@ -34,11 +35,12 @@ export default function FunctionNode({ id, data }: Props) {
   useWebSocket(useCallback((msg) => {
     if (msg.run_id !== runIdRef.current) return
     if (msg.type === 'run_output') {
-      setOutput(prev => [...prev, msg.text as string])
+      appendLine(msg.run_id as string, msg.text as string)
     } else if (msg.type === 'run_done') {
+      finishRun(msg.run_id as string)
       setRunning(false)
     }
-  }, []))
+  }, [appendLine, finishRun]))
 
   const handleRun = useCallback(async () => {
     // Generate run_id on the frontend BEFORE the fetch so the WebSocket
@@ -46,7 +48,7 @@ export default function FunctionNode({ id, data }: Props) {
     const newRunId = Math.random().toString(36).slice(2, 10)
     runIdRef.current = newRunId   // synchronous — handler sees it immediately
     setRunning(true)
-    setOutput([])
+    startRun(newRunId, data.label)
 
     // Find input variable nodes connected to this function node.
     const edges = getEdges().filter(e => e.target === id)
@@ -76,7 +78,7 @@ export default function FunctionNode({ id, data }: Props) {
         run_id: newRunId,
       }),
     })
-  }, [id, data.label, getNodes, getEdges])
+  }, [id, data.label, getNodes, getEdges, startRun])
 
   return (
     <div style={styles.container}>
@@ -91,14 +93,6 @@ export default function FunctionNode({ id, data }: Props) {
       >
         {running ? '⏳ Running…' : '▶ Run'}
       </button>
-
-      {output.length > 0 && (
-        <div style={styles.output}>
-          {output.map((line, i) => (
-            <span key={i}>{line}</span>
-          ))}
-        </div>
-      )}
 
       <Handle type="source" position={Position.Right} />
     </div>
@@ -143,19 +137,5 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'not-allowed',
     fontWeight: 600,
     fontSize: 12,
-  },
-  output: {
-    marginTop: 6,
-    maxHeight: 80,
-    overflowY: 'auto',
-    fontSize: 10,
-    fontFamily: 'monospace',
-    color: '#333',
-    background: '#fff',
-    borderRadius: 3,
-    padding: '3px 5px',
-    display: 'flex',
-    flexDirection: 'column',
-    whiteSpace: 'pre-wrap',
   },
 }

@@ -2,15 +2,19 @@
  * Root application component.
  *
  * Layout:
- *   ┌─────────────────────────────────────┐
- *   │  header: SciStack + db name         │
- *   ├─────────────────────────────────────┤
- *   │  PipelineDAG (fills remaining space)│
- *   └─────────────────────────────────────┘
+ *   ┌─────────────────────────────────────────────┐
+ *   │  header: SciStack + db name                 │
+ *   ├───────────────────────────────┬─────────────┤
+ *   │  PipelineDAG (left 3/4)       │  sidebar    │
+ *   │                               │  (right 1/4)│
+ *   └───────────────────────────────┴─────────────┘
  */
 
 import { useEffect, useState } from 'react'
+import { ReactFlowProvider } from '@xyflow/react'
 import PipelineDAG from './components/DAG/PipelineDAG'
+import Sidebar from './components/Sidebar/Sidebar'
+import { RunLogProvider } from './context/RunLogContext'
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
@@ -46,9 +50,22 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.6,
     fontSize: 12,
   },
-  dagArea: {
+  body: {
+    display: 'flex',
+    flexDirection: 'row',
     flex: 1,
-    minHeight: 0,   // important: lets the flex child shrink below its content size
+    minHeight: 0,
+  },
+  dagArea: {
+    flex: 3,
+    minWidth: 0,
+    minHeight: 0,
+  },
+  sidebar: {
+    flex: 1,
+    minWidth: 0,
+    borderLeft: '1px solid #2a2a4a',
+    background: '#12122a',
   },
 }
 
@@ -68,6 +85,7 @@ export default function App() {
   }, [])
 
   return (
+    <RunLogProvider>
     <div style={styles.root}>
       <header style={styles.header}>
         <span style={styles.title}>SciStack</span>
@@ -79,9 +97,17 @@ export default function App() {
           </span>
         )}
       </header>
-      <div style={styles.dagArea}>
-        <PipelineDAG />
+      <div style={styles.body}>
+        <div style={styles.dagArea}>
+          <ReactFlowProvider>
+            <PipelineDAG />
+          </ReactFlowProvider>
+        </div>
+        <div style={styles.sidebar}>
+          <Sidebar />
+        </div>
       </div>
     </div>
+    </RunLogProvider>
   )
 }
