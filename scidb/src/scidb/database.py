@@ -398,6 +398,15 @@ def configure_database(
     except ImportError:
         pass
 
+    # Set log file path next to the database file
+    from .log import Log
+    log_path = Path(dataset_db_path).parent / "scidb.log"
+    Log.set_path(str(log_path))
+    Log.info(
+        f"configure_database: path={dataset_db_path}, "
+        f"schema_keys={list(dataset_schema_keys)}"
+    )
+
     return db
 
 

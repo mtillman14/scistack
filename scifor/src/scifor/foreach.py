@@ -142,6 +142,11 @@ def for_each(
     print(f"  for_each({fn_name}) — {total} iteration{'s' if total != 1 else ''}")
     print(f"  {meta_summary}")
     print(f"{'=' * 64}")
+    if _log_fn is not None:
+        _log_fn("=" * 64)
+        _log_fn(f"for_each({fn_name}) — {total} iteration{'s' if total != 1 else ''}")
+        _log_fn(meta_summary)
+        _log_fn("=" * 64)
 
     # Detailed config: inputs
     print(f"  inputs: {_format_inputs(inputs)}")
@@ -260,8 +265,13 @@ def for_each(
         print(f"{'=' * 64}\n")
         return None
     else:
+        done_msg = f"for_each({fn_name}) done: completed={completed}, skipped={skipped}, total={total}"
         print(f"  done: completed={completed}, skipped={skipped}, total={total}")
         print(f"{'=' * 64}\n")
+        if _log_fn is not None:
+            _log_fn("─" * 64)
+            _log_fn(done_msg)
+            _log_fn("=" * 64)
         return _results_to_output_dataframe(collected_rows, resolved_output_names)
 
 

@@ -4,6 +4,8 @@ import json
 import warnings
 from typing import Any, Callable
 
+from .log import Log
+
 import scifor as _scifor
 from scifor import for_each as _scifor_for_each
 from scifor.pathinput import PathInput
@@ -140,7 +142,9 @@ def for_each(
         for key in needs_resolve:
             values = resolved_db.distinct_schema_values(key)
             if not values:
-                print(f"[warn] no values found for '{key}' in database, 0 iterations")
+                msg = f"no values found for '{key}' in database, 0 iterations"
+                print(f"[warn] {msg}")
+                Log.warn(msg)
             metadata_iterables[key] = values
 
     # Propagate schema keys to scifor so distribute and DataFrame detection work
@@ -198,8 +202,10 @@ def for_each(
             ]
             removed = len(raw_combos) - len(filtered)
             if removed > 0:
-                print(f"[info] filtered {removed} non-existent schema combinations "
-                      f"(from {len(raw_combos)} to {len(filtered)})")
+                msg = (f"filtered {removed} non-existent schema combinations "
+                       f"(from {len(raw_combos)} to {len(filtered)})")
+                print(f"[info] {msg}")
+                Log.info(msg)
             all_combos = filtered
 
     # Load all inputs into DataFrames (with __record_id and __branch_params)
@@ -358,6 +364,7 @@ def for_each(
         distribute=distribute,
         output_names=output_names,
         _all_combos=full_combos,
+        _log_fn=Log.info,
         **extended_metadata_iterables,
     )
 
@@ -910,22 +917,30 @@ def _save_results(
                     output_obj.save(output_value, **db_kwargs, **save_meta_for_output)
                     meta_str = ", ".join(f"{k}={v}" for k, v in save_meta_for_output.items()
                                          if not k.startswith("__"))
-                    print(f"[save] {meta_str}: {_output_name(output_obj)}")
+                    msg = f"[save] {meta_str}: {_output_name(output_obj)}"
+                    print(msg)
+                    Log.info(msg)
                 except Exception as e:
                     meta_str = ", ".join(f"{k}={v}" for k, v in save_meta_for_output.items()
                                          if not k.startswith("__"))
-                    print(f"[error] {meta_str}: failed to save {_output_name(output_obj)}: {e}")
+                    msg = f"[error] {meta_str}: failed to save {_output_name(output_obj)}: {e}"
+                    print(msg)
+                    Log.error(msg)
                 continue
             output_value = row[output_name]
             try:
                 output_obj.save(output_value, **db_kwargs, **save_metadata)
                 meta_str = ", ".join(f"{k}={v}" for k, v in save_metadata.items()
                                      if not k.startswith("__"))
-                print(f"[save] {meta_str}: {_output_name(output_obj)}")
+                msg = f"[save] {meta_str}: {_output_name(output_obj)}"
+                print(msg)
+                Log.info(msg)
             except Exception as e:
                 meta_str = ", ".join(f"{k}={v}" for k, v in save_metadata.items()
                                      if not k.startswith("__"))
-                print(f"[error] {meta_str}: failed to save {_output_name(output_obj)}: {e}")
+                msg = f"[error] {meta_str}: failed to save {_output_name(output_obj)}: {e}"
+                print(msg)
+                Log.error(msg)
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ Example:
 """
 
 from .database import configure_database, get_database, get_user_id
+from .log import Log
 from .exceptions import (
     AmbiguousParamError,
     AmbiguousVersionError,
@@ -58,6 +59,8 @@ __all__ = [
     "configure_database",
     "get_database",
     "get_user_id",
+    # Logging
+    "Log",
     # Batch execution
     "for_each",
     "Fixed",
