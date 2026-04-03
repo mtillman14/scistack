@@ -49,8 +49,10 @@ def _build_graph(db: DatabaseManager) -> dict:
     # function_name → set of (input_var_type, ...) tuples (for deduplicating edges)
     fn_inputs: dict[str, set] = defaultdict(set)
     fn_outputs: dict[str, set] = defaultdict(set)
-    # variable_type → list of variant dicts {constants, record_count}
-    var_variants: dict[str, list] = defaultdict(list)
+    # constant_name → {str(value): total_record_count}
+    const_counts: dict[str, dict] = defaultdict(lambda: defaultdict(int))
+    # constant_name → set of function names that use it
+    const_fns: dict[str, set] = defaultdict(set)
 
     for v in variants:
         fn = v["function_name"]
@@ -66,9 +68,9 @@ def _build_graph(db: DatabaseManager) -> dict:
             fn_inputs[fn].add(in_type)
         fn_outputs[fn].add(out)
 
-        # Record this variant on the output variable node (full constants for now;
-        # we'll trim to distinguishing-only keys below)
-        var_variants[out].append({"constants": constants, "record_count": count})
+        for k, val in constants.items():
+            const_counts[k][str(val)] += count
+            const_fns[k].add(fn)
 
     # Add any variables in the DB that weren't in any for_each run
     try:
@@ -78,23 +80,8 @@ def _build_graph(db: DatabaseManager) -> dict:
     except Exception:
         pass
 
-    # Get raw record counts for nodes that have no for_each variants
+    # Get raw record counts for each variable type
     record_counts = _get_record_counts(db, all_var_types)
-
-    # Trim variant constants to only the keys that differ across variants of
-    # the same variable type. Constants shared by all variants are noise.
-    for vtype, variant_list in var_variants.items():
-        if len(variant_list) <= 1:
-            continue
-        all_keys = set().union(*(v["constants"].keys() for v in variant_list))
-        # A key is distinguishing if its values differ across any two variants
-        distinguishing = {
-            k for k in all_keys
-            if len({str(v["constants"].get(k)) for v in variant_list}) > 1
-        }
-        for v in variant_list:
-            v["constants"] = {k: val for k, val in v["constants"].items()
-                              if k in distinguishing}
 
     # --- Build nodes ---
     nodes = []
@@ -106,9 +93,30 @@ def _build_graph(db: DatabaseManager) -> dict:
             "position": {"x": 0, "y": 0},   # overwritten by layout endpoint
             "data": {
                 "label": vtype,
-                "variants": var_variants.get(vtype, []),
                 "total_records": record_counts.get(vtype, 0),
             },
+        })
+
+    for const_name in sorted(const_counts.keys()):
+        values = [
+            {"value": val, "record_count": cnt}
+            for val, cnt in sorted(const_counts[const_name].items())
+        ]
+        nodes.append({
+            "id": f"const__{const_name}",
+            "type": "constantNode",
+            "position": {"x": 0, "y": 0},
+            "data": {"label": const_name, "values": values},
+        })
+
+    # Build per-function variant list for the settings panel.
+    fn_variants: dict[str, list] = defaultdict(list)
+    for v in variants:
+        fn_variants[v["function_name"]].append({
+            "constants": v["constants"],
+            "input_types": v["input_types"],
+            "output_type": v["output_type"],
+            "record_count": v["record_count"],
         })
 
     for fn in sorted(fn_inputs.keys()):
@@ -116,7 +124,7 @@ def _build_graph(db: DatabaseManager) -> dict:
             "id": f"fn__{fn}",
             "type": "functionNode",
             "position": {"x": 0, "y": 0},
-            "data": {"label": fn},
+            "data": {"label": fn, "variants": fn_variants.get(fn, [])},
         })
 
     # --- Build edges (deduplicated) ---
@@ -145,18 +153,43 @@ def _build_graph(db: DatabaseManager) -> dict:
                     "target": f"var__{out_type}",
                 })
 
+    for const_name, fns in const_fns.items():
+        for fn in fns:
+            key = (f"const__{const_name}", f"fn__{fn}")
+            if key not in seen_edges:
+                seen_edges.add(key)
+                edges.append({
+                    "id": f"e__{const_name}__{fn}",
+                    "source": f"const__{const_name}",
+                    "target": f"fn__{fn}",
+                })
+
     # Merge in manually-placed nodes that aren't already present from DB data.
     existing_ids = {n["id"] for n in nodes}
+    # Map (type, label) → canonical DB node ID so we can detect graduated nodes.
+    db_node_by_label: dict[tuple, str] = {
+        (n["type"], n["data"]["label"]): n["id"] for n in nodes
+    }
     for node_id, meta in layout_store.get_manual_nodes().items():
-        if node_id not in existing_ids:
-            nodes.append({
-                "id": node_id,
-                "type": meta["type"],
-                "position": {"x": 0, "y": 0},
-                "data": {"label": meta["label"],
-                         **({"variants": [], "total_records": 0}
-                            if meta["type"] == "variableNode" else {})},
-            })
+        if node_id in existing_ids:
+            continue
+        key = (meta["type"], meta["label"])
+        if key in db_node_by_label:
+            # Manual node has been run and now lives in the DB.  Transfer its
+            # saved position to the canonical ID and drop the manual entry so
+            # the node doesn't appear twice after a dag_updated refresh.
+            layout_store.graduate_manual_node(node_id, db_node_by_label[key])
+            continue
+        nodes.append({
+            "id": node_id,
+            "type": meta["type"],
+            "position": {"x": 0, "y": 0},
+            "data": {
+                "label": meta["label"],
+                **({"total_records": 0} if meta["type"] == "variableNode" else {}),
+                **({"values": []} if meta["type"] == "constantNode" else {}),
+            },
+        })
 
     return {"nodes": nodes, "edges": edges}
 

@@ -15,6 +15,7 @@ import { ReactFlowProvider } from '@xyflow/react'
 import PipelineDAG from './components/DAG/PipelineDAG'
 import Sidebar from './components/Sidebar/Sidebar'
 import { RunLogProvider } from './context/RunLogContext'
+import { SelectedNodeProvider } from './context/SelectedNodeContext'
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
@@ -86,6 +87,7 @@ export default function App() {
 
   return (
     <RunLogProvider>
+    <SelectedNodeProvider>
     <div style={styles.root}>
       <header style={styles.header}>
         <span style={styles.title}>SciStack</span>
@@ -97,17 +99,18 @@ export default function App() {
           </span>
         )}
       </header>
-      <div style={styles.body}>
-        <div style={styles.dagArea}>
-          <ReactFlowProvider>
+      <ReactFlowProvider>
+        <div style={styles.body}>
+          <div style={styles.dagArea}>
             <PipelineDAG />
-          </ReactFlowProvider>
+          </div>
+          <div style={styles.sidebar}>
+            <Sidebar />
+          </div>
         </div>
-        <div style={styles.sidebar}>
-          <Sidebar />
-        </div>
-      </div>
+      </ReactFlowProvider>
     </div>
+    </SelectedNodeProvider>
     </RunLogProvider>
   )
 }

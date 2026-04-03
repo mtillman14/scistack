@@ -28,20 +28,24 @@ import '@xyflow/react/dist/style.css'
 
 import VariableNode from './VariableNode'
 import FunctionNode from './FunctionNode'
+import ConstantNode from './ConstantNode'
 import { applyDagreLayout } from '../../layout'
 import { useWebSocket } from '../../hooks/useWebSocket'
+import { useSelectedNode } from '../../context/SelectedNodeContext'
 
 // Tell React Flow which React component to render for each node "type" string.
 // These match the "type" field we set in GET /api/pipeline.
 const nodeTypes = {
   variableNode: VariableNode,
   functionNode: FunctionNode,
+  constantNode: ConstantNode,
 }
 
 export default function PipelineDAG() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const { screenToFlowPosition } = useReactFlow()
+  const { selectedNode, setSelectedNode } = useSelectedNode()
 
   const fetchPipeline = useCallback(async () => {
     const [pipelineRes, layoutRes] = await Promise.all([
@@ -53,16 +57,19 @@ export default function PipelineDAG() {
     const savedPositions: Record<string, { x: number; y: number }> =
       layoutData.positions ?? layoutData  // handle both new and legacy format
 
-    // Initialise all variants as checked (selected for running).
-    const initialised = data.nodes.map((node: Node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        variants: ((node.data as { variants?: unknown[] }).variants ?? []).map(
-          (v: unknown) => ({ ...(v as object), checked: true })
-        ),
-      },
-    }))
+    // Initialise all constant values as checked (selected for running).
+    const initialised = data.nodes.map((node: Node) => {
+      if (node.type !== 'constantNode') return node
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          values: ((node.data as { values?: unknown[] }).values ?? []).map(
+            (v: unknown) => ({ ...(v as object), checked: true })
+          ),
+        },
+      }
+    })
 
     const laidOut = applyDagreLayout(initialised, data.edges, savedPositions)
     setNodes(laidOut)
@@ -77,6 +84,23 @@ export default function PipelineDAG() {
   useWebSocket(useCallback((msg) => {
     if (msg.type === 'dag_updated') fetchPipeline()
   }, [fetchPipeline]))
+
+  // Keep selectedNode data fresh after DAG refreshes.
+  useEffect(() => {
+    if (!selectedNode) return
+    const updated = nodes.find(n => n.id === selectedNode.id)
+    if (updated && updated !== selectedNode) setSelectedNode(updated)
+    else if (!updated) setSelectedNode(null)
+  }, [nodes])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onNodeClick = useCallback((_: unknown, node: Node) => {
+    if (node.type === 'functionNode' || node.type === 'constantNode') setSelectedNode(node)
+    else setSelectedNode(null)
+  }, [setSelectedNode])
+
+  const onPaneClick = useCallback(() => {
+    setSelectedNode(null)
+  }, [setSelectedNode])
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -100,9 +124,8 @@ export default function PipelineDAG() {
         position,
         data: {
           label,
-          ...(nodeType === 'variableNode'
-            ? { variants: [], total_records: 0 }
-            : {}),
+          ...(nodeType === 'variableNode' ? { total_records: 0 } : {}),
+          ...(nodeType === 'constantNode' ? { values: [] } : {}),
         },
       }
       return [...prev, newNode]
@@ -124,6 +147,12 @@ export default function PipelineDAG() {
     })
   }, [])
 
+  const onNodesDelete = useCallback((deleted: Node[]) => {
+    for (const node of deleted) {
+      fetch(`/api/layout/${encodeURIComponent(node.id)}`, { method: 'DELETE' })
+    }
+  }, [])
+
   return (
     <div
       style={{ width: '100%', height: '100%' }}
@@ -136,6 +165,9 @@ export default function PipelineDAG() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDragStop={onNodeDragStop}
+        onNodesDelete={onNodesDelete}
+        onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}

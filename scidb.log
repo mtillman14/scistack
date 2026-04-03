@@ -133,3 +133,239 @@
 [21:59:26.019] [INFO] [save] subject=S03: MaxVO2
 [21:59:26.026] [INFO] [save] subject=S03: MaxVO2
 [22:09:43.317] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[22:15:39.994] [INFO] ================================================================
+[22:15:39.994] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:15:39.994] [INFO] subject=[3 values]
+[22:15:39.994] [INFO] ================================================================
+[22:15:39.994] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:15:39.995] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:15:39.995] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:15:39.995] [INFO] ────────────────────────────────────────────────────────────────
+[22:15:39.995] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:15:39.995] [INFO] ================================================================
+[22:15:40.005] [INFO] [save] subject=S01: MaxHeartRate
+[22:15:40.013] [INFO] [save] subject=S02: MaxHeartRate
+[22:15:40.021] [INFO] [save] subject=S03: MaxHeartRate
+[22:15:41.600] [INFO] ================================================================
+[22:15:41.600] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:15:41.600] [INFO] subject=[3 values]
+[22:15:41.600] [INFO] ================================================================
+[22:15:41.600] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:15:41.601] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:15:41.601] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:15:41.601] [INFO] ────────────────────────────────────────────────────────────────
+[22:15:41.601] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:15:41.601] [INFO] ================================================================
+[22:15:41.614] [INFO] [save] subject=S01: MaxHeartRate
+[22:15:41.622] [INFO] [save] subject=S02: MaxHeartRate
+[22:15:41.630] [INFO] [save] subject=S03: MaxHeartRate
+[22:15:42.329] [INFO] ================================================================
+[22:15:42.329] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:15:42.329] [INFO] subject=[3 values]
+[22:15:42.330] [INFO] ================================================================
+[22:15:42.330] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:15:42.330] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:15:42.330] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:15:42.330] [INFO] ────────────────────────────────────────────────────────────────
+[22:15:42.330] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:15:42.330] [INFO] ================================================================
+[22:15:42.339] [INFO] [save] subject=S01: MaxHeartRate
+[22:15:42.346] [INFO] [save] subject=S02: MaxHeartRate
+[22:15:42.355] [INFO] [save] subject=S03: MaxHeartRate
+[22:15:50.453] [INFO] ================================================================
+[22:15:50.453] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:15:50.453] [INFO] subject=[3 values]
+[22:15:50.453] [INFO] ================================================================
+[22:15:50.454] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:15:50.454] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:15:50.454] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:15:50.454] [INFO] ────────────────────────────────────────────────────────────────
+[22:15:50.454] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:15:50.454] [INFO] ================================================================
+[22:15:50.463] [INFO] [save] subject=S01: MaxHeartRate
+[22:15:50.472] [INFO] [save] subject=S02: MaxHeartRate
+[22:15:50.480] [INFO] [save] subject=S03: MaxHeartRate
+[22:16:22.373] [INFO] ================================================================
+[22:16:22.373] [INFO] for_each(compute_max_vo2) — 6 iterations
+[22:16:22.373] [INFO] subject=[3 values]
+[22:16:22.373] [INFO] ================================================================
+[22:16:22.373] [INFO] [run] subject=S01, __rid_rolling_vo2=61886588051b1001: compute_max_vo2(rolling_vo2)
+[22:16:22.374] [INFO] [run] subject=S01, __rid_rolling_vo2=a1ce5aab0fa68ca7: compute_max_vo2(rolling_vo2)
+[22:16:22.374] [INFO] [run] subject=S02, __rid_rolling_vo2=01b8d012afc35c34: compute_max_vo2(rolling_vo2)
+[22:16:22.374] [INFO] [run] subject=S02, __rid_rolling_vo2=6c0f5a2f7286dfc9: compute_max_vo2(rolling_vo2)
+[22:16:22.374] [INFO] [run] subject=S03, __rid_rolling_vo2=f8d9082ddf82a1c2: compute_max_vo2(rolling_vo2)
+[22:16:22.375] [INFO] [run] subject=S03, __rid_rolling_vo2=c7c1f2a6a8677d17: compute_max_vo2(rolling_vo2)
+[22:16:22.375] [INFO] ────────────────────────────────────────────────────────────────
+[22:16:22.375] [INFO] for_each(compute_max_vo2) done: completed=6, skipped=0, total=6
+[22:16:22.375] [INFO] ================================================================
+[22:16:22.386] [INFO] [save] subject=S01: MaxVO2
+[22:16:22.394] [INFO] [save] subject=S01: MaxVO2
+[22:16:22.402] [INFO] [save] subject=S02: MaxVO2
+[22:16:22.410] [INFO] [save] subject=S02: MaxVO2
+[22:16:22.418] [INFO] [save] subject=S03: MaxVO2
+[22:16:22.427] [INFO] [save] subject=S03: MaxVO2
+[22:16:23.553] [INFO] ================================================================
+[22:16:23.553] [INFO] for_each(compute_rolling_vo2) — 3 iterations
+[22:16:23.553] [INFO] subject=[3 values]
+[22:16:23.553] [INFO] ================================================================
+[22:16:23.554] [INFO] [run] subject=S01, __rid_signal=bb8b159779579e7f: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:16:23.554] [INFO] [run] subject=S02, __rid_signal=72a8685950ef8710: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:16:23.555] [INFO] [run] subject=S03, __rid_signal=95784fc090555401: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:16:23.555] [INFO] ────────────────────────────────────────────────────────────────
+[22:16:23.555] [INFO] for_each(compute_rolling_vo2) done: completed=3, skipped=0, total=3
+[22:16:23.555] [INFO] ================================================================
+[22:16:23.567] [INFO] [save] subject=S01, sample_interval=5, window_seconds=30: RollingVO2
+[22:16:23.577] [INFO] [save] subject=S02, sample_interval=5, window_seconds=30: RollingVO2
+[22:16:23.587] [INFO] [save] subject=S03, sample_interval=5, window_seconds=30: RollingVO2
+[22:16:23.592] [INFO] ================================================================
+[22:16:23.592] [INFO] for_each(compute_rolling_vo2) — 3 iterations
+[22:16:23.592] [INFO] subject=[3 values]
+[22:16:23.592] [INFO] ================================================================
+[22:16:23.593] [INFO] [run] subject=S01, __rid_signal=bb8b159779579e7f: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:16:23.593] [INFO] [run] subject=S02, __rid_signal=72a8685950ef8710: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:16:23.594] [INFO] [run] subject=S03, __rid_signal=95784fc090555401: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:16:23.594] [INFO] ────────────────────────────────────────────────────────────────
+[22:16:23.594] [INFO] for_each(compute_rolling_vo2) done: completed=3, skipped=0, total=3
+[22:16:23.594] [INFO] ================================================================
+[22:16:23.601] [INFO] [save] subject=S01, sample_interval=5, window_seconds=60: RollingVO2
+[22:16:23.611] [INFO] [save] subject=S02, sample_interval=5, window_seconds=60: RollingVO2
+[22:16:23.619] [INFO] [save] subject=S03, sample_interval=5, window_seconds=60: RollingVO2
+[22:17:55.433] [INFO] ================================================================
+[22:17:55.434] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:17:55.434] [INFO] subject=[3 values]
+[22:17:55.434] [INFO] ================================================================
+[22:17:55.434] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:17:55.434] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:17:55.435] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:17:55.435] [INFO] ────────────────────────────────────────────────────────────────
+[22:17:55.435] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:17:55.435] [INFO] ================================================================
+[22:17:55.444] [INFO] [save] subject=S01: MaxHeartRate
+[22:17:55.455] [INFO] [save] subject=S02: MaxHeartRate
+[22:17:55.464] [INFO] [save] subject=S03: MaxHeartRate
+[22:18:17.144] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[22:18:28.871] [INFO] ================================================================
+[22:18:28.871] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:18:28.871] [INFO] subject=[3 values]
+[22:18:28.871] [INFO] ================================================================
+[22:18:28.872] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:18:28.872] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:18:28.873] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:18:28.873] [INFO] ────────────────────────────────────────────────────────────────
+[22:18:28.873] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:18:28.873] [INFO] ================================================================
+[22:18:28.884] [INFO] [save] subject=S01: MaxHeartRate
+[22:18:28.893] [INFO] [save] subject=S02: MaxHeartRate
+[22:18:28.900] [INFO] [save] subject=S03: MaxHeartRate
+[22:20:18.427] [INFO] ================================================================
+[22:20:18.427] [INFO] for_each(compute_rolling_vo2) — 3 iterations
+[22:20:18.427] [INFO] subject=[3 values]
+[22:20:18.427] [INFO] ================================================================
+[22:20:18.428] [INFO] [run] subject=S01, __rid_signal=bb8b159779579e7f: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:20:18.428] [INFO] [run] subject=S02, __rid_signal=72a8685950ef8710: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:20:18.429] [INFO] [run] subject=S03, __rid_signal=95784fc090555401: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:20:18.429] [INFO] ────────────────────────────────────────────────────────────────
+[22:20:18.429] [INFO] for_each(compute_rolling_vo2) done: completed=3, skipped=0, total=3
+[22:20:18.429] [INFO] ================================================================
+[22:20:18.439] [INFO] [save] subject=S01, sample_interval=5, window_seconds=30: RollingVO2
+[22:20:18.448] [INFO] [save] subject=S02, sample_interval=5, window_seconds=30: RollingVO2
+[22:20:18.456] [INFO] [save] subject=S03, sample_interval=5, window_seconds=30: RollingVO2
+[22:20:18.462] [INFO] ================================================================
+[22:20:18.462] [INFO] for_each(compute_rolling_vo2) — 3 iterations
+[22:20:18.462] [INFO] subject=[3 values]
+[22:20:18.462] [INFO] ================================================================
+[22:20:18.463] [INFO] [run] subject=S01, __rid_signal=bb8b159779579e7f: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:20:18.463] [INFO] [run] subject=S02, __rid_signal=72a8685950ef8710: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:20:18.464] [INFO] [run] subject=S03, __rid_signal=95784fc090555401: compute_rolling_vo2(signal, sample_interval, window_seconds)
+[22:20:18.464] [INFO] ────────────────────────────────────────────────────────────────
+[22:20:18.464] [INFO] for_each(compute_rolling_vo2) done: completed=3, skipped=0, total=3
+[22:20:18.464] [INFO] ================================================================
+[22:20:18.474] [INFO] [save] subject=S01, sample_interval=5, window_seconds=60: RollingVO2
+[22:20:18.483] [INFO] [save] subject=S02, sample_interval=5, window_seconds=60: RollingVO2
+[22:20:18.491] [INFO] [save] subject=S03, sample_interval=5, window_seconds=60: RollingVO2
+[22:20:20.452] [INFO] ================================================================
+[22:20:20.452] [INFO] for_each(compute_max_vo2) — 6 iterations
+[22:20:20.452] [INFO] subject=[3 values]
+[22:20:20.452] [INFO] ================================================================
+[22:20:20.452] [INFO] [run] subject=S01, __rid_rolling_vo2=61886588051b1001: compute_max_vo2(rolling_vo2)
+[22:20:20.452] [INFO] [run] subject=S01, __rid_rolling_vo2=a1ce5aab0fa68ca7: compute_max_vo2(rolling_vo2)
+[22:20:20.453] [INFO] [run] subject=S02, __rid_rolling_vo2=01b8d012afc35c34: compute_max_vo2(rolling_vo2)
+[22:20:20.453] [INFO] [run] subject=S02, __rid_rolling_vo2=6c0f5a2f7286dfc9: compute_max_vo2(rolling_vo2)
+[22:20:20.453] [INFO] [run] subject=S03, __rid_rolling_vo2=f8d9082ddf82a1c2: compute_max_vo2(rolling_vo2)
+[22:20:20.454] [INFO] [run] subject=S03, __rid_rolling_vo2=c7c1f2a6a8677d17: compute_max_vo2(rolling_vo2)
+[22:20:20.454] [INFO] ────────────────────────────────────────────────────────────────
+[22:20:20.454] [INFO] for_each(compute_max_vo2) done: completed=6, skipped=0, total=6
+[22:20:20.454] [INFO] ================================================================
+[22:20:20.464] [INFO] [save] subject=S01: MaxVO2
+[22:20:20.473] [INFO] [save] subject=S01: MaxVO2
+[22:20:20.481] [INFO] [save] subject=S02: MaxVO2
+[22:20:20.489] [INFO] [save] subject=S02: MaxVO2
+[22:20:20.497] [INFO] [save] subject=S03: MaxVO2
+[22:20:20.505] [INFO] [save] subject=S03: MaxVO2
+[22:20:27.650] [INFO] ================================================================
+[22:20:27.650] [INFO] for_each(compute_max_vo2) — 6 iterations
+[22:20:27.650] [INFO] subject=[3 values]
+[22:20:27.650] [INFO] ================================================================
+[22:20:27.651] [INFO] [run] subject=S01, __rid_rolling_vo2=61886588051b1001: compute_max_vo2(rolling_vo2)
+[22:20:27.651] [INFO] [run] subject=S01, __rid_rolling_vo2=a1ce5aab0fa68ca7: compute_max_vo2(rolling_vo2)
+[22:20:27.652] [INFO] [run] subject=S02, __rid_rolling_vo2=01b8d012afc35c34: compute_max_vo2(rolling_vo2)
+[22:20:27.652] [INFO] [run] subject=S02, __rid_rolling_vo2=6c0f5a2f7286dfc9: compute_max_vo2(rolling_vo2)
+[22:20:27.653] [INFO] [run] subject=S03, __rid_rolling_vo2=f8d9082ddf82a1c2: compute_max_vo2(rolling_vo2)
+[22:20:27.653] [INFO] [run] subject=S03, __rid_rolling_vo2=c7c1f2a6a8677d17: compute_max_vo2(rolling_vo2)
+[22:20:27.653] [INFO] ────────────────────────────────────────────────────────────────
+[22:20:27.653] [INFO] for_each(compute_max_vo2) done: completed=6, skipped=0, total=6
+[22:20:27.653] [INFO] ================================================================
+[22:20:27.663] [INFO] [save] subject=S01: MaxVO2
+[22:20:27.672] [INFO] [save] subject=S01: MaxVO2
+[22:20:27.680] [INFO] [save] subject=S02: MaxVO2
+[22:20:27.688] [INFO] [save] subject=S02: MaxVO2
+[22:20:27.695] [INFO] [save] subject=S03: MaxVO2
+[22:20:27.702] [INFO] [save] subject=S03: MaxVO2
+[22:20:50.822] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[22:23:21.532] [INFO] ================================================================
+[22:23:21.532] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:23:21.532] [INFO] subject=[3 values]
+[22:23:21.532] [INFO] ================================================================
+[22:23:21.532] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:23:21.533] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:23:21.533] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:23:21.533] [INFO] ────────────────────────────────────────────────────────────────
+[22:23:21.533] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:23:21.533] [INFO] ================================================================
+[22:23:21.545] [INFO] [save] subject=S01: MaxHeartRate
+[22:23:21.553] [INFO] [save] subject=S02: MaxHeartRate
+[22:23:21.561] [INFO] [save] subject=S03: MaxHeartRate
+[22:23:24.938] [INFO] ================================================================
+[22:23:24.938] [INFO] for_each(compute_max_hr) — 3 iterations
+[22:23:24.938] [INFO] subject=[3 values]
+[22:23:24.938] [INFO] ================================================================
+[22:23:24.939] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[22:23:24.939] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[22:23:24.940] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[22:23:24.940] [INFO] ────────────────────────────────────────────────────────────────
+[22:23:24.940] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[22:23:24.940] [INFO] ================================================================
+[22:23:24.951] [INFO] [save] subject=S01: MaxHeartRate
+[22:23:24.960] [INFO] [save] subject=S02: MaxHeartRate
+[22:23:24.968] [INFO] [save] subject=S03: MaxHeartRate
+[22:23:31.663] [INFO] ================================================================
+[22:23:31.663] [INFO] for_each(compute_max_vo2) — 6 iterations
+[22:23:31.663] [INFO] subject=[3 values]
+[22:23:31.663] [INFO] ================================================================
+[22:23:31.663] [INFO] [run] subject=S01, __rid_rolling_vo2=61886588051b1001: compute_max_vo2(rolling_vo2)
+[22:23:31.664] [INFO] [run] subject=S01, __rid_rolling_vo2=a1ce5aab0fa68ca7: compute_max_vo2(rolling_vo2)
+[22:23:31.664] [INFO] [run] subject=S02, __rid_rolling_vo2=01b8d012afc35c34: compute_max_vo2(rolling_vo2)
+[22:23:31.664] [INFO] [run] subject=S02, __rid_rolling_vo2=6c0f5a2f7286dfc9: compute_max_vo2(rolling_vo2)
+[22:23:31.665] [INFO] [run] subject=S03, __rid_rolling_vo2=f8d9082ddf82a1c2: compute_max_vo2(rolling_vo2)
+[22:23:31.665] [INFO] [run] subject=S03, __rid_rolling_vo2=c7c1f2a6a8677d17: compute_max_vo2(rolling_vo2)
+[22:23:31.665] [INFO] ────────────────────────────────────────────────────────────────
+[22:23:31.665] [INFO] for_each(compute_max_vo2) done: completed=6, skipped=0, total=6
+[22:23:31.665] [INFO] ================================================================
+[22:23:31.675] [INFO] [save] subject=S01: MaxVO2
+[22:23:31.683] [INFO] [save] subject=S01: MaxVO2
+[22:23:31.691] [INFO] [save] subject=S02: MaxVO2
+[22:23:31.700] [INFO] [save] subject=S02: MaxVO2
+[22:23:31.707] [INFO] [save] subject=S03: MaxVO2
+[22:23:31.715] [INFO] [save] subject=S03: MaxVO2
+[22:34:20.333] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[22:42:32.843] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']

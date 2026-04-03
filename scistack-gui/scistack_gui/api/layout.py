@@ -8,6 +8,9 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from scistack_gui import layout as layout_store
 
+class ConstantCreate(BaseModel):
+    name: str
+
 router = APIRouter()
 
 
@@ -31,4 +34,27 @@ def put_layout(node_id: str, body: PositionUpdate):
                                        body.node_type, body.label)
     else:
         layout_store.write_node_position(node_id, body.x, body.y)
+    return {"ok": True}
+
+
+@router.delete("/layout/{node_id}")
+def delete_layout(node_id: str):
+    layout_store.delete_node(node_id)
+    return {"ok": True}
+
+
+@router.get("/constants")
+def get_constants() -> list[str]:
+    return layout_store.read_constants()
+
+
+@router.post("/constants")
+def post_constant(body: ConstantCreate):
+    layout_store.write_constant(body.name)
+    return {"ok": True}
+
+
+@router.delete("/constants/{name}")
+def delete_constant(name: str):
+    layout_store.delete_constant(name)
     return {"ok": True}
