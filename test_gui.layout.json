@@ -1,8 +1,8 @@
 {
   "positions": {
     "fn__compute_rolling_vo2": {
-      "x": 390.59117402164867,
-      "y": 203.41382181515405
+      "x": 364.5380168205652,
+      "y": 184.2800108984949
     },
     "var__RollingVO2": {
       "x": 629.4421315570359,
@@ -29,15 +29,36 @@
       "y": 3.3971690258118237
     },
     "fn__compute_max_vo2": {
-      "x": 898.8676103247294,
-      "y": 201.23646960865943
+      "x": 883.2073743709274,
+      "y": 177.5875030591354
     },
     "var__MaxVO2": {
       "x": 1166.0283097418817,
       "y": 208.0308076602831
+    },
+    "const__window_seconds": {
+      "x": -3.3462539196797536,
+      "y": 267.70031357438046
+    },
+    "fn__compute_max_vo2__5q273i": {
+      "x": 935.6320191125768,
+      "y": -139.19120133721484
     }
   },
-  "manual_nodes": {},
+  "manual_nodes": {
+    "fn__compute_rolling_vo2": {
+      "type": "functionNode",
+      "label": "compute_rolling_vo2"
+    },
+    "fn__compute_max_vo2": {
+      "type": "functionNode",
+      "label": "compute_max_vo2"
+    },
+    "fn__compute_max_vo2__5q273i": {
+      "type": "functionNode",
+      "label": "compute_max_vo2"
+    }
+  },
   "constants": [],
   "manual_edges": []
 }

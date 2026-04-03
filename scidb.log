@@ -374,3 +374,6 @@
 [23:36:07.163] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
 [23:41:26.357] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
 [23:52:37.213] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[00:00:36.172] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[08:30:02.379] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[08:42:52.647] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']

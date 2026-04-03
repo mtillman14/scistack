@@ -116,7 +116,7 @@ export default function PipelineDAG() {
     const { nodeType, label } = JSON.parse(raw) as { nodeType: string; label: string }
 
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-    const prefix = nodeType === 'functionNode' ? 'fn' : 'var'
+    const prefix = nodeType === 'functionNode' ? 'fn' : nodeType === 'constantNode' ? 'const' : 'var'
     const nodeId = `${prefix}__${label}__${Math.random().toString(36).slice(2, 8)}`
 
     setNodes(prev => {

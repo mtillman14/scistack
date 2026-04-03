@@ -220,16 +220,24 @@ def _build_graph(db: DatabaseManager) -> dict:
     db_node_by_label: dict[tuple, str] = {
         (n["type"], n["data"]["label"]): n["id"] for n in nodes
     }
+    # Snapshot positions once so we can tell whether a canonical node was already
+    # an established canvas node before this refresh.
+    saved_positions = layout_store.read_layout()["positions"]
     for node_id, meta in layout_store.get_manual_nodes().items():
         if node_id in existing_ids:
             continue
         key = (meta["type"], meta["label"])
         if key in db_node_by_label:
-            # Manual node has been run and now lives in the DB.  Transfer its
-            # saved position to the canonical ID and drop the manual entry so
-            # the node doesn't appear twice after a dag_updated refresh.
-            layout_store.graduate_manual_node(node_id, db_node_by_label[key])
-            continue
+            canonical_id = db_node_by_label[key]
+            # Only graduate (transfer position → canonical, remove manual entry)
+            # when the canonical node has NO saved position yet — meaning it just
+            # appeared in the DB for the first time and this manual node was its
+            # placeholder.  If the canonical node already has a saved position the
+            # user intentionally placed an extra instance; keep it on the canvas.
+            if canonical_id not in saved_positions:
+                layout_store.graduate_manual_node(node_id, canonical_id)
+                continue
+            # Intentional extra instance — fall through to add it to the canvas.
         fn_label = meta["label"]
         extra: dict = {}
         if meta["type"] == "variableNode":
