@@ -146,11 +146,17 @@ def _check_via_lineage(fn, db, output_record_id: str, stored_hash: str,
 
 def _check_via_fn_hash(fn, db, output_record_id: str, output_timestamp: str | None,
                         schema_combo: dict, combo_str: str) -> ComboState:
-    """Staleness check using __fn_hash from version_keys + timestamp for inputs.
+    """Staleness check using __fn_hash from version_keys + record_id/timestamp for inputs.
 
     Used when the output was saved via scidb.for_each (no lineage record).
-    Timestamps are used only for input freshness — the minimum unavoidable
-    fallback when exact input record_ids are not available.
+
+    Input freshness priority:
+    1. __upstream record_ids (preferred): exact record_id comparison per variant,
+       avoids false "stale" when new records are added for a *different* constant
+       variant of the same input type.
+    2. Timestamp comparison (fallback): used only when __upstream is absent.
+       This is less precise — it compares against the MAX timestamp across ALL
+       records of the input type at the schema_id, regardless of variant.
     """
     from scidb.foreach_config import _compute_fn_hash
 
@@ -180,17 +186,39 @@ def _check_via_fn_hash(fn, db, output_record_id: str, output_timestamp: str | No
             logger.debug("stale: %s — function hash changed (__fn_hash)", combo_str)
             return "stale"
 
-    # b. Input freshness via timestamp comparison.
+    # b. Input freshness via __upstream record_ids (preferred path).
+    # __upstream stores the exact record_ids of the inputs that were used.
+    # get_latest_record_id_for_variant checks whether a newer record now exists
+    # for the same (variable_name, schema_id, version_keys) — i.e., the same
+    # variant.  This is variant-precise: records added for a different constant
+    # variant of the same type do not trigger staleness here.
+    upstream_raw = vk.get("__upstream")
+    if upstream_raw:
+        upstream: dict = json.loads(upstream_raw) if isinstance(upstream_raw, str) else (upstream_raw or {})
+        for rid_col, used_rid in upstream.items():
+            if not used_rid:
+                continue
+            current_rid = db.get_latest_record_id_for_variant(used_rid)
+            if current_rid != used_rid:
+                logger.debug(
+                    "stale: %s — upstream %s updated (was %s, now %s)",
+                    combo_str, rid_col, used_rid, current_rid,
+                )
+                return "stale"
+        logger.debug("up_to_date: %s (__fn_hash + __upstream record_ids)", combo_str)
+        return "up_to_date"
+
+    # c. Fallback: timestamp comparison when __upstream is absent.
     # For each input variable type referenced in __inputs, find the latest
     # record at the same schema_id. If that record was saved after the output,
-    # the output is stale.
+    # the output is stale.  Note: this is variant-unaware and may produce false
+    # positives when multiple variants of the same input type exist.
     if output_timestamp is None:
         logger.debug("up_to_date (unverified): %s — no output timestamp available", combo_str)
         return "up_to_date"
 
     inputs_raw = vk.get("__inputs", "{}")
     input_types_map: dict = json.loads(inputs_raw) if isinstance(inputs_raw, str) else {}
-    # input_types_map: param_name → type_name
 
     schema_id_rows = db._duck._fetchall(
         "SELECT schema_id FROM _record_metadata WHERE record_id = ? LIMIT 1",
@@ -265,12 +293,19 @@ def check_node_state(
     # --- Actual combos: output records produced by this function ---
     output_combos = _get_output_combos(db, fn_name, outputs)
 
-    # --- Expected combos: schema_ids from input variables ---
-    expected_schema_ids = _get_expected_schema_ids(db, fn_name)
+    # --- Expected combos: (schema_id, branch_params) from input variables ---
+    # Using full branch_params (not just schema_id) so that a new upstream
+    # variant (e.g. window_seconds=90 added after the function was last run)
+    # is detected as missing even when all schema_ids are already covered by
+    # other variants.
+    expected_combos = _get_expected_combos(db, fn_name)
 
     # --- Determine missing combos ---
-    actual_schema_ids = {c["schema_id"] for c in output_combos}
-    missing_schema_ids = expected_schema_ids - actual_schema_ids
+    actual_combo_keys = {
+        (c["schema_id"], json.dumps(c["branch_params"], sort_keys=True))
+        for c in output_combos
+    }
+    missing_combo_keys = expected_combos - actual_combo_keys
 
     # --- Check each actual combo ---
     counts: dict[str, int] = {"up_to_date": 0, "stale": 0, "missing": 0}
@@ -287,12 +322,13 @@ def check_node_state(
             "state": state,
         })
 
-    for schema_id in missing_schema_ids:
+    for schema_id, bp_json in missing_combo_keys:
         schema_combo = _schema_id_to_combo(db, schema_id)
+        bp = json.loads(bp_json)
         counts["missing"] += 1
         combo_results.append({
             "schema_combo": schema_combo,
-            "branch_params": {},
+            "branch_params": bp,
             "state": "missing",
         })
 
@@ -359,28 +395,33 @@ def _get_output_combos(db, fn_name: str, outputs: list[type]) -> list[dict]:
     return result
 
 
-def _get_expected_schema_ids(db, fn_name: str) -> set:
-    """Return the set of schema_ids that should have been processed by fn_name.
+def _get_expected_combos(db, fn_name: str) -> set[tuple]:
+    """Return the set of (schema_id, branch_params_json) combos that should have
+    been produced by fn_name.
 
-    For each variant of fn_name (from list_pipeline_variants), query its input
-    variable types filtered by the upstream constants, then union the results.
+    For each variant of fn_name, queries its input variable types to find all
+    (schema_id, input_branch_params) combinations that exist in the DB.  The
+    expected output branch_params = input_branch_params + fn's own constants
+    (namespaced as ``fn_name.param``), which is how scidb.for_each builds them.
+
+    Using (schema_id, branch_params) rather than schema_id alone lets us detect
+    when a new upstream variant (e.g. a new constant value) exists in the inputs
+    but hasn't been processed by fn_name yet, even if all schema_ids are already
+    covered by other variants.
     """
     variants = [v for v in db.list_pipeline_variants() if v["function_name"] == fn_name]
     if not variants:
         return set()
 
-    expected: set = set()
+    expected: set[tuple] = set()
     fn_prefix = f"{fn_name}."
 
     for variant in variants:
         input_types: dict = variant["input_types"]    # param_name → type_name
-        constants: dict = variant["constants"]
+        own_constants: dict = variant["constants"]    # un-namespaced direct constants
 
-        # Only the constants that belong to upstream steps.
-        filter_constants = {
-            k: v for k, v in constants.items()
-            if not k.startswith(fn_prefix)
-        }
+        # Namespaced own constants as they appear in the output's branch_params.
+        namespaced_own = {f"{fn_prefix}{k}": v for k, v in own_constants.items()}
 
         for itype in input_types.values():
             rows = db._duck._fetchall(
@@ -389,9 +430,10 @@ def _get_expected_schema_ids(db, fn_name: str) -> set:
                 [itype],
             )
             for schema_id, bp_raw in rows:
-                bp = json.loads(bp_raw or "{}") if bp_raw else {}
-                if all(str(bp.get(k)) == str(v) for k, v in filter_constants.items()):
-                    expected.add(schema_id)
+                input_bp = json.loads(bp_raw or "{}") if bp_raw else {}
+                # Expected output bp = input bp merged with own namespaced constants.
+                expected_bp = {**input_bp, **namespaced_own}
+                expected.add((schema_id, json.dumps(expected_bp, sort_keys=True)))
 
     return expected
 
