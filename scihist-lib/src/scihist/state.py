@@ -74,15 +74,14 @@ def check_combo_state(
 
     combo_str = _combo_str(schema_combo, branch_params)
 
-    # Metadata passed to find_record_id: schema keys + branch_params for
-    # variant disambiguation.
-    lookup_meta = {**schema_combo, **(branch_params or {})}
-
     # Step 1: all outputs must have a record for this combo.
+    # Pass branch_params separately so namespaced keys (e.g. "fn.param") go
+    # through the suffix-matching path rather than the version_keys filter,
+    # which would fail because version_keys stores un-namespaced param names.
     output_record_id = None
     output_timestamp = None
     for OutputCls in outputs:
-        rid = db.find_record_id(OutputCls, lookup_meta)
+        rid = db.find_record_id(OutputCls, schema_combo, branch_params_filter=branch_params or None)
         if rid is None:
             logger.debug("missing: %s — no output record for %s", combo_str, OutputCls.__name__)
             return "missing"

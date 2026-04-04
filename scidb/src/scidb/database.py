@@ -2548,15 +2548,34 @@ class DatabaseManager:
         )
         return len(rows) > 0 and bool(rows[0][0])
 
-    def find_record_id(self, variable_class: type, metadata: dict) -> str | None:
+    def find_record_id(
+        self,
+        variable_class: type,
+        metadata: dict,
+        branch_params_filter: dict | None = None,
+    ) -> str | None:
         """Lightweight lookup returning the record_id of the latest record for
         a variable + metadata combination, without loading any data.
+
+        Args:
+            variable_class: The BaseVariable subclass to look up.
+            metadata: Flat dict of schema keys (and optionally version keys).
+            branch_params_filter: Optional namespaced branch_params dict
+                (e.g. ``{"bandpass_filter.low_hz": 20}``) used for variant
+                disambiguation via suffix matching.  Do NOT merge these into
+                ``metadata`` — they must go through the branch_params path so
+                that namespaced keys like ``fn.param`` match their un-namespaced
+                counterparts stored in ``version_keys``.
 
         Returns None if no matching record exists.
         """
         nested = self._split_metadata(metadata)
-        rows = self._find_record(variable_class.__name__, nested_metadata=nested,
-                                 version_id="latest")
+        rows = self._find_record(
+            variable_class.__name__,
+            nested_metadata=nested,
+            version_id="latest",
+            branch_params_filter=branch_params_filter or None,
+        )
         if rows.empty:
             return None
         return rows.iloc[0]["record_id"]

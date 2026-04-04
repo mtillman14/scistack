@@ -1,9 +1,6 @@
-from scidb import configure_database
-import json
-
-# Look at what get_pipeline_structure returns
-import inspect
-import scidb
-db = configure_database('test_gui.duckdb', ['subject', 'session'])
-print(type(db))
-print([m for m in dir(db) if not m.startswith('_')])
+import duckdb                                                                                                                                                       
+con = duckdb.connect("test_gui.duckdb")
+rows = con.execute("SELECT variable_name, version_keys FROM _record_metadata LIMIT 20").fetchall()                                                                    
+for r in rows:
+    print(r)                                                                                                                                                          
+con.close() 

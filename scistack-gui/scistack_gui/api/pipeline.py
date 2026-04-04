@@ -242,9 +242,9 @@ def _build_graph(db: DatabaseManager) -> dict:
             "label": vtype,
             "total_records": record_counts.get(vtype, 0),
         }
-        state = run_states.get(f"var__{vtype}")
-        if state:
-            data["run_state"] = state
+        # Root variable nodes (no upstream function) are always up to date.
+        state = run_states.get(f"var__{vtype}", "green")
+        data["run_state"] = state
         nodes.append({
             "id": f"var__{vtype}",
             "type": "variableNode",

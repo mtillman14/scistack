@@ -291,3 +291,37 @@ class TestFnHashFallback:
             {"subject": 1, "trial": "A"}, db=db,
         )
         assert state == "stale"
+
+    def test_up_to_date_with_constants(self, db):
+        """check_node_state returns green after for_each run with constants.
+
+        Regression test: branch_params keys are namespaced as "fn.param" but
+        version_keys stores them un-namespaced. find_record_id must route them
+        through the branch_params_filter path (suffix matching), not the
+        version_keys filter path (which would fail to find the record).
+        """
+        class ScidbRawConst(BaseVariable):
+            schema_version = 1
+
+        class ScidbProcessedConst(BaseVariable):
+            schema_version = 1
+
+        def scidb_process_with_scale(raw, scale):
+            return np.asarray(raw, dtype=float) * float(scale)
+
+        for subj in [1, 2]:
+            ScidbRawConst.save(np.random.randn(5), subject=subj, trial="A")
+
+        scidb_for_each(
+            scidb_process_with_scale,
+            inputs={"raw": ScidbRawConst, "scale": 2.0},
+            outputs=[ScidbProcessedConst],
+            subject=[1, 2],
+            trial=["A"],
+        )
+
+        result = check_node_state(scidb_process_with_scale, [ScidbProcessedConst], db=db)
+        assert result["state"] == "green", (
+            f"Expected green after full run with constants, got {result['state']}. "
+            f"Counts: {result['counts']}"
+        )
