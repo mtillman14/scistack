@@ -29,8 +29,8 @@
       "y": 3.3971690258118237
     },
     "fn__compute_max_vo2": {
-      "x": 883.2073743709274,
-      "y": 177.5875030591354
+      "x": 884.3227923441539,
+      "y": 179.81833900558857
     },
     "var__MaxVO2": {
       "x": 1166.0283097418817,
@@ -39,10 +39,6 @@
     "const__window_seconds": {
       "x": -3.3462539196797536,
       "y": 267.70031357438046
-    },
-    "fn__compute_max_vo2__5q273i": {
-      "x": 904.4003158622324,
-      "y": -150.3453810694807
     }
   },
   "manual_nodes": {
@@ -53,12 +49,10 @@
     "fn__compute_max_vo2": {
       "type": "functionNode",
       "label": "compute_max_vo2"
-    },
-    "fn__compute_max_vo2__5q273i": {
-      "type": "functionNode",
-      "label": "compute_max_vo2"
     }
   },
-  "constants": [],
+  "constants": [
+    "new1"
+  ],
   "manual_edges": []
 }

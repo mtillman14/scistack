@@ -52,7 +52,7 @@ def delete_layout(node_id: str):
 
 @router.get("/constants")
 def get_constants() -> list[str]:
-    return layout_store.read_constants()
+    return layout_store.read_all_constant_names()
 
 
 @router.post("/constants")

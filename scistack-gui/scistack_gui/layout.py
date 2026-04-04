@@ -84,6 +84,29 @@ def read_constants() -> list[str]:
     return _load()["constants"]
 
 
+def read_all_constant_names() -> list[str]:
+    """All constant names visible in the palette or already on the canvas.
+
+    Sources (unioned):
+    - ``constants[]``: palette items created via the "+" button.
+    - ``manual_nodes`` with type ``constantNode``: constants dragged to canvas
+      (they get random-suffix IDs like ``const__name__abc123``).
+    - ``positions`` keys with canonical constant IDs (``const__name``, no
+      random suffix — these are DB-derived nodes placed by the pipeline API).
+    """
+    data = _load()
+    names: set[str] = set(data["constants"])
+    # Manually dragged constant nodes — label is the true constant name.
+    for meta in data["manual_nodes"].values():
+        if meta.get("type") == "constantNode":
+            names.add(meta["label"])
+    # Canonical DB-derived constant nodes not already covered by manual_nodes.
+    for node_id in data["positions"]:
+        if node_id.startswith("const__") and node_id not in data["manual_nodes"]:
+            names.add(node_id[len("const__"):])
+    return sorted(names)
+
+
 def write_constant(name: str) -> None:
     data = _load()
     if name not in data["constants"]:

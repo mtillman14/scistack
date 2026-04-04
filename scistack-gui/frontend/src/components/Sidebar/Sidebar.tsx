@@ -4,10 +4,14 @@
  * Tabs:
  *   - Runs: collapsible per-run log sections, most recent first.
  *   - Edit: palette of draggable function and variable nodes.
- *   - Node: settings panel for the selected function node (auto-activates on selection).
+ *   - Node: settings panel for the selected function or constant node (auto-activates on selection).
+ *
+ * When a function node is selected, the Node tab shows a read-only list of all
+ * pipeline variants — the Cartesian product of every constant node's values on the canvas.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { useStore } from '@xyflow/react'
 import RunsTab from './RunsTab'
 import EditTab from './EditTab'
 import FunctionSettingsPanel from './FunctionSettingsPanel'
@@ -20,16 +24,8 @@ const BASE_TABS = ['Runs', 'Edit'] as const
 type BaseTab = typeof BASE_TABS[number]
 type Tab = BaseTab | 'Node'
 
-interface FnVariant {
-  constants: Record<string, unknown>
-  input_types: Record<string, string>
-  output_type: string
-  record_count: number
-}
-
 interface FnNodeData {
   label: string
-  variants?: FnVariant[]
 }
 
 interface ConstantNodeData {
@@ -45,9 +41,22 @@ function isConstantNode(node: Node | null): node is Node & { data: ConstantNodeD
   return node?.type === 'constantNode'
 }
 
+/** Compute the Cartesian product of value arrays. */
+function cartesian(arrays: string[][]): string[][] {
+  if (arrays.length === 0) return []
+  return arrays.reduce<string[][]>(
+    (acc, arr) => acc.flatMap(row => arr.map(v => [...row, v])),
+    [[]]
+  )
+}
+
 export default function Sidebar() {
   const { selectedNode } = useSelectedNode()
   const [activeTab, setActiveTab] = useState<Tab>('Runs')
+
+  // Subscribe directly to the React Flow store so we re-render when node/edge data changes.
+  const nodes = useStore(s => s.nodes)
+  const edges = useStore(s => s.edges)
 
   // Auto-switch to Node tab when a function or constant node is selected; revert when deselected.
   useEffect(() => {
@@ -60,6 +69,46 @@ export default function Sidebar() {
 
   const hasNodeTab = isFunctionNode(selectedNode) || isConstantNode(selectedNode)
   const tabs: Tab[] = hasNodeTab ? ['Runs', 'Edit', 'Node'] : ['Runs', 'Edit']
+
+  // Compute variant combinations from constant nodes connected to the selected function node.
+  // Re-derived whenever nodes or edges change (value edits, new connections, etc.).
+  const { constantNames, variants } = useMemo(() => {
+    if (!isFunctionNode(selectedNode)) return { constantNames: [], variants: [] }
+
+    // BFS upstream: walk edges in reverse to find all ancestor node IDs.
+    const visited = new Set<string>()
+    const queue = [selectedNode.id]
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      for (const e of edges) {
+        if (e.target === current && !visited.has(e.source)) {
+          visited.add(e.source)
+          queue.push(e.source)
+        }
+      }
+    }
+
+    const constantNodes = nodes.filter(
+      n => n.type === 'constantNode' && visited.has(n.id)
+    ) as Array<Node & { data: ConstantNodeData }>
+
+    if (constantNodes.length === 0) return { constantNames: [], variants: [] }
+
+    const names = constantNodes.map(n => n.data.label)
+    const valueLists = constantNodes.map(n =>
+      (n.data.values ?? []).map((v: ConstantValue) => v.value)
+    )
+
+    // If any constant has no values, there are no valid variants.
+    if (valueLists.some(vals => vals.length === 0)) return { constantNames: names, variants: [] }
+
+    const combos = cartesian(valueLists)
+    const variantRows = combos.map(combo =>
+      Object.fromEntries(names.map((name, i) => [name, combo[i]]))
+    )
+
+    return { constantNames: names, variants: variantRows }
+  }, [nodes, edges, selectedNode])
 
   return (
     <div style={styles.root}>
@@ -80,7 +129,8 @@ export default function Sidebar() {
         {activeTab === 'Node' && isFunctionNode(selectedNode) && (
           <FunctionSettingsPanel
             label={(selectedNode.data as FnNodeData).label}
-            variants={(selectedNode.data as FnNodeData).variants ?? []}
+            variants={variants}
+            constantNames={constantNames}
           />
         )}
         {activeTab === 'Node' && isConstantNode(selectedNode) && (
