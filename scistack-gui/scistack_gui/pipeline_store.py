@@ -35,7 +35,7 @@ def _duck(db):
 
 
 def _ensure_tables(db) -> None:
-    """Create _pipeline_nodes and _pipeline_edges if they don't already exist."""
+    """Create pipeline tables if they don't already exist."""
     _duck(db)._execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_nodes (
             node_id   VARCHAR PRIMARY KEY,
@@ -50,6 +50,13 @@ def _ensure_tables(db) -> None:
             target        VARCHAR NOT NULL,
             source_handle VARCHAR,
             target_handle VARCHAR
+        )
+    """)
+    _duck(db)._execute("""
+        CREATE TABLE IF NOT EXISTS _pipeline_pending_constants (
+            constant_name VARCHAR NOT NULL,
+            value         VARCHAR NOT NULL,
+            PRIMARY KEY (constant_name, value)
         )
     """)
 
@@ -170,6 +177,36 @@ def delete_manual_edge(db, edge_id: str) -> None:
     _duck(db)._execute(
         "DELETE FROM _pipeline_edges WHERE edge_id = ?", [edge_id]
     )
+
+
+# ---------------------------------------------------------------------------
+# Pending constants
+# ---------------------------------------------------------------------------
+
+def add_pending_constant(db, const_name: str, value: str) -> None:
+    _duck(db)._execute(
+        "INSERT INTO _pipeline_pending_constants (constant_name, value) VALUES (?, ?) "
+        "ON CONFLICT DO NOTHING",
+        [const_name, value],
+    )
+
+
+def remove_pending_constant(db, const_name: str, value: str) -> None:
+    _duck(db)._execute(
+        "DELETE FROM _pipeline_pending_constants WHERE constant_name = ? AND value = ?",
+        [const_name, value],
+    )
+
+
+def get_pending_constants(db) -> dict[str, set[str]]:
+    """Return {constant_name: {value, ...}} for all pending constant values."""
+    rows = _duck(db)._fetchall(
+        "SELECT constant_name, value FROM _pipeline_pending_constants"
+    )
+    result: dict[str, set[str]] = {}
+    for const_name, value in rows:
+        result.setdefault(const_name, set()).add(value)
+    return result
 
 
 # ---------------------------------------------------------------------------

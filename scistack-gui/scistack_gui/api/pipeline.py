@@ -19,6 +19,7 @@ from scidb.database import DatabaseManager
 from scistack_gui.db import get_db
 from scistack_gui import layout as layout_store
 from scistack_gui import registry
+from scistack_gui.api import ws
 
 router = APIRouter()
 
@@ -103,6 +104,8 @@ def _compute_run_states(
     db: DatabaseManager,
     fn_input_params: dict[str, dict],
     fn_outputs: dict[str, set],
+    fn_constants: dict[str, set] | None = None,
+    pending_constants: dict[str, set] | None = None,
 ) -> dict[str, str]:
     """
     Compute run_state for every function and variable node.
@@ -125,6 +128,15 @@ def _compute_run_states(
         fn_own_state[fn_name] = _own_state_for_function(
             db, fn_name, fn_outputs.get(fn_name, set())
         )
+
+    # Downgrade "green" → "grey" for functions that have unrun pending constant values.
+    if fn_constants and pending_constants:
+        for fn_name in fn_own_state:
+            if fn_own_state[fn_name] == "green":
+                for const_name in fn_constants.get(fn_name, set()):
+                    if pending_constants.get(const_name):
+                        fn_own_state[fn_name] = "grey"
+                        break
 
     # --- Pass 2: DAG propagation ---
     var_producer: dict[str, str] = {}
@@ -231,8 +243,23 @@ def _build_graph(db: DatabaseManager) -> dict:
     # Get raw record counts for each variable type
     record_counts = _get_record_counts(db, all_var_types)
 
+    # Pending constant values — user-declared variants not yet in the DB.
+    pending_constants = layout_store.get_pending_constants()
+
+    # Auto-clean pending values that are now in const_counts (they've been run).
+    # This must happen BEFORE computing run states so resolved values don't
+    # incorrectly keep the function grey/red.
+    for const_name in list(pending_constants.keys()):
+        still_pending: set[str] = set()
+        for pval in pending_constants[const_name]:
+            if pval in const_counts.get(const_name, {}):
+                layout_store.remove_pending_constant(const_name, pval)
+            else:
+                still_pending.add(pval)
+        pending_constants[const_name] = still_pending
+
     # Compute run states for all function and variable nodes
-    run_states = _compute_run_states(db, fn_input_params, fn_outputs)
+    run_states = _compute_run_states(db, fn_input_params, fn_outputs, fn_constants, pending_constants)
 
     # --- Build nodes ---
     nodes = []
@@ -257,6 +284,11 @@ def _build_graph(db: DatabaseManager) -> dict:
             {"value": val, "record_count": cnt}
             for val, cnt in sorted(const_counts[const_name].items())
         ]
+        # Add any still-pending values (not yet run) to the display list.
+        existing_values = {v["value"] for v in values}
+        for pval in sorted(pending_constants.get(const_name, set())):
+            if pval not in existing_values:
+                values.append({"value": pval, "record_count": 0})
         nodes.append({
             "id": f"const__{const_name}",
             "type": "constantNode",
@@ -405,3 +437,17 @@ def _build_graph(db: DatabaseManager) -> dict:
 @router.get("/pipeline")
 def get_pipeline(db: DatabaseManager = Depends(get_db)):
     return _build_graph(db)
+
+
+@router.put("/constants/{name}/pending/{value}")
+async def add_pending_constant_value(name: str, value: str):
+    layout_store.add_pending_constant(name, value)
+    await ws.broadcast({"type": "dag_updated"})
+    return {"ok": True}
+
+
+@router.delete("/constants/{name}/pending/{value}")
+async def remove_pending_constant_value(name: str, value: str):
+    layout_store.remove_pending_constant(name, value)
+    await ws.broadcast({"type": "dag_updated"})
+    return {"ok": True}

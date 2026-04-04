@@ -33,14 +33,19 @@ export default function ConstantSettingsPanel({ id, label, values }: Props) {
         : node
     ))
     setDraft('')
+    fetch(`/api/constants/${encodeURIComponent(label)}/pending/${encodeURIComponent(v)}`, { method: 'PUT' })
   }
 
   const removeValue = (index: number) => {
+    const v = values[index]
     setNodes(nds => nds.map(node => {
       if (node.id !== id) return node
       const updated = (node.data.values as ConstantValue[]).filter((_, i) => i !== index)
       return { ...node, data: { ...node.data, values: updated } }
     }))
+    if (v.record_count === 0) {
+      fetch(`/api/constants/${encodeURIComponent(label)}/pending/${encodeURIComponent(v.value)}`, { method: 'DELETE' })
+    }
   }
 
   return (

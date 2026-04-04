@@ -135,6 +135,18 @@ def delete_manual_edge(edge_id: str) -> None:
     pipeline_store.delete_manual_edge(get_db(), edge_id)
 
 
+def add_pending_constant(const_name: str, value: str) -> None:
+    pipeline_store.add_pending_constant(get_db(), const_name, value)
+
+
+def remove_pending_constant(const_name: str, value: str) -> None:
+    pipeline_store.remove_pending_constant(get_db(), const_name, value)
+
+
+def get_pending_constants() -> dict[str, set[str]]:
+    return pipeline_store.get_pending_constants(get_db())
+
+
 def graduate_manual_node(old_id: str, new_id: str) -> None:
     """Transfer position from a manual node to a DB-derived node ID and remove the manual entry."""
     data = _load()

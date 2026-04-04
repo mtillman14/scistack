@@ -91,6 +91,61 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
             seen.add(key)
             unique_targets.append(v)
 
+    # Add synthetic targets for pending constant values (variants the user
+    # declared but hasn't run yet).  For each pending value we cross-product
+    # with the existing combinations of all other constants, preserving their
+    # original types.  The pending value itself is stored as a string, so we
+    # coerce it back to a Python literal where possible.
+    if fn_variants:
+        import ast
+        from scistack_gui import pipeline_store as _ps
+
+        def _coerce(s: str):
+            try:
+                return ast.literal_eval(s)
+            except (ValueError, SyntaxError):
+                return s
+
+        pending_consts = _ps.get_pending_constants(db)
+        fn_const_names = {k for v in fn_variants for k in v["constants"]}
+        pending_for_fn = {k: vals for k, vals in pending_consts.items()
+                          if k in fn_const_names}
+
+        if pending_for_fn:
+            existing_keys = {
+                tuple(sorted((k, str(v)) for k, v in t["constants"].items()))
+                for t in unique_targets
+            }
+            template = fn_variants[0]
+
+            for const_name, pending_values in pending_for_fn.items():
+                # Collect unique combinations of other constants (typed).
+                other_seen: set[tuple] = set()
+                other_combos: list[dict] = []
+                for v in fn_variants:
+                    other = {k: val for k, val in v["constants"].items()
+                             if k != const_name}
+                    okey = tuple(sorted((k, str(val)) for k, val in other.items()))
+                    if okey not in other_seen:
+                        other_seen.add(okey)
+                        other_combos.append(other)
+
+                for pval_str in pending_values:
+                    pval = _coerce(pval_str)
+                    for other in other_combos:
+                        new_constants = dict(other)
+                        new_constants[const_name] = pval
+                        key = tuple(sorted(
+                            (k, str(v)) for k, v in new_constants.items()
+                        ))
+                        if key not in existing_keys:
+                            existing_keys.add(key)
+                            unique_targets.append({
+                                "input_types": template["input_types"],
+                                "constants": new_constants,
+                                "output_type": template["output_type"],
+                            })
+
     # Build schema kwargs: run on all existing values for each schema key.
     schema_kwargs = {
         key: db.distinct_schema_values(key)
