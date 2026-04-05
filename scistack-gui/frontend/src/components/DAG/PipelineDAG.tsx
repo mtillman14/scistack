@@ -12,7 +12,7 @@
  *   - Background / Controls / MiniMap: built-in UI chrome from React Flow
  */
 
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useRef } from 'react'
 import {
   ReactFlow,
   addEdge,
@@ -49,8 +49,9 @@ const nodeTypes = {
 export default function PipelineDAG() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([])
-  const { screenToFlowPosition } = useReactFlow()
+  const { screenToFlowPosition, fitView } = useReactFlow()
   const { selectedNode, setSelectedNode } = useSelectedNode()
+  const isFirstLoad = useRef(true)
 
   const fetchPipeline = useCallback(async () => {
     // Fetch pipeline first — _build_graph has a side effect (graduate_manual_node)
@@ -75,10 +76,25 @@ export default function PipelineDAG() {
       }
     })
 
-    const laidOut = applyDagreLayout(initialised, data.edges, savedPositions)
-    setNodes(laidOut)
+    // On refreshes, use current on-screen positions so nodes never jump.
+    // Only fall back to saved/dagre positions for nodes not already on screen.
+    setNodes(prev => {
+      const currentPositions: Record<string, { x: number; y: number }> = {}
+      for (const n of prev) {
+        currentPositions[n.id] = n.position
+      }
+      const merged = { ...savedPositions, ...currentPositions }
+      return applyDagreLayout(initialised, data.edges, merged)
+    })
     setEdges(data.edges)
-  }, [setNodes, setEdges])
+
+    // Only fit the viewport on the very first load.
+    if (isFirstLoad.current) {
+      isFirstLoad.current = false
+      // Small delay so React Flow has rendered the nodes before fitting.
+      setTimeout(() => fitView({ padding: 0.2 }), 50)
+    }
+  }, [setNodes, setEdges, fitView])
 
   useEffect(() => {
     fetchPipeline()
@@ -225,8 +241,6 @@ export default function PipelineDAG() {
         onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
       >
         <Background />
         <Controls />

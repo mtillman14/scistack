@@ -65,26 +65,61 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     all_variants = db.list_pipeline_variants()
     fn_variants = [v for v in all_variants if v["function_name"] == function_name]
 
+    from scidb.log import Log
+    Log.info(f"run: fn_variants for '{function_name}' = {fn_variants}")
+
+    # --- Check manual edges for current output wiring ---
+    # If the user has rewired the function's outputs (e.g. deleted an old output
+    # node and connected a new one), manual edges should override DB-derived
+    # output types.  This prevents stale DB history from resurrecting old nodes.
+    from scistack_gui import pipeline_store, layout as layout_store
+    from scistack_gui.api.pipeline import _node_id_to_var_label, _fn_params_from_registry
+
+    all_edges = pipeline_store.get_manual_edges(db)
+    manual_nodes = pipeline_store.get_manual_nodes(db)
+
+    fn_node_ids = set()
+    fn_node_ids.add(f"fn__{function_name}")
+    for nid, meta in manual_nodes.items():
+        if meta["type"] == "functionNode" and meta["label"] == function_name:
+            fn_node_ids.add(nid)
+
+    manual_output_types: list[str] = []
+    for edge in all_edges:
+        if edge["source"] in fn_node_ids:
+            var_label = _node_id_to_var_label(
+                edge["target"], set(), [], manual_nodes)
+            if var_label and var_label not in manual_output_types:
+                manual_output_types.append(var_label)
+
+    if fn_variants and manual_output_types:
+        # Override output types in DB-derived variants with the current wiring.
+        Log.info(f"run: overriding DB output types with manual edge outputs: {manual_output_types}")
+        overridden = []
+        seen_constants = set()
+        for v in fn_variants:
+            key = tuple(sorted(v["constants"].items()))
+            if key in seen_constants:
+                continue
+            seen_constants.add(key)
+            for out in manual_output_types:
+                overridden.append({
+                    **v,
+                    "output_type": out,
+                })
+        fn_variants = overridden
+
     if not fn_variants:
         # No DB history yet — try to infer inputs/outputs from manual edges.
-        from scistack_gui import pipeline_store, layout as layout_store
-        from scistack_gui.api.pipeline import _node_id_to_var_label, _fn_params_from_registry
-        import logging
-        logger = logging.getLogger(__name__)
-
-        all_edges = pipeline_store.get_manual_edges(db)
-        manual_nodes = pipeline_store.get_manual_nodes(db)
-        # Find any node ID for this function (manual or DB-derived).
-        fn_node_ids = set()
-        fn_node_ids.add(f"fn__{function_name}")
-        for nid, meta in manual_nodes.items():
-            if meta["type"] == "functionNode" and meta["label"] == function_name:
-                fn_node_ids.add(nid)
+        Log.info(f"run: all_edges = {all_edges}")
+        Log.info(f"run: manual_nodes = {manual_nodes}")
+        Log.info(f"run: fn_node_ids = {fn_node_ids}")
 
         input_types: dict[str, str] = {}  # param_name → type_name
         # Collect inputs that have no targetHandle so we can match by signature.
         unmatched_inputs: list[str] = []
         output_types: list[str] = []
+        constant_names: set[str] = set()  # constant param names wired to this fn
         for edge in all_edges:
             if edge["source"] in fn_node_ids:
                 var_label = _node_id_to_var_label(
@@ -92,14 +127,45 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                 if var_label and var_label not in output_types:
                     output_types.append(var_label)
             elif edge["target"] in fn_node_ids:
+                src = edge["source"]
+                th = edge.get("targetHandle") or ""
+                # Check if source is a constant node.
+                is_const = False
+                const_label = None
+                if src.startswith("const__"):
+                    is_const = True
+                    # Prefer the manual_nodes label (e.g. "perc") over the
+                    # suffixed node ID (e.g. "const__perc__xd93hn").
+                    src_meta = manual_nodes.get(src)
+                    if src_meta:
+                        const_label = src_meta["label"]
+                    else:
+                        # DB-derived constant: ID is "const__<name>" (no suffix).
+                        const_label = src.replace("const__", "", 1)
+                else:
+                    src_meta = manual_nodes.get(src)
+                    if src_meta and src_meta["type"] == "constantNode":
+                        is_const = True
+                        const_label = src_meta["label"]
+                if is_const and const_label is not None:
+                    # Determine param name from targetHandle or fall back to label.
+                    if th.startswith("const__"):
+                        constant_names.add(th.replace("const__", "", 1))
+                    elif th.startswith("in__"):
+                        constant_names.add(th.replace("in__", "", 1))
+                    else:
+                        constant_names.add(const_label)
+                    continue
                 var_label = _node_id_to_var_label(
-                    edge["source"], set(), [], manual_nodes)
+                    src, set(), [], manual_nodes)
                 if var_label:
-                    th = edge.get("targetHandle") or ""
                     if th.startswith("in__"):
                         input_types[th.replace("in__", "")] = var_label
                     else:
                         unmatched_inputs.append(var_label)
+
+        Log.info(f"run: after edge scan: input_types={input_types}, output_types={output_types}, "
+                 f"constant_names={constant_names}, unmatched_inputs={unmatched_inputs}")
 
         # Match unmatched inputs to function signature params by position.
         if unmatched_inputs:
@@ -109,24 +175,58 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
             for param, var_type in zip(remaining_params, unmatched_inputs):
                 input_types[param] = var_type
             if len(unmatched_inputs) > len(remaining_params):
-                logger.warning(
-                    "run: %d input edges but only %d unmatched params for '%s'",
-                    len(unmatched_inputs), len(remaining_params), function_name)
+                Log.warn(f"run: {len(unmatched_inputs)} input edges but only "
+                         f"{len(remaining_params)} unmatched params for '{function_name}'")
 
         if not output_types:
-            logger.warning("run: no outputs found for '%s' from DB or edges", function_name)
+            Log.warn(f"run: no outputs found for '{function_name}' from DB or edges")
             push_message({"type": "run_done", "run_id": run_id, "success": False,
                           "error": f"No pipeline history or output connections found for '{function_name}'. "
                                     "Connect it to an output variable node first."})
             return
 
-        logger.info("run: inferred inputs=%s outputs=%s for '%s' from edges",
-                     input_types, output_types, function_name)
-        # Build a synthetic variant for each output type.
-        fn_variants = [
-            {"input_types": input_types, "output_type": out, "constants": {}}
-            for out in output_types
-        ]
+        # Collect constant values from pending constants for wired constant nodes.
+        import ast as _ast
+        inferred_constants: dict[str, list] = {}  # const_name → list of typed values
+        if constant_names:
+            pending = pipeline_store.get_pending_constants(db)
+            Log.info(f"run: pending constants = {pending}")
+            for cname in constant_names:
+                vals = pending.get(cname, set())
+                typed_vals = []
+                for v in vals:
+                    try:
+                        typed_vals.append(_ast.literal_eval(v))
+                    except (ValueError, SyntaxError):
+                        typed_vals.append(v)
+                if typed_vals:
+                    inferred_constants[cname] = typed_vals
+                else:
+                    Log.warn(f"run: constant '{cname}' wired to '{function_name}' but has no pending values")
+
+        Log.info(f"run: inferred inputs={input_types} outputs={output_types} "
+                 f"constants={list(inferred_constants.keys())} for '{function_name}' from edges")
+
+        # Build synthetic variants: cross-product of output types × constant combos.
+        if inferred_constants:
+            # Build all combinations of constant values.
+            from itertools import product as _product
+            const_names_list = sorted(inferred_constants.keys())
+            const_value_lists = [inferred_constants[c] for c in const_names_list]
+            fn_variants = []
+            for combo in _product(*const_value_lists):
+                constants = dict(zip(const_names_list, combo))
+                for out in output_types:
+                    fn_variants.append({
+                        "input_types": input_types,
+                        "output_type": out,
+                        "constants": constants,
+                    })
+        else:
+            fn_variants = [
+                {"input_types": input_types, "output_type": out, "constants": {}}
+                for out in output_types
+            ]
 
     # Determine which variants to run. If caller sent specific variants, filter;
     # otherwise run all known variants.

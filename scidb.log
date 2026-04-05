@@ -1730,3 +1730,485 @@
 [11:44:41.728] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
 [11:51:13.216] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
 [11:54:47.385] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[11:59:13.369] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:08:30.263] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:08:30.269] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.005s
+[14:08:30.269] [INFO] loaded 1 inputs in 0.005s
+[14:08:30.270] [INFO] ================================================================
+[14:08:30.270] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:08:30.270] [INFO] subject=[3 values]
+[14:08:30.270] [INFO] ================================================================
+[14:08:30.270] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:08:30.270] [INFO] subject=['S01', 'S02', 'S03']
+[14:08:30.271] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:08:30.271] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:08:30.271] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:08:30.271] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:08:30.272] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:08:30.272] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:08:30.272] [INFO] ────────────────────────────────────────────────────────────────
+[14:08:30.272] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:08:30.272] [INFO] ================================================================
+[14:08:52.053] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:09:18.929] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:09:18.935] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:09:18.935] [INFO] loaded 1 inputs in 0.006s
+[14:09:18.936] [INFO] ================================================================
+[14:09:18.936] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:09:18.936] [INFO] subject=[3 values]
+[14:09:18.936] [INFO] ================================================================
+[14:09:18.936] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:09:18.936] [INFO] subject=['S01', 'S02', 'S03']
+[14:09:18.936] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:09:18.936] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:09:18.937] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:09:18.937] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:09:18.937] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:09:18.938] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:09:18.938] [INFO] ────────────────────────────────────────────────────────────────
+[14:09:18.938] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:09:18.938] [INFO] ================================================================
+[14:09:40.082] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:09:40.088] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:09:40.088] [INFO] loaded 1 inputs in 0.006s
+[14:09:40.089] [INFO] ================================================================
+[14:09:40.089] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:09:40.089] [INFO] subject=[3 values]
+[14:09:40.089] [INFO] ================================================================
+[14:09:40.089] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:09:40.089] [INFO] subject=['S01', 'S02', 'S03']
+[14:09:40.090] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:09:40.090] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:09:40.090] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:09:40.090] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:09:40.091] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:09:40.091] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:09:40.091] [INFO] ────────────────────────────────────────────────────────────────
+[14:09:40.091] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:09:40.091] [INFO] ================================================================
+[14:13:59.331] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:14:04.592] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:14:04.599] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:14:04.599] [INFO] loaded 1 inputs in 0.006s
+[14:14:04.600] [INFO] ================================================================
+[14:14:04.600] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:14:04.600] [INFO] subject=[3 values]
+[14:14:04.600] [INFO] ================================================================
+[14:14:04.600] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:14:04.600] [INFO] subject=['S01', 'S02', 'S03']
+[14:14:04.601] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:14:04.601] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:14:04.601] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:14:04.602] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:14:04.602] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:14:04.602] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:14:04.602] [INFO] ────────────────────────────────────────────────────────────────
+[14:14:04.602] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:14:04.602] [INFO] ================================================================
+[14:14:24.696] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:14:24.703] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.007s
+[14:14:24.703] [INFO] loaded 1 inputs in 0.007s
+[14:14:24.704] [INFO] ================================================================
+[14:14:24.704] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:14:24.704] [INFO] subject=[3 values]
+[14:14:24.704] [INFO] ================================================================
+[14:14:24.704] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:14:24.704] [INFO] subject=['S01', 'S02', 'S03']
+[14:14:24.705] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:14:24.705] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:14:24.705] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:14:24.706] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:14:24.706] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:14:24.706] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:14:24.706] [INFO] ────────────────────────────────────────────────────────────────
+[14:14:24.706] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:14:24.706] [INFO] ================================================================
+[14:16:21.771] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:16:26.921] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:16:26.927] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:16:26.927] [INFO] loaded 1 inputs in 0.006s
+[14:16:26.928] [INFO] ================================================================
+[14:16:26.928] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:16:26.928] [INFO] subject=[3 values]
+[14:16:26.928] [INFO] ================================================================
+[14:16:26.928] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:16:26.928] [INFO] subject=['S01', 'S02', 'S03']
+[14:16:26.929] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:16:26.929] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:16:26.930] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:16:26.930] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:16:26.930] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:16:26.930] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:16:26.930] [INFO] ────────────────────────────────────────────────────────────────
+[14:16:26.930] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:16:26.930] [INFO] ================================================================
+[14:17:06.244] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:17:06.252] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.007s
+[14:17:06.252] [INFO] loaded 1 inputs in 0.007s
+[14:17:06.253] [INFO] ================================================================
+[14:17:06.253] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:17:06.253] [INFO] subject=[3 values]
+[14:17:06.253] [INFO] ================================================================
+[14:17:06.253] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:17:06.253] [INFO] subject=['S01', 'S02', 'S03']
+[14:17:06.253] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:17:06.253] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:06.254] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:17:06.254] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:06.254] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:17:06.254] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:06.254] [INFO] ────────────────────────────────────────────────────────────────
+[14:17:06.254] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:17:06.255] [INFO] ================================================================
+[14:17:16.657] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:17:16.663] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:17:16.663] [INFO] loaded 1 inputs in 0.006s
+[14:17:16.664] [INFO] ================================================================
+[14:17:16.664] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:17:16.664] [INFO] subject=[3 values]
+[14:17:16.664] [INFO] ================================================================
+[14:17:16.664] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:17:16.664] [INFO] subject=['S01', 'S02', 'S03']
+[14:17:16.665] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:17:16.665] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:16.665] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:17:16.665] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:16.666] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:17:16.666] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:16.666] [INFO] ────────────────────────────────────────────────────────────────
+[14:17:16.666] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:17:16.666] [INFO] ================================================================
+[14:17:22.687] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:17:22.692] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.005s
+[14:17:22.693] [INFO] loaded 1 inputs in 0.005s
+[14:17:22.693] [INFO] ================================================================
+[14:17:22.693] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:17:22.693] [INFO] subject=[3 values]
+[14:17:22.693] [INFO] ================================================================
+[14:17:22.693] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:17:22.693] [INFO] subject=['S01', 'S02', 'S03']
+[14:17:22.694] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:17:22.694] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:22.694] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:17:22.694] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:22.695] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:17:22.695] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:22.695] [INFO] ────────────────────────────────────────────────────────────────
+[14:17:22.695] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:17:22.695] [INFO] ================================================================
+[14:17:52.368] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:17:52.376] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.007s
+[14:17:52.376] [INFO] loaded 1 inputs in 0.007s
+[14:17:52.376] [INFO] ================================================================
+[14:17:52.377] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:17:52.377] [INFO] subject=[3 values]
+[14:17:52.377] [INFO] ================================================================
+[14:17:52.377] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:17:52.377] [INFO] subject=['S01', 'S02', 'S03']
+[14:17:52.377] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:17:52.377] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:52.378] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:17:52.378] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:52.378] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:17:52.378] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:17:52.378] [INFO] ────────────────────────────────────────────────────────────────
+[14:17:52.378] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:17:52.378] [INFO] ================================================================
+[14:18:51.981] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:19:06.458] [INFO] run: fn_variants for 'compute_perc_max_hr' = []
+[14:19:06.461] [INFO] run: all_edges = [{'id': 'manual__pewbhr', 'source': 'var__RawVO2', 'target': 'fn__compute_rolling_vo2', 'targetHandle': 'in__signal'}, {'id': 'manual__egwuz9', 'source': 'fn__compute_rolling_vo2', 'target': 'var__RollingVO2'}, {'id': 'manual__0fyuur', 'source': 'var__RollingVO2', 'target': 'fn__compute_max_vo2', 'targetHandle': 'in__rolling_vo2'}, {'id': 'manual__rsu66x', 'source': 'var__MaxHeartRate', 'target': 'fn__compute_80_perc_max_hr__uwwmx3'}, {'id': 'manual__pffh7e', 'source': 'fn__compute_80_perc_max_hr__uwwmx3', 'target': 'var__MaxHR_80Perc__ru78sg'}, {'id': 'manual__nyowlk', 'source': 'var__MaxHeartRate', 'target': 'fn__compute_50_perc_max_hr__9si1rc', 'targetHandle': 'in__max_hr'}, {'id': 'manual__7wgk1x', 'source': 'fn__compute_50_perc_max_hr__9si1rc', 'target': 'var__MaxHR_50Perc__msxju2'}, {'id': 'manual__uu99e2', 'source': 'var__MaxHeartRate', 'target': 'fn__compute_perc_max_hr__ff5eb9', 'targetHandle': 'in__max_hr'}, {'id': 'manual__yub7h0', 'source': 'fn__compute_perc_max_hr__ff5eb9', 'target': 'var__MaxHR_50Perc__l3j64c'}, {'id': 'manual__0vj6lt', 'source': 'const__perc__xd93hn', 'target': 'fn__compute_perc_max_hr__ff5eb9', 'targetHandle': 'in__perc'}]
+[14:19:06.461] [INFO] run: manual_nodes = {'fn__compute_rolling_vo2': {'type': 'functionNode', 'label': 'compute_rolling_vo2'}, 'fn__compute_max_vo2': {'type': 'functionNode', 'label': 'compute_max_vo2'}, 'pathInput__cosmed_data__bbmk24': {'type': 'pathInputNode', 'label': 'cosmed_data'}, 'fn__compute_perc_max_hr__ff5eb9': {'type': 'functionNode', 'label': 'compute_perc_max_hr'}, 'var__MaxHR_50Perc__l3j64c': {'type': 'variableNode', 'label': 'MaxHR_50Perc'}, 'const__perc__xd93hn': {'type': 'constantNode', 'label': 'perc'}}
+[14:19:06.461] [INFO] run: fn_node_ids = {'fn__compute_perc_max_hr__ff5eb9', 'fn__compute_perc_max_hr'}
+[14:19:06.461] [INFO] run: after edge scan: input_types={'max_hr': 'MaxHeartRate'}, output_types=['MaxHR_50Perc'], constant_names={'perc__xd93hn'}, unmatched_inputs=[]
+[14:19:06.462] [INFO] run: pending constants = {'perc': {'0.8'}}
+[14:19:06.462] [WARN] run: constant 'perc__xd93hn' wired to 'compute_perc_max_hr' but has no pending values
+[14:19:06.462] [INFO] run: inferred inputs={'max_hr': 'MaxHeartRate'} outputs=['MaxHR_50Perc'] constants=[] for 'compute_perc_max_hr' from edges
+[14:19:06.464] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:19:06.471] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:19:06.471] [INFO] loaded 1 inputs in 0.006s
+[14:19:06.472] [INFO] ================================================================
+[14:19:06.472] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:19:06.472] [INFO] subject=[3 values]
+[14:19:06.472] [INFO] ================================================================
+[14:19:06.472] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr']}
+[14:19:06.472] [INFO] subject=['S01', 'S02', 'S03']
+[14:19:06.473] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr)
+[14:19:06.473] [INFO] [skip] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:19:06.473] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr)
+[14:19:06.474] [INFO] [skip] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:19:06.474] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr)
+[14:19:06.474] [INFO] [skip] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr raised: compute_perc_max_hr() missing 1 required positional argument: 'perc'
+[14:19:06.474] [INFO] ────────────────────────────────────────────────────────────────
+[14:19:06.474] [INFO] for_each(compute_perc_max_hr) done: completed=0, skipped=3, total=3
+[14:19:06.474] [INFO] ================================================================
+[14:19:49.156] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:19:55.205] [INFO] run: fn_variants for 'compute_perc_max_hr' = []
+[14:19:55.208] [INFO] run: all_edges = [{'id': 'manual__pewbhr', 'source': 'var__RawVO2', 'target': 'fn__compute_rolling_vo2', 'targetHandle': 'in__signal'}, {'id': 'manual__egwuz9', 'source': 'fn__compute_rolling_vo2', 'target': 'var__RollingVO2'}, {'id': 'manual__0fyuur', 'source': 'var__RollingVO2', 'target': 'fn__compute_max_vo2', 'targetHandle': 'in__rolling_vo2'}, {'id': 'manual__rsu66x', 'source': 'var__MaxHeartRate', 'target': 'fn__compute_80_perc_max_hr__uwwmx3'}, {'id': 'manual__pffh7e', 'source': 'fn__compute_80_perc_max_hr__uwwmx3', 'target': 'var__MaxHR_80Perc__ru78sg'}, {'id': 'manual__nyowlk', 'source': 'var__MaxHeartRate', 'target': 'fn__compute_50_perc_max_hr__9si1rc', 'targetHandle': 'in__max_hr'}, {'id': 'manual__7wgk1x', 'source': 'fn__compute_50_perc_max_hr__9si1rc', 'target': 'var__MaxHR_50Perc__msxju2'}, {'id': 'manual__uu99e2', 'source': 'var__MaxHeartRate', 'target': 'fn__compute_perc_max_hr__ff5eb9', 'targetHandle': 'in__max_hr'}, {'id': 'manual__yub7h0', 'source': 'fn__compute_perc_max_hr__ff5eb9', 'target': 'var__MaxHR_50Perc__l3j64c'}, {'id': 'manual__0vj6lt', 'source': 'const__perc__xd93hn', 'target': 'fn__compute_perc_max_hr__ff5eb9', 'targetHandle': 'in__perc'}]
+[14:19:55.208] [INFO] run: manual_nodes = {'fn__compute_rolling_vo2': {'type': 'functionNode', 'label': 'compute_rolling_vo2'}, 'fn__compute_max_vo2': {'type': 'functionNode', 'label': 'compute_max_vo2'}, 'pathInput__cosmed_data__bbmk24': {'type': 'pathInputNode', 'label': 'cosmed_data'}, 'fn__compute_perc_max_hr__ff5eb9': {'type': 'functionNode', 'label': 'compute_perc_max_hr'}, 'var__MaxHR_50Perc__l3j64c': {'type': 'variableNode', 'label': 'MaxHR_50Perc'}, 'const__perc__xd93hn': {'type': 'constantNode', 'label': 'perc'}}
+[14:19:55.208] [INFO] run: fn_node_ids = {'fn__compute_perc_max_hr__ff5eb9', 'fn__compute_perc_max_hr'}
+[14:19:55.208] [INFO] run: after edge scan: input_types={'max_hr': 'MaxHeartRate'}, output_types=['MaxHR_50Perc'], constant_names={'perc'}, unmatched_inputs=[]
+[14:19:55.209] [INFO] run: pending constants = {'perc': {'0.8'}}
+[14:19:55.209] [INFO] run: inferred inputs={'max_hr': 'MaxHeartRate'} outputs=['MaxHR_50Perc'] constants=['perc'] for 'compute_perc_max_hr' from edges
+[14:19:55.211] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:19:55.218] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:19:55.218] [INFO] loaded 2 inputs in 0.006s
+[14:19:55.219] [INFO] ================================================================
+[14:19:55.219] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:19:55.219] [INFO] subject=[3 values]
+[14:19:55.219] [INFO] ================================================================
+[14:19:55.219] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:19:55.219] [INFO] subject=['S01', 'S02', 'S03']
+[14:19:55.220] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr, perc)
+[14:19:55.220] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr, perc)
+[14:19:55.220] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr, perc)
+[14:19:55.220] [INFO] ────────────────────────────────────────────────────────────────
+[14:19:55.220] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:19:55.220] [INFO] ================================================================
+[14:19:55.233] [INFO] [save] subject=S01, perc=0.8: MaxHR_50Perc
+[14:19:55.242] [INFO] [save] subject=S02, perc=0.8: MaxHR_50Perc
+[14:19:55.250] [INFO] [save] subject=S03, perc=0.8: MaxHR_50Perc
+[14:21:10.451] [INFO] run: fn_variants for 'compute_perc_max_hr' = [{'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_50Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}]
+[14:21:10.453] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:21:10.460] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:21:10.460] [INFO] loaded 2 inputs in 0.006s
+[14:21:10.461] [INFO] ================================================================
+[14:21:10.461] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:21:10.461] [INFO] subject=[3 values]
+[14:21:10.461] [INFO] ================================================================
+[14:21:10.461] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:21:10.461] [INFO] subject=['S01', 'S02', 'S03']
+[14:21:10.462] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr, perc)
+[14:21:10.462] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr, perc)
+[14:21:10.462] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr, perc)
+[14:21:10.462] [INFO] ────────────────────────────────────────────────────────────────
+[14:21:10.462] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:21:10.462] [INFO] ================================================================
+[14:21:10.472] [INFO] [save] subject=S01, perc=0.8: MaxHR_50Perc
+[14:21:10.481] [INFO] [save] subject=S02, perc=0.8: MaxHR_50Perc
+[14:21:10.489] [INFO] [save] subject=S03, perc=0.8: MaxHR_50Perc
+[14:26:39.620] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:27:27.564] [INFO] run: fn_variants for 'compute_perc_max_hr' = [{'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_50Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}]
+[14:27:27.567] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:27:27.575] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.007s
+[14:27:27.575] [INFO] loaded 2 inputs in 0.007s
+[14:27:27.576] [INFO] ================================================================
+[14:27:27.576] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:27:27.576] [INFO] subject=[3 values]
+[14:27:27.576] [INFO] ================================================================
+[14:27:27.576] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:27:27.576] [INFO] subject=['S01', 'S02', 'S03']
+[14:27:27.577] [INFO] [run] subject=S01, __rid_max_hr=58f0d27cd6f9f1d8: compute_perc_max_hr(max_hr, perc)
+[14:27:27.577] [INFO] [run] subject=S02, __rid_max_hr=86e0abe0fb03ddb0: compute_perc_max_hr(max_hr, perc)
+[14:27:27.577] [INFO] [run] subject=S03, __rid_max_hr=dea809c9f8330e03: compute_perc_max_hr(max_hr, perc)
+[14:27:27.578] [INFO] ────────────────────────────────────────────────────────────────
+[14:27:27.578] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:27:27.578] [INFO] ================================================================
+[14:27:27.590] [INFO] [save] subject=S01, perc=0.8: MaxHR_50Perc
+[14:27:27.600] [INFO] [save] subject=S02, perc=0.8: MaxHR_50Perc
+[14:27:27.608] [INFO] [save] subject=S03, perc=0.8: MaxHR_50Perc
+[14:31:13.106] [INFO] configure_database: path=test_gui.duckdb, schema_keys=['subject']
+[14:31:13.176] [INFO] ===== for_each(compute_rolling_vo2) start =====
+[14:31:13.188] [INFO] input 'signal': loaded RawVO2 -> 3 rows, 4 cols in 0.011s
+[14:31:13.189] [INFO] loaded 3 inputs in 0.011s
+[14:31:13.191] [INFO] ================================================================
+[14:31:13.191] [INFO] for_each(compute_rolling_vo2) — 3 iterations
+[14:31:13.191] [INFO] subject=[3 values]
+[14:31:13.191] [INFO] ================================================================
+[14:31:13.192] [INFO] inputs: {signal: DataFrame['subject', 'RawVO2', '__rid_signal'], window_seconds: 30, sample_interval: 5}
+[14:31:13.192] [INFO] subject=['S01', 'S02', 'S03']
+[14:31:13.193] [INFO] [run] subject=S01, __rid_signal=bb8b159779579e7f: compute_rolling_vo2(signal, window_seconds, sample_interval)
+[14:31:13.194] [INFO] [run] subject=S02, __rid_signal=72a8685950ef8710: compute_rolling_vo2(signal, window_seconds, sample_interval)
+[14:31:13.195] [INFO] [run] subject=S03, __rid_signal=95784fc090555401: compute_rolling_vo2(signal, window_seconds, sample_interval)
+[14:31:13.195] [INFO] ────────────────────────────────────────────────────────────────
+[14:31:13.195] [INFO] for_each(compute_rolling_vo2) done: completed=3, skipped=0, total=3
+[14:31:13.195] [INFO] ================================================================
+[14:31:13.206] [INFO] [save] subject=S01, sample_interval=5, window_seconds=30: RollingVO2
+[14:31:13.216] [INFO] [save] subject=S02, sample_interval=5, window_seconds=30: RollingVO2
+[14:31:13.227] [INFO] [save] subject=S03, sample_interval=5, window_seconds=30: RollingVO2
+[14:31:13.227] [INFO] ===== for_each(compute_rolling_vo2) start =====
+[14:31:13.232] [INFO] input 'signal': loaded RawVO2 -> 3 rows, 4 cols in 0.005s
+[14:31:13.232] [INFO] loaded 3 inputs in 0.005s
+[14:31:13.234] [INFO] ================================================================
+[14:31:13.234] [INFO] for_each(compute_rolling_vo2) — 3 iterations
+[14:31:13.234] [INFO] subject=[3 values]
+[14:31:13.234] [INFO] ================================================================
+[14:31:13.234] [INFO] inputs: {signal: DataFrame['subject', 'RawVO2', '__rid_signal'], window_seconds: 60, sample_interval: 5}
+[14:31:13.234] [INFO] subject=['S01', 'S02', 'S03']
+[14:31:13.234] [INFO] [run] subject=S01, __rid_signal=bb8b159779579e7f: compute_rolling_vo2(signal, window_seconds, sample_interval)
+[14:31:13.235] [INFO] [run] subject=S02, __rid_signal=72a8685950ef8710: compute_rolling_vo2(signal, window_seconds, sample_interval)
+[14:31:13.236] [INFO] [run] subject=S03, __rid_signal=95784fc090555401: compute_rolling_vo2(signal, window_seconds, sample_interval)
+[14:31:13.236] [INFO] ────────────────────────────────────────────────────────────────
+[14:31:13.236] [INFO] for_each(compute_rolling_vo2) done: completed=3, skipped=0, total=3
+[14:31:13.236] [INFO] ================================================================
+[14:31:13.248] [INFO] [save] subject=S01, sample_interval=5, window_seconds=60: RollingVO2
+[14:31:13.258] [INFO] [save] subject=S02, sample_interval=5, window_seconds=60: RollingVO2
+[14:31:13.269] [INFO] [save] subject=S03, sample_interval=5, window_seconds=60: RollingVO2
+[14:31:13.269] [INFO] ===== for_each(compute_max_vo2) start =====
+[14:31:13.275] [INFO] input 'rolling_vo2': loaded RollingVO2 -> 6 rows, 4 cols in 0.006s
+[14:31:13.275] [INFO] loaded 1 inputs in 0.006s
+[14:31:13.276] [INFO] expanded 3 base combos -> 6 full combos (rid variants)
+[14:31:13.276] [INFO] ================================================================
+[14:31:13.277] [INFO] for_each(compute_max_vo2) — 6 iterations
+[14:31:13.277] [INFO] subject=[3 values]
+[14:31:13.277] [INFO] ================================================================
+[14:31:13.277] [INFO] inputs: {rolling_vo2: DataFrame['subject', 'RollingVO2', '__rid_rolling_vo2']}
+[14:31:13.277] [INFO] subject=['S01', 'S02', 'S03']
+[14:31:13.277] [INFO] [run] subject=S01, __rid_rolling_vo2=52d7edc117a1fac1: compute_max_vo2(rolling_vo2)
+[14:31:13.278] [INFO] [run] subject=S01, __rid_rolling_vo2=470bfca43d7b6c8b: compute_max_vo2(rolling_vo2)
+[14:31:13.278] [INFO] [run] subject=S02, __rid_rolling_vo2=27f267f58e3d5509: compute_max_vo2(rolling_vo2)
+[14:31:13.279] [INFO] [run] subject=S02, __rid_rolling_vo2=893359fda1e87909: compute_max_vo2(rolling_vo2)
+[14:31:13.279] [INFO] [run] subject=S03, __rid_rolling_vo2=00183d7675864ea1: compute_max_vo2(rolling_vo2)
+[14:31:13.279] [INFO] [run] subject=S03, __rid_rolling_vo2=7a5ccdd70bb61186: compute_max_vo2(rolling_vo2)
+[14:31:13.279] [INFO] ────────────────────────────────────────────────────────────────
+[14:31:13.279] [INFO] for_each(compute_max_vo2) done: completed=6, skipped=0, total=6
+[14:31:13.279] [INFO] ================================================================
+[14:31:13.291] [INFO] [save] subject=S01: MaxVO2
+[14:31:13.301] [INFO] [save] subject=S01: MaxVO2
+[14:31:13.311] [INFO] [save] subject=S02: MaxVO2
+[14:31:13.321] [INFO] [save] subject=S02: MaxVO2
+[14:31:13.331] [INFO] [save] subject=S03: MaxVO2
+[14:31:13.341] [INFO] [save] subject=S03: MaxVO2
+[14:31:13.341] [INFO] ===== for_each(compute_max_hr) start =====
+[14:31:13.346] [INFO] input 'signal': loaded RawHeartRate -> 3 rows, 4 cols in 0.005s
+[14:31:13.347] [INFO] loaded 1 inputs in 0.005s
+[14:31:13.348] [INFO] ================================================================
+[14:31:13.348] [INFO] for_each(compute_max_hr) — 3 iterations
+[14:31:13.348] [INFO] subject=[3 values]
+[14:31:13.348] [INFO] ================================================================
+[14:31:13.348] [INFO] inputs: {signal: DataFrame['subject', 'RawHeartRate', '__rid_signal']}
+[14:31:13.348] [INFO] subject=['S01', 'S02', 'S03']
+[14:31:13.348] [INFO] [run] subject=S01, __rid_signal=f22992d0b7b80c50: compute_max_hr(signal)
+[14:31:13.349] [INFO] [run] subject=S02, __rid_signal=4c18ae2d632ac6bf: compute_max_hr(signal)
+[14:31:13.349] [INFO] [run] subject=S03, __rid_signal=999dd28a03092b09: compute_max_hr(signal)
+[14:31:13.349] [INFO] ────────────────────────────────────────────────────────────────
+[14:31:13.349] [INFO] for_each(compute_max_hr) done: completed=3, skipped=0, total=3
+[14:31:13.349] [INFO] ================================================================
+[14:31:13.361] [INFO] [save] subject=S01: MaxHeartRate
+[14:31:13.371] [INFO] [save] subject=S02: MaxHeartRate
+[14:31:13.381] [INFO] [save] subject=S03: MaxHeartRate
+[14:31:26.355] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:32:30.056] [INFO] run: fn_variants for 'compute_perc_max_hr' = []
+[14:32:30.058] [INFO] run: all_edges = [{'id': 'manual__5ettjv', 'source': 'var__MaxHeartRate', 'target': 'fn__compute_perc_max_hr__sbddzh', 'targetHandle': 'in__max_hr'}, {'id': 'manual__si0d4m', 'source': 'const__perc__tljwng', 'target': 'fn__compute_perc_max_hr__sbddzh', 'targetHandle': 'in__perc'}, {'id': 'manual__hc4pj9', 'source': 'fn__compute_perc_max_hr__sbddzh', 'target': 'var__MaxHR_80Perc__n9i6hh'}]
+[14:32:30.058] [INFO] run: manual_nodes = {'fn__compute_perc_max_hr__sbddzh': {'type': 'functionNode', 'label': 'compute_perc_max_hr'}, 'const__perc__tljwng': {'type': 'constantNode', 'label': 'perc'}, 'var__MaxHR_80Perc__n9i6hh': {'type': 'variableNode', 'label': 'MaxHR_80Perc'}}
+[14:32:30.058] [INFO] run: fn_node_ids = {'fn__compute_perc_max_hr__sbddzh', 'fn__compute_perc_max_hr'}
+[14:32:30.058] [INFO] run: after edge scan: input_types={'max_hr': 'MaxHeartRate'}, output_types=['MaxHR_80Perc'], constant_names={'perc'}, unmatched_inputs=[]
+[14:32:30.059] [INFO] run: pending constants = {'perc': {'0.8'}}
+[14:32:30.060] [INFO] run: inferred inputs={'max_hr': 'MaxHeartRate'} outputs=['MaxHR_80Perc'] constants=['perc'] for 'compute_perc_max_hr' from edges
+[14:32:30.062] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:32:30.069] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:32:30.070] [INFO] loaded 2 inputs in 0.007s
+[14:32:30.070] [INFO] ================================================================
+[14:32:30.071] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:32:30.071] [INFO] subject=[3 values]
+[14:32:30.071] [INFO] ================================================================
+[14:32:30.071] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:32:30.071] [INFO] subject=['S01', 'S02', 'S03']
+[14:32:30.071] [INFO] [run] subject=S01, __rid_max_hr=c55ed369b221838e: compute_perc_max_hr(max_hr, perc)
+[14:32:30.071] [INFO] [run] subject=S02, __rid_max_hr=ce19e9be01b0db02: compute_perc_max_hr(max_hr, perc)
+[14:32:30.072] [INFO] [run] subject=S03, __rid_max_hr=0c132eea78d8cb99: compute_perc_max_hr(max_hr, perc)
+[14:32:30.072] [INFO] ────────────────────────────────────────────────────────────────
+[14:32:30.072] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:32:30.072] [INFO] ================================================================
+[14:32:30.084] [INFO] [save] subject=S01, perc=0.8: MaxHR_80Perc
+[14:32:30.093] [INFO] [save] subject=S02, perc=0.8: MaxHR_80Perc
+[14:32:30.100] [INFO] [save] subject=S03, perc=0.8: MaxHR_80Perc
+[14:37:42.015] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:38:25.843] [INFO] run: fn_variants for 'compute_perc_max_hr' = [{'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_80Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}]
+[14:38:25.847] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:38:25.854] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.007s
+[14:38:25.854] [INFO] loaded 2 inputs in 0.007s
+[14:38:25.855] [INFO] ================================================================
+[14:38:25.855] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:38:25.855] [INFO] subject=[3 values]
+[14:38:25.855] [INFO] ================================================================
+[14:38:25.856] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:38:25.856] [INFO] subject=['S01', 'S02', 'S03']
+[14:38:25.856] [INFO] [run] subject=S01, __rid_max_hr=c55ed369b221838e: compute_perc_max_hr(max_hr, perc)
+[14:38:25.856] [INFO] [run] subject=S02, __rid_max_hr=ce19e9be01b0db02: compute_perc_max_hr(max_hr, perc)
+[14:38:25.856] [INFO] [run] subject=S03, __rid_max_hr=0c132eea78d8cb99: compute_perc_max_hr(max_hr, perc)
+[14:38:25.857] [INFO] ────────────────────────────────────────────────────────────────
+[14:38:25.857] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:38:25.857] [INFO] ================================================================
+[14:38:25.868] [INFO] [save] subject=S01, perc=0.8: MaxHR_80Perc
+[14:38:25.877] [INFO] [save] subject=S02, perc=0.8: MaxHR_80Perc
+[14:38:25.885] [INFO] [save] subject=S03, perc=0.8: MaxHR_80Perc
+[14:38:42.602] [INFO] run: fn_variants for 'compute_perc_max_hr' = [{'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_80Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}]
+[14:38:42.606] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:38:42.613] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.007s
+[14:38:42.613] [INFO] loaded 2 inputs in 0.007s
+[14:38:42.614] [INFO] ================================================================
+[14:38:42.614] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:38:42.614] [INFO] subject=[3 values]
+[14:38:42.614] [INFO] ================================================================
+[14:38:42.614] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:38:42.614] [INFO] subject=['S01', 'S02', 'S03']
+[14:38:42.615] [INFO] [run] subject=S01, __rid_max_hr=c55ed369b221838e: compute_perc_max_hr(max_hr, perc)
+[14:38:42.615] [INFO] [run] subject=S02, __rid_max_hr=ce19e9be01b0db02: compute_perc_max_hr(max_hr, perc)
+[14:38:42.615] [INFO] [run] subject=S03, __rid_max_hr=0c132eea78d8cb99: compute_perc_max_hr(max_hr, perc)
+[14:38:42.615] [INFO] ────────────────────────────────────────────────────────────────
+[14:38:42.615] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:38:42.615] [INFO] ================================================================
+[14:38:42.627] [INFO] [save] subject=S01, perc=0.8: MaxHR_80Perc
+[14:38:42.636] [INFO] [save] subject=S02, perc=0.8: MaxHR_80Perc
+[14:38:42.644] [INFO] [save] subject=S03, perc=0.8: MaxHR_80Perc
+[14:42:06.343] [INFO] run: fn_variants for 'compute_perc_max_hr' = [{'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_80Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}]
+[14:42:06.347] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:42:06.353] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:42:06.353] [INFO] loaded 2 inputs in 0.006s
+[14:42:06.354] [INFO] ================================================================
+[14:42:06.354] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:42:06.354] [INFO] subject=[3 values]
+[14:42:06.354] [INFO] ================================================================
+[14:42:06.354] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:42:06.354] [INFO] subject=['S01', 'S02', 'S03']
+[14:42:06.355] [INFO] [run] subject=S01, __rid_max_hr=c55ed369b221838e: compute_perc_max_hr(max_hr, perc)
+[14:42:06.355] [INFO] [run] subject=S02, __rid_max_hr=ce19e9be01b0db02: compute_perc_max_hr(max_hr, perc)
+[14:42:06.355] [INFO] [run] subject=S03, __rid_max_hr=0c132eea78d8cb99: compute_perc_max_hr(max_hr, perc)
+[14:42:06.355] [INFO] ────────────────────────────────────────────────────────────────
+[14:42:06.355] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:42:06.355] [INFO] ================================================================
+[14:42:06.366] [INFO] [save] subject=S01, perc=0.8: MaxHR_80Perc
+[14:42:06.375] [INFO] [save] subject=S02, perc=0.8: MaxHR_80Perc
+[14:42:06.383] [INFO] [save] subject=S03, perc=0.8: MaxHR_80Perc
+[14:42:12.538] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:42:17.992] [INFO] run: fn_variants for 'compute_perc_max_hr' = [{'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_80Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}]
+[14:42:17.994] [INFO] run: overriding DB output types with manual edge outputs: ['MaxHR_Perc']
+[14:42:17.996] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:42:18.003] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.006s
+[14:42:18.003] [INFO] loaded 2 inputs in 0.006s
+[14:42:18.004] [INFO] ================================================================
+[14:42:18.004] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:42:18.004] [INFO] subject=[3 values]
+[14:42:18.004] [INFO] ================================================================
+[14:42:18.004] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:42:18.004] [INFO] subject=['S01', 'S02', 'S03']
+[14:42:18.004] [INFO] [run] subject=S01, __rid_max_hr=c55ed369b221838e: compute_perc_max_hr(max_hr, perc)
+[14:42:18.004] [INFO] [run] subject=S02, __rid_max_hr=ce19e9be01b0db02: compute_perc_max_hr(max_hr, perc)
+[14:42:18.005] [INFO] [run] subject=S03, __rid_max_hr=0c132eea78d8cb99: compute_perc_max_hr(max_hr, perc)
+[14:42:18.005] [INFO] ────────────────────────────────────────────────────────────────
+[14:42:18.005] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:42:18.005] [INFO] ================================================================
+[14:42:18.017] [INFO] [save] subject=S01, perc=0.8: MaxHR_Perc
+[14:42:18.025] [INFO] [save] subject=S02, perc=0.8: MaxHR_Perc
+[14:42:18.033] [INFO] [save] subject=S03, perc=0.8: MaxHR_Perc
+[14:48:33.167] [INFO] configure_database: path=/home/mtillman/SciDB/test_gui.duckdb, schema_keys=['subject']
+[14:48:44.706] [INFO] run: fn_variants for 'compute_perc_max_hr' = [{'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_80Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}, {'function_name': 'compute_perc_max_hr', 'output_type': 'MaxHR_Perc', 'input_types': {'max_hr': 'MaxHeartRate'}, 'constants': {'perc': 0.8}, 'record_count': 3}]
+[14:48:44.710] [INFO] run: overriding DB output types with manual edge outputs: ['MaxHR_Perc']
+[14:48:44.712] [INFO] ===== for_each(compute_perc_max_hr) start =====
+[14:48:44.721] [INFO] input 'max_hr': loaded MaxHeartRate -> 3 rows, 4 cols in 0.008s
+[14:48:44.721] [INFO] loaded 2 inputs in 0.008s
+[14:48:44.722] [INFO] ================================================================
+[14:48:44.722] [INFO] for_each(compute_perc_max_hr) — 3 iterations
+[14:48:44.722] [INFO] subject=[3 values]
+[14:48:44.722] [INFO] ================================================================
+[14:48:44.722] [INFO] inputs: {max_hr: DataFrame['subject', 'MaxHeartRate', '__rid_max_hr'], perc: 0.8}
+[14:48:44.722] [INFO] subject=['S01', 'S02', 'S03']
+[14:48:44.722] [INFO] [run] subject=S01, __rid_max_hr=c55ed369b221838e: compute_perc_max_hr(max_hr, perc)
+[14:48:44.723] [INFO] [run] subject=S02, __rid_max_hr=ce19e9be01b0db02: compute_perc_max_hr(max_hr, perc)
+[14:48:44.723] [INFO] [run] subject=S03, __rid_max_hr=0c132eea78d8cb99: compute_perc_max_hr(max_hr, perc)
+[14:48:44.723] [INFO] ────────────────────────────────────────────────────────────────
+[14:48:44.723] [INFO] for_each(compute_perc_max_hr) done: completed=3, skipped=0, total=3
+[14:48:44.723] [INFO] ================================================================
+[14:48:44.736] [INFO] [save] subject=S01, perc=0.8: MaxHR_Perc
+[14:48:44.745] [INFO] [save] subject=S02, perc=0.8: MaxHR_Perc
+[14:48:44.753] [INFO] [save] subject=S03, perc=0.8: MaxHR_Perc

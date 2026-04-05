@@ -59,6 +59,11 @@ def _ensure_tables(db) -> None:
             PRIMARY KEY (constant_name, value)
         )
     """)
+    _duck(db)._execute("""
+        CREATE TABLE IF NOT EXISTS _pipeline_hidden_nodes (
+            node_id VARCHAR PRIMARY KEY
+        )
+    """)
 
 
 def migrate_from_json(db, layout_path: Path) -> None:
@@ -137,9 +142,22 @@ def delete_node(db, node_id: str) -> None:
 
 
 def graduate_manual_node(db, old_id: str, new_id: str) -> None:
-    """Remove the manual node entry for old_id (the DB-derived node takes over)."""
+    """Remove the manual node entry for old_id (the DB-derived node takes over).
+
+    Also rewrites any manual edges that reference old_id so they point to
+    new_id instead of becoming dangling.
+    """
     _duck(db)._execute(
         "DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id]
+    )
+    # Update edges that reference the old node ID.
+    _duck(db)._execute(
+        "UPDATE _pipeline_edges SET source = ? WHERE source = ?",
+        [new_id, old_id],
+    )
+    _duck(db)._execute(
+        "UPDATE _pipeline_edges SET target = ? WHERE target = ?",
+        [new_id, old_id],
     )
 
 
@@ -213,6 +231,36 @@ def get_pending_constants(db) -> dict[str, set[str]]:
     for const_name, value in rows:
         result.setdefault(const_name, set()).add(value)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Hidden nodes (user-deleted DB-derived nodes)
+# ---------------------------------------------------------------------------
+
+def hide_node(db, node_id: str) -> None:
+    """Mark a DB-derived node as hidden so _build_graph won't recreate it."""
+    _ensure_tables(db)
+    _duck(db)._execute(
+        "INSERT INTO _pipeline_hidden_nodes (node_id) VALUES (?) "
+        "ON CONFLICT DO NOTHING",
+        [node_id],
+    )
+
+
+def unhide_node(db, node_id: str) -> None:
+    """Remove a node from the hidden list (e.g. when user re-adds it)."""
+    _duck(db)._execute(
+        "DELETE FROM _pipeline_hidden_nodes WHERE node_id = ?", [node_id]
+    )
+
+
+def get_hidden_node_ids(db) -> set[str]:
+    """Return the set of node IDs that the user has explicitly deleted."""
+    _ensure_tables(db)
+    rows = _duck(db)._fetchall(
+        "SELECT node_id FROM _pipeline_hidden_nodes"
+    )
+    return {row[0] for row in rows}
 
 
 # ---------------------------------------------------------------------------

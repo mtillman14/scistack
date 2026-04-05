@@ -263,6 +263,9 @@ def _build_graph(db: DatabaseManager) -> dict:
     run and does not require scilineage. list_variables() fills in any variable
     types that exist in the DB but have never been run through for_each.
     """
+    from scistack_gui import pipeline_store as _ps
+    hidden_ids = _ps.get_hidden_node_ids(db)
+
     variants: list[dict] = db.list_pipeline_variants()
     all_var_types: set[str] = set()
     # function_name → dict of param_name → type_name (variable inputs only)
@@ -331,6 +334,38 @@ def _build_graph(db: DatabaseManager) -> dict:
             else:
                 still_pending.add(pval)
         pending_constants[const_name] = still_pending
+
+    # --- Filter out user-hidden nodes ---
+    # Remove variable types, functions, constants, and path inputs that the
+    # user explicitly deleted from the canvas.  Done before computing run
+    # states so hidden nodes don't affect state propagation.
+    hidden_var_types = {nid.replace("var__", "", 1) for nid in hidden_ids
+                        if nid.startswith("var__")}
+    hidden_fn_names = {nid.replace("fn__", "", 1) for nid in hidden_ids
+                       if nid.startswith("fn__")}
+    hidden_const_names = {nid.replace("const__", "", 1) for nid in hidden_ids
+                          if nid.startswith("const__")}
+    hidden_path_names = {nid.replace("pathInput__", "", 1) for nid in hidden_ids
+                         if nid.startswith("pathInput__")}
+    all_var_types -= hidden_var_types
+    # Also remove hidden var types from fn_outputs so edges aren't created.
+    for fn_name in list(fn_outputs.keys()):
+        fn_outputs[fn_name] -= hidden_var_types
+    # Remove hidden var types from fn_input_params values.
+    for fn_name in list(fn_input_params.keys()):
+        fn_input_params[fn_name] = {
+            p: t for p, t in fn_input_params[fn_name].items()
+            if t not in hidden_var_types
+        }
+    for fn_name in hidden_fn_names:
+        fn_input_params.pop(fn_name, None)
+        fn_outputs.pop(fn_name, None)
+        fn_constants.pop(fn_name, None)
+    for cname in hidden_const_names:
+        const_counts.pop(cname, None)
+        const_fns.pop(cname, None)
+    for pname in hidden_path_names:
+        path_inputs.pop(pname, None)
 
     # Compute run states for all function and variable nodes
     run_states = _compute_run_states(db, fn_input_params, fn_outputs, fn_constants, pending_constants)
@@ -472,7 +507,10 @@ def _build_graph(db: DatabaseManager) -> dict:
                 })
 
     # Merge in manually-created edges (tagged so the frontend can delete them).
+    # Skip edges that reference hidden nodes.
     for me in layout_store.read_manual_edges():
+        if me["source"] in hidden_ids or me["target"] in hidden_ids:
+            continue
         if any(e["id"] == me["id"] for e in edges):
             continue
         edge: dict = {
@@ -516,7 +554,12 @@ def _build_graph(db: DatabaseManager) -> dict:
         if meta["type"] == "variableNode":
             extra = {"total_records": 0, "run_state": "red"}
         elif meta["type"] == "constantNode":
-            extra = {"values": []}
+            # Include any pending (user-declared, not yet in DB) values.
+            pending_vals = [
+                {"value": pval, "record_count": 0}
+                for pval in sorted(pending_constants.get(fn_label, set()))
+            ]
+            extra = {"values": pending_vals}
         elif meta["type"] == "pathInputNode":
             extra = {"template": "", "root_folder": None}
         elif meta["type"] == "functionNode":

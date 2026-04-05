@@ -8,6 +8,11 @@
 
 import { Handle, Position } from '@xyflow/react'
 
+export interface Variant {
+  constants: Record<string, unknown>
+  checked?: boolean
+}
+
 export interface VariableNodeData {
   label: string
   total_records: number

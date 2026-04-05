@@ -173,3 +173,6 @@ class MaxHR_80Perc(BaseVariable):
 
 class MaxHR_50Perc(BaseVariable):
     pass
+
+class MaxHR_Perc(BaseVariable):
+    pass

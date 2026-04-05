@@ -71,7 +71,21 @@ def write_manual_node(node_id: str, x: float, y: float,
     data = _load()
     data["positions"][node_id] = {"x": x, "y": y}
     _save(data)
-    pipeline_store.write_manual_node(get_db(), node_id, node_type, label)
+    db = get_db()
+    pipeline_store.write_manual_node(db, node_id, node_type, label)
+    # If the user is re-adding a node that was previously hidden, unhide it.
+    # Also unhide the canonical DB-derived ID for this type/label.
+    pipeline_store.unhide_node(db, node_id)
+    prefix_map = {
+        "variableNode": "var__",
+        "functionNode": "fn__",
+        "constantNode": "const__",
+        "pathInputNode": "pathInput__",
+    }
+    prefix = prefix_map.get(node_type)
+    if prefix:
+        canonical_id = f"{prefix}{label}"
+        pipeline_store.unhide_node(db, canonical_id)
 
 
 def get_manual_nodes() -> dict[str, dict]:
@@ -79,11 +93,18 @@ def get_manual_nodes() -> dict[str, dict]:
 
 
 def delete_node(node_id: str) -> None:
-    """Remove a node's position (JSON) and manual-node entry (DB)."""
+    """Remove a node's position (JSON) and manual-node entry (DB).
+
+    For DB-derived nodes (var__, fn__, const__, pathInput__), also mark them
+    as hidden so _build_graph won't recreate them from pipeline history.
+    """
     data = _load()
     data["positions"].pop(node_id, None)
     _save(data)
-    pipeline_store.delete_node(get_db(), node_id)
+    db = get_db()
+    pipeline_store.delete_node(db, node_id)
+    # Hide DB-derived nodes so they don't reappear from list_pipeline_variants().
+    pipeline_store.hide_node(db, node_id)
 
 
 def read_constants() -> list[str]:
@@ -138,7 +159,9 @@ def read_all_path_input_names() -> list[dict]:
         by_name[pi["name"]] = pi
     for node_id in data["positions"]:
         if node_id.startswith("pathInput__"):
-            name = node_id[len("pathInput__"):]
+            # Node IDs are "pathInput__<name>__<random>"; extract just <name>.
+            parts = node_id.split("__")
+            name = parts[1] if len(parts) >= 2 else node_id[len("pathInput__"):]
             if name not in by_name:
                 by_name[name] = {"name": name, "template": "", "root_folder": None}
     return sorted(by_name.values(), key=lambda p: p["name"])
