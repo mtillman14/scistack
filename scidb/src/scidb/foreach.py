@@ -86,6 +86,7 @@ def for_each(
     where=None,
     _inject_combo_metadata: bool = False,
     _pre_combo_hook: "Callable[[dict], bool] | None" = None,
+    _progress_fn: "Callable[[dict], None] | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -408,6 +409,7 @@ def for_each(
         output_names=output_names,
         _all_combos=full_combos,
         _log_fn=Log.info,
+        _progress_fn=_progress_fn,
         **extended_metadata_iterables,
     )
 

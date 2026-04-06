@@ -21,6 +21,7 @@ def for_each(
     output_names: list[str] | int | None = None,
     _all_combos: list[dict] | None = None,
     _log_fn: "Callable[[str], None] | None" = None,
+    _progress_fn: "Callable[[dict], None] | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -190,8 +191,18 @@ def for_each(
     skipped = 0
     collected_rows: list[tuple[dict, tuple]] = []
 
-    for metadata in all_combos:
+    for combo_idx, metadata in enumerate(all_combos):
         metadata_str = ", ".join(f"{k}={v}" for k, v in metadata.items())
+
+        if _progress_fn is not None:
+            _progress_fn({
+                "event": "combo_start",
+                "current": combo_idx + 1,
+                "total": total,
+                "completed": completed,
+                "skipped": skipped,
+                "metadata": metadata,
+            })
 
         if dry_run:
             _print_dry_run_iteration(inputs, metadata, constant_inputs, distribute_key)
@@ -219,6 +230,16 @@ def for_each(
 
         if filter_failed:
             skipped += 1
+            if _progress_fn is not None:
+                _progress_fn({
+                    "event": "combo_skip",
+                    "current": combo_idx + 1,
+                    "total": total,
+                    "completed": completed,
+                    "skipped": skipped,
+                    "metadata": metadata,
+                    "error": "filter failed",
+                })
             continue
 
         # Call the function
@@ -240,6 +261,16 @@ def for_each(
                 _log_fn(msg)
             traceback.print_exc()
             skipped += 1
+            if _progress_fn is not None:
+                _progress_fn({
+                    "event": "combo_skip",
+                    "current": combo_idx + 1,
+                    "total": total,
+                    "completed": completed,
+                    "skipped": skipped,
+                    "metadata": metadata,
+                    "error": str(e),
+                })
             continue
 
         # Normalize single output to tuple
@@ -265,6 +296,15 @@ def for_each(
             collected_rows.append((metadata, result))
 
         completed += 1
+        if _progress_fn is not None:
+            _progress_fn({
+                "event": "combo_done",
+                "current": combo_idx + 1,
+                "total": total,
+                "completed": completed,
+                "skipped": skipped,
+                "metadata": metadata,
+            })
 
     # Summary
     print(f"{'─' * 64}")

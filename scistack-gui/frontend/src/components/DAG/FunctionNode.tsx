@@ -37,7 +37,7 @@ interface Props {
 export default function FunctionNode({ id, data }: Props) {
   const { getNodes, getEdges } = useReactFlow()
   const [running, setRunning] = useState(false)
-  const { startRun, appendLine, finishRun } = useRunLog()
+  const { startRun, appendLine, finishRun, setRunMeta, updateProgress } = useRunLog()
   // Ref (not state) so the WebSocket handler always sees the current value
   // without waiting for a React re-render — critical when the pipeline
   // finishes before the first render cycle completes.
@@ -46,16 +46,36 @@ export default function FunctionNode({ id, data }: Props) {
   useBackendMessage(useCallback((msg) => {
     // Support both WebSocket format (msg.type) and JSON-RPC notification format (msg.method)
     const msgType = (msg.type ?? msg.method) as string
-    const runId = (msg.run_id ?? (msg.params as Record<string, unknown>)?.run_id) as string | undefined
+    const params = (msg.params ?? msg) as Record<string, unknown>
+    const runId = (msg.run_id ?? (params as Record<string, unknown>)?.run_id) as string | undefined
     if (runId !== runIdRef.current) return
     if (msgType === 'run_output') {
-      const text = (msg.text ?? (msg.params as Record<string, unknown>)?.text) as string
+      const text = (msg.text ?? params.text) as string
       appendLine(runId!, text)
+    } else if (msgType === 'run_start') {
+      setRunMeta(runId!, {
+        constants: (params.constants ?? {}) as Record<string, unknown>,
+        input_types: (params.input_types ?? {}) as Record<string, string>,
+        output_type: (params.output_type ?? '') as string,
+        started_at: (params.started_at ?? Date.now() / 1000) as number,
+      })
+    } else if (msgType === 'run_progress') {
+      updateProgress(runId!, {
+        event: params.event as string,
+        current: params.current as number,
+        total: params.total as number,
+        completed: params.completed as number,
+        skipped: params.skipped as number,
+        metadata: (params.metadata ?? {}) as Record<string, string>,
+        error: params.error as string | undefined,
+      })
     } else if (msgType === 'run_done') {
-      finishRun(runId!)
+      const success = (params.success ?? true) as boolean
+      const durationMs = params.duration_ms as number | undefined
+      finishRun(runId!, success, durationMs)
       setRunning(false)
     }
-  }, [appendLine, finishRun]))
+  }, [appendLine, finishRun, setRunMeta, updateProgress]))
 
   const handleRun = useCallback(async () => {
     // Generate run_id on the frontend BEFORE the fetch so the WebSocket

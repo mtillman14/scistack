@@ -18,6 +18,7 @@ per variant. If `variants` is empty we run all known variants from the DB.
 """
 
 import sys
+import time
 import uuid
 import threading
 from io import StringIO
@@ -310,6 +311,7 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     }
 
     success = True
+    run_started_at = time.time()
     for v in unique_targets:
         # Build inputs dict: variable class inputs + scalar constants
         try:
@@ -328,11 +330,40 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                 if v["constants"] else function_name
         emit(f"▶ Running {label}\n")
 
+        # Emit structured run_start message for the frontend.
+        started_at = time.time()
+        push_message({
+            "type": "run_start",
+            "run_id": run_id,
+            "function_name": function_name,
+            "constants": v["constants"],
+            "input_types": {k: str(vt) for k, vt in v["input_types"].items()},
+            "output_type": v["output_type"],
+            "started_at": started_at,
+        })
+
+        # Progress callback: relay structured progress to the frontend.
+        def _progress_fn(info: dict):
+            # Convert metadata values to strings for JSON serialization.
+            meta = {str(k): str(val) for k, val in info.get("metadata", {}).items()}
+            push_message({
+                "type": "run_progress",
+                "run_id": run_id,
+                "event": info["event"],
+                "current": info["current"],
+                "total": info["total"],
+                "completed": info["completed"],
+                "skipped": info["skipped"],
+                "metadata": meta,
+                "error": info.get("error"),
+            })
+
         # Capture for_each stdout and relay it line-by-line.
         buf = StringIO()
         try:
             with redirect_stdout(buf):
-                for_each(fn, inputs=inputs, outputs=[OutputCls], **schema_kwargs)
+                for_each(fn, inputs=inputs, outputs=[OutputCls],
+                         _progress_fn=_progress_fn, **schema_kwargs)
             output = buf.getvalue()
             if output:
                 emit(output)
@@ -340,7 +371,9 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
             emit(f"Error: {exc}\n")
             success = False
 
-    push_message({"type": "run_done", "run_id": run_id, "success": success})
+    duration_ms = int((time.time() - run_started_at) * 1000)
+    push_message({"type": "run_done", "run_id": run_id, "success": success,
+                  "duration_ms": duration_ms})
     push_message({"type": "dag_updated"})
 
 
