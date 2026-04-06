@@ -5,11 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
+            "name": "Attach to scistack-gui server",
             "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
+            "request": "attach",
+            "connect": { "host": "127.0.0.1", "port": 5678 },
             "justMyCode": false
         }
     ]

@@ -51,9 +51,25 @@ export class PythonProcess {
 
     this.outputChannel.appendLine(`Spawning: ${pythonPath} ${args.join(' ')}`);
 
+    // If the user enabled scistack.debug, pass env vars so server.py starts a
+    // debugpy listener that VS Code can attach to (so breakpoints inside user
+    // functions invoked by DAG Run buttons get hit).
+    const cfg = vscode.workspace.getConfiguration('scistack');
+    const debugEnabled = cfg.get<boolean>('debug', false);
+    const debugPort = cfg.get<number>('debugPort', 5678);
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    if (debugEnabled) {
+      childEnv.SCISTACK_GUI_DEBUG = '1';
+      childEnv.SCISTACK_GUI_DEBUG_PORT = String(debugPort);
+      this.outputChannel.appendLine(
+        `debugpy listener will start on 127.0.0.1:${debugPort} ` +
+        `(attach via "Attach to scistack-gui server" launch config)`
+      );
+    }
+
     this.proc = spawn(pythonPath, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: childEnv,
     });
 
     // Parse newline-delimited JSON from stdout

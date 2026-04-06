@@ -13,6 +13,15 @@ let pythonProcess: PythonProcess | null = null;
 let dagPanel: DagPanel | null = null;
 let outputChannel: vscode.OutputChannel;
 
+// Remember the most recent start args so we can restart the Python process
+// (e.g. after editing scistack_gui source code) without re-prompting the user.
+interface LastStartArgs {
+  dbPath: string;
+  modulePath?: string;
+  schemaKeys?: string[];
+}
+let lastStartArgs: LastStartArgs | null = null;
+
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('SciStack');
 
@@ -82,23 +91,32 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const refreshModule = vscode.commands.registerCommand(
-    'scistack.refreshModule',
+  const restartPython = vscode.commands.registerCommand(
+    'scistack.restartPython',
     async () => {
-      if (!pythonProcess) {
-        vscode.window.showWarningMessage('SciStack: No pipeline is open.');
+      if (!lastStartArgs) {
+        vscode.window.showWarningMessage(
+          'SciStack: No pipeline has been opened yet — run "SciStack: Open Pipeline" first.'
+        );
         return;
       }
+      outputChannel.appendLine('Restarting Python process...');
       try {
-        await pythonProcess.request('refresh_module', {});
-        vscode.window.showInformationMessage('SciStack: Module refreshed.');
+        await startPipeline(
+          context,
+          lastStartArgs.dbPath,
+          lastStartArgs.modulePath,
+          // Don't re-pass schemaKeys: the DB already exists on restart.
+          undefined,
+        );
+        vscode.window.showInformationMessage('SciStack: Python process restarted.');
       } catch (err) {
-        vscode.window.showErrorMessage(`SciStack: Refresh failed — ${err}`);
+        vscode.window.showErrorMessage(`SciStack: Restart failed — ${err}`);
       }
     }
   );
 
-  context.subscriptions.push(openPipeline, refreshModule, outputChannel);
+  context.subscriptions.push(openPipeline, restartPython, outputChannel);
 }
 
 async function startPipeline(
@@ -107,6 +125,14 @@ async function startPipeline(
   modulePath?: string,
   schemaKeys?: string[],
 ) {
+  // Remember args so "Restart Python" can respawn without re-prompting.
+  // Preserve the prior schemaKeys if this call didn't supply them (e.g. restart).
+  lastStartArgs = {
+    dbPath,
+    modulePath,
+    schemaKeys: schemaKeys ?? lastStartArgs?.schemaKeys,
+  };
+
   // Kill existing process if any
   if (pythonProcess) {
     pythonProcess.kill();
@@ -158,6 +184,10 @@ async function startPipeline(
   pythonProcess.onNotification((method, params) => {
     if (dagPanel) {
       dagPanel.postMessage({ method, params });
+      // When a run finishes, auto-detach the debugger if we auto-attached it.
+      if (method === 'run_done') {
+        dagPanel.stopDebugSession();
+      }
     }
   });
 

@@ -625,6 +625,20 @@ def get_function_params(fn_name: str):
     return {"params": params}
 
 
+@router.get("/function/{fn_name}/source")
+def get_function_source(fn_name: str):
+    """Return the source file path and first line number for a registered function."""
+    fn = registry._functions.get(fn_name)
+    if fn is None:
+        return {"ok": False, "error": f"Function '{fn_name}' is not registered."}
+    try:
+        file = inspect.getsourcefile(fn) or inspect.getfile(fn)
+        _, line = inspect.getsourcelines(fn)
+    except (TypeError, OSError) as e:
+        return {"ok": False, "error": f"Could not locate source for '{fn_name}': {e}"}
+    return {"ok": True, "file": file, "line": line}
+
+
 @router.put("/constants/{name}/pending/{value}")
 async def add_pending_constant_value(name: str, value: str):
     layout_store.add_pending_constant(name, value)

@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { Handle, Position, useReactFlow } from '@xyflow/react'
-import { callBackend } from '../../api'
+import { callBackend, isVSCodeMode } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import { useRunLog } from '../../context/RunLogContext'
 import type { Variant } from './VariableNode'
@@ -91,6 +91,26 @@ export default function FunctionNode({ id, data }: Props) {
     })
   }, [id, data.label, getNodes, getEdges, startRun])
 
+  const handleOpenSource = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const src = await callBackend('get_function_source', { name: data.label }) as {
+        ok: boolean; file?: string; line?: number; error?: string
+      }
+      if (!src.ok) {
+        window.alert(`Could not locate source for '${data.label}': ${src.error ?? 'unknown error'}`)
+        return
+      }
+      if (isVSCodeMode) {
+        await callBackend('reveal_in_editor', { file: src.file, line: src.line })
+      } else {
+        window.alert(`${data.label} is defined at:\n${src.file}:${src.line}`)
+      }
+    } catch (err) {
+      window.alert(`Failed to open source: ${err}`)
+    }
+  }, [data.label])
+
   const stateStyle = data.run_state ? STATE_STYLES[data.run_state] : null
 
   const inputParams = data.input_params ?? {}
@@ -130,7 +150,13 @@ export default function FunctionNode({ id, data }: Props) {
         : <Handle type="target" position={Position.Left} />
       }
 
-      <div style={styles.label}>{data.label}</div>
+      <div
+        style={styles.label}
+        onDoubleClick={handleOpenSource}
+        title="Double-click to open function source in editor"
+      >
+        {data.label}
+      </div>
 
       <button
         style={running ? styles.buttonRunning : styles.button}
@@ -173,6 +199,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     marginBottom: 6,
     textAlign: 'center',
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    textDecorationStyle: 'dotted',
+    textUnderlineOffset: '2px',
   },
   button: {
     width: '100%',

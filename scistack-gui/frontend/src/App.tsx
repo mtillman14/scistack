@@ -84,19 +84,19 @@ const styles: Record<string, React.CSSProperties> = {
 export default function App() {
   const [schema, setSchema] = useState<{ keys: string[] }>({ keys: [] });
   const [dbName, setDbName] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
+  const handleRestart = useCallback(async () => {
+    setRestarting(true);
     try {
-      const data = await callBackend("refresh_module") as { ok?: boolean; error?: string };
-      if (!data.ok) {
-        console.error("Refresh failed:", data.error);
-      }
+      // Host-side method handled by the VS Code extension: kills and respawns
+      // the Python subprocess so edits to scistack_gui server code AND the
+      // user's pipeline module are picked up.
+      await callBackend("restart_python");
     } catch (err) {
-      console.error("Refresh failed:", err);
+      console.error("Restart failed:", err);
     } finally {
-      setRefreshing(false);
+      setRestarting(false);
     }
   }, []);
 
@@ -119,11 +119,11 @@ export default function App() {
             <span style={styles.dbName}>{dbName || "loading…"}</span>
             <button
               style={styles.refreshBtn}
-              onClick={handleRefresh}
-              disabled={refreshing}
-              title="Re-import the pipeline module from disk"
+              onClick={handleRestart}
+              disabled={restarting}
+              title="Restart the Python process to pick up edits to server or pipeline code"
             >
-              {refreshing ? "Refreshing..." : "Refresh"}
+              {restarting ? "Restarting..." : "Restart"}
             </button>
             {schema.keys.length > 0 && (
               <span style={styles.schemaKeys}>

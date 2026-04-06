@@ -49,6 +49,9 @@ if (isVSCode) {
 type MessageHandler = (msg: Record<string, unknown>) => void;
 const _notificationHandlers = new Set<MessageHandler>();
 
+/** True when running inside the VS Code extension's webview. */
+export const isVSCodeMode = isVSCode;
+
 export function addNotificationHandler(handler: MessageHandler): () => void {
   _notificationHandlers.add(handler);
   return () => _notificationHandlers.delete(handler);
@@ -96,6 +99,7 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     get_info:               { path: '/api/info' },
     get_registry:           { path: '/api/registry' },
     get_function_params:    { path: (p) => `/api/function/${encodeURIComponent(p.name as string)}/params` },
+    get_function_source:    { path: (p) => `/api/function/${encodeURIComponent(p.name as string)}/source` },
     get_variable_records:   { path: (p) => `/api/variables/${encodeURIComponent(p.name as string)}/records` },
     get_constants:          { path: '/api/constants' },
     get_path_inputs:        { path: '/api/path-inputs' },

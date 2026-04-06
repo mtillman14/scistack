@@ -15,6 +15,7 @@ FastAPI mode (scistack-gui CLI) is unchanged and still works.
 
 import argparse
 import json
+import os
 import sys
 import threading
 import logging
@@ -27,6 +28,23 @@ logging.basicConfig(
     format="[scistack] %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Optional: start a debugpy listener so VS Code can attach and hit breakpoints
+# inside user functions executed by /api/run. Enable by setting
+# SCISTACK_GUI_DEBUG=1 (optionally SCISTACK_GUI_DEBUG_PORT=<port>,
+# SCISTACK_GUI_DEBUG_WAIT=1 to block until the debugger attaches).
+if os.environ.get("SCISTACK_GUI_DEBUG"):
+    try:
+        import debugpy
+        _port = int(os.environ.get("SCISTACK_GUI_DEBUG_PORT", "5678"))
+        debugpy.listen(("127.0.0.1", _port))
+        logger.info(f"debugpy listening on 127.0.0.1:{_port} (attach from VS Code)")
+        if os.environ.get("SCISTACK_GUI_DEBUG_WAIT"):
+            logger.info("SCISTACK_GUI_DEBUG_WAIT set — blocking until debugger attaches...")
+            debugpy.wait_for_client()
+            logger.info("debugger attached")
+    except Exception as e:
+        logger.warning(f"failed to start debugpy listener: {e}")
 
 
 def _send(obj: dict) -> None:
@@ -90,6 +108,22 @@ def _h_get_registry(params):
 def _h_get_function_params(params):
     from scistack_gui.api.pipeline import _fn_params_from_registry
     return {"params": _fn_params_from_registry(params["name"])}
+
+
+def _h_get_function_source(params):
+    """Return the source file path and line number for a registered function."""
+    import inspect
+    from scistack_gui import registry
+    name = params["name"]
+    fn = registry._functions.get(name)
+    if fn is None:
+        return {"ok": False, "error": f"Function '{name}' is not registered (pass --module at startup)."}
+    try:
+        file = inspect.getsourcefile(fn) or inspect.getfile(fn)
+        _, line = inspect.getsourcelines(fn)
+    except (TypeError, OSError) as e:
+        return {"ok": False, "error": f"Could not locate source for '{name}': {e}"}
+    return {"ok": True, "file": file, "line": line}
 
 
 def _h_get_variable_records(params):
@@ -215,6 +249,11 @@ def _h_start_run(params):
 
 
 def _h_refresh_module(params):
+    # NOTE: The VS Code extension does NOT call this RPC. It uses a full
+    # subprocess restart ("SciStack: Restart Python Process") instead, which
+    # also picks up edits to scistack_gui server code. This handler is kept
+    # for other JSON-RPC clients and internal callers (e.g. variable creation
+    # in api/variables.py) that only need to re-import the user module.
     from scistack_gui import registry
     from scistack_gui.notify import notify
     try:
@@ -281,6 +320,7 @@ METHODS = {
     "get_info": _h_get_info,
     "get_registry": _h_get_registry,
     "get_function_params": _h_get_function_params,
+    "get_function_source": _h_get_function_source,
     "get_variable_records": _h_get_variable_records,
     "get_constants": _h_get_constants,
     "get_path_inputs": _h_get_path_inputs,

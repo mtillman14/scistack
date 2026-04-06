@@ -17,8 +17,8 @@
         "title": "SciStack: Open Pipeline"
       },
       {
-        "command": "scistack.refreshModule",
-        "title": "SciStack: Refresh Module"
+        "command": "scistack.restartPython",
+        "title": "SciStack: Restart Python Process"
       }
     ],
     "configuration": {
@@ -28,6 +28,16 @@
           "type": "string",
           "default": "",
           "description": "Path to the Python interpreter with scistack-gui installed. Leave empty to auto-detect from the Python extension."
+        },
+        "scistack.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start a debugpy listener in the SciStack server process so VS Code can attach and hit breakpoints inside user functions executed by the DAG Run buttons. Use the 'Attach to scistack-gui server' launch config to connect."
+        },
+        "scistack.debugPort": {
+          "type": "number",
+          "default": 5678,
+          "description": "Port for the debugpy listener when scistack.debug is enabled."
         }
       }
     }
