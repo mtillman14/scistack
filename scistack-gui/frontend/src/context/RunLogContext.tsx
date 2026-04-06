@@ -6,12 +6,19 @@
 
 import { createContext, useContext, useState, useCallback } from 'react'
 
+export interface VariantEntry {
+  constants: Record<string, unknown>
+  input_types: Record<string, string>     // param → variable type name
+  output_type: string
+}
+
 export interface RunEntry {
   run_id: string
   function_name: string
   constants: Record<string, unknown>
   input_types: Record<string, string>     // param → variable type name
   output_types: string[]                  // accumulated across variants
+  variants: VariantEntry[]                // per-repetition details
   started_at: number              // epoch ms
   duration_ms?: number
   records_total?: number
@@ -61,6 +68,7 @@ export function RunLogProvider({ children }: { children: React.ReactNode }) {
       constants: {},
       input_types: {},
       output_types: [],
+      variants: [],
       started_at: Date.now(),
       records_done: 0,
       records_skipped: 0,
@@ -96,11 +104,17 @@ export function RunLogProvider({ children }: { children: React.ReactNode }) {
       const newOutputs = meta.output_type && !r.output_types.includes(meta.output_type)
         ? [...r.output_types, meta.output_type]
         : r.output_types
+      const variant: VariantEntry = {
+        constants: meta.constants,
+        input_types: meta.input_types,
+        output_type: meta.output_type,
+      }
       return {
         ...r,
         constants: meta.constants,
         input_types: mergedInputs,
         output_types: newOutputs,
+        variants: [...r.variants, variant],
         started_at: meta.started_at * 1000, // convert seconds → ms
       }
     }))

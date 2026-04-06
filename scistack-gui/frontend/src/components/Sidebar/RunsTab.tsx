@@ -80,19 +80,16 @@ function RunCard({ run }: { run: RunEntry }) {
     run.status === 'running' ? '#f0c040' :
     run.status === 'error' ? '#e06060' : '#6be16b'
 
-  // Variables row: "Input1, Input2 → Output1, Output2"
-  const inputNames = Object.values(run.input_types)
-  const outputNames = run.output_types
-  const hasVars = inputNames.length > 0 || outputNames.length > 0
-  const variablesStr = hasVars
-    ? [inputNames.join(', '), outputNames.join(', ')].filter(Boolean).join(' → ')
-    : null
-
-  // Constants row
-  const constantEntries = Object.entries(run.constants)
-  const constantsStr = constantEntries.length > 0
-    ? constantEntries.map(([k, v]) => `${k}=${v}`).join(', ')
-    : null
+  // Build per-repetition display from variants array.
+  // Fall back to flat display if no variants tracked yet (e.g. legacy/in-flight).
+  const variants = run.variants.length > 0
+    ? run.variants
+    : [{
+        constants: run.constants,
+        input_types: run.input_types,
+        output_type: run.output_types[0] ?? '',
+      }]
+  const showRepLabel = variants.length > 1
 
   // Progress info
   const total = run.records_total ?? 0
@@ -114,15 +111,34 @@ function RunCard({ run }: { run: RunEntry }) {
         <span style={styles.time}>{relativeTime(run.started_at)}</span>
       </div>
 
-      {/* Variables row */}
-      {variablesStr && (
-        <div style={styles.variablesRow}>{variablesStr}</div>
+      {/* Repetitions */}
+      {showRepLabel && (
+        <div style={styles.repLabel}>{variants.length} repetitions</div>
       )}
-
-      {/* Constants row */}
-      {constantsStr && (
-        <div style={styles.constantsRow}>{constantsStr}</div>
-      )}
+      {variants.map((v, i) => {
+        const inputNames = Object.values(v.input_types)
+        const constEntries = Object.entries(v.constants)
+        const inputParts = [
+          ...inputNames,
+          ...constEntries.map(([k, val]) => `${k}=${val}`),
+        ]
+        return (
+          <div key={i} style={styles.repBlock}>
+            {showRepLabel && (
+              <div style={styles.repHeader}>#{i + 1}</div>
+            )}
+            {inputParts.length > 0 && (
+              <div style={styles.repInputs}>
+                {inputParts.join(', ')}
+                {v.output_type ? ` → ${v.output_type}` : ''}
+              </div>
+            )}
+            {inputParts.length === 0 && v.output_type && (
+              <div style={styles.repInputs}>→ {v.output_type}</div>
+            )}
+          </div>
+        )
+      })}
 
       {/* Progress */}
       {run.status === 'running' && total > 0 && (
@@ -205,19 +221,28 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#555',
     flexShrink: 0,
   },
-  variablesRow: {
+  repLabel: {
     fontFamily: 'monospace',
-    fontSize: 11,
-    color: '#7a9ec2',
+    fontSize: 10,
+    color: '#888',
+    marginTop: 4,
+    paddingLeft: 20,
+  },
+  repBlock: {
     marginTop: 3,
     paddingLeft: 20,
   },
-  constantsRow: {
+  repHeader: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    color: '#666',
+  },
+  repInputs: {
     fontFamily: 'monospace',
     fontSize: 11,
-    color: '#888',
-    marginTop: 2,
-    paddingLeft: 20,
+    color: '#7a9ec2',
+    marginTop: 1,
+    paddingLeft: 0,
   },
   progressSection: {
     marginTop: 5,
