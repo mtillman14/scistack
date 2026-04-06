@@ -2,7 +2,7 @@
  * PythonProcess — manages the child Python JSON-RPC server.
  *
  * Responsibilities:
- *   - Spawns `python -m scistack_gui.server --db <path> [--module <path>]`
+ *   - Spawns `python -m scistack_gui.server --db <path> [--module <path>] [--project <path>]`
  *   - Parses newline-delimited JSON-RPC from stdout
  *   - Routes responses (have `id`) back to pending request promises
  *   - Routes notifications (no `id`) to registered listeners
@@ -40,9 +40,12 @@ export class PythonProcess {
     modulePath: string | undefined,
     private outputChannel: vscode.OutputChannel,
     schemaKeys?: string[],
+    projectPath?: string,
   ) {
     const args = ['-m', 'scistack_gui.server', '--db', dbPath];
-    if (modulePath) {
+    if (projectPath) {
+      args.push('--project', projectPath);
+    } else if (modulePath) {
       args.push('--module', modulePath);
     }
     if (schemaKeys && schemaKeys.length > 0) {

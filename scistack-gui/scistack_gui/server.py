@@ -257,7 +257,11 @@ def _h_refresh_module(params):
     from scistack_gui import registry
     from scistack_gui.notify import notify
     try:
-        result = registry.refresh_module()
+        # Project mode refreshes all sources; single-file mode refreshes one.
+        if registry._config is not None:
+            result = registry.refresh_all()
+        else:
+            result = registry.refresh_module()
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
     except Exception as e:
@@ -284,7 +288,14 @@ def _h_create_variable(params):
         return {"ok": False, "error": "Variable names should start with an uppercase letter."}
     if name in BaseVariable._all_subclasses:
         return {"ok": False, "error": f"A variable named '{name}' already exists."}
-    if registry._module_path is None:
+
+    # Determine the target file for the new class definition.
+    target_file: Path | None = None
+    if registry._config is not None and registry._config.variable_file is not None:
+        target_file = registry._config.variable_file
+    elif registry._module_path is not None:
+        target_file = registry._module_path
+    if target_file is None:
         return {"ok": False, "error": "No module file was loaded at startup."}
 
     lines = ["\n"]
@@ -295,13 +306,16 @@ def _h_create_variable(params):
         lines.append(f"class {name}(BaseVariable):\n    pass\n")
 
     try:
-        with open(registry._module_path, "a") as f:
+        with open(target_file, "a") as f:
             f.writelines(lines)
     except OSError as e:
         return {"ok": False, "error": f"Failed to write to module file: {e}"}
 
     try:
-        registry.refresh_module()
+        if registry._config is not None:
+            registry.refresh_all()
+        else:
+            registry.refresh_module()
     except Exception as e:
         return {"ok": False, "error": f"Class was written but refresh failed: {e}"}
 
@@ -371,11 +385,21 @@ def main():
     parser = argparse.ArgumentParser(prog="scistack-gui-server")
     parser.add_argument("--db", type=Path, required=True, help="Path to .duckdb file")
     parser.add_argument("--module", "-m", type=Path, default=None,
-                        help="Path to pipeline .py file")
+                        help="Path to pipeline .py file (single-file mode)")
+    parser.add_argument("--project", "-p", type=Path, default=None,
+                        help="Path to pyproject.toml or directory containing one "
+                             "(project mode — reads [tool.scistack] config)")
     parser.add_argument("--schema-keys", type=str, default=None,
                         help="Comma-separated schema keys; if provided and --db "
                              "does not exist, a new database is created.")
     args = parser.parse_args()
+
+    if args.module and args.project:
+        print(json.dumps({
+            "jsonrpc": "2.0", "method": "error",
+            "params": {"message": "--module and --project are mutually exclusive."}
+        }))
+        sys.exit(1)
 
     db_path = args.db.resolve()
     create_new = not db_path.exists()
@@ -386,8 +410,34 @@ def main():
         }))
         sys.exit(1)
 
-    # Import user module first (same order as __main__.py)
-    if args.module:
+    # Import user code first (same order as __main__.py) so that
+    # configure_database() can auto-register the user's variable classes.
+    from scistack_gui import registry
+
+    if args.project:
+        # Project mode: load from [tool.scistack] in pyproject.toml
+        from scistack_gui.config import load_config
+        try:
+            config = load_config(args.project, db_path)
+            result = registry.load_from_config(config)
+            logger.info(
+                "Project mode: %d functions, %d variables",
+                len(result["functions"]), len(result["variables"]),
+            )
+        except (FileNotFoundError, ValueError) as e:
+            print(json.dumps({
+                "jsonrpc": "2.0", "method": "error",
+                "params": {"message": f"Config error: {e}"}
+            }))
+            sys.exit(1)
+        except Exception as e:
+            print(json.dumps({
+                "jsonrpc": "2.0", "method": "error",
+                "params": {"message": f"Error loading project: {e}"}
+            }))
+            sys.exit(1)
+    elif args.module:
+        # Single-file mode (legacy)
         module_path = args.module.resolve()
         if not module_path.exists():
             print(json.dumps({
@@ -406,7 +456,6 @@ def main():
                 "params": {"message": f"Error importing module: {e}"}
             }))
             sys.exit(1)
-        from scistack_gui import registry
         registry.register_module(user_mod, module_path=module_path)
         logger.info("Loaded module: %s", module_path)
 

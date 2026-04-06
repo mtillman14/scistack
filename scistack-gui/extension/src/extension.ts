@@ -18,6 +18,7 @@ let outputChannel: vscode.OutputChannel;
 interface LastStartArgs {
   dbPath: string;
   modulePath?: string;
+  projectPath?: string;
   schemaKeys?: string[];
 }
 let lastStartArgs: LastStartArgs | null = null;
@@ -68,13 +69,32 @@ export function activate(context: vscode.ExtensionContext) {
         schemaKeys = keysInput.split(',').map((s) => s.trim()).filter(Boolean);
       }
 
-      // Optionally select a pipeline .py module
-      const moduleChoice = await vscode.window.showQuickPick(
-        ['Select a pipeline module (.py)', 'No module'],
-        { placeHolder: 'Do you have a pipeline .py file to load?' }
+      // Select pipeline source: project, single file, or none
+      const sourceChoice = await vscode.window.showQuickPick(
+        [
+          'Select a project (pyproject.toml)',
+          'Select a single pipeline module (.py)',
+          'No module',
+        ],
+        { placeHolder: 'How should SciStack discover your pipeline code?' }
       );
+      if (!sourceChoice) return;
+
       let modulePath: string | undefined;
-      if (moduleChoice === 'Select a pipeline module (.py)') {
+      let projectPath: string | undefined;
+
+      if (sourceChoice === 'Select a project (pyproject.toml)') {
+        const projectUris = await vscode.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: true,
+          canSelectMany: false,
+          filters: { 'TOML': ['toml'] },
+          title: 'Select pyproject.toml or project directory',
+        });
+        if (projectUris && projectUris.length > 0) {
+          projectPath = projectUris[0].fsPath;
+        }
+      } else if (sourceChoice === 'Select a single pipeline module (.py)') {
         const moduleUris = await vscode.window.showOpenDialog({
           canSelectFiles: true,
           canSelectFolders: false,
@@ -87,7 +107,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      await startPipeline(context, dbPath, modulePath, schemaKeys);
+      await startPipeline(context, dbPath, modulePath, projectPath, schemaKeys);
     }
   );
 
@@ -106,6 +126,7 @@ export function activate(context: vscode.ExtensionContext) {
           context,
           lastStartArgs.dbPath,
           lastStartArgs.modulePath,
+          lastStartArgs.projectPath,
           // Don't re-pass schemaKeys: the DB already exists on restart.
           undefined,
         );
@@ -123,6 +144,7 @@ async function startPipeline(
   context: vscode.ExtensionContext,
   dbPath: string,
   modulePath?: string,
+  projectPath?: string,
   schemaKeys?: string[],
 ) {
   // Remember args so "Restart Python" can respawn without re-prompting.
@@ -130,6 +152,7 @@ async function startPipeline(
   lastStartArgs = {
     dbPath,
     modulePath,
+    projectPath,
     schemaKeys: schemaKeys ?? lastStartArgs?.schemaKeys,
   };
 
@@ -153,10 +176,11 @@ async function startPipeline(
   outputChannel.appendLine(`Starting SciStack server...`);
   outputChannel.appendLine(`  Python: ${pythonPath}`);
   outputChannel.appendLine(`  DB: ${dbPath}`);
+  if (projectPath) outputChannel.appendLine(`  Project: ${projectPath}`);
   if (modulePath) outputChannel.appendLine(`  Module: ${modulePath}`);
   if (schemaKeys) outputChannel.appendLine(`  Schema keys: [${schemaKeys.join(', ')}] (new DB)`);
 
-  pythonProcess = new PythonProcess(pythonPath, dbPath, modulePath, outputChannel, schemaKeys);
+  pythonProcess = new PythonProcess(pythonPath, dbPath, modulePath, outputChannel, schemaKeys, projectPath);
 
   try {
     const readyParams = await pythonProcess.waitForReady(10000);

@@ -37,8 +37,14 @@ def main():
         "--module", "-m",
         type=Path,
         default=None,
-        help="Path to your pipeline .py file. Imports it so the GUI can "
-             "access your functions and variable classes for running pipelines.",
+        help="Path to your pipeline .py file (single-file mode).",
+    )
+    parser.add_argument(
+        "--project", "-p",
+        type=Path,
+        default=None,
+        help="Path to pyproject.toml or directory containing one "
+             "(project mode — reads [tool.scistack] config).",
     )
     parser.add_argument(
         "--no-browser",
@@ -47,15 +53,36 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.module and args.project:
+        print("Error: --module and --project are mutually exclusive.", file=sys.stderr)
+        sys.exit(1)
+
     db_path = args.db_path.resolve()
     if not db_path.exists():
         print(f"Error: database file not found: {db_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Import user module first (populates BaseVariable._all_subclasses and
+    # Import user code first (populates BaseVariable._all_subclasses and
     # gives us function objects) — must happen before init_db so that
     # configure_database() can auto-register the user's variable classes.
-    if args.module:
+    from scistack_gui import registry
+
+    if args.project:
+        from scistack_gui.config import load_config
+        try:
+            config = load_config(args.project, db_path)
+            result = registry.load_from_config(config)
+            print(
+                f"Project mode: {len(result['functions'])} functions, "
+                f"{len(result['variables'])} variables"
+            )
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error loading project: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.module:
         module_path = args.module.resolve()
         if not module_path.exists():
             print(f"Error: module not found: {module_path}", file=sys.stderr)
@@ -68,7 +95,6 @@ def main():
         except Exception as e:
             print(f"Error importing module {module_path}: {e}", file=sys.stderr)
             sys.exit(1)
-        from scistack_gui import registry
         registry.register_module(user_mod, module_path=module_path)
         print(f"Loaded module: {module_path}")
 
