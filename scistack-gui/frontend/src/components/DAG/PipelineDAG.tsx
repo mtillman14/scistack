@@ -9,7 +9,7 @@
  *   - useNodesState / useEdgesState: React state hooks that React Flow provides
  *     for tracking the node/edge arrays (including position changes from dragging)
  *   - nodeTypes: maps the "type" string from our backend data to a React component
- *   - Background / Controls / MiniMap: built-in UI chrome from React Flow
+ *   - Background / Controls: built-in UI chrome from React Flow
  */
 
 import { useEffect, useCallback, useRef } from 'react'
@@ -21,7 +21,6 @@ import {
   useReactFlow,
   Background,
   Controls,
-  MiniMap,
   type Node,
   type Edge,
   type EdgeChange,
@@ -233,7 +232,6 @@ export default function PipelineDAG() {
       >
         <Background />
         <Controls />
-        <MiniMap />
       </ReactFlow>
     </div>
   )
