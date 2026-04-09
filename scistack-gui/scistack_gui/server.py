@@ -229,6 +229,15 @@ def _h_delete_path_input(params):
     return {"ok": True}
 
 
+def _h_put_node_config(params):
+    from scistack_gui.db import get_db
+    from scistack_gui import pipeline_store
+    node_id = params["node_id"]
+    config = params.get("config", {})
+    pipeline_store.update_node_config(get_db(), node_id, config)
+    return {"ok": True}
+
+
 def _h_start_run(params):
     import uuid
     from scistack_gui.db import get_db
@@ -237,11 +246,14 @@ def _h_start_run(params):
     run_id = params.get("run_id") or str(uuid.uuid4())[:8]
     function_name = params["function_name"]
     variants = params.get("variants", [])
+    schema_filter = params.get("schema_filter")
+    schema_level = params.get("schema_level")
+    run_options = params.get("run_options")
     db = get_db()
 
     thread = threading.Thread(
         target=_run_in_thread,
-        args=(run_id, function_name, variants, db),
+        args=(run_id, function_name, variants, db, schema_filter, schema_level, run_options),
         daemon=True,
     )
     thread.start()
@@ -339,6 +351,7 @@ METHODS = {
     "get_constants": _h_get_constants,
     "get_path_inputs": _h_get_path_inputs,
     "put_layout": _h_put_layout,
+    "put_node_config": _h_put_node_config,
     "delete_layout": _h_delete_layout,
     "put_edge": _h_put_edge,
     "delete_edge": _h_delete_edge,

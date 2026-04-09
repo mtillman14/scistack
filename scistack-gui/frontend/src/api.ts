@@ -114,6 +114,7 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     create_path_input:      { path: '/api/path-inputs', method: 'POST', body: true },
     update_path_input:      { path: (p) => `/api/path-inputs/${encodeURIComponent(p.name as string)}`, method: 'PUT', body: true },
     delete_path_input:      { path: (p) => `/api/path-inputs/${encodeURIComponent(p.name as string)}`, method: 'DELETE' },
+    put_node_config:        { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/config`, method: 'PUT', body: true },
     start_run:              { path: '/api/run', method: 'POST', body: true },
     refresh_module:         { path: '/api/refresh', method: 'POST' },
     create_variable:        { path: '/api/variables/create', method: 'POST', body: true },

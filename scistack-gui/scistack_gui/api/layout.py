@@ -5,9 +5,11 @@ PUT  /api/layout/{node_id} — persist a single node's position (and optionally
 """
 
 import logging
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from scistack_gui import layout as layout_store
+from scidb.database import DatabaseManager
+from scistack_gui import layout as layout_store, pipeline_store
+from scistack_gui.db import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,10 @@ class PositionUpdate(BaseModel):
     # Present only when the node was just dragged from the sidebar palette.
     node_type: str | None = None
     label: str | None = None
+
+
+class NodeConfigUpdate(BaseModel):
+    config: dict
 
 
 @router.get("/layout")
@@ -112,6 +118,13 @@ def put_edge(edge_id: str, body: EdgeCreate):
         "sourceHandle": body.source_handle,
         "targetHandle": body.target_handle,
     })
+    return {"ok": True}
+
+
+@router.put("/layout/{node_id}/config")
+def put_node_config(node_id: str, body: NodeConfigUpdate,
+                    db: DatabaseManager = Depends(get_db)):
+    pipeline_store.update_node_config(db, node_id, body.config)
     return {"ok": True}
 
 

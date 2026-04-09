@@ -8,6 +8,7 @@ This is a software package to facilitate scientific data processing. You should 
 
 There are several submodules in this package. Here are the folders that they are in, and their general purpose within the package:
 
+- scifor: The lowest level iteration orchestrator
 - sci-matlab: MATLAB wrapper
 - scidb-net (optional)
 - sciduck: DuckDB database layer

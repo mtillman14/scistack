@@ -429,6 +429,9 @@ def _build_graph(db: DatabaseManager) -> dict:
             "record_count": v["record_count"],
         })
 
+    # Load saved node configs (schema filter, run options) from manual nodes.
+    manual_nodes = _ps.get_manual_nodes(db)
+
     for fn in sorted(fn_input_params.keys()):
         input_params = dict(sorted(fn_input_params[fn].items()))
         constant_params = sorted(fn_constants[fn])
@@ -447,8 +450,18 @@ def _build_graph(db: DatabaseManager) -> dict:
         state = run_states.get(f"fn__{fn}")
         if state:
             fn_data["run_state"] = state
+        # Apply saved config (schemaFilter, runOptions) if present.
+        node_id = f"fn__{fn}"
+        saved = manual_nodes.get(node_id, {}).get("config")
+        if saved:
+            if "schemaFilter" in saved:
+                fn_data["schemaFilter"] = saved["schemaFilter"]
+            if "schemaLevel" in saved:
+                fn_data["schemaLevel"] = saved["schemaLevel"]
+            if "runOptions" in saved:
+                fn_data["runOptions"] = saved["runOptions"]
         nodes.append({
-            "id": f"fn__{fn}",
+            "id": node_id,
             "type": "functionNode",
             "position": {"x": 0, "y": 0},
             "data": fn_data,
@@ -603,11 +616,21 @@ def _build_graph(db: DatabaseManager) -> dict:
                 "constant_params": [],
                 "run_state": "red",
             }
+        node_data: dict = {"label": fn_label, **extra}
+        # Apply saved config for manually-placed function nodes.
+        saved_cfg = meta.get("config")
+        if saved_cfg and meta["type"] == "functionNode":
+            if "schemaFilter" in saved_cfg:
+                node_data["schemaFilter"] = saved_cfg["schemaFilter"]
+            if "schemaLevel" in saved_cfg:
+                node_data["schemaLevel"] = saved_cfg["schemaLevel"]
+            if "runOptions" in saved_cfg:
+                node_data["runOptions"] = saved_cfg["runOptions"]
         nodes.append({
             "id": node_id,
             "type": meta["type"],
             "position": {"x": 0, "y": 0},
-            "data": {"label": fn_label, **extra},
+            "data": node_data,
         })
 
     return {"nodes": nodes, "edges": edges}

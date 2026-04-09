@@ -41,7 +41,7 @@ var import_child_process = require("child_process");
 var readline = __toESM(require("readline"));
 var vscode = __toESM(require("vscode"));
 var PythonProcess = class {
-  constructor(pythonPath, dbPath, modulePath, outputChannel2, schemaKeys) {
+  constructor(pythonPath, dbPath, modulePath, outputChannel2, schemaKeys, projectPath) {
     this.outputChannel = outputChannel2;
     this.nextId = 1;
     this.pending = /* @__PURE__ */ new Map();
@@ -49,7 +49,9 @@ var PythonProcess = class {
     this.readyResolve = null;
     this.readyReject = null;
     const args = ["-m", "scistack_gui.server", "--db", dbPath];
-    if (modulePath) {
+    if (projectPath) {
+      args.push("--project", projectPath);
+    } else if (modulePath) {
       args.push("--module", modulePath);
     }
     if (schemaKeys && schemaKeys.length > 0) {
@@ -455,12 +457,30 @@ function activate(context) {
           return;
         schemaKeys = keysInput.split(",").map((s) => s.trim()).filter(Boolean);
       }
-      const moduleChoice = await vscode3.window.showQuickPick(
-        ["Select a pipeline module (.py)", "No module"],
-        { placeHolder: "Do you have a pipeline .py file to load?" }
+      const sourceChoice = await vscode3.window.showQuickPick(
+        [
+          "Select a project (pyproject.toml)",
+          "Select a single pipeline module (.py)",
+          "No module"
+        ],
+        { placeHolder: "How should SciStack discover your pipeline code?" }
       );
+      if (!sourceChoice)
+        return;
       let modulePath;
-      if (moduleChoice === "Select a pipeline module (.py)") {
+      let projectPath;
+      if (sourceChoice === "Select a project (pyproject.toml)") {
+        const projectUris = await vscode3.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: true,
+          canSelectMany: false,
+          filters: { "TOML": ["toml"] },
+          title: "Select pyproject.toml or project directory"
+        });
+        if (projectUris && projectUris.length > 0) {
+          projectPath = projectUris[0].fsPath;
+        }
+      } else if (sourceChoice === "Select a single pipeline module (.py)") {
         const moduleUris = await vscode3.window.showOpenDialog({
           canSelectFiles: true,
           canSelectFolders: false,
@@ -472,7 +492,7 @@ function activate(context) {
           modulePath = moduleUris[0].fsPath;
         }
       }
-      await startPipeline(context, dbPath, modulePath, schemaKeys);
+      await startPipeline(context, dbPath, modulePath, projectPath, schemaKeys);
     }
   );
   const restartPython = vscode3.commands.registerCommand(
@@ -490,6 +510,7 @@ function activate(context) {
           context,
           lastStartArgs.dbPath,
           lastStartArgs.modulePath,
+          lastStartArgs.projectPath,
           // Don't re-pass schemaKeys: the DB already exists on restart.
           void 0
         );
@@ -501,10 +522,11 @@ function activate(context) {
   );
   context.subscriptions.push(openPipeline, restartPython, outputChannel);
 }
-async function startPipeline(context, dbPath, modulePath, schemaKeys) {
+async function startPipeline(context, dbPath, modulePath, projectPath, schemaKeys) {
   lastStartArgs = {
     dbPath,
     modulePath,
+    projectPath,
     schemaKeys: schemaKeys ?? lastStartArgs?.schemaKeys
   };
   if (pythonProcess) {
@@ -521,11 +543,13 @@ async function startPipeline(context, dbPath, modulePath, schemaKeys) {
   outputChannel.appendLine(`Starting SciStack server...`);
   outputChannel.appendLine(`  Python: ${pythonPath}`);
   outputChannel.appendLine(`  DB: ${dbPath}`);
+  if (projectPath)
+    outputChannel.appendLine(`  Project: ${projectPath}`);
   if (modulePath)
     outputChannel.appendLine(`  Module: ${modulePath}`);
   if (schemaKeys)
     outputChannel.appendLine(`  Schema keys: [${schemaKeys.join(", ")}] (new DB)`);
-  pythonProcess = new PythonProcess(pythonPath, dbPath, modulePath, outputChannel, schemaKeys);
+  pythonProcess = new PythonProcess(pythonPath, dbPath, modulePath, outputChannel, schemaKeys, projectPath);
   try {
     const readyParams = await pythonProcess.waitForReady(1e4);
     outputChannel.appendLine(

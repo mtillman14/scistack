@@ -64,6 +64,13 @@ def _ensure_tables(db) -> None:
             node_id VARCHAR PRIMARY KEY
         )
     """)
+    # Add config column if missing (migration for existing DBs).
+    try:
+        _duck(db)._execute(
+            "ALTER TABLE _pipeline_nodes ADD COLUMN config VARCHAR DEFAULT '{}'"
+        )
+    except Exception:
+        pass  # Column already exists
 
 
 def migrate_from_json(db, layout_path: Path) -> None:
@@ -122,17 +129,35 @@ def migrate_from_json(db, layout_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def get_manual_nodes(db) -> dict[str, dict]:
-    """Return {node_id: {"type": ..., "label": ...}} for all manual nodes."""
+    """Return {node_id: {"type": ..., "label": ..., "config": ...}} for all manual nodes."""
     _ensure_tables(db)
     rows = _duck(db)._fetchall(
-        "SELECT node_id, node_type, label FROM _pipeline_nodes"
+        "SELECT node_id, node_type, label, config FROM _pipeline_nodes"
     )
-    return {row[0]: {"type": row[1], "label": row[2]} for row in rows}
+    result = {}
+    for row in rows:
+        entry: dict = {"type": row[1], "label": row[2]}
+        if row[3] and row[3] != '{}':
+            try:
+                entry["config"] = json.loads(row[3])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        result[row[0]] = entry
+    return result
 
 
 def write_manual_node(db, node_id: str, node_type: str, label: str) -> None:
     _ensure_tables(db)
     _upsert_node(db, node_id, node_type, label)
+
+
+def update_node_config(db, node_id: str, config: dict) -> None:
+    """Update just the config JSON for an existing node."""
+    _ensure_tables(db)
+    _duck(db)._execute(
+        "UPDATE _pipeline_nodes SET config = ? WHERE node_id = ?",
+        [json.dumps(config), node_id]
+    )
 
 
 def delete_node(db, node_id: str) -> None:

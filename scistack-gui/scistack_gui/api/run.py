@@ -40,9 +40,15 @@ class RunRequest(BaseModel):
     function_name: str
     variants: list[dict] = []   # list of constants dicts; empty = run all known
     run_id: str | None = None   # frontend-generated ID; we generate one if absent
+    schema_filter: dict[str, list] | None = None   # {key: [selected values]}; None = all
+    schema_level: list[str] | None = None          # which schema keys to iterate; None = all
+    run_options: dict | None = None   # {dry_run, save, distribute}; all optional
 
 
-def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: DatabaseManager):
+def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: DatabaseManager,
+                    schema_filter: dict[str, list] | None = None,
+                    schema_level: list[str] | None = None,
+                    run_options: dict | None = None):
     """
     Executed in a background thread. Runs for_each for each variant,
     captures stdout line-by-line, and pushes it to the WebSocket queue.
@@ -304,11 +310,28 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                                 "output_type": template["output_type"],
                             })
 
-    # Build schema kwargs: run on all existing values for each schema key.
-    schema_kwargs = {
-        key: db.distinct_schema_values(key)
-        for key in db.dataset_schema_keys
-    }
+    # Determine which schema keys to iterate over.
+    iterate_keys = schema_level if schema_level is not None else list(db.dataset_schema_keys)
+
+    # Build schema kwargs: use filter if provided, otherwise all values.
+    if schema_filter:
+        schema_kwargs = {}
+        for key in iterate_keys:
+            if key in schema_filter and schema_filter[key]:
+                schema_kwargs[key] = schema_filter[key]
+            else:
+                schema_kwargs[key] = db.distinct_schema_values(key)
+    else:
+        schema_kwargs = {
+            key: db.distinct_schema_values(key)
+            for key in iterate_keys
+        }
+
+    # Extract run options (dry_run, save, distribute).
+    opts = run_options or {}
+    opt_dry_run = opts.get("dry_run", False)
+    opt_save = opts.get("save", True)
+    opt_distribute = opts.get("distribute", False)
 
     success = True
     run_started_at = time.time()
@@ -363,6 +386,8 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
         try:
             with redirect_stdout(buf):
                 for_each(fn, inputs=inputs, outputs=[OutputCls],
+                         dry_run=opt_dry_run, save=opt_save,
+                         distribute=opt_distribute,
                          _progress_fn=_progress_fn, **schema_kwargs)
             output = buf.getvalue()
             if output:
@@ -387,7 +412,8 @@ def start_run(req: RunRequest, db: DatabaseManager = Depends(get_db)):
     run_id = req.run_id or str(uuid.uuid4())[:8]
     thread = threading.Thread(
         target=_run_in_thread,
-        args=(run_id, req.function_name, req.variants, db),
+        args=(run_id, req.function_name, req.variants, db,
+              req.schema_filter, req.schema_level, req.run_options),
         daemon=True,
     )
     thread.start()

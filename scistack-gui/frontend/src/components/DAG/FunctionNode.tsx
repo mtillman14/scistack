@@ -21,6 +21,9 @@ interface FunctionNodeData {
   output_types?: string[]
   constant_params?: string[]
   run_state?: 'green' | 'grey' | 'red'
+  schemaFilter?: Record<string, unknown[]> | null
+  schemaLevel?: string[] | null
+  runOptions?: { dry_run: boolean; save: boolean; distribute: boolean }
 }
 
 const STATE_STYLES: Record<string, { border: string; background: string }> = {
@@ -108,8 +111,11 @@ export default function FunctionNode({ id, data }: Props) {
       function_name: data.label,
       variants: checkedVariants,
       run_id: newRunId,
+      schema_filter: data.schemaFilter ?? null,
+      schema_level: data.schemaLevel ?? null,
+      run_options: data.runOptions ?? null,
     })
-  }, [id, data.label, getNodes, getEdges, startRun])
+  }, [id, data.label, data.schemaFilter, data.schemaLevel, data.runOptions, getNodes, getEdges, startRun])
 
   const handleOpenSource = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation()

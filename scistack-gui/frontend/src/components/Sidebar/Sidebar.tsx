@@ -15,6 +15,7 @@ import { useStore } from '@xyflow/react'
 import RunsTab from './RunsTab'
 import EditTab from './EditTab'
 import FunctionSettingsPanel from './FunctionSettingsPanel'
+import type { SchemaFilter, RunOptions } from './FunctionSettingsPanel'
 import ConstantSettingsPanel from './ConstantSettingsPanel'
 import VariableSettingsPanel from './VariableSettingsPanel'
 import PathInputSettingsPanel from './PathInputSettingsPanel'
@@ -28,6 +29,9 @@ type Tab = BaseTab | 'Node'
 
 interface FnNodeData {
   label: string
+  schemaFilter?: SchemaFilter | null
+  schemaLevel?: string[] | null
+  runOptions?: RunOptions
 }
 
 interface ConstantNodeData {
@@ -144,9 +148,13 @@ export default function Sidebar() {
         {activeTab === 'Edit' && <EditTab />}
         {activeTab === 'Node' && isFunctionNode(selectedNode) && (
           <FunctionSettingsPanel
+            id={selectedNode.id}
             label={(selectedNode.data as FnNodeData).label}
             variants={variants}
             constantNames={constantNames}
+            schemaFilter={(selectedNode.data as FnNodeData).schemaFilter ?? null}
+            schemaLevel={(selectedNode.data as FnNodeData).schemaLevel ?? null}
+            runOptions={(selectedNode.data as FnNodeData).runOptions ?? { dry_run: false, save: true, distribute: false }}
           />
         )}
         {activeTab === 'Node' && isConstantNode(selectedNode) && (

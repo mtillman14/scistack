@@ -59,8 +59,8 @@ export default function PipelineDAG() {
     // savedPositions will have stale keys and dagre will recalculate positions.
     const data = await callBackend('get_pipeline') as { nodes: Node[]; edges: Edge[] }
     const layoutData = await callBackend('get_layout') as Record<string, unknown>
-    const savedPositions: Record<string, { x: number; y: number }> =
-      layoutData.positions ?? layoutData  // handle both new and legacy format
+    const savedPositions =
+      (layoutData.positions ?? layoutData) as Record<string, { x: number; y: number }>  // handle both new and legacy format
 
     // Initialise all constant values as checked (selected for running).
     const initialised = data.nodes.map((node: Node) => {
