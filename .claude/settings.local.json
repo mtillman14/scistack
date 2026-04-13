@@ -34,7 +34,11 @@
       "Bash(for dir in sciduck scirun-lib scihist-lib scidb path-gen pipelinedb-lib canonical-hash scifor scilineage sci-matlab scidb-net; do\n  echo \"=== $dir ===\"\n  echo \"pyproject.toml name:\"\n  grep -m1 '^name' /workspace/$dir/pyproject.toml 2>/dev/null || echo \"no pyproject.toml\"\n  echo \"README.md first heading:\"\n  head -5 /workspace/$dir/README.md 2>/dev/null | grep -m1 '^#' || echo \"no heading\"\n  echo \"\"\ndone)",
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:blogs.mathworks.com)",
+      "WebFetch(domain:www.mathworks.com)"
     ]
   }
 }
