@@ -377,21 +377,34 @@ def _combo_str(schema_combo: dict, branch_params: dict | None = None) -> str:
 
 def _get_output_combos(db, fn_name: str, outputs: list[type]) -> list[dict]:
     """Return distinct (schema_id, branch_params) pairs from output records
-    whose version_keys.__fn matches fn_name."""
+    produced by fn_name.
+
+    Two sources identify a record as belonging to fn_name:
+
+    - ``_record_metadata.version_keys.__fn`` matches (scidb.for_each outputs).
+    - ``_lineage.function_name`` matches (scihist.for_each outputs, which do
+      not write ``__fn`` into version_keys but instead write a row to the
+      dedicated ``_lineage`` table).
+    """
     result: list[dict] = []
     seen: set = set()
 
     for OutputCls in outputs:
         rows = db._duck._fetchall(
-            "SELECT DISTINCT schema_id, branch_params, version_keys "
-            "FROM _record_metadata "
-            "WHERE variable_name = ? AND excluded = FALSE",
+            "SELECT DISTINCT rm.schema_id, rm.branch_params, rm.version_keys, "
+            "       l.function_name "
+            "FROM _record_metadata rm "
+            "LEFT JOIN _lineage l ON rm.record_id = l.output_record_id "
+            "WHERE rm.variable_name = ? AND rm.excluded = FALSE",
             [OutputCls.__name__],
         )
-        for schema_id, bp_raw, vk_raw in rows:
+        for schema_id, bp_raw, vk_raw, lineage_fn_name in rows:
             vk = json.loads(vk_raw or "{}") if vk_raw else {}
-            if vk.get("__fn") != fn_name:
-                continue  # produced by a different function
+            vk_fn = vk.get("__fn")
+            # Match if either the version_keys __fn or the _lineage function_name
+            # identifies this record as produced by fn_name.
+            if vk_fn != fn_name and lineage_fn_name != fn_name:
+                continue
             bp = json.loads(bp_raw or "{}") if bp_raw else {}
             key = (schema_id, json.dumps(bp, sort_keys=True))
             if key not in seen:
@@ -406,21 +419,30 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
     been produced by fn_name.
 
     For each variant of fn_name, queries its input variable types to find all
-    (schema_id, input_branch_params) combinations that exist in the DB.  The
-    expected output branch_params = input_branch_params + fn's own constants
-    (namespaced as ``fn_name.param``), which is how scidb.for_each builds them.
+    (schema_id, input_branch_params) combinations that exist in the DB.
+
+    Two sources of variants are consulted:
+
+    - ``list_pipeline_variants`` (scidb.for_each outputs).  Their output
+      branch_params = input_branch_params + own constants namespaced as
+      ``fn_name.param`` (matching how scidb.for_each builds them).
+    - ``_lineage`` rows for fn_name (scihist.for_each outputs).  These do
+      not namespace constants — output branch_params = input_branch_params
+      merged with own constants un-namespaced.
 
     Using (schema_id, branch_params) rather than schema_id alone lets us detect
     when a new upstream variant (e.g. a new constant value) exists in the inputs
     but hasn't been processed by fn_name yet, even if all schema_ids are already
     covered by other variants.
 
-    When no pipeline variants are registered (function never run) and
+    When no variants are registered from either source (function never run) and
     ``inputs_fallback`` is provided, falls back to querying the input variable
     types directly.
     """
-    variants = [v for v in db.list_pipeline_variants() if v["function_name"] == fn_name]
-    if not variants:
+    scidb_variants = [v for v in db.list_pipeline_variants() if v["function_name"] == fn_name]
+    lineage_variants = _get_lineage_variants(db, fn_name)
+
+    if not scidb_variants and not lineage_variants:
         if inputs_fallback:
             return _get_expected_combos_from_inputs(db, inputs_fallback)
         return set()
@@ -428,11 +450,10 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
     expected: set[tuple] = set()
     fn_prefix = f"{fn_name}."
 
-    for variant in variants:
+    # scidb variants: own constants are namespaced in the output's branch_params.
+    for variant in scidb_variants:
         input_types: dict = variant["input_types"]    # param_name → type_name
         own_constants: dict = variant["constants"]    # un-namespaced direct constants
-
-        # Namespaced own constants as they appear in the output's branch_params.
         namespaced_own = {f"{fn_prefix}{k}": v for k, v in own_constants.items()}
 
         for itype in input_types.values():
@@ -443,11 +464,130 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
             )
             for schema_id, bp_raw in rows:
                 input_bp = json.loads(bp_raw or "{}") if bp_raw else {}
-                # Expected output bp = input bp merged with own namespaced constants.
                 expected_bp = {**input_bp, **namespaced_own}
                 expected.add((schema_id, json.dumps(expected_bp, sort_keys=True)))
 
+    # _lineage variants: own constants are NOT namespaced in the output's
+    # branch_params (scihist.for_each merges them in directly).
+    for variant in lineage_variants:
+        input_types = variant["input_types"]
+        own_constants = variant["constants"]
+
+        for itype in input_types.values():
+            rows = db._duck._fetchall(
+                "SELECT DISTINCT schema_id, branch_params FROM _record_metadata "
+                "WHERE variable_name = ? AND excluded = FALSE",
+                [itype],
+            )
+            for schema_id, bp_raw in rows:
+                input_bp = json.loads(bp_raw or "{}") if bp_raw else {}
+                expected_bp = {**input_bp, **own_constants}
+                expected.add((schema_id, json.dumps(expected_bp, sort_keys=True)))
+
     return expected
+
+
+def _get_lineage_variants(db, fn_name: str) -> list[dict]:
+    """Extract variants for fn_name from the ``_lineage`` table.
+
+    Returns a list of dicts with:
+        ``input_types``  (dict: param_name → type_name) — variable inputs only.
+        ``constants``    (dict: param_name → value) — direct constants from
+                         lineage records, excluding any that are actually
+                         variable inputs (see below).
+
+    Pulls distinct ``(inputs, constants)`` JSON pairs from ``_lineage`` rows
+    whose ``function_name`` equals ``fn_name``.  Used for scihist.for_each
+    outputs, which write to ``_lineage`` but not to ``version_keys.__fn``.
+
+    Variable input detection — three sources, in priority order:
+
+    1. ``inputs`` entries with ``source_type == "variable"`` (rare for scihist
+       since the @lineage_fcn receives raw numpy arrays, not BaseVariables —
+       those get classified as CONSTANT by scilineage).
+    2. ``inputs`` entries with ``source_type == "rid_tracking"`` (added by
+       scihist.for_each via :func:`_append_rid_tracking`).  The entry name
+       is ``__rid_<param>``; the variable type is recovered by looking up
+       ``record_id`` in ``_record_metadata.variable_name``.
+    3. ``constants`` entries whose name appears among the rid_tracking
+       params are stripped — they were variable inputs misclassified by
+       scilineage as constants.
+    """
+    rows = db._duck._fetchall(
+        "SELECT DISTINCT inputs, constants FROM _lineage WHERE function_name = ?",
+        [fn_name],
+    )
+
+    variants: list[dict] = []
+    seen: set = set()
+    for inputs_json, constants_json in rows:
+        try:
+            inputs_list = json.loads(inputs_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            inputs_list = []
+        try:
+            constants_list = json.loads(constants_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            constants_list = []
+
+        input_types: dict = {}
+
+        # Source 1: explicit variable entries.
+        for inp in inputs_list:
+            if not isinstance(inp, dict):
+                continue
+            if inp.get("source_type") != "variable":
+                continue
+            name = inp.get("name")
+            type_name = inp.get("type")
+            if name and type_name:
+                input_types[name] = type_name
+
+        # Source 2: rid_tracking entries — recover variable type via lookup.
+        for inp in inputs_list:
+            if not isinstance(inp, dict):
+                continue
+            if inp.get("source_type") != "rid_tracking":
+                continue
+            rid_name = inp.get("name") or ""
+            record_id = inp.get("record_id")
+            if not rid_name.startswith("__rid_") or not record_id:
+                continue
+            param_name = rid_name[len("__rid_"):]
+            if param_name in input_types:
+                continue
+            vn_rows = db._duck._fetchall(
+                "SELECT variable_name FROM _record_metadata "
+                "WHERE record_id = ? LIMIT 1",
+                [record_id],
+            )
+            if vn_rows and vn_rows[0][0]:
+                input_types[param_name] = vn_rows[0][0]
+
+        # Direct constants: name → value_repr (used to disambiguate variants).
+        constants: dict = {}
+        if isinstance(constants_list, list):
+            for c in constants_list:
+                if isinstance(c, dict) and "name" in c:
+                    constants[c["name"]] = c.get("value_repr")
+
+        # Source 3: strip names that are actually variable inputs.
+        for name in input_types:
+            constants.pop(name, None)
+
+        if not input_types and not constants:
+            continue
+
+        key = (
+            json.dumps(input_types, sort_keys=True),
+            json.dumps(constants, sort_keys=True),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append({"input_types": input_types, "constants": constants})
+
+    return variants
 
 
 def _get_expected_combos_from_inputs(db, inputs: dict) -> set[tuple]:

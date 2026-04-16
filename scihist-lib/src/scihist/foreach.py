@@ -105,13 +105,10 @@ def for_each(
     if save and outputs and not result_tbl.empty:
         # Identify constant (non-variable, non-wrapper) inputs for version_keys.
         constant_inputs = {}
-        # Extract variable type mapping for pipeline version_keys (__inputs).
-        input_var_types = {}
         # Resolve Fixed input record_ids for lineage rid_tracking.
         fixed_rids = {}
         for name, value in inputs.items():
             if isinstance(value, type):
-                input_var_types[name] = value.__name__
                 continue  # Variable type
             if hasattr(value, 'var_type') or hasattr(value, 'var_specs'):
                 # Track Fixed inputs for rid_tracking in lineage.
@@ -120,7 +117,6 @@ def for_each(
                     if hasattr(inner, 'var_type'):
                         inner = inner.var_type
                     if isinstance(inner, type):
-                        input_var_types[name] = inner.__name__
                         save_db = db
                         if save_db is None:
                             try:
@@ -139,8 +135,7 @@ def for_each(
         output_names = [_output_name(o) for o in outputs]
         _save_with_lineage(result_tbl, outputs, output_names, db,
                            constant_inputs=constant_inputs,
-                           fixed_input_rids=fixed_rids,
-                           input_var_types=input_var_types)
+                           fixed_input_rids=fixed_rids)
 
     return result_tbl
 
@@ -334,7 +329,6 @@ def _save_with_lineage(
     db: Any | None,
     constant_inputs: dict | None = None,
     fixed_input_rids: dict | None = None,
-    input_var_types: dict | None = None,
 ) -> None:
     """Save results with lineage tracking, extracting lineage from LineageFcnResult."""
     from scilineage import LineageFcnResult
@@ -381,7 +375,6 @@ def _save_with_lineage(
                     _save_lineage_fcn_result(
                         output_obj, output_value, save_metadata, active_db,
                         input_rids=input_rids,
-                        input_var_types=input_var_types,
                     )
                 else:
                     output_obj.save(output_value, **db_kwargs, **save_metadata)
@@ -401,7 +394,6 @@ def _save_lineage_fcn_result(
     metadata: dict,
     db: Any | None,
     input_rids: dict | None = None,
-    input_var_types: dict | None = None,
 ) -> str | None:
     """Save a LineageFcnResult with full lineage tracking."""
     from scilineage import LineageFcnResult, extract_lineage, get_raw_value
@@ -460,17 +452,11 @@ def _save_lineage_fcn_result(
     pipeline_lineage_hash = data.invoked.compute_lineage_hash()
     raw_data = get_raw_value(data)
 
-    # Build pipeline version_keys (__fn, __inputs, etc.) so that
-    # list_pipeline_variants() and check_node_state() can discover
-    # outputs saved via scihist.for_each.
-    pipeline_vk = _build_pipeline_version_keys(data, input_var_types)
-    save_metadata = {**metadata, **pipeline_vk} if pipeline_vk else metadata
-
     variable_class = output_obj if isinstance(output_obj, type) else type(output_obj)
     instance = variable_class(raw_data)
     return active_db.save(
         instance,
-        save_metadata,
+        metadata,
         lineage=lineage_dict,
         lineage_hash=lineage_hash,
         pipeline_lineage_hash=pipeline_lineage_hash,
@@ -501,54 +487,6 @@ def save(variable_class, data, db=None, **metadata) -> str | None:
     else:
         db_kwargs = {"db": db} if db is not None else {}
         return variable_class.save(data, **db_kwargs, **metadata)
-
-
-def _build_pipeline_version_keys(
-    data: "LineageFcnResult",
-    input_var_types: dict | None = None,
-) -> dict:
-    """Build pipeline version_keys (__fn, __fn_hash, __inputs, __constants).
-
-    Unlike scidb's _build_lineage_version_keys, this uses the known
-    input_var_types mapping (from for_each's inputs dict) rather than
-    introspecting the LineageFcnResult's inputs, which are raw data
-    (numpy arrays) by the time they reach the function.
-    """
-    import hashlib
-    import inspect as _inspect
-    import json as _json
-
-    fn = data.invoked.fcn.fcn
-    fn_name = fn.__name__
-
-    try:
-        src = _inspect.getsource(fn)
-    except (OSError, TypeError):
-        src = fn_name
-    fn_hash = hashlib.sha256(src.encode()).hexdigest()[:16]
-
-    keys: dict = {"__fn": fn_name, "__fn_hash": fn_hash}
-    if input_var_types:
-        keys["__inputs"] = _json.dumps(input_var_types, sort_keys=True)
-
-    # Identify constant inputs (non-variable params from the invocation).
-    constants: dict = {}
-    for param_name, input_val in data.invoked.inputs.items():
-        if input_var_types and param_name in input_var_types:
-            continue  # Variable input, not a constant
-        try:
-            from scilineage.core import LineageFcnResult as _LFR
-            if isinstance(input_val, _LFR):
-                continue
-        except ImportError:
-            pass
-        constants[param_name] = input_val
-    if constants:
-        keys["__constants"] = _json.dumps(
-            {k: str(v) for k, v in sorted(constants.items())},
-        )
-
-    return keys
 
 
 def _append_rid_tracking(lineage_dict: dict, input_rids: dict | None) -> None:
