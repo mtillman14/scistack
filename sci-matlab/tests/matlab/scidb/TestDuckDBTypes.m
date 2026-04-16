@@ -52,8 +52,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('offset'), "DOUBLE");
 
             result = StructVar().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result.ratio, 3.14, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.offset, -1.5, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.ratio, 3.14, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.offset, -1.5, 'AbsTol', 1e-10);
         end
 
         function test_struct_scalar_int(testCase)
@@ -65,7 +65,7 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('count'), "BIGINT");
 
             result = StructVar().load('subject', 2, 'session', 'A');
-            testCase.verifyEqual(result.count, 42, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.count, 42, 'AbsTol', 1e-10);
         end
 
         function test_struct_scalar_string(testCase)
@@ -77,7 +77,7 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('name'), "VARCHAR");
 
             result = StructVar().load('subject', 3, 'session', 'A');
-            testCase.verifyEqual(result.name, "hello");
+            testCase.verifyEqual(result.data.name, "hello");
         end
 
         function test_struct_scalar_bool(testCase)
@@ -90,8 +90,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('enabled'), "BOOLEAN");
 
             result = StructVar().load('subject', 4, 'session', 'A');
-            testCase.verifyTrue(result.flag);
-            testCase.verifyFalse(result.enabled);
+            testCase.verifyTrue(result.data.flag);
+            testCase.verifyFalse(result.data.enabled);
         end
 
         function test_struct_float_vectors(testCase)
@@ -106,8 +106,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('velocity'), "DOUBLE[]");
 
             result = StructVar().load('subject', 5, 'session', 'A');
-            testCase.verifyEqual(result.force, [1;2;3;4;5], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.velocity, [10;20;30;40;50], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.force, [1;2;3;4;5], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.velocity, [10;20;30;40;50], 'AbsTol', 1e-10);
         end
 
         function test_struct_int_vectors(testCase)
@@ -122,8 +122,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('counts'), "BIGINT[]");
 
             result = StructVar().load('subject', 6, 'session', 'A');
-            testCase.verifyEqual(result.ids, [10;20;30], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.counts, [1;2;3], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.ids, [10;20;30], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.counts, [1;2;3], 'AbsTol', 1e-10);
         end
 
         function test_struct_string_array(testCase)
@@ -135,7 +135,7 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('tags'), "VARCHAR[]");
 
             result = StructVar().load('subject', 7, 'session', 'A');
-            testCase.verifyEqual(result.tags, ["alpha", "beta", "gamma"]);
+            testCase.verifyEqual(result.data.tags, ["alpha", "beta", "gamma"]);
         end
 
         function test_struct_mixed_scalar_and_vector(testCase)
@@ -152,9 +152,9 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('scores'), "DOUBLE[]");
 
             result = StructVar().load('subject', 8, 'session', 'A');
-            testCase.verifyEqual(result.name, "experiment_1");
-            testCase.verifyEqual(result.weight, 0.75, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.scores, [90.0;85.5;92.3], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.name, "experiment_1");
+            testCase.verifyEqual(result.data.weight, 0.75, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.scores, [90.0;85.5;92.3], 'AbsTol', 1e-10);
         end
 
         function test_struct_equal_length_vectors_one_row(testCase)
@@ -179,10 +179,10 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
 
             % Must round-trip as full vectors
             result = StructVar().load('subject', 9, 'session', 'A');
-            testCase.verifyEqual(numel(result.force), 10);
-            testCase.verifyEqual(numel(result.velocity), 10);
-            testCase.verifyEqual(result.force, (0:9)', 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.velocity, (10:19)', 'AbsTol', 1e-10);
+            testCase.verifyEqual(numel(result.data.force), 10);
+            testCase.verifyEqual(numel(result.data.velocity), 10);
+            testCase.verifyEqual(result.data.force, (0:9)', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.velocity, (10:19)', 'AbsTol', 1e-10);
         end
 
         function test_struct_column_vectors(testCase)
@@ -197,8 +197,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('velocity'), "DOUBLE[]");
 
             result = StructVar().load('subject', 10, 'session', 'A');
-            testCase.verifyEqual(result.force, (0:9)', 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.velocity, (10:19)', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.force, (0:9)', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.velocity, (10:19)', 'AbsTol', 1e-10);
         end
 
         function test_struct_2d_matrix(testCase)
@@ -210,7 +210,7 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('matrix'), "DOUBLE[][]");
 
             result = StructVar().load('subject', 11, 'session', 'A');
-            testCase.verifyEqual(result.matrix, [1 2 3; 4 5 6], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.matrix, [1 2 3; 4 5 6], 'AbsTol', 1e-10);
         end
 
         function test_struct_vector_orientation(testCase)
@@ -226,8 +226,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
 
             result = StructVar().load('subject', 12, 'session', 'A');
             % Both load as column vectors regardless of original orientation
-            testCase.verifyEqual(result.row_vec, [1;2;3], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.col_vec, [4;5;6], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.row_vec, [1;2;3], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.col_vec, [4;5;6], 'AbsTol', 1e-10);
         end
 
         % =================================================================
@@ -245,9 +245,9 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('velocity'), "DOUBLE");
 
             result = TableVar().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result));
-            testCase.verifyEqual(result.force, [1; 2; 3], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.velocity, [4; 5; 6], 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(result.data.force, [1; 2; 3], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.velocity, [4; 5; 6], 'AbsTol', 1e-10);
         end
 
         function test_table_int_columns(testCase)
@@ -261,9 +261,9 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('counts'), "BIGINT");
 
             result = TableVar().load('subject', 2, 'session', 'A');
-            testCase.verifyTrue(istable(result));
-            testCase.verifyEqual(result.ids, [10; 20; 30], 'AbsTol', 1e-10);
-            testCase.verifyEqual(result.counts, [1; 2; 3], 'AbsTol', 1e-10);
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(result.data.ids, [10; 20; 30], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.counts, [1; 2; 3], 'AbsTol', 1e-10);
         end
 
         function test_table_string_columns(testCase)
@@ -277,9 +277,9 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('grp'), "VARCHAR");
 
             result = TableVar().load('subject', 3, 'session', 'A');
-            testCase.verifyTrue(istable(result));
-            testCase.verifyEqual(result.name, ["alice"; "bob"; "carol"]);
-            testCase.verifyEqual(result.grp, ["A"; "B"; "A"]);
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(result.data.name, ["alice"; "bob"; "carol"]);
+            testCase.verifyEqual(result.data.grp, ["A"; "B"; "A"]);
         end
 
         function test_table_mixed_columns(testCase)
@@ -297,8 +297,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('name'), "VARCHAR");
 
             result = TableVar().load('subject', 4, 'session', 'A');
-            testCase.verifyTrue(istable(result));
-            testCase.verifyEqual(result.Properties.VariableNames, ...
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(result.data.Properties.VariableNames, ...
                 {'score', 'rank', 'name'});
         end
 
@@ -312,8 +312,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             testCase.verifyEqual(types('label'), "VARCHAR");
 
             result = TableVar().load('subject', 5, 'session', 'A');
-            testCase.verifyTrue(istable(result));
-            testCase.verifyEqual(height(result), 1);
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(height(result.data), 1);
         end
 
         % function test_table_multiple_rows(testCase)
@@ -334,8 +334,8 @@ classdef TestDuckDBTypes < matlab.unittest.TestCase
             TableVar().save(t, 'subject', 6, 'session', 'A');
 
             result = TableVar().load('subject', 6, 'session', 'A');
-            testCase.verifyTrue(istable(result));
-            testCase.verifyEqual(result.Properties.VariableNames, ...
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(result.data.Properties.VariableNames, ...
                 {'z_col', 'a_col', 'm_col'});
         end
     end

@@ -762,3 +762,42 @@ class TestLineageFcnPipelineMetadata:
         assert len(variants) == 1
         assert variants[0]["function_name"] == "generate"
         assert variants[0]["record_count"] == 1
+
+
+class TestSaveBatchSingleColumn:
+    """Regression tests for save_batch with single-column (bare) data values.
+
+    The PyArrow fast path indexes data_val[col], which only works when
+    data_val is a dict (multi_column mode).  Bare ndarrays/scalars must
+    fall through to the generic _value_to_storage_row path.
+    """
+
+    def test_save_batch_1d_ndarray_single_column(self, db, array_class):
+        """save_batch must handle bare 1-D ndarray values (single_column mode).
+
+        Before the fix, the Arrow fast path tried data_val["value"] on a
+        bare numpy array and raised IndexError.
+        """
+        data_items = [
+            (np.array([1.0, 2.0, 3.0]), {"subject": 1, "trial": 1}),
+            (np.array([4.0, 5.0, 6.0]), {"subject": 1, "trial": 2}),
+        ]
+        record_ids = db.save_batch(array_class, data_items)
+        assert len(record_ids) == 2
+
+        loaded1 = array_class.load(subject=1, trial=1)
+        np.testing.assert_array_equal(loaded1.data, [1.0, 2.0, 3.0])
+        loaded2 = array_class.load(subject=1, trial=2)
+        np.testing.assert_array_equal(loaded2.data, [4.0, 5.0, 6.0])
+
+    def test_save_batch_scalar_single_column(self, db, scalar_class):
+        """save_batch must handle bare scalar values (single_column mode)."""
+        data_items = [
+            (10.0, {"subject": 1, "trial": 1}),
+            (20.0, {"subject": 1, "trial": 2}),
+        ]
+        record_ids = db.save_batch(scalar_class, data_items)
+        assert len(record_ids) == 2
+
+        assert scalar_class.load(subject=1, trial=1).data == 10.0
+        assert scalar_class.load(subject=1, trial=2).data == 20.0

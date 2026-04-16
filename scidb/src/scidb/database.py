@@ -932,9 +932,14 @@ class DatabaseManager:
         timings["1_setup"] = time.perf_counter() - t0
 
         # --- Detect PyArrow fast path for batch insert ---
+        # The Arrow path below indexes `data_val[col]` for each column name,
+        # which only works when `data_val` is a dict (i.e. multi_column mode).
+        # Single-column mode stores data_val as a bare ndarray/scalar, so
+        # `data_val["value"]` would raise IndexError — exclude it here and
+        # let it fall through to the generic _value_to_storage_row path.
         _use_arrow = False
         pa = None
-        if not is_dataframe:
+        if not is_dataframe and dtype_meta.get("mode") == "multi_column":
             try:
                 import pyarrow as pa
                 col_metas = dtype_meta.get("columns", {})

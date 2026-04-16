@@ -42,73 +42,73 @@ classdef TestDataRoundTrip < matlab.unittest.TestCase
             data = [1.5, 2.7, 3.9, 4.1, 5.0];
             RawSignal().save(data, 'subject', 1);
             result = RawSignal().load('subject', 1);
-            testCase.verifyEqual(result, data', 'AbsTol', 1e-10);
-            testCase.verifyEqual(size(result), size(data'));
+            testCase.verifyEqual(result.data, data', 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), size(data'));
         end
 
         function test_double_column_vector(testCase)
             data = [1.5; 2.7; 3.9; 4.1; 5.0];
             RawSignal().save(data, 'subject', 2);
             result = RawSignal().load('subject', 2);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
-            testCase.verifyEqual(size(result), size(data));
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), size(data));
         end
 
         function test_double_matrix_values(testCase)
             data = [1 2 3 4; 5 6 7 8; 9 10 11 12];
             RawSignal().save(data, 'subject', 3);
             result = RawSignal().load('subject', 3);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
         end
 
         function test_double_matrix_shape(testCase)
             data = randn(3, 7);
             RawSignal().save(data, 'subject', 4);
             result = RawSignal().load('subject', 4);
-            testCase.verifyEqual(size(result), [3, 7]);
+            testCase.verifyEqual(size(result.data), [3, 7]);
         end
 
         function test_double_square_matrix(testCase)
             data = magic(5);
             RawSignal().save(data, 'subject', 5);
             result = RawSignal().load('subject', 5);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
         end
 
         function test_scalar_double(testCase)
             data = 3.14159;
             ScalarVar().save(data, 'subject', 1);
             result = ScalarVar().load('subject', 1);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
         end
 
         function test_scalar_integer(testCase)
             data = 42;
             ScalarVar().save(data, 'subject', 2);
             result = ScalarVar().load('subject', 2);
-            testCase.verifyEqual(result, 42, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, 42, 'AbsTol', 1e-10);
         end
 
         function test_negative_values(testCase)
             data = [-1.5, -2.7, 0, 3.9, -4.1];
             RawSignal().save(data, 'subject', 6);
             result = RawSignal().load('subject', 6);
-            testCase.verifyEqual(result, data', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, data', 'AbsTol', 1e-10);
         end
 
         function test_zeros_array(testCase)
             data = zeros(5, 3);
             RawSignal().save(data, 'subject', 7);
             result = RawSignal().load('subject', 7);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
-            testCase.verifyEqual(size(result), [5, 3]);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), [5, 3]);
         end
 
         function test_ones_array(testCase)
             data = ones(4, 6);
             RawSignal().save(data, 'subject', 8);
             result = RawSignal().load('subject', 8);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
         end
 
         function test_large_matrix(testCase)
@@ -116,15 +116,15 @@ classdef TestDataRoundTrip < matlab.unittest.TestCase
             data = randn(100, 50);
             RawSignal().save(data, 'subject', 9);
             result = RawSignal().load('subject', 9);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
-            testCase.verifyEqual(size(result), [100, 50]);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), [100, 50]);
         end
 
         function test_single_element_array(testCase)
             data = [7.7];
             RawSignal().save(data, 'subject', 10);
             result = RawSignal().load('subject', 10);
-            testCase.verifyEqual(result, 7.7, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, 7.7, 'AbsTol', 1e-10);
         end
 
         function test_single_precision(testCase)
@@ -132,14 +132,14 @@ classdef TestDataRoundTrip < matlab.unittest.TestCase
             RawSignal().save(data, 'subject', 11);
             result = RawSignal().load('subject', 11);
             % from_python converts to double, so compare with double tolerance
-            testCase.verifyEqual(result, double(data'), 'AbsTol', 1e-6);
+            testCase.verifyEqual(result.data, double(data'), 'AbsTol', 1e-6);
         end
 
         function test_int32_array(testCase)
             data = int32([1, 2, 3, 4, 5]);
             RawSignal().save(data, 'subject', 12);
             result = RawSignal().load('subject', 12);
-            testCase.verifyEqual(result, double(data'), 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, double(data'), 'AbsTol', 1e-10);
         end
 
         function test_matrix_element_order(testCase)
@@ -148,28 +148,28 @@ classdef TestDataRoundTrip < matlab.unittest.TestCase
             data = [1 2 3; 4 5 6];  % 2x3 matrix
             RawSignal().save(data, 'subject', 13);
             result = RawSignal().load('subject', 13);
-            testCase.verifyEqual(result(1,1), 1, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result(1,2), 2, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result(1,3), 3, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result(2,1), 4, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result(2,2), 5, 'AbsTol', 1e-10);
-            testCase.verifyEqual(result(2,3), 6, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data(1,1), 1, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data(1,2), 2, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data(1,3), 3, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data(2,1), 4, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data(2,2), 5, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data(2,3), 6, 'AbsTol', 1e-10);
         end
 
         function test_wide_matrix_shape(testCase)
             data = randn(2, 20);
             RawSignal().save(data, 'subject', 14);
             result = RawSignal().load('subject', 14);
-            testCase.verifyEqual(size(result), [2, 20]);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), [2, 20]);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
         end
 
         function test_tall_matrix_shape(testCase)
             data = randn(20, 2);
             RawSignal().save(data, 'subject', 15);
             result = RawSignal().load('subject', 15);
-            testCase.verifyEqual(size(result), [20, 2]);
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), [20, 2]);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
         end
 
         function test_content_hash_deterministic(testCase)

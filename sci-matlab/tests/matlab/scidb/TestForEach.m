@@ -53,7 +53,7 @@ classdef TestForEach < matlab.unittest.TestCase
             for s = [1 2 3]
                 result = ProcessedSignal().load('subject', s, 'session', 'A');
                 raw = RawSignal().load('subject', s, 'session', 'A');
-                testCase.verifyEqual(result, raw * 2, 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.data, raw.data * 2, 'AbsTol', 1e-10);
             end
         end
 
@@ -87,7 +87,7 @@ classdef TestForEach < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, [20 40 60]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [20 40 60]', 'AbsTol', 1e-10);
         end
 
         % --- Constants ---
@@ -102,7 +102,7 @@ classdef TestForEach < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, [15 25 35]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [15 25 35]', 'AbsTol', 1e-10);
         end
 
         function test_constant_included_in_save_metadata(testCase)
@@ -133,7 +133,7 @@ classdef TestForEach < matlab.unittest.TestCase
                 'session', "A");
 
             result = FilteredSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, [11 22 33]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [11 22 33]', 'AbsTol', 1e-10);
         end
 
         % --- Fixed inputs ---
@@ -160,11 +160,11 @@ classdef TestForEach < matlab.unittest.TestCase
 
             % Subject 1: [110-100, 210-200, 310-300] = [10, 10, 10]
             d1 = DeltaSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(d1, [10 10 10]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(d1.data, [10 10 10]', 'AbsTol', 1e-10);
 
             % Subject 2: [120-100, 220-200, 320-300] = [20, 20, 20]
             d2 = DeltaSignal().load('subject', 2, 'session', 'A');
-            testCase.verifyEqual(d2, [20 20 20]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(d2.data, [20 20 20]', 'AbsTol', 1e-10);
         end
 
         % --- dry_run ---
@@ -213,8 +213,8 @@ classdef TestForEach < matlab.unittest.TestCase
 
             r1 = SplitFirst().load('subject', 1, 'session', 'A');
             r2 = SplitSecond().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(r1, [1 2]', 'AbsTol', 1e-10);
-            testCase.verifyEqual(r2, [3 4]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r1.data, [1 2]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r2.data, [3 4]', 'AbsTol', 1e-10);
         end
 
         % --- PathInput ---
@@ -231,7 +231,7 @@ classdef TestForEach < matlab.unittest.TestCase
             % The function should have received a resolved path
             result = ScalarVar().load('subject', 1, 'session', 'A');
             expected_path = fullfile('/data', '1', 'data.mat');
-            testCase.verifyEqual(result, double(strlength(expected_path)), ...
+            testCase.verifyEqual(result.data, double(strlength(expected_path)), ...
                 'AbsTol', 1e-10);
         end
 
@@ -249,7 +249,7 @@ classdef TestForEach < matlab.unittest.TestCase
 
             % Subject 1 should be saved
             r1 = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(r1, [2 4 6]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r1.data, [2 4 6]', 'AbsTol', 1e-10);
 
             % Subject 2 should be skipped (no input data)
             results = ProcessedSignal().load_all('subject', 2, 'session', 'A');
@@ -274,7 +274,7 @@ classdef TestForEach < matlab.unittest.TestCase
             for s = [1 2 3]
                 result = ProcessedSignal().load('subject', s, 'session', 'A');
                 raw = RawSignal().load('subject', s, 'session', 'A');
-                testCase.verifyEqual(result, raw * 2, 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.data, raw.data * 2, 'AbsTol', 1e-10);
             end
         end
 
@@ -310,7 +310,7 @@ classdef TestForEach < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, [15 25 35]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [15 25 35]', 'AbsTol', 1e-10);
         end
 
         function test_parallel_skips_missing(testCase)
@@ -325,7 +325,7 @@ classdef TestForEach < matlab.unittest.TestCase
                 'session', "A");
 
             r1 = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(r1, [2 4 6]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r1.data, [2 4 6]', 'AbsTol', 1e-10);
 
             results = ProcessedSignal().load_all('subject', 2, 'session', 'A');
             testCase.verifyEmpty(results);
@@ -343,7 +343,7 @@ classdef TestForEach < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, [20 40 60]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [20 40 60]', 'AbsTol', 1e-10);
         end
 
         function test_parallel_multiple_outputs(testCase)
@@ -359,8 +359,8 @@ classdef TestForEach < matlab.unittest.TestCase
 
             r1 = SplitFirst().load('subject', 1, 'session', 'A');
             r2 = SplitSecond().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(r1, [1 2]', 'AbsTol', 1e-10);
-            testCase.verifyEqual(r2, [3 4]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r1.data, [1 2]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r2.data, [3 4]', 'AbsTol', 1e-10);
         end
 
         % --- Column selection ---
@@ -381,7 +381,7 @@ classdef TestForEach < matlab.unittest.TestCase
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
             % sum([1;2;3]) = 6
-            testCase.verifyEqual(result, 6.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, 6.0, 'AbsTol', 1e-10);
         end
 
         function test_column_selection_multiple_columns(testCase)
@@ -399,9 +399,9 @@ classdef TestForEach < matlab.unittest.TestCase
                 'session', "A");
 
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(istable(result));
-            testCase.verifyEqual(result.Properties.VariableNames, {'col_a', 'col_b'});
-            testCase.verifyEqual(height(result), 2);
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(result.data.Properties.VariableNames, {'col_a', 'col_b'});
+            testCase.verifyEqual(height(result.data), 2);
         end
 
         function test_column_selection_multiple_iterations(testCase)
@@ -419,8 +419,8 @@ classdef TestForEach < matlab.unittest.TestCase
 
             r1 = ProcessedSignal().load('subject', 1, 'session', 'A');
             r2 = ProcessedSignal().load('subject', 2, 'session', 'A');
-            testCase.verifyEqual(r1, 3.0, 'AbsTol', 1e-10);  % sum([1;2])
-            testCase.verifyEqual(r2, 7.0, 'AbsTol', 1e-10);  % sum([3;4])
+            testCase.verifyEqual(r1.data, 3.0, 'AbsTol', 1e-10);  % sum([1;2])
+            testCase.verifyEqual(r2.data, 7.0, 'AbsTol', 1e-10);  % sum([3;4])
         end
 
         function test_column_selection_invalid_column_skips_iteration(testCase)
@@ -477,7 +477,7 @@ classdef TestForEach < matlab.unittest.TestCase
             for s = subjects
                 for sess = sessions
                     result = ProcessedSignal().load('subject', s, 'session', sess);
-                    testCase.verifyEqual(result, s * [2 4 6]', 'AbsTol', 1e-10);
+                    testCase.verifyEqual(result.data, s * [2 4 6]', 'AbsTol', 1e-10);
                 end
             end
         end
@@ -528,11 +528,11 @@ classdef TestForEach < matlab.unittest.TestCase
             for s = subjects
                 for sess = sessions
                     result = ProcessedSignal().load('subject', s, 'session', sess);
-                    testCase.verifyTrue(istable(result));
-                    testCase.verifyEqual(result.A, tbl.A(sess) * 2, 'AbsTol', 1e-10);
-                    testCase.verifyEqual(result.B, tbl.B(sess) * 2, 'AbsTol', 1e-10);
-                    testCase.verifyEqual(result.subject, tbl.subject(sess));
-                    testCase.verifyTrue(all(ismember({'A', 'B', 'subject'}, result.Properties.VariableNames)));
+                    testCase.verifyTrue(istable(result.data));
+                    testCase.verifyEqual(result.data.A, tbl.A(sess) * 2, 'AbsTol', 1e-10);
+                    testCase.verifyEqual(result.data.B, tbl.B(sess) * 2, 'AbsTol', 1e-10);
+                    testCase.verifyEqual(result.data.subject, tbl.subject(sess));
+                    testCase.verifyTrue(all(ismember({'A', 'B', 'subject'}, result.data.Properties.VariableNames)));
                 end
             end
         end
@@ -558,9 +558,9 @@ classdef TestForEach < matlab.unittest.TestCase
             for s = subjects
                 for sess = sessions
                     result = ProcessedSignal().load('subject', s, 'session', sess);
-                    testCase.verifyTrue(istable(result));
-                    testCase.verifyEqual(result.A, tbl.A(sess) * 2, 'AbsTol', 1e-10);
-                    testCase.verifyEqual(result.B, tbl.B(sess) * 2, 'AbsTol', 1e-10);
+                    testCase.verifyTrue(istable(result.data));
+                    testCase.verifyEqual(result.data.A, tbl.A(sess) * 2, 'AbsTol', 1e-10);
+                    testCase.verifyEqual(result.data.B, tbl.B(sess) * 2, 'AbsTol', 1e-10);
                 end
             end
         end
@@ -583,7 +583,7 @@ classdef TestForEach < matlab.unittest.TestCase
             expected = [2; 4; 6];
             for sess = 1:3
                 result = ProcessedSignal().load('subject', 1, 'session', sess);
-                testCase.verifyEqual(result, expected(sess), 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.data, expected(sess), 'AbsTol', 1e-10);
             end
         end
 
@@ -619,11 +619,11 @@ classdef TestForEach < matlab.unittest.TestCase
             expected_B = containers.Map({1, 2, 3}, {10.0, 12.0, 8.0});
             for sess = sessions
                 result = ProcessedSignal().load('subject', '1', 'session', sess);
-                testCase.verifyTrue(istable(result));
-                testCase.verifyEqual(result.A, expected_A(sess), 'AbsTol', 1e-10);
-                testCase.verifyEqual(result.B, expected_B(sess), 'AbsTol', 1e-10);
+                testCase.verifyTrue(istable(result.data));
+                testCase.verifyEqual(result.data.A, expected_A(sess), 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.data.B, expected_B(sess), 'AbsTol', 1e-10);
                 % The session column must have been stripped from the saved data
-                testCase.verifyFalse(ismember('session', result.Properties.VariableNames));
+                testCase.verifyFalse(ismember('session', result.data.Properties.VariableNames));
             end
         end
 
@@ -651,8 +651,8 @@ classdef TestForEach < matlab.unittest.TestCase
             % Data must be correct (second run didn't corrupt anything)
             for sess = 1:3
                 result = ProcessedSignal().load('subject', '1', 'session', sess);
-                testCase.verifyEqual(result.A, tbl.A(sess) * 2, 'AbsTol', 1e-10);
-                testCase.verifyEqual(result.B, tbl.B(sess) * 2, 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.data.A, tbl.A(sess) * 2, 'AbsTol', 1e-10);
+                testCase.verifyEqual(result.data.B, tbl.B(sess) * 2, 'AbsTol', 1e-10);
             end
         end
 

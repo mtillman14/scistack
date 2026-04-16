@@ -51,39 +51,40 @@ classdef TestSaveLoad < matlab.unittest.TestCase
 
         % --- Load basics ---
 
-        function test_load_returns_raw_data(testCase)
+        function test_load_returns_wrapper(testCase)
             RawSignal().save([1 2 3], 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyTrue(isnumeric(result));
+            testCase.verifyClass(result, 'scidb.BaseVariable');
+            testCase.verifyTrue(isnumeric(result.data));
         end
 
         function test_save_and_load_vector(testCase)
             data = [1.5, 2.7, 3.9, 4.1];
             RawSignal().save(data, 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, data', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, data', 'AbsTol', 1e-10);
         end
 
         function test_save_and_load_scalar(testCase)
             RawSignal().save(3.14159, 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, 3.14159, 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, 3.14159, 'AbsTol', 1e-10);
         end
 
         function test_save_and_load_matrix(testCase)
             data = [1 2 3; 4 5 6; 7 8 9];
             RawSignal().save(data, 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
-            testCase.verifyEqual(size(result), [3, 3]);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), [3, 3]);
         end
 
         function test_save_and_load_column_vector(testCase)
             data = [1; 2; 3; 4; 5];
             RawSignal().save(data, 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
-            testCase.verifyEqual(size(result), [5, 1]);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), [5, 1]);
         end
 
         function test_save_and_load_large_array(testCase)
@@ -91,8 +92,8 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             data = randn(100, 50);
             RawSignal().save(data, 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, data, 'AbsTol', 1e-10);
-            testCase.verifyEqual(size(result), [100, 50]);
+            testCase.verifyEqual(result.data, data, 'AbsTol', 1e-10);
+            testCase.verifyEqual(size(result.data), [100, 50]);
         end
 
         % --- Metadata filtering ---
@@ -103,14 +104,14 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             RawSignal().save([7 8 9], 'subject', 2, 'session', 'A');
 
             result = RawSignal().load('subject', 1, 'session', 'B');
-            testCase.verifyEqual(result, [4 5 6]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [4 5 6]', 'AbsTol', 1e-10);
         end
 
         function test_load_by_partial_metadata_single_match(testCase)
             RawSignal().save([1 2 3], 'subject', 1, 'session', 'A');
             RawSignal().save([4 5 6], 'subject', 2, 'session', 'A');
             result = RawSignal().load('subject', 2, 'session', 'A');
-            testCase.verifyEqual(result, [4 5 6]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [4 5 6]', 'AbsTol', 1e-10);
         end
 
         % --- Versioning ---
@@ -122,7 +123,7 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             % Multiple versions exist — load by specific record_id to get latest
             result = RawSignal().load('subject', 1, 'session', 'A', ...
                 'version', id2);
-            testCase.verifyEqual(result, [10 20 30]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [10 20 30]', 'AbsTol', 1e-10);
         end
 
         function test_load_by_specific_record_id(testCase)
@@ -130,7 +131,7 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A', ...
                 'version', id1);
-            testCase.verifyEqual(result, [1 2 3]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [1 2 3]', 'AbsTol', 1e-10);
         end
 
         function test_load_latest_version_returns_single(testCase)
@@ -138,7 +139,7 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             RawSignal().save([4 5 6], 'subject', 1, 'session', 'A');
             result = RawSignal().load('subject', 1, 'session', 'A');
             % load() returns latest version only
-            testCase.verifyEqual(result, [4 5 6]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [4 5 6]', 'AbsTol', 1e-10);
         end
 
         % --- load_all ---
@@ -231,7 +232,7 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             versions = RawSignal().list_versions('subject', 1, 'session', 'A');
             testCase.verifyTrue(isfield(versions, 'record_id'));
             testCase.verifyTrue(isfield(versions, 'schema'));
-            testCase.verifyTrue(isfield(versions, 'version'));
+            testCase.verifyTrue(isfield(versions, 'branch_params'));
             testCase.verifyTrue(isfield(versions, 'timestamp'));
         end
 
@@ -250,8 +251,8 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             r1 = RawSignal().load('subject', 1, 'session', 'A');
             r2 = ProcessedSignal().load('subject', 1, 'session', 'A');
 
-            testCase.verifyEqual(r1, [1 2 3]', 'AbsTol', 1e-10);
-            testCase.verifyEqual(r2, [4 5 6]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r1.data, [1 2 3]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(r2.data, [4 5 6]', 'AbsTol', 1e-10);
         end
 
         % --- Re-save loaded variable ---
@@ -261,11 +262,11 @@ classdef TestSaveLoad < matlab.unittest.TestCase
             loaded = RawSignal().load('subject', 1, 'session', 'A');
 
             % Re-save the loaded data under different metadata
-            id2 = RawSignal().save(loaded, 'subject', 2, 'session', 'B');
+            id2 = RawSignal().save(loaded.data, 'subject', 2, 'session', 'B');
             testCase.verifyTrue(strlength(string(id2)) == 16);
 
             reloaded = RawSignal().load('subject', 2, 'session', 'B');
-            testCase.verifyEqual(reloaded, [1 2 3]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(reloaded.data, [1 2 3]', 'AbsTol', 1e-10);
         end
     end
 end

@@ -196,7 +196,7 @@ classdef TestEndToEnd < matlab.unittest.TestCase
 
             %% Load and re-save under different metadata
             loaded = RawSignal().load('subject', 1, 'session', 'A');
-            RawSignal().save(loaded, 'subject', 2, 'session', 'B');
+            RawSignal().save(loaded.data, 'subject', 2, 'session', 'B');
 
             %% Verify both copies exist with correct data
             r1 = RawSignal().load('subject', 1, 'session', 'A');

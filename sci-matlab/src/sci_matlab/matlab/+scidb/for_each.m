@@ -294,7 +294,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
             removed = original_count - numel(filtered_combos);
             if removed > 0
-                scidb.Log.info('filtered %d non-existent schema combinations (from %d to %d)', ...
+                fprintf('[info] filtered %d non-existent schema combinations (from %d to %d)\n', ...
                     removed, original_count, numel(filtered_combos));
             end
         end

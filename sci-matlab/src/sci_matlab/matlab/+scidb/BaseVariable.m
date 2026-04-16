@@ -325,7 +325,7 @@ classdef BaseVariable < dynamicprops
             if version ~= "latest"
                 py_var = py_db.load(py_class, py_metadata, version=char(version));
                 wrapped = scidb.BaseVariable.wrap_py_var(py_var);
-                result = wrapped.data;
+                result = wrapped;
                 return;
             end
 
@@ -349,16 +349,12 @@ classdef BaseVariable < dynamicprops
                 results_arr = scidb.BaseVariable.wrap_py_vars_batch(bulk);
 
                 if n == 1
-                    result = results_arr(1).data;
+                    result = results_arr(1);
                 elseif as_table
                     result = multi_result_to_table(results_arr, type_name, categorical_flag);
                 else
-                    % as_table=false: return raw data only (no BaseVariable wrappers)
-                    raw = cell(n, 1);
-                    for k = 1:n
-                        raw{k} = results_arr(k).data;
-                    end
-                    result = normalize_data_column(raw);
+                    % as_table=false: return array of BaseVariable wrappers
+                    result = results_arr;
                 end
             end
 
@@ -480,7 +476,7 @@ classdef BaseVariable < dynamicprops
         %       Any other name-value pairs are metadata filters.
         %
         %   Returns a struct array with fields: record_id, schema,
-        %   version, timestamp.
+        %   branch_params, timestamp.
         %
         %   Example:
         %       v = ProcessedSignal().list_versions(subject=1, session="A");
@@ -499,14 +495,14 @@ classdef BaseVariable < dynamicprops
             py_list = py_db.list_versions(py_class, pyargs(py_kwargs{:}));
 
             n = int64(py.builtins.len(py_list));
-            versions = struct('record_id', {}, 'schema', {}, 'version', {}, 'timestamp', {});
+            versions = struct('record_id', {}, 'schema', {}, 'branch_params', {}, 'timestamp', {});
 
             for i = 1:n
                 py_dict = py_list{i};
-                versions(i).record_id  = string(py_dict{'record_id'});
-                versions(i).schema     = scidb.internal.pydict_to_struct(py_dict{'schema'});
-                versions(i).version    = scidb.internal.pydict_to_struct(py_dict{'version'});
-                versions(i).timestamp  = string(py_dict{'timestamp'});
+                versions(i).record_id     = string(py_dict{'record_id'});
+                versions(i).schema        = scidb.internal.pydict_to_struct(py_dict{'schema'});
+                versions(i).branch_params = scidb.internal.pydict_to_struct(py_dict{'branch_params'});
+                versions(i).timestamp     = string(py_dict{'timestamp'});
             end
 
             
@@ -649,11 +645,6 @@ classdef BaseVariable < dynamicprops
     end
 
     methods (Static)
-        function objs = empty()
-        %EMPTY  Create an empty BaseVariable array (for preallocation).
-            objs = scidb.BaseVariable.empty(0, 0);
-        end
-
         function obj = str2var(s)
             %STR2VAR  Convert a string to a BaseVariable (for flexibility).
             %   This allows users to write code like:

@@ -62,31 +62,33 @@ classdef TestAsTable < matlab.unittest.TestCase
             testCase.verifyTrue(ismember('RawSignal', tbl.Properties.VariableNames));
         end
 
-        function test_load_single_result_returns_raw_data(testCase)
-            %% load() with single match returns raw data
+        function test_load_single_result_returns_wrapper(testCase)
+            %% load() with single match returns a BaseVariable wrapper
             ScalarVar().save(42, 'subject', 1, 'session', 'A');
             result = ScalarVar().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(result, 42);
+            testCase.verifyClass(result, 'scidb.BaseVariable');
+            testCase.verifyEqual(result.data, 42);
         end
 
-        function test_load_as_table_false_returns_raw_data(testCase)
-            %% load(as_table=false) with multiple matches returns raw data
+        function test_load_as_table_false_returns_wrapper_array(testCase)
+            %% load(as_table=false) with multiple matches returns a BaseVariable array
             ScalarVar().save(10, 'subject', 1, 'session', 'A');
             ScalarVar().save(20, 'subject', 1, 'session', 'B');
 
             result = ScalarVar().load('as_table', false, 'subject', 1);
-            testCase.verifyTrue(isnumeric(result));
+            testCase.verifyClass(result, 'scidb.BaseVariable');
             testCase.verifyEqual(numel(result), 2);
-            testCase.verifyEqual(sort(result), [10; 20]);
+            values = arrayfun(@(r) r.data, result);
+            testCase.verifyEqual(sort(values(:)), [10; 20]);
         end
 
-        function test_load_as_table_false_array_data_returns_cell(testCase)
-            %% load(as_table=false) with non-scalar data returns cell array
+        function test_load_as_table_false_array_data_returns_wrapper_array(testCase)
+            %% load(as_table=false) with non-scalar data returns a BaseVariable array
             RawSignal().save([1 2 3], 'subject', 1, 'session', 'A');
             RawSignal().save([4 5 6], 'subject', 1, 'session', 'B');
 
             result = RawSignal().load('as_table', false, 'subject', 1);
-            testCase.verifyTrue(iscell(result));
+            testCase.verifyTrue(isa(result, 'scidb.BaseVariable'));
             testCase.verifyEqual(numel(result), 2);
         end
 
@@ -339,7 +341,7 @@ classdef TestAsTable < matlab.unittest.TestCase
             result = ProcessedSignal().load('subject', 1, 'session', 'A');
             testCase.verifyFalse(istable(result), ...
                 'as_table=false + column selection should return a vector, not a table');
-            testCase.verifyEqual(result, [7.0; 8.0; 9.0], 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data, [7.0; 8.0; 9.0], 'AbsTol', 1e-10);
         end
 
         % -----------------------------------------------------------------

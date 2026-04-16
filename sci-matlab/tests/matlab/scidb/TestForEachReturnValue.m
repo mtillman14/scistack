@@ -262,7 +262,7 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
 
             computed = result.ProcessedSignal{1};
             saved = ProcessedSignal().load('subject', 1, 'session', 'A');
-            testCase.verifyEqual(computed, saved, 'AbsTol', 1e-10);
+            testCase.verifyEqual(computed, saved.data, 'AbsTol', 1e-10);
         end
 
     end

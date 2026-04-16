@@ -19,6 +19,13 @@ classdef TestWhereFilter < matlab.unittest.TestCase
         db
     end
 
+    methods (TestClassSetup)
+        function addPaths(~)
+            this_dir = fileparts(mfilename('fullpath'));
+            run(fullfile(this_dir, 'setup_paths.m'));
+        end
+    end
+
     methods (TestMethodSetup)
         function setUp(obj)
             import matlab.unittest.fixtures.TemporaryFolderFixture
@@ -211,7 +218,7 @@ classdef TestWhereFilter < matlab.unittest.TestCase
 
             result = StepLength().load(where=Side() == "R", db=obj.db);
             % Only subject=2 matches Side=="R"; its StepLength is 0.55
-            obj.assertEqual(result, 0.55);
+            obj.assertEqual(result.data, 0.55);
         end
 
     end
