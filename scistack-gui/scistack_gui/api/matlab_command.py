@@ -21,6 +21,7 @@ def generate_matlab_command(
     schema_level: list[str] | None = None,
     addpath_dirs: list[str] | None = None,
     python_executable: str | None = None,
+    path_inputs: dict[str, dict] | None = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -81,11 +82,23 @@ def generate_matlab_command(
     lines.append("")
 
     if not variants:
-        # No variant info — generate a template.
-        lines.append(f"% Run (fill in inputs/outputs)")
-        lines.append(f"scihist.for_each(@{function_name}, ...")
-        lines.append(f"    struct(), ...")  # inputs placeholder
-        lines.append(f"    {{}});")         # outputs placeholder
+        # No variant info — generate a template, but include any known path inputs.
+        if path_inputs:
+            inputs_str = _format_matlab_struct(
+                {p: _format_path_input(pi) for p, pi in path_inputs.items()}
+            )
+        else:
+            inputs_str = "struct()"
+        lines.append("try")
+        lines.append(f"    % Run (fill in inputs/outputs)")
+        lines.append(f"    scihist.for_each(@{function_name}, ...")
+        lines.append(f"        {inputs_str}, ...")
+        lines.append(f"        {{}});")         # outputs placeholder
+        lines.append("    db.close();")
+        lines.append("catch scistack_err__")
+        lines.append("    db.close();")
+        lines.append("    rethrow(scistack_err__);")
+        lines.append("end")
         return "\n".join(lines)
 
     # Collect all variable types referenced across all variants.
@@ -114,17 +127,27 @@ def generate_matlab_command(
             seen_constants.add(key)
             unique_variants.append(v)
 
+    # Wrap all for_each calls in a try/catch so db.close() always runs,
+    # even if the run errors out or is interrupted.
+    lines.append("try")
+
     # Generate for_each call for each unique variant.
     for v in unique_variants:
         input_types = v.get("input_types", {})
         output_type = v.get("output_type", "")
         constants = v.get("constants", {})
 
-        # Build inputs struct
+        # Build inputs struct — skip PathInput entries (handled via path_inputs).
+        from scistack_gui.api.pipeline import _parse_path_input
         inputs_dict = {}
         if isinstance(input_types, dict):
             for param_name, type_name in input_types.items():
-                inputs_dict[param_name] = f"{type_name}()"
+                if _parse_path_input(str(type_name)) is None:
+                    inputs_dict[param_name] = f"{type_name}()"
+        # Add path inputs as scifor.PathInput(...) expressions.
+        if path_inputs:
+            for param_name, pi in path_inputs.items():
+                inputs_dict[param_name] = _format_path_input(pi)
         # Add constants as scalar values
         for k, val in constants.items():
             inputs_dict[k] = _format_matlab_value(val)
@@ -138,17 +161,44 @@ def generate_matlab_command(
             iterate_keys, schema_filter, constants, function_name
         )
 
-        lines.append("% Run")
-        lines.append(f"scihist.for_each(@{function_name}, ...")
-        lines.append(f"    {inputs_str}, ...")
+        lines.append("    % Run")
+        lines.append(f"    scihist.for_each(@{function_name}, ...")
+        lines.append(f"        {inputs_str}, ...")
         if schema_str:
-            lines.append(f"    {outputs_str}, ...")
-            lines.append(f"    {schema_str});")
+            lines.append(f"        {outputs_str}, ...")
+            lines.append(f"        {schema_str});")
         else:
-            lines.append(f"    {outputs_str});")
+            lines.append(f"        {outputs_str});")
         lines.append("")
 
+    lines.append("    db.close();")
+    lines.append("catch scistack_err__")
+    lines.append("    db.close();")
+    lines.append("    rethrow(scistack_err__);")
+    lines.append("end")
     return "\n".join(lines)
+
+
+def _format_path_input(pi: dict) -> str:
+    """Format a PathInput info dict as a MATLAB ``scifor.PathInput(...)`` expression.
+
+    The template stored in the layout may already include MATLAB double-quote
+    delimiters (e.g. ``"C:\\data\\file.csv"``), or it may be a bare pattern
+    string (e.g. ``{subject}/trial_{trial}.mat``). Both forms are handled.
+    """
+    template = pi.get("template", "")
+    root_folder = pi.get("root_folder")
+
+    # If the template is already wrapped in MATLAB double quotes, use it as-is.
+    # Otherwise wrap it ourselves.
+    if template.startswith('"') and template.endswith('"'):
+        matlab_template = template
+    else:
+        matlab_template = f'"{template}"'
+
+    if root_folder:
+        return f'scifor.PathInput({matlab_template}, root_folder="{root_folder}")'
+    return f"scifor.PathInput({matlab_template})"
 
 
 def _escape_matlab_string(s: str) -> str:
@@ -235,14 +285,6 @@ def _format_pyenv_preamble(python_executable: str) -> list[str]:
         "        scistack_import_err__.message);",
         "    rethrow(scistack_import_err__);",
         "end",
-        "% Clear MATLAB's compiled-function cache to force package functions",
-        "% (scihist.configure_database, scidb.*, etc.) to be re-parsed now that",
-        "% Python is loaded. Without this, functions parsed BEFORE pyenv was",
-        "% configured (e.g. by an IDE code scanner, startup.m, or a previous",
-        "% script run) have `py` cached as an unknown identifier and throw",
-        "% 'Unrecognized function or variable ''py''' at their first py.* call.",
-        "clear functions;",
-        "fprintf('[SciStack] clear functions done; py.* dispatch ready inside package functions\\n');",
         "clear scistack_pyenv__ scistack_pyenv_target__ scistack_norm_path__ ...",
         "    scistack_py_version__ scistack_py_err__ scistack_import_err__;",
     ]

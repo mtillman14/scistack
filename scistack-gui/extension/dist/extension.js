@@ -845,6 +845,10 @@ async function startPipeline(context, dbPath, modulePath, projectPath, schemaKey
     dagPanel = new DagPanel(context, pythonProcess, outputChannel);
     dagPanel.onDidDispose(() => {
       dagPanel = null;
+      if (pythonProcess) {
+        pythonProcess.kill();
+        pythonProcess = null;
+      }
     });
   }
   pythonProcess.onNotification((method, params) => {

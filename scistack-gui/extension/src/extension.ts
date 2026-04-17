@@ -235,6 +235,10 @@ async function startPipeline(
     dagPanel = new DagPanel(context, pythonProcess, outputChannel);
     dagPanel.onDidDispose(() => {
       dagPanel = null;
+      if (pythonProcess) {
+        pythonProcess.kill();
+        pythonProcess = null;
+      }
     });
   }
 

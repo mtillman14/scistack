@@ -318,11 +318,12 @@ class TestGenerateMatlabCommand:
         assert "OutOfProcess" in cmd
         # Stage 4: pre-import scidb so py.scidb.* is warm
         assert "py.importlib.import_module('scidb')" in cmd
-        # Stage 5: clear compiled-function cache so package functions re-parse
-        # with py.* now recognized.
-        assert "clear functions" in cmd
         # Teardown: clear all temporaries
         assert "clear scistack_pyenv__ scistack_pyenv_target__" in cmd
+        # clear functions is NOT emitted — it breaks py.list inside package
+        # functions (MATLAB resolves py.X as a module lookup post-cache-clear,
+        # which fails for builtins like list).
+        assert "clear functions" not in cmd
 
     def test_pyenv_preamble_omitted_when_none(self):
         from scistack_gui.api.matlab_command import generate_matlab_command
@@ -494,3 +495,38 @@ class TestConfigMatlabParsing:
         assert config.matlab_variables == []
         assert config.matlab_addpath == []
         assert config.matlab_variable_dir is None
+
+
+# ---------------------------------------------------------------------------
+# sci-matlab MATLAB directory discovery
+# ---------------------------------------------------------------------------
+
+
+class TestFindSciMatlabMatlabDir:
+    def test_finds_matlab_dir(self):
+        """sci-matlab is installed in this environment; its matlab/ dir must be found."""
+        from scistack_gui.server import _find_sci_matlab_matlab_dir
+        from pathlib import Path
+
+        result = _find_sci_matlab_matlab_dir()
+        assert result is not None, (
+            "sci-matlab is installed but _find_sci_matlab_matlab_dir returned None"
+        )
+        d = Path(result)
+        assert d.is_dir(), f"Expected a directory at {result}"
+        # The directory must contain the +scihist, +scidb, +scifor MATLAB packages.
+        assert (d / "+scihist").is_dir(), f"+scihist not found under {result}"
+        assert (d / "+scidb").is_dir(), f"+scidb not found under {result}"
+        assert (d / "+scifor").is_dir(), f"+scifor not found under {result}"
+
+    def test_scihist_configure_database_present(self):
+        """Regression: +scihist/configure_database.m must exist so MATLAB can call it."""
+        from scistack_gui.server import _find_sci_matlab_matlab_dir
+        from pathlib import Path
+
+        result = _find_sci_matlab_matlab_dir()
+        assert result is not None
+        cfg_db = Path(result) / "+scihist" / "configure_database.m"
+        assert cfg_db.exists(), (
+            f"scihist.configure_database not found at {cfg_db}"
+        )

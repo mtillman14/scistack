@@ -2928,6 +2928,8 @@ class DatabaseManager:
         # reopen DuckDB
         if self._duck is None:
             self._duck = SciDuck(self.dataset_db_path, dataset_schema=self.dataset_schema_keys)
+        else:
+            self._duck.reopen()
         self._closed = False
 
     def set_current_db(self):

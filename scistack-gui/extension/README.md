@@ -15,3 +15,15 @@ The extension spawns a Python child process that must have `scistack-gui` instal
 3. `python3` on `PATH` as a last resort.
 
 Note that VS Code does **not** inherit a venv from the shell it was launched from. If you rely on a virtual environment, either set `scistack.pythonPath` to that venv's python, or install the Python extension and select your interpreter via "Python: Select Interpreter".
+
+## MATLAB
+
+### Debugging MATLAB code in VS Code
+
+To hit breakpoints in your MATLAB pipeline functions when they are called via the SciStack-generated run command, the MathWorks MATLAB extension must be configured to attach its debugger automatically:
+
+1. Open **Settings** (`Cmd+,` / `Ctrl+,`)
+2. Search for **MATLAB: Start Debugger Automatically**
+3. **Check** the checkbox
+
+Without this setting enabled, breakpoints set in `.m` files will not be hit when code runs in the MATLAB Command Window.

@@ -278,7 +278,7 @@ def _h_get_variables_list(params):
 
 def _h_start_run(params):
     import uuid
-    from scistack_gui.db import get_db
+    from scistack_gui.db import get_db, acquire_db_connection, release_db_connection
     from scistack_gui.api.run import _run_in_thread, WhereFilterSpec
 
     run_id = params.get("run_id") or str(uuid.uuid4())[:8]
@@ -303,12 +303,20 @@ def _h_start_run(params):
         len(where_filters) if where_filters else 0,
     )
 
-    thread = threading.Thread(
-        target=_run_in_thread,
-        args=(run_id, function_name, variants, db, schema_filter, schema_level,
-              run_options, where_filters),
-        daemon=True,
-    )
+    # Hold the DB connection open for the full duration of the run (the
+    # _handle_request wrapper will release its reference when this handler
+    # returns, but we acquire an extra one here so the count stays ≥ 1 until
+    # the run thread finishes).
+    acquire_db_connection()
+
+    def _run_wrapper():
+        try:
+            _run_in_thread(run_id, function_name, variants, db, schema_filter,
+                           schema_level, run_options, where_filters)
+        finally:
+            release_db_connection()
+
+    thread = threading.Thread(target=_run_wrapper, daemon=True)
     thread.start()
     return {"run_id": run_id}
 
@@ -510,6 +518,58 @@ def _h_remove_library(params):
 # MATLAB support
 # ---------------------------------------------------------------------------
 
+def _find_sci_matlab_matlab_dir() -> str | None:
+    """Return the sci-matlab MATLAB package directory, or None if not found.
+
+    For editable installs (``pip install -e``), the dist-info's
+    ``direct_url.json`` records the project root; the Python package (and its
+    ``matlab/`` subdirectory) is found inside that tree via ``find_spec``.
+    For regular wheel installs, ``matlab/`` sits directly inside the installed
+    package directory. Both paths are handled by ``find_spec`` alone, but the
+    editable check is kept explicit for clarity and robustness.
+
+    The returned path must be on MATLAB's ``addpath`` so that the
+    ``+scihist``, ``+scidb``, and ``+scifor`` package folders resolve.
+    """
+    import importlib.metadata
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    # Editable installs: direct_url.json in the dist-info points to the
+    # project root.  find_spec still resolves to the right location, but
+    # we check explicitly so the intent is visible in logs.
+    try:
+        dist = importlib.metadata.distribution("sci_matlab")
+        direct_url_text = dist.read_text("direct_url.json")
+        if direct_url_text:
+            info = json.loads(direct_url_text)
+            if info.get("dir_info", {}).get("editable", False):
+                url = info.get("url", "")
+                logger.info(
+                    "_find_sci_matlab_matlab_dir: editable install at %s", url
+                )
+    except Exception:
+        pass  # dist not found or JSON parse error — fall through to find_spec
+
+    # Works for both editable and regular installs: find_spec resolves to the
+    # actual package __init__.py in either case.
+    try:
+        spec = importlib.util.find_spec("sci_matlab")
+        if spec and spec.origin:
+            d = Path(spec.origin).parent / "matlab"
+            if d.is_dir():
+                logger.info("_find_sci_matlab_matlab_dir: found %s", d)
+                return str(d)
+            logger.warning(
+                "_find_sci_matlab_matlab_dir: matlab/ not found at %s", d
+            )
+    except Exception as exc:
+        logger.warning("_find_sci_matlab_matlab_dir: find_spec failed: %s", exc)
+
+    return None
+
+
 def _h_generate_matlab_command(params):
     """Generate a ready-to-paste MATLAB command for a pipeline function."""
     from scistack_gui.api.matlab_command import generate_matlab_command
@@ -520,14 +580,75 @@ def _h_generate_matlab_command(params):
     db_path = str(get_db_path())
 
     # Collect addpath directories from MATLAB config.
-    addpath_dirs = None
+    addpath_dirs: list[str] = []
     if matlab_registry._config is not None:
         addpath_dirs = [str(p) for p in matlab_registry._config.matlab_addpath]
+
+    # Prepend the sci-matlab MATLAB package directory so that +scihist,
+    # +scidb, and +scifor resolve regardless of what the user configured.
+    sci_matlab_dir = _find_sci_matlab_matlab_dir()
+    if sci_matlab_dir:
+        addpath_dirs = [sci_matlab_dir] + addpath_dirs
+        logger.info("generate_matlab_command: prepended sci-matlab dir: %s", sci_matlab_dir)
+    else:
+        logger.warning(
+            "generate_matlab_command: sci-matlab MATLAB directory not found; "
+            "scihist.* / scidb.* may be unavailable in MATLAB"
+        )
 
     # Resolve variants for this function from DB history.
     function_name = params["function_name"]
     all_variants = db.list_pipeline_variants()
     fn_variants = [v for v in all_variants if v["function_name"] == function_name]
+
+    # Collect PathInput param mappings: param_name → {template, root_folder}.
+    # Source 1: DB variants — PathInput values are stored in input_types as JSON.
+    from scistack_gui.api.pipeline import _parse_path_input
+    from scistack_gui import layout as layout_store
+    path_input_params: dict[str, dict] = {}
+    for v in fn_variants:
+        for param_name, type_val in (v.get("input_types") or {}).items():
+            pi = _parse_path_input(str(type_val))
+            if pi is not None:
+                path_input_params[param_name] = pi
+
+    # Source 2: layout manual edges — for functions not yet in the DB.
+    # Edge: source=pathInput__<name>, target=fn__<funcname>[__hash],
+    #        targetHandle=in__<param>
+    saved_pis = {pi["name"]: pi for pi in layout_store.read_all_path_input_names()}
+    for edge in layout_store.read_manual_edges():
+        src = edge.get("source", "")
+        tgt = edge.get("target", "")
+        th = edge.get("targetHandle", "")
+        if not (src.startswith("pathInput__") and th.startswith("in__")):
+            continue
+        # Match target to this function by name (strip "fn__" prefix and hash suffix).
+        tgt_parts = tgt.split("__")
+        if len(tgt_parts) < 2 or tgt_parts[0] != "fn":
+            continue
+        tgt_fn_name = tgt_parts[1]
+        if tgt_fn_name != function_name:
+            continue
+        pi_name = src.split("__")[1] if len(src.split("__")) >= 2 else src[len("pathInput__"):]
+        param_name = th[len("in__"):]
+        if pi_name in saved_pis:
+            # Prefer the saved template (most up-to-date) over whatever is in the variant.
+            path_input_params[param_name] = {
+                "template": saved_pis[pi_name].get("template", ""),
+                "root_folder": saved_pis[pi_name].get("root_folder"),
+            }
+
+    # Overlay saved templates onto DB-variant-derived PathInput params.
+    for param_name, pi in path_input_params.items():
+        # Find which saved PathInput name maps to this param via manual edges.
+        for edge in layout_store.read_manual_edges():
+            th = edge.get("targetHandle", "")
+            if th == f"in__{param_name}":
+                src = edge.get("source", "")
+                pi_name = src.split("__")[1] if len(src.split("__")) >= 2 else ""
+                if pi_name in saved_pis and saved_pis[pi_name].get("template"):
+                    pi["template"] = saved_pis[pi_name]["template"]
+                    pi["root_folder"] = saved_pis[pi_name].get("root_folder")
 
     return {
         "command": generate_matlab_command(
@@ -537,8 +658,9 @@ def _h_generate_matlab_command(params):
             variants=fn_variants if fn_variants else params.get("variants"),
             schema_filter=params.get("schema_filter"),
             schema_level=params.get("schema_level"),
-            addpath_dirs=addpath_dirs,
+            addpath_dirs=addpath_dirs if addpath_dirs else None,
             python_executable=sys.executable,
+            path_inputs=path_input_params if path_input_params else None,
         )
     }
 
@@ -593,6 +715,8 @@ METHODS = {
 
 def _handle_request(req: dict) -> None:
     """Process a single JSON-RPC request."""
+    from scistack_gui.db import acquire_db_connection, release_db_connection
+
     req_id = req.get("id")
     method = req.get("method", "")
     params = req.get("params", {})
@@ -603,6 +727,7 @@ def _handle_request(req: dict) -> None:
             _respond_error(req_id, -32601, f"Method not found: {method}")
         return
 
+    acquire_db_connection()
     try:
         result = handler(params)
         if req_id is not None:
@@ -611,6 +736,8 @@ def _handle_request(req: dict) -> None:
         logger.exception("Error handling %s", method)
         if req_id is not None:
             _respond_error(req_id, -32000, str(e))
+    finally:
+        release_db_connection()
 
 
 def main():
@@ -751,6 +878,13 @@ def main():
             "schema_keys": db.dataset_schema_keys,
         },
     })
+
+    # Release the DuckDB file lock now that startup is complete. It will be
+    # reacquired automatically when the first request arrives. This allows
+    # MATLAB (or any other process) to open the same database immediately.
+    from scistack_gui.db import close_initial_connection
+    close_initial_connection()
+    logger.info("DB connection released after startup — MATLAB can now access the file")
 
     # Main request loop — read one JSON-RPC request per line from stdin
     logger.info("Server ready, waiting for requests on stdin...")

@@ -1152,6 +1152,10 @@ class SciDuck:
         """Close the DuckDB connection."""
         self.con.close()
 
+    def reopen(self):
+        """Reopen the DuckDB connection after close()."""
+        self.con = duckdb.connect(str(self.db_path))
+
     def __enter__(self):
         """Enter context manager."""
         return self
