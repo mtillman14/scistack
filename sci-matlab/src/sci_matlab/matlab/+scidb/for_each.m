@@ -126,6 +126,52 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         end
     end
 
+    % --- PathInput discovery: populate metadata from filesystem when DB is empty ---
+    discovered_combos = {};
+    if has_pathinput(inputs)
+        pi = find_pathinput(inputs);
+        if ~isempty(pi)
+            % Case 1: No metadata keys passed at all
+            if isempty(meta_keys)
+                combos = pi.discover();
+                if ~isempty(combos)
+                    combo_fields = fieldnames(combos{1});
+                    for f = 1:numel(combo_fields)
+                        meta_keys(end+1) = string(combo_fields{f}); %#ok<AGROW>
+                        vals = cellfun(@(c) c.(combo_fields{f}), combos, 'UniformOutput', false);
+                        vals = unique(string(vals), 'stable');
+                        meta_values{end+1} = cellstr(vals); %#ok<AGROW>
+                        scidb.Log.info('discovered %s -> %d values from filesystem', ...
+                            combo_fields{f}, numel(vals));
+                    end
+                    discovered_combos = combos;
+                end
+            end
+
+            % Case 2: Some keys have empty [] (resolved to empty from DB)
+            still_empty = false(1, numel(meta_keys));
+            for i = 1:numel(meta_values)
+                still_empty(i) = isempty(meta_values{i});
+            end
+            if any(still_empty)
+                combos = pi.discover();
+                if ~isempty(combos)
+                    for i = find(still_empty)
+                        key = char(meta_keys(i));
+                        if isfield(combos{1}, key)
+                            vals = cellfun(@(c) c.(key), combos, 'UniformOutput', false);
+                            vals = unique(string(vals), 'stable');
+                            meta_values{i} = cellstr(vals);
+                            scidb.Log.info('discovered %s -> %d values from filesystem', ...
+                                key, numel(vals));
+                        end
+                    end
+                    discovered_combos = combos;
+                end
+            end
+        end
+    end
+
     % --- Propagate schema keys to scifor ---
     propagate_schema(opts.db);
 
@@ -300,6 +346,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                     removed, original_count, numel(filtered_combos));
             end
         end
+    end
+
+    % Use filesystem-discovered combos if DB pre-filter didn't produce any
+    if isempty(all_combos) && ~isempty(discovered_combos)
+        all_combos = discovered_combos;
+        scidb.Log.info('using %d filesystem-discovered combos', numel(all_combos));
     end
 
     % --- Build log summary for parallel banner ---
@@ -1456,6 +1508,22 @@ function tf = has_pathinput(inputs)
         end
         if isa(v, 'scidb.Fixed') && isa(v.var_type, 'scifor.PathInput')
             tf = true; return;
+        end
+    end
+end
+
+
+function pi = find_pathinput(inputs)
+%FIND_PATHINPUT  Find the first PathInput in inputs, unwrapping Fixed if needed.
+    pi = [];
+    fnames = fieldnames(inputs);
+    for i = 1:numel(fnames)
+        v = inputs.(fnames{i});
+        if isa(v, 'scifor.PathInput')
+            pi = v; return;
+        end
+        if isa(v, 'scidb.Fixed') && isa(v.var_type, 'scifor.PathInput')
+            pi = v.var_type; return;
         end
     end
 end

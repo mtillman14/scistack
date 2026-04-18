@@ -191,5 +191,146 @@ classdef TestPathInput < matlab.unittest.TestCase
             testCase.verifyError(@() pi.load(), ...
                 'scifor:PathInput:MultipleMatches');
         end
+
+        %% placeholder_keys tests
+
+        function test_placeholder_keys_simple(testCase)
+            pi = scifor.PathInput("{subject}/data.mat");
+            keys = pi.placeholder_keys();
+            testCase.verifyEqual(keys, {'subject'});
+        end
+
+        function test_placeholder_keys_multiple(testCase)
+            pi = scifor.PathInput("{subject}/{session}/data.mat");
+            keys = pi.placeholder_keys();
+            testCase.verifyEqual(keys, {'subject', 'session'});
+        end
+
+        function test_placeholder_keys_mixed_segment(testCase)
+            pi = scifor.PathInput("{subject}_XSENS_{session}_{speed}-001.xlsx");
+            keys = pi.placeholder_keys();
+            testCase.verifyEqual(keys, {'subject', 'session', 'speed'});
+        end
+
+        function test_placeholder_keys_none(testCase)
+            pi = scifor.PathInput("data/raw/file.mat");
+            keys = pi.placeholder_keys();
+            testCase.verifyEmpty(keys);
+        end
+
+        function test_placeholder_keys_duplicates(testCase)
+            pi = scifor.PathInput("{subject}/{subject}_data.mat");
+            keys = pi.placeholder_keys();
+            testCase.verifyEqual(keys, {'subject'});
+        end
+
+        %% discover tests
+
+        function test_discover_basic(testCase)
+            % Create a multi-level directory tree
+            disc_dir = fullfile(testCase.tmp_dir, 'disc');
+            for subj = ["A", "B"]
+                for sess = ["s1", "s2"]
+                    d = fullfile(disc_dir, subj, sess);
+                    mkdir(d);
+                    fclose(fopen(fullfile(d, char(subj + "_" + sess + ".csv")), 'w'));
+                end
+            end
+
+            pi = scifor.PathInput("{subject}/{session}/{subject}_{session}.csv", ...
+                'root_folder', disc_dir);
+            combos = pi.discover();
+            testCase.verifyLength(combos, 4);
+
+            % Verify specific combos exist
+            found_A_s1 = false;
+            found_B_s2 = false;
+            for c = 1:numel(combos)
+                if strcmp(combos{c}.subject, 'A') && strcmp(combos{c}.session, 's1')
+                    found_A_s1 = true;
+                end
+                if strcmp(combos{c}.subject, 'B') && strcmp(combos{c}.session, 's2')
+                    found_B_s2 = true;
+                end
+            end
+            testCase.verifyTrue(found_A_s1);
+            testCase.verifyTrue(found_B_s2);
+        end
+
+        function test_discover_empty_filesystem(testCase)
+            empty_dir = fullfile(testCase.tmp_dir, 'empty_disc');
+            mkdir(empty_dir);
+            pi = scifor.PathInput("{x}/data/{file}.csv", ...
+                'root_folder', empty_dir);
+            combos = pi.discover();
+            testCase.verifyEmpty(combos);
+        end
+
+        function test_discover_literal_segment(testCase)
+            % Literal segment filters out non-matching dirs
+            disc_dir = fullfile(testCase.tmp_dir, 'lit');
+            mkdir(fullfile(disc_dir, 'XSENS'));
+            fclose(fopen(fullfile(disc_dir, 'XSENS', 'data.csv'), 'w'));
+            mkdir(fullfile(disc_dir, 'OTHER'));
+            fclose(fopen(fullfile(disc_dir, 'OTHER', 'data.csv'), 'w'));
+
+            pi = scifor.PathInput("XSENS/{file}.csv", ...
+                'root_folder', disc_dir);
+            combos = pi.discover();
+            testCase.verifyLength(combos, 1);
+            testCase.verifyEqual(combos{1}.file, 'data');
+        end
+
+        function test_discover_consistency_check(testCase)
+            % {x} in dir must match {x} in filename
+            disc_dir = fullfile(testCase.tmp_dir, 'consist');
+            mkdir(fullfile(disc_dir, 'A'));
+            fclose(fopen(fullfile(disc_dir, 'A', 'A_data.csv'), 'w'));
+            fclose(fopen(fullfile(disc_dir, 'A', 'B_data.csv'), 'w')); % inconsistent
+
+            pi = scifor.PathInput("{x}/{x}_data.csv", ...
+                'root_folder', disc_dir);
+            combos = pi.discover();
+            testCase.verifyLength(combos, 1);
+            testCase.verifyEqual(combos{1}.x, 'A');
+        end
+
+        function test_discover_no_placeholders(testCase)
+            % No placeholders — returns one combo if file exists
+            disc_dir = fullfile(testCase.tmp_dir, 'noplace');
+            mkdir(disc_dir);
+            fclose(fopen(fullfile(disc_dir, 'data.mat'), 'w'));
+
+            pi = scifor.PathInput("data.mat", 'root_folder', disc_dir);
+            combos = pi.discover();
+            testCase.verifyLength(combos, 1);
+            testCase.verifyEmpty(fieldnames(combos{1}));
+        end
+
+        function test_discover_mixed_filename(testCase)
+            % Template with literal+placeholder in filename
+            disc_dir = fullfile(testCase.tmp_dir, 'mixed');
+            mkdir(disc_dir);
+            fclose(fopen(fullfile(disc_dir, 'report_2024_final.csv'), 'w'));
+            fclose(fopen(fullfile(disc_dir, 'report_2023_draft.csv'), 'w'));
+            fclose(fopen(fullfile(disc_dir, 'other.csv'), 'w'));
+
+            pi = scifor.PathInput("report_{year}_{status}.csv", ...
+                'root_folder', disc_dir);
+            combos = pi.discover();
+            testCase.verifyLength(combos, 2);
+        end
+
+        function test_discover_values_are_strings(testCase)
+            disc_dir = fullfile(testCase.tmp_dir, 'strtypes');
+            mkdir(fullfile(disc_dir, '1'));
+            fclose(fopen(fullfile(disc_dir, '1', 'data.csv'), 'w'));
+
+            pi = scifor.PathInput("{num}/data.csv", ...
+                'root_folder', disc_dir);
+            combos = pi.discover();
+            testCase.verifyLength(combos, 1);
+            testCase.verifyClass(combos{1}.num, 'char');
+        end
     end
 end

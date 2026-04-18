@@ -545,6 +545,7 @@ class DatabaseManager:
         self._ensure_meta_tables()
         self._ensure_record_metadata_table()
         self._ensure_lineage_table()
+        self._ensure_for_each_expected_table()
 
         self._closed = False # Track connection open/closed state
 
@@ -593,6 +594,23 @@ class DatabaseManager:
                 inputs           VARCHAR NOT NULL DEFAULT '[]',
                 constants        VARCHAR NOT NULL DEFAULT '[]',
                 timestamp        VARCHAR NOT NULL
+            )
+        """)
+
+    def _ensure_for_each_expected_table(self):
+        """Create the _for_each_expected table for persisting expected combos.
+
+        PathInput-only functions have no DB-variable inputs, so
+        _get_expected_combos() cannot infer the expected set from
+        _record_metadata.  scidb.for_each writes the full expected combo
+        set here at runtime so that check_node_state can fall back to it.
+        """
+        self._duck._execute("""
+            CREATE TABLE IF NOT EXISTS _for_each_expected (
+                function_name VARCHAR NOT NULL,
+                schema_id     INTEGER NOT NULL,
+                branch_params VARCHAR DEFAULT '{}',
+                PRIMARY KEY (function_name, schema_id, branch_params)
             )
         """)
 

@@ -142,6 +142,61 @@ classdef PathInput < handle
             end
         end
 
+        function keys = placeholder_keys(obj)
+        %PLACEHOLDER_KEYS  Return cell array of unique placeholder keys in the template.
+            keys = {};
+            seen = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+            tmpl = char(obj.path_template);
+            idx = 1;
+            while idx <= numel(tmpl)
+                open_idx = find(tmpl(idx:end) == '{', 1, 'first');
+                if isempty(open_idx)
+                    break;
+                end
+                open_idx = open_idx + idx - 1;
+                close_idx = find(tmpl(open_idx:end) == '}', 1, 'first');
+                if isempty(close_idx)
+                    break;
+                end
+                close_idx = close_idx + open_idx - 1;
+                key = tmpl(open_idx+1 : close_idx-1);
+                if ~isempty(key) && ~seen.isKey(key)
+                    seen(key) = true;
+                    keys{end+1} = key; %#ok<AGROW>
+                end
+                idx = close_idx + 1;
+            end
+        end
+
+        function combos = discover(obj)
+        %DISCOVER  Walk filesystem and return all metadata combos matching template.
+        %
+        %   COMBOS = pi.discover()
+        %
+        %   Returns a cell array of structs, one per valid complete path.
+        %   Each struct maps placeholder keys to their string values.
+
+            if strlength(obj.root_folder) > 0
+                root = char(obj.root_folder);
+            else
+                root = pwd;
+            end
+
+            % Split template into segments
+            tmpl = char(obj.path_template);
+            tmpl = strrep(tmpl, '\', '/');
+            segments = strsplit(tmpl, '/');
+            % Remove empty segments
+            segments = segments(~cellfun(@isempty, segments));
+
+            combos = {};
+            if isempty(segments)
+                return;
+            end
+
+            combos = discover_walk(root, segments, 1, struct(), {});
+        end
+
         function disp(obj)
         %DISP  Display the PathInput.
             opts = "";
@@ -153,5 +208,136 @@ classdef PathInput < handle
             end
             fprintf('  scifor.PathInput("%s"%s)\n', obj.path_template, opts);
         end
+    end
+end
+
+
+function combos = discover_walk(current_dir, segments, seg_idx, bindings, combos)
+%DISCOVER_WALK  Recursively descend through segments, matching filesystem entries.
+    if seg_idx > numel(segments)
+        return;
+    end
+
+    segment = segments{seg_idx};
+    is_last = seg_idx == numel(segments);
+
+    % Check if segment contains any placeholders
+    has_placeholder = contains(segment, '{') && contains(segment, '}');
+
+    if ~has_placeholder
+        % Literal segment — must match exactly
+        candidate = fullfile(current_dir, segment);
+        if is_last
+            if exist(candidate, 'file') || exist(candidate, 'dir')
+                combos{end+1} = bindings;
+            end
+        else
+            if isfolder(candidate)
+                combos = discover_walk(candidate, segments, seg_idx + 1, bindings, combos);
+            end
+        end
+        return;
+    end
+
+    % Segment has placeholder(s) — build a regex
+    pattern = segment_to_regex(segment);
+
+    try
+        listing = dir(current_dir);
+    catch
+        return;
+    end
+    % Filter out . and ..
+    listing = listing(~ismember({listing.name}, {'.', '..'}));
+    names = sort({listing.name});
+    is_dir_flags = [listing.isdir];
+    % Sort is_dir_flags to match sorted names
+    [~, sort_idx] = sort({listing.name});
+    is_dir_flags = is_dir_flags(sort_idx);
+
+    for i = 1:numel(names)
+        entry = names{i};
+        tok = regexp(entry, ['^' pattern '$'], 'names');
+        if isempty(tok)
+            continue;
+        end
+
+        % Validate captured values against existing bindings
+        captured_fields = fieldnames(tok);
+        clean_captured = struct();
+        for f = 1:numel(captured_fields)
+            raw_key = captured_fields{f};
+            % Strip numbered suffixes (e.g. subject_2 -> subject)
+            key = regexprep(raw_key, '_\d+$', '');
+            clean_captured.(key) = tok.(raw_key);
+        end
+
+        consistent = true;
+        clean_fields = fieldnames(clean_captured);
+        for f = 1:numel(clean_fields)
+            key = clean_fields{f};
+            if isfield(bindings, key) && ~strcmp(bindings.(key), clean_captured.(key))
+                consistent = false;
+                break;
+            end
+        end
+        if ~consistent
+            continue;
+        end
+
+        new_bindings = bindings;
+        for f = 1:numel(clean_fields)
+            new_bindings.(clean_fields{f}) = clean_captured.(clean_fields{f});
+        end
+
+        if is_last
+            combos{end+1} = new_bindings; %#ok<AGROW>
+        else
+            if is_dir_flags(i)
+                combos = discover_walk(fullfile(current_dir, entry), ...
+                    segments, seg_idx + 1, new_bindings, combos);
+            end
+        end
+    end
+end
+
+
+function pattern = segment_to_regex(segment)
+%SEGMENT_TO_REGEX  Convert a template segment to a regex with named capture groups.
+    tmpl = char(segment);
+    pattern = '';
+    key_counts = containers.Map('KeyType', 'char', 'ValueType', 'double');
+    idx = 1;
+    while idx <= numel(tmpl)
+        open_idx = find(tmpl(idx:end) == '{', 1, 'first');
+        if isempty(open_idx)
+            % Rest is literal
+            pattern = [pattern, regexptranslate('escape', tmpl(idx:end))]; %#ok<AGROW>
+            break;
+        end
+        open_idx = open_idx + idx - 1;
+        % Add literal part before placeholder
+        if open_idx > idx
+            pattern = [pattern, regexptranslate('escape', tmpl(idx:open_idx-1))]; %#ok<AGROW>
+        end
+        close_idx = find(tmpl(open_idx:end) == '}', 1, 'first');
+        if isempty(close_idx)
+            % No closing brace — treat rest as literal
+            pattern = [pattern, regexptranslate('escape', tmpl(open_idx:end))]; %#ok<AGROW>
+            break;
+        end
+        close_idx = close_idx + open_idx - 1;
+        key = tmpl(open_idx+1 : close_idx-1);
+
+        % Handle duplicate keys by numbering
+        if key_counts.isKey(key)
+            key_counts(key) = key_counts(key) + 1;
+            group_name = sprintf('%s_%d', key, key_counts(key));
+        else
+            key_counts(key) = 1;
+            group_name = key;
+        end
+        pattern = [pattern, sprintf('(?<%s>[^/\\\\]+)', group_name)]; %#ok<AGROW>
+        idx = close_idx + 1;
     end
 end

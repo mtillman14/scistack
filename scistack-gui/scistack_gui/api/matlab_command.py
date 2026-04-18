@@ -364,6 +364,11 @@ def _format_schema_kwargs(
             else:
                 formatted = _format_matlab_string_array([str(v) for v in values])
             parts.append(f"'{key}', {formatted}")
+        else:
+            # No filter for this key — emit [] so scidb.for_each resolves
+            # all distinct values from the database.  Without this,
+            # PathInput templates that reference {key} won't be substituted.
+            parts.append(f"'{key}', []")
 
     if not parts:
         return ""

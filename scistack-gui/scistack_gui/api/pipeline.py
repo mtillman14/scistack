@@ -183,12 +183,13 @@ def _own_state_for_function(
     try:
         result = check_node_state(fn_obj, output_classes, db=db)
         state = result["state"]
+        counts = result.get("counts", {})
         logger.debug(
             "state(%s): %s (up_to_date=%d, stale=%d, missing=%d)",
             fn_name, state,
-            result.get("up_to_date", 0),
-            result.get("stale", 0),
-            result.get("missing", 0),
+            counts.get("up_to_date", 0),
+            counts.get("stale", 0),
+            counts.get("missing", 0),
         )
         return state
     except Exception:

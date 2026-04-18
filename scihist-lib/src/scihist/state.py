@@ -445,6 +445,20 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
     if not scidb_variants and not lineage_variants:
         if inputs_fallback:
             return _get_expected_combos_from_inputs(db, inputs_fallback)
+        # Fallback: PathInput-only functions have no DB-variable inputs and
+        # no lineage variants (no records saved yet, or inputs were all
+        # PathInput).  scidb.for_each persists the full expected combo set
+        # in _for_each_expected at runtime — use it here.
+        try:
+            rows = db._duck._fetchall(
+                "SELECT schema_id, branch_params FROM _for_each_expected "
+                "WHERE function_name = ?",
+                [fn_name],
+            )
+            if rows:
+                return {(sid, bp) for sid, bp in rows}
+        except Exception:
+            pass
         return set()
 
     expected: set[tuple] = set()
@@ -483,6 +497,21 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
                 input_bp = json.loads(bp_raw or "{}") if bp_raw else {}
                 expected_bp = {**input_bp, **own_constants}
                 expected.add((schema_id, json.dumps(expected_bp, sort_keys=True)))
+
+    # Fallback: PathInput-only functions have no DB-variable inputs, so the
+    # loops above produce an empty set.  scidb.for_each persists the full
+    # expected combo set in _for_each_expected at runtime — use it here.
+    if not expected:
+        try:
+            rows = db._duck._fetchall(
+                "SELECT schema_id, branch_params FROM _for_each_expected "
+                "WHERE function_name = ?",
+                [fn_name],
+            )
+            if rows:
+                expected = {(sid, bp) for sid, bp in rows}
+        except Exception:
+            pass
 
     return expected
 

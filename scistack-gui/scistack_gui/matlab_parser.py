@@ -66,12 +66,15 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
     valid function declaration.
     """
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        raw = path.read_bytes()
     except OSError as e:
         logger.warning("Cannot read MATLAB function file %s: %s", path, e)
         return None
 
-    source_hash = sha256(text.encode("utf-8")).hexdigest()
+    # Hash raw bytes so the digest matches MATLAB's fileread() which
+    # preserves \r\n line endings (read_text would normalise them away).
+    source_hash = sha256(raw).hexdigest()
+    text = raw.decode("utf-8", errors="replace")
 
     m = _FUNCTION_RE.search(text)
     if m is None:

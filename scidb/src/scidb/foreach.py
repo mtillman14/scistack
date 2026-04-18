@@ -201,6 +201,33 @@ def for_each(
                 Log.info(f"resolved {key}=[] -> {len(values)} values")
             metadata_iterables[key] = values
 
+    # --- PathInput discovery: populate metadata from filesystem when DB is empty ---
+    _discovered_combos = None
+    if _has_pathinput(inputs):
+        pi = _find_pathinput(inputs)
+        if pi is not None:
+            # Case 1: No metadata keys passed at all — discover everything
+            if not metadata_iterables:
+                combos = pi.discover()
+                if combos:
+                    for key in combos[0].keys():
+                        metadata_iterables[key] = list(dict.fromkeys(c[key] for c in combos))
+                        Log.info(f"discovered {key} -> {len(metadata_iterables[key])} values from filesystem")
+                    _discovered_combos = combos
+
+            # Case 2: Some keys have empty [] (resolved to empty from DB) — fill from discovery
+            still_empty = [k for k, v in metadata_iterables.items()
+                           if isinstance(v, list) and len(v) == 0]
+            if still_empty:
+                combos = pi.discover()
+                if combos:
+                    for key in still_empty:
+                        if key in combos[0]:
+                            values = list(dict.fromkeys(c[key] for c in combos))
+                            metadata_iterables[key] = values
+                            Log.info(f"discovered {key} -> {len(values)} values from filesystem")
+                    _discovered_combos = combos
+
     # Propagate schema keys to scifor so distribute and DataFrame detection work
     _propagate_schema(db, distribute)
 
@@ -323,6 +350,10 @@ def for_each(
     current_schema_keys = list(_scifor.get_schema() or [])
 
     base_combos = all_combos
+    if base_combos is None and _discovered_combos is not None:
+        # Use filesystem-discovered combos directly (avoids non-existent Cartesian combos)
+        base_combos = _discovered_combos
+        Log.info(f"using {len(base_combos)} filesystem-discovered combos")
     if base_combos is None:
         keys = list(metadata_iterables.keys())
         value_lists = [metadata_iterables[k] for k in keys]
@@ -419,6 +450,13 @@ def for_each(
                      f"{len(full_combos)} full combos (rid variants)")
         else:
             Log.debug(f"{len(full_combos)} combos (no rid expansion needed)")
+
+    # Persist the full expected combo set BEFORE skip_computed filtering,
+    # so check_node_state knows all combos that should exist (including
+    # ones that failed or were skipped).  Only needed when we actually
+    # have outputs and are not in dry_run mode.
+    if not dry_run and outputs:
+        _persist_expected_combos(db, fn_name, full_combos)
 
     # Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
     # combos where the hook returns True.
@@ -1173,6 +1211,16 @@ def _has_pathinput(inputs: dict) -> bool:
     return False
 
 
+def _find_pathinput(inputs: dict) -> PathInput | None:
+    """Find the first PathInput in inputs, unwrapping Fixed if needed."""
+    for v in inputs.values():
+        if isinstance(v, PathInput):
+            return v
+        if isinstance(v, Fixed) and isinstance(v.var_type, PathInput):
+            return v.var_type
+    return None
+
+
 def _describe_save_data(val) -> str:
     """Compact description of data being saved."""
     import pandas as pd
@@ -1220,3 +1268,67 @@ def _propagate_schema(db, distribute: bool) -> None:
             "but no database is available. Either pass db= to for_each or "
             "call configure_database() first."
         )
+
+
+def _persist_expected_combos(db, fn_name: str, full_combos: list[dict]) -> None:
+    """Persist the full expected combo set for a function into _for_each_expected.
+
+    Called during for_each BEFORE skip_computed filtering, so we capture ALL
+    combos (including ones that will be skipped).  This lets check_node_state
+    know how many combos are expected for PathInput-only functions where no
+    DB-variable inputs exist to infer the expected set.
+
+    Each combo dict is mapped to a (schema_id, branch_params) pair:
+    - schema keys are extracted from the combo and used to get/create a schema_id
+    - branch_params is "{}" (PathInput-only functions have no constant-based variants)
+    """
+    if not full_combos:
+        return
+
+    try:
+        if db is None:
+            from .database import get_database
+            db = get_database()
+    except Exception:
+        Log.debug("_persist_expected_combos: no database available, skipping")
+        return
+
+    try:
+        sk_set = set(db.dataset_schema_keys)
+        rows_to_insert = []
+
+        for combo in full_combos:
+            # Extract only schema keys from the combo (ignore __rid_*, etc.)
+            schema_keys = {k: v for k, v in combo.items() if k in sk_set}
+            if not schema_keys:
+                continue
+
+            level = db._infer_schema_level(schema_keys)
+            if level is None:
+                continue
+
+            schema_id = db._duck._get_or_create_schema_id(level, schema_keys)
+            rows_to_insert.append((fn_name, schema_id, "{}"))
+
+        if not rows_to_insert:
+            return
+
+        # Deduplicate (multiple combos can map to the same schema_id)
+        rows_to_insert = list(set(rows_to_insert))
+
+        # Replace old entries for this function with the new set
+        db._duck._execute(
+            "DELETE FROM _for_each_expected WHERE function_name = ?",
+            [fn_name],
+        )
+        for fn, sid, bp in rows_to_insert:
+            db._duck._execute(
+                "INSERT INTO _for_each_expected (function_name, schema_id, branch_params) "
+                "VALUES (?, ?, ?)",
+                [fn, sid, bp],
+            )
+
+        Log.debug(f"_persist_expected_combos({fn_name}): "
+                   f"wrote {len(rows_to_insert)} expected combos")
+    except Exception as exc:
+        Log.debug(f"_persist_expected_combos({fn_name}): failed — {exc}")
