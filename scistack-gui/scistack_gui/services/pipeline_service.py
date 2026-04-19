@@ -34,6 +34,28 @@ def get_function_params(fn_name: str) -> list[str]:
     return _fn_params_from_registry(fn_name)
 
 
+def get_function_full_info(fn_name: str) -> dict:
+    """Return params, output_names, and language for a function.
+
+    Used when dropping a function node onto the canvas so the node
+    is created with the correct number of output handles.
+    """
+    from scistack_gui.api.pipeline import _fn_params_from_registry
+    from scistack_gui import matlab_registry
+    if matlab_registry.is_matlab_function(fn_name):
+        info = matlab_registry.get_matlab_function(fn_name)
+        return {
+            "params": list(info.params),
+            "output_names": list(info.output_names),
+            "language": "matlab",
+        }
+    return {
+        "params": _fn_params_from_registry(fn_name),
+        "output_names": [],
+        "language": "python",
+    }
+
+
 def get_function_source(fn_name: str) -> dict:
     """Return the source file path and line number for a registered function."""
     from scistack_gui import registry
@@ -75,6 +97,7 @@ def get_registry() -> dict:
     from scistack_gui import matlab_registry
     from scidb import BaseVariable
     matlab_fns = matlab_registry.get_all_function_names()
+    matlab_mismatched = matlab_registry.get_mismatched_function_names()
     logger.info(
         "get_registry: %d python fns, %d matlab fns, %d vars",
         len(registry._functions), len(matlab_fns),
@@ -82,10 +105,13 @@ def get_registry() -> dict:
     )
     if matlab_fns:
         logger.info("matlab_functions: %s", matlab_fns)
+    if matlab_mismatched:
+        logger.info("matlab_functions with name/file mismatch: %s", matlab_mismatched)
     return {
         "functions": sorted(registry._functions.keys()),
         "variables": sorted(BaseVariable._all_subclasses.keys()),
         "matlab_functions": matlab_fns,
+        "matlab_functions_mismatched": matlab_mismatched,
     }
 
 

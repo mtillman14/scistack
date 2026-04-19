@@ -12,6 +12,40 @@ import sys
 logger = logging.getLogger(__name__)
 
 
+def _sort_inferred_by_params_order(
+    inferred: list[str], params_types: list[str]
+) -> list[str]:
+    """Sort edge-inferred class names to match the function signature order.
+
+    ``inferred`` contains BaseVariable class names (e.g. ``["Force_Right", "Time"]``).
+    ``params_types`` contains MATLAB output parameter names in signature order
+    (e.g. ``["time", "force_right"]``).  Both are normalized to lowercase with
+    underscores removed before matching so that ``"Force_Right"`` matches
+    ``"force_right"`` and ``"Time"`` matches ``"time"``.
+
+    Inferred types that cannot be matched to any param name are appended at the end.
+    """
+    def normalize(s: str) -> str:
+        return s.lower().replace("_", "")
+
+    norm_params = [normalize(p) for p in params_types]
+    norm_to_class = {normalize(c): c for c in inferred}
+
+    ordered: list[str] = []
+    used: set[str] = set()
+    for norm_p in norm_params:
+        cls = norm_to_class.get(norm_p)
+        if cls and cls not in used:
+            ordered.append(cls)
+            used.add(cls)
+
+    for cls in inferred:
+        if cls not in used:
+            ordered.append(cls)
+
+    return ordered
+
+
 def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     """Generate a ready-to-paste MATLAB command for a pipeline function.
 
@@ -95,22 +129,54 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
                     pi["root_folder"] = saved_pis[pi_name].get("root_folder")
 
     # Infer output types from manual edges when no DB variants exist.
+    # Always prefer edge inference over params-supplied output_types for
+    # functions with no DB history — the node's output_types field may contain
+    # MATLAB function output parameter names (e.g. "time") rather than the
+    # BaseVariable class names (e.g. "Time") for first-run MATLAB functions.
+    # Edge inference gives correct class names but in arbitrary edge order; we
+    # re-sort them to match the function signature order from params.
     output_types: list[str] = params.get("output_types") or []
-    if not output_types and not fn_variants:
+    if not fn_variants:
         manual_nodes = layout_store.get_manual_nodes()
         fn_node_ids = {f"fn__{function_name}"}
         for nid, meta in manual_nodes.items():
             if meta.get("type") == "functionNode" and meta.get("label") == function_name:
                 fn_node_ids.add(nid)
-        output_types = infer_manual_fn_output_types(
+        inferred = infer_manual_fn_output_types(
             fn_node_ids, layout_store.read_manual_edges(),
             manual_nodes, existing_node_labels={})
-        logger.info("generate_matlab_command: inferred output_types=%s from manual edges", output_types)
+        if inferred:
+            # Re-order inferred class names to match the function parameter order
+            # from params.output_types (which has the correct signature order but
+            # may use lowercase MATLAB param names instead of class names).
+            params_output_types = params.get("output_types") or []
+            if params_output_types:
+                inferred = _sort_inferred_by_params_order(inferred, params_output_types)
+            logger.info(
+                "generate_matlab_command: inferred output_types=%s from manual edges "
+                "(overrides params output_types=%s)",
+                inferred, output_types,
+            )
+            output_types = inferred
+        elif not output_types:
+            logger.warning(
+                "generate_matlab_command: no DB variants and no edge-inferred outputs "
+                "for '%s' — outputs will be empty",
+                function_name,
+            )
+
+    # Resolve project root so relative PathInput templates get an explicit
+    # root_folder in the generated script (MATLAB's CWD is a temp dir, so
+    # CWD-relative paths would be wrong without it).
+    project_root: str | None = None
+    from scistack_gui import registry as _reg
+    if _reg._config is not None:
+        project_root = str(_reg._config.project_root)
 
     logger.info("generate_matlab_command: fn=%s, total_variants=%d, fn_variants=%d, "
-                "path_input_params=%d, output_types=%s",
+                "path_input_params=%d, output_types=%s, project_root=%s",
                 function_name, len(all_variants), len(fn_variants),
-                len(path_input_params), output_types)
+                len(path_input_params), output_types, project_root)
 
     cmd = _fmt(
         function_name=function_name,
@@ -123,6 +189,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         python_executable=sys.executable,
         path_inputs=path_input_params if path_input_params else None,
         output_types=output_types if output_types else None,
+        project_root=project_root,
     )
     logger.info("generate_matlab_command: fn=%s, command_length=%d", function_name, len(cmd))
     return {"command": cmd}

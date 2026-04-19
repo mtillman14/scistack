@@ -8,9 +8,12 @@ entirely on plain Python data structures (dicts, lists, sets, strings).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -123,6 +126,11 @@ def aggregate_variants(
     # Add variable types from the DB that weren't in any for_each run.
     agg.all_var_types |= listed_var_names
 
+    logger.debug(
+        "aggregate_variants: %d variants → %d var types, %d functions, %d constants, %d path inputs",
+        len(variants), len(agg.all_var_types), len(agg.fn_outputs),
+        len(agg.const_counts), len(agg.path_inputs),
+    )
     return agg
 
 
@@ -168,6 +176,11 @@ def filter_hidden(agg: AggregatedData, hidden_ids: set[str]) -> AggregatedData:
     for pname in hidden_path_names:
         agg.path_inputs.pop(pname, None)
 
+    if hidden_ids:
+        logger.debug(
+            "filter_hidden: removed var=%s fn=%s const=%s pathInput=%s",
+            hidden_var_types, hidden_fn_names, hidden_const_names, hidden_path_names,
+        )
     return agg
 
 
@@ -189,6 +202,8 @@ def auto_clean_pending_constants(
             else:
                 still_pending.add(pval)
         pending_constants[const_name] = still_pending
+    if removals:
+        logger.debug("auto_clean_pending_constants: removing %s", removals)
     return pending_constants, removals
 
 
@@ -290,6 +305,7 @@ def build_function_nodes(
     run_states: dict[str, str],
     matlab_functions: set[str],
     saved_configs: dict[str, dict | None],
+    matlab_output_order: dict[str, list[str]] | None = None,
 ) -> list[dict]:
     """Build React Flow function nodes.
 
@@ -302,6 +318,7 @@ def build_function_nodes(
         run_states: {node_id: state}.
         matlab_functions: Set of MATLAB function names.
         saved_configs: {fn_name: config_dict or None} from manual nodes.
+        matlab_output_order: {fn_name: [output_names in signature order]}.
     """
     nodes = []
     for fn in sorted(fn_input_params.keys()):
@@ -314,11 +331,22 @@ def build_function_nodes(
             if name not in known:
                 input_params[name] = ""
 
+        # Order output types: MATLAB functions use declared signature order;
+        # any DB outputs not in the signature are appended sorted.
+        actual_outputs = fn_outputs.get(fn, set())
+        if fn in matlab_functions and matlab_output_order:
+            declared = matlab_output_order.get(fn, [])
+            ordered = [t for t in declared if t in actual_outputs]
+            extras = sorted(t for t in actual_outputs if t not in declared)
+            out_types = ordered + extras
+        else:
+            out_types = sorted(actual_outputs)
+
         fn_data: dict = {
             "label": fn,
             "variants": fn_variants_map.get(fn, []),
             "input_params": input_params,
-            "output_types": sorted(fn_outputs.get(fn, set())),
+            "output_types": out_types,
             "constant_params": constant_params,
         }
         state = run_states.get(f"fn__{fn}")
@@ -488,7 +516,7 @@ def build_manual_node(
     elif meta["type"] == "functionNode":
         extra = {
             "input_params": resolved_input_params or {},
-            "output_types": sorted(resolved_output_types or []),
+            "output_types": list(resolved_output_types or []),
             "constant_params": [],
             "run_state": manual_fn_state or "red",
         }
@@ -537,4 +565,10 @@ def merge_manual_nodes(
                 continue
         to_add.append(node_id)
 
+    if graduations:
+        logger.debug(
+            "merge_manual_nodes: graduating %d node(s): %s",
+            len(graduations),
+            [(g.old_id, g.new_id) for g in graduations],
+        )
     return to_add, graduations

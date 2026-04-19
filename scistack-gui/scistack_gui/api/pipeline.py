@@ -267,6 +267,10 @@ def _build_graph(db: DatabaseManager) -> dict:
         saved_configs[fn] = manual_nodes.get(node_id, {}).get("config")
 
     matlab_functions = set(_mr.get_all_function_names())
+    matlab_output_order = {
+        name: _mr.get_matlab_function(name).output_names
+        for name in matlab_functions
+    }
 
     # --- Overlay saved path inputs ---
     saved_path_inputs = layout_store.read_all_path_input_names()
@@ -280,6 +284,7 @@ def _build_graph(db: DatabaseManager) -> dict:
         agg.fn_input_params, agg.fn_outputs, agg.fn_constants,
         agg.fn_variants_map, fn_params_map, run_states,
         matlab_functions, saved_configs,
+        matlab_output_order=matlab_output_order,
     )
 
     # --- Build edges (pure) ---
@@ -323,6 +328,17 @@ def _build_graph(db: DatabaseManager) -> dict:
                 if p not in resolved_input_params:
                     resolved_input_params[p] = t
             resolved_output_types = resolved.output_types
+            # For manual MATLAB function nodes, always use the declared output
+            # names from the function signature as handles. Connected edges carry
+            # the actual var-label mapping via sourceHandle, so the handle set
+            # must always match the full signature regardless of what's wired up.
+            if _mr.is_matlab_function(fn_label):
+                info = _mr.get_matlab_function(fn_label)
+                resolved_output_types = list(info.output_names)
+                logger.debug(
+                    "manual fn %s (MATLAB): using declared output_names=%s",
+                    fn_label, resolved_output_types,
+                )
             if resolved_output_types:
                 manual_fn_state = _own_state_for_function(
                     db, fn_label, set(resolved_output_types))
@@ -361,8 +377,8 @@ def get_pipeline(db: DatabaseManager = Depends(get_db)):
 
 @router.get("/function/{fn_name}/params")
 def get_function_params(fn_name: str):
-    from scistack_gui.services.pipeline_service import get_function_params as _get_params
-    return {"params": _get_params(fn_name)}
+    from scistack_gui.services.pipeline_service import get_function_full_info
+    return get_function_full_info(fn_name)
 
 
 @router.get("/function/{fn_name}/source")

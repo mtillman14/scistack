@@ -8,7 +8,7 @@ configured .m file paths.
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 
@@ -56,6 +56,9 @@ class MatlabFunctionInfo:
     n_outputs: int = 0
     """Number of declared output arguments (0 = void, 1 = scalar, 2+ = multi)."""
 
+    output_names: list[str] = field(default_factory=list)
+    """Names of declared output arguments, in order."""
+
     language: str = "matlab"
 
 
@@ -87,15 +90,18 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
     raw_params = m.group(4).strip()
     params = [p.strip() for p in raw_params.split(",") if p.strip()] if raw_params else []
 
-    # Count output arguments from the declaration.
+    # Count output arguments and extract names from the declaration.
     #   Group 1: "[out1, out2]" → count comma-separated names
     #   Group 2: "out"          → single output
     #   Neither:                → void (0 outputs)
     if m.group(1) is not None:
-        n_outputs = len([o.strip() for o in m.group(1).split(",") if o.strip()])
+        output_names = [o.strip() for o in m.group(1).split(",") if o.strip()]
+        n_outputs = len(output_names)
     elif m.group(2) is not None:
+        output_names = [m.group(2).strip()]
         n_outputs = 1
     else:
+        output_names = []
         n_outputs = 0
 
     return MatlabFunctionInfo(
@@ -110,6 +116,7 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
         params=params,
         source_hash=source_hash,
         n_outputs=n_outputs,
+        output_names=output_names,
     )
 
 

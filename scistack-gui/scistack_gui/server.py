@@ -108,8 +108,8 @@ def _h_get_registry(params):
 
 
 def _h_get_function_params(params):
-    from scistack_gui.services.pipeline_service import get_function_params
-    return {"params": get_function_params(params["name"])}
+    from scistack_gui.services.pipeline_service import get_function_full_info
+    return get_function_full_info(params["name"])
 
 
 def _h_get_function_source(params):

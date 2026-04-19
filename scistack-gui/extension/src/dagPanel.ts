@@ -275,6 +275,14 @@ export class DagPanel {
   }
 
   /**
+   * Update the PythonProcess reference after a restart, so requests from the
+   * webview are routed to the new process instead of the killed one.
+   */
+  updatePythonProcess(proc: PythonProcess): void {
+    this.pythonProcess = proc;
+  }
+
+  /**
    * Post a notification message to the Webview (from Python push notifications).
    */
   postMessage(msg: Record<string, unknown>): void {

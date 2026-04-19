@@ -23,6 +23,7 @@ def generate_matlab_command(
     python_executable: str | None = None,
     path_inputs: dict[str, dict] | None = None,
     output_types: list[str] | None = None,
+    project_root: str | None = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -87,7 +88,7 @@ def generate_matlab_command(
         # and output types inferred from manual edges.
         if path_inputs:
             inputs_str = _format_matlab_struct(
-                {p: _format_path_input(pi) for p, pi in path_inputs.items()}
+                {p: _format_path_input(pi, project_root) for p, pi in path_inputs.items()}
             )
         else:
             inputs_str = "struct()"
@@ -156,7 +157,7 @@ def generate_matlab_command(
         # Add path inputs as scifor.PathInput(...) expressions.
         if path_inputs:
             for param_name, pi in path_inputs.items():
-                inputs_dict[param_name] = _format_path_input(pi)
+                inputs_dict[param_name] = _format_path_input(pi, project_root)
         # Add constants as scalar values
         for k, val in constants.items():
             inputs_dict[k] = _format_matlab_value(val)
@@ -188,13 +189,19 @@ def generate_matlab_command(
     return "\n".join(lines)
 
 
-def _format_path_input(pi: dict) -> str:
+def _format_path_input(pi: dict, project_root: str | None = None) -> str:
     """Format a PathInput info dict as a MATLAB ``scifor.PathInput(...)`` expression.
 
     The template stored in the layout may already include MATLAB double-quote
     delimiters (e.g. ``"C:\\data\\file.csv"``), or it may be a bare pattern
     string (e.g. ``{subject}/trial_{trial}.mat``). Both forms are handled.
+
+    When ``root_folder`` is not set and the template is a relative path,
+    ``project_root`` is used as the root so MATLAB's CWD (the temp script dir)
+    does not affect resolution.
     """
+    from pathlib import Path as _Path
+
     template = pi.get("template", "")
     root_folder = pi.get("root_folder")
 
@@ -204,6 +211,12 @@ def _format_path_input(pi: dict) -> str:
         matlab_template = template
     else:
         matlab_template = f'"{template}"'
+
+    if not root_folder and project_root:
+        # Check if the bare template (without quotes) is a relative path.
+        bare = template.strip('"')
+        if not _Path(bare).is_absolute():
+            root_folder = project_root
 
     if root_folder:
         return f'scifor.PathInput({matlab_template}, root_folder="{root_folder}")'

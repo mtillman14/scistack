@@ -1,4 +1,0 @@
-[18:58:45.694] [INFO] configure_database: path=/home/mtillman/mnt/rto/LabMembers/MTillman/GitRepos/Stroke-R01-Aim-2/aim2.duckdb, schema_keys=['subject', 'session', 'speed', 'trial', 'cycle']
-[21:02:19.934] [INFO] configure_database: path=/home/mtillman/mnt/rto/LabMembers/MTillman/GitRepos/Stroke-R01-Aim-2/aim2.duckdb, schema_keys=['subject', 'session', 'speed', 'trial', 'cycle']
-[21:02:35.440] [INFO] configure_database: path=/home/mtillman/mnt/rto/LabMembers/MTillman/GitRepos/Stroke-R01-Aim-2/aim2.duckdb, schema_keys=['subject', 'session', 'speed', 'trial', 'cycle']
-[21:02:48.032] [INFO] configure_database: path=/home/mtillman/mnt/rto/LabMembers/MTillman/GitRepos/Stroke-R01-Aim-2/aim2.duckdb, schema_keys=['subject', 'session', 'speed', 'trial', 'cycle']

@@ -495,6 +495,13 @@ var DagPanel = class {
     }
   }
   /**
+   * Update the PythonProcess reference after a restart, so requests from the
+   * webview are routed to the new process instead of the killed one.
+   */
+  updatePythonProcess(proc) {
+    this.pythonProcess = proc;
+  }
+  /**
    * Post a notification message to the Webview (from Python push notifications).
    */
   postMessage(msg) {
@@ -864,7 +871,9 @@ async function startPipeline(context, dbPath, modulePath, projectPath, schemaKey
     return;
   }
   if (dagPanel) {
+    dagPanel.updatePythonProcess(pythonProcess);
     dagPanel.reveal();
+    dagPanel.postMessage({ method: "dag_updated", params: {} });
   } else {
     dagPanel = new DagPanel(context, pythonProcess, outputChannel);
     dagPanel.onDidDispose(() => {

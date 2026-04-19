@@ -135,6 +135,17 @@ def get_all_variable_names() -> list[str]:
     return sorted(_matlab_variables.keys())
 
 
+def get_mismatched_function_names() -> list[str]:
+    """Return sorted list of MATLAB function names where the function name
+    does not match the stem of its .m file (a MATLAB requirement)."""
+    mismatched = [
+        name
+        for name, info in _matlab_functions.items()
+        if info.file_path.stem != name
+    ]
+    return sorted(mismatched)
+
+
 def has_matlab_config() -> bool:
     """Return True if a MATLAB config section was loaded."""
     return _config is not None and bool(

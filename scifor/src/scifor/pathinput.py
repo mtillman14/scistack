@@ -8,6 +8,20 @@ from pathlib import Path
 from typing import Any
 
 
+def _find_project_root(start: Path | None = None) -> Path:
+    """Walk up from *start* (or cwd) to find the nearest project root.
+
+    The root is the first ancestor directory that contains ``pyproject.toml``
+    or ``scistack.toml``.  Falls back to *start* (or cwd) when neither file
+    is found anywhere in the hierarchy.
+    """
+    current = (start or Path.cwd()).resolve()
+    for directory in [current, *current.parents]:
+        if (directory / "pyproject.toml").exists() or (directory / "scistack.toml").exists():
+            return directory
+    return current
+
+
 class PathInput:
     """
     Resolve a path template using iteration metadata.
@@ -21,8 +35,11 @@ class PathInput:
         path_template: A format string with {key} placeholders, e.g.
                       "{subject}/trial_{trial}.mat"
         root_folder: Optional root directory.  If provided, paths are
-                    resolved relative to it.  If None, resolved relative
-                    to the current working directory.
+                    resolved relative to it.  If None and the template is
+                    a relative path, the nearest ancestor directory
+                    containing ``pyproject.toml`` or ``scistack.toml`` is
+                    used; falls back to the current working directory when
+                    neither file is found.
 
     Example:
         for_each(
@@ -58,10 +75,12 @@ class PathInput:
                 Ignored since PathInput resolves file paths, not database records.
             **metadata: Template substitution values.
         """
-        relative_path = Path(self.path_template.format(**metadata))
+        resolved_path = Path(self.path_template.format(**metadata))
         if self.root_folder is not None:
-            return (self.root_folder / relative_path).resolve()
-        return relative_path.resolve()
+            return (self.root_folder / resolved_path).resolve()
+        if not resolved_path.is_absolute():
+            return (_find_project_root() / resolved_path).resolve()
+        return resolved_path.resolve()
 
     def placeholder_keys(self) -> list[str]:
         """Return the list of unique placeholder keys in the template."""
@@ -84,8 +103,7 @@ class PathInput:
         Returns a list of dicts (one per valid complete path), where each dict
         maps placeholder keys to their string values.
         """
-        root = self.root_folder if self.root_folder is not None else Path.cwd()
-        root = Path(root)
+        root = Path(self.root_folder) if self.root_folder is not None else _find_project_root()
 
         # Split template into path segments
         # Normalise separators to '/'

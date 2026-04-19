@@ -161,7 +161,7 @@ class TestDiscover:
         assert groups == {"alpha", "beta"}
 
     def test_no_root_folder_uses_cwd(self, tmp_path, monkeypatch):
-        """When root_folder is None, discover() uses cwd."""
+        """Fallback: when no pyproject.toml/scistack.toml ancestor exists, cwd is used."""
         (tmp_path / "file_A.txt").touch()
         (tmp_path / "file_B.txt").touch()
         monkeypatch.chdir(tmp_path)
@@ -171,6 +171,65 @@ class TestDiscover:
         assert len(combos) == 2
         xs = {c["x"] for c in combos}
         assert xs == {"A", "B"}
+
+    def test_no_root_folder_uses_pyproject_root_for_discover(self, tmp_path, monkeypatch):
+        """discover() with no root_folder roots at the pyproject.toml ancestor."""
+        (tmp_path / "pyproject.toml").touch()
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (tmp_path / "file_A.txt").touch()
+        (tmp_path / "file_B.txt").touch()
+        monkeypatch.chdir(sub)  # cwd is a subdirectory, not the project root
+
+        pi = PathInput("file_{x}.txt")
+        combos = pi.discover()
+        assert len(combos) == 2
+        xs = {c["x"] for c in combos}
+        assert xs == {"A", "B"}
+
+    def test_no_root_folder_uses_scistack_toml_root_for_discover(self, tmp_path, monkeypatch):
+        """discover() finds the root via scistack.toml when pyproject.toml is absent."""
+        (tmp_path / "scistack.toml").touch()
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (tmp_path / "data_X.csv").touch()
+        monkeypatch.chdir(sub)
+
+        pi = PathInput("data_{x}.csv")
+        combos = pi.discover()
+        assert combos == [{"x": "X"}]
+
+
+class TestLoad:
+    def test_load_with_root_folder(self, tmp_path):
+        pi = PathInput("{subject}/data.mat", root_folder=tmp_path)
+        result = pi.load(subject="01")
+        assert result == (tmp_path / "01" / "data.mat").resolve()
+
+    def test_load_no_root_folder_uses_project_root(self, tmp_path, monkeypatch):
+        """load() with no root_folder resolves relative to pyproject.toml ancestor."""
+        (tmp_path / "pyproject.toml").touch()
+        sub = tmp_path / "scripts"
+        sub.mkdir()
+        monkeypatch.chdir(sub)
+
+        pi = PathInput("{subject}/data.mat")
+        result = pi.load(subject="01")
+        assert result == (tmp_path / "01" / "data.mat").resolve()
+
+    def test_load_no_root_folder_fallback_to_cwd(self, tmp_path, monkeypatch):
+        """load() falls back to cwd when no pyproject.toml ancestor exists."""
+        monkeypatch.chdir(tmp_path)
+        pi = PathInput("{subject}/data.mat")
+        result = pi.load(subject="01")
+        assert result == (tmp_path / "01" / "data.mat").resolve()
+
+    def test_load_absolute_template_ignores_project_root(self, tmp_path, monkeypatch):
+        """load() does not prepend the project root when template resolves to absolute."""
+        monkeypatch.chdir(tmp_path)
+        pi = PathInput("/absolute/path/{subject}.mat")
+        result = pi.load(subject="01")
+        assert result == Path("/absolute/path/01.mat")
 
     def test_mixed_filename_segment(self, tmp_path):
         """Template with literal+placeholder in filename segment."""

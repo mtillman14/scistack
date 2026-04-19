@@ -14,6 +14,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import { callBackend } from '../../api'
+import { useCommittedInput } from '../../hooks/useCommittedInput'
 
 interface VariantRow {
   [constantName: string]: string
@@ -59,6 +60,66 @@ interface VariableInfo {
   variable_name: string
 }
 
+interface WhereFilterRowProps {
+  nodeId: string
+  index: number
+  filter: WhereFilter
+  variableNames: string[]
+  onUpdateCanvas: (index: number, patch: Partial<WhereFilter>) => void
+  onUpdate: (index: number, patch: Partial<WhereFilter>) => void
+  onRemove: (index: number) => void
+  isValidVar: boolean
+}
+
+function WhereFilterRow({ nodeId, index, filter, variableNames, onUpdateCanvas, onUpdate, onRemove, isValidVar }: WhereFilterRowProps) {
+  const varInput = useCommittedInput({
+    initialValue: filter.variable,
+    resetKey: `${nodeId}-${index}-var`,
+    onLiveChange: val => onUpdateCanvas(index, { variable: val }),
+    onSave: val => onUpdate(index, { variable: val }),
+  })
+
+  const valInput = useCommittedInput({
+    initialValue: filter.value,
+    resetKey: `${nodeId}-${index}-val`,
+    onLiveChange: val => onUpdateCanvas(index, { value: val }),
+    onSave: val => onUpdate(index, { value: val }),
+  })
+
+  return (
+    <div style={filterRowStyle}>
+      <input
+        list="where-filter-variables"
+        style={{
+          ...filterVarInputStyle,
+          ...(filter.variable !== '' && !isValidVar ? { borderColor: '#dc2626' } : {}),
+        }}
+        placeholder="Variable"
+        {...varInput}
+      />
+      <select
+        style={filterOpSelectStyle}
+        value={filter.op}
+        onChange={e => onUpdate(index, { op: e.target.value })}
+      >
+        {OPERATORS.map(op => (
+          <option key={op} value={op}>{op}</option>
+        ))}
+      </select>
+      <input
+        style={filterValueInputStyle}
+        placeholder="value"
+        {...valInput}
+      />
+      <button
+        style={filterRemoveBtnStyle}
+        onClick={() => onRemove(index)}
+        title="Remove filter"
+      >&times;</button>
+    </div>
+  )
+}
+
 export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaFilter, schemaLevel, whereFilters, runOptions }: Props) {
   const { setNodes } = useReactFlow()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
@@ -97,6 +158,14 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       }
       return updated
     })
+  }, [id, setNodes])
+
+  // Canvas-only variant — updates node data without saving to backend.
+  // Used by useCommittedInput's onLiveChange for text fields.
+  const updateNodeDataCanvas = useCallback((patch: Record<string, unknown>) => {
+    setNodes(nds => nds.map(node =>
+      node.id === id ? { ...node, data: { ...node.data, ...patch } } : node
+    ))
   }, [id, setNodes])
 
   // Toggle a single value in the schema filter.
@@ -181,6 +250,11 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
     updateNodeData({ whereFilters: updated })
   }, [whereFilters, updateNodeData])
 
+  const updateWhereFilterCanvas = useCallback((index: number, patch: Partial<WhereFilter>) => {
+    const updated = whereFilters.map((f, i) => i === index ? { ...f, ...patch } : f)
+    updateNodeDataCanvas({ whereFilters: updated })
+  }, [whereFilters, updateNodeDataCanvas])
+
   // All variant column names (constants + multi-type inputs)
   const allVariantNames = [...constantNames, ...inputTypeNames]
 
@@ -241,38 +315,17 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
         {whereFilters.map((f, idx) => {
           const isValidVar = f.variable === '' || variableNames.includes(f.variable)
           return (
-            <div key={idx} style={styles.filterRow}>
-              <input
-                list="where-filter-variables"
-                style={{
-                  ...styles.filterVarInput,
-                  ...(f.variable !== '' && !isValidVar ? { borderColor: '#dc2626' } : {}),
-                }}
-                placeholder="Variable"
-                value={f.variable}
-                onChange={e => updateWhereFilter(idx, { variable: e.target.value })}
-              />
-              <select
-                style={styles.filterOpSelect}
-                value={f.op}
-                onChange={e => updateWhereFilter(idx, { op: e.target.value })}
-              >
-                {OPERATORS.map(op => (
-                  <option key={op} value={op}>{op}</option>
-                ))}
-              </select>
-              <input
-                style={styles.filterValueInput}
-                placeholder="value"
-                value={f.value}
-                onChange={e => updateWhereFilter(idx, { value: e.target.value })}
-              />
-              <button
-                style={styles.filterRemoveBtn}
-                onClick={() => removeWhereFilter(idx)}
-                title="Remove filter"
-              >&times;</button>
-            </div>
+            <WhereFilterRow
+              key={idx}
+              nodeId={id}
+              index={idx}
+              filter={f}
+              variableNames={variableNames}
+              onUpdateCanvas={updateWhereFilterCanvas}
+              onUpdate={updateWhereFilter}
+              onRemove={removeWhereFilter}
+              isValidVar={isValidVar}
+            />
           )
         })}
         {/* Shared datalist for variable name autocomplete */}
@@ -434,6 +487,57 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
   )
 }
 
+// These are module-level so WhereFilterRow (defined above) can reference them.
+const filterRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 3,
+  marginBottom: 4,
+}
+const filterVarInputStyle: React.CSSProperties = {
+  flex: '3 1 0',
+  minWidth: 0,
+  background: '#1e1e3a',
+  border: '1px solid #2a2a4a',
+  borderRadius: 3,
+  color: '#b2ded9',
+  fontSize: 11,
+  fontFamily: 'monospace',
+  padding: '2px 4px',
+}
+const filterOpSelectStyle: React.CSSProperties = {
+  flex: '0 0 auto',
+  width: 42,
+  background: '#1e1e3a',
+  border: '1px solid #2a2a4a',
+  borderRadius: 3,
+  color: '#ccc',
+  fontSize: 11,
+  fontFamily: 'monospace',
+  padding: '2px 2px',
+  textAlign: 'center',
+}
+const filterValueInputStyle: React.CSSProperties = {
+  flex: '4 1 0',
+  minWidth: 0,
+  background: '#1e1e3a',
+  border: '1px solid #2a2a4a',
+  borderRadius: 3,
+  color: '#b2ded9',
+  fontSize: 11,
+  fontFamily: 'monospace',
+  padding: '2px 4px',
+}
+const filterRemoveBtnStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  color: '#dc2626',
+  fontSize: 14,
+  cursor: 'pointer',
+  padding: '0 2px',
+  lineHeight: 1,
+}
+
 const styles: Record<string, React.CSSProperties> = {
   root: {
     padding: '12px',
@@ -492,56 +596,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     fontSize: 11,
     color: '#b2ded9',
-  },
-  // Data filter styles
-  filterRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 3,
-    marginBottom: 4,
-  },
-  filterVarInput: {
-    flex: '3 1 0',
-    minWidth: 0,
-    background: '#1e1e3a',
-    border: '1px solid #2a2a4a',
-    borderRadius: 3,
-    color: '#b2ded9',
-    fontSize: 11,
-    fontFamily: 'monospace',
-    padding: '2px 4px',
-  },
-  filterOpSelect: {
-    flex: '0 0 auto',
-    width: 42,
-    background: '#1e1e3a',
-    border: '1px solid #2a2a4a',
-    borderRadius: 3,
-    color: '#ccc',
-    fontSize: 11,
-    fontFamily: 'monospace',
-    padding: '2px 2px',
-    textAlign: 'center',
-  },
-  filterValueInput: {
-    flex: '4 1 0',
-    minWidth: 0,
-    background: '#1e1e3a',
-    border: '1px solid #2a2a4a',
-    borderRadius: 3,
-    color: '#b2ded9',
-    fontSize: 11,
-    fontFamily: 'monospace',
-    padding: '2px 4px',
-  },
-  filterRemoveBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#dc2626',
-    fontSize: 14,
-    cursor: 'pointer',
-    padding: '0 2px',
-    lineHeight: 1,
   },
   addFilterBtn: {
     background: 'none',

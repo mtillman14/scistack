@@ -3,12 +3,13 @@
  *
  * Editable fields for path template and root folder.  Changes update the
  * React Flow node data (so the canvas reflects edits live) and persist to
- * the backend via PUT /api/path-inputs/{name}.
+ * the backend on Enter or blur.  Escape reverts to the last saved value.
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useRef, useEffect } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import { callBackend } from '../../api'
+import { useCommittedInput } from '../../hooks/useCommittedInput'
 
 interface Props {
   id: string
@@ -25,45 +26,47 @@ function parseTemplateKeys(template: string): string[] {
 
 export default function PathInputSettingsPanel({ id, label, template, root_folder }: Props) {
   const { setNodes } = useReactFlow()
-  const [draftTemplate, setDraftTemplate] = useState(template)
-  const [draftRoot, setDraftRoot] = useState(root_folder ?? '')
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Sync drafts when a different node is selected.
+  // Refs so each field's callbacks can read the other field's latest draft
+  // without stale-closure issues.
+  const latestTemplate = useRef(template)
+  const latestRoot = useRef(root_folder ?? '')
+
   useEffect(() => {
-    setDraftTemplate(template)
-    setDraftRoot(root_folder ?? '')
-  }, [id, template, root_folder])
+    latestTemplate.current = template
+    latestRoot.current = root_folder ?? ''
+  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const persist = (newTemplate: string, newRoot: string) => {
+  const updateCanvas = (newTemplate: string, newRoot: string) => {
     const rootVal = newRoot.trim() || null
-
-    // Update React Flow node data so the canvas reflects changes immediately.
     setNodes(nds => nds.map(n =>
       n.id === id
         ? { ...n, data: { ...n.data, template: newTemplate, root_folder: rootVal } }
         : n
     ))
-
-    // Debounced save to backend.
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      callBackend('update_path_input', { name: label, template: newTemplate, root_folder: rootVal })
-        .catch(err => console.error('[PathInputSettings] save error:', err))
-    }, 400)
   }
 
-  const onTemplateChange = (val: string) => {
-    setDraftTemplate(val)
-    persist(val, draftRoot)
+  const saveToBackend = (newTemplate: string, newRoot: string) => {
+    const rootVal = newRoot.trim() || null
+    callBackend('update_path_input', { name: label, template: newTemplate, root_folder: rootVal })
+      .catch(err => console.error('[PathInputSettings] save error:', err))
   }
 
-  const onRootChange = (val: string) => {
-    setDraftRoot(val)
-    persist(draftTemplate, val)
-  }
+  const templateInput = useCommittedInput({
+    initialValue: template,
+    resetKey: id,
+    onLiveChange: val => { latestTemplate.current = val; updateCanvas(val, latestRoot.current) },
+    onSave: val => saveToBackend(val, latestRoot.current),
+  })
 
-  const keys = parseTemplateKeys(draftTemplate)
+  const rootInput = useCommittedInput({
+    initialValue: root_folder ?? '',
+    resetKey: id,
+    onLiveChange: val => { latestRoot.current = val; updateCanvas(latestTemplate.current, val) },
+    onSave: val => saveToBackend(latestTemplate.current, val),
+  })
+
+  const keys = parseTemplateKeys(templateInput.value)
 
   return (
     <div style={styles.root}>
@@ -73,9 +76,8 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
         <div style={styles.sectionTitle}>Path Template</div>
         <input
           style={styles.input}
-          value={draftTemplate}
           placeholder="{subject}/trial_{trial}.mat"
-          onChange={e => onTemplateChange(e.target.value)}
+          {...templateInput}
         />
       </section>
 
@@ -83,9 +85,8 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
         <div style={styles.sectionTitle}>Root Folder</div>
         <input
           style={styles.input}
-          value={draftRoot}
           placeholder="/data (optional)"
-          onChange={e => onRootChange(e.target.value)}
+          {...rootInput}
         />
       </section>
 

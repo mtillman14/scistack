@@ -69,6 +69,9 @@ classdef LineageFcn < handle
         function varargout = invoke(obj, args)
         %INVOKE  Core lineage function call: check cache, execute on miss, wrap output.
 
+            % How many outputs the caller actually requested.
+            n_out = max(nargout, 1);
+
             % --- Step 1: Build Python inputs dict ---
             py_inputs = py.dict();
             for i = 1:numel(args)
@@ -84,14 +87,18 @@ classdef LineageFcn < handle
 
             if ~isa(cached, 'py.NoneType') && ~isempty(cached)
                 % --- Cache HIT ---
-                varargout = wrap_cached(obj, py_inv, cached);
+                out = wrap_cached(obj, py_inv, cached, n_out);
             else
                 % --- Cache MISS: execute in MATLAB ---
-                varargout = execute_and_wrap(obj, py_inv, args);
+                out = execute_and_wrap(obj, py_inv, args, n_out);
+            end
+
+            for i = 1:numel(out)
+                varargout{i} = out{i};
             end
         end
 
-        function out = wrap_cached(obj, py_inv, cached)
+        function out = wrap_cached(obj, py_inv, cached, n_out)
         %WRAP_CACHED  Convert cached Python values to MATLAB LineageFcnResults.
 
             cached_cell = cell(cached);
@@ -105,6 +112,16 @@ classdef LineageFcn < handle
                     out{i} = scidb.LineageFcnResult( ...
                         scidb.internal.from_python(cached_cell{i}), py_result);
                 end
+            elseif n_out > 1
+                % Caller requested multiple outputs — return one per requested output.
+                out = cell(1, n_out);
+                for i = 1:n_out
+                    idx = min(i, n);
+                    py_result = py.sci_matlab.bridge.make_lineage_fcn_result( ...
+                        py_inv, int64(i - 1), cached_cell{idx});
+                    out{i} = scidb.LineageFcnResult( ...
+                        scidb.internal.from_python(cached_cell{idx}), py_result);
+                end
             else
                 py_result = py.sci_matlab.bridge.make_lineage_fcn_result( ...
                     py_inv, int64(0), cached_cell{1});
@@ -113,7 +130,7 @@ classdef LineageFcn < handle
             end
         end
 
-        function out = execute_and_wrap(obj, py_inv, args)
+        function out = execute_and_wrap(obj, py_inv, args, n_out)
         %EXECUTE_AND_WRAP  Run the MATLAB function and wrap results.
 
             % Unwrap inputs to raw MATLAB data for execution
@@ -138,6 +155,18 @@ classdef LineageFcn < handle
                     py_result = py.sci_matlab.bridge.make_lineage_fcn_result( ...
                         py_inv, int64(i - 1), py_data);
                     out{i} = scidb.LineageFcnResult(result{i}, py_result);
+                end
+            elseif n_out > 1
+                % Caller requested multiple outputs — capture each function output
+                % as a separate LineageFcnResult (natural MATLAB multi-output pattern).
+                results = cell(1, n_out);
+                [results{1:n_out}] = feval(obj.fcn, matlab_args{:});
+                out = cell(1, n_out);
+                for i = 1:n_out
+                    py_data = scidb.internal.to_python(results{i});
+                    py_result = py.sci_matlab.bridge.make_lineage_fcn_result( ...
+                        py_inv, int64(i - 1), py_data);
+                    out{i} = scidb.LineageFcnResult(results{i}, py_result);
                 end
             else
                 result = feval(obj.fcn, matlab_args{:});

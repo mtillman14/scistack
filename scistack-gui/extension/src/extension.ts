@@ -230,7 +230,11 @@ async function startPipeline(
 
   // Create or reveal the DAG Webview panel
   if (dagPanel) {
+    dagPanel.updatePythonProcess(pythonProcess);
     dagPanel.reveal();
+    // Trigger the webview to re-fetch the registry (and DAG) so any new
+    // functions/variables added since the last start are reflected.
+    dagPanel.postMessage({ method: 'dag_updated', params: {} });
   } else {
     dagPanel = new DagPanel(context, pythonProcess, outputChannel);
     dagPanel.onDidDispose(() => {

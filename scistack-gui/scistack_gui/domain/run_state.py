@@ -8,6 +8,10 @@ and returns a flat dict of node_id → state.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 _STATE_ORDER = {"red": 0, "grey": 1, "green": 2}
 
 
@@ -41,6 +45,10 @@ def propagate_run_states(
             if fn_own_state[fn_name] == "green":
                 for const_name in fn_constants.get(fn_name, set()):
                     if pending_constants.get(const_name):
+                        logger.debug(
+                            "Downgrading %s green→grey: pending constant %r",
+                            fn_name, const_name,
+                        )
                         fn_own_state[fn_name] = "grey"
                         break
 
@@ -86,6 +94,10 @@ def propagate_run_states(
 
         if not progress:
             # Cycle or unresolvable — mark remaining as red.
+            logger.warning(
+                "DAG propagation stalled — possible cycle among: %s",
+                sorted(remaining),
+            )
             for fn_name in remaining:
                 fn_effective_state[fn_name] = "red"
                 for vtype in fn_outputs.get(fn_name, set()):

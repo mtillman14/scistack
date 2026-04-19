@@ -143,10 +143,17 @@ export default function PipelineDAG() {
     const buildFnData = async () => {
       if (nodeType !== 'functionNode') return { run_state: 'red' as const }
       try {
-        const { params } = await callBackend('get_function_params', { name: label }) as { params: string[] }
+        const info = await callBackend('get_function_params', { name: label }) as {
+          params: string[]
+          output_names?: string[]
+          language?: string
+        }
         const input_params: Record<string, string> = {}
-        for (const p of params) input_params[p] = ''
-        return { input_params, output_types: [] as string[], constant_params: [] as string[], run_state: 'red' as const }
+        for (const p of info.params) input_params[p] = ''
+        const output_types = info.output_names ?? []
+        const extra: Record<string, unknown> = {}
+        if (info.language === 'matlab') extra.language = 'matlab'
+        return { input_params, output_types, constant_params: [] as string[], run_state: 'red' as const, ...extra }
       } catch {
         return { run_state: 'red' as const }
       }

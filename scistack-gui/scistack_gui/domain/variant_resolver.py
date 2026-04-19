@@ -8,7 +8,10 @@ pending constant values. No I/O — works entirely on plain Python data.
 from __future__ import annotations
 
 import ast
+import logging
 from itertools import product as _product
+
+logger = logging.getLogger(__name__)
 
 
 def build_inferred_variants(
@@ -60,6 +63,11 @@ def filter_variants(
         v for v in fn_variants
         if any(_constants_match(v["constants"], sel) for sel in selected_variants)
     ]
+    if not targets:
+        logger.debug(
+            "filter_variants: no match for selected=%r — returning all %d variants",
+            selected_variants, len(fn_variants),
+        )
     return targets if targets else fn_variants
 
 
@@ -108,6 +116,11 @@ def merge_pending_constants(
 
     if not pending_for_fn:
         return fn_variants
+
+    logger.debug(
+        "merge_pending_constants: adding pending values for constants %s",
+        sorted(pending_for_fn),
+    )
 
     existing_keys = {
         tuple(sorted((k, str(v)) for k, v in t["constants"].items()))

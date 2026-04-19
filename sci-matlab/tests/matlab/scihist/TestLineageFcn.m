@@ -163,6 +163,42 @@ classdef TestLineageFcn < matlab.unittest.TestCase
             testCase.verifyEqual(char(prov.function_name), 'triple_values');
         end
 
+        % --- Multi-output via nargout (natural MATLAB pattern) ---
+
+        function test_multi_nargout_returns_separate_results(testCase)
+            % When a function naturally returns multiple outputs, LineageFcn
+            % should return one LineageFcnResult per requested output.
+            lfcn = scidb.LineageFcn(@multi_output_fn);
+            [r1, r2, r3] = lfcn([1 2 3]);
+            testCase.verifyClass(r1, 'scidb.LineageFcnResult');
+            testCase.verifyClass(r2, 'scidb.LineageFcnResult');
+            testCase.verifyClass(r3, 'scidb.LineageFcnResult');
+            testCase.verifyEqual(r1.data, [2 4 6], 'AbsTol', 1e-10);
+            testCase.verifyEqual(r2.data, [3 6 9], 'AbsTol', 1e-10);
+            testCase.verifyEqual(r3.data, [4 8 12], 'AbsTol', 1e-10);
+        end
+
+        function test_multi_nargout_single_output_still_works(testCase)
+            % Requesting 1 output from a multi-output function should still work.
+            lfcn = scidb.LineageFcn(@multi_output_fn);
+            r1 = lfcn([1 2 3]);
+            testCase.verifyClass(r1, 'scidb.LineageFcnResult');
+            testCase.verifyEqual(r1.data, [2 4 6], 'AbsTol', 1e-10);
+        end
+
+        function test_multi_nargout_different_lineage_hashes(testCase)
+            lfcn = scidb.LineageFcn(@multi_output_fn);
+            [r1, r2, r3] = lfcn([1 2 3]);
+            SplitFirst().save(r1, 'subject', 1, 'session', 'A');
+            SplitSecond().save(r2, 'subject', 1, 'session', 'A');
+            FilteredSignal().save(r3, 'subject', 1, 'session', 'A');
+            loaded1 = SplitFirst().load('subject', 1, 'session', 'A');
+            loaded2 = SplitSecond().load('subject', 1, 'session', 'A');
+            loaded3 = FilteredSignal().load('subject', 1, 'session', 'A');
+            testCase.verifyNotEqual(loaded1.lineage_hash, loaded2.lineage_hash);
+            testCase.verifyNotEqual(loaded2.lineage_hash, loaded3.lineage_hash);
+        end
+
         % --- Unpack output (multi-output) ---
 
         function test_unpack_output_returns_multiple(testCase)

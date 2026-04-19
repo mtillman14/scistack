@@ -14,6 +14,7 @@ interface Registry {
   functions: string[]
   variables: string[]
   matlab_functions?: string[]
+  matlab_functions_mismatched?: string[]
 }
 
 export default function EditTab() {
@@ -145,14 +146,18 @@ export default function EditTab() {
   return (
     <div style={styles.root}>
       <Section title="Functions">
-        {[...registry.functions, ...(registry.matlab_functions ?? [])].map(fn => (
-          <DragItem
-            key={fn}
-            label={fn}
-            color="#7b68ee"
-            onDragStart={e => onDragStart(e, 'functionNode', fn)}
-          />
-        ))}
+        {[...registry.functions, ...(registry.matlab_functions ?? [])].map(fn => {
+          const mismatch = registry.matlab_functions_mismatched?.includes(fn)
+          const displayLabel = mismatch ? `${fn} (function/file name mismatch)` : fn
+          return (
+            <DragItem
+              key={fn}
+              label={displayLabel}
+              color="#7b68ee"
+              onDragStart={e => onDragStart(e, 'functionNode', fn)}
+            />
+          )
+        })}
       </Section>
       <Section
         title="Variables"

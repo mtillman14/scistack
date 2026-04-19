@@ -20,8 +20,19 @@ def put_layout(node_id: str, x: float, y: float,
                node_type: str | None = None, label: str | None = None) -> dict:
     from scistack_gui import layout as layout_store
     if node_type and label:
-        logger.debug("Node added to DAG: node_id=%r, type=%r, label=%r, position=(%.1f, %.1f)",
-                     node_id, node_type, label, x, y)
+        if node_type == "functionNode":
+            from scistack_gui import matlab_registry
+            if matlab_registry.is_matlab_function(label):
+                info = matlab_registry.get_matlab_function(label)
+                logger.info(
+                    "Function node placed: %r (MATLAB, n_outputs=%d, output_names=%s)",
+                    label, info.n_outputs, info.output_names,
+                )
+            else:
+                logger.info("Function node placed: %r (Python)", label)
+        else:
+            logger.debug("Node added to DAG: node_id=%r, type=%r, label=%r, position=(%.1f, %.1f)",
+                         node_id, node_type, label, x, y)
         layout_store.write_manual_node(node_id, x, y, node_type, label)
     else:
         layout_store.write_node_position(node_id, x, y)

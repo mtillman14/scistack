@@ -7,7 +7,10 @@ and node metadata. No I/O — works entirely on plain Python data structures.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -137,6 +140,10 @@ def resolve_function_edges(
             if var_type not in input_types[param]:
                 input_types[param].append(var_type)
 
+    logger.debug(
+        "resolve_function_edges: inputs=%s outputs=%s constants=%s unmatched=%d",
+        list(input_types), output_types, constant_names, len(unmatched_inputs),
+    )
     return ResolvedEdges(
         input_types=input_types,
         output_types=output_types,

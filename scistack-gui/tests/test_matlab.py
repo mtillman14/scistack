@@ -415,6 +415,54 @@ class TestGenerateMatlabCommand:
 
 
 # ---------------------------------------------------------------------------
+# _format_path_input tests
+# ---------------------------------------------------------------------------
+
+
+class TestFormatPathInput:
+    def test_explicit_root_folder_used_as_is(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+        pi = {"template": "{subject}/data.mat", "root_folder": "/my/data"}
+        result = _format_path_input(pi)
+        assert result == 'scifor.PathInput("{subject}/data.mat", root_folder="/my/data")'
+
+    def test_no_root_folder_no_project_root(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+        pi = {"template": "{subject}/data.mat", "root_folder": None}
+        result = _format_path_input(pi)
+        assert result == 'scifor.PathInput("{subject}/data.mat")'
+
+    def test_relative_template_uses_project_root_when_no_root_folder(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+        pi = {"template": "{subject}/data.mat", "root_folder": None}
+        result = _format_path_input(pi, project_root="/projects/myexp")
+        assert result == 'scifor.PathInput("{subject}/data.mat", root_folder="/projects/myexp")'
+
+    def test_explicit_root_folder_takes_priority_over_project_root(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+        pi = {"template": "{subject}/data.mat", "root_folder": "/explicit/root"}
+        result = _format_path_input(pi, project_root="/projects/myexp")
+        assert result == 'scifor.PathInput("{subject}/data.mat", root_folder="/explicit/root")'
+
+    def test_absolute_template_ignores_project_root(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+        pi = {"template": "/absolute/path/{subject}.mat", "root_folder": None}
+        result = _format_path_input(pi, project_root="/projects/myexp")
+        assert result == 'scifor.PathInput("/absolute/path/{subject}.mat")'
+
+    def test_generate_matlab_command_injects_project_root_for_path_inputs(self):
+        from scistack_gui.api.matlab_command import generate_matlab_command
+        cmd = generate_matlab_command(
+            function_name="load_file",
+            db_path="/data/exp.duckdb",
+            schema_keys=["subject"],
+            path_inputs={"filepath": {"template": "{subject}/data.mat", "root_folder": None}},
+            project_root="/projects/myexp",
+        )
+        assert 'root_folder="/projects/myexp"' in cmd
+
+
+# ---------------------------------------------------------------------------
 # config MATLAB parsing tests
 # ---------------------------------------------------------------------------
 
@@ -504,6 +552,112 @@ class TestConfigMatlabParsing:
 # ---------------------------------------------------------------------------
 # sci-matlab MATLAB directory discovery
 # ---------------------------------------------------------------------------
+
+
+class TestGenerateMatlabCommandOutputTypes:
+    """Regression: MATLAB function output param names must not leak into the
+    generated MATLAB command as BaseVariable class names.
+
+    A function declared as ``function [time, force_left, force_right] = load_csv(f)``
+    has output *parameter names* ``time`` / ``force_left`` / ``force_right``.  The
+    actual BaseVariable class names are ``Time`` / ``Force_Left`` / ``Force_Right``
+    (whatever is wired to the function node's output handles in the GUI).
+    The generated MATLAB command must use the class names, not the param names.
+    """
+
+    def test_output_types_from_variants_use_class_names(self):
+        """When DB variants exist, output_type (class name) must appear in
+        the outputs cell array, not the function's output parameter names."""
+        from scistack_gui.api.matlab_command import generate_matlab_command
+
+        variants = [
+            {
+                "input_types": {},
+                "output_type": "Time",
+                "constants": {},
+                "record_count": 1,
+            },
+            {
+                "input_types": {},
+                "output_type": "Force_Left",
+                "constants": {},
+                "record_count": 1,
+            },
+            {
+                "input_types": {},
+                "output_type": "Force_Right",
+                "constants": {},
+                "record_count": 1,
+            },
+        ]
+
+        cmd = generate_matlab_command(
+            function_name="load_csv",
+            db_path="/data/exp.duckdb",
+            schema_keys=["subject"],
+            variants=variants,
+        )
+
+        assert "Time()" in cmd
+        assert "Force_Left()" in cmd
+        assert "Force_Right()" in cmd
+        # Lowercase param names must NOT appear as class instantiations
+        assert "time()" not in cmd
+        assert "force_left()" not in cmd
+        assert "force_right()" not in cmd
+
+    def test_output_types_with_no_variants_uses_provided_output_types(self):
+        """When no DB variants exist and output_types are provided, the class
+        names should appear (not lowercase function param names)."""
+        from scistack_gui.api.matlab_command import generate_matlab_command
+
+        cmd = generate_matlab_command(
+            function_name="load_csv",
+            db_path="/data/exp.duckdb",
+            schema_keys=["subject"],
+            variants=None,
+            output_types=["Time", "Force_Left", "Force_Right"],
+        )
+
+        assert "Time()" in cmd
+        assert "Force_Left()" in cmd
+        assert "Force_Right()" in cmd
+        assert "time()" not in cmd
+        assert "force_left()" not in cmd
+        assert "force_right()" not in cmd
+
+
+class TestSortInferredByParamsOrder:
+    def test_reorders_to_match_params(self):
+        from scistack_gui.services.matlab_command_service import _sort_inferred_by_params_order
+
+        inferred = ["Force_Right", "Force_Left", "Time"]
+        params = ["time", "force_left", "force_right"]
+        result = _sort_inferred_by_params_order(inferred, params)
+        assert result == ["Time", "Force_Left", "Force_Right"]
+
+    def test_passthrough_when_already_ordered(self):
+        from scistack_gui.services.matlab_command_service import _sort_inferred_by_params_order
+
+        inferred = ["Time", "Force_Left", "Force_Right"]
+        params = ["time", "force_left", "force_right"]
+        result = _sort_inferred_by_params_order(inferred, params)
+        assert result == ["Time", "Force_Left", "Force_Right"]
+
+    def test_unmatched_appended_at_end(self):
+        from scistack_gui.services.matlab_command_service import _sort_inferred_by_params_order
+
+        inferred = ["Extra", "Time", "Force_Left"]
+        params = ["time", "force_left"]
+        result = _sort_inferred_by_params_order(inferred, params)
+        assert result == ["Time", "Force_Left", "Extra"]
+
+    def test_empty_params_preserves_inferred_order(self):
+        from scistack_gui.services.matlab_command_service import _sort_inferred_by_params_order
+
+        inferred = ["Force_Right", "Time"]
+        result = _sort_inferred_by_params_order(inferred, [])
+        assert result == ["Force_Right", "Time"]
 
 
 class TestFindSciMatlabMatlabDir:
