@@ -116,8 +116,62 @@ class TestAcquireReleaseCycle:
         release_db_connection()
 
 
+class TestAcquireRaisesDoesNotLeakRefcount:
+    """Regression: a failed reopen (e.g., external process still holds the
+    DuckDB lock) must not leak the refcount, or subsequent acquires will
+    keep the lock permanently held and MATLAB can never reopen the file.
+
+    Reproduces the leak seen in scidb.log where a ``get_pipeline`` RPC
+    fired while MATLAB held the lock, ``duckdb.connect()`` raised inside
+    ``_db.reopen()``, and the pre-incremented refcount was never rolled
+    back.  The next successful acquire then recorded ``refcount=2`` with
+    ``reopened=True`` — proof that one ghost holder was stuck at 1.
+    """
+
+    def test_reopen_failure_does_not_increment_refcount(self, db_path):
+        from scistack_gui.db import init_db, acquire_db_connection, release_db_connection
+        import scistack_gui.db as db_mod
+
+        init_db(db_path)
+        db_mod._db._duck.close()
+        db_mod._db_open = False
+        assert db_mod._db_refcount == 0
+
+        # Make reopen() fail the way duckdb.connect() does under a lock conflict.
+        def _boom():
+            raise OSError("Could not set lock on file (simulated)")
+
+        original_reopen = db_mod._db._duck.reopen
+        db_mod._db._duck.reopen = _boom
+        try:
+            with pytest.raises(OSError):
+                acquire_db_connection()
+        finally:
+            db_mod._db._duck.reopen = original_reopen
+
+        # The failed acquire must NOT have incremented the refcount.
+        assert db_mod._db_refcount == 0, (
+            f"refcount leaked to {db_mod._db_refcount} after failed reopen"
+        )
+        assert db_mod._db_open is False
+
+        # A subsequent successful acquire should still see refcount go 0 → 1.
+        acquire_db_connection()
+        assert db_mod._db_refcount == 1
+        assert db_mod._db_open is True
+
+        release_db_connection()
+        assert db_mod._db_refcount == 0
+        assert db_mod._db_open is False
+
+
 class TestMatlabCommandIncludesCleanup:
-    """Verify the generated MATLAB script always calls db.close()."""
+    """Verify the generated MATLAB script always closes the DB.
+
+    The script uses the ``scidb.close_database`` helper (not a bare
+    ``db.close()``) so the lock-release log fires exactly when the lock
+    actually drops — see ``+scidb/close_database.m``.
+    """
 
     def test_template_has_close(self):
         from scistack_gui.api.matlab_command import generate_matlab_command
@@ -127,8 +181,8 @@ class TestMatlabCommandIncludesCleanup:
             db_path="/data/test.duckdb",
             schema_keys=["subject"],
         )
-        # Must have db.close() in both try and catch branches
-        assert cmd.count("db.close()") == 2
+        # Must call scidb.close_database(db) in both try and catch branches.
+        assert cmd.count("scidb.close_database(db)") == 2
         assert "catch scistack_err__" in cmd
 
     def test_variants_has_close(self):
@@ -145,5 +199,5 @@ class TestMatlabCommandIncludesCleanup:
                 "record_count": 1,
             }],
         )
-        assert cmd.count("db.close()") == 2
+        assert cmd.count("scidb.close_database(db)") == 2
         assert "catch scistack_err__" in cmd

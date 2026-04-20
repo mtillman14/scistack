@@ -30,15 +30,30 @@ _db_lifecycle_lock = threading.Lock()
 
 
 def acquire_db_connection() -> None:
-    """Increment the holder count and reopen the connection if needed."""
+    """Increment the holder count and reopen the connection if needed.
+
+    If ``reopen()`` raises (typically because another process still holds
+    the DuckDB file lock), the refcount is **not** incremented — the caller
+    must not call :func:`release_db_connection`.  This keeps the refcount
+    consistent with the number of live holders, so a transient lock
+    conflict doesn't leak the count upward and keep the lock permanently
+    held on subsequent successful acquires.
+    """
     global _db_open, _db_refcount
     with _db_lifecycle_lock:
-        _db_refcount += 1
         reopened = False
         if not _db_open and _db is not None:
-            _db.reopen()
+            try:
+                _db.reopen()
+            except Exception:
+                logger.exception(
+                    "acquire_db_connection: reopen failed (refcount stays at %d)",
+                    _db_refcount,
+                )
+                raise
             _db_open = True
             reopened = True
+        _db_refcount += 1
         logger.debug("acquire_db_connection: refcount=%d, reopened=%s", _db_refcount, reopened)
 
 

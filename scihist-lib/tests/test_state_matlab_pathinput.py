@@ -171,3 +171,47 @@ class TestMatlabPathInputPartialRunGoesGrey:
             assert rows[0][0] == 15, (
                 f"Expected 15 lineage rows for {output_name}, got {rows[0][0]}"
             )
+
+    def test_grey_goes_green_after_fix_and_rerun(self, db, matlab_run):
+        """Full workflow: grey → fix → re-run the failing combo → green.
+
+        Starts from the partial-run state set up by ``matlab_run`` (15/16
+        success → grey).  Then simulates the user fixing the MATLAB
+        function so the previously-failing combo (``subject=01,
+        trial=06``) succeeds on a second run.  The function source is
+        unchanged (same hash) because the fix is external to the function
+        — e.g. a repaired input file — so the existing 15 records remain
+        up_to_date.  After saving the final combo, every node (the
+        function and all 3 output variables) must be green.
+        """
+        fn_proxy = matlab_run["fn"]
+        outputs = matlab_run["outputs"]
+
+        # Sanity: confirm the starting state is grey.
+        before = check_node_state(fn_proxy, outputs, db=db)
+        assert before["state"] == "grey"
+        assert before["counts"]["missing"] == 1
+
+        # Pretend the fix lets the previously-failing combo run and save.
+        failed = {"subject": FAILED_COMBO[0], "trial": FAILED_COMBO[1]}
+        _save_combo_outputs(db, fn_proxy, failed, outputs)
+
+        # Aggregate state across all 3 outputs: 16 up_to_date → green.
+        after = check_node_state(fn_proxy, outputs, db=db)
+        assert after["state"] == "green", (
+            f"Expected green after fix, got {after['state']}. "
+            f"Counts: {after['counts']}"
+        )
+        assert after["counts"]["up_to_date"] == 16
+        assert after["counts"]["missing"] == 0
+        assert after["counts"]["stale"] == 0
+
+        # Each individual output variable must also be green.
+        for cls in outputs:
+            per_var = check_node_state(fn_proxy, [cls], db=db)
+            assert per_var["state"] == "green", (
+                f"Expected {cls.__name__} green, got {per_var['state']}. "
+                f"Counts: {per_var['counts']}"
+            )
+            assert per_var["counts"]["up_to_date"] == 16
+            assert per_var["counts"]["missing"] == 0

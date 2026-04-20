@@ -195,8 +195,8 @@ class TestGenerateMatlabCommand:
             variants=variants,
         )
 
-        assert "scidb.register_variable('FilteredSignal')" in cmd
-        assert "scidb.register_variable('RawSignal')" in cmd
+        assert "scidb.register_variable(FilteredSignal())" in cmd
+        assert "scidb.register_variable(RawSignal())" in cmd
         assert "@bandpass_filter" in cmd
         assert "RawSignal()" in cmd
         assert "{FilteredSignal()}" in cmd
@@ -738,8 +738,10 @@ class TestFindSciMatlabMatlabDir:
         )
         contents = close_db.read_text()
         # The RELEASED log MUST fire after close returns, not before.
-        release_idx = contents.find("DuckDB lock RELEASED")
-        close_idx = contents.find("db.close()")
+        # Use rfind so docstring mentions of these strings (which appear
+        # before the code) don't mask the real code-order check.
+        release_idx = contents.rfind("DuckDB lock RELEASED")
+        close_idx = contents.rfind("db.close()")
         assert 0 < close_idx < release_idx, (
             "RELEASED log must appear after db.close() in close_database.m"
         )

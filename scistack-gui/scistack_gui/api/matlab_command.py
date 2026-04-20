@@ -130,7 +130,7 @@ def generate_matlab_command(
     if all_var_types:
         lines.append("% Register variable types")
         for vtype in sorted(all_var_types):
-            lines.append(f"scidb.register_variable('{vtype}');")
+            lines.append(f"scidb.register_variable({vtype}());")
         lines.append("")
 
     # Group variants by (input_types, constants). Multi-output MATLAB

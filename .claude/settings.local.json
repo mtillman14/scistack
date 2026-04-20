@@ -40,7 +40,8 @@
       "WebFetch(domain:blogs.mathworks.com)",
       "WebFetch(domain:www.mathworks.com)",
       "Bash(sort:*)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(awk NR>=415 && NR<=430 *)"
     ]
   }
 }
