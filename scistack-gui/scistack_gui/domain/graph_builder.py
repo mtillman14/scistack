@@ -310,6 +310,7 @@ def build_function_nodes(
     matlab_functions: set[str],
     saved_configs: dict[str, dict | None],
     matlab_output_order: dict[str, list[str]] | None = None,
+    matlab_param_to_class: dict[str, dict[str, str]] | None = None,
 ) -> list[dict]:
     """Build React Flow function nodes.
 
@@ -323,6 +324,10 @@ def build_function_nodes(
         matlab_functions: Set of MATLAB function names.
         saved_configs: {fn_name: config_dict or None} from manual nodes.
         matlab_output_order: {fn_name: [output_names in signature order]}.
+        matlab_param_to_class: {fn_name: {param_name: class_name}} — explicit
+            mapping from MATLAB signature param names to connected Variable class
+            names. Used to decide which declared params got wired up so their
+            handles are rendered (handle id `out__{param_name}`).
     """
     nodes = []
     for fn in sorted(fn_input_params.keys()):
@@ -335,14 +340,33 @@ def build_function_nodes(
             if name not in known:
                 input_params[name] = ""
 
-        # Order output types: MATLAB functions use declared signature order;
-        # any DB outputs not in the signature are appended sorted.
+        # MATLAB fns render handles in MATLAB-signature order using param names
+        # (e.g. "time", "force_left"). Non-MATLAB fns use the class names directly.
         actual_outputs = fn_outputs.get(fn, set())
         if fn in matlab_functions and matlab_output_order:
             declared = matlab_output_order.get(fn, [])
-            ordered = [t for t in declared if t in actual_outputs]
-            extras = sorted(t for t in actual_outputs if t not in declared)
-            out_types = ordered + extras
+            p2c = (matlab_param_to_class or {}).get(fn, {})
+            connected_classes = set(p2c.values()) | actual_outputs
+            # Signature order, but only for params that actually map to a class
+            # (either via an explicit edge or a DB variant).
+            out_types = [p for p in declared
+                         if p in p2c or p2c.get(p) in connected_classes]
+            if not out_types:
+                out_types = list(declared)
+            # Any class in DB variants that is not covered by the declared
+            # signature is a real anomaly — log it so we can see it.
+            covered = {p2c.get(p) for p in out_types if p in p2c}
+            orphan = actual_outputs - covered - {None}
+            if orphan:
+                logger.warning(
+                    "[graph_builder] matlab fn=%s: DB variants %s have no declared "
+                    "param mapping (matlab_param_to_class=%s)",
+                    fn, sorted(orphan), p2c,
+                )
+            logger.debug(
+                "[graph_builder] matlab fn=%s handles=%s param→class=%s",
+                fn, out_types, p2c,
+            )
         else:
             out_types = sorted(actual_outputs)
 
@@ -385,6 +409,7 @@ def build_edges(
     path_inputs: dict[str, dict],
     manual_edges: list[dict],
     hidden_ids: set[str],
+    matlab_param_to_class: dict[str, dict[str, str]] | None = None,
 ) -> list[dict]:
     """Build React Flow edges (DB-derived + manual).
 
@@ -395,9 +420,14 @@ def build_edges(
         path_inputs: {param_name: {"functions": set, ...}}.
         manual_edges: List of manual edge dicts from pipeline_store.
         hidden_ids: Set of hidden node IDs.
+        matlab_param_to_class: {fn_name: {param_name: class_name}} — for MATLAB
+            fns, the explicit mapping from signature param name to connected
+            Variable class. Drives sourceHandle=out__{param_name} for output
+            edges instead of the class-name-based handle.
     """
     edges = []
     seen_edges: set[tuple] = set()
+    p2c_all = matlab_param_to_class or {}
 
     # Variable → function edges.
     for fn, params in fn_input_params.items():
@@ -412,18 +442,24 @@ def build_edges(
                     "targetHandle": f"in__{param_name}",
                 })
 
-    # Function → variable edges.
+    # Function → variable edges. For MATLAB fns, use the param↔class mapping so
+    # sourceHandle=out__{param_name} (matches the handle IDs rendered by
+    # build_function_nodes). For non-MATLAB fns, keep the class-name convention.
     for fn, out_types in fn_outputs.items():
+        class_to_param = {c: p for p, c in p2c_all.get(fn, {}).items()}
         for out_type in out_types:
             key = (f"fn__{fn}", f"var__{out_type}")
-            if key not in seen_edges:
-                seen_edges.add(key)
-                edges.append({
-                    "id": f"e__{fn}__{out_type}",
-                    "source": f"fn__{fn}",
-                    "target": f"var__{out_type}",
-                    "sourceHandle": f"out__{out_type}",
-                })
+            if key in seen_edges:
+                continue
+            seen_edges.add(key)
+            param = class_to_param.get(out_type)
+            source_handle = f"out__{param}" if param else f"out__{out_type}"
+            edges.append({
+                "id": f"e__{fn}__{out_type}",
+                "source": f"fn__{fn}",
+                "target": f"var__{out_type}",
+                "sourceHandle": source_handle,
+            })
 
     # Constant → function edges.
     for const_name, fns in const_fns.items():

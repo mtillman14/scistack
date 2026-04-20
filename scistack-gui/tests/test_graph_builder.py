@@ -615,3 +615,98 @@ class TestMergeManualNodes:
         to_add, graduations = merge_manual_nodes(existing, {}, saved_positions={})
         assert to_add == []
         assert graduations == []
+
+
+# ---------------------------------------------------------------------------
+# MATLAB param-name handles (Fix B)
+# ---------------------------------------------------------------------------
+
+class TestMatlabParamNameHandles:
+    """Exercises the path where MATLAB param names differ from Variable class
+    names (e.g. ``output1 → Result``), to prove the graph_builder uses the
+    explicit mapping rather than any naming convention."""
+
+    def _make_nodes(self, **overrides):
+        defaults = dict(
+            fn_input_params={"fn_ex": {}},
+            fn_outputs={"fn_ex": {"Result"}},
+            fn_constants={"fn_ex": set()},
+            fn_variants_map={"fn_ex": []},
+            fn_params_map={"fn_ex": []},
+            run_states={},
+            matlab_functions={"fn_ex"},
+            saved_configs={"fn_ex": None},
+            matlab_output_order={"fn_ex": ["output1"]},
+            matlab_param_to_class={"fn_ex": {"output1": "Result"}},
+        )
+        defaults.update(overrides)
+        return build_function_nodes(**defaults)
+
+    def test_handles_use_param_name_not_class_name(self):
+        nodes = self._make_nodes()
+        assert nodes[0]["data"]["output_types"] == ["output1"]
+
+    def test_edges_use_param_name_in_source_handle(self):
+        edges = build_edges(
+            fn_input_params={},
+            fn_outputs={"fn_ex": {"Result"}},
+            const_fns={},
+            path_inputs={},
+            manual_edges=[],
+            hidden_ids=set(),
+            matlab_param_to_class={"fn_ex": {"output1": "Result"}},
+        )
+        fn_to_var = [e for e in edges if e.get("source") == "fn__fn_ex"]
+        assert len(fn_to_var) == 1
+        assert fn_to_var[0]["target"] == "var__Result"
+        assert fn_to_var[0]["sourceHandle"] == "out__output1"
+
+    def test_multi_output_preserves_signature_order(self):
+        # load_csv-style: signature order time, force_left, force_right;
+        # class names are Pascal-case and alphabetically would re-order.
+        nodes = build_function_nodes(
+            fn_input_params={"load_csv": {}},
+            fn_outputs={"load_csv": {"Time", "Force_Left", "Force_Right"}},
+            fn_constants={"load_csv": set()},
+            fn_variants_map={"load_csv": []},
+            fn_params_map={"load_csv": []},
+            run_states={},
+            matlab_functions={"load_csv"},
+            saved_configs={"load_csv": None},
+            matlab_output_order={"load_csv": ["time", "force_left", "force_right"]},
+            matlab_param_to_class={"load_csv": {
+                "time": "Time",
+                "force_left": "Force_Left",
+                "force_right": "Force_Right",
+            }},
+        )
+        assert nodes[0]["data"]["output_types"] == ["time", "force_left", "force_right"]
+
+    def test_non_matlab_fn_unaffected(self):
+        # Python fn with matlab_param_to_class empty keeps class-name handles.
+        edges = build_edges(
+            fn_input_params={},
+            fn_outputs={"py_fn": {"Out"}},
+            const_fns={},
+            path_inputs={},
+            manual_edges=[],
+            hidden_ids=set(),
+            matlab_param_to_class={},
+        )
+        fn_to_var = [e for e in edges if e.get("source") == "fn__py_fn"]
+        assert fn_to_var[0]["sourceHandle"] == "out__Out"
+
+    def test_unmapped_class_falls_back_to_class_handle(self):
+        # MATLAB fn where a DB variant's class has no param mapping — shouldn't
+        # crash, just fall back to the class-name handle.
+        edges = build_edges(
+            fn_input_params={},
+            fn_outputs={"fn_ex": {"Unmapped"}},
+            const_fns={},
+            path_inputs={},
+            manual_edges=[],
+            hidden_ids=set(),
+            matlab_param_to_class={"fn_ex": {}},
+        )
+        fn_to_var = [e for e in edges if e.get("source") == "fn__fn_ex"]
+        assert fn_to_var[0]["sourceHandle"] == "out__Unmapped"

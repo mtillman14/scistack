@@ -39,7 +39,8 @@
       "WebFetch(domain:deepwiki.com)",
       "WebFetch(domain:blogs.mathworks.com)",
       "WebFetch(domain:www.mathworks.com)",
-      "Bash(sort:*)"
+      "Bash(sort:*)",
+      "Bash(git *)"
     ]
   }
 }

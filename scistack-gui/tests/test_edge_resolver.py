@@ -9,6 +9,7 @@ import pytest
 from scistack_gui.domain.edge_resolver import (
     ResolvedEdges,
     infer_manual_fn_output_types,
+    infer_manual_fn_param_to_class,
     node_id_to_var_label,
     resolve_function_edges,
 )
@@ -439,3 +440,76 @@ class TestInferManualFnOutputTypes:
             existing_node_labels={},
         )
         assert set(result) == {"A", "B"}
+
+
+class TestInferManualFnParamToClass:
+    def test_extracts_param_to_class_from_outgoing_edge(self):
+        # output1 (MATLAB param) → Result (Variable class): no naming convention.
+        edges = [
+            {"source": "fn__fn_ex", "target": "var__Result",
+             "sourceHandle": "out__output1", "targetHandle": ""},
+        ]
+        result = infer_manual_fn_param_to_class(
+            fn_node_ids={"fn__fn_ex"},
+            manual_edges=edges,
+            manual_nodes={},
+            existing_node_labels={"var__Result": "Result"},
+        )
+        assert result == {"output1": "Result"}
+
+    def test_ignores_input_edges(self):
+        edges = [
+            {"source": "var__In", "target": "fn__fn",
+             "sourceHandle": "", "targetHandle": "in__x"},
+        ]
+        result = infer_manual_fn_param_to_class(
+            fn_node_ids={"fn__fn"},
+            manual_edges=edges,
+            manual_nodes={},
+            existing_node_labels={},
+        )
+        assert result == {}
+
+    def test_ignores_edges_without_out_prefix(self):
+        edges = [
+            {"source": "fn__fn", "target": "var__A",
+             "sourceHandle": "", "targetHandle": ""},
+        ]
+        result = infer_manual_fn_param_to_class(
+            fn_node_ids={"fn__fn"},
+            manual_edges=edges,
+            manual_nodes={},
+            existing_node_labels={"var__A": "A"},
+        )
+        assert result == {}
+
+    def test_first_mapping_wins_on_duplicate_param(self):
+        edges = [
+            {"source": "fn__fn", "target": "var__First",
+             "sourceHandle": "out__p", "targetHandle": ""},
+            {"source": "fn__fn", "target": "var__Second",
+             "sourceHandle": "out__p", "targetHandle": ""},
+        ]
+        result = infer_manual_fn_param_to_class(
+            fn_node_ids={"fn__fn"},
+            manual_edges=edges,
+            manual_nodes={},
+            existing_node_labels={"var__First": "First", "var__Second": "Second"},
+        )
+        assert result == {"p": "First"}
+
+    def test_manual_var_node_target_resolves(self):
+        edges = [
+            {"source": "fn__fn", "target": "uuid-var",
+             "sourceHandle": "out__output_a", "targetHandle": ""},
+        ]
+        manual_nodes = {
+            "uuid-var": {"type": "variableNode", "label": "CustomVar"},
+        }
+        result = infer_manual_fn_param_to_class(
+            fn_node_ids={"fn__fn"},
+            manual_edges=edges,
+            manual_nodes=manual_nodes,
+            existing_node_labels={},
+        )
+        assert result == {"output_a": "CustomVar"}

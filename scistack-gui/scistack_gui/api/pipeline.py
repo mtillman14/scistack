@@ -91,16 +91,22 @@ def _get_record_counts(db: DatabaseManager, var_types: set[str]) -> dict[str, in
 def _build_matlab_fn_proxy(fn_name: str):
     """Build a MatlabLineageFcn proxy for use in check_node_state.
 
-    Uses the source hash and output count from the MATLAB registry so
-    the proxy's ``.hash`` matches what was stored at save time.
+    Uses the source hash from the MATLAB registry so the proxy's ``.hash``
+    matches what was stored at save time.
     """
     from scistack_gui import matlab_registry
     from sci_matlab.bridge import MatlabLineageFcn
 
     info = matlab_registry.get_matlab_function(fn_name)
-    unpack = info.n_outputs >= 2
-    proxy = MatlabLineageFcn(info.source_hash, fn_name, unpack_output=unpack)
-    # check_node_state reads getattr(fn, "__name__") to match lineage records.
+    # unpack_output MUST match sci-matlab/.../+scihist/for_each.m's default.
+    # Native MATLAB multi-output (`[a,b,c] = fn(...)`) uses unpack_output=False
+    # and is unpacked at runtime via LineageFcn's n_out>1 branch. unpack_output=True
+    # is only for the rarer single-cell-array-return pattern.
+    proxy = MatlabLineageFcn(info.source_hash, fn_name, unpack_output=False)
+    logger.debug(
+        "[pipeline] matlab proxy fn=%s source_hash=%s unpack=False hash=%s",
+        fn_name, info.source_hash[:12], proxy.hash[:12],
+    )
     proxy.__name__ = fn_name
     return proxy
 
@@ -272,6 +278,45 @@ def _build_graph(db: DatabaseManager) -> dict:
         for name in matlab_functions
     }
 
+    # Build matlab_param_to_class from DB variants' __output_num (written by
+    # _build_lineage_version_keys) and, as a fallback for ungraduated fns with
+    # no DB history yet, from persisted manual edges.
+    matlab_param_to_class: dict[str, dict[str, str]] = {}
+    for v in variants:
+        fn = v.get("function_name")
+        if fn not in matlab_functions:
+            continue
+        onum = v.get("output_num")
+        out_type = v.get("output_type")
+        if onum is None or out_type is None:
+            continue
+        names = matlab_output_order.get(fn) or []
+        if 0 <= int(onum) < len(names):
+            matlab_param_to_class.setdefault(fn, {})[names[int(onum)]] = out_type
+    from scistack_gui.domain.edge_resolver import infer_manual_fn_param_to_class
+    manual_edges_for_fn_lookup = layout_store.read_manual_edges()
+    existing_node_labels_pre = {f"var__{t}": t for t in agg.all_var_types}
+    for fn in matlab_functions:
+        fn_ids = {f"fn__{fn}"}
+        fn_ids |= {
+            nid for nid, meta in manual_nodes.items()
+            if meta.get("type") == "functionNode" and meta.get("label") == fn
+        }
+        edge_map = infer_manual_fn_param_to_class(
+            fn_node_ids=fn_ids,
+            manual_edges=manual_edges_for_fn_lookup,
+            manual_nodes=manual_nodes,
+            existing_node_labels=existing_node_labels_pre,
+        )
+        if edge_map:
+            existing = matlab_param_to_class.setdefault(fn, {})
+            for p, c in edge_map.items():
+                existing.setdefault(p, c)
+    logger.debug(
+        "[pipeline] matlab_param_to_class=%s",
+        {k: dict(v) for k, v in matlab_param_to_class.items()},
+    )
+
     # --- Overlay saved path inputs ---
     saved_path_inputs = layout_store.read_all_path_input_names()
     gb.overlay_saved_path_inputs(agg.path_inputs, saved_path_inputs)
@@ -285,13 +330,15 @@ def _build_graph(db: DatabaseManager) -> dict:
         agg.fn_variants_map, fn_params_map, run_states,
         matlab_functions, saved_configs,
         matlab_output_order=matlab_output_order,
+        matlab_param_to_class=matlab_param_to_class,
     )
 
     # --- Build edges (pure) ---
-    manual_edges_list = layout_store.read_manual_edges()
+    manual_edges_list = manual_edges_for_fn_lookup
     edges = gb.build_edges(
         agg.fn_input_params, agg.fn_outputs, agg.const_fns,
         agg.path_inputs, manual_edges_list, hidden_ids,
+        matlab_param_to_class=matlab_param_to_class,
     )
 
     # --- Merge manual nodes ---

@@ -433,6 +433,11 @@ def _build_lineage_version_keys(result: Any) -> dict:
             constants[param_name] = input_val
 
     keys: dict = {"__fn": fn_name, "__fn_hash": fn_hash}
+    # Record the output's position in the function's signature (0-based). The GUI
+    # uses this to map class names back to MATLAB param names for handle labels.
+    output_num = getattr(result, "output_num", None)
+    if output_num is not None:
+        keys["__output_num"] = int(output_num)
     if input_types:
         keys["__inputs"] = json.dumps(input_types, sort_keys=True)
     if constants:
@@ -2439,6 +2444,9 @@ class DatabaseManager:
                 output_type   (str),
                 input_types   (dict: param_name → type_name),
                 constants     (dict: param_name → value),
+                output_num    (int | None: 0-based position in the fn signature;
+                               None for legacy records written before __output_num
+                               was added),
                 record_count  (int: distinct records for this variant)
         """
         sql = "SELECT variable_name, version_keys, record_id FROM _record_metadata"
@@ -2478,11 +2486,13 @@ class DatabaseManager:
 
             group_record_ids[group_key].add(record_id)
             if group_key not in group_info:
+                output_num = vk.get("__output_num")
                 group_info[group_key] = {
                     "function_name": fn_name,
                     "output_type": variable_name,
                     "input_types": input_types,
                     "constants": constants,
+                    "output_num": output_num,
                 }
 
         results = []

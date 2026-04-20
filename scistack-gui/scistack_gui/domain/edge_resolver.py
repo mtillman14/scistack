@@ -169,3 +169,36 @@ def infer_manual_fn_output_types(
             if var_label and var_label not in output_types:
                 output_types.append(var_label)
     return output_types
+
+
+def infer_manual_fn_param_to_class(
+    fn_node_ids: set[str],
+    manual_edges: list[dict],
+    manual_nodes: dict[str, dict],
+    existing_node_labels: dict[str, str],
+) -> dict[str, str]:
+    """Extract {param_name: class_name} for a fn from its outgoing manual edges.
+
+    Each manual edge from a function node carries the MATLAB signature param
+    name in ``sourceHandle`` (``out__{param_name}``) and the downstream
+    Variable class via the edge target. This gives an explicit mapping that
+    does not rely on naming conventions — e.g. ``output1 → Result`` works.
+
+    Edges without an ``out__`` prefix or without a resolvable target class
+    are skipped. On duplicate param names the first wins.
+    """
+    mapping: dict[str, str] = {}
+    for edge in manual_edges:
+        if edge.get("source", "") not in fn_node_ids:
+            continue
+        sh = edge.get("sourceHandle") or ""
+        if not sh.startswith("out__"):
+            continue
+        param = sh[len("out__"):]
+        if not param or param in mapping:
+            continue
+        class_name = node_id_to_var_label(
+            edge.get("target", ""), existing_node_labels, manual_nodes)
+        if class_name:
+            mapping[param] = class_name
+    return mapping

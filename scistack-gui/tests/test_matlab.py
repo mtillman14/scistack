@@ -660,6 +660,52 @@ class TestSortInferredByParamsOrder:
         assert result == ["Force_Right", "Time"]
 
 
+class TestMatlabFnProxyHash:
+    """Fix A — the proxy hash must match what MATLAB's scidb.LineageFcn(fn)
+    (unpack_output=false default) produces, so scihist.check_node_state does
+    not report every combo as "stale: function hash changed"."""
+
+    def test_proxy_uses_unpack_false(self, monkeypatch):
+        from hashlib import sha256
+
+        from scistack_gui.api.pipeline import _build_matlab_fn_proxy
+        from scistack_gui import matlab_registry as _mr
+
+        class FakeInfo:
+            source_hash = "a" * 64
+            n_outputs = 3
+            params = ("x",)
+            output_names = ("a", "b", "c")
+
+        monkeypatch.setattr(
+            _mr, "get_matlab_function", lambda _name: FakeInfo()
+        )
+
+        proxy = _build_matlab_fn_proxy("load_csv")
+        expected = sha256(f"{FakeInfo.source_hash}-False".encode()).hexdigest()
+        assert proxy.hash == expected
+        assert proxy.unpack_output is False
+
+    def test_single_output_hash_also_unpack_false(self, monkeypatch):
+        from hashlib import sha256
+
+        from scistack_gui.api.pipeline import _build_matlab_fn_proxy
+        from scistack_gui import matlab_registry as _mr
+
+        class FakeInfo:
+            source_hash = "b" * 64
+            n_outputs = 1
+            params = ()
+            output_names = ("only",)
+
+        monkeypatch.setattr(
+            _mr, "get_matlab_function", lambda _name: FakeInfo()
+        )
+        proxy = _build_matlab_fn_proxy("fn")
+        expected = sha256(f"{FakeInfo.source_hash}-False".encode()).hexdigest()
+        assert proxy.hash == expected
+
+
 class TestFindSciMatlabMatlabDir:
     def test_finds_matlab_dir(self):
         """sci-matlab is installed in this environment; its matlab/ dir must be found."""
@@ -676,6 +722,30 @@ class TestFindSciMatlabMatlabDir:
         assert (d / "+scihist").is_dir(), f"+scihist not found under {result}"
         assert (d / "+scidb").is_dir(), f"+scidb not found under {result}"
         assert (d / "+scifor").is_dir(), f"+scifor not found under {result}"
+
+    def test_close_database_helper_present(self):
+        """Regression: +scidb/close_database.m must exist so matlab_command.py
+        can call scidb.close_database(db) for post-close lock-release logging.
+        """
+        from scistack_gui.server import _find_sci_matlab_matlab_dir
+        from pathlib import Path
+
+        result = _find_sci_matlab_matlab_dir()
+        assert result is not None
+        close_db = Path(result) / "+scidb" / "close_database.m"
+        assert close_db.exists(), (
+            f"scidb.close_database not found at {close_db}"
+        )
+        contents = close_db.read_text()
+        # The RELEASED log MUST fire after close returns, not before.
+        release_idx = contents.find("DuckDB lock RELEASED")
+        close_idx = contents.find("db.close()")
+        assert 0 < close_idx < release_idx, (
+            "RELEASED log must appear after db.close() in close_database.m"
+        )
+        # A close error must be logged and rethrown (not silently swallowed).
+        assert "db.close FAILED" in contents
+        assert "rethrow(close_err__)" in contents
 
     def test_scihist_configure_database_present(self):
         """Regression: +scihist/configure_database.m must exist so MATLAB can call it."""
