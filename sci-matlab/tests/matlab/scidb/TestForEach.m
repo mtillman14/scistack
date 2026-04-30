@@ -120,6 +120,22 @@ classdef TestForEach < matlab.unittest.TestCase
             testCase.verifyGreaterThanOrEqual(numel(versions), 1);
         end
 
+        function test_struct_constant_input_saves_correctly(testCase)
+            % Struct constants must not crash format_save_meta or
+            % metadata_to_pydict during the save phase.
+            RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');
+
+            config = struct('scale_factor', 3);
+            scidb.for_each(@scale_with_config, ...
+                struct('x', RawSignal(), 'config', config), ...
+                {ProcessedSignal()}, ...
+                'subject', 1, ...
+                'session', "A");
+
+            result = ProcessedSignal().load('subject', 1, 'session', 'A');
+            testCase.verifyEqual(result.data, [30 60 90]', 'AbsTol', 1e-10);
+        end
+
         % --- Two loadable inputs ---
 
         function test_two_variable_inputs(testCase)

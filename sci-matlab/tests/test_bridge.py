@@ -27,6 +27,8 @@ from sci_matlab.bridge import (
     make_lineage_fcn_result,
     register_matlab_variable,
     get_surrogate_class,
+    for_each_batch_save_dataframe,
+    split_flat_to_lists,
 )
 from scilineage.core import LineageFcnResult, LineageFcn, LineageFcnInvocation
 from scilineage.inputs import classify_inputs, classify_input, InputKind
@@ -364,3 +366,239 @@ class TestSaveVariableCompatibility:
 
         finally:
             db.close()
+
+
+# ---------------------------------------------------------------------------
+# for_each_batch_save_dataframe tests
+# ---------------------------------------------------------------------------
+
+class TestForEachBatchSaveDataframe:
+    """Verify for_each_batch_save_dataframe splits, saves, and loads correctly."""
+
+    def _make_db(self, tmp_path, type_name="BatchDfVar"):
+        from scidb.database import configure_database
+
+        db = configure_database(
+            tmp_path / "test.duckdb",
+            ["subject", "session"],
+        )
+        register_matlab_variable(type_name)
+        cls = get_surrogate_class(type_name)
+        return db, cls
+
+    def test_single_row_dataframes(self, tmp_path):
+        """3 items, each a 1-row DataFrame — verify round-trip load."""
+        import pandas as pd
+
+        db, cls = self._make_db(tmp_path, "BatchDf1")
+        try:
+            df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [10.0, 20.0, 30.0]})
+            row_counts = np.array([1, 1, 1], dtype=np.int64)
+            meta_keys = ["subject", "session"]
+            meta_columns = [
+                np.array([1, 2, 3]),
+                "A\x1eB\x1eC",
+            ]
+
+            result = for_each_batch_save_dataframe(
+                "BatchDf1", df, row_counts, meta_keys, meta_columns, db=db
+            )
+            rids = result.strip().split("\n")
+            assert len(rids) == 3
+
+            # Verify round-trip: load each item
+            loaded = db.load(cls, {"subject": 1, "session": "A"})
+            assert loaded.data.shape == (1, 2)
+            assert float(loaded.data["x"].iloc[0]) == 1.0
+
+            loaded2 = db.load(cls, {"subject": 3, "session": "C"})
+            assert float(loaded2.data["y"].iloc[0]) == 30.0
+        finally:
+            db.close()
+
+    def test_multi_row_dataframes(self, tmp_path):
+        """2 items with 3 and 2 rows — verify shapes."""
+        import pandas as pd
+
+        db, cls = self._make_db(tmp_path, "BatchDf2")
+        try:
+            df = pd.DataFrame({"val": [1.0, 2.0, 3.0, 4.0, 5.0]})
+            row_counts = np.array([3, 2], dtype=np.int64)
+            meta_keys = ["subject"]
+            meta_columns = [np.array([1, 2])]
+
+            result = for_each_batch_save_dataframe(
+                "BatchDf2", df, row_counts, meta_keys, meta_columns,
+                common_metadata={"session": "X"}, db=db,
+            )
+            rids = result.strip().split("\n")
+            assert len(rids) == 2
+
+            loaded1 = db.load(cls, {"subject": 1, "session": "X"})
+            assert loaded1.data.shape == (3, 1)
+            assert list(loaded1.data["val"]) == [1.0, 2.0, 3.0]
+
+            loaded2 = db.load(cls, {"subject": 2, "session": "X"})
+            assert loaded2.data.shape == (2, 1)
+            assert list(loaded2.data["val"]) == [4.0, 5.0]
+        finally:
+            db.close()
+
+    def test_common_metadata_applied(self, tmp_path):
+        """config/constant metadata reaches every item."""
+        import pandas as pd
+
+        db, cls = self._make_db(tmp_path, "BatchDf3")
+        try:
+            df = pd.DataFrame({"a": [10.0, 20.0]})
+            row_counts = np.array([1, 1], dtype=np.int64)
+            meta_keys = ["subject"]
+            meta_columns = [np.array([1, 2])]
+            common = {"session": "S1", "__fn": "test_func"}
+
+            for_each_batch_save_dataframe(
+                "BatchDf3", df, row_counts, meta_keys, meta_columns,
+                common_metadata=common, db=db,
+            )
+
+            loaded = db.load(cls, {"subject": 1, "session": "S1"})
+            assert loaded is not None
+            assert loaded.metadata.get("__fn") == "test_func"
+        finally:
+            db.close()
+
+    def test_numpy_meta_columns(self, tmp_path):
+        """numpy arrays as metadata columns."""
+        import pandas as pd
+
+        db, cls = self._make_db(tmp_path, "BatchDf4")
+        try:
+            df = pd.DataFrame({"v": [100.0, 200.0]})
+            row_counts = np.array([1, 1], dtype=np.int64)
+            meta_keys = ["subject", "session"]
+            meta_columns = [
+                np.array([5, 6]),
+                np.array([10, 20]),
+            ]
+
+            result = for_each_batch_save_dataframe(
+                "BatchDf4", df, row_counts, meta_keys, meta_columns, db=db,
+            )
+            rids = result.strip().split("\n")
+            assert len(rids) == 2
+        finally:
+            db.close()
+
+    def test_string_meta_columns_via_record_separator(self, tmp_path):
+        """\\x1e-joined strings as metadata columns."""
+        import pandas as pd
+
+        db, cls = self._make_db(tmp_path, "BatchDf5")
+        try:
+            df = pd.DataFrame({"w": [1.0, 2.0, 3.0]})
+            row_counts = np.array([1, 1, 1], dtype=np.int64)
+            meta_keys = ["subject", "session"]
+            meta_columns = [
+                "1\x1e2\x1e3",
+                "alpha\x1ebeta\x1egamma",
+            ]
+
+            result = for_each_batch_save_dataframe(
+                "BatchDf5", df, row_counts, meta_keys, meta_columns, db=db,
+            )
+            rids = result.strip().split("\n")
+            assert len(rids) == 3
+
+            loaded = db.load(cls, {"subject": "3", "session": "gamma"})
+            assert float(loaded.data["w"].iloc[0]) == 3.0
+        finally:
+            db.close()
+
+    def test_empty_dataframe_returns_empty(self, tmp_path):
+        """Edge case: empty row_counts → no saves, returns empty string."""
+        import pandas as pd
+
+        db, _ = self._make_db(tmp_path, "BatchDf6")
+        try:
+            df = pd.DataFrame({"x": pd.Series(dtype=float)})
+            row_counts = np.array([], dtype=np.int64)
+
+            result = for_each_batch_save_dataframe(
+                "BatchDf6", df, row_counts, [], [], db=db,
+            )
+            assert result == ""
+        finally:
+            db.close()
+
+    def test_unregistered_type_raises(self, tmp_path):
+        """ValueError for unknown type."""
+        import pandas as pd
+
+        df = pd.DataFrame({"x": [1.0]})
+        row_counts = np.array([1], dtype=np.int64)
+
+        with pytest.raises(ValueError, match="not registered"):
+            for_each_batch_save_dataframe(
+                "CompletelyUnknownType_xyz_999", df, row_counts, [], [],
+            )
+
+
+# ---------------------------------------------------------------------------
+# split_flat_to_lists tests
+# ---------------------------------------------------------------------------
+
+class TestSplitFlatToLists:
+    """Verify split_flat_to_lists correctly splits flat arrays into Python lists."""
+
+    def test_float_split(self):
+        """Float64 array split into 3 equal-length lists."""
+        flat = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=np.float64)
+        lengths = np.array([2, 2, 2], dtype=np.int64)
+        result = split_flat_to_lists(flat, lengths)
+        assert result == [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+        # Verify native Python types
+        assert all(isinstance(x, float) for sublist in result for x in sublist)
+
+    def test_bool_split(self):
+        """Bool array split into lists of True/False."""
+        flat = np.array([True, False, True, True], dtype=bool)
+        lengths = np.array([2, 2], dtype=np.int64)
+        result = split_flat_to_lists(flat, lengths)
+        assert result == [[True, False], [True, True]]
+        assert all(isinstance(x, bool) for sublist in result for x in sublist)
+
+    def test_variable_lengths(self):
+        """Different sub-list lengths (1, 3, 2)."""
+        flat = np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0], dtype=np.float64)
+        lengths = np.array([1, 3, 2], dtype=np.int64)
+        result = split_flat_to_lists(flat, lengths)
+        assert result == [[10.0], [20.0, 30.0, 40.0], [50.0, 60.0]]
+
+    def test_empty_sublists(self):
+        """Some zero-length entries produce empty lists."""
+        flat = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+        lengths = np.array([0, 2, 0, 1, 0], dtype=np.int64)
+        result = split_flat_to_lists(flat, lengths)
+        assert result == [[], [1.0, 2.0], [], [3.0], []]
+
+    def test_empty_input(self):
+        """Empty flat array + empty lengths = empty result."""
+        flat = np.array([], dtype=np.float64)
+        lengths = np.array([], dtype=np.int64)
+        result = split_flat_to_lists(flat, lengths)
+        assert result == []
+
+    def test_int_split(self):
+        """Integer array split into lists."""
+        flat = np.array([1, 2, 3, 4, 5], dtype=np.int64)
+        lengths = np.array([3, 2], dtype=np.int64)
+        result = split_flat_to_lists(flat, lengths)
+        assert result == [[1, 2, 3], [4, 5]]
+        assert all(isinstance(x, int) for sublist in result for x in sublist)
+
+    def test_single_element_sublists(self):
+        """Each sub-list has exactly one element."""
+        flat = np.array([10.0, 20.0, 30.0], dtype=np.float64)
+        lengths = np.array([1, 1, 1], dtype=np.int64)
+        result = split_flat_to_lists(flat, lengths)
+        assert result == [[10.0], [20.0], [30.0]]

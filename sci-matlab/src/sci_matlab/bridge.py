@@ -138,6 +138,37 @@ class MatlabLineageFcnInvocation:
 # ---------------------------------------------------------------------------
 
 
+def split_flat_to_lists(flat_array, lengths):
+    """Split a flat numpy array into a list of Python lists by lengths.
+
+    Used by MATLAB's to_python cell-column fast path.  Instead of
+    N separate MATLAB→Python bridge crossings (one per cell element),
+    MATLAB concatenates all cell elements into one flat array, records
+    their lengths, and sends both in a single crossing.  This function
+    splits the flat array back into per-element Python lists.
+
+    Parameters
+    ----------
+    flat_array : numpy.ndarray
+        1-D array of concatenated values.
+    lengths : numpy.ndarray
+        1-D integer array where ``lengths[i]`` is the number of elements
+        belonging to sub-list *i*.
+
+    Returns
+    -------
+    list of list
+        One Python list per entry in *lengths*, each containing native
+        Python scalars (float, int, bool).
+    """
+    result = []
+    pos = 0
+    for length in lengths.tolist():
+        result.append(flat_array[pos:pos + length].tolist())
+        pos += length
+    return result
+
+
 def check_cache(invocation: MatlabLineageFcnInvocation):
     """Check if a computation is already cached.
 
@@ -249,6 +280,119 @@ def for_each_batch_save(type_name, data_list, metadata_list, db=None):
     result = "\n".join(_db.save_batch(cls, data_items))
 
     Log.info(f"for_each_batch_save({type_name}): {n_items} items, "
+             f"total {_time.perf_counter() - t_start:.3f}s")
+    return result
+
+
+def for_each_batch_save_dataframe(type_name, dataframe, row_counts, meta_keys, meta_columns, common_metadata=None, db=None):
+    """Batch save for for_each when outputs are DataFrames.
+
+    Accepts a single concatenated DataFrame (all output tables vertcat'd),
+    a row_counts array indicating how many rows belong to each item, columnar
+    metadata (one list/array per metadata key), and common metadata applied to
+    every item.  Splits the DataFrame, assembles (sub_df, metadata_dict) tuples,
+    and calls save_batch once.
+
+    This avoids per-row MATLAB-to-Python bridge crossings for to_python() and
+    metadata_to_pydict(), replacing ~N*K crossings with a small constant number.
+
+    Parameters
+    ----------
+    type_name : str
+        Variable class name (e.g. "ProcessedSignal").
+    dataframe : pandas.DataFrame
+        Single concatenated DataFrame with all rows.
+    row_counts : list or numpy array
+        Number of rows per item (len = number of items to save).
+    meta_keys : list of str
+        Metadata column names, same order as meta_columns.
+    meta_columns : list of (list or numpy array or str)
+        One inner list/array per metadata key, each with one value per item.
+        Strings are record-separator (\\x1e) delimited.
+    common_metadata : dict or None
+        Extra metadata applied to every item (e.g. config_nv + constant_nv).
+    db : DatabaseManager or None
+        Optional database; uses global default when None.
+
+    Returns
+    -------
+    str
+        Newline-joined record IDs.
+    """
+    import time as _time
+    from scidb.log import Log
+    from scidb.variable import BaseVariable
+    from scidb.database import get_database
+
+    cls = BaseVariable.get_subclass_by_name(type_name)
+    if cls is None:
+        raise ValueError(
+            f"Variable type '{type_name}' is not registered. "
+            f"Call scidb.register_variable('{type_name}') first."
+        )
+
+    t_start = _time.perf_counter()
+
+    _db = db if db is not None and not isinstance(db, type(None)) else get_database()
+    common = dict(common_metadata) if common_metadata else {}
+    keys = list(meta_keys)
+
+    # Convert row_counts to a Python list
+    if hasattr(row_counts, 'tolist'):
+        rc = row_counts.tolist()
+    else:
+        rc = [int(x) for x in row_counts]
+
+    n = len(rc)
+
+    if n == 0:
+        Log.info(f"for_each_batch_save_dataframe({type_name}): 0 items, nothing to save")
+        return ""
+
+    # Convert columnar metadata (same pattern as save_batch_bridge)
+    meta_lists = []
+    for j in range(len(keys)):
+        col = meta_columns[j]
+        if isinstance(col, str):
+            # Joined string from MATLAB (record-separator delimited)
+            meta_lists.append(col.split('\x1e'))
+        elif hasattr(col, 'tolist'):
+            meta_lists.append(col.tolist())
+        else:
+            meta_lists.append([v.item() if hasattr(v, 'item') else v for v in col])
+
+    # Split the concatenated DataFrame into per-item DataFrames
+    t_split = _time.perf_counter()
+    offsets = []
+    pos = 0
+    for count in rc:
+        offsets.append(pos)
+        pos += count
+
+    data_items = []
+    for i in range(n):
+        start = offsets[i]
+        end = start + rc[i]
+        sub_df = dataframe.iloc[start:end].reset_index(drop=True)
+
+        meta = dict(common)
+        for j, key in enumerate(keys):
+            meta[key] = meta_lists[j][i]
+
+        data_items.append((sub_df, meta))
+
+    t_convert = _time.perf_counter()
+    Log.debug(f"for_each_batch_save_dataframe({type_name}): {n} items, "
+              f"split+meta {t_convert - t_split:.3f}s, "
+              f"total prep {t_convert - t_start:.3f}s")
+
+    if n > 0:
+        Log.info(f"for_each_batch_save_dataframe({type_name}): {n} items, "
+                 f"DataFrame {dataframe.shape[0]}x{dataframe.shape[1]}")
+
+    result = "\n".join(_db.save_batch(cls, data_items))
+
+    Log.info(f"for_each_batch_save_dataframe({type_name}): {n} items, "
              f"total {_time.perf_counter() - t_start:.3f}s")
     return result
 

@@ -908,6 +908,25 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
         batch_accum{o}.count = 0;
     end
 
+    % --- Fast batch path for single-output DataFrame results ---
+    % When all outputs are tables with the same schema, vertcat them into one
+    % large table, call to_python() once, and pass columnar metadata to
+    % Python. This avoids ~N per-row bridge crossings.
+    if n_outputs == 1 && all(output_col_present)
+        try
+            fast_ok = try_fast_batch_save(result_tbl, outputs, output_names, ...
+                meta_cols, config_nv, constant_nv, py_db);
+            if fast_ok
+                save_all_elapsed = toc(save_all_t0);
+                scidb.Log.info('save_results: fast batch saved all outputs in %.3fs', save_all_elapsed);
+                return;
+            end
+        catch fast_err
+            scidb.Log.warn('save_results: fast batch path failed, falling back to per-row: %s', ...
+                fast_err.message);
+        end
+    end
+
     if all(output_col_present)
         % Standard mode: one row = one save operation
         scidb.Log.debug('save_results: standard mode, %d rows to accumulate', height(result_tbl));
@@ -961,7 +980,11 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
                         meta_str = format_save_meta(save_nv);
                         scidb.Log.info('[save] %s: %s (lineage) saved in %.3fs', meta_str, type_name, lineage_elapsed);
                     catch err
-                        meta_str = format_save_meta(save_nv);
+                        try
+                            meta_str = format_save_meta(save_nv);
+                        catch
+                            meta_str = '<metadata format error>';
+                        end
                         scidb.Log.err('%s: lineage save failed: %s', meta_str, err.message);
                         fprintf(2, '[SciStack] lineage save FAILED for %s: %s\n', meta_str, err.message);
                         fprintf(2, '           %s\n', err.getReport('basic'));
@@ -976,7 +999,11 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
                         batch_accum{o}.py_metas.append(scidb.internal.metadata_to_pydict(save_nv{:}));
                         batch_accum{o}.count = batch_accum{o}.count + 1;
                     catch err
-                        meta_str = format_save_meta(save_nv);
+                        try
+                            meta_str = format_save_meta(save_nv);
+                        catch
+                            meta_str = '<metadata format error>';
+                        end
                         scidb.Log.err('%s: failed to convert for batch: %s', meta_str, err.message);
                     end
                 end
@@ -1013,7 +1040,11 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
                     batch_accum{o}.py_metas.append(scidb.internal.metadata_to_pydict(save_nv{:}));
                     batch_accum{o}.count = batch_accum{o}.count + 1;
                 catch err
-                    meta_str = format_save_meta(save_nv);
+                    try
+                        meta_str = format_save_meta(save_nv);
+                    catch
+                        meta_str = '<metadata format error>';
+                    end
                     scidb.Log.err('%s: failed to convert for batch: %s', meta_str, err.message);
                 end
             end
@@ -1050,6 +1081,139 @@ function save_results(result_tbl, outputs, output_names, config_nv, constant_nv,
 end
 
 
+function ok = try_fast_batch_save(result_tbl, outputs, output_names, ...
+    meta_cols, config_nv, constant_nv, py_db)
+%TRY_FAST_BATCH_SAVE  Attempt fast columnar batch save for single-output DataFrame results.
+%   Returns true if the fast path succeeded, false if it should fall back.
+
+    ok = false;
+    n_rows = height(result_tbl);
+    out_name = output_names{1};
+
+    % Guard 1: output column must exist and be a cell array
+    if ~ismember(out_name, result_tbl.Properties.VariableNames)
+        return;
+    end
+    col_data = result_tbl.(out_name);
+    if ~iscell(col_data)
+        return;
+    end
+
+    % Guard 2: all elements must be tables (not LineageFcnResult, not empty)
+    for ri = 1:n_rows
+        if isempty(col_data{ri}) || ~istable(col_data{ri})
+            return;
+        end
+        if isa(col_data{ri}, 'scidb.LineageFcnResult')
+            return;
+        end
+    end
+
+    % Guard 3: all tables must have the same column names (vertcatable)
+    ref_cols = sort(string(col_data{1}.Properties.VariableNames));
+    for ri = 2:n_rows
+        this_cols = sort(string(col_data{ri}.Properties.VariableNames));
+        if ~isequal(ref_cols, this_cols)
+            return;
+        end
+    end
+
+    scidb.Log.debug('try_fast_batch_save: eligible, %d items', n_rows);
+    fast_t0 = tic;
+
+    % Step 1: vertcat all output tables and record row counts
+    row_counts = zeros(n_rows, 1, 'int64');
+    for ri = 1:n_rows
+        row_counts(ri) = int64(height(col_data{ri}));
+    end
+    combined_tbl = vertcat(col_data{:});
+    vertcat_elapsed = toc(fast_t0);
+    scidb.Log.debug('try_fast_batch_save: vertcat %d rows in %.3fs', height(combined_tbl), vertcat_elapsed);
+
+    % Step 2: single to_python call on the combined table
+    convert_t0 = tic;
+    py_dataframe = scidb.internal.to_python(combined_tbl);
+    convert_elapsed = toc(convert_t0);
+    scidb.Log.debug('try_fast_batch_save: to_python in %.3fs', convert_elapsed);
+
+    % Step 3: row_counts as numpy array
+    py_row_counts = py.numpy.array(row_counts);
+
+    % Step 4: build columnar metadata
+    meta_t0 = tic;
+    n_meta = numel(meta_cols);
+    py_meta_keys = py.list();
+    py_meta_columns = py.list();
+    for mc = 1:n_meta
+        py_meta_keys.append(meta_cols{mc});
+        col_vals = result_tbl.(meta_cols{mc});
+        if isnumeric(col_vals)
+            % Numeric column -> numpy array
+            py_meta_columns.append(py.numpy.array(col_vals));
+        elseif isstring(col_vals) || iscellstr(col_vals)
+            % String column -> join with record separator char(30) = \x1e
+            str_vals = string(col_vals);
+            joined = strjoin(str_vals, char(30));
+            py_meta_columns.append(char(joined));
+        elseif iscell(col_vals)
+            % Cell column: try to detect numeric vs string
+            is_numeric = true;
+            for ci = 1:numel(col_vals)
+                if ~isnumeric(col_vals{ci})
+                    is_numeric = false;
+                    break;
+                end
+            end
+            if is_numeric
+                py_meta_columns.append(py.numpy.array(cell2mat(col_vals)));
+            else
+                str_vals = cellfun(@(x) string(x), col_vals);
+                joined = strjoin(str_vals, char(30));
+                py_meta_columns.append(char(joined));
+            end
+        else
+            % Fallback: convert each element individually
+            py_col = py.list();
+            for ci = 1:numel(col_vals)
+                if iscell(col_vals)
+                    py_col.append(col_vals{ci});
+                else
+                    py_col.append(col_vals(ci));
+                end
+            end
+            py_meta_columns.append(py_col);
+        end
+    end
+    meta_elapsed = toc(meta_t0);
+    scidb.Log.debug('try_fast_batch_save: columnar metadata in %.3fs', meta_elapsed);
+
+    % Step 5: build common metadata from constant_nv + config_nv
+    common_t0 = tic;
+    common_nv = [constant_nv, config_nv];
+    if ~isempty(common_nv)
+        py_common = scidb.internal.metadata_to_pydict(common_nv{:});
+    else
+        py_common = py.dict();
+    end
+    common_elapsed = toc(common_t0);
+    scidb.Log.debug('try_fast_batch_save: common metadata in %.3fs', common_elapsed);
+
+    % Step 6: call Python bridge
+    type_name = class(outputs{1});
+    scidb.internal.ensure_registered(type_name);
+    save_t0 = tic;
+    py.sci_matlab.bridge.for_each_batch_save_dataframe( ...
+        type_name, py_dataframe, py_row_counts, ...
+        py_meta_keys, py_meta_columns, py_common, py_db);
+    save_elapsed = toc(save_t0);
+    scidb.Log.info('[save] %s: fast batch %d items in %.3fs (vertcat=%.3fs, to_python=%.3fs, meta=%.3fs, save=%.3fs)', ...
+        type_name, n_rows, toc(fast_t0), vertcat_elapsed, convert_elapsed, ...
+        meta_elapsed + common_elapsed, save_elapsed);
+
+    ok = true;
+end
+
+
 function keys = build_row_group_keys(tbl, meta_cols)
 %BUILD_ROW_GROUP_KEYS  Build a grouping key string per row from metadata columns.
     n_rows = height(tbl);
@@ -1081,10 +1245,18 @@ function s = format_save_meta(save_nv)
             continue;  % Skip internal keys
         end
         val = save_nv{i+1};
-        if isnumeric(val)
+        if isnumeric(val) && isscalar(val)
             parts{end+1} = sprintf('%s=%g', key, val); %#ok<AGROW>
+        elseif isstruct(val)
+            parts{end+1} = sprintf('%s=<struct>', key); %#ok<AGROW>
+        elseif ischar(val) || (isstring(val) && isscalar(val))
+            parts{end+1} = sprintf('%s=%s', key, char(val)); %#ok<AGROW>
         else
-            parts{end+1} = sprintf('%s=%s', key, string(val)); %#ok<AGROW>
+            try
+                parts{end+1} = sprintf('%s=%s', key, char(string(val))); %#ok<AGROW>
+            catch
+                parts{end+1} = sprintf('%s=<%s>', key, class(val)); %#ok<AGROW>
+            end
         end
     end
     s = strjoin(parts, ', ');
