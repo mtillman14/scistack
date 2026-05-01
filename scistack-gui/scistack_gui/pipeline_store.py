@@ -279,6 +279,19 @@ def unhide_node(db, node_id: str) -> None:
     )
 
 
+def unhide_nodes_by_prefix(db, prefix: str) -> None:
+    """Remove all hidden nodes whose IDs start with ``prefix``.
+
+    Used when a user re-adds a function node by label: composite DB-derived
+    IDs (``fn__{label}__{call_id}``) don't match a single canonical ID, so
+    we unhide every call-site node sharing the prefix.
+    """
+    _duck(db)._execute(
+        "DELETE FROM _pipeline_hidden_nodes WHERE node_id LIKE ?",
+        [prefix + "%"],
+    )
+
+
 def get_hidden_node_ids(db) -> set[str]:
     """Return the set of node IDs that the user has explicitly deleted."""
     _ensure_tables(db)

@@ -84,8 +84,16 @@ def write_manual_node(node_id: str, x: float, y: float,
     }
     prefix = prefix_map.get(node_type)
     if prefix:
-        canonical_id = f"{prefix}{label}"
-        pipeline_store.unhide_node(db, canonical_id)
+        if node_type == "functionNode":
+            # DB-derived function nodes use composite ``fn__{label}__{call_id}``
+            # IDs — there can be multiple canonical nodes per label.  Unhide
+            # every call-site node sharing the label.
+            pipeline_store.unhide_nodes_by_prefix(db, f"fn__{label}__")
+            # Also unhide the legacy fn__{label} form for older layouts.
+            pipeline_store.unhide_node(db, f"fn__{label}")
+        else:
+            canonical_id = f"{prefix}{label}"
+            pipeline_store.unhide_node(db, canonical_id)
 
 
 def get_manual_nodes() -> dict[str, dict]:

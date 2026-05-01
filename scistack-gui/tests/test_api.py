@@ -20,7 +20,13 @@ from collections import defaultdict
 
 # Import test variable classes and pipeline function from conftest so we share
 # the same class objects (avoids duplicate BaseVariable subclass registrations).
-from conftest import RawSignal, FilteredSignal, bandpass_filter
+from conftest import (
+    RawSignal,
+    FilteredSignal,
+    bandpass_filter,
+    find_fn_node_id_by_label,
+    fn_min_state_across_call_sites,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -96,10 +102,10 @@ class TestPipeline:
         assert "var__RawSignal" in node_ids
         assert "var__FilteredSignal" in node_ids
 
-    def test_function_node_present(self, client):
+    def test_function_node_present(self, client, bp_node_id):
         nodes = client.get("/api/pipeline").json()["nodes"]
         node_ids = {n["id"] for n in nodes}
-        assert "fn__bandpass_filter" in node_ids
+        assert bp_node_id in node_ids
 
     def test_constant_node_present(self, client):
         nodes = client.get("/api/pipeline").json()["nodes"]
@@ -111,36 +117,38 @@ class TestPipeline:
         raw_node = next(n for n in nodes if n["id"] == "var__RawSignal")
         assert raw_node["data"]["total_records"] == 4  # 2 subjects × 2 sessions
 
-    def test_function_node_has_variants(self, client):
+    def test_function_node_has_variants(self, client, bp_node_id):
         nodes = client.get("/api/pipeline").json()["nodes"]
-        fn_node = next(n for n in nodes if n["id"] == "fn__bandpass_filter")
+        fn_node = next(n for n in nodes if n["id"] == bp_node_id)
         assert len(fn_node["data"]["variants"]) >= 1
         variant = fn_node["data"]["variants"][0]
         assert "constants" in variant
         assert "input_types" in variant
         assert "output_type" in variant
+        # Sanity: the call_id in the node data matches the suffix of the id.
+        assert fn_node["data"]["call_id"] == bp_node_id.rsplit("__", 1)[1]
 
-    def test_edges_connect_raw_to_function(self, client):
+    def test_edges_connect_raw_to_function(self, client, bp_node_id):
         edges = client.get("/api/pipeline").json()["edges"]
         matches = [
             e for e in edges
-            if e["source"] == "var__RawSignal" and e["target"] == "fn__bandpass_filter"
+            if e["source"] == "var__RawSignal" and e["target"] == bp_node_id
         ]
         assert len(matches) >= 1
 
-    def test_edges_connect_function_to_filtered(self, client):
+    def test_edges_connect_function_to_filtered(self, client, bp_node_id):
         edges = client.get("/api/pipeline").json()["edges"]
         matches = [
             e for e in edges
-            if e["source"] == "fn__bandpass_filter" and e["target"] == "var__FilteredSignal"
+            if e["source"] == bp_node_id and e["target"] == "var__FilteredSignal"
         ]
         assert len(matches) >= 1
 
-    def test_constant_edge_connects_to_function(self, client):
+    def test_constant_edge_connects_to_function(self, client, bp_node_id):
         edges = client.get("/api/pipeline").json()["edges"]
         matches = [
             e for e in edges
-            if e["source"] == "const__low_hz" and e["target"] == "fn__bandpass_filter"
+            if e["source"] == "const__low_hz" and e["target"] == bp_node_id
         ]
         assert len(matches) >= 1
 
@@ -585,9 +593,9 @@ def process_signal(filtered):
 class TestRunStateGreen:
     """Fully-run pipeline → green for both function and output variable."""
 
-    def test_function_node_is_green(self, client):
+    def test_function_node_is_green(self, client, bp_node_id):
         nodes = client.get("/api/pipeline").json()["nodes"]
-        fn_node = next(n for n in nodes if n["id"] == "fn__bandpass_filter")
+        fn_node = next(n for n in nodes if n["id"] == bp_node_id)
         assert fn_node["data"].get("run_state") == "green"
 
     def test_output_variable_is_green(self, client):
@@ -624,11 +632,11 @@ class TestRunStateRed:
 
     def test_function_node_is_red(self, client_never_run):
         nodes = client_never_run.get("/api/pipeline").json()["nodes"]
-        fn_node = next((n for n in nodes if n["id"] == "fn__bandpass_filter"), None)
         # Function never run — no variants in DB, so no fn node in pipeline.
         # State is red only if the node appears (via registry).
-        if fn_node is not None:
-            assert fn_node["data"].get("run_state") == "red"
+        state = fn_min_state_across_call_sites(nodes, "bandpass_filter")
+        if state is not None:
+            assert state == "red"
 
 
 class TestRunStateGrey:
@@ -667,7 +675,9 @@ class TestRunStateGrey:
 
     def test_function_node_is_grey(self, client_partial):
         nodes = client_partial.get("/api/pipeline").json()["nodes"]
-        fn_node = next(n for n in nodes if n["id"] == "fn__bandpass_filter")
+        # One call site (low_hz=20), partially run → grey.
+        node_id = find_fn_node_id_by_label(nodes, "bandpass_filter")
+        fn_node = next(n for n in nodes if n["id"] == node_id)
         assert fn_node["data"].get("run_state") == "grey"
 
     def test_output_variable_is_grey(self, client_partial):
@@ -726,12 +736,14 @@ class TestRunStatePropagation:
 
     def test_upstream_is_grey(self, client_propagation):
         nodes = client_propagation.get("/api/pipeline").json()["nodes"]
-        fn_node = next(n for n in nodes if n["id"] == "fn__bandpass_filter")
+        node_id = find_fn_node_id_by_label(nodes, "bandpass_filter")
+        fn_node = next(n for n in nodes if n["id"] == node_id)
         assert fn_node["data"].get("run_state") == "grey"
 
     def test_downstream_function_is_grey_due_to_staleness(self, client_propagation):
         nodes = client_propagation.get("/api/pipeline").json()["nodes"]
-        fn_node = next(n for n in nodes if n["id"] == "fn__process_signal")
+        node_id = find_fn_node_id_by_label(nodes, "process_signal")
+        fn_node = next(n for n in nodes if n["id"] == node_id)
         # process_signal ran for all available inputs, but upstream is grey → grey
         assert fn_node["data"].get("run_state") == "grey"
 
@@ -755,8 +767,12 @@ class TestPendingConstantLifecycle:
     """
 
     def _fn_state(self, client):
+        # The pending-constant lifecycle creates additional bandpass_filter
+        # call sites mid-test (one per low_hz value).  "Is bandpass_filter
+        # green?" therefore means "are all its call sites green?", so we
+        # return the most pessimistic state across them.
         nodes = client.get("/api/pipeline").json()["nodes"]
-        return next(n for n in nodes if n["id"] == "fn__bandpass_filter")["data"].get("run_state")
+        return fn_min_state_across_call_sites(nodes, "bandpass_filter")
 
     def _const_values(self, client):
         """Return the set of value strings under const__low_hz."""
@@ -837,8 +853,7 @@ class TestPendingConstantRecovery:
 
     def _fn_state(self, c):
         nodes = c.get("/api/pipeline").json()["nodes"]
-        fn_node = next((n for n in nodes if n["id"] == "fn__bandpass_filter"), None)
-        return fn_node["data"].get("run_state") if fn_node else None
+        return fn_min_state_across_call_sites(nodes, "bandpass_filter")
 
     @pytest.fixture
     def client_partial(self, tmp_path):

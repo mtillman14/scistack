@@ -283,6 +283,8 @@ def for_each(
         as_table=as_table,
     )
     config_keys = config.to_version_keys()
+    call_id = config.to_call_id()
+    Log.debug(f"for_each({fn_name}): call_id={call_id}")
 
     # Pre-filter to only schema combinations that actually exist in the database.
     all_combos = None
@@ -462,7 +464,7 @@ def for_each(
     # ones that failed or were skipped).  Only needed when we actually
     # have outputs and are not in dry_run mode.
     if not dry_run and outputs:
-        _persist_expected_combos(db, fn_name, full_combos)
+        _persist_expected_combos(db, fn_name, call_id, full_combos)
 
     # Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
     # combos where the hook returns True.
@@ -1291,17 +1293,20 @@ def _propagate_schema(db, distribute: bool) -> None:
         )
 
 
-def _persist_expected_combos(db, fn_name: str, full_combos: list[dict]) -> None:
-    """Persist the full expected combo set for a function into _for_each_expected.
+def _persist_expected_combos(
+    db, fn_name: str, call_id: str, full_combos: list[dict]
+) -> None:
+    """Persist the full expected combo set for a for_each call into _for_each_expected.
 
     Called during for_each BEFORE skip_computed filtering, so we capture ALL
     combos (including ones that will be skipped).  This lets check_node_state
     know how many combos are expected for PathInput-only functions where no
     DB-variable inputs exist to infer the expected set.
 
-    Each combo dict is mapped to a (schema_id, branch_params) pair:
-    - schema keys are extracted from the combo and used to get/create a schema_id
-    - branch_params is "{}" (PathInput-only functions have no constant-based variants)
+    Rows are scoped by (function_name, call_id) so that multiple for_each()
+    call sites that reuse the same function don't clobber each other.  The
+    DELETE only removes rows for *this* call site; rows for other call sites
+    of the same function are left intact.
     """
     if not full_combos:
         return
@@ -1329,7 +1334,7 @@ def _persist_expected_combos(db, fn_name: str, full_combos: list[dict]) -> None:
                 continue
 
             schema_id = db._duck._get_or_create_schema_id(level, schema_keys)
-            rows_to_insert.append((fn_name, schema_id, "{}"))
+            rows_to_insert.append((fn_name, call_id, schema_id, "{}"))
 
         if not rows_to_insert:
             return
@@ -1337,19 +1342,31 @@ def _persist_expected_combos(db, fn_name: str, full_combos: list[dict]) -> None:
         # Deduplicate (multiple combos can map to the same schema_id)
         rows_to_insert = list(set(rows_to_insert))
 
-        # Replace old entries for this function with the new set
-        db._duck._execute(
-            "DELETE FROM _for_each_expected WHERE function_name = ?",
-            [fn_name],
+        # Replace old entries for THIS call site only.  Other call sites of
+        # the same function (different call_id) are untouched.
+        deleted = db._duck._fetchall(
+            "SELECT COUNT(*) FROM _for_each_expected "
+            "WHERE function_name = ? AND call_id = ?",
+            [fn_name, call_id],
         )
-        for fn, sid, bp in rows_to_insert:
+        prev_count = deleted[0][0] if deleted else 0
+        db._duck._execute(
+            "DELETE FROM _for_each_expected WHERE function_name = ? AND call_id = ?",
+            [fn_name, call_id],
+        )
+        for fn, cid, sid, bp in rows_to_insert:
             db._duck._execute(
-                "INSERT INTO _for_each_expected (function_name, schema_id, branch_params) "
-                "VALUES (?, ?, ?)",
-                [fn, sid, bp],
+                "INSERT INTO _for_each_expected "
+                "(function_name, call_id, schema_id, branch_params) "
+                "VALUES (?, ?, ?, ?)",
+                [fn, cid, sid, bp],
             )
 
-        Log.debug(f"_persist_expected_combos({fn_name}): "
-                   f"wrote {len(rows_to_insert)} expected combos")
+        Log.debug(
+            f"_persist_expected_combos({fn_name}, call_id={call_id}): "
+            f"replaced {prev_count} -> wrote {len(rows_to_insert)} expected combos"
+        )
     except Exception as exc:
-        Log.debug(f"_persist_expected_combos({fn_name}): failed — {exc}")
+        Log.debug(
+            f"_persist_expected_combos({fn_name}, call_id={call_id}): failed — {exc}"
+        )

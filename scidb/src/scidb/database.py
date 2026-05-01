@@ -618,13 +618,19 @@ class DatabaseManager:
         _get_expected_combos() cannot infer the expected set from
         _record_metadata.  scidb.for_each writes the full expected combo
         set here at runtime so that check_node_state can fall back to it.
+
+        ``call_id`` disambiguates rows when the same function is invoked
+        from multiple for_each() call sites (e.g. different inputs, where,
+        or constants).  Without it, function_name alone collides and the
+        second call clobbers the first's expected set.
         """
         self._duck._execute("""
             CREATE TABLE IF NOT EXISTS _for_each_expected (
                 function_name VARCHAR NOT NULL,
+                call_id       VARCHAR NOT NULL,
                 schema_id     INTEGER NOT NULL,
                 branch_params VARCHAR DEFAULT '{}',
-                PRIMARY KEY (function_name, schema_id, branch_params)
+                PRIMARY KEY (function_name, call_id, schema_id, branch_params)
             )
         """)
 
@@ -2442,6 +2448,9 @@ class DatabaseManager:
             List of dicts with keys:
                 function_name (str),
                 output_type   (str),
+                call_id       (str: 16 hex chars; identifies the for_each call
+                               site that produced this variant.  Same across
+                               cosmetic source edits to the fn body),
                 input_types   (dict: param_name → type_name),
                 constants     (dict: param_name → value),
                 output_num    (int | None: 0-based position in the fn signature;
@@ -2449,6 +2458,8 @@ class DatabaseManager:
                                was added),
                 record_count  (int: distinct records for this variant)
         """
+        from .foreach_config import call_id_from_version_keys
+
         sql = "SELECT variable_name, version_keys, record_id FROM _record_metadata"
         params: list = []
         if output_type is not None:
@@ -2490,6 +2501,7 @@ class DatabaseManager:
                 group_info[group_key] = {
                     "function_name": fn_name,
                     "output_type": variable_name,
+                    "call_id": call_id_from_version_keys(vk),
                     "input_types": input_types,
                     "constants": constants,
                     "output_num": output_num,

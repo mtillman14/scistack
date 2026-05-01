@@ -141,3 +141,54 @@ def client(populated_db):
     app = create_app()
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def bp_node_id(populated_db):
+    """The composite ``fn__bandpass_filter__{call_id}`` ID for the seeded
+    for_each call site in ``populated_db``.  Lets tests target the call-site
+    node without hard-coding the call_id."""
+    from scidb.foreach_config import ForEachConfig
+    from scistack_gui.domain.graph_builder import fn_node_id
+    cid = ForEachConfig(
+        fn=bandpass_filter,
+        inputs={"signal": RawSignal, "low_hz": 20},
+    ).to_call_id()
+    return fn_node_id("bandpass_filter", cid)
+
+
+def find_fn_node_id_by_label(nodes, label: str) -> str:
+    """Find a function node ID by its display label.
+
+    Useful for tests that want to assert against the seeded call site
+    without depending on the exact call_id.  Asserts a unique match —
+    multiple matches would mean the test exercises multiple call sites
+    and should target them explicitly.
+    """
+    matches = [n["id"] for n in nodes
+               if n.get("type") == "functionNode" and n.get("data", {}).get("label") == label]
+    assert len(matches) == 1, (
+        f"expected exactly one function node with label {label!r}, got {matches}"
+    )
+    return matches[0]
+
+
+def fn_min_state_across_call_sites(nodes, label: str) -> str | None:
+    """Return the most pessimistic run_state across all call sites of ``label``.
+
+    Used for legacy tests that asked "is fn X green?" before per-call-site
+    nodes existed.  Now that the same fn can produce multiple nodes (one per
+    for_each call site), the equivalent question is "are *all* call sites
+    green?"  This helper returns:
+
+      - ``None`` if no node with that label exists (preserves the old
+        ``next(..., None)`` semantics).
+      - The worst state (red < grey < green) across all matching nodes.
+    """
+    _ORDER = {"red": 0, "grey": 1, "green": 2}
+    states = [n["data"].get("run_state") for n in nodes
+              if n.get("type") == "functionNode" and n.get("data", {}).get("label") == label]
+    states = [s for s in states if s is not None]
+    if not states:
+        return None
+    return min(states, key=lambda s: _ORDER.get(s, 0))

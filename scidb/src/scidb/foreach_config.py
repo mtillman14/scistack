@@ -21,6 +21,41 @@ def _compute_fn_hash(fn: Callable) -> str:
     return hashlib.sha256(src.encode()).hexdigest()[:16]
 
 
+# The canonical for_each call-site identity is captured by exactly these
+# version_keys fields (see ForEachConfig.to_version_keys()).  Anything else
+# in a saved version_keys dict — direct constants unpacked as top-level
+# keys, ``__upstream``, ``__output_num``, scihist's lineage extras — is
+# per-record bookkeeping and must not affect the call_id.
+#
+# ``__fn_hash`` is intentionally excluded too, so cosmetic source edits to
+# the function body don't fork the call site (see ForEachConfig.to_call_id
+# docstring for rationale).
+_CALL_ID_INCLUDED_KEYS = (
+    "__fn",
+    "__inputs",
+    "__constants",
+    "__where",
+    "__distribute",
+    "__as_table",
+)
+
+
+def call_id_from_version_keys(version_keys: dict) -> str:
+    """Compute a 16-hex-char call_id from any version_keys dict.
+
+    Used by both ``ForEachConfig.to_call_id()`` (forward path, before save)
+    and ``list_pipeline_variants()`` (reverse path, reading from
+    ``_record_metadata``) so the call_id of a freshly built config matches
+    the call_id derived from records it eventually wrote.
+
+    Uses a strict allow-list of canonical config keys, ignoring any
+    per-record fields that scidb/scihist may have stored alongside.
+    """
+    keys = {k: version_keys[k] for k in _CALL_ID_INCLUDED_KEYS if k in version_keys}
+    payload = json.dumps(keys, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
 class ForEachConfig:
     """Serializes for_each() computation config into version keys.
 
@@ -70,6 +105,22 @@ class ForEachConfig:
             elif self.as_table is True:
                 keys["__as_table"] = True
         return keys
+
+    def to_call_id(self) -> str:
+        """Stable identifier for this for_each() call site, 16 hex chars.
+
+        Hashes the version keys minus ``__fn_hash`` (and other per-record
+        fields) so that cosmetic edits to the function source do not fork
+        the call site.  Two for_each() calls with the same loadable inputs,
+        constants, where, distribute, and as_table settings produce the
+        same call_id even if the function body was reformatted between runs.
+
+        Used to disambiguate ``_for_each_expected`` rows when the same
+        function is invoked from multiple call sites — without this,
+        function_name alone collides and the second call's expected combos
+        clobber the first's.
+        """
+        return call_id_from_version_keys(self.to_version_keys())
 
     def _get_direct_constants(self) -> dict:
         """Return scalar constant inputs (non-loadable values)."""

@@ -147,8 +147,16 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     all_edges = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
 
+    # Collect all node IDs for this function: every DB-derived call site
+    # (composite fn__{fn}__{call_id}), every manual node sharing the label,
+    # and the legacy fn__{fn} form for backward-compat manual edges.
+    from scistack_gui.domain.graph_builder import fn_node_id
     fn_node_ids = set()
-    fn_node_ids.add(f"fn__{function_name}")
+    fn_node_ids.add(f"fn__{function_name}")  # legacy/manual edges
+    for v in fn_variants:
+        cid = v.get("call_id")
+        if cid:
+            fn_node_ids.add(fn_node_id(function_name, cid))
     for nid, meta in manual_nodes.items():
         if meta["type"] == "functionNode" and meta["label"] == function_name:
             fn_node_ids.add(nid)

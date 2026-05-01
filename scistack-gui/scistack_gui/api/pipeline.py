@@ -115,11 +115,16 @@ def _own_state_for_function(
     db: DatabaseManager,
     fn_name: str,
     fn_out_types: set[str],
+    call_id: str | None = None,
 ) -> str:
     """
-    Return the own run state ("green"/"grey"/"red") for a single function by
-    calling scihist.check_node_state when the function and its output classes
-    are available in the registry.
+    Return the own run state ("green"/"grey"/"red") for a single function
+    by calling scihist.check_node_state.
+
+    When ``call_id`` is provided, restricts the state computation to records
+    produced by that specific for_each call site.  This is what makes the
+    GUI's per-call-site nodes report distinct states when the same function
+    is reused.
 
     Falls back to "red" for unregistered functions (never executed or not
     importable in this session).
@@ -146,12 +151,12 @@ def _own_state_for_function(
         return "red"
 
     try:
-        result = check_node_state(fn_obj, output_classes, db=db)
+        result = check_node_state(fn_obj, output_classes, db=db, call_id=call_id)
         state = result["state"]
         counts = result.get("counts", {})
         logger.debug(
-            "state(%s): %s (up_to_date=%d, stale=%d, missing=%d)",
-            fn_name, state,
+            "state(%s call_id=%s): %s (up_to_date=%d, stale=%d, missing=%d)",
+            fn_name, call_id, state,
             counts.get("up_to_date", 0),
             counts.get("stale", 0),
             counts.get("missing", 0),
@@ -159,26 +164,28 @@ def _own_state_for_function(
         return state
     except Exception:
         logger.exception(
-            "check_node_state failed for %s — falling back to red", fn_name
+            "check_node_state failed for %s call_id=%s — falling back to red",
+            fn_name, call_id,
         )
         return "red"
 
 
 def _compute_run_states(
     db: DatabaseManager,
-    fn_input_params: dict[str, dict],
-    fn_outputs: dict[str, set],
-    fn_constants: dict[str, set] | None = None,
+    fn_input_params: dict[tuple, dict],
+    fn_outputs: dict[tuple, set],
+    fn_constants: dict[tuple, set] | None = None,
     pending_constants: dict[str, set] | None = None,
 ) -> dict[str, str]:
     """
     Compute run_state for every function and variable node.
 
-    Pass 1 — own state per function:
-      Calls scihist.check_node_state for each function that is registered in
-      this session.  Uses lineage records + function hash when available,
-      falling back to __fn_hash + timestamps for scidb.for_each outputs.
-      Unregistered functions default to "red".
+    Function-keyed inputs use FnKey = (fn_name, call_id) so the same fn
+    reused across multiple for_each call sites gets a distinct state per
+    call site.
+
+    Pass 1 — own state per function-call-site:
+      Calls scihist.check_node_state(call_id=cid) for each (fn, cid).
 
     Pass 2 — propagate staleness through the DAG (delegated to domain layer).
 
@@ -188,11 +195,12 @@ def _compute_run_states(
 
     t0 = time.monotonic()
 
-    # --- Pass 1: own state per function ---
-    fn_own_state: dict[str, str] = {}
-    for fn_name in fn_input_params:
-        fn_own_state[fn_name] = _own_state_for_function(
-            db, fn_name, fn_outputs.get(fn_name, set())
+    # --- Pass 1: own state per (fn_name, call_id) ---
+    fn_own_state: dict[tuple, str] = {}
+    for fkey in fn_input_params:
+        fn_name, cid = fkey
+        fn_own_state[fkey] = _own_state_for_function(
+            db, fn_name, fn_outputs.get(fkey, set()), call_id=cid,
         )
 
     # --- Pass 2: DAG propagation (pure) ---
@@ -207,7 +215,7 @@ def _compute_run_states(
         if nid.startswith("fn__"):
             counts[s] = counts.get(s, 0) + 1
     logger.debug(
-        "run_states complete: %d functions in %.1fms (%d green, %d grey, %d red)",
+        "run_states complete: %d call sites in %.1fms (%d green, %d grey, %d red)",
         len([k for k in result if k.startswith("fn__")]), elapsed_ms,
         counts["green"], counts["grey"], counts["red"],
     )
@@ -259,8 +267,11 @@ def _build_graph(db: DatabaseManager) -> dict:
     )
 
     # --- Build fn_params_map and saved_configs ---
+    # fn_params_map and saved_configs are keyed by fn_name (the signature
+    # and saved settings don't vary across call sites).
+    fn_names = {fn for fn, _ in agg.fn_input_params.keys()}
     fn_params_map: dict[str, list[str]] = {}
-    for fn in agg.fn_input_params:
+    for fn in fn_names:
         if _mr.is_matlab_function(fn):
             fn_params_map[fn] = list(_mr.get_matlab_function(fn).params)
         else:
@@ -268,9 +279,22 @@ def _build_graph(db: DatabaseManager) -> dict:
 
     manual_nodes = _ps.get_manual_nodes(db)
     saved_configs: dict[str, dict | None] = {}
-    for fn in agg.fn_input_params:
-        node_id = f"fn__{fn}"
-        saved_configs[fn] = manual_nodes.get(node_id, {}).get("config")
+    for fn in fn_names:
+        # Manual nodes can use either the legacy `fn__{fn}` ID or the
+        # composite `fn__{fn}__{call_id}` ID.  Look up the legacy form
+        # first (matches the pre-call-id node), then any composite manual
+        # node for this fn_name as a fallback.
+        cfg = manual_nodes.get(f"fn__{fn}", {}).get("config")
+        if cfg is None:
+            for nid, meta in manual_nodes.items():
+                if (
+                    meta.get("type") == "functionNode"
+                    and meta.get("label") == fn
+                    and meta.get("config")
+                ):
+                    cfg = meta["config"]
+                    break
+        saved_configs[fn] = cfg
 
     matlab_functions = set(_mr.get_all_function_names())
     matlab_output_order = {
@@ -294,10 +318,17 @@ def _build_graph(db: DatabaseManager) -> dict:
         if 0 <= int(onum) < len(names):
             matlab_param_to_class.setdefault(fn, {})[names[int(onum)]] = out_type
     from scistack_gui.domain.edge_resolver import infer_manual_fn_param_to_class
+    from scistack_gui.domain.graph_builder import fn_node_id
     manual_edges_for_fn_lookup = layout_store.read_manual_edges()
     existing_node_labels_pre = {f"var__{t}": t for t in agg.all_var_types}
     for fn in matlab_functions:
-        fn_ids = {f"fn__{fn}"}
+        # Collect all DB-derived node IDs for this fn (one per call site)
+        # plus any manual nodes that share the label.
+        fn_ids = {
+            fn_node_id(fn_name, cid)
+            for (fn_name, cid) in agg.fn_input_params.keys()
+            if fn_name == fn
+        }
         fn_ids |= {
             nid for nid, meta in manual_nodes.items()
             if meta.get("type") == "functionNode" and meta.get("label") == fn

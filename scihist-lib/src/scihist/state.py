@@ -334,6 +334,7 @@ def check_node_state(
     outputs: list[type],
     inputs: dict | None = None,
     db=None,
+    call_id: str | None = None,
 ) -> dict:
     """Aggregate run state across all known combos for a pipeline function.
 
@@ -352,6 +353,13 @@ def check_node_state(
             determine expected combos when the function has never been run and
             no pipeline variants are registered in the DB.
         db: DatabaseManager instance.  Uses the global DB if omitted.
+        call_id: Optional 16-hex-char identifier for a specific for_each call
+            site (see :func:`scidb.foreach_config.call_id_from_version_keys`).
+            When provided, both actual and expected combos are restricted to
+            records produced by that call site.  Allows the same function to
+            be reused across multiple call sites without their states
+            blurring together.  When omitted, behaves as the union across
+            all call sites.
 
     Returns:
         A dict with keys:
@@ -377,14 +385,16 @@ def check_node_state(
     fn_name = getattr(fn, "__name__", None) or type(fn).__name__
 
     # --- Actual combos: output records produced by this function ---
-    output_combos = _get_output_combos(db, fn_name, outputs)
+    output_combos = _get_output_combos(db, fn_name, outputs, call_id=call_id)
 
     # --- Expected combos: (schema_id, branch_params) from input variables ---
     # Using full branch_params (not just schema_id) so that a new upstream
     # variant (e.g. window_seconds=90 added after the function was last run)
     # is detected as missing even when all schema_ids are already covered by
     # other variants.
-    expected_combos = _get_expected_combos(db, fn_name, inputs_fallback=inputs)
+    expected_combos = _get_expected_combos(
+        db, fn_name, inputs_fallback=inputs, call_id=call_id,
+    )
 
     # --- Determine missing combos ---
     actual_combo_keys = {
@@ -455,7 +465,12 @@ def _combo_str(schema_combo: dict, branch_params: dict | None = None) -> str:
     return ", ".join(parts)
 
 
-def _get_output_combos(db, fn_name: str, outputs: list[type]) -> list[dict]:
+def _get_output_combos(
+    db,
+    fn_name: str,
+    outputs: list[type],
+    call_id: str | None = None,
+) -> list[dict]:
     """Return distinct (schema_id, branch_params) pairs from output records
     produced by fn_name.
 
@@ -465,7 +480,15 @@ def _get_output_combos(db, fn_name: str, outputs: list[type]) -> list[dict]:
     - ``_lineage.function_name`` matches (scihist.for_each outputs, which do
       not write ``__fn`` into version_keys but instead write a row to the
       dedicated ``_lineage`` table).
+
+    When ``call_id`` is provided, restricts matches to records whose
+    version_keys hash to that call_id — i.e. records produced by a specific
+    for_each call site.  Records without recoverable version_keys (legacy
+    rows or rows where __fn is absent and only _lineage matches) are
+    excluded under call_id filtering.
     """
+    from scidb.foreach_config import call_id_from_version_keys
+
     result: list[dict] = []
     seen: set = set()
 
@@ -485,6 +508,11 @@ def _get_output_combos(db, fn_name: str, outputs: list[type]) -> list[dict]:
             # identifies this record as produced by fn_name.
             if vk_fn != fn_name and lineage_fn_name != fn_name:
                 continue
+            if call_id is not None:
+                if not vk:
+                    continue  # cannot derive a call_id without version_keys
+                if call_id_from_version_keys(vk) != call_id:
+                    continue
             bp = json.loads(bp_raw or "{}") if bp_raw else {}
             key = (schema_id, json.dumps(bp, sort_keys=True))
             if key not in seen:
@@ -494,7 +522,12 @@ def _get_output_combos(db, fn_name: str, outputs: list[type]) -> list[dict]:
     return result
 
 
-def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) -> set[tuple]:
+def _get_expected_combos(
+    db,
+    fn_name: str,
+    inputs_fallback: dict | None = None,
+    call_id: str | None = None,
+) -> set[tuple]:
     """Return the set of (schema_id, branch_params_json) combos that should have
     been produced by fn_name.
 
@@ -518,9 +551,19 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
     When no variants are registered from either source (function never run) and
     ``inputs_fallback`` is provided, falls back to querying the input variable
     types directly.
+
+    When ``call_id`` is provided, scidb_variants and the _for_each_expected
+    fallback are filtered to that call site.  Lineage variants are dropped
+    under call_id filtering since the same records are also represented in
+    scidb_variants (scihist.for_each writes to both _record_metadata and
+    _lineage), and the scidb side carries the call_id directly.
     """
     scidb_variants = [v for v in db.list_pipeline_variants() if v["function_name"] == fn_name]
-    lineage_variants = _get_lineage_variants(db, fn_name)
+    if call_id is not None:
+        scidb_variants = [v for v in scidb_variants if v.get("call_id") == call_id]
+        lineage_variants: list[dict] = []
+    else:
+        lineage_variants = _get_lineage_variants(db, fn_name)
 
     if not scidb_variants and not lineage_variants:
         if inputs_fallback:
@@ -530,11 +573,18 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
         # PathInput).  scidb.for_each persists the full expected combo set
         # in _for_each_expected at runtime — use it here.
         try:
-            rows = db._duck._fetchall(
-                "SELECT schema_id, branch_params FROM _for_each_expected "
-                "WHERE function_name = ?",
-                [fn_name],
-            )
+            if call_id is not None:
+                rows = db._duck._fetchall(
+                    "SELECT schema_id, branch_params FROM _for_each_expected "
+                    "WHERE function_name = ? AND call_id = ?",
+                    [fn_name, call_id],
+                )
+            else:
+                rows = db._duck._fetchall(
+                    "SELECT schema_id, branch_params FROM _for_each_expected "
+                    "WHERE function_name = ?",
+                    [fn_name],
+                )
             if rows:
                 return {(sid, bp) for sid, bp in rows}
         except Exception:
@@ -543,6 +593,28 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
 
     expected: set[tuple] = set()
     fn_prefix = f"{fn_name}."
+
+    # When call_id is provided, restrict the schema scope to what THIS call
+    # site actually iterated over (persisted in _for_each_expected at run
+    # time).  Without this, walking _record_metadata for the input variable
+    # would over-report missing combos for any schema_id that exists in the
+    # input but lies outside the call site's subject=/session=/where= scope.
+    #
+    # We still scan the input variable for upstream branch_params within the
+    # scoped schema_ids, so that newly-appeared upstream variants are
+    # correctly flagged as missing for this call site.
+    scoped_schema_ids: set | None = None
+    if call_id is not None:
+        try:
+            scope_rows = db._duck._fetchall(
+                "SELECT DISTINCT schema_id FROM _for_each_expected "
+                "WHERE function_name = ? AND call_id = ?",
+                [fn_name, call_id],
+            )
+            if scope_rows:
+                scoped_schema_ids = {r[0] for r in scope_rows}
+        except Exception:
+            pass
 
     # scidb variants: own constants are namespaced in the output's branch_params.
     for variant in scidb_variants:
@@ -557,6 +629,8 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
                 [itype],
             )
             for schema_id, bp_raw in rows:
+                if scoped_schema_ids is not None and schema_id not in scoped_schema_ids:
+                    continue
                 input_bp = json.loads(bp_raw or "{}") if bp_raw else {}
                 expected_bp = {**input_bp, **namespaced_own}
                 expected.add((schema_id, json.dumps(expected_bp, sort_keys=True)))
@@ -586,11 +660,18 @@ def _get_expected_combos(db, fn_name: str, inputs_fallback: dict | None = None) 
     # expected combo set in _for_each_expected at runtime — use it here.
     if not expected:
         try:
-            rows = db._duck._fetchall(
-                "SELECT schema_id, branch_params FROM _for_each_expected "
-                "WHERE function_name = ?",
-                [fn_name],
-            )
+            if call_id is not None:
+                rows = db._duck._fetchall(
+                    "SELECT schema_id, branch_params FROM _for_each_expected "
+                    "WHERE function_name = ? AND call_id = ?",
+                    [fn_name, call_id],
+                )
+            else:
+                rows = db._duck._fetchall(
+                    "SELECT schema_id, branch_params FROM _for_each_expected "
+                    "WHERE function_name = ?",
+                    [fn_name],
+                )
             if rows:
                 expected = {(sid, bp) for sid, bp in rows}
         except Exception:
