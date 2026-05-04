@@ -1268,6 +1268,7 @@ class DatabaseManager:
         version_id controls which versions are returned:
         - "all" (default): no version filtering (return every version)
         - "latest": only the latest row per (variable_name, schema_id, version_keys)
+        - any other string: treated as a record_id for direct lookup
 
         branch_params_filter: optional dict of branch_params key/value filters
         include_excluded: if False (default), skip records with excluded=TRUE
@@ -1292,6 +1293,17 @@ class DatabaseManager:
                 f"WHERE rm.record_id = ? AND rm.variable_name = ?{excluded_clause}"
             )
             return self._duck._fetchdf(sql, [record_id, type_name])
+
+        # Unrecognized version_id → treat as record_id lookup
+        if version_id not in ("latest", "all"):
+            Log.info(f"_find_record({type_name}): treating version_id={version_id!r} as record_id")
+            sql = (
+                f"SELECT rm.*, {schema_col_select} "
+                f"FROM _record_metadata rm "
+                f"LEFT JOIN _schema s ON rm.schema_id = s.schema_id "
+                f"WHERE rm.record_id = ? AND rm.variable_name = ?{excluded_clause}"
+            )
+            return self._duck._fetchdf(sql, [version_id, type_name])
 
         # By metadata
         schema_keys = nested_metadata.get("schema", {}) if nested_metadata else {}

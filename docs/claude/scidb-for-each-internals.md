@@ -45,6 +45,8 @@ All schema values are stored as VARCHAR strings, regardless of the original Pyth
 
 ### `_record_metadata` table
 
+> **See also:** [`scidb-identity-and-data-flow.md`](scidb-identity-and-data-flow.md) for a comprehensive diagram of how `record_id`, `version_keys`, `branch_params`, `content_hash`, `schema_id`, and `call_id` relate to each other, including the full save and load paths.
+
 ```sql
 CREATE TABLE IF NOT EXISTS _record_metadata (
     record_id       VARCHAR NOT NULL,
@@ -80,6 +82,29 @@ Each row is one saved record. Key columns:
 
 - **`branch_params`**: JSON dict tracking which upstream pipeline choices led to this record. Explained in detail in the variant tracking section below.
 
+#### Intuitive distinction: `version_keys` vs `branch_params`
+
+These two fields serve different roles and are easy to confuse. The short version:
+
+- **`version_keys`** = "what produced me" — the full configuration of the *current* computation step (function name, function hash, input types, constants). It drives the `load_all(version_id="latest")` query, which partitions by `(variable_name, schema_id, version_keys)` to find the newest version of each specific computation variant at each schema location.
+
+- **`branch_params`** = "what pipeline choices led to me" — the accumulated constants from *every* function in the pipeline chain, namespaced by function name. It drives the variant expansion system (Steps 11–12) so that downstream steps can keep upstream variants separated and propagate the history forward.
+
+A concrete example makes the distinction clear. After a three-step pipeline:
+
+```
+RawEMG → bandpass(low_hz=20) → FilteredEMG → compute_rms(window=100) → RMS → normalize(method="zscore") → NormalizedRMS
+```
+
+The `NormalizedRMS` record would have:
+
+| Field | Value | Scope |
+|---|---|---|
+| `version_keys` | `{"__fn": "normalize", "__fn_hash": "...", "__inputs": ..., "__constants": {"method": "zscore"}}` | Current step only |
+| `branch_params` | `{"bandpass.low_hz": 20, "compute_rms.window": 100, "normalize.method": "zscore"}` | Full pipeline chain |
+
+`version_keys` answers "what function call produced this record?" while `branch_params` answers "what parameter choices across the entire pipeline produced this record?" The first is used for deduplication/versioning; the second is used for variant tracking across the DAG.
+
 ### `_variables` table
 
 ```sql
@@ -101,15 +126,20 @@ One row per variable type. The `dtype` column is a JSON dict describing how the 
 ```sql
 CREATE TABLE IF NOT EXISTS _for_each_expected (
     function_name  VARCHAR NOT NULL,
+    call_id        VARCHAR NOT NULL,
     schema_id      INTEGER NOT NULL,
     branch_params  VARCHAR DEFAULT '{}',
-    PRIMARY KEY (function_name, schema_id, branch_params)
+    PRIMARY KEY (function_name, call_id, schema_id, branch_params)
 )
 ```
 
 Source: `/workspace/scidb/src/scidb/database.py`, lines 622–629.
 
 Stores the set of combos that a `for_each` call was *expected* to produce. Used by `check_node_state()` to determine whether a pipeline step is complete or has missing outputs.
+
+The `call_id` column is a 16-hex-character SHA-256 hash that uniquely identifies a specific `for_each()` call site. It is computed from a subset of the version keys (`__fn`, `__inputs`, `__constants`, `__where`, `__distribute`, `__as_table`) — intentionally excluding `__fn_hash` so that cosmetic edits to the function source don't change the call site identity. This allows the same function to be called from multiple places in a pipeline (e.g., `bandpass` called once with `low_hz=20` and again with `low_hz=50`) without the second call's expected combos clobbering the first's. The DELETE during `_persist_expected_combos` is scoped to `(function_name, call_id)`.
+
+The `call_id` is a **derived value** — it is not stored in `_record_metadata` or `branch_params`. It can be recomputed from any record's `version_keys` at any time via `call_id_from_version_keys()` (source: `/workspace/scidb/src/scidb/foreach_config.py`).
 
 ### Data tables (e.g., `FilteredEMG_data`)
 
@@ -505,12 +535,14 @@ The expansion count is logged: `expanded 4 base combos -> 8 full combos (rid var
 
 Before any combos are filtered by `skip_computed`, scidb writes the full expected combo set to the `_for_each_expected` table via `_persist_expected_combos()` (lines 1294–1355).
 
+First, a `call_id` is computed from the version keys via `ForEachConfig.to_call_id()` (see the `_for_each_expected` table section above for details on how `call_id` is derived).
+
 For each combo in `full_combos`:
 1. Extract only the schema-key values from the combo dict (ignore `__rid_*` keys)
 2. Look up or create a `schema_id` in the `_schema` table for those values
-3. Insert `(function_name, schema_id, "{}")` into `_for_each_expected`
+3. Insert `(function_name, call_id, schema_id, "{}")` into `_for_each_expected`
 
-Old entries for this function are deleted first (`DELETE FROM _for_each_expected WHERE function_name = ?`), then the new set is inserted. This ensures the expected set reflects the current run's combos, not stale ones from a previous run.
+Old entries for this specific call site are deleted first (`DELETE FROM _for_each_expected WHERE function_name = ? AND call_id = ?`), then the new set is inserted. Scoping the DELETE to `(function_name, call_id)` means that if the same function is used at two different call sites (e.g., `bandpass` called once with `low_hz=20` and again with `low_hz=50`), persisting expected combos for one call site does not clobber the other's expected set.
 
 ### Step 14: Apply pre-combo hook (skip_computed) (lines 467–476)
 
