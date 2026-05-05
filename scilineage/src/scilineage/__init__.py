@@ -37,7 +37,7 @@ from .core import (
     manual,
     make_tuple_unpacking_wrapper,
 )
-from .hashing import canonical_hash
+from .hashing import canonical_hash, compute_function_hash
 from .inputs import InputKind, ClassifiedInput, classify_input, is_trackable_variable
 from .lineage import (
     LineageRecord,
@@ -73,4 +73,5 @@ __all__ = [
     "get_upstream_lineage",
     # Hashing
     "canonical_hash",
+    "compute_function_hash",
 ]

@@ -173,32 +173,36 @@ metadata["low_hz"] = 20
 
 ---
 
-### MEDIUM: Dual Function Hash Storage
+### MEDIUM: Dual Function Hash Storage ✅ RESOLVED (Hash Method Unified)
 
 **Where:** scidb ↔ scihist boundary
 
-**The problem:** The same function hash is computed and stored twice:
+**The problem (HISTORICAL):** The same function hash was computed using TWO different methods:
 
-```python
-# Computed in scidb via ForEachConfig
-version_keys["__fn_hash"] = _compute_fn_hash(fn)  # "a1b2c3d4e5f6"
+- scidb: Source-based hashing via `inspect.getsource()` (sensitive to formatting)
+- scihist: Bytecode-based hashing via `fn.__code__.co_code` (ignores formatting)
 
-# Computed in scihist via LineageRecord
-lineage["function_hash"] = fn.hash  # "a1b2c3d4e5f6" (same value)
-```
+**Resolution (Implemented):**
 
-**Why this happens:** Two independent code paths for the same hash:
+- ✅ Created shared `compute_function_hash()` in `scilineage.hashing`
+- ✅ Both scidb and scihist now use the same **bytecode-based** method
+- ✅ Reformatting code no longer invalidates cached results
+- ✅ Single source of truth (no divergence possible)
 
-- scidb: `ForEachConfig.to_version_keys()` → `_compute_fn_hash()` (scidb doc lines 299-323)
-- scihist: `LineageFcn.hash` → stored in `LineageRecord` (scihist doc lines 83-91)
+**Current State:**
 
-**Consequences:**
+- Both use bytecode-based hashing (ignores whitespace/comments)
+- scidb stores 16-char hash in `version_keys.__fn_hash`
+- scihist stores full hash (including `unpack_output` config) in `_lineage.function_hash`
+- **Dual storage remains** (by design - see analysis in `.claude/function-hash-storage-analysis.md`)
 
-- Redundant computation
-- Two storage locations (`version_keys` and `_lineage` table)
-- Scihist staleness check falls back from `_lineage.function_hash` to `version_keys.__fn_hash` (scihist doc line 441)
+**Why keep dual storage:**
 
-**Better design:** Single source of truth, computed once.
+- Performance: Direct column access (`_lineage.function_hash`) is faster than JSON extract
+- Separation: Lineage metadata belongs in lineage table
+- Cost: Storage overhead is negligible (~16 bytes per lineage output)
+
+**Reference:** See `.claude/function-hash-unification-analysis.md` for full rationale.
 
 ---
 

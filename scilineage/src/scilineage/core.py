@@ -29,6 +29,7 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 from .backend import _get_backend
+from .hashing import compute_function_hash
 from .inputs import classify_inputs, is_trackable_variable
 
 STRING_REPR_DELIMITER = "-"
@@ -75,13 +76,12 @@ class LineageFcn:
         self.generates_file = generates_file
         self.invocations: tuple[LineageFcnInvocation, ...] = ()
 
-        # Hash function bytecode + constants for reproducibility
-        # Include co_consts to distinguish functions with same structure but different literals
-        fcn_code = fcn.__code__.co_code
-        fcn_consts = str(fcn.__code__.co_consts).encode()
-        combined_code = fcn_code + fcn_consts
-        fcn_hash = sha256(combined_code).hexdigest()
+        # Hash function bytecode + constants for reproducibility.
+        # Use shared compute_function_hash (bytecode-based, ignores formatting/comments).
+        # Get full hash (not truncated) so we have maximum entropy.
+        fcn_hash = compute_function_hash(fcn, truncate=64)
 
+        # Include unpack_output in hash to distinguish function configurations
         string_repr = f"{fcn_hash}{STRING_REPR_DELIMITER}{unpack_output}"
         self.hash = sha256(string_repr.encode()).hexdigest()
         logger.debug("LineageFcn created: %s hash=%s", fcn.__name__, self.hash[:12])

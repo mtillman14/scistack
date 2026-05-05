@@ -1,24 +1,28 @@
 """ForEachConfig — serializes for_each() computation config into version keys."""
 
 import hashlib
-import inspect
 import json
 from typing import Any, Callable
 
+from scilineage.hashing import compute_function_hash
+
 
 def _compute_fn_hash(fn: Callable) -> str:
-    """SHA-256 of the function's source code, truncated to 16 hex chars.
+    """Compute a stable hash of the function's bytecode and constants.
 
-    Falls back to hashing ``fn.__name__`` if source is unavailable (e.g.
-    built-in or compiled functions).  The hash is used downstream by
-    check_combo_state to detect whether the function body has changed since
-    an output record was saved.
+    Uses bytecode-based hashing (via scilineage.hashing.compute_function_hash),
+    which only changes when the function's actual logic changes. Ignores cosmetic
+    changes like whitespace, comments, and formatting.
+
+    Returns 16 hex chars (truncated SHA-256) for version_keys storage.
+
+    Args:
+        fn: The function to hash (can be plain function or LineageFcn wrapper).
+
+    Returns:
+        16-character hex string hash.
     """
-    try:
-        src = inspect.getsource(fn)
-    except (OSError, TypeError):
-        src = getattr(fn, "__name__", repr(fn))
-    return hashlib.sha256(src.encode()).hexdigest()[:16]
+    return compute_function_hash(fn, truncate=16)
 
 
 # The canonical for_each call-site identity is captured by exactly these
