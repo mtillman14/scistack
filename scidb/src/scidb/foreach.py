@@ -356,14 +356,25 @@ def for_each(
     Log.debug("building variant tracking (rid->branch_params mapping)")
     rid_to_bp: dict = {}   # {record_id: branch_params_dict}
     rid_keys: list = []    # __rid_{param_name} column names added to this call's schema
+    fixed_rid_values: dict = {}  # {param_name: record_id} for Fixed inputs
 
     for param_name, data in list(loaded_inputs.items()):
-        if not isinstance(data, pd.DataFrame) or "__record_id" not in data.columns:
+        # Extract DataFrame from Fixed wrapper if needed
+        df = None
+        is_fixed = False
+        if isinstance(data, pd.DataFrame):
+            df = data
+        elif hasattr(data, 'data') and isinstance(data.data, pd.DataFrame):
+            # scifor.Fixed wrapper
+            df = data.data
+            is_fixed = True
+
+        if df is None or "__record_id" not in df.columns:
             continue
 
         # Build rid→bp from this input's DataFrame
-        bp_col = "__branch_params" if "__branch_params" in data.columns else None
-        for _, row in data.iterrows():
+        bp_col = "__branch_params" if "__branch_params" in df.columns else None
+        for _, row in df.iterrows():
             rid = row["__record_id"]
             if rid is None:
                 continue
@@ -372,8 +383,18 @@ def for_each(
 
         # Rename __record_id → __rid_{param_name} so per-param tracking is unambiguous
         rid_col = f"__rid_{param_name}"
-        loaded_inputs[param_name] = data.rename(columns={"__record_id": rid_col})
-        rid_keys.append(rid_col)
+        df_renamed = df.rename(columns={"__record_id": rid_col})
+
+        # Update loaded_inputs with renamed DataFrame (or rewrap in Fixed)
+        if is_fixed:
+            # For Fixed inputs, extract the single record_id and store it
+            # (Fixed inputs should have exactly one row after filtering)
+            if len(df) == 1:
+                fixed_rid_values[param_name] = str(df.iloc[0]["__record_id"])
+            data.data = df_renamed
+        else:
+            loaded_inputs[param_name] = df_renamed
+            rid_keys.append(rid_col)
 
     Log.debug(f"variant tracking: {len(rid_to_bp)} record_ids mapped, "
               f"{len(rid_keys)} rid keys: {rid_keys}")
@@ -434,8 +455,16 @@ def for_each(
         rid_per_combo: dict = {}
         for rid_col in rid_keys:
             param_name = rid_col[len("__rid_"):]
-            df = loaded_inputs.get(param_name)
-            if not isinstance(df, pd.DataFrame) or rid_col not in df.columns:
+            data = loaded_inputs.get(param_name)
+
+            # Extract DataFrame from Fixed wrapper if needed
+            df = None
+            if isinstance(data, pd.DataFrame):
+                df = data
+            elif hasattr(data, 'data') and isinstance(data.data, pd.DataFrame):
+                df = data.data
+
+            if df is None or rid_col not in df.columns:
                 continue
             schema_cols_in_df = [k for k in _lookup_keys if k in df.columns]
             mapping: dict = {}
@@ -478,9 +507,16 @@ def for_each(
                     full_combo = {**combo}
                     for rc_name, rc_val in zip(rid_col_names, rid_combo):
                         full_combo[rc_name] = rc_val
+                    # Add Fixed input record_ids to combo
+                    for fixed_param, fixed_rid in fixed_rid_values.items():
+                        full_combo[f"__rid_{fixed_param}"] = fixed_rid
                     full_combos.append(full_combo)
             else:
-                full_combos.append(combo)
+                full_combo = {**combo}
+                # Add Fixed input record_ids to combo
+                for fixed_param, fixed_rid in fixed_rid_values.items():
+                    full_combo[f"__rid_{fixed_param}"] = fixed_rid
+                full_combos.append(full_combo)
 
         if len(full_combos) != len(base_combos):
             Log.info(f"expanded {len(base_combos)} base combos -> "
@@ -519,11 +555,81 @@ def for_each(
             all_rids.extend(rids)
         extended_metadata_iterables[rid_col] = list(dict.fromkeys(all_rids))  # preserve order, dedupe
 
+    def _reconstruct_variable_inputs(
+        resolved: dict,
+        current_combo: dict,
+        inputs: dict,
+    ) -> dict:
+        """Reconstruct BaseVariable objects for variable inputs.
+
+        After scifor extracts raw data, reconstruct BaseVariable objects
+        with metadata so LineageFcn can classify them correctly.
+
+        Args:
+            resolved: Dict of param_name → raw_data from scifor
+            current_combo: Combo dict with __rid_* → record_id + schema keys
+            inputs: Original inputs dict with param_name → variable_class or Fixed()
+
+        Returns:
+            Dict with BaseVariable objects for variable inputs, raw data for others
+        """
+        import pandas as pd
+        reconstructed = {}
+
+        for param_name, raw_value in resolved.items():
+            # Check if this param is a variable input (has __rid_* entry)
+            rid_key = f"__rid_{param_name}"
+            if rid_key not in current_combo:
+                # Not a variable - pass through as-is
+                reconstructed[param_name] = raw_value
+                continue
+
+            # Get variable class from inputs
+            input_spec = inputs.get(param_name)
+            variable_class = None
+
+            if isinstance(input_spec, type):
+                # Simple variable type
+                variable_class = input_spec
+            elif hasattr(input_spec, 'var_type') and isinstance(input_spec.var_type, type):
+                # Fixed wrapper - extract the variable class
+                variable_class = input_spec.var_type
+
+            if variable_class is None:
+                # Not a simple variable type - pass through
+                reconstructed[param_name] = raw_value
+                continue
+
+            # Extract raw data from DataFrame if needed
+            data_value = raw_value
+            if isinstance(raw_value, pd.DataFrame):
+                # Extract the data column (variable name column)
+                var_name = variable_class.__name__
+                if var_name in raw_value.columns:
+                    # Get the single value from the data column
+                    data_value = raw_value[var_name].iloc[0]
+                else:
+                    # Fallback: pass through as-is
+                    data_value = raw_value
+
+            # Reconstruct BaseVariable
+            var = variable_class(data_value)
+            var.record_id = str(current_combo[rid_key])
+
+            # Set metadata from combo (schema keys only)
+            var.metadata = {k: v for k, v in current_combo.items() if not k.startswith("__")}
+
+            reconstructed[param_name] = var
+
+        return reconstructed
+
     # --- Wrap fn to resolve PerComboLoader/PerComboLoaderMerge inputs per-combo,
-    #     and/or inject combo metadata (for generates_file functions). ---
+    #     inject combo metadata (for generates_file functions), and/or
+    #     reconstruct BaseVariable objects (for LineageFcn). ---
     _per_combo = {k: v for k, v in loaded_inputs.items()
                   if isinstance(v, (PerComboLoader, PerComboLoaderMerge))}
-    if _per_combo or _inject_combo_metadata:
+    _is_lineage_wrapper = getattr(fn, '__lineage_wrapper__', False)
+    if _per_combo or _inject_combo_metadata or _is_lineage_wrapper:
         _ordered_combos = full_combos
         _call_idx = [0]
         _orig_fn = fn
@@ -557,6 +663,11 @@ def for_each(
                     resolved[k] = _resolve_per_combo_merge(v, load_kw)
                 else:
                     resolved[k] = v
+
+            # Reconstruct BaseVariable objects for LineageFcn
+            if getattr(_orig_fn, '__lineage_wrapper__', False):
+                resolved = _reconstruct_variable_inputs(resolved, current_combo, inputs)
+
             if _inject_combo_metadata and _fn_params is not None:
                 # Only inject metadata keys that the function signature accepts
                 for k, v in load_kw.items():
@@ -824,15 +935,12 @@ def _load_input(var_spec: Any, db: Any | None, where: Any | None) -> Any:
         if isinstance(inner_loaded, PerComboLoader):
             # Inner needs per-combo loading; wrap the whole Fixed spec
             return PerComboLoader(var_spec)
-        # Strip internal tracking columns — Fixed inputs are not part of
-        # the rid expansion (they're tracked separately in scihist), so
-        # __record_id / __branch_params would confuse _extract_data.
+        # Keep __record_id for variant tracking (needed for BaseVariable reconstruction)
+        # but strip __branch_params which is redundant for Fixed inputs.
         import pandas as pd
         if isinstance(inner_loaded, pd.DataFrame):
-            _drop = [c for c in ("__record_id", "__branch_params")
-                     if c in inner_loaded.columns]
-            if _drop:
-                inner_loaded = inner_loaded.drop(columns=_drop)
+            if "__branch_params" in inner_loaded.columns:
+                inner_loaded = inner_loaded.drop(columns=["__branch_params"])
         # Stringify fixed_metadata schema keys to match the stringified
         # DataFrame columns produced by _load_var_type_all.
         fixed_meta = dict(var_spec.fixed_metadata)

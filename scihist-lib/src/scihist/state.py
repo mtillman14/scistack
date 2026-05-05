@@ -194,7 +194,7 @@ def _has_superseded_ancestor(db, record_id: str, combo_str: str,
 
         for inp in lineage_inputs:
             source_type = inp.get("source_type")
-            if source_type not in ("variable", "rid_tracking"):
+            if source_type != "variable":
                 continue
             used_rid = inp.get("record_id")
             if not used_rid:
@@ -689,15 +689,11 @@ def _get_lineage_variants(db, fn_name: str) -> list[dict]:
     Used for scihist.for_each outputs, which write to ``_lineage`` but not
     to ``version_keys.__fn``.
 
-    Variable input detection — two sources:
+    Variable input detection:
 
-    1. ``inputs`` entries with ``source_type == "variable"`` (rare for
-       scihist since the @lineage_fcn receives raw numpy arrays, not
-       BaseVariables — those get classified as CONSTANT by scilineage).
-    2. ``inputs`` entries with ``source_type == "rid_tracking"`` (added by
-       scihist.for_each via :func:`_append_rid_tracking`).  The entry name
-       is ``__rid_<param>``; the variable type is recovered by looking up
-       ``record_id`` in ``_record_metadata.variable_name``.
+    ``inputs`` entries with ``source_type == "variable"`` are extracted to
+    determine input types. The scidb wrapper reconstructs BaseVariable objects
+    before calling LineageFcn, ensuring proper classification.
 
     We intentionally do NOT use ``_lineage.constants`` to discriminate
     between variants: scilineage classifies per-combo values (e.g. a
@@ -733,27 +729,6 @@ def _get_lineage_variants(db, fn_name: str) -> list[dict]:
             type_name = inp.get("type")
             if name and type_name:
                 input_types[name] = type_name
-
-        # Source 2: rid_tracking entries — recover variable type via lookup.
-        for inp in inputs_list:
-            if not isinstance(inp, dict):
-                continue
-            if inp.get("source_type") != "rid_tracking":
-                continue
-            rid_name = inp.get("name") or ""
-            record_id = inp.get("record_id")
-            if not rid_name.startswith("__rid_") or not record_id:
-                continue
-            param_name = rid_name[len("__rid_"):]
-            if param_name in input_types:
-                continue
-            vn_rows = db._duck._fetchall(
-                "SELECT variable_name FROM _record_metadata "
-                "WHERE record_id = ? LIMIT 1",
-                [record_id],
-            )
-            if vn_rows and vn_rows[0][0]:
-                input_types[param_name] = vn_rows[0][0]
 
         if not input_types:
             continue

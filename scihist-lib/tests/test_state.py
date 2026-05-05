@@ -329,3 +329,86 @@ class TestFnHashFallback:
             f"Expected green after full run with constants, got {result['state']}. "
             f"Counts: {result['counts']}"
         )
+
+
+def test_variable_input_classification(tmp_path):
+    """Test that variable inputs are properly classified in lineage records.
+
+    This verifies the fix for the input classification quirk where BaseVariable
+    inputs were being classified as constants instead of variables.
+    """
+    from scidb import configure_database, BaseVariable
+    from scidb.database import get_database
+
+    # Setup database
+    db_path = tmp_path / "test.duckdb"
+    configure_database(str(db_path), ["subject", "session"])
+    db = get_database()
+
+    # Define variable types
+    class RawEMG(BaseVariable):
+        schema_version = 1
+
+    class Filtered(BaseVariable):
+        schema_version = 1
+
+    # Create and save a variable
+    sig = RawEMG(np.random.randn(100))
+    rid_input = RawEMG.save(sig, subject=1, session="A")
+
+    # Process with lineage function
+    @lineage_fcn
+    def bandpass(signal, low_hz):
+        return signal
+
+    # Iterate over schema keys to avoid aggregation mode
+    for_each(
+        bandpass,
+        inputs={"signal": RawEMG, "low_hz": 20},
+        outputs=[Filtered],
+        subject=[1],
+        session=["A"],
+    )
+
+    # Query lineage
+    import json
+    con = db._duck.con
+    result = con.execute("""
+        SELECT inputs, constants
+        FROM _lineage
+        WHERE target = 'Filtered'
+    """).fetchone()
+
+    assert result is not None, "No lineage record found in _lineage"
+    inputs_json, constants_json = result[0], result[1]
+    inputs = json.loads(inputs_json) if isinstance(inputs_json, str) else inputs_json
+    constants = json.loads(constants_json) if isinstance(constants_json, str) else constants_json
+
+    # Assert proper classification
+    var_inputs = [i for i in inputs if i.get("name") == "signal"]
+    assert len(var_inputs) == 1, f"Expected 1 variable input named 'signal', got {len(var_inputs)}"
+    assert var_inputs[0]["source_type"] == "variable", (
+        f"Expected source_type='variable', got {var_inputs[0].get('source_type')}"
+    )
+    assert var_inputs[0]["type"] == "RawEMG", (
+        f"Expected type='RawEMG', got {var_inputs[0].get('type')}"
+    )
+    assert var_inputs[0]["record_id"] == rid_input, (
+        f"Expected record_id={rid_input}, got {var_inputs[0].get('record_id')}"
+    )
+
+    # Constant in constants
+    low_hz_constants = [c for c in constants if c.get("name") == "low_hz"]
+    assert len(low_hz_constants) == 1, f"Expected 1 constant 'low_hz', got {len(low_hz_constants)}"
+
+    # NO rid_tracking entries
+    rid_tracking = [i for i in inputs if i.get("source_type") == "rid_tracking"]
+    assert len(rid_tracking) == 0, (
+        f"Expected 0 rid_tracking entries, got {len(rid_tracking)}: {rid_tracking}"
+    )
+
+    # NO variable inputs in constants (the bug we're fixing)
+    signal_in_constants = [c for c in constants if c.get("name") == "signal"]
+    assert len(signal_in_constants) == 0, (
+        f"Variable 'signal' should NOT be in constants, found {len(signal_in_constants)}"
+    )

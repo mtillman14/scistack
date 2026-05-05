@@ -141,7 +141,7 @@ def _build_skip_hook(fn: "LineageFcn", outputs: list, db, inputs: dict) -> Calla
     1. Every output type already has a record for this combo's metadata.
     2. The function hash stored in lineage matches the current function's hash.
     3. The combo's ``__rid_*`` values match those stored in the output record's
-       lineage inputs (as ``rid_tracking`` entries) — meaning all upstream
+       lineage inputs (as ``variable`` entries) — meaning all upstream
        inputs are unchanged.
     4. Constant input hashes match those stored in the output record's lineage.
     """
@@ -238,8 +238,11 @@ def _build_skip_hook(fn: "LineageFcn", outputs: list, db, inputs: dict) -> Calla
             lineage_inputs = db.get_lineage_inputs(output_record_id)
             stored_rids = {}
             for inp in lineage_inputs:
-                if inp.get("source_type") == "rid_tracking":
-                    stored_rids[inp["name"]] = inp["record_id"]
+                if inp.get("source_type") == "variable":
+                    # Map parameter name to record_id
+                    param_name = inp.get("name")
+                    if param_name:
+                        stored_rids[f"__rid_{param_name}"] = inp["record_id"]
             logger.debug("step3: combo_rids=%s, stored_rids=%s", combo_rids, stored_rids)
             for rid_key, rid_val in combo_rids.items():
                 # Self-referential case: the loaded "input" IS the output
@@ -271,8 +274,11 @@ def _build_skip_hook(fn: "LineageFcn", outputs: list, db, inputs: dict) -> Calla
                 lineage_inputs = db.get_lineage_inputs(output_record_id)
                 stored_rids = {}
                 for inp in lineage_inputs:
-                    if inp.get("source_type") == "rid_tracking":
-                        stored_rids[inp["name"]] = inp["record_id"]
+                    if inp.get("source_type") == "variable":
+                        # Map parameter name to record_id
+                        param_name = inp.get("name")
+                        if param_name:
+                            stored_rids[f"__rid_{param_name}"] = inp["record_id"]
             logger.debug("step3b: fixed_inputs=%s, stored_rids=%s",
                           list(fixed_inputs.keys()), stored_rids)
             for name, (inner_type, fixed_meta) in fixed_inputs.items():
@@ -447,7 +453,6 @@ def _save_lineage_fcn_result(
         if data.invoked.fcn.generates_file:
             lineage_record = extract_lineage(data)
             lineage_dict = _lineage_to_dict(lineage_record)
-            _append_rid_tracking(lineage_dict, input_rids)
             pipeline_lineage_hash = data.invoked.compute_lineage_hash()
             generated_id = f"generated:{pipeline_lineage_hash[:32]}"
             user_id = get_user_id()
@@ -494,7 +499,6 @@ def _save_lineage_fcn_result(
 
         lineage_record = extract_lineage(data)
         lineage_dict = _lineage_to_dict(lineage_record)
-        _append_rid_tracking(lineage_dict, input_rids)
         lineage_hash = data.hash
         pipeline_lineage_hash = data.invoked.compute_lineage_hash()
         raw_data = get_raw_value(data)
@@ -559,7 +563,8 @@ def save_lineage_result(
 
     active_db = db if db is not None else get_database()
 
-    # Extract input_rids from __upstream in metadata (for rid_tracking)
+    # Extract input_rids from __upstream in metadata (legacy, no longer used)
+    # BaseVariable reconstruction in scidb wrapper now handles variable tracking.
     input_rids = {}
     if "__upstream" in metadata:
         try:
@@ -579,10 +584,9 @@ def save_lineage_result(
             input_rids.update(fixed_rids)
             logger.debug("Merged %d fixed_rids into input_rids", len(fixed_rids))
 
-    # Extract lineage and append rid_tracking entries
+    # Extract lineage
     lineage_record = extract_lineage(lineage_result)
     lineage_dict = _lineage_to_dict(lineage_record)
-    _append_rid_tracking(lineage_dict, input_rids)
 
     # Handle generates_file case (lineage-only save)
     if lineage_result.invoked.fcn.generates_file:
@@ -680,18 +684,6 @@ def save(variable_class, data, db=None, **metadata) -> str | None:
         logger.debug("save() exit: variable=%s, record_id=%s (plain path)",
                      var_name, rid[:12] if rid else None)
         return rid
-
-
-def _append_rid_tracking(lineage_dict: dict, input_rids: dict | None) -> None:
-    """Append __rid_* entries to lineage inputs for skip_computed tracking."""
-    if not input_rids:
-        return
-    for rid_key, rid_val in input_rids.items():
-        lineage_dict["inputs"].append({
-            "name": rid_key,
-            "source_type": "rid_tracking",
-            "record_id": str(rid_val),
-        })
 
 
 def _lineage_to_dict(lineage_record) -> dict:

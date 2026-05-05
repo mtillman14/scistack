@@ -275,13 +275,13 @@ class TestFixedInputTracking:
     """Test that Fixed inputs are tracked correctly in lineage."""
 
     def test_fixed_input_in_lineage(self, db):
-        """Fixed inputs should appear in _lineage.inputs as rid_tracking entries."""
+        """Fixed inputs should appear in _lineage.inputs as variable entries (not constants)."""
         @lineage_fcn
         def process(ref, value):
             return ref + value
 
         # Save reference data
-        RawData.save(np.array([100, 200]), subject=1, trial=1)
+        ref_rid = RawData.save(np.array([100, 200]), subject=1, trial=1)
 
         # Use Fixed input
         scihist_for_each(
@@ -303,32 +303,43 @@ class TestFixedInputTracking:
         """).fetchone()
         assert record_check is not None, "No ProcessedData record found in _record_metadata"
 
-        # Now check lineage has rid_tracking entry for Fixed input
+        # Now check lineage has variable entry for Fixed input (not rid_tracking)
         result = con.execute("""
-            SELECT inputs
+            SELECT inputs, constants
             FROM _lineage
             WHERE target = 'ProcessedData'
         """).fetchone()
 
         assert result is not None, "No lineage record found in _lineage"
-        inputs_json = result[0]
+        inputs_json, constants_json = result[0], result[1]
         inputs = json.loads(inputs_json) if isinstance(inputs_json, str) else inputs_json
+        constants = json.loads(constants_json) if isinstance(constants_json, str) else constants_json
 
-        # Find rid_tracking entries
+        # Fixed input should be classified as variable, not constant
+        variable_entries = [
+            inp for inp in inputs
+            if inp.get("source_type") == "variable"
+        ]
+
+        # Should have ref as a variable input
+        ref_entry = next(
+            (e for e in variable_entries if e["name"] == "ref"),
+            None
+        )
+        assert ref_entry is not None, f"Missing 'ref' variable entry. Found variables: {variable_entries}"
+        assert ref_entry.get("type") == "RawData", f"Expected type='RawData', got {ref_entry.get('type')}"
+        assert ref_entry.get("record_id") == ref_rid, f"Expected record_id={ref_rid}, got {ref_entry.get('record_id')}"
+
+        # value should be in constants (it's a literal constant)
+        value_in_constants = any(c.get("name") == "value" for c in constants)
+        assert value_in_constants, "Constant 'value' should be in constants list"
+
+        # Should NOT have rid_tracking entries
         rid_tracking_entries = [
             inp for inp in inputs
             if inp.get("source_type") == "rid_tracking"
         ]
-
-        assert len(rid_tracking_entries) > 0, "No rid_tracking entries found"
-
-        # Should have __rid_ref for the Fixed input
-        ref_entry = next(
-            (e for e in rid_tracking_entries if e["name"] == "__rid_ref"),
-            None
-        )
-        assert ref_entry is not None, "Missing __rid_ref for Fixed input"
-        assert "record_id" in ref_entry, "rid_tracking entry missing record_id"
+        assert len(rid_tracking_entries) == 0, f"Should not have rid_tracking entries, found: {rid_tracking_entries}"
 
     def test_fixed_input_staleness_detection(self, db):
         """Changing a Fixed input should cause skip_computed to re-run."""

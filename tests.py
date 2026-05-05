@@ -1,10 +1,3 @@
-pytest scihist-lib/tests/test_unified_variant_tracking.py::TestVersionKeysCompleteness -v
+pytest scihist-lib/tests/test_unified_variant_tracking.py::TestFixedInputTracking::test_fixed_input_in_lineage -xvs
 
-  # Branch params accumulation
-  pytest scihist-lib/tests/test_unified_variant_tracking.py::TestBranchParamsAccumulation -v
-
-  # Fixed input tracking
-  pytest scihist-lib/tests/test_unified_variant_tracking.py::TestFixedInputTracking -v
-
-  # Graceful degradation
-  pytest scidb/tests/test_optional_lineage_dependency.py::TestScidbWithoutLineage -v
+pytest scihist-lib/tests/ -x

@@ -588,4 +588,7 @@ def make_tuple_unpacking_wrapper(lineage_fn: Callable) -> Callable:
     except (ValueError, TypeError):
         wrapped.__scidb_params__ = set()
 
+    # Mark as a lineage wrapper so scidb can detect and reconstruct BaseVariable inputs
+    wrapped.__lineage_wrapper__ = True
+
     return wrapped
