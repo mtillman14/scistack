@@ -11,6 +11,14 @@ import scifor as _scifor
 from scifor import for_each as _scifor_for_each
 from scifor.pathinput import PathInput
 
+# Conditional import for lineage support (optional dependency)
+try:
+    from scilineage import LineageFcnResult
+    HAS_LINEAGE = True
+except ImportError:
+    LineageFcnResult = None
+    HAS_LINEAGE = False
+
 from .colname import ColName
 from .column_selection import ColumnSelection
 from .fixed import Fixed
@@ -89,6 +97,7 @@ def for_each(
     _pre_combo_hook: "Callable[[dict], bool] | None" = None,
     _progress_fn: "Callable[[dict], None] | None" = None,
     _cancel_check: "Callable[[], bool] | None" = None,
+    _lineage_fixed_rids: "dict | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -127,6 +136,18 @@ def for_each(
     Returns:
         A pandas DataFrame of results, or None when dry_run=True.
     """
+    # --- Normalize where clause: convert string to RawFilter ---
+    # (but not if it's an EachOf wrapper - those will be normalized in recursive calls)
+    if isinstance(where, str):
+        from .filters import raw_sql
+        # Preserve original string for version_keys
+        original_where_str = where
+        # Convert Python-style == to SQL =
+        where_sql = where.replace("==", "=")
+        where = raw_sql(where_sql)
+        # Store original for version_keys serialization
+        where._original_str = original_where_str
+
     # --- EachOf expansion: must be first, before any other logic ---
     each_of_axes = []
     for param, val in inputs.items():
@@ -171,6 +192,14 @@ def for_each(
             if _cancel_check is not None and _cancel_check():
                 break
         return pd.concat(results, ignore_index=True) if results else None
+
+    # Wrap lineage functions to unpack tuple returns when needed
+    if HAS_LINEAGE:
+        try:
+            from scilineage import make_tuple_unpacking_wrapper
+            fn = make_tuple_unpacking_wrapper(fn)
+        except ImportError:
+            pass  # scilineage not available
 
     fn_name = getattr(fn, "__name__", repr(fn))
     Log.info(f"===== for_each({fn_name}) start =====")
@@ -499,6 +528,22 @@ def for_each(
         _call_idx = [0]
         _orig_fn = fn
 
+        # Get function parameters to check which metadata keys it accepts.
+        # For scihist functions, the wrapper stores the original function's
+        # parameters in __scidb_params__. Otherwise try to get the signature.
+        _fn_params = None
+        if _inject_combo_metadata:
+            if hasattr(_orig_fn, '__scidb_params__'):
+                _fn_params = _orig_fn.__scidb_params__
+            else:
+                import inspect
+                try:
+                    sig = inspect.signature(_orig_fn)
+                    _fn_params = set(sig.parameters.keys())
+                except (ValueError, TypeError):
+                    # Couldn't get signature, don't inject metadata
+                    _fn_params = set()
+
         def fn(**kwargs):  # noqa: F811 — intentional rebind
             idx = _call_idx[0]
             _call_idx[0] = idx + 1
@@ -512,9 +557,10 @@ def for_each(
                     resolved[k] = _resolve_per_combo_merge(v, load_kw)
                 else:
                     resolved[k] = v
-            if _inject_combo_metadata:
+            if _inject_combo_metadata and _fn_params is not None:
+                # Only inject metadata keys that the function signature accepts
                 for k, v in load_kw.items():
-                    if k not in resolved:
+                    if k not in resolved and k in _fn_params:
                         resolved[k] = v
             return _orig_fn(**resolved)
 
@@ -559,7 +605,8 @@ def for_each(
     if save and outputs and not result_tbl.empty:
         save_t0 = time.perf_counter()
         _save_results(result_tbl, outputs, output_names, config_keys, db,
-                      rid_to_bp=rid_to_bp, rid_keys=rid_keys)
+                      rid_to_bp=rid_to_bp, rid_keys=rid_keys,
+                      lineage_fixed_rids=_lineage_fixed_rids)
         save_elapsed = time.perf_counter() - save_t0
         Log.info(f"for_each({fn_name}): saved {len(result_tbl)} results in {save_elapsed:.3f}s")
 
@@ -873,10 +920,14 @@ def _load_var_type_all(
         and confuse scifor's data-column detection.
         """
         const_keys: set = set()
-        constants_json = meta.get("__constants")
-        if constants_json:
+        constants_val = meta.get("__constants")
+        if constants_val:
             try:
-                const_keys = set(json.loads(constants_json).keys())
+                # Handle both dict (new format) and JSON string (old format)
+                if isinstance(constants_val, dict):
+                    const_keys = set(constants_val.keys())
+                else:
+                    const_keys = set(json.loads(constants_val).keys())
             except Exception:
                 pass
         return {k: str(v) if k in _schema_keys and v is not None else v
@@ -1048,6 +1099,7 @@ def _save_results(
     db: Any | None,
     rid_to_bp: "dict | None" = None,
     rid_keys: "list | None" = None,
+    lineage_fixed_rids: "dict | None" = None,
 ) -> None:
     """Save results from the result table to output variable types."""
     import pandas as pd
@@ -1068,7 +1120,12 @@ def _save_results(
     meta_cols = [c for c in result_tbl.columns if c not in output_names]
 
     fn_name = config_keys.get("__fn", "")
-    direct_constants = json.loads(config_keys.get("__constants", "{}") or "{}")
+    # Handle both dict (new format) and JSON string (old format) for backward compatibility
+    constants_val = config_keys.get("__constants", {})
+    if isinstance(constants_val, str):
+        direct_constants = json.loads(constants_val or "{}")
+    else:
+        direct_constants = constants_val or {}
 
     for _, row in result_tbl.iterrows():
         # 1. Collect upstream branch_params via __rid_* columns → rid_to_bp lookup
@@ -1131,7 +1188,7 @@ def _save_results(
             if k not in save_metadata:
                 save_metadata[k] = v
 
-        save_metadata["__branch_params"] = json.dumps(merged_bp)
+        save_metadata["__branch_params"] = merged_bp
 
         # Add upstream record_ids to version_keys so that records from different
         # upstream variants get distinct record_ids even when content is identical.
@@ -1143,7 +1200,7 @@ def _save_results(
                     if rid_val is not None and not (isinstance(rid_val, float) and pd.isna(rid_val)):
                         upstream[rid_col] = rid_val
             if upstream:
-                save_metadata["__upstream"] = json.dumps(upstream, sort_keys=True)
+                save_metadata["__upstream"] = upstream
 
         for output_obj, output_name in zip(outputs, output_names):
             if output_name not in row.index:
@@ -1176,6 +1233,34 @@ def _save_results(
                     Log.error(msg)
                 continue
             output_value = row[output_name]
+
+            # Detect LineageFcnResult and delegate to scihist if present
+            if HAS_LINEAGE and isinstance(output_value, LineageFcnResult):
+                try:
+                    from scihist.foreach import save_lineage_result
+                    save_t0 = time.perf_counter()
+                    # Add lineage_fixed_rids to metadata for rid_tracking
+                    lineage_metadata = dict(save_metadata)
+                    if lineage_fixed_rids:
+                        lineage_metadata["__lineage_fixed_rids"] = lineage_fixed_rids
+                    rid = save_lineage_result(output_obj, output_value, lineage_metadata, db)
+                    save_elapsed = time.perf_counter() - save_t0
+                    meta_str = ", ".join(f"{k}={v}" for k, v in save_metadata.items()
+                                         if not k.startswith("__"))
+                    data_desc = _describe_save_data(output_value)
+                    rid_short = rid[:12] if isinstance(rid, str) else str(rid)
+                    msg = f"[save] {meta_str}: {_output_name(output_obj)} -> record_id={rid_short} ({data_desc}) [lineage] in {save_elapsed:.3f}s"
+                    print(msg)
+                    Log.info(msg)
+                except Exception as e:
+                    meta_str = ", ".join(f"{k}={v}" for k, v in save_metadata.items()
+                                         if not k.startswith("__"))
+                    msg = f"[error] {meta_str}: failed to save {_output_name(output_obj)} [lineage]: {e}"
+                    print(msg)
+                    Log.error(msg)
+                continue
+
+            # Normal save path
             try:
                 save_t0 = time.perf_counter()
                 rid = output_obj.save(output_value, **db_kwargs, **save_metadata)

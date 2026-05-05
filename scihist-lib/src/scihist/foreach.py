@@ -1,5 +1,6 @@
 """SciHist for_each — auto-wraps function in LineageFcn and records lineage."""
 
+import json
 import logging
 import time
 import sys
@@ -73,7 +74,8 @@ def for_each(
         logger.debug("%s is already a LineageFcn (hash=%s)", fn_name, fn.hash[:12])
 
     # Wrap LineageFcn in a plain callable for scidb.for_each
-    fn_plain = _make_plain(fn)
+    from scilineage import make_tuple_unpacking_wrapper
+    fn_plain = make_tuple_unpacking_wrapper(fn)
 
     # Build the pre-combo skip hook when skip_computed is enabled.
     pre_combo_hook = None
@@ -97,17 +99,42 @@ def for_each(
     elif not outputs:
         logger.debug("skip_computed disabled: no outputs specified")
 
-    # Delegate to scidb.for_each with save=False (we handle saves ourselves).
+    # Compute Fixed input record_ids for lineage tracking before delegating to scidb.
+    # These are needed for staleness checking but scidb doesn't include them in
+    # __upstream (Fixed inputs have __record_id stripped for variant expansion).
+    fixed_rids = {}
+    if save and outputs:
+        for name, value in inputs.items():
+            if hasattr(value, 'fixed_metadata'):
+                inner = value.var_type if hasattr(value, 'var_type') else value
+                if hasattr(inner, 'var_type'):  # Unwrap ColumnSelection
+                    inner = inner.var_type
+                if isinstance(inner, type):
+                    save_db = db
+                    if save_db is None:
+                        try:
+                            from scidb.database import get_database
+                            save_db = get_database()
+                        except Exception:
+                            save_db = None
+                    if save_db is not None:
+                        rid = save_db.find_record_id(inner, value.fixed_metadata)
+                        if rid:
+                            fixed_rids[f"__rid_{name}"] = rid
+        logger.debug("computed %d fixed_rids for lineage tracking", len(fixed_rids))
+
+    # Delegate to scidb.for_each with save=True (scidb will detect LineageFcnResult
+    # and call save_lineage_result with complete metadata).
     # For generates_file functions, inject combo metadata as kwargs so fn receives
     # schema keys (subject, session, etc.) as named arguments.
     _inject_meta = getattr(fn, 'generates_file', False)
-    logger.debug("delegating to scidb.for_each (save=False, distribute=%s)", distribute)
+    logger.debug("delegating to scidb.for_each (save=%s, distribute=%s)", save, distribute)
     result_tbl = _scidb_for_each(
         fn_plain,
         inputs,
         outputs,
         dry_run=dry_run,
-        save=False,
+        save=save,
         as_table=as_table,
         db=db,
         distribute=distribute,
@@ -116,6 +143,7 @@ def for_each(
         _pre_combo_hook=pre_combo_hook,
         _progress_fn=_progress_fn,
         _cancel_check=_cancel_check,
+        _lineage_fixed_rids=fixed_rids if fixed_rids else None,
         **metadata_iterables,
     )
 
@@ -124,51 +152,6 @@ def for_each(
         return None
 
     logger.info("scidb.for_each returned %d rows", len(result_tbl))
-
-    # Save with lineage
-    if save and outputs and not result_tbl.empty:
-        # Identify constant (non-variable, non-wrapper) inputs for version_keys.
-        constant_inputs = {}
-        # Resolve Fixed input record_ids for lineage rid_tracking.
-        fixed_rids = {}
-        for name, value in inputs.items():
-            if isinstance(value, type):
-                continue  # Variable type
-            if hasattr(value, 'var_type') or hasattr(value, 'var_specs'):
-                # Track Fixed inputs for rid_tracking in lineage.
-                if hasattr(value, 'fixed_metadata'):
-                    inner = value.var_type
-                    if hasattr(inner, 'var_type'):
-                        inner = inner.var_type
-                    if isinstance(inner, type):
-                        save_db = db
-                        if save_db is None:
-                            try:
-                                from scidb.database import get_database
-                                save_db = get_database()
-                            except Exception:
-                                save_db = None
-                        if save_db is not None:
-                            rid = save_db.find_record_id(inner, value.fixed_metadata)
-                            if rid:
-                                fixed_rids[f"__rid_{name}"] = rid
-                continue  # Wrapper (Fixed, ColumnSelection, Merge, etc.)
-            try:
-                from scifor import PathInput as _PathInput
-                if isinstance(value, _PathInput):
-                    continue  # PathInput — resolved per-combo by scidb.for_each
-            except ImportError:
-                pass
-            constant_inputs[name] = value
-
-        logger.debug("input classification: %d constants, %d fixed_rids",
-                      len(constant_inputs), len(fixed_rids))
-        output_names = [_output_name(o) for o in outputs]
-        logger.info("saving %d rows with lineage for %s", len(result_tbl), output_names)
-        _save_with_lineage(result_tbl, outputs, output_names, db,
-                           constant_inputs=constant_inputs,
-                           fixed_input_rids=fixed_rids)
-
     return result_tbl
 
 
@@ -378,12 +361,6 @@ def _build_skip_hook(fn: "LineageFcn", outputs: list, db, inputs: dict) -> Calla
     return _should_skip
 
 
-def _make_plain(lineage_fn) -> Callable:
-    """Wrap a LineageFcn in a plain function handle that returns LineageFcnResult."""
-    def wrapped(*args, **kwargs):
-        return lineage_fn(*args, **kwargs)
-    wrapped.__name__ = getattr(lineage_fn, "__name__", "lineage_fcn")
-    return wrapped
 
 
 def _save_with_lineage(
@@ -568,6 +545,125 @@ def _save_lineage_fcn_result(
         logger.exception("_save_lineage_fcn_result FAILED: output=%s, fn=%s, elapsed=%.3fs",
                          output_name, fn_name, elapsed)
         raise
+
+
+def save_lineage_result(
+    output_obj: Any,
+    lineage_result: "LineageFcnResult",
+    metadata: dict,
+    db: Any | None,
+) -> str | None:
+    """Save a LineageFcnResult with lineage tracking.
+
+    This function is called by scidb.for_each when it detects a LineageFcnResult.
+    It receives pre-built metadata from scidb (including version_keys and branch_params)
+    and adds lineage-specific information.
+
+    Args:
+        output_obj: The output variable class
+        lineage_result: The LineageFcnResult containing data and lineage info
+        metadata: Pre-built metadata from scidb (includes __fn, __fn_hash,
+                  __inputs, __constants, __branch_params, __upstream)
+        db: Database instance (optional)
+
+    Returns:
+        record_id of the saved output
+    """
+    from scilineage import extract_lineage, get_raw_value
+    from scidb.database import get_database
+    from datetime import datetime
+
+    output_name = output_obj.__name__ if isinstance(output_obj, type) else type(output_obj).__name__
+    fn_name = lineage_result.invoked.fcn.fn.__name__ if hasattr(lineage_result.invoked.fcn, 'fn') else "unknown"
+    logger.debug("save_lineage_result entry: output=%s, fn=%s, generates_file=%s",
+                 output_name, fn_name, lineage_result.invoked.fcn.generates_file)
+
+    active_db = db if db is not None else get_database()
+
+    # Extract input_rids from __upstream in metadata (for rid_tracking)
+    input_rids = {}
+    if "__upstream" in metadata:
+        try:
+            # Handle both dict (new format) and JSON string (old format) for backward compatibility
+            upstream_val = metadata["__upstream"]
+            if isinstance(upstream_val, dict):
+                input_rids = upstream_val
+            else:
+                input_rids = json.loads(upstream_val)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Failed to parse __upstream for rid tracking")
+
+    # Merge in Fixed input record_ids from scihist (for staleness tracking)
+    if "__lineage_fixed_rids" in metadata:
+        fixed_rids = metadata.get("__lineage_fixed_rids", {})
+        if fixed_rids:
+            input_rids.update(fixed_rids)
+            logger.debug("Merged %d fixed_rids into input_rids", len(fixed_rids))
+
+    # Extract lineage and append rid_tracking entries
+    lineage_record = extract_lineage(lineage_result)
+    lineage_dict = _lineage_to_dict(lineage_record)
+    _append_rid_tracking(lineage_dict, input_rids)
+
+    # Handle generates_file case (lineage-only save)
+    if lineage_result.invoked.fcn.generates_file:
+        from scidb.database import get_user_id
+        pipeline_lineage_hash = lineage_result.invoked.compute_lineage_hash()
+        generated_id = f"generated:{pipeline_lineage_hash[:32]}"
+        user_id = get_user_id()
+        nested_metadata = active_db._split_metadata(metadata)
+
+        schema_keys = nested_metadata.get("schema", {})
+        version_keys = nested_metadata.get("version", {})
+        # version_keys already contains __fn, __fn_hash from scidb
+        schema_level = active_db._infer_schema_level(schema_keys)
+        schema_id = (
+            active_db._duck._get_or_create_schema_id(schema_level, schema_keys)
+            if schema_level is not None and schema_keys
+            else 0
+        )
+        active_db._save_record_metadata(
+            record_id=generated_id,
+            timestamp=datetime.now().isoformat(),
+            variable_name=output_name,
+            schema_id=schema_id,
+            version_keys=version_keys or None,
+            content_hash=None,
+            lineage_hash=pipeline_lineage_hash,
+            schema_version=getattr(output_obj, 'schema_version', 1),
+            user_id=user_id,
+        )
+        active_db._save_lineage(
+            output_record_id=generated_id,
+            output_type=output_name,
+            lineage=lineage_dict,
+            lineage_hash=pipeline_lineage_hash,
+            user_id=user_id,
+            schema_keys=nested_metadata.get("schema"),
+            output_content_hash=None,
+        )
+        logger.debug("save_lineage_result exit: record_id=%s (generates_file)", generated_id[:12])
+        return generated_id
+
+    # Normal case: save data + lineage
+    lineage_hash = lineage_result.hash
+    pipeline_lineage_hash = lineage_result.invoked.compute_lineage_hash()
+    raw_data = get_raw_value(lineage_result)
+
+    variable_class = output_obj if isinstance(output_obj, type) else type(output_obj)
+    instance = variable_class(raw_data)
+
+    # Use pre-built metadata from scidb (already contains version_keys and branch_params)
+    rid = active_db.save(
+        instance,
+        metadata,
+        lineage=lineage_dict,
+        lineage_hash=lineage_hash,
+        pipeline_lineage_hash=pipeline_lineage_hash,
+    )
+
+    logger.debug("save_lineage_result exit: record_id=%s", rid[:12] if rid else None)
+    return rid
 
 
 def save(variable_class, data, db=None, **metadata) -> str | None:

@@ -16,11 +16,45 @@ returned.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .database import DatabaseManager
+
+
+def _add_schema_column_casts(sql: str, schema_keys: list[str]) -> str:
+    """Add TRY_CAST to schema columns in SQL where clauses.
+
+    Schema keys are stored as VARCHAR in the database, so comparisons with
+    numeric literals need explicit casting. This function automatically wraps
+    schema column references with TRY_CAST(column AS INTEGER) when they appear
+    in comparisons.
+
+    Args:
+        sql: The raw SQL WHERE condition
+        schema_keys: List of schema column names (e.g., ['subject', 'trial'])
+
+    Returns:
+        SQL with casts added to schema columns
+
+    Example:
+        _add_schema_column_casts("subject <= 2", ["subject", "trial"])
+        # Returns: "TRY_CAST(subject AS INTEGER) <= 2"
+    """
+    if not schema_keys:
+        return sql
+
+    # Build regex pattern to match schema columns followed by comparison operators
+    # Match word boundaries to avoid partial matches
+    pattern = r'\b(' + '|'.join(re.escape(key) for key in schema_keys) + r')\b'
+
+    def replace_with_cast(match):
+        col_name = match.group(1)
+        return f'TRY_CAST({col_name} AS INTEGER)'
+
+    return re.sub(pattern, replace_with_cast, sql)
 
 
 class Filter(ABC):
@@ -634,8 +668,12 @@ class RawFilter(Filter):
         # Run the raw SQL against the target table joined with schema
         schema_keys = db.dataset_schema_keys
 
+        # Add casts for schema columns (stored as VARCHAR but often compared to integers)
+        sql_with_casts = _add_schema_column_casts(self.sql, schema_keys)
+
         try:
             # Latest-version query over target table with the raw condition
+            # Join with _schema to make schema keys available in the WHERE clause
             query = f"""
                 WITH ranked AS (
                     SELECT rm.schema_id,
@@ -643,16 +681,19 @@ class RawFilter(Filter):
                                PARTITION BY rm.variable_name, rm.schema_id, rm.version_keys
                                ORDER BY rm.timestamp DESC
                            ) AS rn,
-                           t.*
+                           t.*,
+                           s.*
                     FROM _record_metadata rm
                     JOIN "{target_table_name}" t
                         ON t.record_id = rm.record_id
+                    LEFT JOIN _schema s
+                        ON s.schema_id = rm.schema_id
                     WHERE rm.variable_name = ?
                 )
                 SELECT DISTINCT schema_id
                 FROM ranked
                 WHERE rn = 1
-                  AND ({self.sql})
+                  AND ({sql_with_casts})
             """
             rows = db._duck._fetchall(query, [target_table_name.removesuffix("_data")])
         except Exception as e:

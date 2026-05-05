@@ -585,12 +585,12 @@ class DatabaseManager:
                 timestamp VARCHAR NOT NULL,
                 variable_name VARCHAR NOT NULL,
                 schema_id INTEGER NOT NULL,
-                version_keys VARCHAR DEFAULT '{}',
+                version_keys JSON DEFAULT '{}',
                 content_hash VARCHAR,
                 lineage_hash VARCHAR,
                 schema_version INTEGER,
                 user_id VARCHAR,
-                branch_params VARCHAR DEFAULT '{}',
+                branch_params JSON DEFAULT '{}',
                 excluded BOOLEAN DEFAULT FALSE,
                 PRIMARY KEY (record_id, timestamp)
             )
@@ -605,8 +605,8 @@ class DatabaseManager:
                 target           VARCHAR NOT NULL,
                 function_name    VARCHAR NOT NULL,
                 function_hash    VARCHAR NOT NULL,
-                inputs           VARCHAR NOT NULL DEFAULT '[]',
-                constants        VARCHAR NOT NULL DEFAULT '[]',
+                inputs           JSON NOT NULL DEFAULT '[]',
+                constants        JSON NOT NULL DEFAULT '[]',
                 timestamp        VARCHAR NOT NULL
             )
         """)
@@ -629,7 +629,7 @@ class DatabaseManager:
                 function_name VARCHAR NOT NULL,
                 call_id       VARCHAR NOT NULL,
                 schema_id     INTEGER NOT NULL,
-                branch_params VARCHAR DEFAULT '{}',
+                branch_params JSON DEFAULT '{}',
                 PRIMARY KEY (function_name, call_id, schema_id, branch_params)
             )
         """)
@@ -1921,7 +1921,17 @@ class DatabaseManager:
 
         # Strategy 1: filter by __where version key
         augmented = dict(metadata)
-        augmented["__where"] = where.to_key()
+        # where can be a string or a Filter object
+        # For RawFilter with original string, use that for consistency with save path
+        from .filters import RawFilter
+        if isinstance(where, str):
+            augmented["__where"] = where
+        elif isinstance(where, RawFilter) and hasattr(where, '_original_str'):
+            augmented["__where"] = where._original_str
+        elif hasattr(where, 'to_key'):
+            augmented["__where"] = where.to_key()
+        else:
+            augmented["__where"] = str(where)
         nested = self._split_metadata(augmented)
         records = self._find_record(type_name, nested_metadata=nested, version_id=version_id)
 
@@ -2588,8 +2598,15 @@ class DatabaseManager:
             vk = json.loads(row["version_keys"] or "{}") if row.get("version_keys") else {}
             bp = json.loads(row["branch_params"] or "{}") if row.get("branch_params") else {}
             fn_name = vk.get("__fn")
-            input_types: dict = json.loads(vk["__inputs"]) if "__inputs" in vk else {}
-            constants: dict = json.loads(vk["__constants"]) if "__constants" in vk else {}
+            # Handle both dict (new format) and JSON string (old format) for backward compatibility
+            if "__inputs" in vk:
+                input_types: dict = vk["__inputs"] if isinstance(vk["__inputs"], dict) else json.loads(vk["__inputs"])
+            else:
+                input_types = {}
+            if "__constants" in vk:
+                constants: dict = vk["__constants"] if isinstance(vk["__constants"], dict) else json.loads(vk["__constants"])
+            else:
+                constants = {}
 
             schema = {}
             for k in self.dataset_schema_keys:

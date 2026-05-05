@@ -35,6 +35,7 @@ from .core import (
     LineageFcn,
     lineage_fcn,
     manual,
+    make_tuple_unpacking_wrapper,
 )
 from .hashing import canonical_hash
 from .inputs import InputKind, ClassifiedInput, classify_input, is_trackable_variable
@@ -58,6 +59,8 @@ __all__ = [
     "lineage_fcn",
     # Manual intervention
     "manual",
+    # Tuple unpacking
+    "make_tuple_unpacking_wrapper",
     # Input classification
     "InputKind",
     "ClassifiedInput",

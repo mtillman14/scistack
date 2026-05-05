@@ -85,18 +85,33 @@ class ForEachConfig:
         self.as_table = as_table
 
     def to_version_keys(self) -> dict:
-        """Return dict of config keys to merge into save_metadata."""
+        """Return dict of config keys to merge into save_metadata.
+
+        All values are plain Python objects (dicts, strings, bools, lists).
+        The final JSON encoding is done by _save_record_metadata.
+        """
         keys = {}
         keys["__fn"] = getattr(self.fn, "__name__", repr(self.fn))
         keys["__fn_hash"] = _compute_fn_hash(self.fn)
-        inputs_key = self._serialize_inputs()
-        if inputs_key != "{}":
-            keys["__inputs"] = inputs_key
+        inputs_dict = self._serialize_inputs()
+        if inputs_dict:
+            keys["__inputs"] = inputs_dict
+        # Always include __constants, even if empty (for consistency)
         direct = self._get_direct_constants()
-        if direct:
-            keys["__constants"] = json.dumps(direct, sort_keys=True)
+        keys["__constants"] = direct if direct else {}
         if self.where is not None:
-            keys["__where"] = self.where.to_key()
+            # where can be a string or a Filter object
+            # For RawFilter created from string, preserve original string format
+            from .filters import RawFilter
+            if isinstance(self.where, str):
+                keys["__where"] = self.where
+            elif isinstance(self.where, RawFilter) and hasattr(self.where, '_original_str'):
+                # Preserve original string for string-based filters
+                keys["__where"] = self.where._original_str
+            elif hasattr(self.where, 'to_key'):
+                keys["__where"] = self.where.to_key()
+            else:
+                keys["__where"] = str(self.where)
         if self.distribute:
             keys["__distribute"] = True
         if self.as_table:
@@ -127,11 +142,14 @@ class ForEachConfig:
         from .foreach import _is_loadable
         return {k: v for k, v in self.inputs.items() if not _is_loadable(v)}
 
-    def _serialize_inputs(self) -> str:
-        """Serialize loadable inputs to a canonical JSON string.
+    def _serialize_inputs(self) -> dict:
+        """Serialize loadable inputs to a dict.
 
         Only includes loadable inputs (variable types, Fixed, ColumnSelection,
         Merge) — constants are already included in save_metadata directly.
+
+        Returns a dict (not JSON string) so it can be included in version_keys
+        which will be JSON-encoded once by _save_record_metadata.
         """
         from .foreach import _is_loadable
 
@@ -145,4 +163,4 @@ class ForEachConfig:
                     result[name] = spec.__name__
                 else:
                     result[name] = repr(spec)
-        return json.dumps(result, sort_keys=True)
+        return result

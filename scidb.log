@@ -1018,3 +1018,1069 @@
 [00:40:44.454] [DEBUG] RPC << get_layout OK (10.0ms)
 [00:40:44.455] [INFO] [sciduck] DuckDB lock RELEASED: /Users/mitchelltillman/Documents/Stroke-R01-Aim-2/aim2.duckdb
 [00:40:44.455] [DEBUG] [scistack_gui.db] release_db_connection: refcount=0, closed=True
+[16:33:00.191] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[16:33:00.199] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[16:33:00.208] [DEBUG] save(RawData): record_id=f6c7341e61b5, content_hash=39fde331b2be, serialization=native
+[16:33:00.232] [DEBUG] _save_native: created table 'RawData_data'
+[16:33:00.241] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=f6c7341e61b5
+[16:33:00.249] [DEBUG] _save_record_metadata: RawData, record_id=f6c7341e61b5, schema_id=1
+[16:33:00.259] [DEBUG] save(RawData): transaction committed
+[16:33:00.262] [INFO] save_variable(RawData): saved -> record_id=f6c7341e61b5
+[16:33:00.265] [INFO] scihist.for_each(compute): skip_computed=True
+[16:33:00.271] [INFO] ===== for_each(compute) start =====
+[16:33:00.290] [DEBUG] for_each(compute): call_id=e95c5f3830a2d439
+[16:33:00.295] [INFO] load_all(RawData): metadata={}
+[16:33:00.319] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[16:33:00.334] [INFO] load_all(RawData): found 1 record(s)
+[16:33:00.351] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.055s
+[16:33:00.355] [DEBUG] input 'param': constant int
+[16:33:00.359] [INFO] loaded 2 inputs in 0.063s
+[16:33:00.374] [DEBUG] building variant tracking (rid->branch_params mapping)
+[16:33:00.382] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[16:33:00.391] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[16:33:00.405] [DEBUG] 1 combos (no rid expansion needed)
+[16:33:00.418] [DEBUG] _persist_expected_combos(compute, call_id=e95c5f3830a2d439): replaced 0 -> wrote 1 expected combos
+[16:33:00.425] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[16:33:00.428] [INFO] ================================================================
+[16:33:00.431] [INFO] for_each(compute) — 1 iteration
+[16:33:00.439] [INFO] subject=[1 values], trial=[1 values]
+[16:33:00.442] [INFO] ================================================================
+[16:33:00.446] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], param: 10}
+[16:33:00.449] [INFO] subject=['1']
+[16:33:00.454] [INFO] trial=['1']
+[16:33:00.462] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute(x, param)
+[16:33:00.467] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute completed in 0.001s
+[16:33:00.470] [INFO] ────────────────────────────────────────────────────────────────
+[16:33:00.474] [INFO] for_each(compute) done: completed=1, skipped=0, total=1
+[16:33:00.478] [INFO] ================================================================
+[16:33:00.483] [DEBUG] for_each(compute): completed=1, failed=0, total=1
+[16:33:00.487] [DEBUG] save(ProcessedData): record_id=89ab2422899f, content_hash=af6aa7745b18, serialization=native
+[16:33:00.496] [DEBUG] _save_native: created table 'ProcessedData_data'
+[16:33:00.503] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=89ab2422899f
+[16:33:00.515] [DEBUG] _save_record_metadata: ProcessedData, record_id=89ab2422899f, schema_id=1
+[16:33:00.524] [DEBUG] _save_lineage: ProcessedData, fn=compute, lineage_hash=3e63756773c3
+[16:33:00.536] [DEBUG] save(ProcessedData): transaction committed
+[16:33:00.539] [INFO] [save] subject=1, trial=1, param=10: ProcessedData -> record_id=89ab2422899f (LineageFcnResult) [lineage] in 0.052s
+[16:33:00.543] [INFO] for_each(compute): saved 1 results in 0.057s
+[18:25:55.660] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:25:55.674] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:25:55.681] [DEBUG] save(RawData): record_id=f6c7341e61b5, content_hash=39fde331b2be, serialization=native
+[18:25:55.719] [DEBUG] _save_native: created table 'RawData_data'
+[18:25:55.733] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=f6c7341e61b5
+[18:25:55.751] [DEBUG] _save_record_metadata: RawData, record_id=f6c7341e61b5, schema_id=1
+[18:25:55.767] [DEBUG] save(RawData): transaction committed
+[18:25:55.773] [INFO] save_variable(RawData): saved -> record_id=f6c7341e61b5
+[18:25:55.779] [INFO] scihist.for_each(compute): skip_computed=True
+[18:25:55.783] [INFO] ===== for_each(compute) start =====
+[18:25:55.795] [DEBUG] for_each(compute): call_id=0b1703da2b96be6d
+[18:25:55.799] [INFO] load_all(RawData): metadata={}
+[18:25:55.818] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:25:55.823] [INFO] load_all(RawData): found 1 record(s)
+[18:25:55.838] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.039s
+[18:25:55.843] [DEBUG] input 'param': constant int
+[18:25:55.847] [INFO] loaded 2 inputs in 0.049s
+[18:25:55.853] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:25:55.865] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:25:55.871] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:25:55.874] [DEBUG] 1 combos (no rid expansion needed)
+[18:25:55.889] [DEBUG] _persist_expected_combos(compute, call_id=0b1703da2b96be6d): replaced 0 -> wrote 1 expected combos
+[18:25:55.902] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:25:55.906] [INFO] ================================================================
+[18:25:55.913] [INFO] for_each(compute) — 1 iteration
+[18:25:55.920] [INFO] subject=[1 values], trial=[1 values]
+[18:25:55.926] [INFO] ================================================================
+[18:25:55.932] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], param: 10}
+[18:25:55.940] [INFO] subject=['1']
+[18:25:55.946] [INFO] trial=['1']
+[18:25:55.956] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute(x, param)
+[18:25:55.967] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute completed in 0.001s
+[18:25:55.973] [INFO] ────────────────────────────────────────────────────────────────
+[18:25:55.981] [INFO] for_each(compute) done: completed=1, skipped=0, total=1
+[18:25:55.987] [INFO] ================================================================
+[18:25:55.993] [DEBUG] for_each(compute): completed=1, failed=0, total=1
+[18:25:56.001] [DEBUG] save(ProcessedData): record_id=4bcda9020693, content_hash=af6aa7745b18, serialization=native
+[18:25:56.016] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:25:56.026] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=4bcda9020693
+[18:25:56.039] [DEBUG] _save_record_metadata: ProcessedData, record_id=4bcda9020693, schema_id=1
+[18:25:56.058] [DEBUG] _save_lineage: ProcessedData, fn=compute, lineage_hash=3e63756773c3
+[18:25:56.075] [DEBUG] save(ProcessedData): transaction committed
+[18:25:56.080] [INFO] [save] subject=1, trial=1, param=10: ProcessedData -> record_id=4bcda9020693 (LineageFcnResult) [lineage] in 0.080s
+[18:25:56.086] [INFO] for_each(compute): saved 1 results in 0.088s
+[18:28:13.503] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:28:13.508] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:28:13.517] [DEBUG] save(RawData): record_id=f6c7341e61b5, content_hash=39fde331b2be, serialization=native
+[18:28:13.560] [DEBUG] _save_native: created table 'RawData_data'
+[18:28:13.569] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=f6c7341e61b5
+[18:28:13.588] [DEBUG] _save_record_metadata: RawData, record_id=f6c7341e61b5, schema_id=1
+[18:28:13.607] [DEBUG] save(RawData): transaction committed
+[18:28:13.612] [INFO] save_variable(RawData): saved -> record_id=f6c7341e61b5
+[18:28:13.621] [INFO] scihist.for_each(compute): skip_computed=True
+[18:28:13.628] [INFO] ===== for_each(compute) start =====
+[18:28:13.640] [DEBUG] for_each(compute): call_id=0b1703da2b96be6d
+[18:28:13.646] [INFO] load_all(RawData): metadata={}
+[18:28:13.675] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:28:13.681] [INFO] load_all(RawData): found 1 record(s)
+[18:28:13.697] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.050s
+[18:28:13.701] [DEBUG] input 'param': constant int
+[18:28:13.710] [INFO] loaded 2 inputs in 0.064s
+[18:28:13.715] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:28:13.724] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:28:13.733] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:28:13.738] [DEBUG] 1 combos (no rid expansion needed)
+[18:28:13.766] [DEBUG] _persist_expected_combos(compute, call_id=0b1703da2b96be6d): replaced 0 -> wrote 1 expected combos
+[18:28:13.776] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:28:13.782] [INFO] ================================================================
+[18:28:13.789] [INFO] for_each(compute) — 1 iteration
+[18:28:13.798] [INFO] subject=[1 values], trial=[1 values]
+[18:28:13.806] [INFO] ================================================================
+[18:28:13.815] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], param: 10}
+[18:28:13.821] [INFO] subject=['1']
+[18:28:13.828] [INFO] trial=['1']
+[18:28:13.840] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute(x, param)
+[18:28:13.846] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute completed in 0.001s
+[18:28:13.853] [INFO] ────────────────────────────────────────────────────────────────
+[18:28:13.860] [INFO] for_each(compute) done: completed=1, skipped=0, total=1
+[18:28:13.868] [INFO] ================================================================
+[18:28:13.877] [DEBUG] for_each(compute): completed=1, failed=0, total=1
+[18:28:13.885] [DEBUG] save(ProcessedData): record_id=d189b3a57cc6, content_hash=af6aa7745b18, serialization=native
+[18:28:13.902] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:28:13.909] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=d189b3a57cc6
+[18:28:13.922] [DEBUG] _save_record_metadata: ProcessedData, record_id=d189b3a57cc6, schema_id=1
+[18:28:13.942] [DEBUG] _save_lineage: ProcessedData, fn=compute, lineage_hash=3e63756773c3
+[18:28:13.955] [DEBUG] save(ProcessedData): transaction committed
+[18:28:13.959] [INFO] [save] subject=1, trial=1, param=10: ProcessedData -> record_id=d189b3a57cc6 (LineageFcnResult) [lineage] in 0.075s
+[18:28:13.969] [INFO] for_each(compute): saved 1 results in 0.086s
+[18:43:06.125] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:43:06.131] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:43:06.141] [DEBUG] save(RawData): record_id=f6c7341e61b5, content_hash=39fde331b2be, serialization=native
+[18:43:06.182] [DEBUG] _save_native: created table 'RawData_data'
+[18:43:06.197] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=f6c7341e61b5
+[18:43:06.207] [DEBUG] _save_record_metadata: RawData, record_id=f6c7341e61b5, schema_id=1
+[18:43:06.221] [DEBUG] save(RawData): transaction committed
+[18:43:06.227] [INFO] save_variable(RawData): saved -> record_id=f6c7341e61b5
+[18:43:06.235] [INFO] scihist.for_each(compute): skip_computed=True
+[18:43:06.241] [INFO] ===== for_each(compute) start =====
+[18:43:06.256] [DEBUG] for_each(compute): call_id=0b1703da2b96be6d
+[18:43:06.259] [INFO] load_all(RawData): metadata={}
+[18:43:06.288] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:43:06.292] [INFO] load_all(RawData): found 1 record(s)
+[18:43:06.324] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.065s
+[18:43:06.330] [DEBUG] input 'param': constant int
+[18:43:06.342] [INFO] loaded 2 inputs in 0.083s
+[18:43:06.351] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:43:06.361] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:43:06.371] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:43:06.376] [DEBUG] 1 combos (no rid expansion needed)
+[18:43:06.388] [DEBUG] _persist_expected_combos(compute, call_id=0b1703da2b96be6d): replaced 0 -> wrote 1 expected combos
+[18:43:06.397] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:43:06.402] [INFO] ================================================================
+[18:43:06.409] [INFO] for_each(compute) — 1 iteration
+[18:43:06.415] [INFO] subject=[1 values], trial=[1 values]
+[18:43:06.424] [INFO] ================================================================
+[18:43:06.433] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], param: 10}
+[18:43:06.445] [INFO] subject=['1']
+[18:43:06.452] [INFO] trial=['1']
+[18:43:06.461] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute(x, param)
+[18:43:06.468] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute completed in 0.001s
+[18:43:06.476] [INFO] ────────────────────────────────────────────────────────────────
+[18:43:06.482] [INFO] for_each(compute) done: completed=1, skipped=0, total=1
+[18:43:06.492] [INFO] ================================================================
+[18:43:06.502] [DEBUG] for_each(compute): completed=1, failed=0, total=1
+[18:43:06.509] [DEBUG] save(ProcessedData): record_id=d189b3a57cc6, content_hash=af6aa7745b18, serialization=native
+[18:43:06.530] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:43:06.539] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=d189b3a57cc6
+[18:43:06.556] [DEBUG] _save_record_metadata: ProcessedData, record_id=d189b3a57cc6, schema_id=1
+[18:43:06.576] [DEBUG] _save_lineage: ProcessedData, fn=compute, lineage_hash=3e63756773c3
+[18:43:06.594] [DEBUG] save(ProcessedData): transaction committed
+[18:43:06.598] [INFO] [save] subject=1, trial=1, param=10: ProcessedData -> record_id=d189b3a57cc6 (LineageFcnResult) [lineage] in 0.089s
+[18:43:06.605] [INFO] for_each(compute): saved 1 results in 0.098s
+[18:43:06.616] [INFO] ===== for_each(plain_fn) start =====
+[18:43:06.633] [DEBUG] for_each(plain_fn): call_id=a7452c71116a9443
+[18:43:06.640] [INFO] load_all(RawData): metadata={}
+[18:43:06.656] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:43:06.661] [INFO] load_all(RawData): found 1 record(s)
+[18:43:06.679] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.039s
+[18:43:06.690] [DEBUG] input 'factor': constant float
+[18:43:06.701] [INFO] loaded 2 inputs in 0.062s
+[18:43:06.710] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:43:06.720] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:43:06.731] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:43:06.741] [DEBUG] 1 combos (no rid expansion needed)
+[18:43:06.754] [DEBUG] _persist_expected_combos(plain_fn, call_id=a7452c71116a9443): replaced 0 -> wrote 1 expected combos
+[18:43:06.759] [INFO] ================================================================
+[18:43:06.769] [INFO] for_each(plain_fn) — 1 iteration
+[18:43:06.778] [INFO] subject=[1 values], trial=[1 values]
+[18:43:06.788] [INFO] ================================================================
+[18:43:06.798] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], factor: 2.0}
+[18:43:06.810] [INFO] subject=['1']
+[18:43:06.819] [INFO] trial=['1']
+[18:43:06.829] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: plain_fn(x, factor)
+[18:43:06.834] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: plain_fn completed in 0.000s
+[18:43:06.841] [INFO] ────────────────────────────────────────────────────────────────
+[18:43:06.849] [INFO] for_each(plain_fn) done: completed=1, skipped=0, total=1
+[18:43:06.857] [INFO] ================================================================
+[18:43:06.865] [DEBUG] for_each(plain_fn): completed=1, failed=0, total=1
+[18:43:06.875] [INFO] save_variable(IntermediateA): metadata={'subject': '1', 'trial': '1', 'factor': 2.0}
+[18:43:06.885] [DEBUG] save(IntermediateA): record_id=bf8f4371a093, content_hash=0afbc6fb5385, serialization=native
+[18:43:06.903] [DEBUG] _save_native: created table 'IntermediateA_data'
+[18:43:06.924] [DEBUG] _save_native: inserted single record into 'IntermediateA_data', record_id=bf8f4371a093
+[18:43:06.936] [DEBUG] _save_record_metadata: IntermediateA, record_id=bf8f4371a093, schema_id=1
+[18:43:06.949] [DEBUG] save(IntermediateA): transaction committed
+[18:43:06.953] [INFO] save_variable(IntermediateA): saved -> record_id=bf8f4371a093
+[18:43:06.963] [INFO] [save] subject=1, trial=1, factor=2.0: IntermediateA -> record_id=bf8f4371a093 (ndarray shape=(1,)) in 0.089s
+[18:43:06.971] [INFO] for_each(plain_fn): saved 1 results in 0.097s
+[18:45:04.531] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:45:04.539] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:45:04.547] [DEBUG] save(RawData): record_id=8a4b1f038f1e, content_hash=d913532a4e83, serialization=native
+[18:45:04.582] [DEBUG] _save_native: created table 'RawData_data'
+[18:45:04.589] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=8a4b1f038f1e
+[18:45:04.604] [DEBUG] _save_record_metadata: RawData, record_id=8a4b1f038f1e, schema_id=1
+[18:45:04.622] [DEBUG] save(RawData): transaction committed
+[18:45:04.624] [INFO] save_variable(RawData): saved -> record_id=8a4b1f038f1e
+[18:45:04.629] [INFO] save_variable(RawData): metadata={'subject': 2, 'trial': 1}
+[18:45:04.633] [DEBUG] save(RawData): record_id=7da723b4cc56, content_hash=d913532a4e83, serialization=native
+[18:45:04.657] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=7da723b4cc56
+[18:45:04.675] [DEBUG] _save_record_metadata: RawData, record_id=7da723b4cc56, schema_id=2
+[18:45:04.690] [DEBUG] save(RawData): transaction committed
+[18:45:04.696] [INFO] save_variable(RawData): saved -> record_id=7da723b4cc56
+[18:45:04.702] [INFO] ===== for_each(plain_step1) start =====
+[18:45:04.725] [DEBUG] for_each(plain_step1): call_id=0af7ff69e29a0228
+[18:45:04.728] [INFO] load_all(RawData): metadata={}
+[18:45:04.752] [DEBUG] _find_record(RawData): 2 record(s) matched (before branch_params filter)
+[18:45:04.756] [INFO] load_all(RawData): found 2 record(s)
+[18:45:04.769] [INFO] input 'x': loaded RawData -> 2 rows, 5 cols in 0.042s
+[18:45:04.777] [DEBUG] input 'p1': constant int
+[18:45:04.780] [INFO] loaded 2 inputs in 0.053s
+[18:45:04.788] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:45:04.796] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:45:04.803] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:45:04.809] [DEBUG] 1 combos (no rid expansion needed)
+[18:45:04.820] [DEBUG] _persist_expected_combos(plain_step1, call_id=0af7ff69e29a0228): replaced 0 -> wrote 1 expected combos
+[18:45:04.824] [INFO] ================================================================
+[18:45:04.828] [INFO] for_each(plain_step1) — 1 iteration
+[18:45:04.834] [INFO] subject=[1 values], trial=[1 values]
+[18:45:04.839] [INFO] ================================================================
+[18:45:04.844] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], p1: 5}
+[18:45:04.849] [INFO] subject=['1']
+[18:45:04.856] [INFO] trial=['1']
+[18:45:04.868] [INFO] [run] subject=1, trial=1, __rid_x=8a4b1f038f1ed032: plain_step1(x, p1)
+[18:45:04.873] [INFO] [done] subject=1, trial=1, __rid_x=8a4b1f038f1ed032: plain_step1 completed in 0.000s
+[18:45:04.897] [INFO] ────────────────────────────────────────────────────────────────
+[18:45:04.902] [INFO] for_each(plain_step1) done: completed=1, skipped=0, total=1
+[18:45:04.907] [INFO] ================================================================
+[18:45:04.915] [DEBUG] for_each(plain_step1): completed=1, failed=0, total=1
+[18:45:04.922] [INFO] save_variable(IntermediateA): metadata={'subject': '1', 'trial': '1', 'p1': 5}
+[18:45:04.929] [DEBUG] save(IntermediateA): record_id=0c68f1453aa7, content_hash=af6aa7745b18, serialization=native
+[18:45:04.942] [DEBUG] _save_native: created table 'IntermediateA_data'
+[18:45:04.953] [DEBUG] _save_native: inserted single record into 'IntermediateA_data', record_id=0c68f1453aa7
+[18:45:04.966] [DEBUG] _save_record_metadata: IntermediateA, record_id=0c68f1453aa7, schema_id=1
+[18:45:04.980] [DEBUG] save(IntermediateA): transaction committed
+[18:45:04.984] [INFO] save_variable(IntermediateA): saved -> record_id=0c68f1453aa7
+[18:45:04.997] [INFO] [save] subject=1, trial=1, p1=5: IntermediateA -> record_id=0c68f1453aa7 (ndarray shape=(1,)) in 0.075s
+[18:45:05.008] [INFO] for_each(plain_step1): saved 1 results in 0.087s
+[18:45:05.013] [INFO] ===== for_each(plain_step2) start =====
+[18:45:05.019] [DEBUG] for_each(plain_step2): call_id=e910b533b7711180
+[18:45:05.038] [INFO] load_all(IntermediateA): metadata={}
+[18:45:05.053] [DEBUG] _find_record(IntermediateA): 1 record(s) matched (before branch_params filter)
+[18:45:05.058] [INFO] load_all(IntermediateA): found 1 record(s)
+[18:45:05.076] [INFO] input 'y': loaded IntermediateA -> 1 rows, 6 cols in 0.038s
+[18:45:05.081] [DEBUG] input 'p2': constant int
+[18:45:05.087] [INFO] loaded 2 inputs in 0.049s
+[18:45:05.092] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:45:05.101] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_y']
+[18:45:05.109] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:45:05.115] [DEBUG] 1 combos (no rid expansion needed)
+[18:45:05.126] [DEBUG] _persist_expected_combos(plain_step2, call_id=e910b533b7711180): replaced 0 -> wrote 1 expected combos
+[18:45:05.131] [INFO] ================================================================
+[18:45:05.137] [INFO] for_each(plain_step2) — 1 iteration
+[18:45:05.145] [INFO] subject=[1 values], trial=[1 values]
+[18:45:05.152] [INFO] ================================================================
+[18:45:05.157] [INFO] inputs: {y: DataFrame['subject', 'trial', 'p1', 'IntermediateA', '__rid_y'], p2: 2}
+[18:45:05.163] [INFO] subject=['1']
+[18:45:05.168] [INFO] trial=['1']
+[18:45:05.177] [INFO] [run] subject=1, trial=1, __rid_y=0c68f1453aa75079: plain_step2(y, p2)
+[18:45:05.182] [INFO] [done] subject=1, trial=1, __rid_y=0c68f1453aa75079: plain_step2 completed in 0.000s
+[18:45:05.187] [INFO] ────────────────────────────────────────────────────────────────
+[18:45:05.200] [INFO] for_each(plain_step2) done: completed=1, skipped=0, total=1
+[18:45:05.204] [INFO] ================================================================
+[18:45:05.210] [DEBUG] for_each(plain_step2): completed=1, failed=0, total=1
+[18:45:05.218] [INFO] save_variable(ProcessedData): metadata={'subject': '1', 'trial': '1', 'p2': 2}
+[18:45:05.224] [DEBUG] save(ProcessedData): record_id=2bdbd511f2f1, content_hash=db4f216e5a2b, serialization=native
+[18:45:05.234] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:45:05.239] [DEBUG] _save_native: inserted 1 rows (dataframe) into 'ProcessedData_data', record_id=2bdbd511f2f1
+[18:45:05.252] [DEBUG] _save_record_metadata: ProcessedData, record_id=2bdbd511f2f1, schema_id=1
+[18:45:05.270] [DEBUG] save(ProcessedData): transaction committed
+[18:45:05.276] [INFO] save_variable(ProcessedData): saved -> record_id=2bdbd511f2f1
+[18:45:05.284] [INFO] [save] subject=1, trial=1, p2=2: ProcessedData -> record_id=2bdbd511f2f1 (DataFrame 1x2) in 0.066s
+[18:45:05.290] [INFO] for_each(plain_step2): saved 1 results in 0.073s
+[18:45:05.295] [INFO] scihist.for_each(lineage_step1): skip_computed=True
+[18:45:05.304] [INFO] ===== for_each(lineage_step1) start =====
+[18:45:05.323] [DEBUG] for_each(lineage_step1): call_id=9079163ff90116bd
+[18:45:05.327] [INFO] load_all(RawData): metadata={}
+[18:45:05.342] [DEBUG] _find_record(RawData): 2 record(s) matched (before branch_params filter)
+[18:45:05.349] [INFO] load_all(RawData): found 2 record(s)
+[18:45:05.376] [INFO] input 'x': loaded RawData -> 2 rows, 5 cols in 0.050s
+[18:45:05.379] [DEBUG] input 'p1': constant int
+[18:45:05.389] [INFO] loaded 2 inputs in 0.062s
+[18:45:05.392] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:45:05.398] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:45:05.406] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:45:05.442] [DEBUG] 1 combos (no rid expansion needed)
+[18:45:05.450] [DEBUG] _persist_expected_combos(lineage_step1, call_id=9079163ff90116bd): replaced 0 -> wrote 1 expected combos
+[18:45:05.464] [DEBUG] _find_record(IntermediateB): 0 record(s) matched (before branch_params filter)
+[18:45:05.469] [INFO] ================================================================
+[18:45:05.476] [INFO] for_each(lineage_step1) — 1 iteration
+[18:45:05.483] [INFO] subject=[1 values], trial=[1 values]
+[18:45:05.487] [INFO] ================================================================
+[18:45:05.496] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], p1: 5}
+[18:45:05.503] [INFO] subject=['2']
+[18:45:05.507] [INFO] trial=['1']
+[18:45:05.515] [INFO] [run] subject=2, trial=1, __rid_x=7da723b4cc5697d6: lineage_step1(x, p1)
+[18:45:05.520] [INFO] [done] subject=2, trial=1, __rid_x=7da723b4cc5697d6: lineage_step1 completed in 0.001s
+[18:45:05.527] [INFO] ────────────────────────────────────────────────────────────────
+[18:45:05.534] [INFO] for_each(lineage_step1) done: completed=1, skipped=0, total=1
+[18:45:05.539] [INFO] ================================================================
+[18:45:05.547] [DEBUG] for_each(lineage_step1): completed=1, failed=0, total=1
+[18:45:05.554] [DEBUG] save(IntermediateB): record_id=93d95b59e1bf, content_hash=af6aa7745b18, serialization=native
+[18:45:05.570] [DEBUG] _save_native: created table 'IntermediateB_data'
+[18:45:05.594] [DEBUG] _save_native: inserted single record into 'IntermediateB_data', record_id=93d95b59e1bf
+[18:45:05.626] [DEBUG] _save_record_metadata: IntermediateB, record_id=93d95b59e1bf, schema_id=2
+[18:45:05.642] [DEBUG] _save_lineage: IntermediateB, fn=lineage_step1, lineage_hash=dbf66c6588d2
+[18:45:05.683] [DEBUG] save(IntermediateB): transaction committed
+[18:45:05.689] [INFO] [save] subject=2, trial=1, p1=5: IntermediateB -> record_id=93d95b59e1bf (LineageFcnResult) [lineage] in 0.135s
+[18:45:05.707] [INFO] for_each(lineage_step1): saved 1 results in 0.154s
+[18:45:05.710] [INFO] scihist.for_each(lineage_step2): skip_computed=True
+[18:45:05.714] [INFO] ===== for_each(lineage_step2) start =====
+[18:45:05.720] [DEBUG] for_each(lineage_step2): call_id=fb3de48311a0009b
+[18:45:05.725] [INFO] load_all(IntermediateB): metadata={}
+[18:45:05.735] [DEBUG] _find_record(IntermediateB): 1 record(s) matched (before branch_params filter)
+[18:45:05.743] [INFO] load_all(IntermediateB): found 1 record(s)
+[18:45:05.757] [INFO] input 'y': loaded IntermediateB -> 1 rows, 6 cols in 0.032s
+[18:45:05.762] [DEBUG] input 'p2': constant int
+[18:45:05.766] [INFO] loaded 2 inputs in 0.042s
+[18:45:05.773] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:45:05.780] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_y']
+[18:45:05.788] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:45:05.793] [DEBUG] 1 combos (no rid expansion needed)
+[18:45:05.803] [DEBUG] _persist_expected_combos(lineage_step2, call_id=fb3de48311a0009b): replaced 0 -> wrote 1 expected combos
+[18:45:05.813] [DEBUG] _find_record(FinalResult): 0 record(s) matched (before branch_params filter)
+[18:45:05.823] [INFO] ================================================================
+[18:45:05.827] [INFO] for_each(lineage_step2) — 1 iteration
+[18:45:05.831] [INFO] subject=[1 values], trial=[1 values]
+[18:45:05.834] [INFO] ================================================================
+[18:45:05.837] [INFO] inputs: {y: DataFrame['subject', 'trial', 'p1', 'IntermediateB', '__rid_y'], p2: 2}
+[18:45:05.843] [INFO] subject=['2']
+[18:45:05.849] [INFO] trial=['1']
+[18:45:05.856] [INFO] [run] subject=2, trial=1, __rid_y=93d95b59e1bfa261: lineage_step2(y, p2)
+[18:45:05.888] [INFO] [done] subject=2, trial=1, __rid_y=93d95b59e1bfa261: lineage_step2 completed in 0.008s
+[18:45:05.891] [INFO] ────────────────────────────────────────────────────────────────
+[18:45:05.895] [INFO] for_each(lineage_step2) done: completed=1, skipped=0, total=1
+[18:45:05.899] [INFO] ================================================================
+[18:45:05.909] [DEBUG] for_each(lineage_step2): completed=1, failed=0, total=1
+[18:45:05.929] [DEBUG] save(FinalResult): record_id=9191c25fe9f8, content_hash=f00a5d07183e, serialization=native
+[18:45:05.990] [DEBUG] _save_native: created table 'FinalResult_data'
+[18:45:06.004] [DEBUG] _save_native: inserted 1 rows (dataframe) into 'FinalResult_data', record_id=9191c25fe9f8
+[18:45:06.016] [DEBUG] _save_record_metadata: FinalResult, record_id=9191c25fe9f8, schema_id=2
+[18:45:06.029] [DEBUG] _save_lineage: FinalResult, fn=lineage_step2, lineage_hash=938250d1b88a
+[18:45:06.044] [DEBUG] save(FinalResult): transaction committed
+[18:45:06.050] [INFO] [save] subject=2, trial=1, p2=2: FinalResult -> record_id=9191c25fe9f8 (LineageFcnResult) [lineage] in 0.135s
+[18:45:06.056] [INFO] for_each(lineage_step2): saved 1 results in 0.141s
+[18:46:55.076] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:46:55.079] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:46:55.087] [DEBUG] save(RawData): record_id=8a4b1f038f1e, content_hash=d913532a4e83, serialization=native
+[18:46:55.126] [DEBUG] _save_native: created table 'RawData_data'
+[18:46:55.138] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=8a4b1f038f1e
+[18:46:55.147] [DEBUG] _save_record_metadata: RawData, record_id=8a4b1f038f1e, schema_id=1
+[18:46:55.167] [DEBUG] save(RawData): transaction committed
+[18:46:55.172] [INFO] save_variable(RawData): saved -> record_id=8a4b1f038f1e
+[18:46:55.178] [INFO] save_variable(RawData): metadata={'subject': 2, 'trial': 1}
+[18:46:55.183] [DEBUG] save(RawData): record_id=7da723b4cc56, content_hash=d913532a4e83, serialization=native
+[18:46:55.201] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=7da723b4cc56
+[18:46:55.211] [DEBUG] _save_record_metadata: RawData, record_id=7da723b4cc56, schema_id=2
+[18:46:55.224] [DEBUG] save(RawData): transaction committed
+[18:46:55.288] [INFO] save_variable(RawData): saved -> record_id=7da723b4cc56
+[18:46:55.292] [INFO] ===== for_each(plain_step1) start =====
+[18:46:55.319] [DEBUG] for_each(plain_step1): call_id=0af7ff69e29a0228
+[18:46:55.327] [INFO] load_all(RawData): metadata={}
+[18:46:55.348] [DEBUG] _find_record(RawData): 2 record(s) matched (before branch_params filter)
+[18:46:55.351] [INFO] load_all(RawData): found 2 record(s)
+[18:46:55.370] [INFO] input 'x': loaded RawData -> 2 rows, 5 cols in 0.043s
+[18:46:55.374] [DEBUG] input 'p1': constant int
+[18:46:55.378] [INFO] loaded 2 inputs in 0.051s
+[18:46:55.382] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:46:55.400] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:46:55.411] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:46:55.418] [DEBUG] 1 combos (no rid expansion needed)
+[18:46:55.430] [DEBUG] _persist_expected_combos(plain_step1, call_id=0af7ff69e29a0228): replaced 0 -> wrote 1 expected combos
+[18:46:55.433] [INFO] ================================================================
+[18:46:55.438] [INFO] for_each(plain_step1) — 1 iteration
+[18:46:55.446] [INFO] subject=[1 values], trial=[1 values]
+[18:46:55.451] [INFO] ================================================================
+[18:46:55.458] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], p1: 5}
+[18:46:55.479] [INFO] subject=['1']
+[18:46:55.485] [INFO] trial=['1']
+[18:46:55.495] [INFO] [run] subject=1, trial=1, __rid_x=8a4b1f038f1ed032: plain_step1(x, p1)
+[18:46:55.499] [INFO] [done] subject=1, trial=1, __rid_x=8a4b1f038f1ed032: plain_step1 completed in 0.000s
+[18:46:55.508] [INFO] ────────────────────────────────────────────────────────────────
+[18:46:55.513] [INFO] for_each(plain_step1) done: completed=1, skipped=0, total=1
+[18:46:55.517] [INFO] ================================================================
+[18:46:55.522] [DEBUG] for_each(plain_step1): completed=1, failed=0, total=1
+[18:46:55.526] [INFO] save_variable(IntermediateA): metadata={'subject': '1', 'trial': '1', 'p1': 5}
+[18:46:55.529] [DEBUG] save(IntermediateA): record_id=0c68f1453aa7, content_hash=af6aa7745b18, serialization=native
+[18:46:55.542] [DEBUG] _save_native: created table 'IntermediateA_data'
+[18:46:55.549] [DEBUG] _save_native: inserted single record into 'IntermediateA_data', record_id=0c68f1453aa7
+[18:46:55.564] [DEBUG] _save_record_metadata: IntermediateA, record_id=0c68f1453aa7, schema_id=1
+[18:46:55.597] [DEBUG] save(IntermediateA): transaction committed
+[18:46:55.604] [INFO] save_variable(IntermediateA): saved -> record_id=0c68f1453aa7
+[18:46:55.611] [INFO] [save] subject=1, trial=1, p1=5: IntermediateA -> record_id=0c68f1453aa7 (ndarray shape=(1,)) in 0.085s
+[18:46:55.615] [INFO] for_each(plain_step1): saved 1 results in 0.090s
+[18:46:55.619] [INFO] ===== for_each(plain_step2) start =====
+[18:46:55.627] [DEBUG] for_each(plain_step2): call_id=e910b533b7711180
+[18:46:55.633] [INFO] load_all(IntermediateA): metadata={}
+[18:46:55.644] [DEBUG] _find_record(IntermediateA): 1 record(s) matched (before branch_params filter)
+[18:46:55.650] [INFO] load_all(IntermediateA): found 1 record(s)
+[18:46:55.664] [INFO] input 'y': loaded IntermediateA -> 1 rows, 5 cols in 0.032s
+[18:46:55.671] [DEBUG] input 'p2': constant int
+[18:46:55.677] [INFO] loaded 2 inputs in 0.045s
+[18:46:55.683] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:46:55.690] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_y']
+[18:46:55.697] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:46:55.699] [DEBUG] 1 combos (no rid expansion needed)
+[18:46:55.708] [DEBUG] _persist_expected_combos(plain_step2, call_id=e910b533b7711180): replaced 0 -> wrote 1 expected combos
+[18:46:55.711] [INFO] ================================================================
+[18:46:55.716] [INFO] for_each(plain_step2) — 1 iteration
+[18:46:55.719] [INFO] subject=[1 values], trial=[1 values]
+[18:46:55.725] [INFO] ================================================================
+[18:46:55.728] [INFO] inputs: {y: DataFrame['subject', 'trial', 'IntermediateA', '__rid_y'], p2: 2}
+[18:46:55.732] [INFO] subject=['1']
+[18:46:55.737] [INFO] trial=['1']
+[18:46:55.743] [INFO] [run] subject=1, trial=1, __rid_y=0c68f1453aa75079: plain_step2(y, p2)
+[18:46:55.746] [INFO] [done] subject=1, trial=1, __rid_y=0c68f1453aa75079: plain_step2 completed in 0.000s
+[18:46:55.751] [INFO] ────────────────────────────────────────────────────────────────
+[18:46:55.754] [INFO] for_each(plain_step2) done: completed=1, skipped=0, total=1
+[18:46:55.758] [INFO] ================================================================
+[18:46:55.762] [DEBUG] for_each(plain_step2): completed=1, failed=0, total=1
+[18:46:55.767] [INFO] save_variable(ProcessedData): metadata={'subject': '1', 'trial': '1', 'p2': 2}
+[18:46:55.786] [DEBUG] save(ProcessedData): record_id=5005f1407d27, content_hash=24a3295626d1, serialization=native
+[18:46:55.811] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:46:55.820] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=5005f1407d27
+[18:46:55.844] [DEBUG] _save_record_metadata: ProcessedData, record_id=5005f1407d27, schema_id=1
+[18:46:55.866] [DEBUG] save(ProcessedData): transaction committed
+[18:46:55.870] [INFO] save_variable(ProcessedData): saved -> record_id=5005f1407d27
+[18:46:55.876] [INFO] [save] subject=1, trial=1, p2=2: ProcessedData -> record_id=5005f1407d27 (ndarray shape=(1,)) in 0.109s
+[18:46:55.882] [INFO] for_each(plain_step2): saved 1 results in 0.116s
+[18:48:10.621] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:48:10.628] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:48:10.634] [DEBUG] save(RawData): record_id=f6c7341e61b5, content_hash=39fde331b2be, serialization=native
+[18:48:10.672] [DEBUG] _save_native: created table 'RawData_data'
+[18:48:10.684] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=f6c7341e61b5
+[18:48:10.706] [DEBUG] _save_record_metadata: RawData, record_id=f6c7341e61b5, schema_id=1
+[18:48:10.719] [DEBUG] save(RawData): transaction committed
+[18:48:10.723] [INFO] save_variable(RawData): saved -> record_id=f6c7341e61b5
+[18:48:10.731] [INFO] scihist.for_each(compute): skip_computed=True
+[18:48:10.736] [INFO] ===== for_each(compute) start =====
+[18:48:10.748] [DEBUG] for_each(compute): call_id=0b1703da2b96be6d
+[18:48:10.751] [INFO] load_all(RawData): metadata={}
+[18:48:10.770] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:48:10.775] [INFO] load_all(RawData): found 1 record(s)
+[18:48:10.791] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.040s
+[18:48:10.798] [DEBUG] input 'param': constant int
+[18:48:10.804] [INFO] loaded 2 inputs in 0.053s
+[18:48:10.812] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:48:10.823] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:48:10.834] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:48:10.839] [DEBUG] 1 combos (no rid expansion needed)
+[18:48:10.852] [DEBUG] _persist_expected_combos(compute, call_id=0b1703da2b96be6d): replaced 0 -> wrote 1 expected combos
+[18:48:10.868] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:48:10.871] [INFO] ================================================================
+[18:48:10.876] [INFO] for_each(compute) — 1 iteration
+[18:48:10.881] [INFO] subject=[1 values], trial=[1 values]
+[18:48:10.891] [INFO] ================================================================
+[18:48:10.900] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], param: 10}
+[18:48:10.904] [INFO] subject=['1']
+[18:48:10.907] [INFO] trial=['1']
+[18:48:10.917] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute(x, param)
+[18:48:10.926] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute completed in 0.001s
+[18:48:10.936] [INFO] ────────────────────────────────────────────────────────────────
+[18:48:10.941] [INFO] for_each(compute) done: completed=1, skipped=0, total=1
+[18:48:10.949] [INFO] ================================================================
+[18:48:10.954] [DEBUG] for_each(compute): completed=1, failed=0, total=1
+[18:48:10.965] [DEBUG] save(ProcessedData): record_id=d189b3a57cc6, content_hash=af6aa7745b18, serialization=native
+[18:48:10.978] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:48:10.990] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=d189b3a57cc6
+[18:48:11.010] [DEBUG] _save_record_metadata: ProcessedData, record_id=d189b3a57cc6, schema_id=1
+[18:48:11.025] [DEBUG] _save_lineage: ProcessedData, fn=compute, lineage_hash=3e63756773c3
+[18:48:11.046] [DEBUG] save(ProcessedData): transaction committed
+[18:48:11.050] [INFO] [save] subject=1, trial=1, param=10: ProcessedData -> record_id=d189b3a57cc6 (LineageFcnResult) [lineage] in 0.086s
+[18:48:11.056] [INFO] for_each(compute): saved 1 results in 0.092s
+[18:48:11.062] [INFO] save_variable(RawData): metadata={'subject': 2, 'trial': 1}
+[18:48:11.072] [DEBUG] save(RawData): record_id=7da723b4cc56, content_hash=d913532a4e83, serialization=native
+[18:48:11.102] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=7da723b4cc56
+[18:48:11.112] [DEBUG] _save_record_metadata: RawData, record_id=7da723b4cc56, schema_id=2
+[18:48:11.123] [DEBUG] save(RawData): transaction committed
+[18:48:11.147] [INFO] save_variable(RawData): saved -> record_id=7da723b4cc56
+[18:48:11.153] [INFO] ===== for_each(plain_step1) start =====
+[18:48:11.167] [DEBUG] for_each(plain_step1): call_id=0af7ff69e29a0228
+[18:48:11.171] [INFO] load_all(RawData): metadata={}
+[18:48:11.189] [DEBUG] _find_record(RawData): 2 record(s) matched (before branch_params filter)
+[18:48:11.191] [INFO] load_all(RawData): found 2 record(s)
+[18:48:11.207] [INFO] input 'x': loaded RawData -> 2 rows, 5 cols in 0.037s
+[18:48:11.213] [DEBUG] input 'p1': constant int
+[18:48:11.220] [INFO] loaded 2 inputs in 0.050s
+[18:48:11.226] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:48:11.238] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:48:11.250] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:48:11.254] [DEBUG] 1 combos (no rid expansion needed)
+[18:48:11.266] [DEBUG] _persist_expected_combos(plain_step1, call_id=0af7ff69e29a0228): replaced 0 -> wrote 1 expected combos
+[18:48:11.271] [INFO] ================================================================
+[18:48:11.276] [INFO] for_each(plain_step1) — 1 iteration
+[18:48:11.282] [INFO] subject=[1 values], trial=[1 values]
+[18:48:11.286] [INFO] ================================================================
+[18:48:11.292] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], p1: 5}
+[18:48:11.298] [INFO] subject=['2']
+[18:48:11.305] [INFO] trial=['1']
+[18:48:11.317] [INFO] [run] subject=2, trial=1, __rid_x=7da723b4cc5697d6: plain_step1(x, p1)
+[18:48:11.322] [INFO] [done] subject=2, trial=1, __rid_x=7da723b4cc5697d6: plain_step1 completed in 0.000s
+[18:48:11.328] [INFO] ────────────────────────────────────────────────────────────────
+[18:48:11.340] [INFO] for_each(plain_step1) done: completed=1, skipped=0, total=1
+[18:48:11.347] [INFO] ================================================================
+[18:48:11.353] [DEBUG] for_each(plain_step1): completed=1, failed=0, total=1
+[18:48:11.360] [INFO] save_variable(IntermediateA): metadata={'subject': '2', 'trial': '1', 'p1': 5}
+[18:48:11.368] [DEBUG] save(IntermediateA): record_id=51455210b10c, content_hash=af6aa7745b18, serialization=native
+[18:48:11.385] [DEBUG] _save_native: created table 'IntermediateA_data'
+[18:48:11.401] [DEBUG] _save_native: inserted single record into 'IntermediateA_data', record_id=51455210b10c
+[18:48:11.417] [DEBUG] _save_record_metadata: IntermediateA, record_id=51455210b10c, schema_id=2
+[18:48:11.441] [DEBUG] save(IntermediateA): transaction committed
+[18:48:11.450] [INFO] save_variable(IntermediateA): saved -> record_id=51455210b10c
+[18:48:11.454] [INFO] [save] subject=2, trial=1, p1=5: IntermediateA -> record_id=51455210b10c (ndarray shape=(1,)) in 0.093s
+[18:48:11.460] [INFO] for_each(plain_step1): saved 1 results in 0.100s
+[18:48:11.467] [INFO] ===== for_each(plain_step2) start =====
+[18:48:11.473] [DEBUG] for_each(plain_step2): call_id=e910b533b7711180
+[18:48:11.483] [INFO] load_all(IntermediateA): metadata={}
+[18:48:11.504] [DEBUG] _find_record(IntermediateA): 1 record(s) matched (before branch_params filter)
+[18:48:11.509] [INFO] load_all(IntermediateA): found 1 record(s)
+[18:48:11.530] [INFO] input 'y': loaded IntermediateA -> 1 rows, 5 cols in 0.047s
+[18:48:11.537] [DEBUG] input 'p2': constant int
+[18:48:11.544] [INFO] loaded 2 inputs in 0.061s
+[18:48:11.552] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:48:11.561] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_y']
+[18:48:11.568] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:48:11.574] [DEBUG] 1 combos (no rid expansion needed)
+[18:48:11.593] [DEBUG] _persist_expected_combos(plain_step2, call_id=e910b533b7711180): replaced 0 -> wrote 1 expected combos
+[18:48:11.600] [INFO] ================================================================
+[18:48:11.608] [INFO] for_each(plain_step2) — 1 iteration
+[18:48:11.615] [INFO] subject=[1 values], trial=[1 values]
+[18:48:11.621] [INFO] ================================================================
+[18:48:11.627] [INFO] inputs: {y: DataFrame['subject', 'trial', 'IntermediateA', '__rid_y'], p2: 2}
+[18:48:11.635] [INFO] subject=['2']
+[18:48:11.643] [INFO] trial=['1']
+[18:48:11.654] [INFO] [run] subject=2, trial=1, __rid_y=51455210b10c8c90: plain_step2(y, p2)
+[18:48:11.661] [INFO] [done] subject=2, trial=1, __rid_y=51455210b10c8c90: plain_step2 completed in 0.000s
+[18:48:11.666] [INFO] ────────────────────────────────────────────────────────────────
+[18:48:11.675] [INFO] for_each(plain_step2) done: completed=1, skipped=0, total=1
+[18:48:11.682] [INFO] ================================================================
+[18:48:11.689] [DEBUG] for_each(plain_step2): completed=1, failed=0, total=1
+[18:48:11.699] [INFO] save_variable(ProcessedData): metadata={'subject': '2', 'trial': '1', 'p2': 2}
+[18:48:11.703] [DEBUG] save(ProcessedData): record_id=671a7fa87fd4, content_hash=24a3295626d1, serialization=native
+[18:48:11.728] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=671a7fa87fd4
+[18:48:11.746] [DEBUG] _save_record_metadata: ProcessedData, record_id=671a7fa87fd4, schema_id=2
+[18:48:11.764] [DEBUG] save(ProcessedData): transaction committed
+[18:48:11.770] [INFO] save_variable(ProcessedData): saved -> record_id=671a7fa87fd4
+[18:48:11.776] [INFO] [save] subject=2, trial=1, p2=2: ProcessedData -> record_id=671a7fa87fd4 (ndarray shape=(1,)) in 0.077s
+[18:48:11.784] [INFO] for_each(plain_step2): saved 1 results in 0.086s
+[18:48:46.462] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:48:46.471] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:48:46.486] [DEBUG] save(RawData): record_id=f6c7341e61b5, content_hash=39fde331b2be, serialization=native
+[18:48:46.522] [DEBUG] _save_native: created table 'RawData_data'
+[18:48:46.534] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=f6c7341e61b5
+[18:48:46.553] [DEBUG] _save_record_metadata: RawData, record_id=f6c7341e61b5, schema_id=1
+[18:48:46.575] [DEBUG] save(RawData): transaction committed
+[18:48:46.582] [INFO] save_variable(RawData): saved -> record_id=f6c7341e61b5
+[18:48:46.593] [INFO] scihist.for_each(compute): skip_computed=True
+[18:48:46.607] [INFO] ===== for_each(compute) start =====
+[18:48:46.624] [DEBUG] for_each(compute): call_id=0b1703da2b96be6d
+[18:48:46.631] [INFO] load_all(RawData): metadata={}
+[18:48:46.656] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:48:46.668] [INFO] load_all(RawData): found 1 record(s)
+[18:48:46.687] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.056s
+[18:48:46.693] [DEBUG] input 'param': constant int
+[18:48:46.702] [INFO] loaded 2 inputs in 0.071s
+[18:48:46.711] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:48:46.721] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:48:46.731] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:48:46.740] [DEBUG] 1 combos (no rid expansion needed)
+[18:48:46.751] [DEBUG] _persist_expected_combos(compute, call_id=0b1703da2b96be6d): replaced 0 -> wrote 1 expected combos
+[18:48:46.764] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:48:46.771] [INFO] ================================================================
+[18:48:46.782] [INFO] for_each(compute) — 1 iteration
+[18:48:46.789] [INFO] subject=[1 values], trial=[1 values]
+[18:48:46.796] [INFO] ================================================================
+[18:48:46.805] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], param: 10}
+[18:48:46.817] [INFO] subject=['1']
+[18:48:46.826] [INFO] trial=['1']
+[18:48:46.839] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute(x, param)
+[18:48:46.848] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute completed in 0.001s
+[18:48:46.857] [INFO] ────────────────────────────────────────────────────────────────
+[18:48:46.865] [INFO] for_each(compute) done: completed=1, skipped=0, total=1
+[18:48:46.876] [INFO] ================================================================
+[18:48:46.887] [DEBUG] for_each(compute): completed=1, failed=0, total=1
+[18:48:46.896] [DEBUG] save(ProcessedData): record_id=d189b3a57cc6, content_hash=af6aa7745b18, serialization=native
+[18:48:46.908] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:48:46.925] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=d189b3a57cc6
+[18:48:46.945] [DEBUG] _save_record_metadata: ProcessedData, record_id=d189b3a57cc6, schema_id=1
+[18:48:46.967] [DEBUG] _save_lineage: ProcessedData, fn=compute, lineage_hash=3e63756773c3
+[18:48:46.987] [DEBUG] save(ProcessedData): transaction committed
+[18:48:46.993] [INFO] [save] subject=1, trial=1, param=10: ProcessedData -> record_id=d189b3a57cc6 (LineageFcnResult) [lineage] in 0.098s
+[18:48:47.002] [INFO] for_each(compute): saved 1 results in 0.108s
+[18:48:47.015] [INFO] save_variable(RawData): metadata={'subject': 2, 'trial': 1}
+[18:48:47.020] [DEBUG] save(RawData): record_id=7da723b4cc56, content_hash=d913532a4e83, serialization=native
+[18:48:47.054] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=7da723b4cc56
+[18:48:47.064] [DEBUG] _save_record_metadata: RawData, record_id=7da723b4cc56, schema_id=2
+[18:48:47.087] [DEBUG] save(RawData): transaction committed
+[18:48:47.096] [INFO] save_variable(RawData): saved -> record_id=7da723b4cc56
+[18:48:47.104] [INFO] ===== for_each(plain_step1) start =====
+[18:48:47.116] [DEBUG] for_each(plain_step1): call_id=0af7ff69e29a0228
+[18:48:47.122] [INFO] load_all(RawData): metadata={}
+[18:48:47.136] [DEBUG] _find_record(RawData): 2 record(s) matched (before branch_params filter)
+[18:48:47.145] [INFO] load_all(RawData): found 2 record(s)
+[18:48:47.161] [INFO] input 'x': loaded RawData -> 2 rows, 5 cols in 0.039s
+[18:48:47.166] [DEBUG] input 'p1': constant int
+[18:48:47.174] [INFO] loaded 2 inputs in 0.052s
+[18:48:47.182] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:48:47.192] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:48:47.204] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:48:47.211] [DEBUG] 1 combos (no rid expansion needed)
+[18:48:47.226] [DEBUG] _persist_expected_combos(plain_step1, call_id=0af7ff69e29a0228): replaced 0 -> wrote 1 expected combos
+[18:48:47.231] [INFO] ================================================================
+[18:48:47.241] [INFO] for_each(plain_step1) — 1 iteration
+[18:48:47.246] [INFO] subject=[1 values], trial=[1 values]
+[18:48:47.253] [INFO] ================================================================
+[18:48:47.263] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], p1: 5}
+[18:48:47.271] [INFO] subject=['2']
+[18:48:47.279] [INFO] trial=['1']
+[18:48:47.288] [INFO] [run] subject=2, trial=1, __rid_x=7da723b4cc5697d6: plain_step1(x, p1)
+[18:48:47.293] [INFO] [done] subject=2, trial=1, __rid_x=7da723b4cc5697d6: plain_step1 completed in 0.000s
+[18:48:47.300] [INFO] ────────────────────────────────────────────────────────────────
+[18:48:47.308] [INFO] for_each(plain_step1) done: completed=1, skipped=0, total=1
+[18:48:47.314] [INFO] ================================================================
+[18:48:47.320] [DEBUG] for_each(plain_step1): completed=1, failed=0, total=1
+[18:48:47.331] [INFO] save_variable(IntermediateA): metadata={'subject': '2', 'trial': '1', 'p1': 5}
+[18:48:47.337] [DEBUG] save(IntermediateA): record_id=51455210b10c, content_hash=af6aa7745b18, serialization=native
+[18:48:47.353] [DEBUG] _save_native: created table 'IntermediateA_data'
+[18:48:47.364] [DEBUG] _save_native: inserted single record into 'IntermediateA_data', record_id=51455210b10c
+[18:48:47.375] [DEBUG] _save_record_metadata: IntermediateA, record_id=51455210b10c, schema_id=2
+[18:48:47.392] [DEBUG] save(IntermediateA): transaction committed
+[18:48:47.400] [INFO] save_variable(IntermediateA): saved -> record_id=51455210b10c
+[18:48:47.407] [INFO] [save] subject=2, trial=1, p1=5: IntermediateA -> record_id=51455210b10c (ndarray shape=(1,)) in 0.076s
+[18:48:47.414] [INFO] for_each(plain_step1): saved 1 results in 0.084s
+[18:48:47.421] [INFO] ===== for_each(plain_step2) start =====
+[18:48:47.431] [DEBUG] for_each(plain_step2): call_id=e910b533b7711180
+[18:48:47.441] [INFO] load_all(IntermediateA): metadata={}
+[18:48:47.457] [DEBUG] _find_record(IntermediateA): 1 record(s) matched (before branch_params filter)
+[18:48:47.461] [INFO] load_all(IntermediateA): found 1 record(s)
+[18:48:47.480] [INFO] input 'y': loaded IntermediateA -> 1 rows, 5 cols in 0.039s
+[18:48:47.485] [DEBUG] input 'p2': constant int
+[18:48:47.491] [INFO] loaded 2 inputs in 0.050s
+[18:48:47.499] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:48:47.508] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_y']
+[18:48:47.518] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:48:47.524] [DEBUG] 1 combos (no rid expansion needed)
+[18:48:47.540] [DEBUG] _persist_expected_combos(plain_step2, call_id=e910b533b7711180): replaced 0 -> wrote 1 expected combos
+[18:48:47.550] [INFO] ================================================================
+[18:48:47.557] [INFO] for_each(plain_step2) — 1 iteration
+[18:48:47.567] [INFO] subject=[1 values], trial=[1 values]
+[18:48:47.576] [INFO] ================================================================
+[18:48:47.584] [INFO] inputs: {y: DataFrame['subject', 'trial', 'IntermediateA', '__rid_y'], p2: 2}
+[18:48:47.591] [INFO] subject=['2']
+[18:48:47.597] [INFO] trial=['1']
+[18:48:47.609] [INFO] [run] subject=2, trial=1, __rid_y=51455210b10c8c90: plain_step2(y, p2)
+[18:48:47.614] [INFO] [done] subject=2, trial=1, __rid_y=51455210b10c8c90: plain_step2 completed in 0.000s
+[18:48:47.623] [INFO] ────────────────────────────────────────────────────────────────
+[18:48:47.632] [INFO] for_each(plain_step2) done: completed=1, skipped=0, total=1
+[18:48:47.638] [INFO] ================================================================
+[18:48:47.649] [DEBUG] for_each(plain_step2): completed=1, failed=0, total=1
+[18:48:47.657] [INFO] save_variable(ProcessedData): metadata={'subject': '2', 'trial': '1', 'p2': 2}
+[18:48:47.665] [DEBUG] save(ProcessedData): record_id=671a7fa87fd4, content_hash=24a3295626d1, serialization=native
+[18:48:47.693] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=671a7fa87fd4
+[18:48:47.711] [DEBUG] _save_record_metadata: ProcessedData, record_id=671a7fa87fd4, schema_id=2
+[18:48:47.727] [DEBUG] save(ProcessedData): transaction committed
+[18:48:47.733] [INFO] save_variable(ProcessedData): saved -> record_id=671a7fa87fd4
+[18:48:47.740] [INFO] [save] subject=2, trial=1, p2=2: ProcessedData -> record_id=671a7fa87fd4 (ndarray shape=(1,)) in 0.083s
+[18:48:47.747] [INFO] for_each(plain_step2): saved 1 results in 0.091s
+[18:49:55.759] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:49:55.768] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:49:55.779] [DEBUG] save(RawData): record_id=f6c7341e61b5, content_hash=39fde331b2be, serialization=native
+[18:49:55.825] [DEBUG] _save_native: created table 'RawData_data'
+[18:49:55.839] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=f6c7341e61b5
+[18:49:55.853] [DEBUG] _save_record_metadata: RawData, record_id=f6c7341e61b5, schema_id=1
+[18:49:55.865] [DEBUG] save(RawData): transaction committed
+[18:49:55.872] [INFO] save_variable(RawData): saved -> record_id=f6c7341e61b5
+[18:49:55.879] [INFO] scihist.for_each(compute): skip_computed=True
+[18:49:55.886] [INFO] ===== for_each(compute) start =====
+[18:49:55.906] [DEBUG] for_each(compute): call_id=0b1703da2b96be6d
+[18:49:55.912] [INFO] load_all(RawData): metadata={}
+[18:49:55.938] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:49:55.946] [INFO] load_all(RawData): found 1 record(s)
+[18:49:55.967] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.055s
+[18:49:55.975] [DEBUG] input 'param': constant int
+[18:49:55.985] [INFO] loaded 2 inputs in 0.073s
+[18:49:55.998] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:49:56.009] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:49:56.022] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:49:56.027] [DEBUG] 1 combos (no rid expansion needed)
+[18:49:56.044] [DEBUG] _persist_expected_combos(compute, call_id=0b1703da2b96be6d): replaced 0 -> wrote 1 expected combos
+[18:49:56.070] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:49:56.075] [INFO] ================================================================
+[18:49:56.082] [INFO] for_each(compute) — 1 iteration
+[18:49:56.090] [INFO] subject=[1 values], trial=[1 values]
+[18:49:56.097] [INFO] ================================================================
+[18:49:56.106] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], param: 10}
+[18:49:56.114] [INFO] subject=['1']
+[18:49:56.120] [INFO] trial=['1']
+[18:49:56.134] [INFO] [run] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute(x, param)
+[18:49:56.139] [INFO] [done] subject=1, trial=1, __rid_x=f6c7341e61b53241: compute completed in 0.001s
+[18:49:56.145] [INFO] ────────────────────────────────────────────────────────────────
+[18:49:56.153] [INFO] for_each(compute) done: completed=1, skipped=0, total=1
+[18:49:56.161] [INFO] ================================================================
+[18:49:56.169] [DEBUG] for_each(compute): completed=1, failed=0, total=1
+[18:49:56.179] [DEBUG] save(ProcessedData): record_id=d189b3a57cc6, content_hash=af6aa7745b18, serialization=native
+[18:49:56.197] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:49:56.206] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=d189b3a57cc6
+[18:49:56.218] [DEBUG] _save_record_metadata: ProcessedData, record_id=d189b3a57cc6, schema_id=1
+[18:49:56.240] [DEBUG] _save_lineage: ProcessedData, fn=compute, lineage_hash=3e63756773c3
+[18:49:56.259] [DEBUG] save(ProcessedData): transaction committed
+[18:49:56.264] [INFO] [save] subject=1, trial=1, param=10: ProcessedData -> record_id=d189b3a57cc6 (LineageFcnResult) [lineage] in 0.086s
+[18:49:56.271] [INFO] for_each(compute): saved 1 results in 0.093s
+[18:49:56.280] [INFO] save_variable(RawData): metadata={'subject': 2, 'trial': 1}
+[18:49:56.288] [DEBUG] save(RawData): record_id=7da723b4cc56, content_hash=d913532a4e83, serialization=native
+[18:49:56.312] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=7da723b4cc56
+[18:49:56.326] [DEBUG] _save_record_metadata: RawData, record_id=7da723b4cc56, schema_id=2
+[18:49:56.343] [DEBUG] save(RawData): transaction committed
+[18:49:56.349] [INFO] save_variable(RawData): saved -> record_id=7da723b4cc56
+[18:49:56.355] [INFO] ===== for_each(plain_step1) start =====
+[18:49:56.374] [DEBUG] for_each(plain_step1): call_id=0af7ff69e29a0228
+[18:49:56.380] [INFO] load_all(RawData): metadata={}
+[18:49:56.396] [DEBUG] _find_record(RawData): 2 record(s) matched (before branch_params filter)
+[18:49:56.402] [INFO] load_all(RawData): found 2 record(s)
+[18:49:56.417] [INFO] input 'x': loaded RawData -> 2 rows, 5 cols in 0.037s
+[18:49:56.423] [DEBUG] input 'p1': constant int
+[18:49:56.431] [INFO] loaded 2 inputs in 0.051s
+[18:49:56.439] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:49:56.448] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:49:56.460] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:49:56.466] [DEBUG] 1 combos (no rid expansion needed)
+[18:49:56.478] [DEBUG] _persist_expected_combos(plain_step1, call_id=0af7ff69e29a0228): replaced 0 -> wrote 1 expected combos
+[18:49:56.483] [INFO] ================================================================
+[18:49:56.491] [INFO] for_each(plain_step1) — 1 iteration
+[18:49:56.500] [INFO] subject=[1 values], trial=[1 values]
+[18:49:56.508] [INFO] ================================================================
+[18:49:56.517] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], p1: 5}
+[18:49:56.525] [INFO] subject=['2']
+[18:49:56.532] [INFO] trial=['1']
+[18:49:56.543] [INFO] [run] subject=2, trial=1, __rid_x=7da723b4cc5697d6: plain_step1(x, p1)
+[18:49:56.549] [INFO] [done] subject=2, trial=1, __rid_x=7da723b4cc5697d6: plain_step1 completed in 0.000s
+[18:49:56.556] [INFO] ────────────────────────────────────────────────────────────────
+[18:49:56.563] [INFO] for_each(plain_step1) done: completed=1, skipped=0, total=1
+[18:49:56.570] [INFO] ================================================================
+[18:49:56.583] [DEBUG] for_each(plain_step1): completed=1, failed=0, total=1
+[18:49:56.592] [INFO] save_variable(IntermediateA): metadata={'subject': '2', 'trial': '1', 'p1': 5}
+[18:49:56.601] [DEBUG] save(IntermediateA): record_id=51455210b10c, content_hash=af6aa7745b18, serialization=native
+[18:49:56.620] [DEBUG] _save_native: created table 'IntermediateA_data'
+[18:49:56.630] [DEBUG] _save_native: inserted single record into 'IntermediateA_data', record_id=51455210b10c
+[18:49:56.643] [DEBUG] _save_record_metadata: IntermediateA, record_id=51455210b10c, schema_id=2
+[18:49:56.668] [DEBUG] save(IntermediateA): transaction committed
+[18:49:56.676] [INFO] save_variable(IntermediateA): saved -> record_id=51455210b10c
+[18:49:56.686] [INFO] [save] subject=2, trial=1, p1=5: IntermediateA -> record_id=51455210b10c (ndarray shape=(1,)) in 0.094s
+[18:49:56.695] [INFO] for_each(plain_step1): saved 1 results in 0.104s
+[18:49:56.702] [INFO] ===== for_each(plain_step2) start =====
+[18:49:56.711] [DEBUG] for_each(plain_step2): call_id=e910b533b7711180
+[18:49:56.719] [INFO] load_all(IntermediateA): metadata={}
+[18:49:56.733] [DEBUG] _find_record(IntermediateA): 1 record(s) matched (before branch_params filter)
+[18:49:56.739] [INFO] load_all(IntermediateA): found 1 record(s)
+[18:49:56.754] [INFO] input 'y': loaded IntermediateA -> 1 rows, 5 cols in 0.035s
+[18:49:56.759] [DEBUG] input 'p2': constant int
+[18:49:56.766] [INFO] loaded 2 inputs in 0.048s
+[18:49:56.775] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:49:56.784] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_y']
+[18:49:56.795] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:49:56.804] [DEBUG] 1 combos (no rid expansion needed)
+[18:49:56.818] [DEBUG] _persist_expected_combos(plain_step2, call_id=e910b533b7711180): replaced 0 -> wrote 1 expected combos
+[18:49:56.827] [INFO] ================================================================
+[18:49:56.835] [INFO] for_each(plain_step2) — 1 iteration
+[18:49:56.854] [INFO] subject=[1 values], trial=[1 values]
+[18:49:56.860] [INFO] ================================================================
+[18:49:56.867] [INFO] inputs: {y: DataFrame['subject', 'trial', 'IntermediateA', '__rid_y'], p2: 2}
+[18:49:56.881] [INFO] subject=['2']
+[18:49:56.893] [INFO] trial=['1']
+[18:49:56.902] [INFO] [run] subject=2, trial=1, __rid_y=51455210b10c8c90: plain_step2(y, p2)
+[18:49:56.913] [INFO] [done] subject=2, trial=1, __rid_y=51455210b10c8c90: plain_step2 completed in 0.000s
+[18:49:56.921] [INFO] ────────────────────────────────────────────────────────────────
+[18:49:56.930] [INFO] for_each(plain_step2) done: completed=1, skipped=0, total=1
+[18:49:56.937] [INFO] ================================================================
+[18:49:56.946] [DEBUG] for_each(plain_step2): completed=1, failed=0, total=1
+[18:49:56.955] [INFO] save_variable(ProcessedData): metadata={'subject': '2', 'trial': '1', 'p2': 2}
+[18:49:56.965] [DEBUG] save(ProcessedData): record_id=671a7fa87fd4, content_hash=24a3295626d1, serialization=native
+[18:49:56.988] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=671a7fa87fd4
+[18:49:57.002] [DEBUG] _save_record_metadata: ProcessedData, record_id=671a7fa87fd4, schema_id=2
+[18:49:57.019] [DEBUG] save(ProcessedData): transaction committed
+[18:49:57.027] [INFO] save_variable(ProcessedData): saved -> record_id=671a7fa87fd4
+[18:49:57.037] [INFO] [save] subject=2, trial=1, p2=2: ProcessedData -> record_id=671a7fa87fd4 (ndarray shape=(1,)) in 0.081s
+[18:49:57.047] [INFO] for_each(plain_step2): saved 1 results in 0.093s
+[18:49:57.062] [INFO] save_variable(RawData): metadata={'subject': 3, 'trial': 1}
+[18:49:57.069] [DEBUG] save(RawData): record_id=db617e65d5d3, content_hash=d913532a4e83, serialization=native
+[18:49:57.098] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=db617e65d5d3
+[18:49:57.115] [DEBUG] _save_record_metadata: RawData, record_id=db617e65d5d3, schema_id=3
+[18:49:57.134] [DEBUG] save(RawData): transaction committed
+[18:49:57.140] [INFO] save_variable(RawData): saved -> record_id=db617e65d5d3
+[18:49:57.154] [INFO] scihist.for_each(lineage_step1): skip_computed=True
+[18:49:57.165] [INFO] ===== for_each(lineage_step1) start =====
+[18:49:57.173] [DEBUG] for_each(lineage_step1): call_id=9079163ff90116bd
+[18:49:57.183] [INFO] load_all(RawData): metadata={}
+[18:49:57.200] [DEBUG] _find_record(RawData): 3 record(s) matched (before branch_params filter)
+[18:49:57.205] [INFO] load_all(RawData): found 3 record(s)
+[18:49:57.226] [INFO] input 'x': loaded RawData -> 3 rows, 5 cols in 0.043s
+[18:49:57.233] [DEBUG] input 'p1': constant int
+[18:49:57.242] [INFO] loaded 2 inputs in 0.059s
+[18:49:57.252] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:49:57.263] [DEBUG] variant tracking: 3 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:49:57.274] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:49:57.280] [DEBUG] 1 combos (no rid expansion needed)
+[18:49:57.294] [DEBUG] _persist_expected_combos(lineage_step1, call_id=9079163ff90116bd): replaced 0 -> wrote 1 expected combos
+[18:49:57.305] [DEBUG] _find_record(IntermediateB): 0 record(s) matched (before branch_params filter)
+[18:49:57.313] [INFO] ================================================================
+[18:49:57.320] [INFO] for_each(lineage_step1) — 1 iteration
+[18:49:57.329] [INFO] subject=[1 values], trial=[1 values]
+[18:49:57.337] [INFO] ================================================================
+[18:49:57.347] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], p1: 5}
+[18:49:57.356] [INFO] subject=['3']
+[18:49:57.364] [INFO] trial=['1']
+[18:49:57.376] [INFO] [run] subject=3, trial=1, __rid_x=db617e65d5d31144: lineage_step1(x, p1)
+[18:49:57.382] [INFO] [done] subject=3, trial=1, __rid_x=db617e65d5d31144: lineage_step1 completed in 0.000s
+[18:49:57.390] [INFO] ────────────────────────────────────────────────────────────────
+[18:49:57.401] [INFO] for_each(lineage_step1) done: completed=1, skipped=0, total=1
+[18:49:57.410] [INFO] ================================================================
+[18:49:57.420] [DEBUG] for_each(lineage_step1): completed=1, failed=0, total=1
+[18:49:57.428] [DEBUG] save(IntermediateB): record_id=cd2a849987e2, content_hash=af6aa7745b18, serialization=native
+[18:49:57.447] [DEBUG] _save_native: created table 'IntermediateB_data'
+[18:49:57.463] [DEBUG] _save_native: inserted single record into 'IntermediateB_data', record_id=cd2a849987e2
+[18:49:57.477] [DEBUG] _save_record_metadata: IntermediateB, record_id=cd2a849987e2, schema_id=3
+[18:49:57.494] [DEBUG] _save_lineage: IntermediateB, fn=lineage_step1, lineage_hash=dbf66c6588d2
+[18:49:57.508] [DEBUG] save(IntermediateB): transaction committed
+[18:49:57.515] [INFO] [save] subject=3, trial=1, p1=5: IntermediateB -> record_id=cd2a849987e2 (LineageFcnResult) [lineage] in 0.088s
+[18:49:57.525] [INFO] for_each(lineage_step1): saved 1 results in 0.098s
+[18:49:57.534] [INFO] scihist.for_each(lineage_step2): skip_computed=True
+[18:49:57.540] [INFO] ===== for_each(lineage_step2) start =====
+[18:49:57.546] [DEBUG] for_each(lineage_step2): call_id=fb3de48311a0009b
+[18:49:57.554] [INFO] load_all(IntermediateB): metadata={}
+[18:49:57.572] [DEBUG] _find_record(IntermediateB): 1 record(s) matched (before branch_params filter)
+[18:49:57.578] [INFO] load_all(IntermediateB): found 1 record(s)
+[18:49:57.595] [INFO] input 'y': loaded IntermediateB -> 1 rows, 5 cols in 0.040s
+[18:49:57.604] [DEBUG] input 'p2': constant int
+[18:49:57.612] [INFO] loaded 2 inputs in 0.058s
+[18:49:57.622] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:49:57.629] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_y']
+[18:49:57.642] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:49:57.647] [DEBUG] 1 combos (no rid expansion needed)
+[18:49:57.662] [DEBUG] _persist_expected_combos(lineage_step2, call_id=fb3de48311a0009b): replaced 0 -> wrote 1 expected combos
+[18:49:57.676] [DEBUG] _find_record(FinalResult): 0 record(s) matched (before branch_params filter)
+[18:49:57.682] [INFO] ================================================================
+[18:49:57.691] [INFO] for_each(lineage_step2) — 1 iteration
+[18:49:57.700] [INFO] subject=[1 values], trial=[1 values]
+[18:49:57.707] [INFO] ================================================================
+[18:49:57.715] [INFO] inputs: {y: DataFrame['subject', 'trial', 'IntermediateB', '__rid_y'], p2: 2}
+[18:49:57.724] [INFO] subject=['3']
+[18:49:57.732] [INFO] trial=['1']
+[18:49:57.743] [INFO] [run] subject=3, trial=1, __rid_y=cd2a849987e2ff3f: lineage_step2(y, p2)
+[18:49:57.752] [INFO] [done] subject=3, trial=1, __rid_y=cd2a849987e2ff3f: lineage_step2 completed in 0.000s
+[18:49:57.761] [INFO] ────────────────────────────────────────────────────────────────
+[18:49:57.770] [INFO] for_each(lineage_step2) done: completed=1, skipped=0, total=1
+[18:49:57.777] [INFO] ================================================================
+[18:49:57.786] [DEBUG] for_each(lineage_step2): completed=1, failed=0, total=1
+[18:49:57.794] [DEBUG] save(FinalResult): record_id=c1efd1f6f8c8, content_hash=24a3295626d1, serialization=native
+[18:49:57.817] [DEBUG] _save_native: created table 'FinalResult_data'
+[18:49:57.834] [DEBUG] _save_native: inserted single record into 'FinalResult_data', record_id=c1efd1f6f8c8
+[18:49:57.845] [DEBUG] _save_record_metadata: FinalResult, record_id=c1efd1f6f8c8, schema_id=3
+[18:49:57.859] [DEBUG] _save_lineage: FinalResult, fn=lineage_step2, lineage_hash=cba36c5148f5
+[18:49:57.878] [DEBUG] save(FinalResult): transaction committed
+[18:49:57.884] [INFO] [save] subject=3, trial=1, p2=2: FinalResult -> record_id=c1efd1f6f8c8 (LineageFcnResult) [lineage] in 0.091s
+[18:49:57.891] [INFO] for_each(lineage_step2): saved 1 results in 0.099s
+[18:51:37.131] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:51:37.139] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:51:37.146] [DEBUG] save(RawData): record_id=5326e143c65b, content_hash=f159b23b8d09, serialization=native
+[18:51:37.186] [DEBUG] _save_native: created table 'RawData_data'
+[18:51:37.196] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=5326e143c65b
+[18:51:37.207] [DEBUG] _save_record_metadata: RawData, record_id=5326e143c65b, schema_id=1
+[18:51:37.222] [DEBUG] save(RawData): transaction committed
+[18:51:37.228] [INFO] save_variable(RawData): saved -> record_id=5326e143c65b
+[18:51:37.238] [INFO] scihist.for_each(split_process): skip_computed=True
+[18:51:37.243] [INFO] ===== for_each(split_process) start =====
+[18:51:37.259] [DEBUG] for_each(split_process): call_id=5c94fe0d2d29aba2
+[18:51:37.264] [INFO] load_all(RawData): metadata={}
+[18:51:37.289] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:51:37.294] [INFO] load_all(RawData): found 1 record(s)
+[18:51:37.313] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.049s
+[18:51:37.319] [DEBUG] input 'factor': constant int
+[18:51:37.327] [INFO] loaded 2 inputs in 0.062s
+[18:51:37.335] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:51:37.343] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:51:37.357] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:51:37.363] [DEBUG] 1 combos (no rid expansion needed)
+[18:51:37.376] [DEBUG] _persist_expected_combos(split_process, call_id=5c94fe0d2d29aba2): replaced 0 -> wrote 1 expected combos
+[18:51:37.388] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:51:37.401] [INFO] ================================================================
+[18:51:37.409] [INFO] for_each(split_process) — 1 iteration
+[18:51:37.415] [INFO] subject=[1 values], trial=[1 values]
+[18:51:37.422] [INFO] ================================================================
+[18:51:37.430] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], factor: 5}
+[18:51:37.437] [INFO] subject=['1']
+[18:51:37.445] [INFO] trial=['1']
+[18:51:37.456] [INFO] [run] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process(x, factor)
+[18:51:37.463] [INFO] [done] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process completed in 0.001s
+[18:51:37.471] [INFO] ────────────────────────────────────────────────────────────────
+[18:51:37.486] [INFO] for_each(split_process) done: completed=1, skipped=0, total=1
+[18:51:37.494] [INFO] ================================================================
+[18:51:37.503] [DEBUG] for_each(split_process): completed=1, failed=0, total=1
+[18:51:37.511] [DEBUG] save(ProcessedData): record_id=db500afe2a0e, content_hash=d4d51173bfca, serialization=native
+[18:51:37.528] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:51:37.533] [ERROR] save(ProcessedData): transaction rolled back: Object of type ndarray is not JSON serializable
+[18:51:37.542] [ERROR] [error] subject=1, trial=1, factor=5: failed to save ProcessedData [lineage]: Object of type ndarray is not JSON serializable
+[18:51:37.550] [INFO] for_each(split_process): saved 1 results in 0.041s
+[18:52:18.068] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:52:18.075] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:52:18.092] [DEBUG] save(RawData): record_id=5326e143c65b, content_hash=f159b23b8d09, serialization=native
+[18:52:18.153] [DEBUG] _save_native: created table 'RawData_data'
+[18:52:18.163] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=5326e143c65b
+[18:52:18.177] [DEBUG] _save_record_metadata: RawData, record_id=5326e143c65b, schema_id=1
+[18:52:18.198] [DEBUG] save(RawData): transaction committed
+[18:52:18.207] [INFO] save_variable(RawData): saved -> record_id=5326e143c65b
+[18:52:18.217] [INFO] scihist.for_each(split_process): skip_computed=True
+[18:52:18.232] [INFO] ===== for_each(split_process) start =====
+[18:52:18.248] [DEBUG] for_each(split_process): call_id=5c94fe0d2d29aba2
+[18:52:18.254] [INFO] load_all(RawData): metadata={}
+[18:52:18.276] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:52:18.290] [INFO] load_all(RawData): found 1 record(s)
+[18:52:18.307] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.053s
+[18:52:18.313] [DEBUG] input 'factor': constant int
+[18:52:18.322] [INFO] loaded 2 inputs in 0.068s
+[18:52:18.339] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:52:18.349] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:52:18.360] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:52:18.367] [DEBUG] 1 combos (no rid expansion needed)
+[18:52:18.381] [DEBUG] _persist_expected_combos(split_process, call_id=5c94fe0d2d29aba2): replaced 0 -> wrote 1 expected combos
+[18:52:18.400] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:52:18.404] [INFO] ================================================================
+[18:52:18.413] [INFO] for_each(split_process) — 1 iteration
+[18:52:18.422] [INFO] subject=[1 values], trial=[1 values]
+[18:52:18.431] [INFO] ================================================================
+[18:52:18.440] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], factor: 5}
+[18:52:18.449] [INFO] subject=['1']
+[18:52:18.457] [INFO] trial=['1']
+[18:52:18.468] [INFO] [run] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process(x, factor)
+[18:52:18.475] [INFO] [done] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process completed in 0.001s
+[18:52:18.486] [INFO] ────────────────────────────────────────────────────────────────
+[18:52:18.494] [INFO] for_each(split_process) done: completed=1, skipped=0, total=1
+[18:52:18.502] [INFO] ================================================================
+[18:52:18.510] [DEBUG] for_each(split_process): completed=1, failed=0, total=1
+[18:52:18.521] [DEBUG] save(ProcessedData): record_id=db500afe2a0e, content_hash=d4d51173bfca, serialization=native
+[18:52:18.542] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:52:18.548] [ERROR] save(ProcessedData): transaction rolled back: Object of type ndarray is not JSON serializable
+[18:52:18.558] [ERROR] [error] subject=1, trial=1, factor=5: failed to save ProcessedData [lineage]: Object of type ndarray is not JSON serializable
+[18:52:18.566] [INFO] for_each(split_process): saved 1 results in 0.046s
+[18:55:59.045] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:55:59.052] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:55:59.068] [DEBUG] save(RawData): record_id=5326e143c65b, content_hash=f159b23b8d09, serialization=native
+[18:55:59.110] [DEBUG] _save_native: created table 'RawData_data'
+[18:55:59.124] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=5326e143c65b
+[18:55:59.141] [DEBUG] _save_record_metadata: RawData, record_id=5326e143c65b, schema_id=1
+[18:55:59.174] [DEBUG] save(RawData): transaction committed
+[18:55:59.180] [INFO] save_variable(RawData): saved -> record_id=5326e143c65b
+[18:55:59.190] [INFO] scihist.for_each(split_process): skip_computed=True
+[18:55:59.199] [INFO] ===== for_each(split_process) start =====
+[18:55:59.216] [DEBUG] for_each(split_process): call_id=5c94fe0d2d29aba2
+[18:55:59.230] [INFO] load_all(RawData): metadata={}
+[18:55:59.258] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:55:59.264] [INFO] load_all(RawData): found 1 record(s)
+[18:55:59.287] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.057s
+[18:55:59.293] [DEBUG] input 'factor': constant int
+[18:55:59.303] [INFO] loaded 2 inputs in 0.073s
+[18:55:59.311] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:55:59.321] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:55:59.333] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:55:59.340] [DEBUG] 1 combos (no rid expansion needed)
+[18:55:59.358] [DEBUG] _persist_expected_combos(split_process, call_id=5c94fe0d2d29aba2): replaced 0 -> wrote 1 expected combos
+[18:55:59.370] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:55:59.376] [INFO] ================================================================
+[18:55:59.385] [INFO] for_each(split_process) — 1 iteration
+[18:55:59.395] [INFO] subject=[1 values], trial=[1 values]
+[18:55:59.404] [INFO] ================================================================
+[18:55:59.412] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], factor: 5}
+[18:55:59.421] [INFO] subject=['1']
+[18:55:59.430] [INFO] trial=['1']
+[18:55:59.443] [INFO] [run] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process(x, factor)
+[18:55:59.449] [INFO] [done] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process completed in 0.001s
+[18:55:59.458] [INFO] ────────────────────────────────────────────────────────────────
+[18:55:59.470] [INFO] for_each(split_process) done: completed=1, skipped=0, total=1
+[18:55:59.489] [INFO] ================================================================
+[18:55:59.500] [DEBUG] for_each(split_process): completed=1, failed=0, total=1
+[18:55:59.512] [DEBUG] save(ProcessedData): record_id=db500afe2a0e, content_hash=d4d51173bfca, serialization=native
+[18:55:59.527] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:55:59.533] [ERROR] save(ProcessedData): transaction rolled back: Object of type ndarray is not JSON serializable
+[18:55:59.551] [ERROR] [error] subject=1, trial=1, factor=5: failed to save ProcessedData [lineage]: Object of type ndarray is not JSON serializable
+[18:55:59.559] [INFO] for_each(split_process): saved 1 results in 0.050s
+[18:58:14.094] [INFO] configure_database: path=:memory:, schema_keys=['subject', 'trial']
+[18:58:14.101] [INFO] save_variable(RawData): metadata={'subject': 1, 'trial': 1}
+[18:58:14.110] [DEBUG] save(RawData): record_id=5326e143c65b, content_hash=f159b23b8d09, serialization=native
+[18:58:14.172] [DEBUG] _save_native: created table 'RawData_data'
+[18:58:14.184] [DEBUG] _save_native: inserted single record into 'RawData_data', record_id=5326e143c65b
+[18:58:14.203] [DEBUG] _save_record_metadata: RawData, record_id=5326e143c65b, schema_id=1
+[18:58:14.230] [DEBUG] save(RawData): transaction committed
+[18:58:14.237] [INFO] save_variable(RawData): saved -> record_id=5326e143c65b
+[18:58:14.246] [INFO] scihist.for_each(split_process): skip_computed=True
+[18:58:14.255] [INFO] ===== for_each(split_process) start =====
+[18:58:14.265] [DEBUG] for_each(split_process): call_id=5c94fe0d2d29aba2
+[18:58:14.281] [INFO] load_all(RawData): metadata={}
+[18:58:14.307] [DEBUG] _find_record(RawData): 1 record(s) matched (before branch_params filter)
+[18:58:14.315] [INFO] load_all(RawData): found 1 record(s)
+[18:58:14.331] [INFO] input 'x': loaded RawData -> 1 rows, 5 cols in 0.050s
+[18:58:14.342] [DEBUG] input 'factor': constant int
+[18:58:14.357] [INFO] loaded 2 inputs in 0.076s
+[18:58:14.367] [DEBUG] building variant tracking (rid->branch_params mapping)
+[18:58:14.380] [DEBUG] variant tracking: 1 record_ids mapped, 1 rid keys: ['__rid_x']
+[18:58:14.393] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[18:58:14.399] [DEBUG] 1 combos (no rid expansion needed)
+[18:58:14.416] [DEBUG] _persist_expected_combos(split_process, call_id=5c94fe0d2d29aba2): replaced 0 -> wrote 1 expected combos
+[18:58:14.439] [DEBUG] _find_record(ProcessedData): 0 record(s) matched (before branch_params filter)
+[18:58:14.445] [INFO] ================================================================
+[18:58:14.454] [INFO] for_each(split_process) — 1 iteration
+[18:58:14.463] [INFO] subject=[1 values], trial=[1 values]
+[18:58:14.471] [INFO] ================================================================
+[18:58:14.481] [INFO] inputs: {x: DataFrame['subject', 'trial', 'RawData', '__rid_x'], factor: 5}
+[18:58:14.498] [INFO] subject=['1']
+[18:58:14.511] [INFO] trial=['1']
+[18:58:14.525] [INFO] [run] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process(x, factor)
+[18:58:14.544] [INFO] [done] subject=1, trial=1, __rid_x=5326e143c65b2a73: split_process completed in 0.001s
+[18:58:14.555] [INFO] ────────────────────────────────────────────────────────────────
+[18:58:14.564] [INFO] for_each(split_process) done: completed=1, skipped=0, total=1
+[18:58:14.574] [INFO] ================================================================
+[18:58:14.582] [DEBUG] for_each(split_process): completed=1, failed=0, total=1
+[18:58:14.591] [DEBUG] save(ProcessedData): record_id=0215f42d88a9, content_hash=44a37f40fa28, serialization=native
+[18:58:14.610] [DEBUG] _save_native: created table 'ProcessedData_data'
+[18:58:14.630] [DEBUG] _save_native: inserted single record into 'ProcessedData_data', record_id=0215f42d88a9
+[18:58:14.650] [DEBUG] _save_record_metadata: ProcessedData, record_id=0215f42d88a9, schema_id=1
+[18:58:14.673] [DEBUG] _save_lineage: ProcessedData, fn=split_process, lineage_hash=196d84465865
+[18:58:14.693] [DEBUG] save(ProcessedData): transaction committed
+[18:58:14.701] [INFO] [save] subject=1, trial=1, factor=5: ProcessedData -> record_id=0215f42d88a9 (LineageFcnResult) [lineage] in 0.110s
+[18:58:14.711] [DEBUG] save(FinalResult): record_id=009946211013, content_hash=3bfa8d24b239, serialization=native
+[18:58:14.727] [DEBUG] _save_native: created table 'FinalResult_data'
+[18:58:14.739] [DEBUG] _save_native: inserted single record into 'FinalResult_data', record_id=009946211013
+[18:58:14.757] [DEBUG] _save_record_metadata: FinalResult, record_id=009946211013, schema_id=1
+[18:58:14.779] [DEBUG] _save_lineage: FinalResult, fn=split_process, lineage_hash=196d84465865
+[18:58:14.807] [DEBUG] save(FinalResult): transaction committed
+[18:58:14.812] [INFO] [save] subject=1, trial=1, factor=5: FinalResult -> record_id=009946211013 (LineageFcnResult) [lineage] in 0.102s
+[18:58:14.822] [INFO] for_each(split_process): saved 1 results in 0.233s
+[18:58:14.834] [INFO] load_all(ProcessedData): metadata={'subject': 1, 'trial': 1}
+[18:58:14.850] [DEBUG] _find_record(ProcessedData): 1 record(s) matched (before branch_params filter)
+[18:58:14.866] [INFO] load_all(ProcessedData): found 1 record(s)
+[18:58:14.885] [INFO] load_all(FinalResult): metadata={'subject': 1, 'trial': 1}
+[18:58:14.902] [DEBUG] _find_record(FinalResult): 1 record(s) matched (before branch_params filter)
+[18:58:14.908] [INFO] load_all(FinalResult): found 1 record(s)

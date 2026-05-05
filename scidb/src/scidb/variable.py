@@ -141,7 +141,13 @@ class BaseVariable(metaclass=VariableMeta):
         Args:
             data: The native Python object (numpy array, etc.)
         """
-        self.data = data
+        # Convert memoryviews to numpy arrays
+        # DuckDB/pandas sometimes returns numpy arrays as memoryviews for efficiency
+        if isinstance(data, memoryview):
+            import numpy as np
+            self.data = np.asarray(data)
+        else:
+            self.data = data
         self.record_id: str | None = None
         self.metadata: dict | None = None
         self.content_hash: str | None = None

@@ -1065,8 +1065,7 @@ class TestForEachConfigKeys:
         )
 
         meta = MockOutput.saved_data[0]["metadata"]
-        import json
-        inputs_key = json.loads(meta["__inputs"])
+        inputs_key = meta["__inputs"]
         assert inputs_key == {"x": "MockVariableA"}
 
     def test_constant_not_in_inputs_key(self):
@@ -1083,8 +1082,7 @@ class TestForEachConfigKeys:
         )
 
         meta = MockOutput.saved_data[0]["metadata"]
-        import json
-        inputs_key = json.loads(meta["__inputs"])
+        inputs_key = meta["__inputs"]
         assert "smoothing" not in inputs_key
         assert "x" in inputs_key
 
@@ -1103,8 +1101,7 @@ class TestForEachConfigKeys:
         )
 
         meta = MockOutput.saved_data[0]["metadata"]
-        import json
-        inputs_key = json.loads(meta["__inputs"])
+        inputs_key = meta["__inputs"]
         assert "Fixed" in inputs_key["baseline"]
         assert "session='BL'" in inputs_key["baseline"]
         assert inputs_key["current"] == "MockVariableB"

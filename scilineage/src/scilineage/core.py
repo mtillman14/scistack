@@ -523,3 +523,69 @@ def manual(data: Any, label: str, reason: str = "") -> LineageFcnResult:
     output = LineageFcnResult(invocation, 0, True, data)
     invocation.outputs = (output,)
     return output
+
+
+def make_tuple_unpacking_wrapper(lineage_fn: Callable) -> Callable:
+    """Wrap a LineageFcn to unpack tuple results into separate LineageFcnResults.
+
+    When a @lineage_fcn function returns a tuple (e.g., for multiple outputs),
+    this wrapper unpacks the tuple so that each output gets its own
+    LineageFcnResult with just its element, rather than all outputs sharing
+    the same LineageFcnResult containing the full tuple.
+
+    This is useful when integrating with iteration frameworks (like scifor)
+    that expect tuple-returning functions to produce separate values per output.
+
+    Args:
+        lineage_fn: A LineageFcn or any callable that may return LineageFcnResult
+
+    Returns:
+        A wrapped function that unpacks tuple-wrapped LineageFcnResults
+
+    Example:
+        @lineage_fcn
+        def split_data(x):
+            return x[:10], x[10:]
+
+        wrapped = make_tuple_unpacking_wrapper(split_data)
+        first, second = wrapped(data)  # Each is its own LineageFcnResult
+    """
+    from .lineage import get_raw_value
+
+    def wrapped(*args, **kwargs):
+        result = lineage_fn(*args, **kwargs)
+
+        # If result is a LineageFcnResult wrapping a tuple, unpack it
+        # This allows functions that return tuples to work with multiple outputs
+        # even without unpack_output=True
+        if isinstance(result, LineageFcnResult):
+            raw = get_raw_value(result)
+            if isinstance(raw, tuple):
+                # Unpack tuple - return tuple of LineageFcnResults (one per element)
+                # Each keeps the same lineage but different data
+                unpacked = []
+                for i, elem in enumerate(raw):
+                    # Create a new LineageFcnResult for each tuple element
+                    unpacked_result = type(result)(
+                        result.invoked,
+                        i,  # output_num
+                        result.is_complete,
+                        elem  # just this element, not the tuple
+                    )
+                    unpacked.append(unpacked_result)
+                return tuple(unpacked)
+
+        return result
+
+    wrapped.__name__ = getattr(lineage_fn, "__name__", "lineage_fcn")
+
+    # Store the original function's parameter names so scidb can check which
+    # metadata keys to inject for generates_file functions
+    try:
+        original_fn = lineage_fn.fcn if hasattr(lineage_fn, 'fcn') else lineage_fn
+        sig = inspect.signature(original_fn)
+        wrapped.__scidb_params__ = set(sig.parameters.keys())
+    except (ValueError, TypeError):
+        wrapped.__scidb_params__ = set()
+
+    return wrapped
