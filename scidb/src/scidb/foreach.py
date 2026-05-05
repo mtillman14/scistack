@@ -603,10 +603,16 @@ def for_each(
 
     # Save results
     if save and outputs and not result_tbl.empty:
+        # Compute Fixed input rids for lineage tracking if not provided
+        fixed_rids_for_save = _lineage_fixed_rids
+        if fixed_rids_for_save is None and HAS_LINEAGE:
+            # Only compute if we might save LineageFcnResult objects
+            fixed_rids_for_save = _compute_fixed_input_rids(inputs, db)
+
         save_t0 = time.perf_counter()
         _save_results(result_tbl, outputs, output_names, config_keys, db,
                       rid_to_bp=rid_to_bp, rid_keys=rid_keys,
-                      lineage_fixed_rids=_lineage_fixed_rids)
+                      lineage_fixed_rids=fixed_rids_for_save)
         save_elapsed = time.perf_counter() - save_t0
         Log.info(f"for_each({fn_name}): saved {len(result_tbl)} results in {save_elapsed:.3f}s")
 
@@ -858,6 +864,54 @@ def _load_input(var_spec: Any, db: Any | None, where: Any | None) -> Any:
 
     # Unknown — return as-is
     return var_spec
+
+
+def _compute_fixed_input_rids(inputs: dict, db) -> dict:
+    """Compute record_ids for Fixed inputs for lineage tracking.
+
+    Fixed inputs have __record_id stripped during variant expansion (line 826-829),
+    but lineage tracking needs to know which specific record was used for staleness
+    checking. This function computes those record_ids.
+
+    Args:
+        inputs: The inputs dict passed to for_each (may contain Fixed wrappers)
+        db: Database instance
+
+    Returns:
+        Dict mapping "__rid_{param_name}" to record_id for each Fixed input
+    """
+    fixed_rids = {}
+
+    # If db is None, we can't look up record_ids
+    if db is None:
+        return fixed_rids
+
+    for name, value in inputs.items():
+        # Detect Fixed wrapper
+        if not hasattr(value, 'fixed_metadata'):
+            continue
+
+        # Unwrap to get inner variable type
+        inner = value.var_type if hasattr(value, 'var_type') else value
+
+        # Unwrap ColumnSelection if present
+        if hasattr(inner, 'var_type'):
+            inner = inner.var_type
+
+        # Must be a variable type (class)
+        if not isinstance(inner, type):
+            continue
+
+        # Look up record_id for this Fixed input
+        try:
+            rid = db.find_record_id(inner, value.fixed_metadata)
+            if rid:
+                fixed_rids[f"__rid_{name}"] = rid
+        except Exception:
+            # If lookup fails, skip this Fixed input
+            pass
+
+    return fixed_rids
 
 
 def _merge_needs_per_combo(merge_spec: "Merge") -> bool:

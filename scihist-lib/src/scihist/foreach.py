@@ -77,16 +77,18 @@ def for_each(
     from scilineage import make_tuple_unpacking_wrapper
     fn_plain = make_tuple_unpacking_wrapper(fn)
 
+    # Ensure database is available (get global instance if not provided)
+    active_db = db
+    if active_db is None and (save or skip_computed):
+        try:
+            from scidb.database import get_database
+            active_db = get_database()
+        except Exception:
+            pass
+
     # Build the pre-combo skip hook when skip_computed is enabled.
     pre_combo_hook = None
     if skip_computed and not dry_run and outputs:
-        active_db = db
-        if active_db is None:
-            try:
-                from scidb.database import get_database
-                active_db = get_database()
-            except Exception:
-                active_db = None
         if active_db is not None:
             pre_combo_hook = _build_skip_hook(fn, outputs, active_db, inputs)
             logger.debug("built skip_computed hook for %s", fn_name)
@@ -99,32 +101,10 @@ def for_each(
     elif not outputs:
         logger.debug("skip_computed disabled: no outputs specified")
 
-    # Compute Fixed input record_ids for lineage tracking before delegating to scidb.
-    # These are needed for staleness checking but scidb doesn't include them in
-    # __upstream (Fixed inputs have __record_id stripped for variant expansion).
-    fixed_rids = {}
-    if save and outputs:
-        for name, value in inputs.items():
-            if hasattr(value, 'fixed_metadata'):
-                inner = value.var_type if hasattr(value, 'var_type') else value
-                if hasattr(inner, 'var_type'):  # Unwrap ColumnSelection
-                    inner = inner.var_type
-                if isinstance(inner, type):
-                    save_db = db
-                    if save_db is None:
-                        try:
-                            from scidb.database import get_database
-                            save_db = get_database()
-                        except Exception:
-                            save_db = None
-                    if save_db is not None:
-                        rid = save_db.find_record_id(inner, value.fixed_metadata)
-                        if rid:
-                            fixed_rids[f"__rid_{name}"] = rid
-        logger.debug("computed %d fixed_rids for lineage tracking", len(fixed_rids))
-
     # Delegate to scidb.for_each with save=True (scidb will detect LineageFcnResult
     # and call save_lineage_result with complete metadata).
+    # Fixed input record_ids are now computed internally by scidb (no longer need
+    # to pre-compute and pass via _lineage_fixed_rids).
     # For generates_file functions, inject combo metadata as kwargs so fn receives
     # schema keys (subject, session, etc.) as named arguments.
     _inject_meta = getattr(fn, 'generates_file', False)
@@ -136,14 +116,13 @@ def for_each(
         dry_run=dry_run,
         save=save,
         as_table=as_table,
-        db=db,
+        db=active_db,
         distribute=distribute,
         where=where,
         _inject_combo_metadata=_inject_meta,
         _pre_combo_hook=pre_combo_hook,
         _progress_fn=_progress_fn,
         _cancel_check=_cancel_check,
-        _lineage_fixed_rids=fixed_rids if fixed_rids else None,
         **metadata_iterables,
     )
 
