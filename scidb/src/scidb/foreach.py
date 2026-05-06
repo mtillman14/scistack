@@ -423,6 +423,45 @@ def for_each(
     _iterated_schema_keys = set(metadata_iterables.keys()) & set(current_schema_keys)
     _aggregation_mode = len(current_schema_keys) > 0 and len(_iterated_schema_keys) < len(current_schema_keys)
 
+    # Lookup keys for rid disambiguation: schema keys + any non-schema metadata
+    # iterable keys.  Using only schema keys misses non-schema iterables (e.g.
+    # "session") that ARE present in the loaded DataFrame and should distinguish
+    # which record belongs to which combo.
+    _lookup_keys = list(dict.fromkeys(
+        current_schema_keys +
+        [k for k in metadata_iterables if k not in set(current_schema_keys)]
+    ))
+
+    # For each rid_key, map combo_tuple → [rid_values at that combo]
+    rid_per_combo: dict = {}
+    for rid_col in rid_keys:
+        param_name = rid_col[len("__rid_"):]
+        data = loaded_inputs.get(param_name)
+
+        # Extract DataFrame from Fixed wrapper if needed
+        df = None
+        if isinstance(data, pd.DataFrame):
+            df = data
+        elif hasattr(data, 'data') and isinstance(data.data, pd.DataFrame):
+            df = data.data
+
+        if df is None or rid_col not in df.columns:
+            continue
+        schema_cols_in_df = [k for k in _lookup_keys if k in df.columns]
+        mapping: dict = {}
+        if schema_cols_in_df:
+            for combo_vals, group in df.groupby(schema_cols_in_df, sort=False):
+                raw_key = combo_vals if isinstance(combo_vals, tuple) else (combo_vals,)
+                # Expand to ALL _lookup_keys, filling missing cols with ""
+                col_val = {sk: ("" if v is None else str(v))
+                           for sk, v in zip(schema_cols_in_df, raw_key)}
+                key = tuple(col_val.get(sk, "") for sk in _lookup_keys)
+                mapping[key] = group[rid_col].tolist()
+        else:
+            # No lookup cols in df — use all-empty key
+            mapping[tuple("" for _ in _lookup_keys)] = df[rid_col].tolist()
+        rid_per_combo[rid_col] = mapping
+
     if _aggregation_mode:
         # Aggregation mode: skip rid expansion.  Strip __rid_* columns from
         # loaded DataFrames so the user's function doesn't see internal
@@ -432,54 +471,44 @@ def for_each(
                 rid_cols_in_df = [c for c in data.columns if c.startswith("__rid_")]
                 if rid_cols_in_df:
                     loaded_inputs[param_name] = data.drop(columns=rid_cols_in_df)
-        rid_keys = []
-        rid_per_combo = {}
+
+        # Don't expand combos — aggregation keeps multiple records per combo
         full_combos = list(base_combos)
+
+        # Pre-compute contributing rids per combo for save path (branch_params merge + provenance)
+        # Structure: combo_key → {rid_col: [rids]} to preserve parameter information
+        _iterated_keys_ordered = [k for k in _lookup_keys if k in _iterated_schema_keys]
+        _combo_to_rids = {}
+        for combo in base_combos:
+            combo_key = tuple(str(combo.get(k, "")) for k in _iterated_keys_ordered)
+            rids_by_param = {}
+            for rid_col, mapping in rid_per_combo.items():
+                param_rids = []
+                for full_key, rids in mapping.items():
+                    iterated_vals = tuple(
+                        full_key[_lookup_keys.index(k)] for k in _iterated_keys_ordered
+                    )
+                    if iterated_vals == combo_key:
+                        param_rids.extend(rids)
+                if param_rids:
+                    rids_by_param[rid_col] = param_rids
+            _combo_to_rids[combo_key] = rids_by_param
+
+        # Don't extend scifor schema or metadata_iterables with rid keys
+        rid_keys_for_schema = []
+
+        total_rids = sum(len(rids) for rids_by_param in _combo_to_rids.values()
+                         for rids in rids_by_param.values())
         Log.info(f"aggregation mode: skipped rid expansion, "
                  f"iterating {list(_iterated_schema_keys) or '(none)'} "
                  f"of schema {current_schema_keys}, "
-                 f"{len(full_combos)} combo(s)")
+                 f"{len(full_combos)} combo(s), "
+                 f"{total_rids} contributing rids")
     else:
         # Full iteration mode: expand combos with rid variants.
-
-        # Lookup keys for rid disambiguation: schema keys + any non-schema metadata
-        # iterable keys.  Using only schema keys misses non-schema iterables (e.g.
-        # "session") that ARE present in the loaded DataFrame and should distinguish
-        # which record belongs to which combo.
-        _lookup_keys = list(dict.fromkeys(
-            current_schema_keys +
-            [k for k in metadata_iterables if k not in set(current_schema_keys)]
-        ))
-
-        # For each rid_key, map combo_tuple → [rid_values at that combo]
-        rid_per_combo: dict = {}
-        for rid_col in rid_keys:
-            param_name = rid_col[len("__rid_"):]
-            data = loaded_inputs.get(param_name)
-
-            # Extract DataFrame from Fixed wrapper if needed
-            df = None
-            if isinstance(data, pd.DataFrame):
-                df = data
-            elif hasattr(data, 'data') and isinstance(data.data, pd.DataFrame):
-                df = data.data
-
-            if df is None or rid_col not in df.columns:
-                continue
-            schema_cols_in_df = [k for k in _lookup_keys if k in df.columns]
-            mapping: dict = {}
-            if schema_cols_in_df:
-                for combo_vals, group in df.groupby(schema_cols_in_df, sort=False):
-                    raw_key = combo_vals if isinstance(combo_vals, tuple) else (combo_vals,)
-                    # Expand to ALL _lookup_keys, filling missing cols with ""
-                    col_val = {sk: ("" if v is None else str(v))
-                               for sk, v in zip(schema_cols_in_df, raw_key)}
-                    key = tuple(col_val.get(sk, "") for sk in _lookup_keys)
-                    mapping[key] = group[rid_col].tolist()
-            else:
-                # No lookup cols in df — use all-empty key
-                mapping[tuple("" for _ in _lookup_keys)] = df[rid_col].tolist()
-            rid_per_combo[rid_col] = mapping
+        _combo_to_rids = None
+        _iterated_keys_ordered = None
+        rid_keys_for_schema = rid_keys
 
         # Expand each base combo with all valid rid-combos for that schema location
         Log.debug(f"expanding combos: {len(base_combos)} base combos, "
@@ -544,16 +573,19 @@ def for_each(
 
     # Temporarily extend scifor's schema to include __rid_* keys so _filter_df_for_combo
     # treats them as schema columns (not data columns), giving single-row filtered DFs.
-    if rid_keys:
-        _scifor.set_schema(current_schema_keys + rid_keys)
+    # In aggregation mode, rid_keys_for_schema is empty so schema isn't extended.
+    if rid_keys_for_schema:
+        _scifor.set_schema(current_schema_keys + rid_keys_for_schema)
 
-    # Collect all rid values per key so scifor's metadata_iterables are complete
+    # Collect all rid values per key so scifor's metadata_iterables are complete.
+    # In aggregation mode, rid_keys_for_schema is empty so this loop is skipped.
     extended_metadata_iterables = dict(metadata_iterables)
-    for rid_col, mapping in rid_per_combo.items():
-        all_rids: list = []
-        for rids in mapping.values():
-            all_rids.extend(rids)
-        extended_metadata_iterables[rid_col] = list(dict.fromkeys(all_rids))  # preserve order, dedupe
+    if rid_keys_for_schema:
+        for rid_col, mapping in rid_per_combo.items():
+            all_rids: list = []
+            for rids in mapping.values():
+                all_rids.extend(rids)
+            extended_metadata_iterables[rid_col] = list(dict.fromkeys(all_rids))  # preserve order, dedupe
 
     def _reconstruct_variable_inputs(
         resolved: dict,
@@ -706,7 +738,7 @@ def for_each(
                   f"failed={_run_summary['skipped']}, total={_run_summary['total']}")
 
     # Restore scifor's schema
-    if rid_keys:
+    if rid_keys_for_schema:
         _scifor.set_schema(current_schema_keys)
 
     if result_tbl is None:
@@ -721,9 +753,14 @@ def for_each(
             fixed_rids_for_save = _compute_fixed_input_rids(inputs, db)
 
         save_t0 = time.perf_counter()
-        _save_results(result_tbl, outputs, output_names, config_keys, db,
-                      rid_to_bp=rid_to_bp, rid_keys=rid_keys,
-                      lineage_fixed_rids=fixed_rids_for_save)
+        _save_results(
+            result_tbl, outputs, output_names, config_keys, db,
+            rid_to_bp=rid_to_bp,
+            rid_keys=[] if _aggregation_mode else rid_keys,
+            lineage_fixed_rids=fixed_rids_for_save,
+            combo_to_rids=_combo_to_rids,
+            combo_to_rids_keys=_iterated_keys_ordered,
+        )
         save_elapsed = time.perf_counter() - save_t0
         Log.info(f"for_each({fn_name}): saved {len(result_tbl)} results in {save_elapsed:.3f}s")
 
@@ -1262,6 +1299,8 @@ def _save_results(
     rid_to_bp: "dict | None" = None,
     rid_keys: "list | None" = None,
     lineage_fixed_rids: "dict | None" = None,
+    combo_to_rids: "dict | None" = None,
+    combo_to_rids_keys: "list | None" = None,
 ) -> None:
     """Save results from the result table to output variable types."""
     import pandas as pd
@@ -1292,7 +1331,25 @@ def _save_results(
     for _, row in result_tbl.iterrows():
         # 1. Collect upstream branch_params via __rid_* columns → rid_to_bp lookup
         merged_bp: dict = {}
-        if rid_to_bp and rid_keys:
+        if combo_to_rids is not None and combo_to_rids_keys is not None:
+            # Aggregation mode: merge branch_params from all contributing rids
+            combo_key = tuple(str(row.get(k, "")) for k in combo_to_rids_keys)
+            rids_by_param = combo_to_rids.get(combo_key, {})
+            # Flatten all rids from all parameters
+            for rid_col, rids in rids_by_param.items():
+                for rid in rids:
+                    if rid in rid_to_bp:
+                        for k, v in rid_to_bp[rid].items():
+                            if k in merged_bp and merged_bp[k] != v:
+                                warnings.warn(
+                                    f"branch_params key '{k}' overwritten: "
+                                    f"{merged_bp[k]!r} → {v!r}. "
+                                    f"Use version= for precise selection.",
+                                    UserWarning, stacklevel=4,
+                                )
+                            merged_bp[k] = v
+        elif rid_to_bp and rid_keys:
+            # Full iteration mode: existing per-row rid lookup
             for rid_col in rid_keys:
                 if rid_col not in row.index:
                     continue
@@ -1354,7 +1411,29 @@ def _save_results(
 
         # Add upstream record_ids to version_keys so that records from different
         # upstream variants get distinct record_ids even when content is identical.
-        if rid_keys:
+        if combo_to_rids is not None and combo_to_rids_keys is not None:
+            # Aggregation mode: collect all contributing upstream rids per parameter
+            combo_key = tuple(str(row.get(k, "")) for k in combo_to_rids_keys)
+            rids_by_param = combo_to_rids.get(combo_key, {})
+            if rids_by_param:
+                # Build __upstream from contributing rids
+                # Since aggregation has multiple upstream records per parameter,
+                # we store them as individual indexed entries for provenance compatibility:
+                # __rid_signal_0, __rid_signal_1, etc.
+                upstream = {}
+                for rid_col, rids in rids_by_param.items():
+                    if rids:
+                        if len(rids) == 1:
+                            # Single rid: store normally
+                            upstream[rid_col] = rids[0]
+                        else:
+                            # Multiple rids: store as indexed entries
+                            for idx, rid in enumerate(rids):
+                                upstream[f"{rid_col}_{idx}"] = rid
+                if upstream:
+                    save_metadata["__upstream"] = upstream
+        elif rid_keys:
+            # Full iteration mode: per-row rid lookup
             upstream = {}
             for rid_col in rid_keys:
                 if rid_col in row.index:

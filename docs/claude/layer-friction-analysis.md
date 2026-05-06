@@ -48,7 +48,7 @@ You can use scidb without scihist if you don't need lineage.
 
 ## Friction Points (Ordered by Severity)
 
-### CRITICAL: Dual Variant Tracking Systems
+### CRITICAL: Dual Variant Tracking Systems RESOLVED (Variant Tracking Systems Unified)
 
 **Where:** scidb ↔ scihist boundary
 
@@ -100,7 +100,7 @@ You can use scidb without scihist if you don't need lineage.
 
 ---
 
-### HIGH: Input Classification Quirk
+### HIGH: Input Classification Quirk RESOLVED (Input Classification Unified)
 
 **Where:** scidb → scihist boundary
 
@@ -135,7 +135,7 @@ You can use scidb without scihist if you don't need lineage.
 
 ---
 
-### HIGH: Triple Storage of Constants
+### HIGH: Triple Storage of Constants DEFERRED (Documented)
 
 **Where:** scidb layer (affects scihist)
 

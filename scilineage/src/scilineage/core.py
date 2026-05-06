@@ -588,7 +588,10 @@ def make_tuple_unpacking_wrapper(lineage_fn: Callable) -> Callable:
     except (ValueError, TypeError):
         wrapped.__scidb_params__ = set()
 
-    # Mark as a lineage wrapper so scidb can detect and reconstruct BaseVariable inputs
-    wrapped.__lineage_wrapper__ = True
+    # Mark as a lineage wrapper so scidb can detect and reconstruct BaseVariable inputs.
+    # Only set True when wrapping an actual LineageFcn (has .fcn attribute), NOT for
+    # plain functions — otherwise _reconstruct_variable_inputs runs on non-variable
+    # inputs and causes TypeError on RawSignal comparisons.
+    wrapped.__lineage_wrapper__ = hasattr(lineage_fn, 'fcn')
 
     return wrapped
