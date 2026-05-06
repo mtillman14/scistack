@@ -110,7 +110,7 @@ class TestMatlabPathInputPartialRunGoesGrey:
 
         # Step 1 — MATLAB scidb.for_each persists ALL 16 discovered combos
         # to _for_each_expected, before execution begins.
-        _persist_expected_combos(db, FN_NAME, _discovered_combos())
+        _persist_expected_combos(db, FN_NAME, "test_call_id", _discovered_combos())
 
         # Step 2 — MATLAB executes the function, saving outputs for every
         # successful combo. The failed combo produces no output.

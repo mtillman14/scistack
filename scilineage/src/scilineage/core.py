@@ -594,4 +594,12 @@ def make_tuple_unpacking_wrapper(lineage_fn: Callable) -> Callable:
     # inputs and causes TypeError on RawSignal comparisons.
     wrapped.__lineage_wrapper__ = hasattr(lineage_fn, 'fcn')
 
+    # Propagate .fcn so compute_function_hash can unwrap through any number of
+    # wrapper layers to reach the original user function.  Without this,
+    # double-wrapping (scihist wraps, then scidb wraps again) causes
+    # compute_function_hash to hash the wrapper bytecode instead of the
+    # original function, producing mismatched __fn_hash values.
+    if hasattr(lineage_fn, 'fcn'):
+        wrapped.fcn = lineage_fn.fcn
+
     return wrapped

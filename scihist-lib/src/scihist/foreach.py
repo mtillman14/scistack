@@ -146,6 +146,7 @@ def _build_skip_hook(fn: "LineageFcn", outputs: list, db, inputs: dict) -> Calla
     4. Constant input hashes match those stored in the output record's lineage.
     """
     from canonicalhash import canonical_hash as _chash
+    from scilineage.hashing import compute_function_hash
 
     schema_keys: set = set(db.dataset_schema_keys)
 
@@ -199,7 +200,7 @@ def _build_skip_hook(fn: "LineageFcn", outputs: list, db, inputs: dict) -> Calla
         lookup_combo = dict(schema_combo)
         lookup_combo.update(constant_values)
         lookup_combo["__fn"] = fn.fcn.__name__
-        lookup_combo["__fn_hash"] = fn.hash
+        lookup_combo["__fn_hash"] = compute_function_hash(fn, truncate=16)
 
         output_record_id = None
         for OutputCls in outputs:

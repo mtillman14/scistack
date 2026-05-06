@@ -63,7 +63,7 @@ class TestPersistExpectedCombos:
             {"subject": 2, "trial": "A"},
             {"subject": 2, "trial": "B"},
         ]
-        _persist_expected_combos(db, "import_from_file", combos)
+        _persist_expected_combos(db, "import_from_file", "test_call_id", combos)
 
         rows = db._duck._fetchall(
             "SELECT function_name, schema_id, branch_params "
@@ -80,7 +80,7 @@ class TestPersistExpectedCombos:
             {"subject": 1, "trial": "A"},
             {"subject": 1, "trial": "B"},
         ]
-        _persist_expected_combos(db, "import_from_file", combos_v1)
+        _persist_expected_combos(db, "import_from_file", "test_call_id", combos_v1)
 
         rows = db._duck._fetchall(
             "SELECT schema_id FROM _for_each_expected WHERE function_name = ?",
@@ -94,7 +94,7 @@ class TestPersistExpectedCombos:
             {"subject": 1, "trial": "B"},
             {"subject": 2, "trial": "A"},
         ]
-        _persist_expected_combos(db, "import_from_file", combos_v2)
+        _persist_expected_combos(db, "import_from_file", "test_call_id", combos_v2)
 
         rows = db._duck._fetchall(
             "SELECT schema_id FROM _for_each_expected WHERE function_name = ?",
@@ -104,7 +104,7 @@ class TestPersistExpectedCombos:
 
     def test_empty_combos_is_noop(self, db):
         """Empty combo list doesn't crash or write rows."""
-        _persist_expected_combos(db, "import_from_file", [])
+        _persist_expected_combos(db, "import_from_file", "test_call_id", [])
         rows = db._duck._fetchall(
             "SELECT schema_id FROM _for_each_expected"
         )
@@ -117,7 +117,7 @@ class TestPersistExpectedCombos:
             {"subject": 1, "trial": "A"},
             {"subject": 1, "trial": "A"},  # duplicate
         ]
-        _persist_expected_combos(db, "import_from_file", combos)
+        _persist_expected_combos(db, "import_from_file", "test_call_id", combos)
 
         rows = db._duck._fetchall(
             "SELECT schema_id FROM _for_each_expected WHERE function_name = ?",
@@ -135,7 +135,7 @@ class TestGetExpectedCombosFallback:
             {"subject": 1, "trial": "A"},
             {"subject": 2, "trial": "B"},
         ]
-        _persist_expected_combos(db, "import_from_file", combos)
+        _persist_expected_combos(db, "import_from_file", "test_call_id", combos)
 
         expected = _get_expected_combos(db, "import_from_file")
         assert len(expected) == 2
@@ -160,7 +160,7 @@ class TestGetExpectedCombosFallback:
         )
 
         # Also persist some _for_each_expected rows (they should be ignored)
-        _persist_expected_combos(db, "process_raw", [{"subject": 99, "trial": "Z"}])
+        _persist_expected_combos(db, "process_raw", "test_call_id", [{"subject": 99, "trial": "Z"}])
 
         expected = _get_expected_combos(db, "process_raw")
         # Should return 4 combos from the existing logic (2x2 input combos)
@@ -168,8 +168,9 @@ class TestGetExpectedCombosFallback:
         # The fallback row (subject=99) should NOT be present
         schema_ids = {sid for sid, _ in expected}
         fallback_rows = db._duck._fetchall(
-            "SELECT schema_id FROM _for_each_expected WHERE function_name = ?",
-            ["process_raw"],
+            "SELECT schema_id FROM _for_each_expected "
+            "WHERE function_name = ? AND call_id = ?",
+            ["process_raw", "test_call_id"],
         )
         fallback_sids = {r[0] for r in fallback_rows}
         assert not (fallback_sids & schema_ids), \
@@ -193,7 +194,7 @@ class TestCheckNodeStatePathInput:
         ]
 
         # Persist all combos as expected
-        _persist_expected_combos(db, "import_from_file", all_combos)
+        _persist_expected_combos(db, "import_from_file", "test_call_id", all_combos)
 
         # Simulate successful runs by saving outputs + lineage for selected combos
         for combo in combos_to_succeed:
@@ -271,7 +272,7 @@ class TestCheckNodeStatePathInput:
             {"subject": "1", "trial": "A"},
             {"subject": "1", "trial": "B"},
         ]
-        _persist_expected_combos(db, "import_from_file", new_expected)
+        _persist_expected_combos(db, "import_from_file", "test_call_id", new_expected)
 
         result = check_node_state(
             import_from_file, [PathInputOutput], db=db,

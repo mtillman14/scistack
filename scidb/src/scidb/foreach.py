@@ -193,8 +193,9 @@ def for_each(
                 break
         return pd.concat(results, ignore_index=True) if results else None
 
-    # Wrap lineage functions to unpack tuple returns when needed
-    if HAS_LINEAGE:
+    # Wrap lineage functions to unpack tuple returns when needed.
+    # Skip if already wrapped (scihist.for_each pre-wraps before delegating here).
+    if HAS_LINEAGE and not getattr(fn, '__lineage_wrapper__', False):
         try:
             from scilineage import make_tuple_unpacking_wrapper
             fn = make_tuple_unpacking_wrapper(fn)
