@@ -337,7 +337,15 @@ def _build_graph(db: DatabaseManager) -> dict:
     # _build_lineage_version_keys) and, as a fallback for ungraduated fns with
     # no DB history yet, from persisted manual edges.
     matlab_param_to_class: dict[str, dict[str, str]] = {}
-    for v in variants:
+    # Collect all variants from the aggregated data
+    all_variants = []
+    for (fn_name, call_id), fn_data in scidb_agg["functions"].items():
+        for v in fn_data.get("variants", []):
+            # Add function_name to variant dict for compatibility
+            variant = {"function_name": fn_name, **v}
+            all_variants.append(variant)
+
+    for v in all_variants:
         fn = v.get("function_name")
         if fn not in matlab_functions:
             continue

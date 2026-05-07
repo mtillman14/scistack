@@ -294,7 +294,6 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     logger.info("[run_thread] Step 11: Resolving variants to execute (run_id=%s)", run_id)
     from scistack_gui.domain.variant_resolver import (
         filter_variants, deduplicate_variants,
-        merge_pending_constants, build_schema_kwargs,
     )
 
     # Determine which variants to run.
@@ -310,26 +309,22 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     logger.debug("[run_thread] After deduplication: %d unique targets (run_id=%s)",
                 len(unique_targets), run_id)
 
-    # Add synthetic targets for pending constant values.
-    if fn_variants:
-        from scistack_gui import pipeline_store as _ps
-        pending_consts = _ps.get_pending_constants(db)
-        logger.debug("[run_thread] Merging pending constants: %s (run_id=%s)",
+    # Get pending constants to override during execution.
+    # Note: Pending constants are applied per-variant during input construction
+    # rather than creating synthetic cross-product variants.
+    from scistack_gui import pipeline_store as _ps
+    pending_consts = _ps.get_pending_constants(db)
+    if pending_consts:
+        logger.info("[run_thread] Pending constants will override DB values: %s (run_id=%s)",
                     list(pending_consts.keys()), run_id)
-        unique_targets = merge_pending_constants(unique_targets, pending_consts)
-        logger.debug("[run_thread] After merging pending constants: %d targets (run_id=%s)",
-                    len(unique_targets), run_id)
 
-    # Build schema kwargs.
-    logger.info("[run_thread] Step 12: Building schema iteration parameters (run_id=%s)", run_id)
-    iterate_keys = schema_level if schema_level is not None else list(db.dataset_schema_keys)
-    distinct_values = {key: db.distinct_schema_values(key) for key in iterate_keys}
-    logger.debug("[run_thread] Schema iteration keys: %s (run_id=%s)", iterate_keys, run_id)
-    schema_kwargs = build_schema_kwargs(
-        schema_level, list(db.dataset_schema_keys),
-        schema_filter, distinct_values,
-    )
-    logger.debug("[run_thread] Schema kwargs: %s (run_id=%s)", list(schema_kwargs.keys()), run_id)
+    # Schema iteration will be handled directly by for_each via schema_filter and schema_level.
+    logger.info("[run_thread] Step 12: Schema iteration parameters will be handled by for_each (run_id=%s)", run_id)
+    if schema_level:
+        logger.debug("[run_thread] Schema level: %s (run_id=%s)", schema_level, run_id)
+    if schema_filter:
+        logger.debug("[run_thread] Schema filter: %s (run_id=%s)",
+                     {k: f"{len(v)} values" for k, v in schema_filter.items()}, run_id)
 
     # Extract run options (dry_run, save, distribute, as_table).
     logger.info("[run_thread] Step 13: Extracting run options (run_id=%s)", run_id)
@@ -351,10 +346,10 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
 
     logger.info(
         "[run_thread] Step 15: Starting execution of %d target(s) for '%s' "
-        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, schema_keys=%s) (run_id=%s)",
+        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, schema_level=%s, schema_filter=%s) (run_id=%s)",
         len(unique_targets), function_name,
         opt_dry_run, opt_save, opt_distribute, opt_as_table,
-        list(schema_kwargs.keys()), run_id,
+        schema_level, _summarize_schema_filter(schema_filter), run_id,
     )
 
     cancelled = False
@@ -393,6 +388,21 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                 logger.debug("[run_thread] Added constants to inputs: %s (run_id=%s)",
                            v["constants"], run_id)
 
+                # Override with pending constants if any match this variant's constants.
+                if pending_consts:
+                    import ast as _ast
+                    for const_name, pending_values in pending_consts.items():
+                        if const_name in v["constants"]:
+                            # Use the first pending value (Strategy 2: simplest approach)
+                            pending_str = next(iter(pending_values))
+                            try:
+                                pending_typed = _ast.literal_eval(pending_str)
+                            except (ValueError, SyntaxError):
+                                pending_typed = pending_str
+                            inputs[const_name] = pending_typed
+                            logger.info("[run_thread] Overriding constant '%s' with pending value: %s (run_id=%s)",
+                                       const_name, pending_typed, run_id)
+
                 OutputCls = registry.get_variable_class(v["output_type"])
                 logger.debug("[run_thread] Output class: %s (run_id=%s)", v["output_type"], run_id)
             except KeyError as e:
@@ -402,8 +412,11 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                 success = False
                 continue
 
-            label = f"{function_name}({', '.join(f'{k}={val}' for k, val in v['constants'].items())})" \
-                    if v["constants"] else function_name
+            # Build label from actual constants that will be used (after pending overrides)
+            actual_constants = {k: val for k, val in inputs.items()
+                               if k in v["constants"] or (pending_consts and k in pending_consts)}
+            label = f"{function_name}({', '.join(f'{k}={val}' for k, val in actual_constants.items())})" \
+                    if actual_constants else function_name
             logger.info(
                 "[run_thread] Target %d/%d -> %s, inputs=%s, output=%s (run_id=%s)",
                 idx, len(unique_targets), label,
@@ -459,7 +472,8 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                              skip_computed=False,
                              _progress_fn=_progress_fn,
                              _cancel_check=_is_cancelled,
-                             **schema_kwargs)
+                             schema_filter=schema_filter,
+                             schema_level=schema_level)
                 output = buf.getvalue()
                 if output:
                     logger.debug("[run_thread] Captured %d bytes of stdout (run_id=%s)",
