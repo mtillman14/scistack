@@ -2084,3 +2084,605 @@
 [18:58:14.885] [INFO] load_all(FinalResult): metadata={'subject': 1, 'trial': 1}
 [18:58:14.902] [DEBUG] _find_record(FinalResult): 1 record(s) matched (before branch_params filter)
 [18:58:14.908] [INFO] load_all(FinalResult): found 1 record(s)
+[14:21:29.660] [INFO] configure_database: path=:memory:, schema_keys=['subject']
+[14:21:29.671] [INFO] save_variable(RawSignal): metadata={'subject': 1, 'trial': 1}
+[14:21:29.686] [DEBUG] save(RawSignal): record_id=548482b8e3d7, content_hash=6b1bec4ab530, serialization=native
+[14:21:29.732] [DEBUG] _save_native: created table 'RawSignal_data'
+[14:21:29.755] [DEBUG] _save_native: inserted single record into 'RawSignal_data', record_id=548482b8e3d7
+[14:21:29.775] [DEBUG] _save_record_metadata: RawSignal, record_id=548482b8e3d7, schema_id=1
+[14:21:29.800] [DEBUG] save(RawSignal): transaction committed
+[14:21:29.810] [INFO] save_variable(RawSignal): saved -> record_id=548482b8e3d7
+[14:21:29.826] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:21:29.840] [DEBUG] save(Baseline): record_id=1135f5c65d95, content_hash=f159b23b8d09, serialization=native
+[14:21:29.865] [DEBUG] _save_native: created table 'Baseline_data'
+[14:21:29.877] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=1135f5c65d95
+[14:21:29.907] [DEBUG] _save_record_metadata: Baseline, record_id=1135f5c65d95, schema_id=1
+[14:21:29.941] [DEBUG] save(Baseline): transaction committed
+[14:21:29.954] [INFO] save_variable(Baseline): saved -> record_id=1135f5c65d95
+[14:21:29.968] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:21:29.984] [INFO] ===== for_each(subtract_baseline) start =====
+[14:21:30.006] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:21:30.022] [INFO] load_all(RawSignal): metadata={}
+[14:21:30.057] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:21:30.070] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:21:30.081] [INFO] load_all(RawSignal): found 1 record(s)
+[14:21:30.106] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.084s
+[14:21:30.117] [INFO] load_all(Baseline): metadata={}
+[14:21:30.138] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:21:30.154] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:21:30.167] [INFO] load_all(Baseline): found 1 record(s)
+[14:21:30.189] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.072s
+[14:21:30.198] [INFO] loaded 2 inputs in 0.177s
+[14:21:30.214] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:21:30.230] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:21:30.243] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:21:30.257] [DEBUG] 1 combos (no rid expansion needed)
+[14:21:30.276] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 0 -> wrote 1 expected combos
+[14:21:30.295] [DEBUG] _find_record(Filtered): 0 record(s) matched (before branch_params filter)
+[14:21:30.306] [INFO] ================================================================
+[14:21:30.319] [INFO] for_each(fn) — 1 iteration
+[14:21:30.336] [INFO] subject=[1 values], trial=[1 values]
+[14:21:30.350] [INFO] ================================================================
+[14:21:30.364] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:21:30.380] [INFO] subject=['1']
+[14:21:30.397] [INFO] trial=[1]
+[14:21:30.423] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn(signal, baseline)
+[14:21:30.439] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn completed in 0.002s
+[14:21:30.452] [INFO] ────────────────────────────────────────────────────────────────
+[14:21:30.466] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:21:30.479] [INFO] ================================================================
+[14:21:30.494] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:21:30.517] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:21:30.532] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:21:30.547] [DEBUG] save(Filtered): record_id=80211443b478, content_hash=75be46574da3, serialization=native
+[14:21:30.568] [DEBUG] _save_native: created table 'Filtered_data'
+[14:21:30.582] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=80211443b478
+[14:21:30.604] [DEBUG] _save_record_metadata: Filtered, record_id=80211443b478, schema_id=1
+[14:21:30.619] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=be1a081082d8
+[14:21:30.647] [DEBUG] save(Filtered): transaction committed
+[14:21:30.658] [INFO] [save] subject=1, trial=1: Filtered -> record_id=80211443b478 (LineageFcnResult) [lineage] in 0.112s
+[14:21:30.669] [INFO] for_each(subtract_baseline): saved 1 results in 0.124s
+[14:21:30.684] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:21:30.696] [DEBUG] save(Baseline): record_id=dd608ff6c04c, content_hash=c860acee4ab3, serialization=native
+[14:21:30.723] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=dd608ff6c04c
+[14:21:30.738] [DEBUG] _save_record_metadata: Baseline, record_id=dd608ff6c04c, schema_id=1
+[14:21:30.759] [DEBUG] save(Baseline): transaction committed
+[14:21:30.771] [INFO] save_variable(Baseline): saved -> record_id=dd608ff6c04c
+[14:21:30.788] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:21:30.804] [INFO] ===== for_each(subtract_baseline) start =====
+[14:21:30.815] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:21:30.825] [INFO] load_all(RawSignal): metadata={}
+[14:21:30.847] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:21:30.861] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:21:30.874] [INFO] load_all(RawSignal): found 1 record(s)
+[14:21:30.905] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.079s
+[14:21:30.915] [INFO] load_all(Baseline): metadata={}
+[14:21:30.935] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:21:30.947] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:21:30.960] [INFO] load_all(Baseline): found 1 record(s)
+[14:21:30.982] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.067s
+[14:21:30.992] [INFO] loaded 2 inputs in 0.167s
+[14:21:31.006] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:21:31.023] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:21:31.033] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:21:31.043] [DEBUG] 1 combos (no rid expansion needed)
+[14:21:31.061] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 1 -> wrote 1 expected combos
+[14:21:31.077] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:21:31.093] [DEBUG] _find_record(Filtered): 1 record(s) matched (before branch_params filter)
+[14:21:31.106] [INFO] [recompute] subject=1 — __rid_baseline changed
+[14:21:31.117] [INFO] ================================================================
+[14:21:31.131] [INFO] for_each(fn) — 1 iteration
+[14:21:31.144] [INFO] subject=[1 values], trial=[1 values]
+[14:21:31.159] [INFO] ================================================================
+[14:21:31.173] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:21:31.188] [INFO] subject=['1']
+[14:21:31.201] [INFO] trial=[1]
+[14:21:31.221] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn(signal, baseline)
+[14:21:31.232] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn completed in 0.002s
+[14:21:31.242] [INFO] ────────────────────────────────────────────────────────────────
+[14:21:31.256] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:21:31.270] [INFO] ================================================================
+[14:21:31.285] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:21:31.311] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:21:31.323] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:21:31.340] [DEBUG] save(Filtered): record_id=910f054d6d39, content_hash=e9ff77b63e1f, serialization=native
+[14:21:31.364] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=910f054d6d39
+[14:21:31.390] [DEBUG] _save_record_metadata: Filtered, record_id=910f054d6d39, schema_id=1
+[14:21:31.408] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=7d26687a1b46
+[14:21:31.438] [DEBUG] save(Filtered): transaction committed
+[14:21:31.450] [INFO] [save] subject=1, trial=1: Filtered -> record_id=910f054d6d39 (LineageFcnResult) [lineage] in 0.110s
+[14:21:31.461] [INFO] for_each(subtract_baseline): saved 1 results in 0.124s
+[14:21:31.475] [INFO] load_all(Filtered): metadata={'subject': 1}
+[14:21:31.505] [DEBUG] _find_record: record 910f054d6d3979cd: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': 'dd608ff6c04c3d20'}, '__upstream': {'__rid_baseline': 'dd608ff6c04c3d20', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:21:31.516] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:21:31.531] [DEBUG] _find_record(Filtered): 2 record(s) matched (before branch_params filter)
+[14:21:31.543] [INFO] load_all(Filtered): found 2 record(s)
+[14:22:32.295] [INFO] configure_database: path=:memory:, schema_keys=['subject']
+[14:22:32.314] [INFO] save_variable(RawSignal): metadata={'subject': 1, 'trial': 1}
+[14:22:32.328] [DEBUG] save(RawSignal): record_id=548482b8e3d7, content_hash=6b1bec4ab530, serialization=native
+[14:22:32.391] [DEBUG] _save_native: created table 'RawSignal_data'
+[14:22:32.407] [DEBUG] _save_native: inserted single record into 'RawSignal_data', record_id=548482b8e3d7
+[14:22:32.425] [DEBUG] _save_record_metadata: RawSignal, record_id=548482b8e3d7, schema_id=1
+[14:22:32.449] [DEBUG] save(RawSignal): transaction committed
+[14:22:32.458] [INFO] save_variable(RawSignal): saved -> record_id=548482b8e3d7
+[14:22:32.472] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:22:32.490] [DEBUG] save(Baseline): record_id=1135f5c65d95, content_hash=f159b23b8d09, serialization=native
+[14:22:32.521] [DEBUG] _save_native: created table 'Baseline_data'
+[14:22:32.535] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=1135f5c65d95
+[14:22:32.560] [DEBUG] _save_record_metadata: Baseline, record_id=1135f5c65d95, schema_id=1
+[14:22:32.577] [DEBUG] save(Baseline): transaction committed
+[14:22:32.585] [INFO] save_variable(Baseline): saved -> record_id=1135f5c65d95
+[14:22:32.596] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:22:32.616] [INFO] ===== for_each(subtract_baseline) start =====
+[14:22:32.629] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:22:32.643] [INFO] load_all(RawSignal): metadata={}
+[14:22:32.674] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:22:32.686] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:22:32.702] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:22:32.712] [INFO] load_all(RawSignal): found 1 record(s)
+[14:22:32.739] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.096s
+[14:22:32.752] [INFO] load_all(Baseline): metadata={}
+[14:22:32.777] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:22:32.788] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:22:32.810] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:22:32.821] [INFO] load_all(Baseline): found 1 record(s)
+[14:22:32.845] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.093s
+[14:22:32.855] [INFO] loaded 2 inputs in 0.212s
+[14:22:32.877] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:22:32.904] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:22:32.921] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:22:32.931] [DEBUG] 1 combos (no rid expansion needed)
+[14:22:32.951] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 0 -> wrote 1 expected combos
+[14:22:32.969] [DEBUG] _find_record(Filtered): SQL returned 0 records, version_id=latest
+[14:22:32.980] [DEBUG] _find_record(Filtered): 0 record(s) matched (before branch_params filter)
+[14:22:32.998] [INFO] ================================================================
+[14:22:33.010] [INFO] for_each(fn) — 1 iteration
+[14:22:33.026] [INFO] subject=[1 values], trial=[1 values]
+[14:22:33.062] [INFO] ================================================================
+[14:22:33.075] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:22:33.089] [INFO] subject=['1']
+[14:22:33.101] [INFO] trial=[1]
+[14:22:33.123] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn(signal, baseline)
+[14:22:33.142] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn completed in 0.004s
+[14:22:33.151] [INFO] ────────────────────────────────────────────────────────────────
+[14:22:33.166] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:22:33.178] [INFO] ================================================================
+[14:22:33.202] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:22:33.225] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:22:33.239] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:22:33.257] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:22:33.273] [DEBUG] save(Filtered): record_id=80211443b478, content_hash=75be46574da3, serialization=native
+[14:22:33.296] [DEBUG] _save_native: created table 'Filtered_data'
+[14:22:33.311] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=80211443b478
+[14:22:33.333] [DEBUG] _save_record_metadata: Filtered, record_id=80211443b478, schema_id=1
+[14:22:33.350] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=be1a081082d8
+[14:22:33.375] [DEBUG] save(Filtered): transaction committed
+[14:22:33.395] [INFO] [save] subject=1, trial=1: Filtered -> record_id=80211443b478 (LineageFcnResult) [lineage] in 0.124s
+[14:22:33.409] [INFO] for_each(subtract_baseline): saved 1 results in 0.140s
+[14:22:33.423] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:22:33.435] [DEBUG] save(Baseline): record_id=dd608ff6c04c, content_hash=c860acee4ab3, serialization=native
+[14:22:33.469] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=dd608ff6c04c
+[14:22:33.484] [DEBUG] _save_record_metadata: Baseline, record_id=dd608ff6c04c, schema_id=1
+[14:22:33.509] [DEBUG] save(Baseline): transaction committed
+[14:22:33.522] [INFO] save_variable(Baseline): saved -> record_id=dd608ff6c04c
+[14:22:33.538] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:22:33.561] [INFO] ===== for_each(subtract_baseline) start =====
+[14:22:33.575] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:22:33.587] [INFO] load_all(RawSignal): metadata={}
+[14:22:33.607] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:22:33.617] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:22:33.636] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:22:33.646] [INFO] load_all(RawSignal): found 1 record(s)
+[14:22:33.697] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.110s
+[14:22:33.707] [INFO] load_all(Baseline): metadata={}
+[14:22:33.725] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:22:33.738] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:22:33.748] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:22:33.758] [INFO] load_all(Baseline): found 1 record(s)
+[14:22:33.781] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.074s
+[14:22:33.788] [INFO] loaded 2 inputs in 0.202s
+[14:22:33.801] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:22:33.817] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:22:33.835] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:22:33.846] [DEBUG] 1 combos (no rid expansion needed)
+[14:22:33.865] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 1 -> wrote 1 expected combos
+[14:22:33.883] [DEBUG] _find_record(Filtered): SQL returned 1 records, version_id=latest
+[14:22:33.894] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:22:33.909] [DEBUG] _find_record(Filtered): 1 record(s) matched (before branch_params filter)
+[14:22:33.927] [INFO] [recompute] subject=1 — __rid_baseline changed
+[14:22:33.936] [INFO] ================================================================
+[14:22:33.948] [INFO] for_each(fn) — 1 iteration
+[14:22:33.963] [INFO] subject=[1 values], trial=[1 values]
+[14:22:33.975] [INFO] ================================================================
+[14:22:33.988] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:22:34.001] [INFO] subject=['1']
+[14:22:34.015] [INFO] trial=[1]
+[14:22:34.032] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn(signal, baseline)
+[14:22:34.045] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn completed in 0.003s
+[14:22:34.055] [INFO] ────────────────────────────────────────────────────────────────
+[14:22:34.067] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:22:34.079] [INFO] ================================================================
+[14:22:34.090] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:22:34.113] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:22:34.123] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:22:34.137] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:22:34.154] [DEBUG] save(Filtered): record_id=910f054d6d39, content_hash=e9ff77b63e1f, serialization=native
+[14:22:34.178] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=910f054d6d39
+[14:22:34.192] [DEBUG] _save_record_metadata: Filtered, record_id=910f054d6d39, schema_id=1
+[14:22:34.215] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=7d26687a1b46
+[14:22:34.239] [DEBUG] save(Filtered): transaction committed
+[14:22:34.247] [INFO] [save] subject=1, trial=1: Filtered -> record_id=910f054d6d39 (LineageFcnResult) [lineage] in 0.094s
+[14:22:34.260] [INFO] for_each(subtract_baseline): saved 1 results in 0.108s
+[14:22:34.275] [INFO] load_all(Filtered): metadata={'subject': 1}
+[14:22:34.293] [DEBUG] _find_record(Filtered): SQL returned 2 records, version_id=latest
+[14:22:34.312] [DEBUG] _find_record: record 910f054d6d3979cd: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': 'dd608ff6c04c3d20'}, '__upstream': {'__rid_baseline': 'dd608ff6c04c3d20', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:22:34.326] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:22:34.343] [DEBUG] _find_record(Filtered): 2 record(s) matched (before branch_params filter)
+[14:22:34.355] [INFO] load_all(Filtered): found 2 record(s)
+[14:24:14.205] [INFO] configure_database: path=:memory:, schema_keys=['subject']
+[14:24:14.219] [INFO] save_variable(RawSignal): metadata={'subject': 1, 'trial': 1}
+[14:24:14.233] [DEBUG] save(RawSignal): record_id=548482b8e3d7, content_hash=6b1bec4ab530, serialization=native
+[14:24:14.283] [DEBUG] _save_native: created table 'RawSignal_data'
+[14:24:14.305] [DEBUG] _save_native: inserted single record into 'RawSignal_data', record_id=548482b8e3d7
+[14:24:14.320] [DEBUG] _save_record_metadata: RawSignal, record_id=548482b8e3d7, schema_id=1
+[14:24:14.352] [DEBUG] save(RawSignal): transaction committed
+[14:24:14.363] [INFO] save_variable(RawSignal): saved -> record_id=548482b8e3d7
+[14:24:14.383] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:24:14.408] [DEBUG] save(Baseline): record_id=1135f5c65d95, content_hash=f159b23b8d09, serialization=native
+[14:24:14.427] [DEBUG] _save_native: created table 'Baseline_data'
+[14:24:14.442] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=1135f5c65d95
+[14:24:14.467] [DEBUG] _save_record_metadata: Baseline, record_id=1135f5c65d95, schema_id=1
+[14:24:14.489] [DEBUG] save(Baseline): transaction committed
+[14:24:14.501] [INFO] save_variable(Baseline): saved -> record_id=1135f5c65d95
+[14:24:14.519] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:24:14.531] [INFO] ===== for_each(subtract_baseline) start =====
+[14:24:14.544] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:24:14.560] [INFO] load_all(RawSignal): metadata={}
+[14:24:14.597] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:24:14.610] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:24:14.627] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:24:14.641] [INFO] load_all(RawSignal): found 1 record(s)
+[14:24:14.659] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.099s
+[14:24:14.672] [INFO] load_all(Baseline): metadata={}
+[14:24:14.696] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:14.706] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:24:14.725] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:14.743] [INFO] load_all(Baseline): found 1 record(s)
+[14:24:14.768] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.097s
+[14:24:14.779] [INFO] loaded 2 inputs in 0.219s
+[14:24:14.791] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:24:14.811] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:24:14.836] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:24:14.847] [DEBUG] 1 combos (no rid expansion needed)
+[14:24:14.865] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 0 -> wrote 1 expected combos
+[14:24:14.881] [DEBUG] _find_record(Filtered): SQL returned 0 records, version_id=latest
+[14:24:14.892] [DEBUG] _find_record(Filtered): 0 record(s) matched (before branch_params filter)
+[14:24:14.904] [INFO] ================================================================
+[14:24:14.919] [INFO] for_each(fn) — 1 iteration
+[14:24:14.930] [INFO] subject=[1 values], trial=[1 values]
+[14:24:14.943] [INFO] ================================================================
+[14:24:14.958] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:24:14.972] [INFO] subject=['1']
+[14:24:14.989] [INFO] trial=[1]
+[14:24:15.010] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn(signal, baseline)
+[14:24:15.023] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn completed in 0.003s
+[14:24:15.033] [INFO] ────────────────────────────────────────────────────────────────
+[14:24:15.048] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:24:15.063] [INFO] ================================================================
+[14:24:15.080] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:24:15.106] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:15.123] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:24:15.143] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:15.165] [DEBUG] save(Filtered): record_id=80211443b478, content_hash=75be46574da3, serialization=native
+[14:24:15.190] [DEBUG] _save_native: created table 'Filtered_data'
+[14:24:15.206] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=80211443b478
+[14:24:15.227] [DEBUG] _save_record_metadata: Filtered, record_id=80211443b478, schema_id=1
+[14:24:15.256] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=be1a081082d8
+[14:24:15.283] [DEBUG] save(Filtered): transaction committed
+[14:24:15.295] [INFO] [save] subject=1, trial=1: Filtered -> record_id=80211443b478 (LineageFcnResult) [lineage] in 0.132s
+[14:24:15.311] [INFO] for_each(subtract_baseline): saved 1 results in 0.149s
+[14:24:15.330] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:24:15.345] [DEBUG] save(Baseline): record_id=dd608ff6c04c, content_hash=c860acee4ab3, serialization=native
+[14:24:15.371] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=dd608ff6c04c
+[14:24:15.387] [DEBUG] _save_record_metadata: Baseline, record_id=dd608ff6c04c, schema_id=1
+[14:24:15.405] [DEBUG] save(Baseline): transaction committed
+[14:24:15.417] [INFO] save_variable(Baseline): saved -> record_id=dd608ff6c04c
+[14:24:15.431] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:24:15.447] [INFO] ===== for_each(subtract_baseline) start =====
+[14:24:15.465] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:24:15.480] [INFO] load_all(RawSignal): metadata={}
+[14:24:15.505] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:24:15.516] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:24:15.533] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:24:15.549] [INFO] load_all(RawSignal): found 1 record(s)
+[14:24:15.573] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.093s
+[14:24:15.583] [INFO] load_all(Baseline): metadata={}
+[14:24:15.600] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:15.613] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:24:15.629] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:15.643] [INFO] load_all(Baseline): found 1 record(s)
+[14:24:15.669] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.087s
+[14:24:15.681] [INFO] loaded 2 inputs in 0.201s
+[14:24:15.701] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:24:15.721] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:24:15.736] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:24:15.747] [DEBUG] 1 combos (no rid expansion needed)
+[14:24:15.762] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 1 -> wrote 1 expected combos
+[14:24:15.785] [DEBUG] _find_record(Filtered): SQL returned 1 records, version_id=latest
+[14:24:15.797] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:24:15.817] [DEBUG] _find_record(Filtered): 1 record(s) matched (before branch_params filter)
+[14:24:15.835] [INFO] [recompute] subject=1 — __rid_baseline changed
+[14:24:15.844] [INFO] ================================================================
+[14:24:15.854] [INFO] for_each(fn) — 1 iteration
+[14:24:15.869] [INFO] subject=[1 values], trial=[1 values]
+[14:24:15.881] [INFO] ================================================================
+[14:24:15.892] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:24:15.910] [INFO] subject=['1']
+[14:24:15.925] [INFO] trial=[1]
+[14:24:15.950] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn(signal, baseline)
+[14:24:15.966] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn completed in 0.004s
+[14:24:15.976] [INFO] ────────────────────────────────────────────────────────────────
+[14:24:15.989] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:24:16.004] [INFO] ================================================================
+[14:24:16.018] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:24:16.041] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:16.053] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:24:16.066] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:16.089] [DEBUG] save(Filtered): record_id=910f054d6d39, content_hash=e9ff77b63e1f, serialization=native
+[14:24:16.121] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=910f054d6d39
+[14:24:16.136] [DEBUG] _save_record_metadata: Filtered, record_id=910f054d6d39, schema_id=1
+[14:24:16.158] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=7d26687a1b46
+[14:24:16.181] [DEBUG] save(Filtered): transaction committed
+[14:24:16.191] [INFO] [save] subject=1, trial=1: Filtered -> record_id=910f054d6d39 (LineageFcnResult) [lineage] in 0.104s
+[14:24:16.208] [INFO] for_each(subtract_baseline): saved 1 results in 0.122s
+[14:24:16.229] [INFO] load_all(Filtered): metadata={'subject': 1}
+[14:24:16.253] [DEBUG] _find_record(Filtered): SQL returned 2 records, version_id=latest
+[14:24:16.266] [DEBUG] _find_record: record 910f054d6d3979cd: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': 'dd608ff6c04c3d20'}, '__upstream': {'__rid_baseline': 'dd608ff6c04c3d20', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:24:16.280] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:24:16.297] [DEBUG] _find_record(Filtered): 2 record(s) matched (before branch_params filter)
+[14:24:16.311] [INFO] load_all(Filtered): found 2 record(s)
+[14:24:25.510] [INFO] configure_database: path=:memory:, schema_keys=['subject']
+[14:24:25.523] [INFO] save_variable(RawSignal): metadata={'subject': 1, 'trial': 1}
+[14:24:25.537] [DEBUG] save(RawSignal): record_id=548482b8e3d7, content_hash=6b1bec4ab530, serialization=native
+[14:24:25.581] [DEBUG] _save_native: created table 'RawSignal_data'
+[14:24:25.597] [DEBUG] _save_native: inserted single record into 'RawSignal_data', record_id=548482b8e3d7
+[14:24:25.621] [DEBUG] _save_record_metadata: RawSignal, record_id=548482b8e3d7, schema_id=1
+[14:24:25.646] [DEBUG] save(RawSignal): transaction committed
+[14:24:25.654] [INFO] save_variable(RawSignal): saved -> record_id=548482b8e3d7
+[14:24:25.669] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:24:25.682] [DEBUG] save(Baseline): record_id=1135f5c65d95, content_hash=f159b23b8d09, serialization=native
+[14:24:25.704] [DEBUG] _save_native: created table 'Baseline_data'
+[14:24:25.726] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=1135f5c65d95
+[14:24:25.743] [DEBUG] _save_record_metadata: Baseline, record_id=1135f5c65d95, schema_id=1
+[14:24:25.766] [DEBUG] save(Baseline): transaction committed
+[14:24:25.776] [INFO] save_variable(Baseline): saved -> record_id=1135f5c65d95
+[14:24:25.791] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:24:25.804] [INFO] ===== for_each(subtract_baseline) start =====
+[14:24:25.816] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:24:25.831] [INFO] load_all(RawSignal): metadata={}
+[14:24:25.863] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:24:25.873] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:24:25.894] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:24:25.902] [INFO] load_all(RawSignal): found 1 record(s)
+[14:24:25.922] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.091s
+[14:24:25.931] [INFO] load_all(Baseline): metadata={}
+[14:24:25.959] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:25.968] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:24:25.983] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:25.995] [INFO] load_all(Baseline): found 1 record(s)
+[14:24:26.023] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.091s
+[14:24:26.036] [INFO] loaded 2 inputs in 0.205s
+[14:24:26.046] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:24:26.061] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:24:26.074] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:24:26.085] [DEBUG] 1 combos (no rid expansion needed)
+[14:24:26.106] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 0 -> wrote 1 expected combos
+[14:24:26.124] [DEBUG] _find_record(Filtered): SQL returned 0 records, version_id=latest
+[14:24:26.133] [DEBUG] _find_record(Filtered): 0 record(s) matched (before branch_params filter)
+[14:24:26.146] [INFO] ================================================================
+[14:24:26.156] [INFO] for_each(fn) — 1 iteration
+[14:24:26.178] [INFO] subject=[1 values], trial=[1 values]
+[14:24:26.191] [INFO] ================================================================
+[14:24:26.203] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:24:26.213] [INFO] subject=['1']
+[14:24:26.225] [INFO] trial=[1]
+[14:24:26.246] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn(signal, baseline)
+[14:24:26.258] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn completed in 0.001s
+[14:24:26.274] [INFO] ────────────────────────────────────────────────────────────────
+[14:24:26.290] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:24:26.306] [INFO] ================================================================
+[14:24:26.329] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:24:26.365] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:26.374] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:24:26.384] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:26.400] [DEBUG] save(Filtered): record_id=80211443b478, content_hash=75be46574da3, serialization=native
+[14:24:26.424] [DEBUG] _save_native: created table 'Filtered_data'
+[14:24:26.448] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=80211443b478
+[14:24:26.466] [DEBUG] _save_record_metadata: Filtered, record_id=80211443b478, schema_id=1
+[14:24:26.484] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=be1a081082d8
+[14:24:26.508] [DEBUG] save(Filtered): transaction committed
+[14:24:26.517] [INFO] [save] subject=1, trial=1: Filtered -> record_id=80211443b478 (LineageFcnResult) [lineage] in 0.118s
+[14:24:26.529] [INFO] for_each(subtract_baseline): saved 1 results in 0.131s
+[14:24:26.541] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:24:26.554] [DEBUG] save(Baseline): record_id=dd608ff6c04c, content_hash=c860acee4ab3, serialization=native
+[14:24:26.574] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=dd608ff6c04c
+[14:24:26.587] [DEBUG] _save_record_metadata: Baseline, record_id=dd608ff6c04c, schema_id=1
+[14:24:26.610] [DEBUG] save(Baseline): transaction committed
+[14:24:26.618] [INFO] save_variable(Baseline): saved -> record_id=dd608ff6c04c
+[14:24:26.633] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:24:26.648] [INFO] ===== for_each(subtract_baseline) start =====
+[14:24:26.659] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:24:26.671] [INFO] load_all(RawSignal): metadata={}
+[14:24:26.693] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:24:26.705] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:24:26.721] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:24:26.732] [INFO] load_all(RawSignal): found 1 record(s)
+[14:24:26.756] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.084s
+[14:24:26.765] [INFO] load_all(Baseline): metadata={}
+[14:24:26.785] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:26.798] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:24:26.810] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:26.822] [INFO] load_all(Baseline): found 1 record(s)
+[14:24:26.848] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.083s
+[14:24:26.857] [INFO] loaded 2 inputs in 0.185s
+[14:24:26.866] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:24:26.882] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:24:26.898] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:24:26.907] [DEBUG] 1 combos (no rid expansion needed)
+[14:24:26.926] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 1 -> wrote 1 expected combos
+[14:24:26.947] [DEBUG] _find_record(Filtered): SQL returned 1 records, version_id=latest
+[14:24:26.957] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:24:26.971] [DEBUG] _find_record(Filtered): 1 record(s) matched (before branch_params filter)
+[14:24:26.981] [INFO] [recompute] subject=1 — __rid_baseline changed
+[14:24:26.990] [INFO] ================================================================
+[14:24:27.003] [INFO] for_each(fn) — 1 iteration
+[14:24:27.014] [INFO] subject=[1 values], trial=[1 values]
+[14:24:27.030] [INFO] ================================================================
+[14:24:27.041] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:24:27.053] [INFO] subject=['1']
+[14:24:27.072] [INFO] trial=[1]
+[14:24:27.090] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn(signal, baseline)
+[14:24:27.100] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn completed in 0.002s
+[14:24:27.110] [INFO] ────────────────────────────────────────────────────────────────
+[14:24:27.121] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:24:27.133] [INFO] ================================================================
+[14:24:27.146] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:24:27.171] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:24:27.180] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:24:27.195] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:24:27.208] [DEBUG] save(Filtered): record_id=910f054d6d39, content_hash=e9ff77b63e1f, serialization=native
+[14:24:27.233] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=910f054d6d39
+[14:24:27.246] [DEBUG] _save_record_metadata: Filtered, record_id=910f054d6d39, schema_id=1
+[14:24:27.264] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=7d26687a1b46
+[14:24:27.284] [DEBUG] save(Filtered): transaction committed
+[14:24:27.293] [INFO] [save] subject=1, trial=1: Filtered -> record_id=910f054d6d39 (LineageFcnResult) [lineage] in 0.086s
+[14:24:27.303] [INFO] for_each(subtract_baseline): saved 1 results in 0.097s
+[14:24:27.318] [INFO] load_all(Filtered): metadata={'subject': 1}
+[14:24:27.339] [DEBUG] _find_record(Filtered): SQL returned 2 records, version_id=latest
+[14:24:27.351] [DEBUG] _find_record: record 910f054d6d3979cd: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': 'dd608ff6c04c3d20'}, '__upstream': {'__rid_baseline': 'dd608ff6c04c3d20', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:24:27.363] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:24:27.379] [DEBUG] _find_record(Filtered): 2 record(s) matched (before branch_params filter)
+[14:24:27.389] [INFO] load_all(Filtered): found 2 record(s)
+[14:25:27.988] [INFO] configure_database: path=:memory:, schema_keys=['subject']
+[14:25:27.996] [INFO] save_variable(RawSignal): metadata={'subject': 1, 'trial': 1}
+[14:25:28.013] [DEBUG] save(RawSignal): record_id=548482b8e3d7, content_hash=6b1bec4ab530, serialization=native
+[14:25:28.051] [DEBUG] _save_native: created table 'RawSignal_data'
+[14:25:28.065] [DEBUG] _save_native: inserted single record into 'RawSignal_data', record_id=548482b8e3d7
+[14:25:28.085] [DEBUG] _save_record_metadata: RawSignal, record_id=548482b8e3d7, schema_id=1
+[14:25:28.105] [DEBUG] save(RawSignal): transaction committed
+[14:25:28.114] [INFO] save_variable(RawSignal): saved -> record_id=548482b8e3d7
+[14:25:28.130] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:25:28.144] [DEBUG] save(Baseline): record_id=1135f5c65d95, content_hash=f159b23b8d09, serialization=native
+[14:25:28.161] [DEBUG] _save_native: created table 'Baseline_data'
+[14:25:28.179] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=1135f5c65d95
+[14:25:28.199] [DEBUG] _save_record_metadata: Baseline, record_id=1135f5c65d95, schema_id=1
+[14:25:28.222] [DEBUG] save(Baseline): transaction committed
+[14:25:28.232] [INFO] save_variable(Baseline): saved -> record_id=1135f5c65d95
+[14:25:28.245] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:25:28.261] [INFO] ===== for_each(subtract_baseline) start =====
+[14:25:28.279] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:25:28.295] [INFO] load_all(RawSignal): metadata={}
+[14:25:28.326] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:25:28.341] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:25:28.357] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:25:28.370] [INFO] load_all(RawSignal): found 1 record(s)
+[14:25:28.396] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.101s
+[14:25:28.408] [INFO] load_all(Baseline): metadata={}
+[14:25:28.430] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:25:28.445] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:25:28.466] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:25:28.477] [INFO] load_all(Baseline): found 1 record(s)
+[14:25:28.503] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.095s
+[14:25:28.515] [INFO] loaded 2 inputs in 0.220s
+[14:25:28.532] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:25:28.551] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:25:28.571] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:25:28.580] [DEBUG] 1 combos (no rid expansion needed)
+[14:25:28.604] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 0 -> wrote 1 expected combos
+[14:25:28.624] [DEBUG] _find_record(Filtered): SQL returned 0 records, version_id=latest
+[14:25:28.635] [DEBUG] _find_record(Filtered): 0 record(s) matched (before branch_params filter)
+[14:25:28.653] [INFO] ================================================================
+[14:25:28.669] [INFO] for_each(fn) — 1 iteration
+[14:25:28.685] [INFO] subject=[1 values], trial=[1 values]
+[14:25:28.701] [INFO] ================================================================
+[14:25:28.719] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:25:28.736] [INFO] subject=['1']
+[14:25:28.756] [INFO] trial=[1]
+[14:25:28.777] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn(signal, baseline)
+[14:25:28.789] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=1135f5c65d951cf8: fn completed in 0.001s
+[14:25:28.805] [INFO] ────────────────────────────────────────────────────────────────
+[14:25:28.823] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:25:28.843] [INFO] ================================================================
+[14:25:28.864] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:25:28.886] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:25:28.900] [DEBUG] _find_record: record 1135f5c65d951cf8: version_keys = {'trial': 1}
+[14:25:28.919] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:25:28.933] [DEBUG] save(Filtered): record_id=80211443b478, content_hash=75be46574da3, serialization=native
+[14:25:28.958] [DEBUG] _save_native: created table 'Filtered_data'
+[14:25:28.974] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=80211443b478
+[14:25:28.990] [DEBUG] _save_record_metadata: Filtered, record_id=80211443b478, schema_id=1
+[14:25:29.009] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=be1a081082d8
+[14:25:29.025] [DEBUG] save(Filtered): transaction committed
+[14:25:29.036] [INFO] [save] subject=1, trial=1: Filtered -> record_id=80211443b478 (LineageFcnResult) [lineage] in 0.104s
+[14:25:29.050] [INFO] for_each(subtract_baseline): saved 1 results in 0.118s
+[14:25:29.067] [INFO] save_variable(Baseline): metadata={'subject': 1, 'trial': 1}
+[14:25:29.083] [DEBUG] save(Baseline): record_id=dd608ff6c04c, content_hash=c860acee4ab3, serialization=native
+[14:25:29.109] [DEBUG] _save_native: inserted single record into 'Baseline_data', record_id=dd608ff6c04c
+[14:25:29.129] [DEBUG] _save_record_metadata: Baseline, record_id=dd608ff6c04c, schema_id=1
+[14:25:29.145] [DEBUG] save(Baseline): transaction committed
+[14:25:29.154] [INFO] save_variable(Baseline): saved -> record_id=dd608ff6c04c
+[14:25:29.170] [INFO] scihist.for_each(subtract_baseline): skip_computed=True
+[14:25:29.187] [INFO] ===== for_each(subtract_baseline) start =====
+[14:25:29.201] [DEBUG] for_each(subtract_baseline): call_id=6039cf2720ab17b3
+[14:25:29.219] [INFO] load_all(RawSignal): metadata={}
+[14:25:29.246] [DEBUG] _find_record(RawSignal): SQL returned 1 records, version_id=latest
+[14:25:29.260] [DEBUG] _find_record: record 548482b8e3d7d9d6: version_keys = {'trial': 1}
+[14:25:29.278] [DEBUG] _find_record(RawSignal): 1 record(s) matched (before branch_params filter)
+[14:25:29.293] [INFO] load_all(RawSignal): found 1 record(s)
+[14:25:29.319] [INFO] input 'signal': loaded RawSignal -> 1 rows, 5 cols in 0.100s
+[14:25:29.331] [INFO] load_all(Baseline): metadata={}
+[14:25:29.352] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:25:29.364] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:25:29.379] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:25:29.388] [INFO] load_all(Baseline): found 1 record(s)
+[14:25:29.414] [INFO] input 'baseline': loaded Fixed(Baseline, subject=1, trial=1) in 0.083s
+[14:25:29.427] [INFO] loaded 2 inputs in 0.207s
+[14:25:29.443] [DEBUG] building variant tracking (rid->branch_params mapping)
+[14:25:29.461] [DEBUG] variant tracking: 2 record_ids mapped, 1 rid keys: ['__rid_signal']
+[14:25:29.479] [DEBUG] expanding combos: 1 base combos, 1 rid dimensions
+[14:25:29.491] [DEBUG] 1 combos (no rid expansion needed)
+[14:25:29.512] [DEBUG] _persist_expected_combos(subtract_baseline, call_id=6039cf2720ab17b3): replaced 1 -> wrote 1 expected combos
+[14:25:29.533] [DEBUG] _find_record(Filtered): SQL returned 1 records, version_id=latest
+[14:25:29.543] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:25:29.557] [DEBUG] _find_record(Filtered): 1 record(s) matched (before branch_params filter)
+[14:25:29.574] [INFO] [recompute] subject=1 — __rid_baseline changed
+[14:25:29.591] [INFO] ================================================================
+[14:25:29.609] [INFO] for_each(fn) — 1 iteration
+[14:25:29.623] [INFO] subject=[1 values], trial=[1 values]
+[14:25:29.638] [INFO] ================================================================
+[14:25:29.654] [INFO] inputs: {signal: DataFrame['subject', 'trial', 'RawSignal', '__rid_signal'], baseline: Fixed(DataFrame['subject', 'trial', 'Baseline', '__rid_baseline'], subject=1, trial=1)}
+[14:25:29.670] [INFO] subject=['1']
+[14:25:29.687] [INFO] trial=[1]
+[14:25:29.709] [INFO] [run] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn(signal, baseline)
+[14:25:29.720] [INFO] [done] subject=1, trial=1, __rid_signal=548482b8e3d7d9d6, __rid_baseline=dd608ff6c04c3d20: fn completed in 0.002s
+[14:25:29.736] [INFO] ────────────────────────────────────────────────────────────────
+[14:25:29.747] [INFO] for_each(fn) done: completed=1, skipped=0, total=1
+[14:25:29.769] [INFO] ================================================================
+[14:25:29.785] [DEBUG] for_each(subtract_baseline): completed=1, failed=0, total=1
+[14:25:29.804] [DEBUG] _find_record(Baseline): SQL returned 1 records, version_id=latest
+[14:25:29.814] [DEBUG] _find_record: record dd608ff6c04c3d20: version_keys = {'trial': 1}
+[14:25:29.831] [DEBUG] _find_record(Baseline): 1 record(s) matched (before branch_params filter)
+[14:25:29.848] [DEBUG] save(Filtered): record_id=910f054d6d39, content_hash=e9ff77b63e1f, serialization=native
+[14:25:29.876] [DEBUG] _save_native: inserted single record into 'Filtered_data', record_id=910f054d6d39
+[14:25:29.892] [DEBUG] _save_record_metadata: Filtered, record_id=910f054d6d39, schema_id=1
+[14:25:29.912] [DEBUG] _save_lineage: Filtered, fn=subtract_baseline, lineage_hash=7d26687a1b46
+[14:25:29.936] [DEBUG] save(Filtered): transaction committed
+[14:25:29.951] [INFO] [save] subject=1, trial=1: Filtered -> record_id=910f054d6d39 (LineageFcnResult) [lineage] in 0.103s
+[14:25:29.961] [INFO] for_each(subtract_baseline): saved 1 results in 0.114s
+[14:25:29.981] [INFO] load_all(Filtered): metadata={'subject': 1}
+[14:25:30.008] [DEBUG] _find_record(Filtered): SQL returned 2 records, version_id=latest
+[14:25:30.036] [DEBUG] _find_record: record 910f054d6d3979cd: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': 'dd608ff6c04c3d20'}, '__upstream': {'__rid_baseline': 'dd608ff6c04c3d20', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:25:30.046] [DEBUG] _find_record: record 80211443b478b2ce: version_keys = {'__constants': {}, '__fn': 'subtract_baseline', '__fn_hash': 'f7cbf1a80146f503', '__inputs': {'baseline': 'Fixed(Baseline, subject=1, trial=1)', 'signal': 'RawSignal'}, '__lineage_fixed_rids': {'__rid_baseline': '1135f5c65d951cf8'}, '__upstream': {'__rid_baseline': '1135f5c65d951cf8', '__rid_signal': '548482b8e3d7d9d6'}, 'trial': 1}
+[14:25:30.062] [DEBUG] _find_record: collapsed 1 provenance-only variant(s)
+[14:25:30.083] [DEBUG] _find_record(Filtered): 1 record(s) matched (before branch_params filter)
+[14:25:30.099] [INFO] load_all(Filtered): found 1 record(s)

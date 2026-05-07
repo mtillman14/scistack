@@ -77,7 +77,13 @@ def test_list_pipeline_variants_includes_call_id(db):
 # ---------------------------------------------------------------------------
 
 def test_check_node_state_filters_by_call_id(db):
-    """Two call sites: each call_id sees only its own combos as up_to_date."""
+    """Two call sites with different scopes: each shows grey due to partial-run detection.
+
+    Call site A processes session A with low_hz=20, but session B exists in input → grey.
+    Call site B processes session B with low_hz=50, but session A exists in input → grey.
+    This enables partial-run detection: you're warned if input data exists that hasn't
+    been processed with the given parameters.
+    """
     _seed(db, subjects=["1", "2"], sessions=["A", "B"])
 
     # Call site A: low_hz=20, session A
@@ -112,14 +118,24 @@ def test_check_node_state_filters_by_call_id(db):
     state_b = check_node_state(bandpass, [Filtered], db=db, call_id=cid_b)
     state_union = check_node_state(bandpass, [Filtered], db=db)
 
-    # Each call site sees only its own 2 combos.
-    assert state_a["counts"]["up_to_date"] == 2, state_a
-    assert state_a["counts"]["missing"] == 0, state_a
-    assert state_b["counts"]["up_to_date"] == 2, state_b
-    assert state_b["counts"]["missing"] == 0, state_b
+    # Each call site sees ALL input data (partial-run detection).
+    # Call site A processed session A with low_hz=20, but session B exists in input.
+    assert state_a["counts"]["up_to_date"] == 2, state_a  # session A processed
+    assert state_a["counts"]["missing"] == 2, state_a      # session B not processed with low_hz=20
+    assert state_a["state"] == "grey", state_a             # partially complete
 
-    # Union sees all 4 combos.
-    assert state_union["counts"]["up_to_date"] == 4, state_union
+    # Call site B processed session B with low_hz=50, but session A exists in input.
+    assert state_b["counts"]["up_to_date"] == 2, state_b  # session B processed
+    assert state_b["counts"]["missing"] == 2, state_b      # session A not processed with low_hz=50
+    assert state_b["state"] == "grey", state_b             # partially complete
+
+    # Union (no call_id) sees all possible input × branch_params combinations.
+    # Expected: 2 sessions × 2 subjects × 2 low_hz values = 8 combos
+    # Actual: only 4 combos processed (A×20, B×50)
+    # Missing: 4 combos (A×50, B×20)
+    assert state_union["counts"]["up_to_date"] == 4, state_union  # processed combos
+    assert state_union["counts"]["missing"] == 4, state_union      # unprocessed combos
+    assert state_union["state"] == "grey", state_union             # partially complete
 
 
 def test_check_node_state_call_id_detects_missing_per_site(db):

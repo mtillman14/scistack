@@ -451,10 +451,17 @@ class TestVariantExclusion:
         assert len(excluded) == 1
         assert excluded[0]["branch_params"]["bandpass.low_hz"] == 20
 
-    def test_exclude_ambiguous_raises_ambiguous_version_error(self, db):
-        """Excluding by branch_params that matches multiple records raises error."""
-        with pytest.raises(AmbiguousVersionError):
-            db.exclude_variant(Filtered, subject="S01", session="1")  # no filter
+    def test_exclude_multiple_variants_without_branch_params(self, db):
+        """Excluding without specifying branch_params excludes all matching variants."""
+        count = db.exclude_variant(Filtered, subject="S01", session="1")
+        assert count == 2, "Should exclude both low_hz=20 and low_hz=30"
+
+        remaining = db.list_versions(Filtered, subject="S01", session="1")
+        assert len(remaining) == 0, "All variants should be excluded"
+
+        # Verify they still exist with include_excluded=True
+        all_v = db.list_versions(Filtered, subject="S01", session="1", include_excluded=True)
+        assert len(all_v) == 2, "Both variants should exist but be excluded"
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +831,136 @@ class TestVariantExclusionEdgeCases:
         db.include_variant(Filtered, subject="S01", session="1", low_hz=20)
         versions = db.list_versions(Filtered, subject="S01", session="1")
         assert len(versions) == 2
+
+
+# ---------------------------------------------------------------------------
+# 9b. Multi-variant exclusion (new behavior)
+# ---------------------------------------------------------------------------
+
+class TestMultiVariantExclusion:
+    """Test that exclude_variant and include_variant work on multiple variants."""
+
+    @pytest.fixture(autouse=True)
+    def _multi_variant_setup(self, db):
+        """Create data with multiple subjects, sessions, and branch_params."""
+        # Create input data: 2 subjects × 2 sessions
+        for subj in ["S01", "S02"]:
+            for sess in ["pre", "post"]:
+                RawSignal.save(np.array([1.0, 2.0]), subject=subj, session=sess)
+
+        # Process with 3 different low_hz values
+        for low_hz in [20, 50, 100]:
+            for_each(
+                bandpass,
+                {"signal": RawSignal, "low_hz": low_hz},
+                [Filtered],
+                subject=["S01", "S02"],
+                session=["pre", "post"],
+            )
+        # Total: 4 schema combos × 3 branch variants = 12 records
+
+    def test_exclude_all_variants_for_one_session(self, db):
+        """Excluding by session only should exclude all branch_params for that session."""
+        count = db.exclude_variant(Filtered, session="post")
+        assert count == 6, "Should exclude 2 subjects × 3 low_hz values for session=post"
+
+        # Verify only pre session remains
+        remaining = list(Filtered.load_all(db=db))
+        assert len(remaining) == 6
+        for rec in remaining:
+            assert rec.metadata["session"] == "pre"
+
+    def test_exclude_all_variants_for_one_subject(self, db):
+        """Excluding by subject only should exclude all sessions and branch_params."""
+        count = db.exclude_variant(Filtered, subject="S01")
+        assert count == 6, "Should exclude 2 sessions × 3 low_hz values for subject=S01"
+
+        remaining = list(Filtered.load_all(db=db))
+        assert len(remaining) == 6
+        for rec in remaining:
+            assert rec.metadata["subject"] == "S02"
+
+    def test_exclude_specific_branch_param_all_schemas(self, db):
+        """Excluding by branch_param only should exclude that param for all schema combos."""
+        count = db.exclude_variant(Filtered, low_hz=50)
+        assert count == 4, "Should exclude 2 subjects × 2 sessions for low_hz=50"
+
+        remaining = list(Filtered.load_all(db=db))
+        assert len(remaining) == 8  # 4 schema combos × 2 remaining low_hz values
+        for rec in remaining:
+            assert rec.branch_params["bandpass.low_hz"] in [20, 100]
+
+    def test_exclude_specific_schema_and_branch_param(self, db):
+        """Excluding with both schema and branch_params should exclude only that combo."""
+        count = db.exclude_variant(Filtered, subject="S01", session="pre", low_hz=20)
+        assert count == 1, "Should exclude only the specific variant"
+
+        remaining = list(Filtered.load_all(db=db))
+        assert len(remaining) == 11
+
+    def test_include_restores_all_excluded_variants(self, db):
+        """include_variant should restore all matching variants."""
+        # Exclude all post session variants
+        excluded_count = db.exclude_variant(Filtered, session="post")
+        assert excluded_count == 6
+
+        # Re-include them
+        included_count = db.include_variant(Filtered, session="post")
+        assert included_count == 6, "Should re-include same count that was excluded"
+
+        # Verify all restored
+        remaining = list(Filtered.load_all(db=db))
+        assert len(remaining) == 12, "All variants should be restored"
+
+    def test_exclude_multiple_then_include_subset(self, db):
+        """Can exclude broadly, then re-include specific variants."""
+        # Exclude all S01 variants (6 total)
+        db.exclude_variant(Filtered, subject="S01")
+
+        # Re-include only S01 pre session (3 variants: low_hz 20, 50, 100)
+        count = db.include_variant(Filtered, subject="S01", session="pre")
+        assert count == 3
+
+        remaining = list(Filtered.load_all(db=db))
+        # 6 S02 + 3 S01/pre = 9 total
+        assert len(remaining) == 9
+
+    def test_load_all_skips_excluded_variants(self, db):
+        """load_all should not return excluded variants."""
+        # Before exclusion: 12 total records
+        all_before = list(Filtered.load_all(db=db))
+        assert len(all_before) == 12
+
+        # Exclude all session=post variants (6 records)
+        count = db.exclude_variant(Filtered, session="post")
+        assert count == 6
+
+        # After exclusion: only session=pre should remain (6 records)
+        all_after = list(Filtered.load_all(db=db))
+        assert len(all_after) == 6
+
+        # Verify all remaining records are session=pre
+        for rec in all_after:
+            assert rec.metadata["session"] == "pre", f"Found {rec.metadata['session']}, expected 'pre'"
+
+        # Verify excluded records still exist in database using list_versions
+        all_versions = db.list_versions(Filtered, include_excluded=True)
+        assert len(all_versions) == 12
+        excluded_count = sum(1 for v in all_versions if v.get("excluded"))
+        assert excluded_count == 6, "Should have 6 excluded variants"
+
+    def test_return_count_matches_excluded_variants(self, db):
+        """Return value should match number of variants excluded."""
+        # Test various exclusion patterns
+        count1 = db.exclude_variant(Filtered, session="post", low_hz=20)
+        assert count1 == 2, "2 subjects for (post, low_hz=20)"
+
+        count2 = db.exclude_variant(Filtered, subject="S01", session="pre")
+        assert count2 == 3, "3 low_hz values for (S01, pre)"
+
+        # Total excluded: 5 (2 + 3)
+        remaining = list(Filtered.load_all(db=db))
+        assert len(remaining) == 7  # 12 - 5
 
 
 # ---------------------------------------------------------------------------

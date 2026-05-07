@@ -1351,6 +1351,38 @@ class DatabaseManager:
             f"ORDER BY timestamp DESC"
         )
         df = self._duck._fetchdf(sql, params)
+        Log.debug(f"_find_record({type_name}): SQL returned {len(df)} records, version_id={version_id}")
+
+        # Collapse provenance-only variants when using version_id="latest".
+        # Records differing only in __upstream, __output_num, or __lineage_fixed_rids
+        # are temporal updates to the same pipeline step, not distinct variants.
+        if version_id == "latest" and len(df) > 0:
+            from collections import defaultdict
+            groups = defaultdict(list)
+            for idx, row in df.iterrows():
+                vk = json.loads(row["version_keys"] or "{}")
+                # Debug: log version_keys for investigation
+                Log.debug(f"_find_record: record {row['record_id']}: version_keys = {vk}")
+                # Strip provenance-only keys
+                vk_stripped = {k: v for k, v in vk.items()
+                              if k not in ("__upstream", "__output_num", "__lineage_fixed_rids")}
+                # Include branch_params in the grouping key to ensure records with
+                # different upstream branch parameters are not collapsed together
+                bp = row.get("branch_params", "{}")
+                group_key = (
+                    row["variable_name"],
+                    row["schema_id"],
+                    json.dumps(vk_stripped, sort_keys=True),
+                    bp  # Add branch_params to distinguish different branch variants
+                )
+                groups[group_key].append((row["timestamp"], idx))
+
+            # Keep only the latest record per group
+            keep_indices = [max(group)[1] for group in groups.values()]
+            collapsed_count = len(df) - len(keep_indices)
+            if collapsed_count > 0:
+                Log.debug(f"_find_record: collapsed {collapsed_count} provenance-only variant(s)")
+            df = df.loc[keep_indices].sort_values("timestamp", ascending=False)
 
         # Filter by version keys via Python-side JSON parsing (lists → in)
         if version_keys and len(df) > 0:
@@ -2310,35 +2342,123 @@ class DatabaseManager:
         self,
         record_id_or_type: "str | Type[BaseVariable]",
         **kwargs,
-    ) -> None:
-        """Mark a variant as excluded from automatic inclusion in for_each and load().
+    ) -> int:
+        """Mark variant(s) as excluded from automatic inclusion in for_each and load().
+
+        If multiple variants match the provided metadata, ALL matching variants
+        are excluded (e.g., all branch_params for a given schema combo).
 
         Usage:
-            db.exclude_variant("abc123")                                  # by record_id
-            db.exclude_variant(DetectedSpikes, subject="S01", low_hz=20)  # by params
+            db.exclude_variant("abc123")                                  # by record_id (1 variant)
+            db.exclude_variant(DetectedSpikes, subject="S01", low_hz=20)  # specific variant
+            db.exclude_variant(DetectedSpikes, subject="S01")             # all variants for S01
+
+        Returns:
+            Number of variants excluded.
         """
-        record_id = self._resolve_record_id(record_id_or_type, **kwargs)
-        self._duck._execute(
-            "UPDATE _record_metadata SET excluded = TRUE WHERE record_id = ?",
-            [record_id],
+        if isinstance(record_id_or_type, str):
+            # Direct record_id provided - exclude just that one
+            self._duck._execute(
+                "UPDATE _record_metadata SET excluded = TRUE WHERE record_id = ?",
+                [record_id_or_type],
+            )
+            return 1
+
+        # Variable class + kwargs: find and exclude ALL matching records
+        variable_class = record_id_or_type
+        schema_keys_set = set(self.dataset_schema_keys)
+        schema_metadata = {k: v for k, v in kwargs.items() if k in schema_keys_set}
+        branch_params_filter = {k: v for k, v in kwargs.items() if k not in schema_keys_set} or None
+
+        nested_metadata = self._split_metadata(schema_metadata)
+        records = self._find_record(
+            variable_class.__name__,
+            nested_metadata=nested_metadata,
+            version_id="all",
+            branch_params_filter=branch_params_filter,
+            include_excluded=True,
         )
+
+        if len(records) == 0:
+            raise NotFoundError(
+                f"No {variable_class.__name__} found matching: {kwargs}"
+            )
+
+        # Exclude all matching records
+        record_ids = records["record_id"].tolist()
+        for rid in record_ids:
+            self._duck._execute(
+                "UPDATE _record_metadata SET excluded = TRUE WHERE record_id = ?",
+                [rid],
+            )
+
+        if len(record_ids) > 1:
+            Log.info(
+                f"Excluded {len(record_ids)} variant(s) of {variable_class.__name__} "
+                f"matching {kwargs}"
+            )
+        return len(record_ids)
 
     def include_variant(
         self,
         record_id_or_type: "str | Type[BaseVariable]",
         **kwargs,
-    ) -> None:
-        """Re-include a previously excluded variant.
+    ) -> int:
+        """Re-include previously excluded variant(s).
+
+        If multiple variants match the provided metadata, ALL matching variants
+        are re-included.
 
         Usage:
-            db.include_variant("abc123")
-            db.include_variant(DetectedSpikes, subject="S01", low_hz=20)
+            db.include_variant("abc123")                                  # by record_id (1 variant)
+            db.include_variant(DetectedSpikes, subject="S01", low_hz=20)  # specific variant
+            db.include_variant(DetectedSpikes, subject="S01")             # all variants for S01
+
+        Returns:
+            Number of variants re-included.
         """
-        record_id = self._resolve_record_id(record_id_or_type, **kwargs)
-        self._duck._execute(
-            "UPDATE _record_metadata SET excluded = FALSE WHERE record_id = ?",
-            [record_id],
+        if isinstance(record_id_or_type, str):
+            # Direct record_id provided - include just that one
+            self._duck._execute(
+                "UPDATE _record_metadata SET excluded = FALSE WHERE record_id = ?",
+                [record_id_or_type],
+            )
+            return 1
+
+        # Variable class + kwargs: find and include ALL matching records
+        variable_class = record_id_or_type
+        schema_keys_set = set(self.dataset_schema_keys)
+        schema_metadata = {k: v for k, v in kwargs.items() if k in schema_keys_set}
+        branch_params_filter = {k: v for k, v in kwargs.items() if k not in schema_keys_set} or None
+
+        nested_metadata = self._split_metadata(schema_metadata)
+        records = self._find_record(
+            variable_class.__name__,
+            nested_metadata=nested_metadata,
+            version_id="all",
+            branch_params_filter=branch_params_filter,
+            include_excluded=True,
         )
+
+        if len(records) == 0:
+            raise NotFoundError(
+                f"No {variable_class.__name__} found matching: {kwargs}"
+            )
+
+        # Re-include all matching records
+        record_ids = records["record_id"].tolist()
+        for rid in record_ids:
+            self._duck._execute(
+                "UPDATE _record_metadata SET excluded = FALSE WHERE record_id = ?",
+                [rid],
+            )
+
+        if len(record_ids) > 1:
+            Log.info(
+                f"Re-included {len(record_ids)} variant(s) of {variable_class.__name__} "
+                f"matching {kwargs}"
+            )
+        return len(record_ids)
 
     def get_provenance(
         self,

@@ -601,5 +601,10 @@ def make_tuple_unpacking_wrapper(lineage_fn: Callable) -> Callable:
     # original function, producing mismatched __fn_hash values.
     if hasattr(lineage_fn, 'fcn'):
         wrapped.fcn = lineage_fn.fcn
+    else:
+        # For plain functions, store the original so compute_function_hash
+        # can unwrap to the original function's bytecode, ensuring hash
+        # consistency between save-time and check-time.
+        wrapped.fcn = lineage_fn
 
     return wrapped

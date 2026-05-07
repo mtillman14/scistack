@@ -1,4 +1,6 @@
-pytest scihist-lib/tests/test_unified_variant_tracking.py::TestFixedInputTracking::test_fixed_input_in_lineage -xvs
-
-pytest scihist-lib/tests/ -x
-
+1. Run all skip_computed tests to ensure we didn't break anything else:                                                                                        
+  python -m pytest scihist-lib/tests/test_skip_computed.py -xvs                                                                                                  
+  2. Run variant/branch_params tests to ensure legitimate variants still work:                                                                                   
+  python -m pytest scidb/tests/test_branch_params.py -xvs                                                                                                        
+  3. Run integration tests:                                                                                                                                      
+  python -m pytest scidb/tests/test_integration.py -xvs

@@ -564,6 +564,11 @@ def _get_expected_combos(
         lineage_variants: list[dict] = []
     else:
         lineage_variants = _get_lineage_variants(db, fn_name)
+        # If lineage variants exist, they're the authoritative source for
+        # scihist.for_each outputs. Ignore scidb variants to avoid double-counting
+        # (scihist writes to both _lineage and version_keys for the same records).
+        if lineage_variants:
+            scidb_variants = []
 
     if not scidb_variants and not lineage_variants:
         if inputs_fallback:
@@ -594,27 +599,13 @@ def _get_expected_combos(
     expected: set[tuple] = set()
     fn_prefix = f"{fn_name}."
 
-    # When call_id is provided, restrict the schema scope to what THIS call
-    # site actually iterated over (persisted in _for_each_expected at run
-    # time).  Without this, walking _record_metadata for the input variable
-    # would over-report missing combos for any schema_id that exists in the
-    # input but lies outside the call site's subject=/session=/where= scope.
-    #
-    # We still scan the input variable for upstream branch_params within the
-    # scoped schema_ids, so that newly-appeared upstream variants are
-    # correctly flagged as missing for this call site.
-    scoped_schema_ids: set | None = None
-    if call_id is not None:
-        try:
-            scope_rows = db._duck._fetchall(
-                "SELECT DISTINCT schema_id FROM _for_each_expected "
-                "WHERE function_name = ? AND call_id = ?",
-                [fn_name, call_id],
-            )
-            if scope_rows:
-                scoped_schema_ids = {r[0] for r in scope_rows}
-        except Exception:
-            pass
+    # Note: We do NOT scope expected combos by call_id's for_each_expected
+    # schema_ids. This allows partial-run detection to work correctly: if a
+    # for_each(fn, subject=[1]) processes only subject=1 but input data exists
+    # for subject=2, the function should show as grey (partially run), not
+    # green. The call_id is still used to filter output_combos (which records
+    # were produced by this call site), but expected_combos considers ALL
+    # available input data to determine completeness.
 
     # scidb variants: own constants are namespaced in the output's branch_params.
     for variant in scidb_variants:
@@ -629,21 +620,28 @@ def _get_expected_combos(
                 [itype],
             )
             for schema_id, bp_raw in rows:
-                if scoped_schema_ids is not None and schema_id not in scoped_schema_ids:
-                    continue
                 input_bp = json.loads(bp_raw or "{}") if bp_raw else {}
                 expected_bp = {**input_bp, **namespaced_own}
                 expected.add((schema_id, json.dumps(expected_bp, sort_keys=True)))
 
-    # _lineage variants: scihist.for_each stores user constants in
-    # version_keys, not branch_params — scidb.save() writes
-    # branch_params={} for scihist records.  Therefore the expected
-    # branch_params template equals the input's branch_params; we do
-    # NOT merge own_constants here (doing so would produce phantom
-    # missing combos, especially when PathInput resolves to a different
-    # filepath per combo and scilineage captures that as a "constant").
+    # _lineage variants: When scihist.for_each delegates to scidb.for_each,
+    # constants are saved to branch_params (namespaced as "fn.param").
+    # Query the actual output records to determine what branch_params
+    # template was used, then apply that template to all input schema_ids.
     for variant in lineage_variants:
         input_types = variant["input_types"]
+
+        # Get the branch_params pattern from actual output records.
+        # All outputs for this variant should have the same constant keys.
+        output_bp_template = {}
+        sample_rows = db._duck._fetchall(
+            "SELECT rm.branch_params FROM _record_metadata rm "
+            "JOIN _lineage l ON rm.record_id = l.output_record_id "
+            "WHERE l.function_name = ? AND rm.excluded = FALSE LIMIT 1",
+            [fn_name],
+        )
+        if sample_rows and sample_rows[0][0]:
+            output_bp_template = json.loads(sample_rows[0][0])
 
         for itype in input_types.values():
             rows = db._duck._fetchall(
@@ -653,7 +651,9 @@ def _get_expected_combos(
             )
             for schema_id, bp_raw in rows:
                 input_bp = json.loads(bp_raw or "{}") if bp_raw else {}
-                expected.add((schema_id, json.dumps(input_bp, sort_keys=True)))
+                # Merge input's branch_params with the output's constant template
+                expected_bp = {**input_bp, **output_bp_template}
+                expected.add((schema_id, json.dumps(expected_bp, sort_keys=True)))
 
     # Fallback: PathInput-only functions have no DB-variable inputs, so the
     # loops above produce an empty set.  scidb.for_each persists the full
