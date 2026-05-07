@@ -329,6 +329,113 @@ def _check_via_fn_hash(fn, db, output_record_id: str, output_timestamp: str | No
     return "up_to_date"
 
 
+def check_multiple_nodes_state(
+    nodes: list[dict],
+    fn_registry: dict | None = None,
+    db=None,
+) -> dict[str, dict]:
+    """Check run state for multiple function nodes in a single call.
+
+    Optimizes database access by sharing the connection across all node checks.
+    Useful for GUI graph building where many nodes need state computation.
+
+    Args:
+        nodes: List of dicts with keys:
+            - ``fn`` or ``fn_name`` (callable or str): The function object or name
+            - ``call_id`` (str): 16-hex-char call site identifier
+            - ``outputs`` (list[type]): Output variable classes
+            When ``fn`` is not provided, ``fn_name`` is looked up in ``fn_registry``.
+        fn_registry: Optional dict mapping function names to function objects.
+            Used when nodes specify ``fn_name`` instead of ``fn``.
+        db: DatabaseManager instance. Uses the global DB if omitted.
+
+    Returns:
+        Dict mapping node_id (``fn__{fn_name}__{call_id}``) to state result:
+        {
+            "state": "green" | "grey" | "red",
+            "counts": {"up_to_date": N, "stale": N, "missing": N},
+        }
+
+    Example:
+        >>> nodes = [
+        ...     {"fn": process_emg, "call_id": "abc123", "outputs": [FilteredEMG]},
+        ...     {"fn": compute_stats, "call_id": "def456", "outputs": [Stats]},
+        ... ]
+        >>> states = check_multiple_nodes_state(nodes, db=db)
+        >>> states["fn__process_emg__abc123"]["state"]
+        'green'
+    """
+    if db is None:
+        from scidb.database import get_database
+        db = get_database()
+
+    result: dict[str, dict] = {}
+
+    for node in nodes:
+        # Get function object
+        fn = node.get("fn")
+        if fn is None:
+            fn_name = node.get("fn_name")
+            if fn_name is None:
+                logger.warning("check_multiple_nodes_state: node missing both 'fn' and 'fn_name', skipping")
+                continue
+            if fn_registry is None:
+                logger.warning("check_multiple_nodes_state: fn_name=%r but no fn_registry provided, skipping",
+                               fn_name)
+                continue
+            fn = fn_registry.get(fn_name)
+            if fn is None:
+                # Function not in registry — cannot run state check, mark as red
+                fn_name_safe = fn_name
+                call_id = node.get("call_id", "")
+                node_id = f"fn__{fn_name_safe}__{call_id}"
+                result[node_id] = {
+                    "state": "red",
+                    "counts": {"up_to_date": 0, "stale": 0, "missing": 0},
+                }
+                continue
+        else:
+            fn_name = getattr(fn, "__name__", None) or type(fn).__name__
+
+        outputs = node.get("outputs", [])
+        call_id = node.get("call_id")
+
+        if not outputs:
+            # No outputs specified — mark as red
+            node_id = f"fn__{fn_name}__{call_id or ''}"
+            result[node_id] = {
+                "state": "red",
+                "counts": {"up_to_date": 0, "stale": 0, "missing": 0},
+            }
+            continue
+
+        # Call check_node_state for this node
+        try:
+            state_result = check_node_state(fn, outputs, db=db, call_id=call_id)
+            node_id = f"fn__{fn_name}__{call_id or ''}"
+            result[node_id] = {
+                "state": state_result["state"],
+                "counts": state_result.get("counts", {"up_to_date": 0, "stale": 0, "missing": 0}),
+            }
+        except Exception:
+            logger.exception(
+                "check_multiple_nodes_state: check_node_state failed for %s call_id=%s — marking as red",
+                fn_name, call_id,
+            )
+            node_id = f"fn__{fn_name}__{call_id or ''}"
+            result[node_id] = {
+                "state": "red",
+                "counts": {"up_to_date": 0, "stale": 0, "missing": 0},
+            }
+
+    logger.debug(
+        "check_multiple_nodes_state: checked %d nodes, %d results",
+        len(nodes), len(result),
+    )
+
+    return result
+
+
 def check_node_state(
     fn,
     outputs: list[type],

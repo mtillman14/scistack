@@ -2656,6 +2656,318 @@ class DatabaseManager:
 
         return results
 
+    def get_aggregated_variants(
+        self,
+        fn_name: str | None = None,
+        call_id: str | None = None,
+    ) -> dict:
+        """
+        Get aggregated variant data for pipeline visualization.
+
+        Aggregates variants by (fn_name, call_id) and collects metadata about
+        functions, variables, constants, and path inputs. This provides all the
+        data needed to build a pipeline graph in one query.
+
+        Args:
+            fn_name: Optional function name to filter results.
+            call_id: Optional call_id to filter to a specific for_each call site.
+
+        Returns:
+            Dict with keys:
+
+            ``"functions"`` (dict)
+                Keyed by (fn_name, call_id) tuples::
+
+                    {
+                        (fn_name, call_id): {
+                            "input_params": {param: var_type},
+                            "outputs": [var_type1, var_type2],
+                            "constants": {param: [val1, val2]},
+                            "variant_count": int,
+                            "variants": [variant_dicts],
+                        }
+                    }
+
+            ``"variables"`` (dict)
+                Variable metadata keyed by variable name::
+
+                    {
+                        var_type: {
+                            "record_count": int,
+                        }
+                    }
+
+            ``"constants"`` (dict)
+                Constants used across functions::
+
+                    {
+                        const_name: {
+                            "values": [{"value": val, "record_count": N}],
+                            "functions": [(fn_name, call_id), ...],
+                        }
+                    }
+
+            ``"path_inputs"`` (dict)
+                PathInput parameters::
+
+                    {
+                        param_name: {
+                            "template": str,
+                            "root_folder": str | None,
+                            "functions": [(fn_name, call_id), ...],
+                        }
+                    }
+        """
+        import re
+        from collections import defaultdict
+
+        def _parse_path_input(value: str) -> dict | None:
+            """Parse PathInput from __inputs value string."""
+            # New JSON format
+            if value.startswith("{"):
+                try:
+                    parsed = json.loads(value)
+                    if parsed.get("__type") == "PathInput":
+                        return {
+                            "template": parsed["template"],
+                            "root_folder": parsed.get("root_folder"),
+                        }
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+            # Legacy repr format: PathInput('...', root_folder=PosixPath('...'))
+            if value.startswith("PathInput("):
+                m = re.match(r"PathInput\('([^']*)'", value)
+                if m:
+                    template = m.group(1)
+                    root_match = re.search(
+                        r"root_folder=(?:Posix|Windows|Pure\w*)?Path\('([^']*)'\)", value
+                    )
+                    root = root_match.group(1) if root_match else None
+                    return {"template": template, "root_folder": root}
+
+            return None
+
+        # Fetch base variant data
+        variants = self.list_pipeline_variants()
+
+        # Apply filters
+        if fn_name is not None:
+            variants = [v for v in variants if v["function_name"] == fn_name]
+        if call_id is not None:
+            variants = [v for v in variants if v.get("call_id") == call_id]
+
+        # Initialize result structure
+        functions = defaultdict(lambda: {
+            "input_params": {},
+            "outputs": [],
+            "constants": defaultdict(list),
+            "variant_count": 0,
+            "variants": [],
+        })
+        all_var_types = set()
+        const_counts = defaultdict(lambda: defaultdict(int))
+        const_fns = defaultdict(set)
+        fn_constants_map = defaultdict(set)
+        path_inputs = {}
+
+        # Aggregate variants by (fn_name, call_id)
+        for v in variants:
+            fn = v["function_name"]
+            cid = v.get("call_id", "")
+            if not cid:
+                continue  # Skip legacy variants without call_id
+
+            fkey = (fn, cid)
+            out = v["output_type"]
+            inputs = v["input_types"]
+            constants = v["constants"]
+            count = v["record_count"]
+
+            # Track variable types
+            all_var_types.add(out)
+
+            # Process inputs
+            for param_name, type_val in inputs.items():
+                # Check if it's a PathInput
+                pi = _parse_path_input(type_val)
+                if pi is not None:
+                    if param_name not in path_inputs:
+                        path_inputs[param_name] = {
+                            **pi,
+                            "functions": set(),
+                        }
+                    path_inputs[param_name]["functions"].add(fkey)
+                else:
+                    all_var_types.add(type_val)
+                    functions[fkey]["input_params"][param_name] = type_val
+
+            # Track outputs
+            if out not in functions[fkey]["outputs"]:
+                functions[fkey]["outputs"].append(out)
+
+            # Track constants
+            for k, val in constants.items():
+                const_counts[k][str(val)] += count
+                const_fns[k].add(fkey)
+                fn_constants_map[fkey].add(k)
+                if val not in functions[fkey]["constants"][k]:
+                    functions[fkey]["constants"][k].append(val)
+
+            # Track variant
+            functions[fkey]["variants"].append({
+                "input_types": inputs,
+                "constants": constants,
+                "output_type": out,
+                "record_count": count,
+            })
+            functions[fkey]["variant_count"] += 1
+
+        # Get variable record counts
+        variables = {}
+        for var_type in all_var_types:
+            rows = self._duck._fetchall(
+                "SELECT COUNT(DISTINCT record_id) FROM _record_metadata "
+                "WHERE variable_name = ? AND excluded = FALSE",
+                [var_type],
+            )
+            record_count = rows[0][0] if rows else 0
+            variables[var_type] = {"record_count": record_count}
+
+        # Build constants result
+        constants_result = {}
+        for const_name in const_counts:
+            values = [
+                {"value": val, "record_count": cnt}
+                for val, cnt in sorted(const_counts[const_name].items())
+            ]
+            constants_result[const_name] = {
+                "values": values,
+                "functions": list(const_fns[const_name]),
+            }
+
+        # Convert functions dict to regular dict (remove defaultdict)
+        functions_result = {}
+        for fkey, data in functions.items():
+            functions_result[fkey] = {
+                "input_params": dict(data["input_params"]),
+                "outputs": data["outputs"],
+                "constants": {k: list(v) for k, v in data["constants"].items()},
+                "variant_count": data["variant_count"],
+                "variants": data["variants"],
+            }
+
+        # Convert path_inputs functions to lists
+        for param_name in path_inputs:
+            path_inputs[param_name]["functions"] = list(path_inputs[param_name]["functions"])
+
+        return {
+            "functions": functions_result,
+            "variables": variables,
+            "constants": constants_result,
+            "path_inputs": path_inputs,
+        }
+
+    def filter_variants_for_execution(
+        self,
+        fn_name: str,
+        call_id: str,
+        schema_filter: dict[str, list] | None = None,
+        constant_overrides: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        """
+        Filter variants for execution based on schema and constant selection.
+
+        This method prepares variants for execution by:
+        1. Getting variants for the specified function and call_id
+        2. Filtering by schema_filter if provided
+        3. Applying constant_overrides (replacing DB constants)
+        4. Deduplicating the result
+
+        Args:
+            fn_name: Function name to filter.
+            call_id: Call site identifier (16 hex chars).
+            schema_filter: Optional dict of {schema_key: [selected_values]} to
+                filter variants by. Only variants matching these schema values
+                will be included.
+            constant_overrides: Optional dict of {constant_name: value} to
+                override database constants. When provided, these values replace
+                the constants from the database for all matching variants.
+
+        Returns:
+            List of variant dicts ready for for_each execution::
+
+                [
+                    {
+                        "input_types": {param: var_type},
+                        "output_type": var_type,
+                        "constants": {param: value},
+                    }
+                ]
+
+            The list is deduplicated so identical variants appear only once.
+
+        Example::
+
+            # Get variants for a function, overriding threshold constant
+            variants = db.filter_variants_for_execution(
+                fn_name="process_signal",
+                call_id="abc123def456789",
+                schema_filter={"subject": [1, 2]},  # Only subjects 1 and 2
+                constant_overrides={"threshold": 0.75},  # Override with 0.75
+            )
+        """
+        # Get all variants for this function and call_id
+        all_variants = self.list_pipeline_variants()
+        fn_variants = [
+            v for v in all_variants
+            if v["function_name"] == fn_name and v.get("call_id") == call_id
+        ]
+
+        if not fn_variants:
+            return []
+
+        # Build result variants
+        result_variants = []
+        seen = set()  # For deduplication
+
+        for variant in fn_variants:
+            input_types = variant["input_types"]
+            output_type = variant["output_type"]
+            constants = dict(variant["constants"])  # Make a copy
+
+            # Apply constant overrides
+            if constant_overrides:
+                for const_name, const_value in constant_overrides.items():
+                    if const_name in constants:
+                        constants[const_name] = const_value
+
+            # Create variant dict
+            result_variant = {
+                "input_types": input_types,
+                "output_type": output_type,
+                "constants": constants,
+            }
+
+            # Deduplicate by converting to a hashable key
+            key = (
+                output_type,
+                tuple(sorted(input_types.items())),
+                tuple(sorted(constants.items())),
+            )
+
+            if key not in seen:
+                seen.add(key)
+                result_variants.append(result_variant)
+
+        # Note: schema_filter is intentionally NOT applied here because
+        # for_each handles schema filtering via **metadata_iterables.
+        # The schema_filter parameter is kept for API compatibility with the
+        # original plan, but filtering by schema happens at execution time,
+        # not during variant selection.
+
+        return result_variants
+
     def get_upstream_provenance(
         self,
         record_id: str,

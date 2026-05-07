@@ -41,33 +41,38 @@ def acquire_db_connection() -> None:
     """
     global _db_open, _db_refcount
     with _db_lifecycle_lock:
+        logger.debug("[db] acquire_db_connection: current state - open=%s, refcount=%d", _db_open, _db_refcount)
         reopened = False
         if not _db_open and _db is not None:
+            logger.info("[db] acquire_db_connection: connection closed, reopening")
             try:
                 _db.reopen()
+                logger.info("[db] acquire_db_connection: successfully reopened connection")
             except Exception:
                 logger.exception(
-                    "acquire_db_connection: reopen failed (refcount stays at %d)",
+                    "[db] acquire_db_connection: reopen failed (refcount stays at %d)",
                     _db_refcount,
                 )
                 raise
             _db_open = True
             reopened = True
         _db_refcount += 1
-        logger.debug("acquire_db_connection: refcount=%d, reopened=%s", _db_refcount, reopened)
+        logger.debug("[db] acquire_db_connection complete: refcount=%d, reopened=%s", _db_refcount, reopened)
 
 
 def release_db_connection() -> None:
     """Decrement the holder count and close the connection when idle."""
     global _db_open, _db_refcount
     with _db_lifecycle_lock:
+        logger.debug("[db] release_db_connection: current refcount=%d, open=%s", _db_refcount, _db_open)
         _db_refcount = max(0, _db_refcount - 1)
         closed = False
         if _db_refcount == 0 and _db_open and _db is not None:
+            logger.info("[db] release_db_connection: refcount reached 0, closing connection")
             _db._duck.close()
             _db_open = False
             closed = True
-        logger.debug("release_db_connection: refcount=%d, closed=%s", _db_refcount, closed)
+        logger.debug("[db] release_db_connection complete: refcount=%d, closed=%s", _db_refcount, closed)
 
 
 def close_initial_connection() -> None:
@@ -111,17 +116,27 @@ def init_db(db_path: Path) -> DatabaseManager:
     Open an existing SciStack database. Called once at startup.
     Reads schema keys from the DB itself so the user doesn't need to supply them.
     """
+    logger.info("[db] init_db: initializing database from %s", db_path)
     global _db, _db_path, _db_open
+
+    logger.info("[db] Step 1: reading schema keys from database")
     schema_keys = read_schema_keys(db_path)
+    logger.info("[db] Step 1: found %d schema key(s): %s", len(schema_keys), schema_keys)
+
+    logger.info("[db] Step 2: configuring database connection")
     _db = scidb.configure_database(db_path, schema_keys)
     _db_path = db_path
     _db_open = True
+    logger.info("[db] Step 2: database connection established")
 
     # Migrate manual_nodes / manual_edges from JSON into DuckDB (one-time, idempotent).
+    logger.info("[db] Step 3: migrating legacy JSON layout to DuckDB (if needed)")
     from scistack_gui import pipeline_store
     layout_path = db_path.with_suffix(".layout.json")
     pipeline_store.migrate_from_json(_db, layout_path)
+    logger.info("[db] Step 3: migration complete")
 
+    logger.info("[db] init_db complete: database ready at %s", db_path)
     return _db
 
 
@@ -130,14 +145,23 @@ def create_db(db_path: Path, schema_keys: list[str]) -> DatabaseManager:
     Create a new SciStack database at db_path with the given schema keys.
     The parent directory must already exist. Fails if the file already exists.
     """
+    logger.info("[db] create_db: creating new database at %s with schema keys: %s", db_path, schema_keys)
     global _db, _db_path, _db_open
+
+    logger.info("[db] Step 1: validating database does not exist")
     if db_path.exists():
         raise FileExistsError(f"Database already exists: {db_path}")
+
+    logger.info("[db] Step 2: validating schema keys")
     if not schema_keys:
         raise ValueError("schema_keys must not be empty")
+
+    logger.info("[db] Step 3: configuring new database with %d schema key(s)", len(schema_keys))
     _db = scidb.configure_database(db_path, schema_keys)
     _db_path = db_path
     _db_open = True
+
+    logger.info("[db] create_db complete: new database created at %s", db_path)
     return _db
 
 

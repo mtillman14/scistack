@@ -91,21 +91,17 @@ if not isinstance(fn, LineageFcn):
 
 The auto-wrap means users can pass plain functions to `scihist.for_each()` and still get full lineage tracking. The log message confirms: `auto-wrapped bandpass_filter in LineageFcn (hash=a1b2c3d4e5f6)`.
 
-### Step 2: Create plain callable wrapper (line 76)
+### Step 2: Create plain callable wrapper (lines 77-78)
 
-scidb.for_each() expects a plain callable — it doesn't know about `LineageFcn`. The `_make_plain()` helper (lines 381–386) creates a thin wrapper:
+scidb.for_each() expects a plain callable — it doesn't know about `LineageFcn`. The `make_tuple_unpacking_wrapper()` helper from scilineage creates a wrapper that:
 
-```python
-def _make_plain(lineage_fn) -> Callable:
-    def wrapped(*args, **kwargs):
-        return lineage_fn(*args, **kwargs)
-    wrapped.__name__ = getattr(lineage_fn, "__name__", "lineage_fcn")
-    return wrapped
-```
+1. Calls the `LineageFcn`, which returns a `LineageFcnResult`
+2. If the function is configured to unpack tuples (default), extracts the raw data from the result
+3. Otherwise returns the full `LineageFcnResult`
 
-This wrapper calls the `LineageFcn`, which returns a `LineageFcnResult`. scidb.for_each() collects that result into its output DataFrame — the `LineageFcnResult` objects sit in the output column cells, carrying their lineage metadata alongside the data. Since scidb is called with `save=False` (Step 5), it never tries to interpret or save these objects itself.
+scidb.for_each() collects results into its output DataFrame — `LineageFcnResult` objects sit in the output column cells, carrying their lineage metadata alongside the data. Since scidb is called with `save=False` (Step 5), it never tries to interpret or save these objects itself.
 
-### Step 3: Build skip_computed hook (lines 78–98)
+### Step 3: Build skip_computed hook (lines 89-98)
 
 When `skip_computed=True` (the default), `dry_run=False`, and there are output types specified, scihist builds a pre-combo hook via `_build_skip_hook()`. This hook is a callable `(combo: dict) -> bool` that returns `True` when a combo should be skipped.
 
@@ -117,7 +113,7 @@ The hook construction and logic are detailed in the "The skip_computed system" s
 
 If the `LineageFcn` has `generates_file=True` (set via the `@lineage_fcn(generates_file=True)` decorator), scihist sets `_inject_combo_metadata=True`. This tells scidb.for_each() to pass the current combo's schema keys (e.g., `subject=1, session="A"`) as extra keyword arguments to the function, so it can construct output file paths from the metadata.
 
-### Step 5: Delegate to scidb.for_each (lines 104–120)
+### Step 5: Delegate to scidb.for_each (lines 112-127)
 
 The core delegation:
 
@@ -127,9 +123,9 @@ result_tbl = _scidb_for_each(
     inputs,
     outputs,
     dry_run=dry_run,
-    save=False,                          # <-- scihist handles saves
+    save=save,                           # <-- Note: now delegates save to scidb
     as_table=as_table,
-    db=db,
+    db=active_db,
     distribute=distribute,
     where=where,
     _inject_combo_metadata=_inject_meta, # <-- for generates_file
@@ -140,43 +136,46 @@ result_tbl = _scidb_for_each(
 )
 ```
 
-Key: `save=False`. scidb.for_each() does *everything* it normally does — load inputs, build combos, expand variants, iterate via scifor — but it does NOT save results. The result DataFrame comes back with `LineageFcnResult` objects in the output columns, carrying unsaved lineage metadata.
+**Important change:** As of the variant tracking unification (commit 6f51da1), scihist now passes `save=save` instead of `save=False`, delegating the save logic to scidb. Fixed input record IDs are computed internally by scidb (see scidb Step 10 and the `_lineage_fixed_rids` parameter), so scihist no longer needs to pre-compute or track them separately.
 
-If `dry_run=True`, scidb returns `None` and scihist returns `None` immediately (lines 122–124).
+scidb.for_each() does everything — load inputs, build combos, expand variants, iterate via scifor, and save results with lineage. The result DataFrame comes back with `LineageFcnResult` objects in the output columns if saving was disabled.
 
-### Step 6: Classify inputs for save (lines 128–162)
+If `dry_run=True`, scidb returns `None` and scihist returns `None` immediately (lines 129-131).
 
-Before saving, scihist classifies the original `inputs` dict to determine:
+### Step 6: Return result DataFrame (lines 133-134)
 
-1. **Constant inputs** (`constant_inputs`): Values that are not variable types, not wrappers (Fixed, Merge, ColumnSelection), and not PathInput. These are Python scalars, strings, numpy arrays, etc. that were passed unchanged to every function call. They are added to version_keys during save for variant disambiguation.
+The result DataFrame is returned to the caller after scidb.for_each completes. With the unified variant tracking architecture (commit 6f51da1), the save logic has been delegated to scidb, which calls back to scihist when it encounters `LineageFcnResult` objects (see the "Callback-based save architecture" section below).
 
-2. **Fixed input record IDs** (`fixed_rids`): For each `Fixed` wrapper, scihist resolves the current record ID of the fixed input by calling `db.find_record_id(inner_type, fixed_metadata)`. These are stored as `__rid_{param_name}` entries in the lineage inputs for skip_computed tracking.
+---
 
-The classification logic (lines 134–162) walks through each input and applies these rules:
+## Callback-based save architecture
 
-| Input type | Classification | Action |
-|---|---|---|
-| Variable type (class) | Skip | Not tracked here (tracked by scilineage as variable inputs) |
-| Fixed wrapper | Track rid | Resolve `db.find_record_id()` → store in `fixed_rids` |
-| Merge/ColumnSelection wrapper | Skip | Not tracked as constant or fixed |
-| PathInput | Skip | Resolved per-combo by scidb.for_each |
-| Everything else | Constant | Stored in `constant_inputs` |
+### Overview
 
-### Step 7: Save with lineage (lines 166–170)
+As of the variant tracking unification (commit 6f51da1), scihist uses a **callback-based save model** instead of handling saves directly:
 
-If `save=True`, outputs are specified, and the result table is non-empty, scihist calls `_save_with_lineage()`:
+1. scihist.for_each() calls scidb.for_each() with `save=save` (delegating save responsibility)
+2. scidb.for_each() processes all combos and prepares to save results
+3. When scidb encounters a `LineageFcnResult` in the output data, it calls back to `scihist.save_lineage_result()`
+4. scihist.save_lineage_result() extracts lineage metadata and delegates to scidb.save() with the lineage dict
+
+This architecture unifies variant tracking while preserving lineage capabilities. scidb handles all the version_keys, branch_params, and rid tracking logic, while scihist adds lineage-specific metadata when called back.
+
+### How scidb detects LineageFcnResult
+
+In scidb's save logic (Step 19 of scidb-for-each-internals.md), before saving each output, scidb checks:
 
 ```python
-_save_with_lineage(result_tbl, outputs, output_names, db,
-                   constant_inputs=constant_inputs,
-                   fixed_input_rids=fixed_rids)
+if HAS_LINEAGE and isinstance(output_value, LineageFcnResult):
+    from scihist.foreach import save_lineage_result
+    record_id = save_lineage_result(output_obj, output_value, save_metadata, db)
 ```
 
-The save logic is detailed in the "The lineage-aware save path" section below.
+This imports scihist.save_lineage_result() on-demand and calls it with pre-built metadata from scidb's save logic.
 
-### Step 8: Return result DataFrame (line 172)
+### Fixed input tracking
 
-The result DataFrame is returned to the caller. Its output columns contain `LineageFcnResult` objects (not raw data), unless the function was not wrapped in LineageFcn. The caller can inspect these for lineage metadata if needed, or just use the DataFrame for further processing.
+Fixed input record IDs are now computed by scidb during loading (Step 10) and stored in the `_lineage_fixed_rids` dict. scidb passes this to scihist via the callback metadata, so scihist doesn't need to pre-compute Fixed record IDs.
 
 ---
 
@@ -190,9 +189,11 @@ The result DataFrame is returned to the caller. Its output columns contain `Line
 
 The hook is constructed with the current function (`LineageFcn`), output types, database, and input specifications. During construction, it pre-computes:
 
-**Constant hashes** (lines 190–215): For each constant input (non-variable, non-wrapper, non-PathInput), the canonical hash is computed via `canonical_hash()`. These hashes are compared against stored lineage constants at check time.
+**Constant hashes** (lines 153-178): For each constant input (non-variable, non-wrapper, non-PathInput), the canonical hash is computed via `canonical_hash()`. These hashes are compared against stored lineage constants at check time.
 
-**Fixed input specs** (lines 194–210): For each `Fixed` wrapper, the inner variable type and fixed metadata are extracted and stored as `fixed_inputs[name] = (inner_type, fixed_metadata)`. At check time, the current record ID for each fixed input is looked up and compared against stored lineage.
+**Function hash** (line 149): Uses `compute_function_hash()` from `scilineage.hashing`, which performs bytecode-based hashing (same method used by scidb). This ensures consistency between scidb and scihist function hash computations.
+
+**Fixed input specs** (lines 156-174): For each `Fixed` wrapper, the inner variable type and fixed metadata are extracted and stored as `fixed_inputs[name] = (inner_type, fixed_metadata)`. At check time, the current record ID for each fixed input is looked up via `db.find_record_id()` and compared against stored lineage `rid_tracking` entries.
 
 ### The 4-step skip check: `_should_skip()` (lines 223–376)
 
@@ -285,35 +286,25 @@ This makes it easy to see at a glance why combos were or were not recomputed.
 
 ### Overview
 
-After scidb.for_each() returns a result table with `LineageFcnResult` objects in the output columns, scihist saves each result with full lineage tracking. There are two save paths depending on whether the function has `generates_file=True`.
+With the callback-based architecture, scidb.for_each() detects `LineageFcnResult` objects during its save step (Step 19) and calls back to scihist.save_lineage_result(). scidb provides pre-built metadata including version_keys, branch_params, and `__rid_*` tracking.
 
-### `_save_with_lineage()` (lines 389–465)
+### `save_lineage_result()` (lines 534-632)
 
-This function iterates over each row of the result table and each output:
+This is the callback function that scidb calls when it encounters a LineageFcnResult. It receives:
+- `output_obj`: The output variable class
+- `lineage_result`: The LineageFcnResult containing data and lineage info
+- `metadata`: Pre-built metadata from scidb (includes `__fn`, `__fn_hash`, `__inputs`, `__constants`, `__branch_params`, `__upstream`, and `__rid_*` keys)
+- `db`: Database instance (optional)
 
-1. **Extract metadata**: Separates `__rid_*` keys (for lineage rid_tracking) from save metadata (schema keys + user metadata). Strips all `__`-prefixed keys from save metadata. Merges `fixed_input_rids` into the rid tracking dict.
+The function has two distinct paths:
 
-2. **Add constant inputs**: Constant input values are added to save metadata for variant disambiguation (e.g., `low_hz=20` becomes a version key).
-
-3. **Route by output type**:
-   - If the output value is a `LineageFcnResult` → call `_save_lineage_fcn_result()` (the lineage-aware path)
-   - Otherwise → call `output_obj.save(data, **db_kwargs, **save_metadata)` (plain save, no lineage)
-
-4. **Log each save**: Prints timing and record ID: `[save] subject=1, session=A: FilteredEMG (lineage) -> record_id=abc123def456 in 0.042s`
-
-5. **Error handling**: If a save fails, the error is logged but does not stop other saves.
-
-### `_save_lineage_fcn_result()` (lines 467–570)
-
-This is the core lineage save logic. It has two distinct paths:
-
-#### Normal path (lines 539–565)
+#### Normal path (lines 574-614)
 
 For functions that produce data (the common case):
 
-1. **Extract lineage**: Call `extract_lineage(data)` to get a `LineageRecord` from the `LineageFcnResult`.
+1. **Extract lineage**: Call `extract_lineage(lineage_result)` to get a `LineageRecord` from the `LineageFcnResult`.
 
-2. **Convert to dict**: `_lineage_to_dict()` (lines 622–629) converts the `LineageRecord` to a flat dict:
+2. **Convert to dict**: `_lineage_to_dict()` (lines 635-642) converts the `LineageRecord` to a flat dict:
    ```python
    {
        "function_name": "bandpass_filter",
@@ -323,26 +314,24 @@ For functions that produce data (the common case):
    }
    ```
 
-3. **Append rid_tracking**: `_append_rid_tracking()` (lines 610–619) adds `__rid_*` entries to the lineage inputs list:
+3. **Append rid_tracking**: `_append_rid_tracking()` (lines 623-632) adds `__rid_*` entries from the metadata to the lineage inputs list:
    ```python
    {"name": "__rid_signal", "source_type": "rid_tracking", "record_id": "abc123..."}
    ```
-   These entries allow skip_computed to verify that the same input records were used.
+   These entries (already computed by scidb) allow skip_computed to verify that the same input records were used.
 
 4. **Compute hashes**:
-   - `lineage_hash` = `data.hash` (content hash of the lineage result)
-   - `pipeline_lineage_hash` = `data.invoked.compute_lineage_hash()` (hash of the full invocation — function + inputs + constants)
+   - `lineage_hash` = `lineage_result.hash` (content hash of the lineage result)
+   - `pipeline_lineage_hash` = `lineage_result.invoked.compute_lineage_hash()` (hash of the full invocation — function + inputs + constants)
 
-5. **Wrap data in variable class**: Extract the raw data via `get_raw_value(data)`, create an instance of the output variable class (`variable_class(raw_data)`).
+5. **Wrap data in variable class**: Extract the raw data via `get_raw_value(lineage_result)`, create an instance of the output variable class (`output_obj(raw_data)`).
 
-6. **Add __fn and __fn_hash to metadata**: These are added to save metadata so that scidb's version_keys system can identify which function produced the output.
-
-7. **Save via db.save()**: Call `active_db.save(instance, fn_metadata, lineage=lineage_dict, lineage_hash=lineage_hash, pipeline_lineage_hash=pipeline_lineage_hash)`. This writes:
+6. **Save via db.save()**: Call `db.save(instance, metadata, lineage=lineage_dict, lineage_hash=lineage_hash, pipeline_lineage_hash=pipeline_lineage_hash)`. The metadata already contains `__fn`, `__fn_hash`, `__inputs`, `__constants`, `__branch_params`, and `__upstream` from scidb. This writes:
    - A row to `_record_metadata` with the computed record_id, version_keys, branch_params
    - The data to the variable's data table
-   - A row to `_lineage` with the function name, function hash, inputs, constants, lineage hash
+   - A row to `_lineage` with the function name, function hash, inputs (including rid_tracking), constants, lineage hash
 
-#### generates_file path (lines 491–537)
+#### generates_file path (lines 561-573)
 
 For functions decorated with `@lineage_fcn(generates_file=True)` — functions that produce files on disk rather than data to store in DuckDB:
 
@@ -350,21 +339,17 @@ For functions decorated with `@lineage_fcn(generates_file=True)` — functions t
 
 2. **Generate a synthetic record ID**: `generated_id = f"generated:{pipeline_lineage_hash[:32]}"`. There is no actual data content, so the record ID is derived from the lineage hash instead of from a content hash.
 
-3. **Split metadata**: Call `db._split_metadata(metadata)` to separate schema keys from version keys.
+3. **Update metadata** with the synthetic record_id and set `content_hash=None`.
 
-4. **Write _record_metadata directly**: Call `db._save_record_metadata()` with:
-   - `record_id=generated_id`
-   - `content_hash=None` (no data stored)
-   - `lineage_hash=pipeline_lineage_hash`
-   - `version_keys` include `__fn` and `__fn_hash`
+4. **Write _record_metadata directly**: Call `db._save_record_metadata()` with the pre-built metadata from scidb (which already includes `__fn`, `__fn_hash`, `__inputs`, `__constants`, `__branch_params`).
 
-5. **Write _lineage directly**: Call `db._save_lineage()` with the lineage dict.
+5. **Write _lineage directly**: Call `db._save_lineage()` with the lineage dict (including rid_tracking entries).
 
 6. **No data table write**: The function's output is a file on disk — nothing is written to a DuckDB data table. Only metadata and lineage are persisted.
 
 This enables skip_computed to work for file-generating functions: the lineage record tracks what inputs and function version produced the file, so a re-run can be skipped if nothing has changed.
 
-### `save()` — public API (lines 573–607)
+### `save()` — public API (lines 653-679)
 
 The module-level `save()` function is exported as `scihist.save` for standalone use outside of `for_each`:
 
@@ -375,7 +360,7 @@ result = my_lineage_fn(input_data)
 save(OutputType, result, subject=1, session="A")
 ```
 
-It routes `LineageFcnResult` → `_save_lineage_fcn_result()`, raw data → `variable_class.save()`.
+It detects `LineageFcnResult` and calls `save_lineage_result()` with constructed metadata, or delegates to `variable_class.save()` for raw data.
 
 ---
 
@@ -652,27 +637,30 @@ What happens:
      - Returns `LineageFcnResult` with data + lineage
    - scifor collects `LineageFcnResult` objects into the result DataFrame
 
-6. **Classify inputs for save**:
-   - `signal`: variable type → skip
-   - `calibration`: Fixed wrapper → resolve `db.find_record_id(Calibration, {"session": "baseline"})` → store as `fixed_rids["__rid_calibration"] = "cal_rid_123"`
-   - `low_hz`, `high_hz`: constants → `constant_inputs = {"low_hz": 20, "high_hz": 450}`
+6. **Delegate to scidb.for_each with save=True**: scidb processes the for_each call:
+   - Loads `RawEMG` and `Calibration` (Fixed) into DataFrames
+   - Builds combos with `__rid_signal` variant expansion
+   - For each combo, the skip hook checks if output exists with matching provenance
+     - First run: no outputs exist → `[recompute] — no output record` → combo proceeds
+     - Second run (same data): outputs exist, fn hash matches, rid matches, constant hashes match → `[skip]` → combo skipped
+   - scifor iterates and calls the `LineageFcn`, collecting `LineageFcnResult` objects
+   - scidb prepares to save results (Step 19), detects `LineageFcnResult`, calls back to scihist
 
-7. **Save with lineage**: For each result row:
-   - Extract `__rid_signal` from result metadata, merge with `fixed_rids` → `input_rids = {"__rid_signal": "sig_rid_456", "__rid_calibration": "cal_rid_123"}`
-   - Strip `__`-prefixed keys from save metadata → `save_metadata = {"subject": "1", "session": "A", "low_hz": 20, "high_hz": 450}`
-   - Output value is `LineageFcnResult` → route to `_save_lineage_fcn_result()`:
-     - `extract_lineage(data)` → `LineageRecord(function_name="bandpass_filter", function_hash="a1b2...", inputs=[...], constants=[...])`
+7. **Callback to scihist.save_lineage_result()**: For each result row with a `LineageFcnResult`:
+   - scidb provides pre-built metadata: `{"subject": "1", "session": "A", "__fn": "bandpass_filter", "__fn_hash": "a1b2...", "__inputs": '{"signal": "RawEMG"}', "__constants": '{"low_hz": 20, "high_hz": 450}', "__branch_params": '{"bandpass_filter.low_hz": 20, "bandpass_filter.high_hz": 450}', "__upstream": '{"__rid_signal": "sig_rid_456", "__rid_calibration": "cal_rid_123"}', "__rid_signal": "sig_rid_456", "__rid_calibration": "cal_rid_123"}`
+   - scihist.save_lineage_result():
+     - `extract_lineage(lineage_result)` → `LineageRecord(function_name="bandpass_filter", function_hash="a1b2...", inputs=[...], constants=[...])`
      - `_lineage_to_dict()` → flat dict
-     - `_append_rid_tracking()` → adds `__rid_signal` and `__rid_calibration` entries to lineage inputs
-     - `data.hash` → `lineage_hash`
-     - `data.invoked.compute_lineage_hash()` → `pipeline_lineage_hash`
-     - `get_raw_value(data)` → the raw numpy array result
+     - `_append_rid_tracking(metadata)` → adds `__rid_signal` and `__rid_calibration` entries to lineage inputs
+     - `lineage_result.hash` → `lineage_hash`
+     - `lineage_result.invoked.compute_lineage_hash()` → `pipeline_lineage_hash`
+     - `get_raw_value(lineage_result)` → the raw numpy array result
      - `FilteredEMG(raw_data)` → variable instance
-     - Add `__fn="bandpass_filter"`, `__fn_hash="a1b2..."` to metadata
      - `db.save(instance, metadata, lineage=lineage_dict, lineage_hash=..., pipeline_lineage_hash=...)` →
        - Writes to `_record_metadata` (record_id, version_keys, branch_params, lineage_hash)
        - Writes data to `FilteredEMG_data`
        - Writes to `_lineage` (function_name, function_hash, inputs with rid_tracking, constants, lineage_hash)
+     - Returns record_id to scidb
      - Log: `[save-lineage] FilteredEMG: record_id=abc123def456 function_hash=a1b2c3d4e5f6`
 
 8. **Return**: The result DataFrame is returned to the caller.
@@ -697,20 +685,22 @@ If you re-save `RawEMG` for subject=1, session=A with new data (different conten
 
 ## How scihist differs from scidb in what it writes to the database
 
-Understanding the differences in what each layer writes helps debug unexpected behavior:
+**As of the variant tracking unification (commit 6f51da1), scihist now delegates saving to scidb, so the metadata structure is largely unified.** The main differences are:
 
 | Aspect | scidb.for_each | scihist.for_each |
 |---|---|---|
-| `version_keys.__fn` | Written | Written (via `_save_lineage_fcn_result`) |
-| `version_keys.__fn_hash` | Written (from `ForEachConfig`) | Written (from `lineage_dict`) |
-| `version_keys.__inputs` | Written | NOT written (scihist doesn't use `ForEachConfig` for save) |
-| `version_keys.__constants` | Written | NOT written |
-| `branch_params` | Written (accumulated upstream + namespaced constants) | Written `{}` (empty — scihist doesn't namespace constants into branch_params) |
+| `version_keys.__fn` | Written (from `ForEachConfig`) | Written (from `ForEachConfig` via scidb) |
+| `version_keys.__fn_hash` | Written (from `ForEachConfig`) | Written (from `ForEachConfig` via scidb) |
+| `version_keys.__inputs` | Written | Written (via scidb) |
+| `version_keys.__constants` | Written | Written (via scidb) |
+| `branch_params` | Written (accumulated upstream + namespaced constants) | Written (via scidb - same logic) |
 | `_lineage` row | NOT written | Written (function_name, function_hash, inputs, constants) |
 | `_lineage.inputs` entries | N/A | `rid_tracking` entries for each `__rid_*` input |
-| Constant variant disambiguation | Via `version_keys.__constants` + `branch_params` | Via `version_keys` (constants as top-level keys) |
+| Fixed input tracking | Strips `__record_id` from Fixed inputs | Tracks Fixed `__record_id` in lineage for skip_computed |
 
-This means:
-- `_get_output_combos()` must check BOTH `version_keys.__fn` AND `_lineage.function_name` to find all outputs
-- `_get_expected_combos()` must consult BOTH `list_pipeline_variants()` AND `_get_lineage_variants()`
-- scihist outputs have `branch_params={}`, so variant tracking relies on `version_keys` and `_lineage` rather than on `branch_params`
+**Key insight:** scihist outputs now have the full scidb metadata structure (`version_keys`, `branch_params`) PLUS lineage tracking in the `_lineage` table. This unifies variant tracking while adding provenance capabilities.
+
+The only distinguishing feature is the presence of `_lineage` rows for scihist.for_each outputs, which enable:
+- skip_computed to check function hash and input record IDs
+- Staleness checking via full upstream provenance graph
+- Constant hash verification

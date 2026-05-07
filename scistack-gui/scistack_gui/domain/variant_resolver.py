@@ -31,9 +31,13 @@ def build_inferred_variants(
     Returns:
         List of variant dicts with input_types, output_type, constants.
     """
+    logger.info("[variant_resolver] build_inferred_variants: building variants from %d input(s), %d output(s), %d constant(s)",
+                len(input_types), len(output_types), len(inferred_constants))
+
     if inferred_constants:
         const_names_list = sorted(inferred_constants.keys())
         const_value_lists = [inferred_constants[c] for c in const_names_list]
+        logger.debug("[variant_resolver] computing cross-product of %d constant(s)", len(const_names_list))
         variants = []
         for combo in _product(*const_value_lists):
             constants = dict(zip(const_names_list, combo))
@@ -43,12 +47,17 @@ def build_inferred_variants(
                     "output_type": out,
                     "constants": constants,
                 })
+        logger.info("[variant_resolver] build_inferred_variants complete: built %d variant(s) from cross-product",
+                    len(variants))
         return variants
     else:
-        return [
+        variants = [
             {"input_types": input_types, "output_type": out, "constants": {}}
             for out in output_types
         ]
+        logger.info("[variant_resolver] build_inferred_variants complete: built %d variant(s) (no constants)",
+                    len(variants))
+        return variants
 
 
 def filter_variants(
@@ -59,15 +68,19 @@ def filter_variants(
 
     Falls back to all fn_variants if no match is found.
     """
+    logger.info("[variant_resolver] filter_variants: filtering %d variant(s) using %d selected variant(s)",
+                len(fn_variants), len(selected_variants))
     targets = [
         v for v in fn_variants
         if any(_constants_match(v["constants"], sel) for sel in selected_variants)
     ]
     if not targets:
         logger.debug(
-            "filter_variants: no match for selected=%r — returning all %d variants",
+            "[variant_resolver] filter_variants: no match for selected=%r — returning all %d variants",
             selected_variants, len(fn_variants),
         )
+    else:
+        logger.info("[variant_resolver] filter_variants complete: %d variant(s) matched", len(targets))
     return targets if targets else fn_variants
 
 
@@ -77,6 +90,7 @@ def deduplicate_variants(targets: list[dict]) -> list[dict]:
     list_pipeline_variants may return duplicates across different output types
     for the same function.
     """
+    logger.info("[variant_resolver] deduplicate_variants: deduplicating %d variant(s)", len(targets))
     seen: set[tuple] = set()
     unique: list[dict] = []
     for v in targets:
@@ -84,6 +98,10 @@ def deduplicate_variants(targets: list[dict]) -> list[dict]:
         if key not in seen:
             seen.add(key)
             unique.append(v)
+    duplicates_removed = len(targets) - len(unique)
+    if duplicates_removed > 0:
+        logger.debug("[variant_resolver] removed %d duplicate(s)", duplicates_removed)
+    logger.info("[variant_resolver] deduplicate_variants complete: %d unique variant(s)", len(unique))
     return unique
 
 
@@ -105,7 +123,11 @@ def merge_pending_constants(
     Returns:
         Extended list of unique variant targets (appends to the input list).
     """
+    logger.info("[variant_resolver] merge_pending_constants: merging pending constants into %d variant(s)",
+                len(fn_variants))
+
     if not fn_variants or not pending_constants:
+        logger.debug("[variant_resolver] no variants or pending constants, skipping merge")
         return fn_variants
 
     fn_const_names = {k for v in fn_variants for k in v["constants"]}
@@ -115,11 +137,12 @@ def merge_pending_constants(
     }
 
     if not pending_for_fn:
+        logger.debug("[variant_resolver] no pending constants match function's constant parameters")
         return fn_variants
 
-    logger.debug(
-        "merge_pending_constants: adding pending values for constants %s",
-        sorted(pending_for_fn),
+    logger.info(
+        "[variant_resolver] adding pending values for %d constant(s): %s",
+        len(pending_for_fn), sorted(pending_for_fn),
     )
 
     existing_keys = {
@@ -127,8 +150,11 @@ def merge_pending_constants(
         for t in fn_variants
     }
     template = fn_variants[0]
+    initial_variant_count = len(fn_variants)
 
     for const_name, pending_values in pending_for_fn.items():
+        logger.debug("[variant_resolver] processing %d pending value(s) for constant '%s'",
+                     len(pending_values), const_name)
         # Collect unique combinations of other constants (typed).
         other_seen: set[tuple] = set()
         other_combos: list[dict] = []
@@ -156,6 +182,9 @@ def merge_pending_constants(
                         "output_type": template["output_type"],
                     })
 
+    added_variant_count = len(fn_variants) - initial_variant_count
+    logger.info("[variant_resolver] merge_pending_constants complete: added %d variant(s), total %d",
+                added_variant_count, len(fn_variants))
     return fn_variants
 
 
@@ -176,21 +205,32 @@ def build_schema_kwargs(
     Returns:
         {schema_key: [values_to_iterate]}.
     """
+    logger.info("[variant_resolver] build_schema_kwargs: building schema kwargs for iteration")
     iterate_keys = schema_level if schema_level is not None else list(all_schema_keys)
+    logger.debug("[variant_resolver] iterating over %d schema key(s): %s", len(iterate_keys), iterate_keys)
 
     if schema_filter:
+        logger.debug("[variant_resolver] applying schema filter with %d key(s)", len(schema_filter))
         schema_kwargs = {}
         for key in iterate_keys:
             if key in schema_filter and schema_filter[key]:
                 schema_kwargs[key] = schema_filter[key]
+                logger.debug("[variant_resolver] schema key '%s': using %d filtered value(s)",
+                             key, len(schema_filter[key]))
             else:
                 schema_kwargs[key] = distinct_values.get(key, [])
+                logger.debug("[variant_resolver] schema key '%s': using %d distinct value(s)",
+                             key, len(distinct_values.get(key, [])))
+        logger.info("[variant_resolver] build_schema_kwargs complete: %d schema key(s) configured", len(schema_kwargs))
         return schema_kwargs
     else:
-        return {
+        logger.debug("[variant_resolver] no schema filter, using all distinct values")
+        schema_kwargs = {
             key: distinct_values.get(key, [])
             for key in iterate_keys
         }
+        logger.info("[variant_resolver] build_schema_kwargs complete: %d schema key(s) configured", len(schema_kwargs))
+        return schema_kwargs
 
 
 def _constants_match(db_constants: dict, selected: dict) -> bool:

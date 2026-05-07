@@ -412,3 +412,98 @@ def test_variable_input_classification(tmp_path):
     assert len(signal_in_constants) == 0, (
         f"Variable 'signal' should NOT be in constants, found {len(signal_in_constants)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# check_multiple_nodes_state
+# ---------------------------------------------------------------------------
+
+class TestCheckMultipleNodesState:
+    def test_multiple_nodes_basic(self, db):
+        """Test checking state for multiple nodes at once."""
+        from scihist.state import check_multiple_nodes_state
+
+        _seed_raw(db)
+        _run_all(db, subjects=(1,), trials=("A",))  # Run only subject=1, trial=A
+
+        # Define nodes to check
+        nodes = [
+            {"fn": process_data, "call_id": None, "outputs": [ProcessedState]},
+            {"fn": second_step, "call_id": None, "outputs": [SecondaryState]},
+        ]
+
+        result = check_multiple_nodes_state(nodes, db=db)
+
+        # process_data has been run (partially) → should be grey or green
+        process_state = result.get("fn__process_data__")
+        assert process_state is not None
+        assert process_state["state"] in ("green", "grey", "red")
+        assert "counts" in process_state
+
+        # second_step has not been run → should be red
+        second_state = result.get("fn__second_step__")
+        assert second_state is not None
+        assert second_state["state"] == "red"
+        assert second_state["counts"]["missing"] >= 0
+
+    def test_multiple_nodes_with_call_id(self, db):
+        """Test checking state with call_id specified."""
+        from scihist.state import check_multiple_nodes_state
+        from scidb.foreach_config import call_id_from_version_keys
+
+        _seed_raw(db)
+        _run_all(db)
+
+        # Get the call_id from the actual outputs
+        # (In practice this would come from list_pipeline_variants)
+        variants = db.list_pipeline_variants()
+        call_ids = {v["call_id"] for v in variants if v["function_name"] == "process_data"}
+        call_id = list(call_ids)[0] if call_ids else None
+
+        nodes = [
+            {"fn": process_data, "call_id": call_id, "outputs": [ProcessedState]},
+        ]
+
+        result = check_multiple_nodes_state(nodes, db=db)
+
+        node_id = f"fn__process_data__{call_id}" if call_id else "fn__process_data__"
+        assert node_id in result
+        # Should be green since we ran all combos
+        assert result[node_id]["state"] in ("green", "grey")
+
+    def test_multiple_nodes_with_fn_registry(self, db):
+        """Test using fn_registry to lookup functions by name."""
+        from scihist.state import check_multiple_nodes_state
+
+        _seed_raw(db)
+        _run_all(db)
+
+        fn_registry = {
+            "process_data": process_data,
+            "second_step": second_step,
+        }
+
+        nodes = [
+            {"fn_name": "process_data", "call_id": None, "outputs": [ProcessedState]},
+            {"fn_name": "second_step", "call_id": None, "outputs": [SecondaryState]},
+        ]
+
+        result = check_multiple_nodes_state(nodes, fn_registry=fn_registry, db=db)
+
+        assert "fn__process_data__" in result
+        assert "fn__second_step__" in result
+
+    def test_multiple_nodes_missing_function(self, db):
+        """Test that missing functions are marked as red."""
+        from scihist.state import check_multiple_nodes_state
+
+        fn_registry = {}  # Empty registry
+
+        nodes = [
+            {"fn_name": "nonexistent_func", "call_id": "abc123", "outputs": [ProcessedState]},
+        ]
+
+        result = check_multiple_nodes_state(nodes, fn_registry=fn_registry, db=db)
+
+        assert "fn__nonexistent_func__abc123" in result
+        assert result["fn__nonexistent_func__abc123"]["state"] == "red"

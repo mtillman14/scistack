@@ -25,6 +25,8 @@ def for_each(
     distribute: bool = False,
     where=None,
     skip_computed: bool = True,
+    schema_filter: dict[str, list] | None = None,
+    schema_level: list[str] | None = None,
     _progress_fn: "Callable[[dict], None] | None" = None,
     _cancel_check: "Callable[[], bool] | None" = None,
     **metadata_iterables: list[Any],
@@ -54,7 +56,15 @@ def for_each(
         skip_computed: If True (default), skip combos whose outputs already exist
                     and whose full upstream provenance graph is unchanged. Pass
                     False to force re-computation of every combo.
-        **metadata_iterables: Iterables of metadata values to combine.
+        schema_filter: Optional dict of {schema_key: [selected_values]} to filter
+                    which schema combinations to process. If provided together with
+                    schema_level, metadata_iterables are built automatically.
+        schema_level: Optional list of schema keys to iterate over. If None and
+                    schema_filter is provided, iterates over all filtered keys.
+                    If both schema_filter and schema_level are None, **metadata_iterables
+                    are used directly (backward compatible).
+        **metadata_iterables: Iterables of metadata values to combine. Used when
+                    schema_filter and schema_level are not provided.
 
     Returns:
         A pandas DataFrame of results, or None when dry_run=True.
@@ -64,51 +74,126 @@ def for_each(
 
     fn_name = getattr(fn, "__name__", repr(fn))
     if _Log:
+        _Log.info(f"===== scihist.for_each({fn_name}) start =====")
         _Log.info(f"scihist.for_each({fn_name}): skip_computed={skip_computed}")
 
-    # Auto-wrap plain functions in LineageFcn
+    # Step 1: Auto-wrap plain functions in LineageFcn
     if not isinstance(fn, LineageFcn):
+        logger.info("[scihist] Step 1: auto-wrapping %s in LineageFcn", fn_name)
         fn = LineageFcn(fn)
-        logger.info("auto-wrapped %s in LineageFcn (hash=%s)", fn_name, fn.hash[:12])
+        logger.info("[scihist] auto-wrapped %s in LineageFcn (hash=%s)", fn_name, fn.hash[:12])
+        if _Log:
+            _Log.info(f"[scihist] Step 1: auto-wrapped {fn_name} in LineageFcn (hash={fn.hash[:12]})")
     else:
-        logger.debug("%s is already a LineageFcn (hash=%s)", fn_name, fn.hash[:12])
+        logger.debug("[scihist] Step 1: %s is already a LineageFcn (hash=%s)", fn_name, fn.hash[:12])
+        if _Log:
+            _Log.info(f"[scihist] Step 1: {fn_name} already wrapped in LineageFcn (hash={fn.hash[:12]})")
 
-    # Wrap LineageFcn in a plain callable for scidb.for_each
+    # Step 2: Wrap LineageFcn in a plain callable for scidb.for_each
+    logger.info("[scihist] Step 2: wrapping LineageFcn in tuple unpacking wrapper for scidb")
     from scilineage import make_tuple_unpacking_wrapper
     fn_plain = make_tuple_unpacking_wrapper(fn)
+    if _Log:
+        _Log.info("[scihist] Step 2: created tuple unpacking wrapper for scidb delegation")
 
     # Ensure database is available (get global instance if not provided)
     active_db = db
-    if active_db is None and (save or skip_computed):
+    if active_db is None and (save or skip_computed or schema_filter is not None):
         try:
             from scidb.database import get_database
             active_db = get_database()
         except Exception:
             pass
 
-    # Build the pre-combo skip hook when skip_computed is enabled.
+    # Step 2.5: Build metadata_iterables from schema_filter and schema_level if provided
+    if schema_filter is not None or schema_level is not None:
+        if metadata_iterables:
+            raise ValueError(
+                "Cannot use both schema_filter/schema_level and **metadata_iterables. "
+                "Use schema_filter/schema_level for automatic iteration, or "
+                "**metadata_iterables for manual control."
+            )
+
+        if active_db is None:
+            raise ValueError(
+                "schema_filter/schema_level require a database connection, but no db was provided "
+                "and no global database is configured."
+            )
+
+        # Determine which schema keys to iterate
+        all_schema_keys = active_db.dataset_schema_keys
+        if schema_level is not None:
+            # Explicit iteration keys provided
+            iterate_keys = schema_level
+        else:
+            # No schema_level: iterate over all schema keys
+            iterate_keys = all_schema_keys
+
+        # Build metadata_iterables from schema_filter
+        metadata_iterables = {}
+        for key in iterate_keys:
+            if schema_filter and key in schema_filter:
+                # Use filtered values
+                metadata_iterables[key] = schema_filter[key]
+            else:
+                # Get all distinct values from the database
+                metadata_iterables[key] = active_db.distinct_schema_values(key)
+
+        logger.info(
+            "[scihist] Built metadata_iterables from schema_filter/schema_level: %s",
+            {k: f"{len(v)} values" for k, v in metadata_iterables.items()}
+        )
+        if _Log:
+            _Log.info(
+                f"[scihist] Step 2.5: built metadata_iterables from schema params: "
+                f"{list(metadata_iterables.keys())}"
+            )
+
+    # Step 3: Build the pre-combo skip hook when skip_computed is enabled.
     pre_combo_hook = None
     if skip_computed and not dry_run and outputs:
         if active_db is not None:
+            logger.info("[scihist] Step 3: building skip_computed hook for %s", fn_name)
             pre_combo_hook = _build_skip_hook(fn, outputs, active_db, inputs)
-            logger.debug("built skip_computed hook for %s", fn_name)
+            logger.info("[scihist] built skip_computed hook for %s", fn_name)
+            if _Log:
+                _Log.info(f"[scihist] Step 3: built skip_computed hook for {fn_name}")
         else:
-            logger.debug("skip_computed disabled: no database available")
+            logger.debug("[scihist] Step 3: skip_computed disabled - no database available")
+            if _Log:
+                _Log.info("[scihist] Step 3: skip_computed disabled (no database)")
     elif not skip_computed:
-        logger.debug("skip_computed disabled by caller")
+        logger.debug("[scihist] Step 3: skip_computed disabled by caller")
+        if _Log:
+            _Log.info("[scihist] Step 3: skip_computed disabled by caller")
     elif dry_run:
-        logger.debug("skip_computed disabled: dry_run=True")
+        logger.debug("[scihist] Step 3: skip_computed disabled - dry_run=True")
+        if _Log:
+            _Log.info("[scihist] Step 3: skip_computed disabled (dry_run)")
     elif not outputs:
         logger.debug("skip_computed disabled: no outputs specified")
 
     # Delegate to scidb.for_each with save=True (scidb will detect LineageFcnResult
     # and call save_lineage_result with complete metadata).
+    # Step 4: Detect generates_file mode
     # Fixed input record_ids are now computed internally by scidb (no longer need
     # to pre-compute and pass via _lineage_fixed_rids).
     # For generates_file functions, inject combo metadata as kwargs so fn receives
     # schema keys (subject, session, etc.) as named arguments.
     _inject_meta = getattr(fn, 'generates_file', False)
-    logger.debug("delegating to scidb.for_each (save=%s, distribute=%s)", save, distribute)
+    if _inject_meta:
+        logger.info("[scihist] Step 4: generates_file=True, will inject combo metadata")
+        if _Log:
+            _Log.info("[scihist] Step 4: generates_file=True, metadata injection enabled")
+    else:
+        logger.debug("[scihist] Step 4: generates_file=False")
+        if _Log:
+            _Log.info("[scihist] Step 4: generates_file=False")
+
+    # Step 5: Delegate to scidb.for_each
+    logger.info("[scihist] Step 5: delegating to scidb.for_each (save=%s, distribute=%s)", save, distribute)
+    if _Log:
+        _Log.info(f"[scihist] Step 5: delegating to scidb.for_each (save={save}, distribute={distribute})")
     result_tbl = _scidb_for_each(
         fn_plain,
         inputs,
@@ -127,10 +212,15 @@ def for_each(
     )
 
     if result_tbl is None:
-        logger.info("scidb.for_each returned None (dry_run)")
+        logger.info("[scihist] scidb.for_each returned None (dry_run)")
+        if _Log:
+            _Log.info("[scihist] Step 5 complete: scidb.for_each returned None (dry_run)")
         return None
 
-    logger.info("scidb.for_each returned %d rows", len(result_tbl))
+    logger.info("[scihist] scidb.for_each returned %d rows", len(result_tbl))
+    if _Log:
+        _Log.info(f"[scihist] Step 5 complete: scidb.for_each returned {len(result_tbl)} rows")
+        _Log.info(f"===== scihist.for_each({fn_name}) complete =====")
     return result_tbl
 
 
@@ -557,6 +647,11 @@ def save_lineage_result(
     from scidb.database import get_database
     from datetime import datetime
 
+    output_name = output_obj.__name__ if hasattr(output_obj, '__name__') else str(output_obj)
+    logger.info("[scihist] save_lineage_result callback: saving %s with lineage", output_name)
+    if _Log:
+        _Log.info(f"[scihist] save_lineage_result: called back from scidb for {output_name}")
+
     output_name = output_obj.__name__ if isinstance(output_obj, type) else type(output_obj).__name__
     fn_name = lineage_result.invoked.fcn.fn.__name__ if hasattr(lineage_result.invoked.fcn, 'fn') else "unknown"
     logger.debug("save_lineage_result entry: output=%s, fn=%s, generates_file=%s",
@@ -626,10 +721,13 @@ def save_lineage_result(
             schema_keys=nested_metadata.get("schema"),
             output_content_hash=None,
         )
-        logger.debug("save_lineage_result exit: record_id=%s (generates_file)", generated_id[:12])
+        logger.info("[scihist] save_lineage_result: saved generates_file output, record_id=%s", generated_id[:12])
+        if _Log:
+            _Log.info(f"[scihist] save_lineage_result complete (generates_file): record_id={generated_id[:12]}")
         return generated_id
 
     # Normal case: save data + lineage
+    logger.debug("[scihist] save_lineage_result: normal save path (data + lineage)")
     lineage_hash = lineage_result.hash
     pipeline_lineage_hash = lineage_result.invoked.compute_lineage_hash()
     raw_data = get_raw_value(lineage_result)
@@ -646,7 +744,9 @@ def save_lineage_result(
         pipeline_lineage_hash=pipeline_lineage_hash,
     )
 
-    logger.debug("save_lineage_result exit: record_id=%s", rid[:12] if rid else None)
+    logger.info("[scihist] save_lineage_result: saved %s, record_id=%s", output_name, rid[:12] if rid else None)
+    if _Log:
+        _Log.info(f"[scihist] save_lineage_result complete: {output_name} record_id={rid[:12] if rid else None}")
     return rid
 
 

@@ -118,42 +118,50 @@ def check_lockfile_staleness(project_root: Path) -> Optional[StartupError]:
     (but not recorded as a startup error) — we'd rather open the project
     than block on a best-effort check.
     """
+    logger.info("[startup] Step 1: checking lockfile staleness for project: %s", project_root)
     project_root = Path(project_root)
     pyproject = project_root / "pyproject.toml"
     if not pyproject.exists():
         logger.debug(
-            "No pyproject.toml at %s — skipping lockfile staleness check",
+            "[startup] Step 1: no pyproject.toml at %s — skipping lockfile staleness check",
             project_root,
         )
         return None
+    logger.info("[startup] Step 1: found pyproject.toml, proceeding with staleness check")
 
+    logger.info("[startup] Step 2: attempting to import scistack.uv_wrapper")
     try:
         from scistack.uv_wrapper import (
             UvNotFoundError,
             is_lockfile_stale,
             sync,
         )
+        logger.info("[startup] Step 2: successfully imported scistack.uv_wrapper")
     except ImportError:
         logger.debug(
-            "scistack package not importable — skipping lockfile staleness check"
+            "[startup] Step 2: scistack package not importable — skipping lockfile staleness check"
         )
         return None
 
+    logger.info("[startup] Step 3: checking if lockfile is stale")
     try:
         stale = is_lockfile_stale(project_root)
+        logger.info("[startup] Step 3: lockfile staleness check result: %s", "STALE" if stale else "FRESH")
     except Exception:  # pragma: no cover — defensive
-        logger.debug("is_lockfile_stale raised unexpectedly", exc_info=True)
+        logger.debug("[startup] Step 3: is_lockfile_stale raised unexpectedly", exc_info=True)
         return None
 
     if not stale:
-        logger.debug("uv.lock at %s is up to date", project_root)
+        logger.debug("[startup] Step 3: uv.lock at %s is up to date, no sync needed", project_root)
         return None
 
-    logger.info("uv.lock is stale in %s — running uv sync", project_root)
+    logger.info("[startup] Step 4: uv.lock is stale in %s — running uv sync", project_root)
     try:
+        logger.info("[startup] Step 4: executing uv sync with 300s timeout")
         result = sync(project_root, timeout=300.0)
+        logger.info("[startup] Step 4: uv sync completed with exit code %d", result.returncode if hasattr(result, 'returncode') else 0)
     except UvNotFoundError as e:
-        logger.warning("uv is not installed: %s", e)
+        logger.warning("[startup] Step 4: uv is not installed: %s", e)
         err = StartupError(
             kind="uv_not_installed",
             message=(
@@ -176,11 +184,11 @@ def check_lockfile_staleness(project_root: Path) -> Optional[StartupError]:
         return err
 
     if result.ok:
-        logger.info("uv sync succeeded on project open")
+        logger.info("[startup] Step 4 complete: uv sync succeeded on project open")
         return None
 
     logger.warning(
-        "uv sync failed on project open (exit %d):\n%s",
+        "[startup] Step 4 failed: uv sync failed on project open (exit %d):\n%s",
         result.returncode,
         result.combined_output,
     )

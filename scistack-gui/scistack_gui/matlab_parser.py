@@ -68,27 +68,32 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
     Returns ``None`` if the file cannot be read or does not contain a
     valid function declaration.
     """
+    logger.debug("[matlab_parser] Parsing function file: %s", path)
     try:
         raw = path.read_bytes()
     except OSError as e:
-        logger.warning("Cannot read MATLAB function file %s: %s", path, e)
+        logger.warning("[matlab_parser] Cannot read MATLAB function file %s: %s", path, e)
         return None
 
     # Hash raw bytes so the digest matches MATLAB's fileread() which
     # preserves \r\n line endings (read_text would normalise them away).
+    logger.debug("[matlab_parser] Computing source hash")
     source_hash = sha256(raw).hexdigest()
     text = raw.decode("utf-8", errors="replace")
 
+    logger.debug("[matlab_parser] Searching for function declaration")
     m = _FUNCTION_RE.search(text)
     if m is None:
-        logger.debug("No function declaration found in %s", path)
+        logger.debug("[matlab_parser] No function declaration found in %s", path)
         return None
 
     # Group 3 is always the function name.
     fn_name = m.group(3)
+    logger.debug("[matlab_parser] Found function: %s", fn_name)
     # Group 4 is the parameter list.
     raw_params = m.group(4).strip()
     params = [p.strip() for p in raw_params.split(",") if p.strip()] if raw_params else []
+    logger.debug("[matlab_parser] Function has %d parameters", len(params))
 
     # Count output arguments and extract names from the declaration.
     #   Group 1: "[out1, out2]" → count comma-separated names
@@ -103,7 +108,9 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
     else:
         output_names = []
         n_outputs = 0
+    logger.debug("[matlab_parser] Function has %d outputs", n_outputs)
 
+    logger.debug("[matlab_parser] Successfully parsed function: %s", fn_name)
     return MatlabFunctionInfo(
         name=fn_name,
         # The caller (config._resolve_glob_paths) already normalizes paths
@@ -126,21 +133,27 @@ def parse_matlab_variable(path: Path) -> str | None:
     Looks for ``classdef Foo < scidb.BaseVariable`` (or any parent path
     ending in ``BaseVariable``). Returns the class name or ``None``.
     """
+    logger.debug("[matlab_parser] Parsing variable classdef file: %s", path)
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        logger.warning("Cannot read MATLAB variable file %s: %s", path, e)
+        logger.warning("[matlab_parser] Cannot read MATLAB variable file %s: %s", path, e)
         return None
 
+    logger.debug("[matlab_parser] Searching for classdef declaration")
     m = _CLASSDEF_RE.search(text)
     if m is None:
+        logger.debug("[matlab_parser] No classdef declaration found in %s", path)
         return None
 
     class_name = m.group(1)
     parent = m.group(2)
+    logger.debug("[matlab_parser] Found classdef: %s < %s", class_name, parent)
 
     # Accept any parent that ends with "BaseVariable" (e.g. scidb.BaseVariable).
     if parent.endswith("BaseVariable"):
+        logger.debug("[matlab_parser] Class %s is a BaseVariable subclass", class_name)
         return class_name
 
+    logger.debug("[matlab_parser] Class %s does not inherit from BaseVariable", class_name)
     return None

@@ -149,6 +149,7 @@ def aggregate_variants(
     Returns:
         AggregatedData with all parsed fields.
     """
+    logger.info("[graph_builder] aggregate_variants: processing %d variant(s)", len(variants))
     agg = AggregatedData()
 
     for v in variants:
@@ -205,9 +206,10 @@ def aggregate_variants(
 
     # Add variable types from the DB that weren't in any for_each run.
     agg.all_var_types |= listed_var_names
+    logger.debug("[graph_builder] added %d variable type(s) from list_variables", len(listed_var_names))
 
-    logger.debug(
-        "aggregate_variants: %d variants → %d var types, %d call sites, %d constants, %d path inputs",
+    logger.info(
+        "[graph_builder] aggregate_variants complete: %d variants → %d var types, %d call sites, %d constants, %d path inputs",
         len(variants), len(agg.all_var_types), len(agg.fn_outputs),
         len(agg.const_counts), len(agg.path_inputs),
     )
@@ -224,6 +226,8 @@ def filter_hidden(agg: AggregatedData, hidden_ids: set[str]) -> AggregatedData:
     Returns:
         The same AggregatedData, mutated.
     """
+    logger.info("[graph_builder] filter_hidden: filtering %d hidden node(s)", len(hidden_ids))
+
     hidden_var_types = {nid.replace("var__", "", 1) for nid in hidden_ids
                         if nid.startswith("var__")}
     # fn IDs in hidden_ids are composite ``fn__{fn_name}__{call_id}``.
@@ -262,8 +266,12 @@ def filter_hidden(agg: AggregatedData, hidden_ids: set[str]) -> AggregatedData:
         agg.path_inputs.pop(pname, None)
 
     if hidden_ids:
+        logger.info(
+            "[graph_builder] filter_hidden complete: removed %d var, %d fn, %d const, %d pathInput",
+            len(hidden_var_types), len(hidden_fkeys), len(hidden_const_names), len(hidden_path_names),
+        )
         logger.debug(
-            "filter_hidden: removed var=%s fn=%s const=%s pathInput=%s",
+            "[graph_builder] hidden nodes: var=%s fn=%s const=%s pathInput=%s",
             hidden_var_types, sorted(hidden_fkeys),
             hidden_const_names, hidden_path_names,
         )
@@ -299,6 +307,7 @@ def build_variable_nodes(
     run_states: dict[str, str],
 ) -> list[dict]:
     """Build React Flow variable nodes."""
+    logger.info("[graph_builder] build_variable_nodes: building %d variable node(s)", len(all_var_types))
     nodes = []
     for vtype in sorted(all_var_types):
         data: dict = {
@@ -313,6 +322,7 @@ def build_variable_nodes(
             "position": {"x": 0, "y": 0},
             "data": data,
         })
+    logger.debug("[graph_builder] built %d variable node(s)", len(nodes))
     return nodes
 
 
@@ -321,6 +331,7 @@ def build_constant_nodes(
     pending_constants: dict[str, set[str]],
 ) -> list[dict]:
     """Build React Flow constant nodes."""
+    logger.info("[graph_builder] build_constant_nodes: building %d constant node(s)", len(const_counts))
     nodes = []
     for const_name in sorted(const_counts.keys()):
         values = [
@@ -337,6 +348,7 @@ def build_constant_nodes(
             "position": {"x": 0, "y": 0},
             "data": {"label": const_name, "values": values},
         })
+    logger.debug("[graph_builder] built %d constant node(s)", len(nodes))
     return nodes
 
 
@@ -366,6 +378,7 @@ def overlay_saved_path_inputs(
 
 def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
     """Build React Flow path input nodes."""
+    logger.info("[graph_builder] build_path_input_nodes: building %d path input node(s)", len(path_inputs))
     nodes = []
     for param_name in sorted(path_inputs.keys()):
         pi = path_inputs[param_name]
@@ -379,6 +392,7 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
                 "root_folder": pi.get("root_folder"),
             },
         })
+    logger.debug("[graph_builder] built %d path input node(s)", len(nodes))
     return nodes
 
 
@@ -414,6 +428,7 @@ def build_function_nodes(
             names. Used to decide which declared params got wired up so their
             handles are rendered (handle id `out__{param_name}`).
     """
+    logger.info("[graph_builder] build_function_nodes: building %d function node(s)", len(fn_input_params))
     nodes = []
     # Sort by (fn_name, call_id) for stable output across runs.
     for fkey in sorted(fn_input_params.keys()):
@@ -489,6 +504,7 @@ def build_function_nodes(
             "position": {"x": 0, "y": 0},
             "data": fn_data,
         })
+    logger.debug("[graph_builder] built %d function node(s)", len(nodes))
     return nodes
 
 
@@ -519,11 +535,13 @@ def build_edges(
             Variable class. Drives sourceHandle=out__{param_name} for output
             edges instead of the class-name-based handle.
     """
+    logger.info("[graph_builder] build_edges: building edges from DB-derived data and manual edges")
     edges = []
     seen_edges: set[tuple] = set()
     p2c_all = matlab_param_to_class or {}
 
     # Variable → function edges (one per call-site target).
+    logger.debug("[graph_builder] building variable → function edges")
     for fkey, params in fn_input_params.items():
         fn, cid = fkey
         target_id = fn_node_id(fn, cid)
@@ -537,9 +555,12 @@ def build_edges(
                     "target": target_id,
                     "targetHandle": f"in__{param_name}",
                 })
+    var_to_fn_count = len(edges)
+    logger.debug("[graph_builder] built %d variable → function edge(s)", var_to_fn_count)
 
     # Function → variable edges.  For MATLAB fns, use the param↔class mapping
     # (call-site-independent) so sourceHandle=out__{param_name}.
+    logger.debug("[graph_builder] building function → variable edges")
     for fkey, out_types in fn_outputs.items():
         fn, cid = fkey
         source_id = fn_node_id(fn, cid)
@@ -557,8 +578,11 @@ def build_edges(
                 "target": f"var__{out_type}",
                 "sourceHandle": source_handle,
             })
+    fn_to_var_count = len(edges) - var_to_fn_count
+    logger.debug("[graph_builder] built %d function → variable edge(s)", fn_to_var_count)
 
     # Constant → function edges (one per call site that uses the constant).
+    logger.debug("[graph_builder] building constant → function edges")
     for const_name, fkeys in const_fns.items():
         for fkey in fkeys:
             fn, cid = fkey
@@ -572,8 +596,11 @@ def build_edges(
                     "target": target_id,
                     "targetHandle": f"const__{const_name}",
                 })
+    const_to_fn_count = len(edges) - var_to_fn_count - fn_to_var_count
+    logger.debug("[graph_builder] built %d constant → function edge(s)", const_to_fn_count)
 
     # PathInput → function edges.
+    logger.debug("[graph_builder] building pathInput → function edges")
     for param_name, pi in path_inputs.items():
         for fkey in pi["functions"]:
             fn, cid = fkey
@@ -587,8 +614,12 @@ def build_edges(
                     "target": target_id,
                     "targetHandle": f"in__{param_name}",
                 })
+    path_to_fn_count = len(edges) - var_to_fn_count - fn_to_var_count - const_to_fn_count
+    logger.debug("[graph_builder] built %d pathInput → function edge(s)", path_to_fn_count)
 
     # Merge manually-created edges.
+    logger.debug("[graph_builder] merging %d manual edge(s)", len(manual_edges))
+    db_edge_count = len(edges)
     for me in manual_edges:
         if me["source"] in hidden_ids or me["target"] in hidden_ids:
             continue
@@ -605,7 +636,11 @@ def build_edges(
         if me.get("targetHandle"):
             edge["targetHandle"] = me["targetHandle"]
         edges.append(edge)
+    manual_edge_count = len(edges) - db_edge_count
+    logger.debug("[graph_builder] added %d manual edge(s)", manual_edge_count)
 
+    logger.info("[graph_builder] build_edges complete: %d total edges (%d DB-derived, %d manual)",
+                len(edges), db_edge_count, manual_edge_count)
     return edges
 
 
@@ -694,6 +729,9 @@ def merge_manual_nodes(
         - List of manual node IDs that should be added to the graph.
         - List of GraduationAction objects (side-effects for the service layer).
     """
+    logger.info("[graph_builder] merge_manual_nodes: processing %d manual node(s) against %d existing node(s)",
+                len(manual_nodes), len(existing_nodes))
+
     existing_ids = {n["id"] for n in existing_nodes}
     db_nodes_by_label: dict[tuple, list[str]] = {}
     for n in existing_nodes:
@@ -721,10 +759,11 @@ def merge_manual_nodes(
             )
         to_add.append(node_id)
 
+    logger.info("[graph_builder] merge_manual_nodes complete: %d to add, %d to graduate",
+                len(to_add), len(graduations))
     if graduations:
         logger.debug(
-            "merge_manual_nodes: graduating %d node(s): %s",
-            len(graduations),
+            "[graph_builder] graduations: %s",
             [(g.old_id, g.new_id) for g in graduations],
         )
     return to_add, graduations

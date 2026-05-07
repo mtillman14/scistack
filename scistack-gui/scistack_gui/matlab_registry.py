@@ -53,28 +53,34 @@ def load_from_config(config: SciStackConfig) -> dict:
 
     Returns a summary dict.
     """
+    logger.info("[matlab_registry] Step 1: Loading MATLAB config")
     global _config
     _config = config
 
+    logger.info("[matlab_registry] Step 2: Clearing registries")
     _matlab_functions.clear()
     _matlab_variables.clear()
 
     # --- Function files ---
-    for path in config.matlab_functions:
+    logger.info("[matlab_registry] Step 3: Parsing %d MATLAB function files", len(config.matlab_functions))
+    for idx, path in enumerate(config.matlab_functions):
+        logger.debug("[matlab_registry] Parsing function file %d/%d: %s", idx + 1, len(config.matlab_functions), path)
         info = parse_matlab_function(path)
         if info is not None:
             if info.name in _matlab_functions:
                 logger.warning(
-                    "MATLAB function '%s' from %s shadows previous definition from %s",
+                    "[matlab_registry] MATLAB function '%s' from %s shadows previous definition from %s",
                     info.name, path, _matlab_functions[info.name].file_path,
                 )
             _matlab_functions[info.name] = info
-            logger.info("Registered MATLAB function: %s (%s)", info.name, path)
+            logger.info("[matlab_registry] Registered MATLAB function: %s (%s)", info.name, path)
         else:
-            logger.warning("Could not parse MATLAB function from %s", path)
+            logger.warning("[matlab_registry] Could not parse MATLAB function from %s", path)
 
     # --- Variable classdef files ---
-    for path in config.matlab_variables:
+    logger.info("[matlab_registry] Step 4: Parsing %d MATLAB variable files", len(config.matlab_variables))
+    for idx, path in enumerate(config.matlab_variables):
+        logger.debug("[matlab_registry] Parsing variable file %d/%d: %s", idx + 1, len(config.matlab_variables), path)
         var_name = parse_matlab_variable(path)
         if var_name is not None:
             # Store the path as-is (already absolute & normalized by
@@ -83,17 +89,20 @@ def load_from_config(config: SciStackConfig) -> dict:
             _matlab_variables[var_name] = path
             # Create a Python surrogate so BaseVariable._all_subclasses
             # contains this type and the DAG builder can reference it.
+            logger.debug("[matlab_registry] Creating Python surrogate for MATLAB variable: %s", var_name)
             try:
                 from sci_matlab.bridge import register_matlab_variable
                 register_matlab_variable(var_name)
-                logger.info("Registered MATLAB variable: %s (%s)", var_name, path)
+                logger.info("[matlab_registry] Registered MATLAB variable: %s (%s)", var_name, path)
             except Exception:
                 logger.exception(
-                    "Failed to create surrogate for MATLAB variable '%s'", var_name
+                    "[matlab_registry] Failed to create surrogate for MATLAB variable '%s'", var_name
                 )
         else:
-            logger.warning("Could not parse MATLAB variable classdef from %s", path)
+            logger.warning("[matlab_registry] Could not parse MATLAB variable classdef from %s", path)
 
+    logger.info("[matlab_registry] Step 5: MATLAB registry loading complete - %d functions, %d variables",
+                len(_matlab_functions), len(_matlab_variables))
     return {
         "matlab_functions": sorted(_matlab_functions.keys()),
         "matlab_variables": sorted(_matlab_variables.keys()),
@@ -102,8 +111,9 @@ def load_from_config(config: SciStackConfig) -> dict:
 
 def refresh_all() -> dict:
     """Re-scan all configured MATLAB paths."""
+    logger.info("[matlab_registry] Starting refresh_all")
     if _config is None:
-        logger.warning("No MATLAB config loaded; nothing to refresh.")
+        logger.warning("[matlab_registry] No MATLAB config loaded; nothing to refresh.")
         return {"matlab_functions": [], "matlab_variables": []}
     return load_from_config(_config)
 

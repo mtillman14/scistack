@@ -89,7 +89,7 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     captures stdout line-by-line, and pushes it to the WebSocket queue.
     """
     logger.info(
-        "run[%s]: thread started for function=%s, variants=%d, "
+        "[run_thread] Step 1: Thread started for run_id=%s, function=%s, variants=%d, "
         "schema_level=%s, schema_filter=%s, where_filters=%s, run_options=%s",
         run_id, function_name, len(variants or []),
         schema_level, _summarize_schema_filter(schema_filter),
@@ -98,9 +98,11 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     )
 
     def emit(text: str):
+        logger.debug("[run_thread] Emitting output for run_id=%s: %s", run_id, text.rstrip())
         push_message({"type": "run_output", "run_id": run_id, "text": text})
 
     # Register this run so cancel_run/force_cancel_run can find it.
+    logger.info("[run_thread] Step 2: Registering run in active runs registry (run_id=%s)", run_id)
     cancel_event = threading.Event()
     with _active_runs_lock:
         _active_runs[run_id] = {
@@ -109,27 +111,35 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
             "cancelled": False,
             "force_cancelled": False,
         }
+    logger.debug("[run_thread] Run registered successfully (run_id=%s)", run_id)
 
     def _is_cancelled() -> bool:
         return cancel_event.is_set()
 
     # The DatabaseManager is stored in thread-local storage by configure_database().
     # Background threads don't inherit that local, so we re-register it here.
+    logger.info("[run_thread] Step 3: Setting current database for thread (run_id=%s)", run_id)
     db.set_current_db()
 
+    logger.info("[run_thread] Step 4: Looking up function '%s' in registry (run_id=%s)", function_name, run_id)
     try:
         fn = registry.get_function(function_name)
+        logger.debug("[run_thread] Function found: %s (run_id=%s)", fn, run_id)
     except KeyError as e:
-        logger.warning("run[%s]: function not found: %s", run_id, e)
+        logger.warning("[run_thread] Function not found: %s (run_id=%s)", e, run_id)
         push_message({"type": "run_done", "run_id": run_id, "success": False,
                       "error": str(e), "cancelled": False})
         with _active_runs_lock:
             _active_runs.pop(run_id, None)
+        logger.info("[run_thread] Thread exiting due to function not found (run_id=%s)", run_id)
         return
 
     # Look up input/output types for this function from the DB.
+    logger.info("[run_thread] Step 5: Querying DB for pipeline variants (run_id=%s)", run_id)
     all_variants = db.list_pipeline_variants()
     fn_variants = [v for v in all_variants if v["function_name"] == function_name]
+    logger.debug("[run_thread] Found %d variants for function '%s' (run_id=%s)",
+                 len(fn_variants), function_name, run_id)
 
     from scidb.log import Log
     Log.info(f"run: fn_variants for '{function_name}' = {fn_variants}")
@@ -138,6 +148,7 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
     # If the user has rewired the function's outputs (e.g. deleted an old output
     # node and connected a new one), manual edges should override DB-derived
     # output types.  This prevents stale DB history from resurrecting old nodes.
+    logger.info("[run_thread] Step 6: Checking manual edges for output wiring (run_id=%s)", run_id)
     from scistack_gui import pipeline_store, layout as layout_store
     from scistack_gui.api.pipeline import _fn_params_from_registry
     from scistack_gui.domain.edge_resolver import (
@@ -146,6 +157,8 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
 
     all_edges = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
+    logger.debug("[run_thread] Found %d manual edges, %d manual nodes (run_id=%s)",
+                 len(all_edges), len(manual_nodes), run_id)
 
     # Collect all node IDs for this function: every DB-derived call site
     # (composite fn__{fn}__{call_id}), every manual node sharing the label,
@@ -163,9 +176,13 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
 
     manual_output_types = infer_manual_fn_output_types(
         fn_node_ids, all_edges, manual_nodes, existing_node_labels={})
+    logger.debug("[run_thread] Inferred manual output types: %s (run_id=%s)",
+                 manual_output_types, run_id)
 
     if fn_variants and manual_output_types:
         # Override output types in DB-derived variants with the current wiring.
+        logger.info("[run_thread] Step 7: Overriding DB output types with manual edge outputs: %s (run_id=%s)",
+                    manual_output_types, run_id)
         Log.info(f"run: overriding DB output types with manual edge outputs: {manual_output_types}")
         overridden = []
         seen_constants = set()
@@ -180,14 +197,17 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                     "output_type": out,
                 })
         fn_variants = overridden
+        logger.debug("[run_thread] Overridden to %d variants (run_id=%s)", len(fn_variants), run_id)
 
     if not fn_variants:
         # No DB history yet — try to infer inputs/outputs from manual edges.
+        logger.info("[run_thread] Step 8: No DB variants found, inferring from manual edges (run_id=%s)", run_id)
         Log.info(f"run: all_edges = {all_edges}")
         Log.info(f"run: manual_nodes = {manual_nodes}")
         Log.info(f"run: fn_node_ids = {fn_node_ids}")
 
         sig_params = _fn_params_from_registry(function_name)
+        logger.debug("[run_thread] Function signature params: %s (run_id=%s)", sig_params, run_id)
         resolved = resolve_function_edges(
             fn_node_ids=fn_node_ids,
             manual_edges=all_edges,
@@ -199,21 +219,28 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
         output_types = resolved.output_types
         constant_names = resolved.constant_names
 
+        logger.info("[run_thread] Edge resolution complete: inputs=%s, outputs=%s, constants=%s (run_id=%s)",
+                    input_types, output_types, constant_names, run_id)
         Log.info(f"run: after edge scan: input_types={input_types}, output_types={output_types}, "
                  f"constant_names={constant_names}")
 
         if not output_types:
+            logger.warning("[run_thread] No outputs found for '%s' from DB or edges (run_id=%s)",
+                          function_name, run_id)
             Log.warn(f"run: no outputs found for '{function_name}' from DB or edges")
             push_message({"type": "run_done", "run_id": run_id, "success": False,
                           "error": f"No pipeline history or output connections found for '{function_name}'. "
                                     "Connect it to an output variable node first."})
+            logger.info("[run_thread] Thread exiting due to no outputs (run_id=%s)", run_id)
             return
 
         # Collect constant values from pending constants for wired constant nodes.
+        logger.info("[run_thread] Step 9: Collecting pending constants for wired nodes (run_id=%s)", run_id)
         import ast as _ast
         inferred_constants: dict[str, list] = {}  # const_name → list of typed values
         if constant_names:
             pending = pipeline_store.get_pending_constants(db)
+            logger.debug("[run_thread] Pending constants from DB: %s (run_id=%s)", pending, run_id)
             Log.info(f"run: pending constants = {pending}")
             for cname in constant_names:
                 vals = pending.get(cname, set())
@@ -225,13 +252,20 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                         typed_vals.append(v)
                 if typed_vals:
                     inferred_constants[cname] = typed_vals
+                    logger.debug("[run_thread] Constant '%s' has %d values (run_id=%s)",
+                                cname, len(typed_vals), run_id)
                 else:
+                    logger.warning("[run_thread] Constant '%s' wired to '%s' has no pending values (run_id=%s)",
+                                  cname, function_name, run_id)
                     Log.warn(f"run: constant '{cname}' wired to '{function_name}' but has no pending values")
 
+        logger.info("[run_thread] Inferred constants: %s (run_id=%s)",
+                    list(inferred_constants.keys()), run_id)
         Log.info(f"run: inferred inputs={input_types} outputs={output_types} "
                  f"constants={list(inferred_constants.keys())} for '{function_name}' from edges")
 
         # Build synthetic variants: cross-product of output types × constant combos.
+        logger.info("[run_thread] Step 10: Building synthetic variants from inferred data (run_id=%s)", run_id)
         if inferred_constants:
             # Build all combinations of constant values.
             from itertools import product as _product
@@ -246,13 +280,18 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                         "output_type": out,
                         "constants": constants,
                     })
+            logger.debug("[run_thread] Built %d synthetic variants from constant combinations (run_id=%s)",
+                        len(fn_variants), run_id)
         else:
             fn_variants = [
                 {"input_types": input_types, "output_type": out, "constants": {}}
                 for out in output_types
             ]
+            logger.debug("[run_thread] Built %d synthetic variants without constants (run_id=%s)",
+                        len(fn_variants), run_id)
 
     # --- Variant resolution via domain layer ---
+    logger.info("[run_thread] Step 11: Resolving variants to execute (run_id=%s)", run_id)
     from scistack_gui.domain.variant_resolver import (
         filter_variants, deduplicate_variants,
         merge_pending_constants, build_schema_kwargs,
@@ -260,58 +299,79 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
 
     # Determine which variants to run.
     if variants:
+        logger.debug("[run_thread] Filtering %d DB variants to requested %d variants (run_id=%s)",
+                    len(fn_variants), len(variants), run_id)
         targets = filter_variants(fn_variants, variants)
     else:
+        logger.debug("[run_thread] Using all %d DB variants (run_id=%s)", len(fn_variants), run_id)
         targets = fn_variants
 
     unique_targets = deduplicate_variants(targets)
+    logger.debug("[run_thread] After deduplication: %d unique targets (run_id=%s)",
+                len(unique_targets), run_id)
 
     # Add synthetic targets for pending constant values.
     if fn_variants:
         from scistack_gui import pipeline_store as _ps
         pending_consts = _ps.get_pending_constants(db)
+        logger.debug("[run_thread] Merging pending constants: %s (run_id=%s)",
+                    list(pending_consts.keys()), run_id)
         unique_targets = merge_pending_constants(unique_targets, pending_consts)
+        logger.debug("[run_thread] After merging pending constants: %d targets (run_id=%s)",
+                    len(unique_targets), run_id)
 
     # Build schema kwargs.
+    logger.info("[run_thread] Step 12: Building schema iteration parameters (run_id=%s)", run_id)
     iterate_keys = schema_level if schema_level is not None else list(db.dataset_schema_keys)
     distinct_values = {key: db.distinct_schema_values(key) for key in iterate_keys}
+    logger.debug("[run_thread] Schema iteration keys: %s (run_id=%s)", iterate_keys, run_id)
     schema_kwargs = build_schema_kwargs(
         schema_level, list(db.dataset_schema_keys),
         schema_filter, distinct_values,
     )
+    logger.debug("[run_thread] Schema kwargs: %s (run_id=%s)", list(schema_kwargs.keys()), run_id)
 
     # Extract run options (dry_run, save, distribute, as_table).
+    logger.info("[run_thread] Step 13: Extracting run options (run_id=%s)", run_id)
     opts = run_options or {}
     opt_dry_run = opts.get("dry_run", False)
     opt_save = opts.get("save", True)
     opt_distribute = opts.get("distribute", False)
     opt_as_table = opts.get("as_table", False)
+    logger.debug("[run_thread] Run options: dry_run=%s, save=%s, distribute=%s, as_table=%s (run_id=%s)",
+                opt_dry_run, opt_save, opt_distribute, opt_as_table, run_id)
 
     success = True
     run_started_at = time.time()
     # Build where= argument from where_filters.
+    logger.info("[run_thread] Step 14: Building where filters (run_id=%s)", run_id)
     where_arg = _build_where(where_filters)
+    if where_arg:
+        logger.debug("[run_thread] Where filters built: %s (run_id=%s)", where_arg, run_id)
 
     logger.info(
-        "run[%s]: executing %d target(s) for '%s' "
-        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, schema_keys=%s)",
-        run_id, len(unique_targets), function_name,
+        "[run_thread] Step 15: Starting execution of %d target(s) for '%s' "
+        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, schema_keys=%s) (run_id=%s)",
+        len(unique_targets), function_name,
         opt_dry_run, opt_save, opt_distribute, opt_as_table,
-        list(schema_kwargs.keys()),
+        list(schema_kwargs.keys()), run_id,
     )
 
     cancelled = False
     try:
-        for v in unique_targets:
+        for idx, v in enumerate(unique_targets, 1):
             # Cooperative cancel: stop before launching the next variant.
             if _is_cancelled():
-                logger.info("run[%s]: cancel detected between variants — stopping",
-                            run_id)
+                logger.info("[run_thread] Cancel detected between variants — stopping (run_id=%s, target=%d/%d)",
+                            run_id, idx, len(unique_targets))
                 cancelled = True
                 emit("⛔ Cancelled\n")
                 break
             # Build inputs dict: variable class inputs + scalar constants
+            logger.info("[run_thread] Step 16.%d: Processing target %d/%d (run_id=%s)",
+                       idx, idx, len(unique_targets), run_id)
             try:
+                logger.debug("[run_thread] Building inputs for target %d (run_id=%s)", idx, run_id)
                 inputs = {}
                 for param, type_names in v["input_types"].items():
                     # type_names may be a list (new) or a string (from DB history).
@@ -319,14 +379,25 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                         if len(type_names) > 1:
                             from scidb import EachOf
                             inputs[param] = EachOf(*(registry.get_variable_class(t) for t in type_names))
+                            logger.debug("[run_thread] Input '%s' is EachOf with %d types (run_id=%s)",
+                                       param, len(type_names), run_id)
                         else:
                             inputs[param] = registry.get_variable_class(type_names[0])
+                            logger.debug("[run_thread] Input '%s' is single type: %s (run_id=%s)",
+                                       param, type_names[0], run_id)
                     else:
                         inputs[param] = registry.get_variable_class(type_names)
+                        logger.debug("[run_thread] Input '%s' is type: %s (run_id=%s)",
+                                   param, type_names, run_id)
                 inputs.update(v["constants"])   # add constants
+                logger.debug("[run_thread] Added constants to inputs: %s (run_id=%s)",
+                           v["constants"], run_id)
 
                 OutputCls = registry.get_variable_class(v["output_type"])
+                logger.debug("[run_thread] Output class: %s (run_id=%s)", v["output_type"], run_id)
             except KeyError as e:
+                logger.error("[run_thread] Failed to resolve input/output types for target %d: %s (run_id=%s)",
+                           idx, e, run_id)
                 emit(f"Error: {e}\n")
                 success = False
                 continue
@@ -334,15 +405,16 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
             label = f"{function_name}({', '.join(f'{k}={val}' for k, val in v['constants'].items())})" \
                     if v["constants"] else function_name
             logger.info(
-                "run[%s]: target -> %s, inputs=%s, output=%s",
-                run_id, label,
+                "[run_thread] Target %d/%d -> %s, inputs=%s, output=%s (run_id=%s)",
+                idx, len(unique_targets), label,
                 {k: (type_names if isinstance(type_names, list) else [type_names])
                  for k, type_names in v["input_types"].items()},
-                v["output_type"],
+                v["output_type"], run_id,
             )
             emit(f"▶ Running {label}\n")
 
             # Emit structured run_start message for the frontend.
+            logger.debug("[run_thread] Emitting run_start message for target %d (run_id=%s)", idx, run_id)
             started_at = time.time()
             push_message({
                 "type": "run_start",
@@ -358,6 +430,8 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
             def _progress_fn(info: dict):
                 # Convert metadata values to strings for JSON serialization.
                 meta = {str(k): str(val) for k, val in info.get("metadata", {}).items()}
+                logger.debug("[run_thread] Progress update: event=%s, current=%d, total=%d (run_id=%s)",
+                           info["event"], info["current"], info["total"], run_id)
                 push_message({
                     "type": "run_progress",
                     "run_id": run_id,
@@ -371,8 +445,11 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                 })
 
             # Capture for_each stdout and relay it line-by-line.
+            logger.info("[run_thread] Step 17.%d: Executing for_each for target %d (run_id=%s)",
+                       idx, idx, run_id)
             buf = StringIO()
             try:
+                logger.debug("[run_thread] Redirecting stdout to buffer (run_id=%s)", run_id)
                 with redirect_stdout(buf):
                     for_each(fn, inputs=inputs, outputs=[OutputCls],
                              dry_run=opt_dry_run, save=opt_save,
@@ -385,49 +462,58 @@ def _run_in_thread(run_id: str, function_name: str, variants: list[dict], db: Da
                              **schema_kwargs)
                 output = buf.getvalue()
                 if output:
+                    logger.debug("[run_thread] Captured %d bytes of stdout (run_id=%s)",
+                               len(output), run_id)
                     emit(output)
                 target_ms = int((time.time() - started_at) * 1000)
-                logger.info("run[%s]: target %s completed in %d ms",
-                            run_id, label, target_ms)
+                logger.info("[run_thread] Target %d/%d (%s) completed successfully in %d ms (run_id=%s)",
+                            idx, len(unique_targets), label, target_ms, run_id)
             except KeyboardInterrupt:
                 # Force-cancel injected an interrupt into this thread (or the
                 # user pressed Ctrl-C in CLI mode).  Treat as cancel and stop.
                 logger.warning(
-                    "run[%s]: target %s interrupted by KeyboardInterrupt "
-                    "(force-cancel)", run_id, label,
+                    "[run_thread] Target %d/%d (%s) interrupted by KeyboardInterrupt (force-cancel) (run_id=%s)",
+                    idx, len(unique_targets), label, run_id,
                 )
                 output = buf.getvalue()
                 if output:
+                    logger.debug("[run_thread] Emitting %d bytes of partial stdout (run_id=%s)",
+                               len(output), run_id)
                     emit(output)
                 cancelled = True
                 emit("⛔ Force-cancelled\n")
                 break
             except Exception as exc:
-                logger.exception("run[%s]: target %s failed", run_id, label)
+                logger.exception("[run_thread] Target %d/%d (%s) failed with exception (run_id=%s)",
+                                idx, len(unique_targets), label, run_id)
                 emit(f"Error: {exc}\n")
                 success = False
     except KeyboardInterrupt:
         # Defence in depth: if KeyboardInterrupt slips past the per-target
         # handler (e.g. fired between targets), still cancel cleanly.
-        logger.warning("run[%s]: interrupted by KeyboardInterrupt at top level",
+        logger.warning("[run_thread] Interrupted by KeyboardInterrupt at top level (run_id=%s)",
                        run_id)
         cancelled = True
         emit("⛔ Force-cancelled\n")
     finally:
+        logger.info("[run_thread] Step 18: Cleanup and completion (run_id=%s)", run_id)
         duration_ms = int((time.time() - run_started_at) * 1000)
         # Read the final cancel flags from the registry before popping it.
+        logger.debug("[run_thread] Removing run from active registry (run_id=%s)", run_id)
         with _active_runs_lock:
             entry = _active_runs.pop(run_id, None)
         was_force = bool(entry and entry.get("force_cancelled"))
         if cancel_event.is_set():
             cancelled = True
         logger.info(
-            "run[%s]: finished (success=%s, cancelled=%s, force=%s) in %d ms",
-            run_id, success, cancelled, was_force, duration_ms,
+            "[run_thread] Thread finished (success=%s, cancelled=%s, force=%s) in %d ms (run_id=%s)",
+            success, cancelled, was_force, duration_ms, run_id,
         )
+        logger.debug("[run_thread] Emitting run_done message (run_id=%s)", run_id)
         push_message({"type": "run_done", "run_id": run_id, "success": success,
                       "duration_ms": duration_ms,
                       "cancelled": cancelled, "force_cancelled": was_force})
+        logger.debug("[run_thread] Emitting dag_updated message (run_id=%s)", run_id)
         push_message({"type": "dag_updated"})
 
 
@@ -470,7 +556,17 @@ def _summarize_schema_filter(schema_filter: dict[str, list] | None) -> str:
 
 @router.post("/run")
 def start_run(req: RunRequest, db: DatabaseManager = Depends(get_db)):
+    logger.info("[api/run] POST /api/run - Validating request")
+    logger.debug("[api/run] Request: function_name=%s, variants=%d, run_id=%s, schema_filter=%s, "
+                "schema_level=%s, run_options=%s, where_filters=%d",
+                req.function_name, len(req.variants), req.run_id,
+                _summarize_schema_filter(req.schema_filter), req.schema_level,
+                req.run_options, len(req.where_filters) if req.where_filters else 0)
+
     run_id = req.run_id or str(uuid.uuid4())[:8]
+    logger.info("[api/run] Generated run_id: %s", run_id)
+
+    logger.info("[api/run] Spawning background thread for run_id=%s", run_id)
     thread = threading.Thread(
         target=_run_in_thread,
         args=(run_id, req.function_name, req.variants, db,
@@ -479,6 +575,7 @@ def start_run(req: RunRequest, db: DatabaseManager = Depends(get_db)):
         daemon=True,
     )
     thread.start()
+    logger.info("[api/run] Background thread started for run_id=%s", run_id)
     return {"run_id": run_id}
 
 
@@ -496,14 +593,16 @@ def cancel_run(run_id: str) -> dict:
         ``{"ok": True, "cancelled": True}`` on success,
         ``{"ok": False, "error": "unknown run_id"}`` if the run isn't active.
     """
+    logger.info("[cancel_run] Attempting cooperative cancel for run_id=%s", run_id)
     with _active_runs_lock:
         entry = _active_runs.get(run_id)
         if entry is None:
-            logger.warning("cancel_run: unknown run_id=%s", run_id)
+            logger.warning("[cancel_run] Unknown run_id=%s (not in active runs)", run_id)
             return {"ok": False, "error": f"unknown run_id: {run_id}"}
+        logger.debug("[cancel_run] Setting cancelled flag and event for run_id=%s", run_id)
         entry["cancelled"] = True
         entry["event"].set()
-    logger.info("run[%s]: cancel requested (cooperative)", run_id)
+    logger.info("[cancel_run] Cooperative cancel requested for run_id=%s", run_id)
     return {"ok": True, "cancelled": True, "force": False}
 
 
@@ -525,11 +624,13 @@ def force_cancel_run(run_id: str) -> dict:
         ``{"ok": False, "error": "..."}`` if the run isn't active or the
         ctypes injection failed unexpectedly.
     """
+    logger.info("[force_cancel_run] Attempting force cancel for run_id=%s", run_id)
     with _active_runs_lock:
         entry = _active_runs.get(run_id)
         if entry is None:
-            logger.warning("force_cancel_run: unknown run_id=%s", run_id)
+            logger.warning("[force_cancel_run] Unknown run_id=%s (not in active runs)", run_id)
             return {"ok": False, "error": f"unknown run_id: {run_id}"}
+        logger.debug("[force_cancel_run] Setting cancelled and force_cancelled flags for run_id=%s", run_id)
         entry["cancelled"] = True
         entry["force_cancelled"] = True
         entry["event"].set()
@@ -538,7 +639,7 @@ def force_cancel_run(run_id: str) -> dict:
     tid = thread.ident
     if tid is None:
         logger.warning(
-            "run[%s]: force-cancel could not resolve thread id (thread not started?)",
+            "[force_cancel_run] Could not resolve thread id for run_id=%s (thread not started?)",
             run_id,
         )
         return {
@@ -550,6 +651,7 @@ def force_cancel_run(run_id: str) -> dict:
             "warning": "thread id not available",
         }
 
+    logger.info("[force_cancel_run] Injecting KeyboardInterrupt into thread tid=%s (run_id=%s)", tid, run_id)
     # PyThreadState_SetAsyncExc takes (long thread_id, PyObject* exc) and
     # returns the number of threads modified. Returns:
     #   0  → invalid thread id (worker likely already exited)
@@ -561,8 +663,8 @@ def force_cancel_run(run_id: str) -> dict:
     )
     if n == 0:
         logger.warning(
-            "run[%s]: force-cancel injection failed (thread tid=%s no longer exists)",
-            run_id, tid,
+            "[force_cancel_run] Injection failed - thread tid=%s no longer exists (run_id=%s)",
+            tid, run_id,
         )
         return {
             "ok": True,
@@ -574,20 +676,20 @@ def force_cancel_run(run_id: str) -> dict:
         }
     if n > 1:
         # Undo the over-broad injection per Python docs.
+        logger.error(
+            "[force_cancel_run] Injection affected %d threads - rolling back (run_id=%s)",
+            n, run_id,
+        )
         ctypes.pythonapi.PyThreadState_SetAsyncExc(
             ctypes.c_long(tid), ctypes.c_long(0))
-        logger.error(
-            "run[%s]: force-cancel injection affected %d threads — rolled back",
-            run_id, n,
-        )
         return {
             "ok": False,
             "error": f"PyThreadState_SetAsyncExc affected {n} threads (rolled back)",
         }
 
     logger.info(
-        "run[%s]: force-cancel injected KeyboardInterrupt into tid=%s",
-        run_id, tid,
+        "[force_cancel_run] Successfully injected KeyboardInterrupt into tid=%s (run_id=%s)",
+        tid, run_id,
     )
     return {
         "ok": True,

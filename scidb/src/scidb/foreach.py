@@ -148,7 +148,7 @@ def for_each(
         # Store original for version_keys serialization
         where._original_str = original_where_str
 
-    # --- EachOf expansion: must be first, before any other logic ---
+    # --- Step 1: EachOf expansion: must be first, before any other logic ---
     each_of_axes = []
     for param, val in inputs.items():
         if isinstance(val, EachOf):
@@ -157,6 +157,12 @@ def for_each(
         each_of_axes.append(("where", None, where.alternatives))
 
     if each_of_axes:
+        Log.info(f"[scidb] Step 1: EachOf expansion detected - {len(each_of_axes)} axes, will make recursive calls")
+        for kind, param, alts in each_of_axes:
+            if kind == "input":
+                Log.info(f"  EachOf axis: input '{param}' with {len(alts)} alternatives")
+            else:
+                Log.info(f"  EachOf axis: where with {len(alts)} alternatives")
         import pandas as pd
         from itertools import product as _eachof_product
 
@@ -191,7 +197,11 @@ def for_each(
             # as soon as the user cancels — don't start the next concrete run.
             if _cancel_check is not None and _cancel_check():
                 break
-        return pd.concat(results, ignore_index=True) if results else None
+        result_df = pd.concat(results, ignore_index=True) if results else None
+        Log.info(f"[scidb] Step 1: EachOf expansion complete - concatenated {len(results)} result(s)")
+        return result_df
+    else:
+        Log.info("[scidb] Step 1: no EachOf expansion needed")
 
     # Wrap lineage functions to unpack tuple returns when needed.
     # Skip if already wrapped (scihist.for_each pre-wraps before delegating here).
@@ -199,17 +209,19 @@ def for_each(
         try:
             from scilineage import make_tuple_unpacking_wrapper
             fn = make_tuple_unpacking_wrapper(fn)
+            Log.info("[scidb] wrapped function in tuple unpacking wrapper for lineage support")
         except ImportError:
             pass  # scilineage not available
 
     fn_name = getattr(fn, "__name__", repr(fn))
     Log.info(f"===== for_each({fn_name}) start =====")
 
-    # Resolve empty lists to all distinct values from the database
+    # Step 2: Resolve empty lists to all distinct values from the database
     needs_resolve = [k for k, v in metadata_iterables.items()
                      if isinstance(v, list) and len(v) == 0]
     resolved_db = None
     if needs_resolve:
+        Log.info(f"[scidb] Step 2: resolving {len(needs_resolve)} empty list(s) from database: {needs_resolve}")
         resolved_db = db
         if resolved_db is None:
             try:
@@ -228,16 +240,20 @@ def for_each(
                 print(f"[warn] {msg}")
                 Log.warn(msg)
             else:
-                Log.info(f"resolved {key}=[] -> {len(values)} values")
+                Log.info(f"[scidb] resolved '{key}' from database: {len(values)} values")
             metadata_iterables[key] = values
+    else:
+        Log.info("[scidb] Step 2: no empty lists to resolve from database")
 
-    # --- PathInput discovery: populate metadata from filesystem when DB is empty ---
+    # --- Step 3: PathInput discovery: populate metadata from filesystem when DB is empty ---
     _discovered_combos = None
     if _has_pathinput(inputs):
+        Log.info("[scidb] Step 3: PathInput detected, checking if filesystem discovery is needed")
         pi = _find_pathinput(inputs)
         if pi is not None:
             # Case 1: No metadata keys passed at all — discover everything
             if not metadata_iterables:
+                Log.info("[scidb] PathInput discovery case 1: no metadata keys provided, discovering all from filesystem")
                 combos = pi.discover()
                 Log.debug(f"PathInput discovery: template={pi.path_template!r}, "
                           f"root_folder={pi.root_folder!r}, "
@@ -252,6 +268,7 @@ def for_each(
             still_empty = [k for k, v in metadata_iterables.items()
                            if isinstance(v, list) and len(v) == 0]
             if still_empty:
+                Log.info(f"[scidb] PathInput discovery case 2: {len(still_empty)} key(s) still empty after DB resolution: {still_empty}")
                 combos = pi.discover()
                 Log.debug(f"PathInput discovery: template={pi.path_template!r}, "
                           f"root_folder={pi.root_folder!r}, "
@@ -263,13 +280,19 @@ def for_each(
                             metadata_iterables[key] = values
                             Log.info(f"discovered {key} -> {len(values)} values from filesystem")
                     _discovered_combos = combos
+    else:
+        Log.info("[scidb] Step 3: no PathInput detected, skipping filesystem discovery")
 
-    # Propagate schema keys to scifor so distribute and DataFrame detection work
+    # Step 4: Propagate schema keys to scifor so distribute and DataFrame detection work
+    Log.info("[scidb] Step 4: propagating schema keys to scifor")
     _propagate_schema(db, distribute)
+    if db and hasattr(db, 'dataset_schema_keys'):
+        Log.info(f"[scidb] schema keys propagated: {db.dataset_schema_keys}")
 
-    # Stringify metadata_iterables values for schema keys.
+    # Step 5: Stringify metadata_iterables values for schema keys.
     # _load_var_type_all stringifies schema columns in loaded DataFrames (DB returns
     # typed values like np.int64); combo metadata must match to filter correctly.
+    Log.info("[scidb] Step 5: stringifying metadata iterable values for schema keys")
     _resolved_db_for_str = db
     if _resolved_db_for_str is None:
         try:
@@ -280,17 +303,24 @@ def for_each(
     if _resolved_db_for_str is not None and hasattr(_resolved_db_for_str, 'dataset_schema_keys'):
         from scidb.database import _schema_str
         _sk_set = set(_resolved_db_for_str.dataset_schema_keys)
+        stringify_count = 0
         for key in list(metadata_iterables.keys()):
             if key in _sk_set:
                 metadata_iterables[key] = [
                     _schema_str(v) for v in metadata_iterables[key]
                 ]
+                stringify_count += 1
+        Log.info(f"[scidb] stringified {stringify_count} schema key iterable(s)")
+    else:
+        Log.info("[scidb] Step 5: no database available for schema stringification, skipping")
 
-    # Build output_names for scifor
+    # Step 6: Build output_names for scifor
     output_names = [_output_name(o) for o in outputs] if outputs else ["result"]
+    Log.info(f"[scidb] Step 6: resolved {len(output_names)} output name(s): {output_names}")
 
-    # --- Dry-run shortcut: convert inputs for display only, call scifor, return ---
+    # --- Step 7: Dry-run shortcut: convert inputs for display only, call scifor, return ---
     if dry_run:
+        Log.info("[scidb] Step 7: dry_run=True, converting inputs for display and delegating to scifor")
         display_inputs = _convert_inputs_for_display(inputs)
         _scifor_for_each(
             fn,
@@ -304,7 +334,8 @@ def for_each(
         )
         return None
 
-    # Build ForEachConfig version keys (DB-specific; not part of scifor)
+    # Step 8: Build ForEachConfig version keys (DB-specific; not part of scifor)
+    Log.info("[scidb] Step 8: building ForEachConfig version keys")
     config = ForEachConfig(
         fn=fn,
         inputs=inputs,
@@ -314,11 +345,12 @@ def for_each(
     )
     config_keys = config.to_version_keys()
     call_id = config.to_call_id()
-    Log.debug(f"for_each({fn_name}): call_id={call_id}")
+    Log.info(f"[scidb] ForEachConfig: call_id={call_id}, version_keys={list(config_keys.keys())}")
 
-    # Pre-filter to only schema combinations that actually exist in the database.
+    # Step 9: Pre-filter to only schema combinations that actually exist in the database.
     all_combos = None
     if needs_resolve and not _has_pathinput(inputs):
+        Log.info("[scidb] Step 9: pre-filtering combos to only existing schema combinations")
         from scidb.database import _schema_str
         filter_db = resolved_db
         schema_keys_set = set(filter_db.dataset_schema_keys)
@@ -344,17 +376,24 @@ def for_each(
                 msg = (f"filtered {removed} non-existent schema combinations "
                        f"(from {len(raw_combos)} to {len(filtered)})")
                 print(f"[info] {msg}")
-                Log.info(msg)
+                Log.info(f"[scidb] {msg}")
+            else:
+                Log.info(f"[scidb] all {len(raw_combos)} combos exist in database")
             all_combos = filtered
+    else:
+        Log.info("[scidb] Step 9: skipping combo pre-filtering (no empty list resolution or PathInput detected)")
 
-    # Load all inputs into DataFrames (with __record_id and __branch_params)
+    # Step 10: Load all inputs into DataFrames (with __record_id and __branch_params)
+    Log.info(f"[scidb] Step 10: loading {len(inputs)} input(s) into DataFrames")
     loaded_inputs = _convert_inputs(inputs, db, where)
+    df_count = sum(1 for v in loaded_inputs.values() if isinstance(v, __import__('pandas').DataFrame))
+    Log.info(f"[scidb] loaded {df_count} DataFrame input(s), {len(loaded_inputs) - df_count} other(s)")
 
-    # --- Variant tracking: build rid→bp mapping and __rid_{param} discriminator columns ---
+    # --- Step 11: Variant tracking: build rid→bp mapping and __rid_{param} discriminator columns ---
     import pandas as pd
     from itertools import product as _iproduct
 
-    Log.debug("building variant tracking (rid->branch_params mapping)")
+    Log.info("[scidb] Step 11: building variant tracking (rid->branch_params mapping)")
     rid_to_bp: dict = {}   # {record_id: branch_params_dict}
     rid_keys: list = []    # __rid_{param_name} column names added to this call's schema
     fixed_rid_values: dict = {}  # {param_name: record_id} for Fixed inputs
@@ -397,32 +436,39 @@ def for_each(
             loaded_inputs[param_name] = df_renamed
             rid_keys.append(rid_col)
 
-    Log.debug(f"variant tracking: {len(rid_to_bp)} record_ids mapped, "
-              f"{len(rid_keys)} rid keys: {rid_keys}")
+    Log.info(f"[scidb] variant tracking: {len(rid_to_bp)} record_id(s) mapped, "
+              f"{len(rid_keys)} rid key(s): {rid_keys}, "
+              f"{len(fixed_rid_values)} fixed input rid(s): {list(fixed_rid_values.keys())}")
 
     # Strip __branch_params from all DataFrames (now tracked via rid_to_bp)
     for param_name, data in list(loaded_inputs.items()):
         if isinstance(data, pd.DataFrame) and "__branch_params" in data.columns:
             loaded_inputs[param_name] = data.drop(columns=["__branch_params"])
 
-    # --- Build full combos: base_combos × valid rid-combos per schema location ---
+    # --- Step 12: Build full combos: base_combos × valid rid-combos per schema location ---
+    Log.info("[scidb] Step 12: expanding combos with record-ID variants")
     current_schema_keys = list(_scifor.get_schema() or [])
 
     base_combos = all_combos
     if base_combos is None and _discovered_combos is not None:
         # Use filesystem-discovered combos directly (avoids non-existent Cartesian combos)
         base_combos = _discovered_combos
-        Log.info(f"using {len(base_combos)} filesystem-discovered combos")
+        Log.info(f"[scidb] using {len(base_combos)} filesystem-discovered combos")
     if base_combos is None:
         keys = list(metadata_iterables.keys())
         value_lists = [metadata_iterables[k] for k in keys]
         base_combos = [dict(zip(keys, combo)) for combo in _iproduct(*value_lists)]
+        Log.info(f"[scidb] built {len(base_combos)} base combos from metadata iterables")
 
     # Detect aggregation mode: not all schema keys are being iterated, so
     # lower-level records should be aggregated into multi-row DataFrames
     # rather than being separated into individual combos via rid expansion.
     _iterated_schema_keys = set(metadata_iterables.keys()) & set(current_schema_keys)
     _aggregation_mode = len(current_schema_keys) > 0 and len(_iterated_schema_keys) < len(current_schema_keys)
+    if _aggregation_mode:
+        Log.info(f"[scidb] aggregation mode detected: iterating {len(_iterated_schema_keys)}/{len(current_schema_keys)} schema keys")
+    else:
+        Log.info("[scidb] full iteration mode: all schema keys being iterated")
 
     # Lookup keys for rid disambiguation: schema keys + any non-schema metadata
     # iterable keys.  Using only schema keys misses non-schema iterables (e.g.
@@ -554,29 +600,41 @@ def for_each(
         else:
             Log.debug(f"{len(full_combos)} combos (no rid expansion needed)")
 
-    # Persist the full expected combo set BEFORE skip_computed filtering,
+    # Step 13: Persist the full expected combo set BEFORE skip_computed filtering,
     # so check_node_state knows all combos that should exist (including
     # ones that failed or were skipped).  Only needed when we actually
     # have outputs and are not in dry_run mode.
     if not dry_run and outputs:
+        Log.info(f"[scidb] Step 13: persisting {len(full_combos)} expected combo(s) to _for_each_expected table")
         _persist_expected_combos(db, fn_name, call_id, full_combos)
+    else:
+        Log.info("[scidb] Step 13: skipping expected combos persistence (dry_run or no outputs)")
 
-    # Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
+    # Step 14: Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
     # combos where the hook returns True.
     if _pre_combo_hook is not None:
+        Log.info("[scidb] Step 14: applying pre-combo hook (skip_computed)")
         pre_hook_count = len(full_combos)
         full_combos = [c for c in full_combos if not _pre_combo_hook(c)]
         skipped = pre_hook_count - len(full_combos)
         if skipped > 0:
             msg = f"skip_computed: {skipped}/{pre_hook_count} combos skipped"
             print(f"[info] {msg}")
-            Log.info(msg)
+            Log.info(f"[scidb] {msg}")
+        else:
+            Log.info(f"[scidb] skip_computed: 0/{pre_hook_count} combos skipped (all will be computed)")
+    else:
+        Log.info("[scidb] Step 14: no pre-combo hook provided, skipping")
 
-    # Temporarily extend scifor's schema to include __rid_* keys so _filter_df_for_combo
+    # Step 15: Temporarily extend scifor's schema to include __rid_* keys so _filter_df_for_combo
     # treats them as schema columns (not data columns), giving single-row filtered DFs.
     # In aggregation mode, rid_keys_for_schema is empty so schema isn't extended.
     if rid_keys_for_schema:
-        _scifor.set_schema(current_schema_keys + rid_keys_for_schema)
+        extended_schema = current_schema_keys + rid_keys_for_schema
+        Log.info(f"[scidb] Step 15: extending scifor schema from {len(current_schema_keys)} to {len(extended_schema)} keys (added {len(rid_keys_for_schema)} rid keys)")
+        _scifor.set_schema(extended_schema)
+    else:
+        Log.info("[scidb] Step 15: not extending scifor schema (aggregation mode or no rid keys)")
 
     # Collect all rid values per key so scifor's metadata_iterables are complete.
     # In aggregation mode, rid_keys_for_schema is empty so this loop is skipped.
@@ -656,13 +714,21 @@ def for_each(
 
         return reconstructed
 
-    # --- Wrap fn to resolve PerComboLoader/PerComboLoaderMerge inputs per-combo,
+    # --- Step 16: Wrap fn to resolve PerComboLoader/PerComboLoaderMerge inputs per-combo,
     #     inject combo metadata (for generates_file functions), and/or
     #     reconstruct BaseVariable objects (for LineageFcn). ---
     _per_combo = {k: v for k, v in loaded_inputs.items()
                   if isinstance(v, (PerComboLoader, PerComboLoaderMerge))}
     _is_lineage_wrapper = getattr(fn, '__lineage_wrapper__', False)
     if _per_combo or _inject_combo_metadata or _is_lineage_wrapper:
+        wrap_reasons = []
+        if _per_combo:
+            wrap_reasons.append(f"{len(_per_combo)} PerComboLoader input(s)")
+        if _inject_combo_metadata:
+            wrap_reasons.append("generates_file metadata injection")
+        if _is_lineage_wrapper:
+            wrap_reasons.append("LineageFcn variable reconstruction")
+        Log.info(f"[scidb] Step 16: wrapping function for {', '.join(wrap_reasons)}")
         _ordered_combos = full_combos
         _call_idx = [0]
         _orig_fn = fn
@@ -707,6 +773,8 @@ def for_each(
                     if k not in resolved and k in _fn_params:
                         resolved[k] = v
             return _orig_fn(**resolved)
+    else:
+        Log.info("[scidb] Step 16: no function wrapping needed")
 
     # Wrap _progress_fn to track final completed/skipped counts for logging.
     _run_summary = {"total": 0, "completed": 0, "skipped": 0}
@@ -718,7 +786,8 @@ def for_each(
         if _progress_fn is not None:
             _progress_fn(info)
 
-    # Delegate core loop to scifor
+    # Step 17: Delegate core loop to scifor
+    Log.info(f"[scidb] Step 17: delegating to scifor.for_each with {len(full_combos)} combo(s)")
     result_tbl = _scifor_for_each(
         fn,
         loaded_inputs,
@@ -732,26 +801,33 @@ def for_each(
         _cancel_check=_cancel_check,
         **extended_metadata_iterables,
     )
+    Log.info(f"[scidb] scifor.for_each completed: {_run_summary['completed']} completed, {_run_summary['skipped']} skipped")
 
     # Log run summary with failed repetition count.
     if _run_summary["total"] > 0:
         Log.debug(f"for_each({fn_name}): completed={_run_summary['completed']}, "
                   f"failed={_run_summary['skipped']}, total={_run_summary['total']}")
 
-    # Restore scifor's schema
+    # Step 18: Restore scifor's schema
     if rid_keys_for_schema:
+        Log.info(f"[scidb] Step 18: restoring scifor schema to {len(current_schema_keys)} keys (removing {len(rid_keys_for_schema)} rid keys)")
         _scifor.set_schema(current_schema_keys)
+    else:
+        Log.info("[scidb] Step 18: no schema restoration needed (wasn't extended)")
 
     if result_tbl is None:
         return None
 
-    # Save results
+    # Step 19: Save results
     if save and outputs and not result_tbl.empty:
+        Log.info(f"[scidb] Step 19: saving {len(result_tbl)} result row(s) for {len(outputs)} output(s)")
         # Compute Fixed input rids for lineage tracking if not provided
         fixed_rids_for_save = _lineage_fixed_rids
         if fixed_rids_for_save is None and HAS_LINEAGE:
             # Only compute if we might save LineageFcnResult objects
             fixed_rids_for_save = _compute_fixed_input_rids(inputs, db)
+            if fixed_rids_for_save:
+                Log.info(f"[scidb] computed {len(fixed_rids_for_save)} Fixed input rid(s) for lineage: {list(fixed_rids_for_save.keys())}")
 
         save_t0 = time.perf_counter()
         _save_results(
@@ -763,7 +839,13 @@ def for_each(
             combo_to_rids_keys=_iterated_keys_ordered,
         )
         save_elapsed = time.perf_counter() - save_t0
-        Log.info(f"for_each({fn_name}): saved {len(result_tbl)} results in {save_elapsed:.3f}s")
+        Log.info(f"[scidb] Step 19 complete: saved {len(result_tbl)} result(s) in {save_elapsed:.3f}s")
+    elif not save:
+        Log.info("[scidb] Step 19: skipping save (save=False)")
+    elif not outputs:
+        Log.info("[scidb] Step 19: skipping save (no outputs specified)")
+    elif result_tbl.empty:
+        Log.info("[scidb] Step 19: skipping save (result table is empty)")
 
     return result_tbl
 

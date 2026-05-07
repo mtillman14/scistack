@@ -57,7 +57,7 @@ def for_each(
     """
     schema_keys = get_schema()
 
-    # Resolve output_names
+    # Step 1: Resolve output_names
     if output_names is None:
         resolved_output_names = ["output"]
     elif isinstance(output_names, int):
@@ -65,21 +65,34 @@ def for_each(
     else:
         resolved_output_names = list(output_names)
     n_outputs = len(resolved_output_names)
+    if _log_fn:
+        _log_fn(f"[scifor] Step 1: resolved {n_outputs} output name(s): {resolved_output_names}")
 
-    # Resolve empty lists [] in standalone mode (scan DataFrame inputs)
+    # Step 2: Resolve empty lists [] in standalone mode (scan DataFrame inputs)
     if _all_combos is None:
         needs_resolve = [k for k, v in metadata_iterables.items()
                          if isinstance(v, list) and len(v) == 0]
         if needs_resolve:
+            if _log_fn:
+                _log_fn(f"[scifor] Step 2: resolving empty lists for {needs_resolve} from DataFrame inputs")
             for key in needs_resolve:
                 values = _distinct_values_from_inputs(inputs, key)
                 if not values:
                     print(f"[warn] no values found for '{key}' in input DataFrames, 0 iterations")
+                    if _log_fn:
+                        _log_fn(f"[warn] no values found for '{key}' in input DataFrames")
+                else:
+                    if _log_fn:
+                        _log_fn(f"[scifor] resolved '{key}' to {len(values)} values: {values}")
                 metadata_iterables[key] = values
+        elif _log_fn:
+            _log_fn("[scifor] Step 2: no empty lists to resolve (using pre-built combos or explicit values)")
 
-    # Validate distribute parameter and resolve target key
+    # Step 3: Validate distribute parameter and resolve target key
     distribute_key = None
     if distribute:
+        if _log_fn:
+            _log_fn("[scifor] Step 3: validating distribute parameter")
         iter_keys_in_schema = [k for k in schema_keys if k in metadata_iterables]
         if not iter_keys_in_schema:
             raise ValueError(
@@ -96,11 +109,21 @@ def for_each(
                 f"Schema order: {schema_keys}"
             )
         distribute_key = schema_keys[deepest_idx + 1]
+        if _log_fn:
+            _log_fn(f"[scifor] distribute target resolved: '{distribute_key}' (one level below '{deepest_iterated}')")
+    elif _log_fn:
+        _log_fn("[scifor] Step 3: distribute=False, skipping validation")
 
-    # Resolve ColName wrappers before the data/constant split
+    # Step 4: Resolve ColName wrappers before the data/constant split
+    if _log_fn:
+        colname_count = sum(1 for v in inputs.values() if isinstance(v, ColName))
+        if colname_count > 0:
+            _log_fn(f"[scifor] Step 4: resolving {colname_count} ColName wrapper(s)")
+        else:
+            _log_fn("[scifor] Step 4: no ColName wrappers to resolve")
     inputs = _resolve_colnames(inputs, schema_keys)
 
-    # Separate data inputs from constants
+    # Step 5: Separate data inputs from constants
     data_inputs = {}
     constant_inputs = {}
     for param_name, var_spec in inputs.items():
@@ -108,6 +131,8 @@ def for_each(
             data_inputs[param_name] = var_spec
         else:
             constant_inputs[param_name] = var_spec
+    if _log_fn:
+        _log_fn(f"[scifor] Step 5: classified {len(data_inputs)} data input(s), {len(constant_inputs)} constant(s)")
 
     # Check distribute doesn't conflict with a constant input name
     if distribute_key is not None and distribute_key in constant_inputs:
@@ -115,27 +140,38 @@ def for_each(
             f"distribute target '{distribute_key}' conflicts with a constant input named '{distribute_key}'."
         )
 
-    # Build set of input names to keep as full DataFrames (with schema cols)
+    # Step 6: Build set of input names to keep as full DataFrames (with schema cols)
     if as_table is True:
         as_table_set = set(data_inputs.keys())
     elif as_table:
         as_table_set = set(as_table)
     else:
         as_table_set = set()
+    if _log_fn:
+        if as_table_set:
+            _log_fn(f"[scifor] Step 6: as_table inputs: {sorted(as_table_set)}")
+        else:
+            _log_fn("[scifor] Step 6: as_table=False, all data inputs will have schema columns stripped")
 
-    # Build combo list
+    # Step 7: Build combo list
     if _all_combos is not None:
         all_combos = _all_combos
         keys = list(metadata_iterables.keys())
+        if _log_fn:
+            _log_fn(f"[scifor] Step 7: using {len(all_combos)} pre-built combos (from DB wrapper)")
     else:
         keys = list(metadata_iterables.keys())
         value_lists = [metadata_iterables[k] for k in keys]
         all_combos = [dict(zip(keys, combo)) for combo in product(*value_lists)]
+        if _log_fn:
+            _log_fn(f"[scifor] Step 7: built {len(all_combos)} combos from Cartesian product of {keys}")
 
     total = len(all_combos)
     fn_name = getattr(fn, "__name__", repr(fn))
 
-    # Start banner
+    # Step 8: Print summary banner
+    if _log_fn:
+        _log_fn(f"[scifor] Step 8: printing summary banner for {total} iterations")
     display_keys = [k for k in keys if not k.startswith("__")]
     meta_summary = ", ".join(
         f"{k}=[{len(metadata_iterables[k])} values]"
@@ -193,6 +229,10 @@ def for_each(
     skipped = 0
     collected_rows: list[tuple[dict, tuple]] = []
     was_cancelled = False
+
+    # Step 9: Main loop
+    if _log_fn:
+        _log_fn(f"[scifor] Step 9: starting main loop over {total} combo(s)")
 
     for combo_idx, metadata in enumerate(all_combos):
         # Cooperative cancel: check between combos (before any work for this combo).
@@ -364,7 +404,10 @@ def for_each(
             _log_fn("─" * 64)
             _log_fn(done_msg)
             _log_fn("=" * 64)
-        return _results_to_output_dataframe(collected_rows, resolved_output_names)
+        # Step 10: Build output DataFrame
+        if _log_fn:
+            _log_fn(f"[scifor] Step 10: building output DataFrame from {len(collected_rows)} result row(s)")
+        return _results_to_output_dataframe(collected_rows, resolved_output_names, _log_fn)
 
 
 def _call_fn(fn, kwargs, n_outputs):
@@ -725,9 +768,13 @@ def _get_raw_df(var_spec: Any) -> "pd.DataFrame | None":
 def _results_to_output_dataframe(
     collected_rows: list[tuple[dict, tuple]],
     output_names: list[str],
+    _log_fn: "Callable[[str], None] | None" = None,
 ) -> "pd.DataFrame":
     """Build a combined DataFrame from all for_each results."""
     import pandas as pd
+
+    if _log_fn:
+        _log_fn(f"[scifor] _results_to_output_dataframe: processing {len(collected_rows)} row(s)")
 
     if not collected_rows:
         return pd.DataFrame()
@@ -740,6 +787,8 @@ def _results_to_output_dataframe(
     )
 
     if all_dataframes:
+        if _log_fn:
+            _log_fn("[scifor] using flatten mode (all outputs are DataFrames)")
         parts = []
         for metadata, result_tuple in collected_rows:
             combined_data = pd.concat(
@@ -750,15 +799,23 @@ def _results_to_output_dataframe(
             parts.append(pd.concat(
                 [meta_df.reset_index(drop=True), combined_data], axis=1
             ))
-        return pd.concat(parts, ignore_index=True)
+        result = pd.concat(parts, ignore_index=True)
+        if _log_fn:
+            _log_fn(f"[scifor] flatten mode: built DataFrame with {len(result)} row(s), {len(result.columns)} column(s)")
+        return result
     else:
+        if _log_fn:
+            _log_fn("[scifor] using scalar mode (at least one output is not a DataFrame)")
         rows = []
         for metadata, result_tuple in collected_rows:
             row = dict(metadata)
             for name, value in zip(output_names, result_tuple):
                 row[name] = value
             rows.append(row)
-        return pd.DataFrame(rows)
+        result = pd.DataFrame(rows)
+        if _log_fn:
+            _log_fn(f"[scifor] scalar mode: built DataFrame with {len(result)} row(s), {len(result.columns)} column(s)")
+        return result
 
 
 # ---------------------------------------------------------------------------

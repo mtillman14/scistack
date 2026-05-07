@@ -25,7 +25,7 @@ Example:
 
 from .foreach import for_each, save
 from .database import configure_database, find_by_lineage
-from .state import check_combo_state, check_node_state
+from .state import check_combo_state, check_node_state, check_multiple_nodes_state
 
 # Re-export DB wrappers from scidb
 from scidb import Fixed, Merge, ColumnSelection, ForEachConfig
@@ -49,6 +49,7 @@ __all__ = [
     # Node staleness
     "check_combo_state",
     "check_node_state",
+    "check_multiple_nodes_state",
     # DB wrappers
     "Fixed",
     "Merge",

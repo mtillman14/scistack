@@ -167,11 +167,12 @@ def for_each(
     _pre_combo_hook: Callable[[dict], bool] | None = None,
     _progress_fn: Callable[[dict], None] | None = None,
     _cancel_check: Callable[[], bool] | None = None,
+    _lineage_fixed_rids: dict | None = None,
     **metadata_iterables: list[Any],
 ) -> pd.DataFrame | None
 ```
 
-Source: lines 78–93.
+Source: lines 86–102.
 
 The `inputs` dict maps **function parameter names** to their sources. Keys are the names your function expects as keyword arguments. Values can be:
 
@@ -191,7 +192,10 @@ Compared to `scifor.for_each()`, three major parameters are added:
 | `save` | Whether to actually save results to the database (default `True`). |
 | `db` | Optional explicit database instance; if omitted, the global database from `configure_database()` is used. |
 
-The `_inject_combo_metadata` and `_pre_combo_hook` parameters are internal hooks used by the `scihist` layer above for `generates_file` functions and `skip_computed` logic, respectively.
+The `_inject_combo_metadata`, `_pre_combo_hook`, and `_lineage_fixed_rids` parameters are internal hooks used by the `scihist` layer above:
+- `_inject_combo_metadata`: Passes current combo metadata to `generates_file` functions
+- `_pre_combo_hook`: Implements `skip_computed` logic
+- `_lineage_fixed_rids`: Pre-resolved record IDs for Fixed inputs (used by scihist for lineage tracking)
 
 ---
 
@@ -312,14 +316,14 @@ config_keys = config.to_version_keys()
 | Key | Value | Purpose |
 |---|---|---|
 | `__fn` | Function name string | Identifies which function produced this output |
-| `__fn_hash` | SHA-256 of function source (16 hex chars) | Detects if the function body changed |
+| `__fn_hash` | Bytecode-based hash (16 hex chars) | Detects if the function logic changed |
 | `__inputs` | JSON of loadable input specs | Detects if input variable types changed |
 | `__constants` | JSON of constant input values | Detects if parameter values changed |
 | `__where` | Filter expression string | Detects if row filtering changed |
 | `__distribute` | `True` | Present only when distribute is active |
 | `__as_table` | `True` or sorted list | Present only when as_table is non-default |
 
-**On hash truncation:** The function hash is computed by `_compute_fn_hash()` (lines 9–21 of `foreach_config.py`): it takes `inspect.getsource(fn)`, hashes it with SHA-256, and truncates to 16 hex characters (64 bits). This is the same truncation used for `record_id` and `content_hash` throughout the system. 16 hex characters give 2^64 possible values (~1.8 x 10^19). For context, Git originally used 7-character hex prefixes (28 bits) for commit display and has since moved to longer prefixes as repositories grew, but Git's full SHA-1 hashes are 40 hex characters (160 bits). The 64-bit space used here is large enough that collisions are astronomically unlikely in any realistic scientific workflow (you would need ~4 billion distinct function bodies before a collision becomes probable via the birthday paradox). The hash is also never used in isolation — it is always stored alongside the function name, so a collision would require the same function name with the same 64-bit hash but different source code.
+**On function hashing:** The function hash is computed by `_compute_fn_hash()` (lines 10-25 of `foreach_config.py`), which delegates to `scilineage.hashing.compute_function_hash()`. This uses **bytecode-based hashing** rather than source-based hashing: it hashes the function's compiled bytecode (`fn.__code__.co_code`) along with its constants (`fn.__code__.co_consts`). This means cosmetic changes like whitespace, comments, and variable renaming do NOT change the hash — only actual logic changes trigger a hash change. The result is truncated to 16 hex characters (64 bits), the same truncation used for `record_id` and `content_hash` throughout the system. 16 hex characters give 2^64 possible values (~1.8 x 10^19). For context, Git originally used 7-character hex prefixes (28 bits) for commit display and has since moved to longer prefixes as repositories grew, but Git's full SHA-1 hashes are 40 hex characters (160 bits). The 64-bit space used here is large enough that collisions are astronomically unlikely in any realistic scientific workflow (you would need ~4 billion distinct function bodies before a collision becomes probable via the birthday paradox). The hash is also never used in isolation — it is always stored alongside the function name, so a collision would require the same function name with the same 64-bit hash but different source code.
 
 Constants are identified by `_get_direct_constants()` (lines 74–77): any input value that is not loadable (not a type, not a Fixed/Merge/ColumnSelection/PathInput/DataFrame) is a constant.
 

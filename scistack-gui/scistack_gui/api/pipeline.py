@@ -111,65 +111,6 @@ def _build_matlab_fn_proxy(fn_name: str):
     return proxy
 
 
-def _own_state_for_function(
-    db: DatabaseManager,
-    fn_name: str,
-    fn_out_types: set[str],
-    call_id: str | None = None,
-) -> str:
-    """
-    Return the own run state ("green"/"grey"/"red") for a single function
-    by calling scihist.check_node_state.
-
-    When ``call_id`` is provided, restricts the state computation to records
-    produced by that specific for_each call site.  This is what makes the
-    GUI's per-call-site nodes report distinct states when the same function
-    is reused.
-
-    Falls back to "red" for unregistered functions (never executed or not
-    importable in this session).
-    """
-    from scihist.state import check_node_state
-    from scidb import BaseVariable
-
-    fn_obj = registry._functions.get(fn_name)
-    if fn_obj is None:
-        # Try MATLAB registry — build a proxy with the right hash.
-        from scistack_gui import matlab_registry
-        if matlab_registry.is_matlab_function(fn_name):
-            fn_obj = _build_matlab_fn_proxy(fn_name)
-        else:
-            # Function not registered in this session — can't run state check.
-            return "red"
-
-    output_classes = [
-        BaseVariable._all_subclasses[t]
-        for t in fn_out_types
-        if t in BaseVariable._all_subclasses
-    ]
-    if not output_classes:
-        return "red"
-
-    try:
-        result = check_node_state(fn_obj, output_classes, db=db, call_id=call_id)
-        state = result["state"]
-        counts = result.get("counts", {})
-        logger.debug(
-            "state(%s call_id=%s): %s (up_to_date=%d, stale=%d, missing=%d)",
-            fn_name, call_id, state,
-            counts.get("up_to_date", 0),
-            counts.get("stale", 0),
-            counts.get("missing", 0),
-        )
-        return state
-    except Exception:
-        logger.exception(
-            "check_node_state failed for %s call_id=%s — falling back to red",
-            fn_name, call_id,
-        )
-        return "red"
-
-
 def _compute_run_states(
     db: DatabaseManager,
     fn_input_params: dict[tuple, dict],
@@ -185,23 +126,69 @@ def _compute_run_states(
     call site.
 
     Pass 1 — own state per function-call-site:
-      Calls scihist.check_node_state(call_id=cid) for each (fn, cid).
+      Calls scihist.check_multiple_nodes_state() for all nodes in batch.
 
     Pass 2 — propagate staleness through the DAG (delegated to domain layer).
 
     Returns {node_id: "green"|"grey"|"red"} for fn__ and var__ nodes.
     """
     from scistack_gui.domain.run_state import propagate_run_states
+    from scihist import check_multiple_nodes_state
+    from scidb import BaseVariable
 
     t0 = time.monotonic()
 
-    # --- Pass 1: own state per (fn_name, call_id) ---
+    # --- Pass 1: Build function registry and nodes list ---
+    # Build registry combining Python and MATLAB functions
+    fn_registry = dict(registry._functions)  # Copy Python functions
+
+    from scistack_gui import matlab_registry
+    for fn_name in fn_input_params.keys():
+        fn_name_str, _ = fn_name
+        if fn_name_str not in fn_registry and matlab_registry.is_matlab_function(fn_name_str):
+            fn_registry[fn_name_str] = _build_matlab_fn_proxy(fn_name_str)
+
+    # Build nodes list for batched state checking
+    nodes = []
+    for fkey in fn_input_params:
+        fn_name, cid = fkey
+        fn_out_types = fn_outputs.get(fkey, set())
+
+        # Convert output type names to classes
+        output_classes = [
+            BaseVariable._all_subclasses[t]
+            for t in fn_out_types
+            if t in BaseVariable._all_subclasses
+        ]
+
+        if output_classes:  # Only add if we have valid output classes
+            nodes.append({
+                "fn_name": fn_name,
+                "call_id": cid,
+                "outputs": output_classes,
+            })
+
+    # Batch call to check states for all nodes
+    state_results = check_multiple_nodes_state(nodes, fn_registry=fn_registry, db=db)
+
+    # Convert results to fn_own_state format (FnKey → state)
     fn_own_state: dict[tuple, str] = {}
     for fkey in fn_input_params:
         fn_name, cid = fkey
-        fn_own_state[fkey] = _own_state_for_function(
-            db, fn_name, fn_outputs.get(fkey, set()), call_id=cid,
-        )
+        node_id = f"fn__{fn_name}__{cid or ''}"
+        if node_id in state_results:
+            fn_own_state[fkey] = state_results[node_id]["state"]
+            counts = state_results[node_id].get("counts", {})
+            logger.debug(
+                "state(%s call_id=%s): %s (up_to_date=%d, stale=%d, missing=%d)",
+                fn_name, cid, fn_own_state[fkey],
+                counts.get("up_to_date", 0),
+                counts.get("stale", 0),
+                counts.get("missing", 0),
+            )
+        else:
+            # Function not in results (no outputs or error) → mark as red
+            fn_own_state[fkey] = "red"
 
     # --- Pass 2: DAG propagation (pure) ---
     result = propagate_run_states(
@@ -229,47 +216,90 @@ def _build_graph(db: DatabaseManager) -> dict:
     Delegates pure logic to domain.graph_builder and domain.edge_resolver;
     this function orchestrates data fetching and side effects.
     """
+    logger.info("[pipeline] Step 1: Starting graph build orchestration")
+
     from scistack_gui import pipeline_store as _ps
     from scistack_gui import matlab_registry as _mr
     from scistack_gui.domain import graph_builder as gb
     from scistack_gui.domain.edge_resolver import resolve_function_edges
 
     hidden_ids = _ps.get_hidden_node_ids(db)
+    logger.debug("[pipeline] loaded %d hidden node IDs", len(hidden_ids))
 
-    # --- Fetch data ---
-    variants: list[dict] = db.list_pipeline_variants()
-    logger.debug("_build_graph: %d pipeline variants from DB", len(variants))
+    # --- Fetch aggregated data from scidb (replaces steps 2-5) ---
+    logger.info("[pipeline] Step 2: Fetching aggregated variants from scidb")
+    scidb_agg = db.get_aggregated_variants()
+    logger.info("[pipeline] fetched data for %d functions, %d variables, %d constants, %d path inputs",
+                len(scidb_agg["functions"]), len(scidb_agg["variables"]),
+                len(scidb_agg["constants"]), len(scidb_agg["path_inputs"]))
 
-    listed_var_names: set[str] = set()
-    try:
-        listed = db.list_variables()
-        for _, row in listed.iterrows():
-            listed_var_names.add(row["variable_name"])
-    except Exception:
-        pass
+    # Convert scidb format to AggregatedData format for compatibility
+    logger.info("[pipeline] Step 3: Converting to AggregatedData format")
+    from collections import defaultdict
+    agg = gb.AggregatedData()
 
-    # --- Aggregate and filter (pure) ---
-    agg = gb.aggregate_variants(variants, listed_var_names)
+    # Convert functions dict
+    for (fn_name, call_id), fn_data in scidb_agg["functions"].items():
+        fkey = (fn_name, call_id)
+        agg.fn_input_params[fkey] = fn_data["input_params"]
+        agg.fn_outputs[fkey] = set(fn_data["outputs"])
+        # Convert constants from list to dict for const_counts
+        for const_name, values in fn_data["constants"].items():
+            agg.fn_constants[fkey].add(const_name)
+            for val in values:
+                # Note: we don't have per-value record counts from scidb_agg,
+                # but const_counts is used for display, so we can approximate
+                agg.const_counts[const_name][str(val)] = 1
+        agg.fn_variants_map[fkey] = fn_data["variants"]
+
+    # Convert constants
+    for const_name, const_data in scidb_agg["constants"].items():
+        for val_entry in const_data["values"]:
+            agg.const_counts[const_name][val_entry["value"]] = val_entry["record_count"]
+        for fkey in const_data["functions"]:
+            agg.const_fns[const_name].add(tuple(fkey))
+
+    # Convert variables
+    agg.all_var_types = set(scidb_agg["variables"].keys())
+
+    # Convert path_inputs
+    for param_name, pi_data in scidb_agg["path_inputs"].items():
+        agg.path_inputs[param_name] = {
+            "template": pi_data["template"],
+            "root_folder": pi_data["root_folder"],
+            "functions": set(tuple(f) for f in pi_data["functions"]),
+        }
+
+    logger.info("[pipeline] Step 4: Filtering hidden nodes")
     gb.filter_hidden(agg, hidden_ids)
 
-    record_counts = _get_record_counts(db, agg.all_var_types)
+    logger.info("[pipeline] Step 5: Using record counts from scidb")
+    record_counts = {vtype: vdata["record_count"]
+                     for vtype, vdata in scidb_agg["variables"].items()}
 
     pending_constants = layout_store.get_pending_constants()
+    logger.debug("[pipeline] loaded %d pending constant(s)", len(pending_constants))
     pending_constants, removals = gb.auto_clean_pending_constants(
         pending_constants, agg.const_counts)
     for const_name, pval in removals:
         layout_store.remove_pending_constant(const_name, pval)
+    if removals:
+        logger.debug("[pipeline] removed %d pending constant value(s) that are now in database", len(removals))
 
     # --- Compute run states ---
+    logger.info("[pipeline] Step 6: Computing run states (delegating to run_state)")
     run_states = _compute_run_states(
         db, agg.fn_input_params, agg.fn_outputs,
         agg.fn_constants, pending_constants,
     )
+    logger.info("[pipeline] computed run states for %d nodes", len(run_states))
 
     # --- Build fn_params_map and saved_configs ---
     # fn_params_map and saved_configs are keyed by fn_name (the signature
     # and saved settings don't vary across call sites).
+    logger.info("[pipeline] Step 7: Building function parameter maps and saved configs")
     fn_names = {fn for fn, _ in agg.fn_input_params.keys()}
+    logger.debug("[pipeline] building parameter maps for %d unique function(s)", len(fn_names))
     fn_params_map: dict[str, list[str]] = {}
     for fn in fn_names:
         if _mr.is_matlab_function(fn):
@@ -278,6 +308,7 @@ def _build_graph(db: DatabaseManager) -> dict:
             fn_params_map[fn] = _fn_params_from_registry(fn)
 
     manual_nodes = _ps.get_manual_nodes(db)
+    logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
     saved_configs: dict[str, dict | None] = {}
     for fn in fn_names:
         # Manual nodes can use either the legacy `fn__{fn}` ID or the
@@ -349,13 +380,19 @@ def _build_graph(db: DatabaseManager) -> dict:
     )
 
     # --- Overlay saved path inputs ---
+    logger.info("[pipeline] Step 8: Overlaying saved path inputs")
     saved_path_inputs = layout_store.read_all_path_input_names()
+    logger.debug("[pipeline] loaded %d saved path input(s)", len(saved_path_inputs))
     gb.overlay_saved_path_inputs(agg.path_inputs, saved_path_inputs)
 
     # --- Build nodes (pure) ---
+    logger.info("[pipeline] Step 9: Building nodes (delegating to graph_builder)")
     nodes = gb.build_variable_nodes(agg.all_var_types, record_counts, run_states)
+    var_node_count = len(nodes)
     nodes += gb.build_constant_nodes(agg.const_counts, pending_constants)
+    const_node_count = len(nodes) - var_node_count
     nodes += gb.build_path_input_nodes(agg.path_inputs)
+    path_input_node_count = len(nodes) - var_node_count - const_node_count
     nodes += gb.build_function_nodes(
         agg.fn_input_params, agg.fn_outputs, agg.fn_constants,
         agg.fn_variants_map, fn_params_map, run_states,
@@ -363,24 +400,34 @@ def _build_graph(db: DatabaseManager) -> dict:
         matlab_output_order=matlab_output_order,
         matlab_param_to_class=matlab_param_to_class,
     )
+    fn_node_count = len(nodes) - var_node_count - const_node_count - path_input_node_count
+    logger.info("[pipeline] built %d nodes: %d variable, %d constant, %d path input, %d function",
+                len(nodes), var_node_count, const_node_count, path_input_node_count, fn_node_count)
 
     # --- Build edges (pure) ---
+    logger.info("[pipeline] Step 10: Building edges (delegating to graph_builder)")
     manual_edges_list = manual_edges_for_fn_lookup
     edges = gb.build_edges(
         agg.fn_input_params, agg.fn_outputs, agg.const_fns,
         agg.path_inputs, manual_edges_list, hidden_ids,
         matlab_param_to_class=matlab_param_to_class,
     )
+    logger.info("[pipeline] built %d edges", len(edges))
 
     # --- Merge manual nodes ---
+    logger.info("[pipeline] Step 11: Merging manual nodes (delegating to graph_builder)")
     saved_positions = layout_store.read_layout()["positions"]
+    logger.debug("[pipeline] loaded %d saved position(s)", len(saved_positions))
     to_add, graduations = gb.merge_manual_nodes(nodes, manual_nodes, saved_positions)
 
     # Execute graduation side effects.
+    logger.info("[pipeline] Step 12: Executing %d graduation action(s)", len(graduations))
     for action in graduations:
         layout_store.graduate_manual_node(action.old_id, action.new_id)
+        logger.debug("[pipeline] graduated manual node: %s -> %s", action.old_id, action.new_id)
 
     # Build and append manual nodes that should be added.
+    logger.info("[pipeline] Step 13: Building %d manual node(s) to add", len(to_add))
     existing_node_labels = {n["id"]: n["data"]["label"] for n in nodes}
     for node_id in to_add:
         meta = manual_nodes[node_id]
@@ -437,13 +484,16 @@ def _build_graph(db: DatabaseManager) -> dict:
             matlab_functions,
         )
         nodes.append(node)
+        logger.debug("[pipeline] built manual node: %s (type=%s, label=%s)",
+                     node_id, meta["type"], meta["label"])
 
+    logger.info("[pipeline] Step 14: Graph build complete - assembling final result")
     node_types = {}
     for n in nodes:
         t = n["type"]
         node_types[t] = node_types.get(t, 0) + 1
-    logger.debug(
-        "graph built: %d nodes (%s), %d edges",
+    logger.info(
+        "[pipeline] graph built successfully: %d total nodes (%s), %d edges",
         len(nodes),
         ", ".join(f"{c} {t}" for t, c in sorted(node_types.items())),
         len(edges),

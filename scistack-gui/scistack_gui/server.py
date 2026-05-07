@@ -214,6 +214,9 @@ def _h_start_run(params):
     from scistack_gui.db import get_db, acquire_db_connection, release_db_connection
     from scistack_gui.api.run import _run_in_thread, WhereFilterSpec
 
+    logger.info("[server] JSON-RPC start_run handler called")
+    logger.debug("[server] Request params: %s", params)
+
     run_id = params.get("run_id") or str(uuid.uuid4())[:8]
     function_name = params["function_name"]
     variants = params.get("variants", [])
@@ -226,7 +229,7 @@ def _h_start_run(params):
     db = get_db()
 
     logger.info(
-        "start_run[%s]: function=%s, language=%s, variants=%d, "
+        "[server] Parsed request: run_id=%s, function=%s, language=%s, variants=%d, "
         "schema_filter=%s, schema_level=%s, run_options=%s, where_filters=%d",
         run_id, function_name, language, len(variants),
         list(schema_filter.keys()) if schema_filter else None,
@@ -234,32 +237,42 @@ def _h_start_run(params):
         len(where_filters) if where_filters else 0,
     )
 
+    logger.debug("[server] Acquiring DB connection for run thread")
     acquire_db_connection()
 
     def _run_wrapper():
+        logger.debug("[server] Run wrapper thread started (run_id=%s)", run_id)
         try:
             _run_in_thread(run_id, function_name, variants, db, schema_filter,
                            schema_level, run_options, where_filters)
         finally:
+            logger.debug("[server] Releasing DB connection (run_id=%s)", run_id)
             release_db_connection()
+            logger.debug("[server] Run wrapper thread finished (run_id=%s)", run_id)
 
+    logger.info("[server] Spawning run wrapper thread (run_id=%s)", run_id)
     thread = threading.Thread(target=_run_wrapper, daemon=True)
     thread.start()
+    logger.info("[server] Run wrapper thread started (run_id=%s)", run_id)
     return {"run_id": run_id}
 
 
 def _h_cancel_run(params):
     from scistack_gui.services.run_service import cancel_run
     run_id = params["run_id"]
-    logger.info("cancel_run[%s]: cooperative cancel requested", run_id)
-    return cancel_run(run_id)
+    logger.info("[server] JSON-RPC cancel_run handler called for run_id=%s", run_id)
+    result = cancel_run(run_id)
+    logger.debug("[server] cancel_run result: %s (run_id=%s)", result, run_id)
+    return result
 
 
 def _h_force_cancel_run(params):
     from scistack_gui.services.run_service import force_cancel_run
     run_id = params["run_id"]
-    logger.info("force_cancel_run[%s]: force cancel requested", run_id)
-    return force_cancel_run(run_id)
+    logger.info("[server] JSON-RPC force_cancel_run handler called for run_id=%s", run_id)
+    result = force_cancel_run(run_id)
+    logger.debug("[server] force_cancel_run result: %s (run_id=%s)", result, run_id)
+    return result
 
 
 def _h_refresh_module(params):
