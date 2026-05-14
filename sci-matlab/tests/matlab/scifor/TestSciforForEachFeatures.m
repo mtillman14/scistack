@@ -8,7 +8,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
 
     methods (TestMethodSetup)
         function resetSchema(~)
-            scifor.schema_store_(string.empty(1, 0));
+            scifor.set_schema(string.empty(1, 0));
         end
     end
 

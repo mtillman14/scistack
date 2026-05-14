@@ -12,6 +12,15 @@ function set_schema(keys)
 %   Standalone users who do not use a database should call it once before
 %   using scidb.for_each() with table inputs or distribute=true.
 %
+%   Storage model:
+%     - Python's scifor module global is the source of truth when the
+%       py.scifor module is importable.
+%     - A MATLAB-side fallback cache (kept via setappdata(0, ...)) holds
+%       the same value so that standalone callers without Python still
+%       work, and so scifor.get_schema() returns a consistent answer if
+%       Python becomes unreachable mid-session.
+%     - When Python is reachable, BOTH are written so they stay in sync.
+%
 %   Example:
 %       scifor.set_schema(["subject", "session"])
 
@@ -19,6 +28,26 @@ function set_schema(keys)
         keys string
     end
 
-    scifor.schema_store_(keys);
+    % Normalize to a row vector of strings
+    keys_row = keys(:)';
+    if isempty(keys_row)
+        keys_row = string.empty(1, 0);
+    end
+
+    % Always write the MATLAB-side fallback cache
+    setappdata(0, 'scifor_schema', keys_row);
+
+    % Forward to Python's scifor.set_schema; tolerate Python being unavailable
+    try
+        if isempty(keys_row)
+            py_keys = py.list();
+        else
+            py_keys = py.list(cellstr(keys_row));
+        end
+        py.scifor.set_schema(py_keys);
+    catch
+        % Python not importable (standalone scifor use) — MATLAB cache is
+        % sufficient. Nothing else to do.
+    end
 
 end

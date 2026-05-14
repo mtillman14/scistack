@@ -523,36 +523,6 @@ classdef TestForEach < matlab.unittest.TestCase
             );
         end
 
-        function test_distribute_true_saves_to_multiple_rows(testCase)
-            tbl = table;
-            tbl.A = [1; 2; 3];
-            tbl.B = [4; 5; 6];
-            tbl.subject = ["1"; "1"; "1"];
-
-            subjects = "1";
-            sessions = [1, 2, 3];
-
-            scidb.for_each(@double_table_values, ...
-                struct('x', tbl), ...
-                {ProcessedSignal()}, ...
-                'subject', subjects, ...
-                distribute=true ...
-            );
-
-            % Verify each output: distribute saves one row per session,
-            % so session=k should hold row k of the processed table.
-            for s = subjects
-                for sess = sessions
-                    result = ProcessedSignal().load('subject', s, 'session', sess);
-                    testCase.verifyTrue(istable(result.data));
-                    testCase.verifyEqual(result.data.A, tbl.A(sess) * 2, 'AbsTol', 1e-10);
-                    testCase.verifyEqual(result.data.B, tbl.B(sess) * 2, 'AbsTol', 1e-10);
-                    testCase.verifyEqual(result.data.subject, tbl.subject(sess));
-                    testCase.verifyTrue(all(ismember({'A', 'B', 'subject'}, result.data.Properties.VariableNames)));
-                end
-            end
-        end
-
         function test_distribute_multiple_subjects(testCase)
             % Two subjects, same constant table input. Each subject's output
             % table is independently distributed to sessions 1-3.

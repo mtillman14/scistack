@@ -5,6 +5,15 @@ function py_obj = to_python(data)
 %   Arrays are converted to C-contiguous numpy ndarrays so that
 %   canonical_hash produces consistent results.
 
+    % Pass through Python objects that arrived in a MATLAB cell. The
+    % MATLAB→Python bridge can route them straight back without conversion
+    % (e.g. ``py.scilineage.core.LineageFcnResult`` cells produced when a
+    % LineageFcn-wrapped function returns multiple outputs via scifor).
+    if isa(data, 'py.object') && ~isa(data, 'py.NoneType')
+        py_obj = data;
+        return;
+    end
+
     if isstring(data) && isscalar(data)
         py_obj = char(data);
 
@@ -107,6 +116,20 @@ function py_obj = to_python(data)
                         % Fast path: 3 bridge crossings instead of N*3
                         py_flat = py.numpy.array(flat, pyargs('dtype', flat_dtype));
                         py_lengths = py.numpy.array(lengths, pyargs('dtype', 'int64'));
+                        % Log the dtype + sizes so the cell-column flatten
+                        % path can be observed if the bridge ever changes
+                        % how it shapes the resulting numpy array
+                        % (split_flat_to_lists ravels defensively, but
+                        % this log lets us see *which* dtype regressed if
+                        % a similar bug returns).
+                        try
+                            scidb.Log.debug( ...
+                                'to_python cell flatten: col="%s" dtype=%s flat_size=[%s] lengths_size=[%s]', ...
+                                col_names{i}, flat_dtype, ...
+                                num2str(size(flat)), num2str(size(lengths)));
+                        catch
+                            % Log not configured; ignore.
+                        end
                         py_val = py.sci_matlab.bridge.split_flat_to_lists(py_flat, py_lengths);
                     else
                         % Fallback: convert element-by-element.

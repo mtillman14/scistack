@@ -36,21 +36,37 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % Wrap LineageFcn in a plain function handle for scidb.for_each
     fn_plain = @(varargin) lineage_obj(varargin{:});
 
-    % Pass the real function name so scidb.for_each can persist expected
-    % combos with the correct name (not the anonymous wrapper name)
+    % Pass the real function name and source hash so scidb.for_each can
+    % persist expected combos with the correct name (not the anonymous
+    % wrapper) and version_keys' __fn_hash identifies the wrapped function
+    % source (not the wrapper closure, which is anonymous and unhashable).
     if isa(fn, 'function_handle')
         real_fn_name = func2str(fn);
+        hash_fn = fn;
     elseif isa(fn, 'scidb.LineageFcn')
         real_fn_name = func2str(fn.fcn);
+        hash_fn = fn.fcn;
     else
         real_fn_name = '';
+        hash_fn = [];
+    end
+
+    real_fn_hash = '';
+    if ~isempty(hash_fn)
+        try
+            real_fn_hash = scidb.internal.hash_function(hash_fn);
+        catch
+            % Anonymous or unresolvable; leave hash blank.
+        end
     end
 
     % Delegate to scidb.for_each
+    extra_nv = {};
     if ~isempty(real_fn_name)
-        result_tbl = scidb.for_each(fn_plain, inputs, outputs, ...
-            '_fn_name', real_fn_name, varargin{:});
-    else
-        result_tbl = scidb.for_each(fn_plain, inputs, outputs, varargin{:});
+        extra_nv = [extra_nv, {'_fn_name', real_fn_name}];
     end
+    if ~isempty(real_fn_hash)
+        extra_nv = [extra_nv, {'_fn_hash', real_fn_hash}];
+    end
+    result_tbl = scidb.for_each(fn_plain, inputs, outputs, extra_nv{:}, varargin{:});
 end

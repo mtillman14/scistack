@@ -3,6 +3,7 @@
 import json
 import time
 import warnings
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .log import Log
@@ -77,6 +78,41 @@ class _DryRunMerge(_scifor.Merge):
     @property
     def __name__(self) -> str:  # type: ignore[override]
         return self._dry_name
+
+
+# ---------------------------------------------------------------------------
+# Prepared state shared between the prepare / loop / save phases
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ForEachState:
+    """Everything ``_for_each_prepare`` computes that the inner loop and
+    ``_for_each_save_resolved`` consume. Holding it in one place lets the
+    same prepare code service both the Python-driven path (the existing
+    ``for_each`` orchestration) and the MATLAB-driven bridge entry that
+    runs the loop in MATLAB's ``scifor.for_each``.
+
+    Fields are populated by ``_for_each_prepare`` in the order they appear
+    in the pre-loop steps; consumers should treat the dataclass as
+    read-only once returned.
+    """
+
+    fn_name: str
+    config_keys: dict
+    call_id: str
+    output_names: list
+    loaded_inputs: dict
+    full_combos: list
+    extended_metadata_iterables: dict
+    rid_to_bp: dict
+    rid_keys: list
+    rid_keys_for_schema: list
+    aggregation_mode: bool
+    combo_to_rids: Any  # dict | None
+    iterated_keys_ordered: Any  # list | None
+    fixed_rid_values: dict
+    current_schema_keys: list
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +252,177 @@ def for_each(
     fn_name = getattr(fn, "__name__", repr(fn))
     Log.info(f"===== for_each({fn_name}) start =====")
 
+    # --- Steps 2-15: pre-loop preparation. Returns None on dry_run shortcut. ---
+    state = _for_each_prepare(
+        fn=fn,
+        fn_name=fn_name,
+        inputs=inputs,
+        outputs=outputs,
+        dry_run=dry_run,
+        as_table=as_table,
+        db=db,
+        distribute=distribute,
+        where=where,
+        _pre_combo_hook=_pre_combo_hook,
+        _cancel_check=_cancel_check,
+        metadata_iterables=metadata_iterables,
+    )
+    if state is None:
+        return None
+
+    # --- Step 16: Wrap fn to resolve PerComboLoader/PerComboLoaderMerge inputs per-combo,
+    #     inject combo metadata (for generates_file functions), and/or
+    #     reconstruct BaseVariable objects (for LineageFcn). ---
+    _per_combo = {k: v for k, v in state.loaded_inputs.items()
+                  if isinstance(v, (PerComboLoader, PerComboLoaderMerge))}
+    _is_lineage_wrapper = getattr(fn, '__lineage_wrapper__', False)
+    if _per_combo or _inject_combo_metadata or _is_lineage_wrapper:
+        wrap_reasons = []
+        if _per_combo:
+            wrap_reasons.append(f"{len(_per_combo)} PerComboLoader input(s)")
+        if _inject_combo_metadata:
+            wrap_reasons.append("generates_file metadata injection")
+        if _is_lineage_wrapper:
+            wrap_reasons.append("LineageFcn variable reconstruction")
+        Log.info(f"[scidb] Step 16: wrapping function for {', '.join(wrap_reasons)}")
+        _ordered_combos = state.full_combos
+        _call_idx = [0]
+        _orig_fn = fn
+
+        # Get function parameters to check which metadata keys it accepts.
+        # For scihist functions, the wrapper stores the original function's
+        # parameters in __scidb_params__. Otherwise try to get the signature.
+        _fn_params = None
+        if _inject_combo_metadata:
+            if hasattr(_orig_fn, '__scidb_params__'):
+                _fn_params = _orig_fn.__scidb_params__
+            else:
+                import inspect
+                try:
+                    sig = inspect.signature(_orig_fn)
+                    _fn_params = set(sig.parameters.keys())
+                except (ValueError, TypeError):
+                    # Couldn't get signature, don't inject metadata
+                    _fn_params = set()
+
+        def fn(**kwargs):  # noqa: F811 — intentional rebind
+            idx = _call_idx[0]
+            _call_idx[0] = idx + 1
+            current_combo = _ordered_combos[idx] if idx < len(_ordered_combos) else {}
+            load_kw = {k: v for k, v in current_combo.items() if not k.startswith("__")}
+            resolved = {}
+            for k, v in kwargs.items():
+                if isinstance(v, PerComboLoader):
+                    resolved[k] = _resolve_per_combo_loader(v, load_kw)
+                elif isinstance(v, PerComboLoaderMerge):
+                    resolved[k] = _resolve_per_combo_merge(v, load_kw)
+                else:
+                    resolved[k] = v
+
+            # Reconstruct BaseVariable objects for LineageFcn
+            if getattr(_orig_fn, '__lineage_wrapper__', False):
+                resolved = _reconstruct_variable_inputs(resolved, current_combo, inputs)
+
+            if _inject_combo_metadata and _fn_params is not None:
+                # Only inject metadata keys that the function signature accepts
+                for k, v in load_kw.items():
+                    if k not in resolved and k in _fn_params:
+                        resolved[k] = v
+            return _orig_fn(**resolved)
+    else:
+        Log.info("[scidb] Step 16: no function wrapping needed")
+
+    # Wrap _progress_fn to track final completed/skipped counts for logging.
+    _run_summary = {"total": 0, "completed": 0, "skipped": 0}
+
+    def _tracking_progress_fn(info: dict):
+        _run_summary["total"] = info.get("total", _run_summary["total"])
+        _run_summary["completed"] = info.get("completed", _run_summary["completed"])
+        _run_summary["skipped"] = info.get("skipped", _run_summary["skipped"])
+        if _progress_fn is not None:
+            _progress_fn(info)
+
+    # Step 17: Delegate core loop to scifor
+    Log.info(f"[scidb] Step 17: delegating to scifor.for_each with {len(state.full_combos)} combo(s)")
+    result_tbl = _scifor_for_each(
+        fn,
+        state.loaded_inputs,
+        dry_run=False,
+        as_table=as_table,
+        distribute=distribute,
+        output_names=state.output_names,
+        _all_combos=state.full_combos,
+        _log_fn=Log.info,
+        _progress_fn=_tracking_progress_fn,
+        _cancel_check=_cancel_check,
+        **state.extended_metadata_iterables,
+    )
+    Log.info(f"[scidb] scifor.for_each completed: {_run_summary['completed']} completed, {_run_summary['skipped']} skipped")
+
+    # Log run summary with failed repetition count.
+    if _run_summary["total"] > 0:
+        Log.debug(f"for_each({fn_name}): completed={_run_summary['completed']}, "
+                  f"failed={_run_summary['skipped']}, total={_run_summary['total']}")
+
+    # --- Steps 18-19: schema restore + save ---
+    return _for_each_save_resolved(
+        state=state,
+        result_tbl=result_tbl,
+        inputs=inputs,
+        outputs=outputs,
+        save=save,
+        db=db,
+        lineage_fixed_rids=_lineage_fixed_rids,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Prepare / save seam functions
+#
+# These factor the Python-driven body of ``for_each`` so that:
+#   - Python pipelines (the ``for_each`` orchestration above) call them
+#     in sequence with a Python ``for`` loop in between (delegated to
+#     ``scifor.for_each``).
+#   - MATLAB pipelines (the ``sci_matlab.bridge.for_each_prepare`` /
+#     ``for_each_save`` bridge entries) call them in sequence with the
+#     MATLAB-side ``+scifor/for_each.m`` running the inner loop in
+#     between.
+#
+# Both callers get identical correctness (variant expansion,
+# branch_params, ``__upstream``, lineage save) because they share the
+# same prepare and save code.
+# ---------------------------------------------------------------------------
+
+
+def _for_each_prepare(
+    *,
+    fn: Callable,
+    fn_name: str,
+    inputs: dict,
+    outputs: list,
+    dry_run: bool,
+    as_table,
+    db,
+    distribute: bool,
+    where,
+    _pre_combo_hook,
+    _cancel_check,
+    metadata_iterables: dict,
+) -> "_ForEachState | None":
+    """Run scidb.for_each's pre-loop work (Steps 2-15).
+
+    On ``dry_run=True`` runs the dry-run shortcut (Step 7) and returns
+    ``None`` to signal the caller to stop. Otherwise returns the prepared
+    state object the loop and save phases consume.
+    """
+    # Track which keys the user passed with explicit (non-empty) values.
+    # Keys passed as [] are about to be resolved from the DB (Step 2) or
+    # the filesystem (Step 3) — those should not count as "user explicit"
+    # in Step 3's discovery branch, since the user delegated their values
+    # to resolution rather than asserting intent.
+    user_explicit_keys = {k for k, v in metadata_iterables.items()
+                           if not (isinstance(v, list) and len(v) == 0)}
+
     # Step 2: Resolve empty lists to all distinct values from the database
     needs_resolve = [k for k, v in metadata_iterables.items()
                      if isinstance(v, list) and len(v) == 0]
@@ -245,41 +452,86 @@ def for_each(
     else:
         Log.info("[scidb] Step 2: no empty lists to resolve from database")
 
-    # --- Step 3: PathInput discovery: populate metadata from filesystem when DB is empty ---
+    # --- Step 3: PathInput discovery.  Discovery runs whenever a PathInput
+    # is present; its role depends on what the caller supplied:
+    #
+    #   * No metadata_iterables at all → adopt every discovered key/value.
+    #   * All template keys passed as [] → fill from disk and use the
+    #     discovered combos directly. This avoids Cartesian-product
+    #     "invention" of combos that have no file on disk (regression
+    #     covered by tests/matlab/scidb/TestForEachSchemaFiltering).
+    #   * Any template key has explicit user values → user intent is
+    #     authoritative. Empty-list keys still get filled from disk, but
+    #     no filtering happens; the Cartesian product of metadata_iterables
+    #     drives base_combos. Combos with missing files fail at runtime
+    #     and are surfaced as "missing" by check_node_state. ---
     _discovered_combos = None
     if _has_pathinput(inputs):
-        Log.info("[scidb] Step 3: PathInput detected, checking if filesystem discovery is needed")
+        Log.info("[scidb] Step 3: PathInput detected, running filesystem discovery")
         pi = _find_pathinput(inputs)
         if pi is not None:
-            # Case 1: No metadata keys passed at all — discover everything
-            if not metadata_iterables:
-                Log.info("[scidb] PathInput discovery case 1: no metadata keys provided, discovering all from filesystem")
-                combos = pi.discover()
-                Log.debug(f"PathInput discovery: template={pi.path_template!r}, "
-                          f"root_folder={pi.root_folder!r}, "
-                          f"matching_files={len(combos)}")
-                if combos:
-                    for key in combos[0].keys():
+            combos = pi.discover()
+            Log.debug(f"PathInput discovery: template={pi.path_template!r}, "
+                      f"root_folder={pi.root_folder!r}, "
+                      f"matching_files={len(combos)}")
+            if combos:
+                combo_keys = list(combos[0].keys())
+
+                # Case A: No metadata keys passed at all → adopt every
+                # discovered key with all its discovered values.
+                if not metadata_iterables:
+                    for key in combo_keys:
                         metadata_iterables[key] = list(dict.fromkeys(c[key] for c in combos))
                         Log.info(f"discovered {key} -> {len(metadata_iterables[key])} values from filesystem")
                     _discovered_combos = combos
+                else:
+                    # Case B: Keys provided (some may be []). For each
+                    # template key, fill empty lists from disk; explicit
+                    # user-provided values are left alone.
+                    #
+                    # "Explicit" means the user passed a non-empty list at
+                    # the call site (captured in user_explicit_keys before
+                    # Step 2).  A key whose value came from DB resolution
+                    # (Step 2) or filesystem discovery (here) is NOT
+                    # considered explicit — those are auto-fills, not
+                    # user assertions of intent.
+                    user_filter_seen = False
+                    for key in combo_keys:
+                        if key not in metadata_iterables:
+                            continue
+                        user_vals = metadata_iterables[key]
+                        if not user_vals:
+                            metadata_iterables[key] = list(dict.fromkeys(
+                                c[key] for c in combos
+                            ))
+                            Log.info(f"discovered {key} -> {len(metadata_iterables[key])} values from filesystem")
+                        elif key in user_explicit_keys:
+                            user_filter_seen = True
 
-            # Case 2: Some keys have empty [] (resolved to empty from DB) — fill from discovery
-            still_empty = [k for k, v in metadata_iterables.items()
-                           if isinstance(v, list) and len(v) == 0]
-            if still_empty:
-                Log.info(f"[scidb] PathInput discovery case 2: {len(still_empty)} key(s) still empty after DB resolution: {still_empty}")
-                combos = pi.discover()
-                Log.debug(f"PathInput discovery: template={pi.path_template!r}, "
-                          f"root_folder={pi.root_folder!r}, "
-                          f"matching_files={len(combos)}")
-                if combos:
-                    for key in still_empty:
-                        if key in combos[0]:
-                            values = list(dict.fromkeys(c[key] for c in combos))
-                            metadata_iterables[key] = values
-                            Log.info(f"discovered {key} -> {len(values)} values from filesystem")
-                    _discovered_combos = combos
+                    if user_filter_seen:
+                        # User supplied explicit values for at least one
+                        # template key — those define the intended combo
+                        # set. Leave _discovered_combos=None so Step 12
+                        # falls through to the Cartesian product of
+                        # metadata_iterables. Combos whose files are
+                        # missing on disk will be attempted and fail
+                        # with FileNotFoundError, which scifor catches
+                        # per-combo and records as a skip — surfacing as
+                        # "missing" in check_node_state rather than
+                        # being silently dropped here.
+                        Log.info(
+                            "[scidb] explicit user values for template keys; "
+                            "skipping discovery filter — Cartesian product "
+                            "of user-provided iterables will drive base_combos"
+                        )
+                    else:
+                        # All template keys filled from disk discovery —
+                        # use discovered combos directly to avoid
+                        # inventing non-existent combos via Cartesian
+                        # product (e.g. {sub1,sub2} × {sessA,sessB}
+                        # producing {sub2,sessB} when only 3 of 4 files
+                        # exist).
+                        _discovered_combos = combos
     else:
         Log.info("[scidb] Step 3: no PathInput detected, skipping filesystem discovery")
 
@@ -318,10 +570,41 @@ def for_each(
     output_names = [_output_name(o) for o in outputs] if outputs else ["result"]
     Log.info(f"[scidb] Step 6: resolved {len(output_names)} output name(s): {output_names}")
 
-    # --- Step 7: Dry-run shortcut: convert inputs for display only, call scifor, return ---
+    # --- Step 7: Dry-run shortcut: convert inputs for display only, call
+    # scifor, return.  Also runs the same combo prefilter Step 9 applies
+    # to non-dry runs so the printed iteration count reflects what would
+    # actually be processed (combos missing from the DB are dropped). ---
     if dry_run:
         Log.info("[scidb] Step 7: dry_run=True, converting inputs for display and delegating to scifor")
         display_inputs = _convert_inputs_for_display(inputs)
+
+        # Prefilter combos to existing schema combinations (mirrors Step 9
+        # for the non-dry path). Only meaningful when at least one key
+        # was DB-resolved AND no PathInput is present.
+        _dryrun_all_combos = None
+        if needs_resolve and not _has_pathinput(inputs):
+            from scidb.database import _schema_str
+            filter_db = resolved_db
+            if filter_db is not None and hasattr(filter_db, 'dataset_schema_keys'):
+                schema_keys_set = set(filter_db.dataset_schema_keys)
+                keys = list(metadata_iterables.keys())
+                schema_indices = [i for i, k in enumerate(keys) if k in schema_keys_set]
+                filter_keys = [keys[i] for i in schema_indices]
+                if filter_keys:
+                    from itertools import product
+                    value_lists = [metadata_iterables[k] for k in keys]
+                    raw_combos = list(product(*value_lists))
+                    existing = filter_db.distinct_schema_combinations(filter_keys)
+                    existing_set = set(existing)
+                    _dryrun_all_combos = [
+                        dict(zip(keys, combo))
+                        for combo in raw_combos
+                        if tuple(_schema_str(combo[i]) for i in schema_indices) in existing_set
+                    ]
+
+        scifor_kwargs = dict(metadata_iterables)
+        if _dryrun_all_combos is not None:
+            scifor_kwargs["_all_combos"] = _dryrun_all_combos
         _scifor_for_each(
             fn,
             display_inputs,
@@ -330,7 +613,7 @@ def for_each(
             distribute=distribute,
             output_names=output_names,
             _cancel_check=_cancel_check,
-            **metadata_iterables,
+            **scifor_kwargs,
         )
         return None
 
@@ -496,6 +779,10 @@ def for_each(
             continue
         schema_cols_in_df = [k for k in _lookup_keys if k in df.columns]
         mapping: dict = {}
+        # Dedupe rids per group so DataFrame-mode inputs (one DuckDB row
+        # per inner-table row, all sharing a single record_id) don't
+        # produce N duplicate combos. We preserve insertion order via
+        # dict.fromkeys.
         if schema_cols_in_df:
             for combo_vals, group in df.groupby(schema_cols_in_df, sort=False):
                 raw_key = combo_vals if isinstance(combo_vals, tuple) else (combo_vals,)
@@ -503,10 +790,12 @@ def for_each(
                 col_val = {sk: ("" if v is None else str(v))
                            for sk, v in zip(schema_cols_in_df, raw_key)}
                 key = tuple(col_val.get(sk, "") for sk in _lookup_keys)
-                mapping[key] = group[rid_col].tolist()
+                mapping[key] = list(dict.fromkeys(group[rid_col].tolist()))
         else:
             # No lookup cols in df — use all-empty key
-            mapping[tuple("" for _ in _lookup_keys)] = df[rid_col].tolist()
+            mapping[tuple("" for _ in _lookup_keys)] = list(
+                dict.fromkeys(df[rid_col].tolist())
+            )
         rid_per_combo[rid_col] = mapping
 
     if _aggregation_mode:
@@ -646,172 +935,43 @@ def for_each(
                 all_rids.extend(rids)
             extended_metadata_iterables[rid_col] = list(dict.fromkeys(all_rids))  # preserve order, dedupe
 
-    def _reconstruct_variable_inputs(
-        resolved: dict,
-        current_combo: dict,
-        inputs: dict,
-    ) -> dict:
-        """Reconstruct BaseVariable objects for variable inputs.
-
-        After scifor extracts raw data, reconstruct BaseVariable objects
-        with metadata so LineageFcn can classify them correctly.
-
-        Args:
-            resolved: Dict of param_name → raw_data from scifor
-            current_combo: Combo dict with __rid_* → record_id + schema keys
-            inputs: Original inputs dict with param_name → variable_class or Fixed()
-
-        Returns:
-            Dict with BaseVariable objects for variable inputs, raw data for others
-        """
-        import pandas as pd
-        reconstructed = {}
-
-        for param_name, raw_value in resolved.items():
-            # Check if this param is a variable input (has __rid_* entry)
-            rid_key = f"__rid_{param_name}"
-            if rid_key not in current_combo:
-                # Not a variable - pass through as-is
-                reconstructed[param_name] = raw_value
-                continue
-
-            # Get variable class from inputs
-            input_spec = inputs.get(param_name)
-            variable_class = None
-
-            if isinstance(input_spec, type):
-                # Simple variable type
-                variable_class = input_spec
-            elif hasattr(input_spec, 'var_type') and isinstance(input_spec.var_type, type):
-                # Fixed wrapper - extract the variable class
-                variable_class = input_spec.var_type
-
-            if variable_class is None:
-                # Not a simple variable type - pass through
-                reconstructed[param_name] = raw_value
-                continue
-
-            # Extract raw data from DataFrame if needed
-            data_value = raw_value
-            if isinstance(raw_value, pd.DataFrame):
-                # Extract the data column (variable name column)
-                var_name = variable_class.__name__
-                if var_name in raw_value.columns:
-                    # Get the single value from the data column
-                    data_value = raw_value[var_name].iloc[0]
-                else:
-                    # Fallback: pass through as-is
-                    data_value = raw_value
-
-            # Reconstruct BaseVariable
-            var = variable_class(data_value)
-            var.record_id = str(current_combo[rid_key])
-
-            # Set metadata from combo (schema keys only)
-            var.metadata = {k: v for k, v in current_combo.items() if not k.startswith("__")}
-
-            reconstructed[param_name] = var
-
-        return reconstructed
-
-    # --- Step 16: Wrap fn to resolve PerComboLoader/PerComboLoaderMerge inputs per-combo,
-    #     inject combo metadata (for generates_file functions), and/or
-    #     reconstruct BaseVariable objects (for LineageFcn). ---
-    _per_combo = {k: v for k, v in loaded_inputs.items()
-                  if isinstance(v, (PerComboLoader, PerComboLoaderMerge))}
-    _is_lineage_wrapper = getattr(fn, '__lineage_wrapper__', False)
-    if _per_combo or _inject_combo_metadata or _is_lineage_wrapper:
-        wrap_reasons = []
-        if _per_combo:
-            wrap_reasons.append(f"{len(_per_combo)} PerComboLoader input(s)")
-        if _inject_combo_metadata:
-            wrap_reasons.append("generates_file metadata injection")
-        if _is_lineage_wrapper:
-            wrap_reasons.append("LineageFcn variable reconstruction")
-        Log.info(f"[scidb] Step 16: wrapping function for {', '.join(wrap_reasons)}")
-        _ordered_combos = full_combos
-        _call_idx = [0]
-        _orig_fn = fn
-
-        # Get function parameters to check which metadata keys it accepts.
-        # For scihist functions, the wrapper stores the original function's
-        # parameters in __scidb_params__. Otherwise try to get the signature.
-        _fn_params = None
-        if _inject_combo_metadata:
-            if hasattr(_orig_fn, '__scidb_params__'):
-                _fn_params = _orig_fn.__scidb_params__
-            else:
-                import inspect
-                try:
-                    sig = inspect.signature(_orig_fn)
-                    _fn_params = set(sig.parameters.keys())
-                except (ValueError, TypeError):
-                    # Couldn't get signature, don't inject metadata
-                    _fn_params = set()
-
-        def fn(**kwargs):  # noqa: F811 — intentional rebind
-            idx = _call_idx[0]
-            _call_idx[0] = idx + 1
-            current_combo = _ordered_combos[idx] if idx < len(_ordered_combos) else {}
-            load_kw = {k: v for k, v in current_combo.items() if not k.startswith("__")}
-            resolved = {}
-            for k, v in kwargs.items():
-                if isinstance(v, PerComboLoader):
-                    resolved[k] = _resolve_per_combo_loader(v, load_kw)
-                elif isinstance(v, PerComboLoaderMerge):
-                    resolved[k] = _resolve_per_combo_merge(v, load_kw)
-                else:
-                    resolved[k] = v
-
-            # Reconstruct BaseVariable objects for LineageFcn
-            if getattr(_orig_fn, '__lineage_wrapper__', False):
-                resolved = _reconstruct_variable_inputs(resolved, current_combo, inputs)
-
-            if _inject_combo_metadata and _fn_params is not None:
-                # Only inject metadata keys that the function signature accepts
-                for k, v in load_kw.items():
-                    if k not in resolved and k in _fn_params:
-                        resolved[k] = v
-            return _orig_fn(**resolved)
-    else:
-        Log.info("[scidb] Step 16: no function wrapping needed")
-
-    # Wrap _progress_fn to track final completed/skipped counts for logging.
-    _run_summary = {"total": 0, "completed": 0, "skipped": 0}
-
-    def _tracking_progress_fn(info: dict):
-        _run_summary["total"] = info.get("total", _run_summary["total"])
-        _run_summary["completed"] = info.get("completed", _run_summary["completed"])
-        _run_summary["skipped"] = info.get("skipped", _run_summary["skipped"])
-        if _progress_fn is not None:
-            _progress_fn(info)
-
-    # Step 17: Delegate core loop to scifor
-    Log.info(f"[scidb] Step 17: delegating to scifor.for_each with {len(full_combos)} combo(s)")
-    result_tbl = _scifor_for_each(
-        fn,
-        loaded_inputs,
-        dry_run=False,
-        as_table=as_table,
-        distribute=distribute,
+    return _ForEachState(
+        fn_name=fn_name,
+        config_keys=config_keys,
+        call_id=call_id,
         output_names=output_names,
-        _all_combos=full_combos,
-        _log_fn=Log.info,
-        _progress_fn=_tracking_progress_fn,
-        _cancel_check=_cancel_check,
-        **extended_metadata_iterables,
+        loaded_inputs=loaded_inputs,
+        full_combos=full_combos,
+        extended_metadata_iterables=extended_metadata_iterables,
+        rid_to_bp=rid_to_bp,
+        rid_keys=rid_keys,
+        rid_keys_for_schema=rid_keys_for_schema,
+        aggregation_mode=_aggregation_mode,
+        combo_to_rids=_combo_to_rids,
+        iterated_keys_ordered=_iterated_keys_ordered,
+        fixed_rid_values=fixed_rid_values,
+        current_schema_keys=current_schema_keys,
     )
-    Log.info(f"[scidb] scifor.for_each completed: {_run_summary['completed']} completed, {_run_summary['skipped']} skipped")
 
-    # Log run summary with failed repetition count.
-    if _run_summary["total"] > 0:
-        Log.debug(f"for_each({fn_name}): completed={_run_summary['completed']}, "
-                  f"failed={_run_summary['skipped']}, total={_run_summary['total']}")
 
+def _for_each_save_resolved(
+    *,
+    state: "_ForEachState",
+    result_tbl,
+    inputs: dict,
+    outputs: list,
+    save: bool,
+    db,
+    lineage_fixed_rids,
+):
+    """Run scidb.for_each's Step 18 (schema restore) and Step 19 (save).
+
+    Returns ``result_tbl`` unchanged after performing the save side effect.
+    """
     # Step 18: Restore scifor's schema
-    if rid_keys_for_schema:
-        Log.info(f"[scidb] Step 18: restoring scifor schema to {len(current_schema_keys)} keys (removing {len(rid_keys_for_schema)} rid keys)")
-        _scifor.set_schema(current_schema_keys)
+    if state.rid_keys_for_schema:
+        Log.info(f"[scidb] Step 18: restoring scifor schema to {len(state.current_schema_keys)} keys (removing {len(state.rid_keys_for_schema)} rid keys)")
+        _scifor.set_schema(state.current_schema_keys)
     else:
         Log.info("[scidb] Step 18: no schema restoration needed (wasn't extended)")
 
@@ -822,7 +982,7 @@ def for_each(
     if save and outputs and not result_tbl.empty:
         Log.info(f"[scidb] Step 19: saving {len(result_tbl)} result row(s) for {len(outputs)} output(s)")
         # Compute Fixed input rids for lineage tracking if not provided
-        fixed_rids_for_save = _lineage_fixed_rids
+        fixed_rids_for_save = lineage_fixed_rids
         if fixed_rids_for_save is None and HAS_LINEAGE:
             # Only compute if we might save LineageFcnResult objects
             fixed_rids_for_save = _compute_fixed_input_rids(inputs, db)
@@ -831,12 +991,12 @@ def for_each(
 
         save_t0 = time.perf_counter()
         _save_results(
-            result_tbl, outputs, output_names, config_keys, db,
-            rid_to_bp=rid_to_bp,
-            rid_keys=[] if _aggregation_mode else rid_keys,
+            result_tbl, outputs, state.output_names, state.config_keys, db,
+            rid_to_bp=state.rid_to_bp,
+            rid_keys=[] if state.aggregation_mode else state.rid_keys,
             lineage_fixed_rids=fixed_rids_for_save,
-            combo_to_rids=_combo_to_rids,
-            combo_to_rids_keys=_iterated_keys_ordered,
+            combo_to_rids=state.combo_to_rids,
+            combo_to_rids_keys=state.iterated_keys_ordered,
         )
         save_elapsed = time.perf_counter() - save_t0
         Log.info(f"[scidb] Step 19 complete: saved {len(result_tbl)} result(s) in {save_elapsed:.3f}s")
@@ -848,6 +1008,75 @@ def for_each(
         Log.info("[scidb] Step 19: skipping save (result table is empty)")
 
     return result_tbl
+
+
+def _reconstruct_variable_inputs(
+    resolved: dict,
+    current_combo: dict,
+    inputs: dict,
+) -> dict:
+    """Reconstruct BaseVariable objects for variable inputs.
+
+    After scifor extracts raw data, reconstruct BaseVariable objects
+    with metadata so LineageFcn can classify them correctly.
+
+    Args:
+        resolved: Dict of param_name → raw_data from scifor
+        current_combo: Combo dict with __rid_* → record_id + schema keys
+        inputs: Original inputs dict with param_name → variable_class or Fixed()
+
+    Returns:
+        Dict with BaseVariable objects for variable inputs, raw data for others
+    """
+    import pandas as pd
+    reconstructed = {}
+
+    for param_name, raw_value in resolved.items():
+        # Check if this param is a variable input (has __rid_* entry)
+        rid_key = f"__rid_{param_name}"
+        if rid_key not in current_combo:
+            # Not a variable - pass through as-is
+            reconstructed[param_name] = raw_value
+            continue
+
+        # Get variable class from inputs
+        input_spec = inputs.get(param_name)
+        variable_class = None
+
+        if isinstance(input_spec, type):
+            # Simple variable type
+            variable_class = input_spec
+        elif hasattr(input_spec, 'var_type') and isinstance(input_spec.var_type, type):
+            # Fixed wrapper - extract the variable class
+            variable_class = input_spec.var_type
+
+        if variable_class is None:
+            # Not a simple variable type - pass through
+            reconstructed[param_name] = raw_value
+            continue
+
+        # Extract raw data from DataFrame if needed
+        data_value = raw_value
+        if isinstance(raw_value, pd.DataFrame):
+            # Extract the data column (variable name column)
+            var_name = variable_class.__name__
+            if var_name in raw_value.columns:
+                # Get the single value from the data column
+                data_value = raw_value[var_name].iloc[0]
+            else:
+                # Fallback: pass through as-is
+                data_value = raw_value
+
+        # Reconstruct BaseVariable
+        var = variable_class(data_value)
+        var.record_id = str(current_combo[rid_key])
+
+        # Set metadata from combo (schema keys only)
+        var.metadata = {k: v for k, v in current_combo.items() if not k.startswith("__")}
+
+        reconstructed[param_name] = var
+
+    return reconstructed
 
 
 # ---------------------------------------------------------------------------
@@ -1037,10 +1266,17 @@ def _load_input(var_spec: Any, db: Any | None, where: Any | None) -> Any:
     if isinstance(var_spec, Merge):
         if _merge_needs_per_combo(var_spec):
             return PerComboLoaderMerge(var_spec)
-        # All constituents can be pre-loaded
+        # All constituents can be pre-loaded.
+        # ``where=`` is intentionally NOT propagated to Merge constituents:
+        # the inner-join across constituents already restricts the result
+        # set, and enforcing where-coverage on each constituent
+        # individually trips the filter-coverage validator (the filter
+        # variable rarely covers EVERY schema location that a Merge
+        # constituent has data for). The where filter still affects the
+        # surrounding for_each call via __where in version_keys.
         loaded_tables = []
         for sub_spec in var_spec.var_specs:
-            loaded_tables.append(_load_input(sub_spec, db, where))
+            loaded_tables.append(_load_input(sub_spec, db, where=None))
         return _scifor.Merge(*loaded_tables)
 
     # Fixed: check for Fixed(Merge(...)) error, then load inner

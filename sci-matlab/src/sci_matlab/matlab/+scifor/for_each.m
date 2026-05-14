@@ -768,6 +768,17 @@ function result = extract_data(tbl, schema_keys, as_table)
             result = val{1};
         else
             result = val;
+            % When the source DataFrame held multiple records of vector
+            % data, from_python's try_stack_numeric stacks them as rows
+            % of a matrix (M-record table, each row 1×N). Filtering to
+            % one row yields a 1×N row vector — but the cell-extraction
+            % path for a single-record case gives an N×1 column. Coerce
+            % the row vector to a column so per-record extraction is
+            % shape-consistent regardless of how many records were
+            % loaded together.
+            if isnumeric(result) && isrow(result) && ~isscalar(result)
+                result = result(:);
+            end
         end
     elseif ~isempty(keep_cols) && numel(keep_cols) < numel(col_names)
         sub_tbl = tbl(:, cellstr(keep_cols));

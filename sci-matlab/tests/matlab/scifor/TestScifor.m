@@ -6,8 +6,8 @@ classdef TestScifor < matlab.unittest.TestCase
 
     methods (TestMethodSetup)
         function resetSchema(~)
-            % Reset scifor schema before each test by clearing the store
-            scifor.schema_store_(string.empty(1, 0));
+            % Reset scifor schema before each test by clearing it
+            scifor.set_schema(string.empty(1, 0));
         end
     end
 

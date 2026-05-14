@@ -76,10 +76,21 @@ classdef TestPathInput < matlab.unittest.TestCase
             testCase.verifyEqual(path, expected);
         end
 
-        function test_no_root_folder_uses_pwd(testCase)
+        function test_no_root_folder_uses_project_root(testCase)
+            % When no root_folder is supplied, PathInput.load() resolves
+            % the template relative to scifor's project-root finder
+            % (nearest pyproject.toml or scistack.toml ancestor; falls
+            % back to cwd when neither is found). Compute the expected
+            % path through the bridge so the test is robust to
+            % OS-specific symlink resolution (e.g. macOS /var/folders
+            % vs /private/var/folders) and to where the test is launched
+            % from.
+            root_str = char(py.sci_matlab.bridge.pathinput_project_root());
+            expected_py = py.pathlib.Path(root_str).joinpath('1', 'data.mat').resolve();
+            expected = string(char(py.str(expected_py)));
+
             pi = scifor.PathInput("{x}/data.mat");
             path = pi.load('x', 1);
-            expected = string(fullfile(pwd, '1', 'data.mat'));
             testCase.verifyEqual(path, expected);
         end
 

@@ -6,6 +6,12 @@ function hash = hash_function(fcn)
 %   For named functions, hashes the full source code of the .m file.
 %   Anonymous functions are not supported (error).
 %
+%   The hashing format itself lives in Python
+%   (sci_matlab.bridge.compute_matlab_function_hash) so it can be tweaked
+%   centrally without divergence between MATLAB-side and GUI-side
+%   consumers. MATLAB only reads the source file and forwards the bytes
+%   across the bridge.
+%
 %   Returns a 64-character hex string.
 
     info = functions(fcn);
@@ -25,7 +31,8 @@ function hash = hash_function(fcn)
             'Cannot locate source file for function "%s".', func_name);
     end
 
-    % Read source and hash via Python's hashlib
+    % Read source and forward to Python for hashing
     source = fileread(fpath);
-    hash = char(py.hashlib.sha256(py.bytes(source, 'utf-8')).hexdigest());
+    hash = char(py.sci_matlab.bridge.compute_matlab_function_hash( ...
+        source, func_name, false));
 end

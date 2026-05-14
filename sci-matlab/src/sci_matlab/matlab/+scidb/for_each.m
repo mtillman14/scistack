@@ -1,16 +1,22 @@
 function result_tbl = for_each(fn, inputs, outputs, varargin)
-%SCIDB.FOR_EACH  DB-backed for_each — loads inputs, delegates loop to scifor, saves outputs.
+%SCIDB.FOR_EACH  DB-backed for_each — delegates prepare + save to Python.
 %
 %   scidb.for_each(@FN, INPUTS, OUTPUTS, Name, Value, ...)
 %
-%   This is the DB I/O layer. It:
-%   1. Resolves empty lists [] via db.distinct_schema_values()
-%   2. Pre-filters schema combos via db.distinct_schema_combinations()
-%   3. Builds ForEachConfig version keys
-%   4. Loads all input variables into MATLAB tables
-%   5. Converts scidb wrappers -> scifor wrappers
-%   6. Delegates the core loop to scifor.for_each()
-%   7. Saves results from the returned table
+%   Two-pass design (see .claude/matlab-for-each-redesign-plan.md Phase 3):
+%
+%     1. Python ``sci_matlab.bridge.for_each_prepare`` does all pre-loop
+%        work (DB-load inputs, __rid_* variant expansion, version-key
+%        build, persist expected combos for the GUI).
+%     2. MATLAB's existing ``+scifor/for_each.m`` runs the inner loop
+%        with the prepared inputs and combo list, calling the user
+%        function once per combo.
+%     3. Python ``sci_matlab.bridge.for_each_save`` saves the results
+%        with branch_params / ``__upstream`` / LineageFcnResult routing.
+%
+%   MATLAB owns only step 2 and the bridge plumbing. All correctness-
+%   sensitive logic (variant tracking, lineage save, version keys) lives
+%   in Python so MATLAB-driven and Python-driven pipelines stay in sync.
 %
 %   Arguments:
 %       fn      - Function handle (plain; use scihist.for_each for LineageFcn wrapping)
@@ -22,8 +28,6 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %   Name-Value Arguments:
 %       dry_run       - If true, preview without executing (default: false)
 %       save          - If true, save outputs (default: true)
-%       preload       - If true, pre-load all inputs (default: true)
-%       parallel      - If true, use 3-phase parallel execution (default: false)
 %       distribute    - If true, split outputs by element/row (default: false)
 %       db            - Optional DatabaseManager for load/save operations
 %       where         - Optional scidb.Filter for input loading
@@ -31,14 +35,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %       (any other)   - Metadata iterables (numeric or string arrays)
 %
 %   Returns:
-%       result_tbl - MATLAB table with metadata columns and output columns.
-%                    Returns [] for dry_run or parallel mode.
-%
-%   Example:
-%       scidb.for_each(@filter_data, ...
-%           struct('step_length', StepLength(), 'smoothing', 0.2), ...
-%           {FilteredStepLength()}, ...
-%           subject=[1 2 3], session=["A" "B"]);
+%       result_tbl - MATLAB table with metadata + output columns.
+%                    Returns [] for dry_run.
 
     % Default return value
     result_tbl = [];
@@ -48,1706 +46,610 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
     dry_run = opts.dry_run;
     do_save = opts.save;
-    do_preload = opts.preload;
     as_table_raw = opts.as_table;
-
-    % Build db name-value pair for passthrough to load/save
-    if isempty(opts.db)
-        db_nv = {};
-    else
-        db_nv = {'db', opts.db};
-    end
-
-    % Build where name-value pair for passthrough to load calls
     where_filter = opts.where;
-    if isempty(where_filter)
-        where_nv = {};
-    else
-        where_nv = {'where', where_filter};
-    end
 
-    % Get function name for display
+    % --- Resolve function name + source hash ---
     if isa(fn, 'function_handle')
         fn_name = func2str(fn);
+        hash_fn = fn;
     elseif isa(fn, 'scidb.LineageFcn')
         fn_name = func2str(fn.fcn);
+        hash_fn = fn.fcn;
     else
         fn_name = 'unknown';
+        hash_fn = [];
     end
-
-    % Override fn_name if provided (used by scihist.for_each to pass the
-    % real function name instead of the anonymous wrapper name)
     if ~isempty(opts.fn_name_override)
         fn_name = opts.fn_name_override;
     end
 
+    if ~isempty(opts.fn_hash_override)
+        fn_hash = opts.fn_hash_override;
+    elseif ~isempty(hash_fn)
+        try
+            fn_hash = scidb.internal.hash_function(hash_fn);
+        catch
+            fn_hash = '';
+        end
+    else
+        fn_hash = '';
+    end
+
     scidb.Log.info('===== for_each(%s) start =====', fn_name);
 
-    % Parse metadata iterables
+    % Dry-run is handled below by passing dry_run=true through the bridge
+    % so Python's _for_each_prepare can resolve empty [] iterables from
+    % the database before invoking scifor.for_each(dry_run=true) itself.
+
+    % --- Parse metadata iterables into a Python dict for the bridge ---
     if mod(numel(meta_args), 2) ~= 0
         error('scidb:for_each', 'Metadata arguments must be name-value pairs.');
     end
-
-    meta_keys = string.empty;
-    meta_values = {};
+    % Track which metadata keys arrived numeric / logical so we can
+    % coerce the result table's metadata columns back to MATLAB-native
+    % types after save. Python's _for_each_prepare Step 5 stringifies
+    % schema-key values for DataFrame-side filtering consistency, but
+    % MATLAB callers expect numeric inputs to round-trip as numeric.
+    py_meta = py.dict();
+    meta_original_classes = containers.Map('KeyType', 'char', 'ValueType', 'char');
     for i = 1:2:numel(meta_args)
-        meta_keys(end+1) = string(meta_args{i}); %#ok<AGROW>
-        v = meta_args{i+1};
-        if isnumeric(v)
-            meta_values{end+1} = num2cell(v); %#ok<AGROW>
-        elseif isstring(v)
-            meta_values{end+1} = cellstr(v); %#ok<AGROW>
-        elseif iscell(v)
-            meta_values{end+1} = v; %#ok<AGROW>
-        else
-            meta_values{end+1} = {v}; %#ok<AGROW>
-        end
+        key = char(string(meta_args{i}));
+        val = meta_args{i+1};
+        meta_original_classes(key) = class(val);
+        py_meta{key} = scidb.internal.to_python(val);
     end
 
-    % --- Resolve empty arrays from database ---
-    needs_resolve = false(1, numel(meta_keys));
-    for i = 1:numel(meta_values)
-        needs_resolve(i) = isempty(meta_values{i});
-    end
-    resolve_db = [];
-    if any(needs_resolve)
-        if isempty(opts.db)
-            resolve_db = py.scidb.database.get_database();
-        else
-            resolve_db = opts.db;
-        end
-        for i = find(needs_resolve)
-            py_vals = resolve_db.distinct_schema_values(char(meta_keys(i)));
-            mat_vals = cell(py_vals);
-            for j = 1:numel(mat_vals)
-                mat_vals{j} = scidb.internal.from_python(mat_vals{j});
-            end
-            if isempty(mat_vals)
-                scidb.Log.warn('no values found for ''%s'' in database, 0 iterations', ...
-                    meta_keys(i));
-            else
-                scidb.Log.info('resolved %s=[] -> %d values', meta_keys(i), numel(mat_vals));
-            end
-            meta_values{i} = mat_vals;
-        end
-    end
-
-    % --- PathInput discovery: filesystem is the source of truth for which
-    %     combos exist whenever a PathInput is present. Must run on every call,
-    %     not only when meta_values are empty — otherwise a re-run picks up
-    %     lineage-resolved values from the DB and builds a Cartesian product
-    %     that invents combos with no file on disk. ---
-    discovered_combos = {};
-    if has_pathinput(inputs)
-        pi = find_pathinput(inputs);
-        if ~isempty(pi)
-            combos = pi.discover();
-            scidb.Log.debug('PathInput discovery: template="%s", root_folder="%s", matching_files=%d', ...
-                pi.path_template, pi.root_folder, numel(combos));
-            if ~isempty(combos)
-                combo_fields = fieldnames(combos{1});
-
-                if isempty(meta_keys)
-                    % No metadata args at all — adopt every discovered field.
-                    for f = 1:numel(combo_fields)
-                        meta_keys(end+1) = string(combo_fields{f}); %#ok<AGROW>
-                        vals = cellfun(@(c) c.(combo_fields{f}), combos, 'UniformOutput', false);
-                        vals = unique(string(vals), 'stable');
-                        meta_values{end+1} = cellstr(vals); %#ok<AGROW>
-                        scidb.Log.info('discovered %s -> %d values from filesystem', ...
-                            combo_fields{f}, numel(vals));
-                    end
-                    discovered_combos = combos;
-                else
-                    % Filter discovered combos by user-provided values. An empty
-                    % meta_values{i} (whether passed empty or DB-resolved empty)
-                    % means "no user constraint for this key" and does not filter.
-                    keep = true(1, numel(combos));
-                    for i = 1:numel(meta_keys)
-                        key = char(meta_keys(i));
-                        if ~isfield(combos{1}, key)
-                            continue;
-                        end
-                        user_vals = meta_values{i};
-                        if isempty(user_vals)
-                            continue;
-                        end
-                        user_strs = string.empty;
-                        for vi = 1:numel(user_vals)
-                            user_strs(end+1) = string(user_vals{vi}); %#ok<AGROW>
-                        end
-                        for ci = 1:numel(combos)
-                            if keep(ci) && ~ismember(string(combos{ci}.(key)), user_strs)
-                                keep(ci) = false;
-                            end
-                        end
-                    end
-                    discovered_combos = combos(keep);
-
-                    % Reset meta_values for every template-covered key to the
-                    % values actually present in the filtered discovery result.
-                    % This drops invented combos (no file on disk) from both the
-                    % iteration banner and any downstream Cartesian fallbacks,
-                    % and fills in keys the user passed as [].
-                    for i = 1:numel(meta_keys)
-                        key = char(meta_keys(i));
-                        if isfield(combos{1}, key) && ~isempty(discovered_combos)
-                            vals = cellfun(@(c) c.(key), discovered_combos, 'UniformOutput', false);
-                            vals = unique(string(vals), 'stable');
-                            meta_values{i} = cellstr(vals);
-                            scidb.Log.info('discovered %s -> %d values from filesystem', ...
-                                key, numel(vals));
-                        end
-                    end
-
-                    if numel(discovered_combos) < numel(combos)
-                        scidb.Log.info('filesystem-discovered %d combos (filtered from %d by user-provided values)', ...
-                            numel(discovered_combos), numel(combos));
-                    else
-                        scidb.Log.info('filesystem-discovered %d combos', numel(discovered_combos));
-                    end
-                end
-            end
-        end
-    end
-
-    % --- Propagate schema keys to scifor ---
-    propagate_schema(opts.db);
-
-    % --- Resolve ColName wrappers before the loadable/constant split ---
+    % --- Build kind-tagged inputs spec for the bridge ---
     input_names = fieldnames(inputs);
-
-    % Resolve database for ColName lookups (only if needed)
-    has_colname = false;
+    py_inputs_spec = py.dict();
     for p = 1:numel(input_names)
-        if isa(inputs.(input_names{p}), 'scifor.ColName') || isa(inputs.(input_names{p}), 'scidb.ColName')
-            has_colname = true;
-            break;
-        end
+        name = input_names{p};
+        py_inputs_spec{name} = describe_input_for_python(inputs.(name));
     end
 
-    if has_colname
-        if isempty(opts.db)
-            py_db_colname = py.scidb.database.get_database();
-        else
-            py_db_colname = opts.db;
-        end
-
-        for p = 1:numel(input_names)
-            var_spec = inputs.(input_names{p});
-            if isa(var_spec, 'scifor.ColName')
-                % scifor.ColName wrapping a table in scidb context
-                inner = var_spec.data;
-                if isa(inner, 'scidb.BaseVariable')
-                    type_name = class(inner);
-                    py_class = scidb.internal.ensure_registered(type_name);
-                    inputs.(input_names{p}) = char(py.sci_matlab.bridge.get_data_column_name(py_class, py_db_colname));
-                elseif istable(inner)
-                    % Resolve from table columns like scifor does
-                    propagate_schema(opts.db);
-                    sk = scifor.get_schema();
-                    tbl_cols = string(inner.Properties.VariableNames);
-                    data_cols = setdiff(tbl_cols, sk, 'stable');
-                    if numel(data_cols) == 1
-                        inputs.(input_names{p}) = char(data_cols(1));
-                    elseif isempty(data_cols)
-                        error('scidb:ColName', ...
-                            'ColName(%s): table has no data columns.', input_names{p});
-                    else
-                        error('scidb:ColName', ...
-                            'ColName(%s): table has %d data columns (%s), expected exactly 1.', ...
-                            input_names{p}, numel(data_cols), strjoin(data_cols, ', '));
-                    end
-                else
-                    error('scidb:ColName', ...
-                        'ColName in scidb.for_each requires a BaseVariable or table.');
-                end
-            elseif isa(var_spec, 'scidb.ColName')
-                inner = var_spec.var_type;
-                if isa(inner, 'scidb.BaseVariable')
-                    type_name = class(inner);
-                    py_class = scidb.internal.ensure_registered(type_name);
-                    inputs.(input_names{p}) = char(py.sci_matlab.bridge.get_data_column_name(py_class, py_db_colname));
-                else
-                    error('scidb:ColName', ...
-                        'scidb.ColName requires a BaseVariable instance.');
-                end
-            end
-        end
-    end
-
-    % --- Parse inputs struct — separate loadable from constants ---
-    n_inputs = numel(input_names);
-
-    loadable_idx = false(1, n_inputs);
-    constant_names = {};
-    constant_values = {};
-    constant_nv = {};
-
-    for p = 1:n_inputs
-        var_spec = inputs.(input_names{p});
-        if is_loadable(var_spec)
-            loadable_idx(p) = true;
-        else
-            constant_names{end+1} = input_names{p}; %#ok<AGROW>
-            constant_values{end+1} = var_spec; %#ok<AGROW>
-            if is_metadata_compatible(var_spec)
-                constant_nv{end+1} = input_names{p}; %#ok<AGROW>
-                constant_nv{end+1} = var_spec; %#ok<AGROW>
-            end
-        end
-    end
-
-    % Build ForEachConfig version keys
-    config_nv = build_config_nv(fn_name, inputs, input_names, loadable_idx, ...
-        where_filter, opts.distribute, as_table_raw);
-
-    % Parse outputs cell array
+    % --- Build output class names list ---
     n_outputs = numel(outputs);
-    output_names = cell(1, n_outputs);
+    output_class_names = cell(1, n_outputs);
     for o = 1:n_outputs
-        parts = strsplit(class(outputs{o}), '.');
-        output_names{o} = parts{end};
-    end
-
-    % --- Pre-filter to existing schema combinations ---
-    all_combos = [];
-    if any(needs_resolve) && ~has_pathinput(inputs)
-        filter_db = resolve_db;
-        db_schema_keys = cell(filter_db.dataset_schema_keys);
-        for si = 1:numel(db_schema_keys)
-            db_schema_keys{si} = string(db_schema_keys{si});
+        % outputs may be cell of instances or cell of classes; class()
+        % handles both
+        if iscell(outputs)
+            output_class_names{o} = class(outputs{o});
+        else
+            output_class_names{o} = class(outputs(o));
         end
-        db_schema_keys_str = [db_schema_keys{:}];
-
-        schema_indices = [];
-        filter_keys = string.empty;
-        for ki = 1:numel(meta_keys)
-            if ismember(meta_keys(ki), db_schema_keys_str)
-                schema_indices(end+1) = ki; %#ok<AGROW>
-                filter_keys(end+1) = meta_keys(ki); %#ok<AGROW>
-            end
-        end
-
-        if ~isempty(filter_keys)
-            py_keys = py.list();
-            for ki = 1:numel(filter_keys)
-                py_keys.append(char(filter_keys(ki)));
-            end
-            py_existing = filter_db.distinct_schema_combinations(py_keys);
-            n_existing = int64(py.len(py_existing));
-
-            existing_set = containers.Map('KeyType', 'char', 'ValueType', 'logical');
-            for ei = 1:n_existing
-                py_tuple = py_existing{ei};
-                combo_parts = cell(1, numel(filter_keys));
-                for ki = 1:numel(filter_keys)
-                    combo_parts{ki} = char(string(py_tuple{ki}));
-                end
-                existing_set(strjoin(combo_parts, '|')) = true;
-            end
-
-            % Build combos and filter
-            if isempty(meta_values)
-                raw_combos = {{}};
-            else
-                raw_combos = scidb.internal.cartesian_product(meta_values);
-            end
-            original_count = numel(raw_combos);
-            keep = true(1, original_count);
-            for ci = 1:original_count
-                combo = raw_combos{ci};
-                combo_parts = cell(1, numel(schema_indices));
-                for ki = 1:numel(schema_indices)
-                    combo_parts{ki} = schema_str(combo{schema_indices(ki)});
-                end
-                combo_key = strjoin(combo_parts, '|');
-                if ~existing_set.isKey(combo_key)
-                    keep(ci) = false;
-                end
-            end
-
-            % Convert to cell array of structs for _all_combos
-            filtered_combos = raw_combos(keep);
-            all_combos = cell(1, numel(filtered_combos));
-            for ci = 1:numel(filtered_combos)
-                combo = filtered_combos{ci};
-                s = struct();
-                for ki = 1:numel(meta_keys)
-                    s.(char(meta_keys(ki))) = combo{ki};
-                end
-                all_combos{ci} = s;
-            end
-
-            removed = original_count - numel(filtered_combos);
-            if removed > 0
-                fprintf('[info] filtered %d non-existent schema combinations (from %d to %d)\n', ...
-                    removed, original_count, numel(filtered_combos));
-            end
-        end
+        % Ensure each output type is registered Python-side before prepare
+        scidb.internal.ensure_registered(output_class_names{o});
     end
+    py_output_classes = py.list(output_class_names);
 
-    % Use filesystem-discovered combos if DB pre-filter didn't produce any
-    if isempty(all_combos) && ~isempty(discovered_combos)
-        all_combos = discovered_combos;
-        scidb.Log.info('using %d filesystem-discovered combos', numel(all_combos));
-    end
-
-    % --- Persist expected combos for check_node_state ---
-    if ~dry_run && ~isempty(all_combos) && ~isempty(outputs)
-        try
-            if isempty(opts.db)
-                persist_db = py.scidb.database.get_database();
-            else
-                persist_db = opts.db;
-            end
-            % Convert MATLAB cell-of-structs to Python list-of-dicts
-            py_combos = py.list();
-            for ci = 1:numel(all_combos)
-                combo_struct = all_combos{ci};
-                py_dict = py.dict();
-                fnames = fieldnames(combo_struct);
-                for fi = 1:numel(fnames)
-                    py_dict{fnames{fi}} = combo_struct.(fnames{fi});
-                end
-                py_combos.append(py_dict);
-            end
-            foreach_mod = py.importlib.import_module('scidb.foreach');
-            persist_fn = py.getattr(foreach_mod, '_persist_expected_combos');
-            persist_fn(persist_db, fn_name, py_combos);
-            scidb.Log.info('persisted %d expected combos for %s', numel(all_combos), fn_name);
-        catch me
-            scidb.Log.warn('_persist_expected_combos failed: %s', me.message);
-        end
-    end
-
-    % --- Build log summary for parallel banner ---
-    meta_parts_log = cell(1, numel(meta_keys));
-    for mk = 1:numel(meta_keys)
-        meta_parts_log{mk} = sprintf('%s=[%d values]', meta_keys(mk), numel(meta_values{mk}));
-    end
-    if isempty(meta_parts_log)
-        meta_summary_log = 'no metadata';
+    % --- where filter: ship the Python Filter object directly.
+    %     ForEachConfig.to_version_keys handles the .to_key() stringification
+    %     for __where; _load_input also expects the live Filter object.
+    if isempty(where_filter)
+        py_where = py.None;
     else
-        meta_summary_log = strjoin(meta_parts_log, ', ');
+        py_where = where_filter.py_filter;
     end
 
-    % --- Parallel branch ---
-    if opts.parallel && ~dry_run
-        % Log banner for parallel (scifor won't run, so log it here)
-        scidb.Log.info('%s', repmat('=', 1, 64));
-        scidb.Log.info('for_each(%s) — %s', fn_name, meta_summary_log);
-        scidb.Log.info('%s', repmat('=', 1, 64));
-        % Parallel stays self-contained — does NOT delegate to scifor
-        [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
-            meta_keys, meta_values, input_names, loadable_idx, ...
-            constant_names, constant_values, constant_nv, config_nv, ...
-            as_table_raw, fn_name, do_save, ...
-            db_nv, where_nv, opts);
-        scidb.Log.info('%s', repmat('-', 1, 64));
-        scidb.Log.info('for_each(%s) done: completed=%d, skipped=%d, total=%d', ...
-            fn_name, completed, skipped, total);
-        scidb.Log.info('%s', repmat('=', 1, 64));
-        result_tbl = [];
-        return;
+    % --- as_table: pass through to bridge as bool / list / None ---
+    if islogical(as_table_raw) && isscalar(as_table_raw) && as_table_raw
+        py_as_table = true;
+    elseif isstring(as_table_raw) && ~isempty(as_table_raw)
+        py_as_table = py.list(cellstr(as_table_raw(:)'));
+    else
+        py_as_table = py.None;
     end
 
-    % --- Resolve database for loading ---
+    % --- db: passthrough ---
     if isempty(opts.db)
-        py_db = py.scidb.database.get_database();
+        py_db = py.None;
     else
         py_db = opts.db;
     end
 
-    % --- Load all inputs into MATLAB tables ---
+    % --- Call #1: Python prepare ---
+    prep_t0 = tic;
+    prep = py.sci_matlab.bridge.for_each_prepare( ...
+        fn_name, fn_hash, py_inputs_spec, py_output_classes, py_meta, ...
+        pyargs('where', py_where, ...
+               'distribute', logical(opts.distribute), ...
+               'as_table', py_as_table, ...
+               'db', py_db, ...
+               'dry_run', logical(dry_run)));
+    scidb.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
+
+    % Dry-run: Python ran the scifor.for_each(dry_run=true) call itself
+    % and returned a stub (handle=-1). Nothing else to do.
+    if dry_run
+        return;
+    end
+
+    handle = int64(prep{'handle'});
+
+    % --- Convert prepared inputs to a MATLAB struct for scifor.
+    %     Each loaded value may be a DataFrame, a Python scifor.Fixed /
+    %     scifor.ColumnSelection / scifor.Merge wrapper, or a constant.
+    %     The bridge describes it as a kind-tagged dict; MATLAB rebuilds
+    %     the matching MATLAB classdef wrapper so MATLAB's scifor inner
+    %     loop sees the same types a pure-MATLAB call would.
+    py_loaded_inputs = prep{'loaded_inputs'};
     scifor_inputs = struct();
-    load_total_tic = tic;
-    for p = 1:n_inputs
-        param_name = input_names{p};
-        var_spec = inputs.(param_name);
-
-        if ~loadable_idx(p)
-            % Constant — pass through
-            scifor_inputs.(param_name) = var_spec;
-            scidb.Log.debug('input ''%s'': constant %s', param_name, class(var_spec));
-            continue;
-        end
-
-        % Already a MATLAB table — pass through
-        if istable(var_spec)
-            scifor_inputs.(param_name) = var_spec;
-            scidb.Log.info('input ''%s'': MATLAB table %dx%d (pass-through)', ...
-                param_name, height(var_spec), width(var_spec));
-            continue;
-        end
-
-        % Convert scidb wrappers to loaded tables with scifor wrappers
-        input_tic = tic;
-        try
-            scifor_inputs.(param_name) = convert_input(var_spec, py_db, where_nv, db_nv);
-            input_elapsed = toc(input_tic);
-            log_loaded_input(param_name, var_spec, scifor_inputs.(param_name), input_elapsed);
-        catch err
-            scidb.Log.err('failed to load input ''%s'': %s', param_name, err.message);
-            result_tbl = [];
-            return;
-        end
+    loaded_keys = cell(py.list(py_loaded_inputs.keys()));
+    for ki = 1:numel(loaded_keys)
+        k = char(loaded_keys{ki});
+        desc = py.sci_matlab.bridge.for_each_describe_loaded_input(py_loaded_inputs{k});
+        scifor_inputs.(k) = build_scifor_input_from_desc(desc);
+        % Python's Step 5 stringifies schema-key columns in loaded
+        % DataFrames so DataFrame-side filtering can match user-supplied
+        % string-form values. MATLAB user functions that receive the
+        % table (as_table=true) expect the original metadata types.
+        % Coerce schema-key columns back based on the originally-supplied
+        % MATLAB classes tracked in meta_original_classes.
+        scifor_inputs.(k) = coerce_meta_columns( ...
+            scifor_inputs.(k), meta_original_classes);
     end
-    load_total_elapsed = toc(load_total_tic);
-    scidb.Log.info('loaded %d inputs in %.3fs', n_inputs, load_total_elapsed);
 
-    % --- Build metadata NV args for scifor ---
+    % --- Convert extended_metadata_iterables to scifor name-value pairs ---
+    py_meta_iters = prep{'extended_metadata_iterables'};
     scifor_meta_nv = {};
-    for k = 1:numel(meta_keys)
-        scifor_meta_nv{end+1} = char(meta_keys(k)); %#ok<AGROW>
-        vals = meta_values{k};
-        if numel(vals) == 1
-            scifor_meta_nv{end+1} = vals{1}; %#ok<AGROW>
-        else
-            if isnumeric(vals{1})
-                scifor_meta_nv{end+1} = cell2mat(vals); %#ok<AGROW>
-            else
-                scifor_meta_nv{end+1} = string(vals); %#ok<AGROW>
-            end
-        end
+    meta_iter_keys = cell(py.list(py_meta_iters.keys()));
+    for ki = 1:numel(meta_iter_keys)
+        k = char(meta_iter_keys{ki});
+        v_py = py_meta_iters{k};
+        scifor_meta_nv{end+1} = k; %#ok<AGROW>
+        scifor_meta_nv{end+1} = scidb.internal.from_python(v_py); %#ok<AGROW>
     end
 
-    % --- Build scifor options ---
+    % --- Convert full_combos (py.list of dicts) to MATLAB cell of structs ---
+    py_full_combos = prep{'full_combos'};
+    n_combos = int64(py.len(py_full_combos));
+    all_combos = cell(1, n_combos);
+    for ci = 1:n_combos
+        d = py_full_combos{ci};
+        s = struct();
+        ks = cell(py.list(d.keys()));
+        for kii = 1:numel(ks)
+            field_name = char(ks{kii});
+            % Field names with leading __ become valid MATLAB fields via
+            % the same x__ auto-sanitization MATLAB uses for jsondecode;
+            % use dynamic field access to preserve original keys, and
+            % rely on MATLAB's automatic prefixing for invalid names.
+            s.(field_name) = scidb.internal.from_python(d{field_name});
+        end
+        all_combos{ci} = s;
+    end
+
+    % --- Output names returned by Python prepare ---
+    py_output_names = prep{'output_names'};
+    output_names_cell = cell(py.list(py_output_names));
+    output_names = cell(1, numel(output_names_cell));
+    for o = 1:numel(output_names_cell)
+        output_names{o} = char(output_names_cell{o});
+    end
+
+    % --- Build scifor options for the inner loop ---
     scifor_opts = {};
-    scifor_opts{end+1} = 'dry_run';
-    scifor_opts{end+1} = dry_run;
-    scifor_opts{end+1} = 'distribute';
-    scifor_opts{end+1} = opts.distribute;
-    scifor_opts{end+1} = 'output_names';
-    scifor_opts{end+1} = output_names;
-
-    if ~isempty(as_table_raw)
-        scifor_opts{end+1} = 'as_table';
-        scifor_opts{end+1} = as_table_raw;
-    elseif opts.distribute
-        % distribute needs schema columns preserved in plain-table inputs
-        % but NOT in auto-loaded BaseVariable tables (where schema columns
-        % are metadata added by lineage_results_to_table, not user data)
-        table_input_names = string.empty;
-        for p = 1:n_inputs
-            if istable(inputs.(input_names{p}))
-                table_input_names(end+1) = string(input_names{p}); %#ok<AGROW>
-            end
-        end
-        if ~isempty(table_input_names)
-            scifor_opts{end+1} = 'as_table';
-            scifor_opts{end+1} = table_input_names;
-        end
-    end
-
-    if ~isempty(all_combos)
-        scifor_opts{end+1} = '_all_combos';
-        scifor_opts{end+1} = all_combos;
-    end
-
-    % Force nested mode so table outputs get a named column for save_results
+    scifor_opts{end+1} = '_all_combos';
+    scifor_opts{end+1} = all_combos;
     scifor_opts{end+1} = '_nest_table_outputs';
     scifor_opts{end+1} = true;
-
-    % Resolve PathInput per-combo inside scifor loop
-    if has_pathinput(inputs)
+    scifor_opts{end+1} = 'output_names';
+    scifor_opts{end+1} = output_names;
+    if ~isempty(find_pathinput(inputs))
         scifor_opts{end+1} = '_resolve_pathinput';
         scifor_opts{end+1} = true;
     end
-
-    % Pass log function so scifor logs banner, config, and iteration details
+    if ~isempty(as_table_raw)
+        scifor_opts{end+1} = 'as_table';
+        scifor_opts{end+1} = as_table_raw;
+    end
+    if opts.distribute
+        scifor_opts{end+1} = 'distribute';
+        scifor_opts{end+1} = true;
+    end
     scifor_opts{end+1} = '_log_fn';
     scifor_opts{end+1} = @(msg) scidb.Log.info('%s', msg);
 
-    % Note: scidb.Filter (where) is applied during loading, NOT passed to scifor.
-    % scifor's where= is for scifor.ColFilter on tables.
-
-    % --- Delegate to scifor.for_each ---
-    n_out = max(numel(outputs), 1);
+    % --- MATLAB inner loop: scifor.for_each ---
+    scidb.Log.debug('scifor.for_each: %d combo(s), %d input(s), %d output(s)', ...
+        n_combos, numel(fieldnames(scifor_inputs)), n_outputs);
+    n_out = max(n_outputs, 1);
     result_tables = cell(1, n_out);
     try
         [result_tables{1:n_out}] = scifor.for_each(fn, scifor_inputs, ...
             scifor_opts{:}, scifor_meta_nv{:});
     catch err
-        scidb.Log.err('for_each(%s) failed: %s', fn_name, err.message);
-        scidb.Log.info('%s', repmat('=', 1, 64));
-        % Re-throw scifor errors with scidb prefix
+        % Surface the error but still attempt to free the prepare-side
+        % cache so we don't leak state on partial failures.
+        try
+            py.sci_matlab.bridge.for_each_save(handle, py.list(), pyargs('save', false));
+        catch
+            % best-effort cleanup
+        end
+        % Re-tag scifor-layer configuration errors as scidb errors so
+        % callers can catch them with a single identifier.  The scifor
+        % message is preserved verbatim; only the identifier changes.
         if startsWith(err.identifier, 'scifor:')
             new_id = strrep(err.identifier, 'scifor:', 'scidb:');
-            error(new_id, '%s', err.message);
-        else
-            rethrow(err);
+            err_to_throw = MException(new_id, '%s', err.message);
+            throw(err_to_throw);
         end
+        rethrow(err);
     end
 
-    % Merge all output tables into a single return table
-    result_tbl = result_tables{1};
-    for oi = 2:n_out
-        if ~isempty(result_tables{oi}) && ismember(output_names{oi}, result_tables{oi}.Properties.VariableNames)
-            result_tbl.(output_names{oi}) = result_tables{oi}.(output_names{oi});
+    % --- Convert each result table to a Python DataFrame for the save call.
+    %     LineageFcnResult cells get their .py_obj substituted so Python's
+    %     save path routes them through scihist's lineage-aware save. ---
+    py_result_dfs = py.list();
+    for o = 1:n_out
+        tbl = result_tables{o};
+        if isempty(tbl)
+            scidb.Log.warn('scifor output %d (%s): empty table; nothing to save', ...
+                o, output_names{o});
+            py_result_dfs.append(py.None);
+            continue;
         end
-    end
-
-    if isempty(result_tbl) || dry_run
-        if dry_run
-            scidb.Log.debug('for_each(%s): dry_run=true, skipping save', fn_name);
-        else
-            scidb.Log.warn('for_each(%s): result_tbl is empty, skipping save', fn_name);
-        end
-        return;
-    end
-
-    % --- Save results ---
-    if do_save && ~isempty(outputs)
-        scidb.Log.debug('for_each(%s): saving %d outputs, result_tbl=%dx%d', ...
-            fn_name, numel(outputs), height(result_tbl), width(result_tbl));
-        for oi = 1:numel(outputs)
-            tbl_i = result_tables{oi};
-            if ~isempty(tbl_i) && height(tbl_i) > 0
-                save_results(tbl_i, outputs(oi), output_names(oi), config_nv, constant_nv, db_nv, py_db);
-            end
-        end
-    elseif ~do_save
-        scidb.Log.debug('for_each(%s): save=false, skipping save', fn_name);
-    elseif isempty(outputs)
-        scidb.Log.warn(['for_each(%s): outputs is empty {}, skipping save — ' ...
-            'outputs must be specified for results to persist'], fn_name);
-    end
-
-    % --- Flatten nested table outputs for return ---
-    % _nest_table_outputs was forced for saving; un-nest for caller
-    result_tbl = flatten_nested_table_outputs(result_tbl, output_names);
-end
-
-
-% =========================================================================
-% Input load logging
-% =========================================================================
-
-function log_loaded_input(param_name, var_spec, loaded, elapsed)
-%LOG_LOADED_INPUT  Log details about a loaded input.
-    type_name = input_type_name(var_spec);
-    if istable(loaded)
-        scidb.Log.info('input ''%s'': loaded %s -> %d rows, %d cols in %.3fs', ...
-            param_name, type_name, height(loaded), width(loaded), elapsed);
-    elseif isa(loaded, 'scifor.Merge')
-        scidb.Log.info('input ''%s'': loaded %s in %.3fs', ...
-            param_name, type_name, elapsed);
-    elseif isa(loaded, 'scifor.Fixed')
-        scidb.Log.info('input ''%s'': loaded %s in %.3fs', ...
-            param_name, type_name, elapsed);
-    elseif isa(loaded, 'scifor.ColumnSelection')
-        scidb.Log.info('input ''%s'': loaded %s in %.3fs', ...
-            param_name, type_name, elapsed);
-    else
-        scidb.Log.info('input ''%s'': loaded %s in %.3fs', ...
-            param_name, type_name, elapsed);
-    end
-end
-
-
-function name = input_type_name(var_spec)
-%INPUT_TYPE_NAME  Get a human-readable type name for a var_spec.
-    if isa(var_spec, 'scidb.Merge')
-        parts = cell(1, numel(var_spec.var_specs));
-        for i = 1:numel(var_spec.var_specs)
-            parts{i} = input_type_name(var_spec.var_specs{i});
-        end
-        name = sprintf('Merge(%s)', strjoin(parts, ', '));
-    elseif isa(var_spec, 'scidb.Fixed')
-        inner_name = input_type_name(var_spec.var_type);
-        ff = fieldnames(var_spec.fixed_metadata);
-        if isempty(ff)
-            name = sprintf('Fixed(%s)', inner_name);
-        else
-            kv_parts = cell(1, numel(ff));
-            for f = 1:numel(ff)
-                val = var_spec.fixed_metadata.(ff{f});
-                if isnumeric(val)
-                    kv_parts{f} = sprintf('%s=%g', ff{f}, val);
-                else
-                    kv_parts{f} = sprintf('%s=%s', ff{f}, string(val));
-                end
-            end
-            name = sprintf('Fixed(%s, %s)', inner_name, strjoin(kv_parts, ', '));
-        end
-    elseif isa(var_spec, 'scidb.BaseVariable')
-        name = class(var_spec);
-    elseif isa(var_spec, 'scifor.PathInput')
-        name = 'PathInput';
-    else
-        name = class(var_spec);
-    end
-end
-
-
-% =========================================================================
-% Input loading and conversion
-% =========================================================================
-
-function result = convert_input(var_spec, py_db, where_nv, db_nv)
-%CONVERT_INPUT  Load a single input and return a scifor-compatible wrapper or table.
-
-    % scidb.Merge -> load each constituent -> scifor.Merge of tables
-    % Merge constituents are always loaded WITHOUT the where filter;
-    % where= applies at the scifor level, not during bulk loading.
-    if isa(var_spec, 'scidb.Merge')
-        loaded_tables = cell(1, numel(var_spec.var_specs));
-        for i = 1:numel(var_spec.var_specs)
-            loaded_tables{i} = convert_input(var_spec.var_specs{i}, py_db, {}, db_nv);
-        end
-        result = scifor.Merge(loaded_tables{:});
-        return;
-    end
-
-    % scidb.Fixed -> load inner -> scifor.Fixed with loaded table
-    if isa(var_spec, 'scidb.Fixed')
-        inner_loaded = convert_input(var_spec.var_type, py_db, where_nv, db_nv);
-        fixed_fields = fieldnames(var_spec.fixed_metadata);
-        fixed_nv = {};
-        for f = 1:numel(fixed_fields)
-            fixed_nv{end+1} = fixed_fields{f}; %#ok<AGROW>
-            fixed_nv{end+1} = var_spec.fixed_metadata.(fixed_fields{f}); %#ok<AGROW>
-        end
-        result = scifor.Fixed(inner_loaded, fixed_nv{:});
-        return;
-    end
-
-    % scifor.PathInput -> return as constant (per-combo resolution via _resolve_pathinput)
-    if isa(var_spec, 'scifor.PathInput')
-        result = var_spec;
-        return;
-    end
-
-    % MATLAB table -> pass through
-    if istable(var_spec)
-        result = var_spec;
-        return;
-    end
-
-    % BaseVariable instance -> bulk load all records into a MATLAB table
-    if isa(var_spec, 'scidb.BaseVariable')
-        var_inst = var_spec;
-        type_name = class(var_inst);
-        py_class = scidb.internal.ensure_registered(type_name);
-
-        % Load all data
-        if isempty(where_nv)
-            bulk = py.sci_matlab.bridge.load_and_extract( ...
-                py_class, py.dict(), ...
-                pyargs('version_id', 'latest', 'db', py_db));
-        else
-            bulk = py.sci_matlab.bridge.load_and_extract( ...
-                py_class, py.dict(), ...
-                pyargs('version_id', 'latest', 'db', py_db, ...
-                       'where', where_nv{2}.py_filter));
-        end
-        n_results = int64(bulk{'n'});
-
-        if n_results == 0
-            result = table();
-            return;
-        end
-
-        % Batch-wrap all results
-        results = scidb.BaseVariable.wrap_py_vars_batch(bulk);
-
-        % Convert BaseVariable array into a MATLAB table with metadata + data cols
-        result = lineage_results_to_table(results, var_inst);
-
-        % Handle column selection if specified
-        if ~isempty(var_inst.selected_columns)
-            cols = var_inst.selected_columns;
-            result = scifor.ColumnSelection(result, cols);
-        end
-        return;
-    end
-
-    % Unknown -> pass through as constant
-    result = var_spec;
-end
-
-
-function tbl = lineage_results_to_table(results, var_inst)
-%LINEAGE_RESULTS_TO_TABLE  Convert an array of BaseVariable into a MATLAB table.
-%   Produces a table with metadata columns + data columns, suitable for
-%   scifor.for_each to filter per combo.
-    n = numel(results);
-    scidb.Log.debug('lineage_results_to_table: %d results for %s', n, class(var_inst));
-
-    % Strip internal metadata keys (x__fn, x__inputs, constant keys, etc.)
-    for i = 1:n
-        results(i).metadata = strip_internal_meta(results(i).metadata);
-    end
-
-    if n > 0
-        meta_fields_dbg = fieldnames(results(1).metadata);
-        scidb.Log.debug('  metadata fields after strip: [%s]', strjoin(meta_fields_dbg, ', '));
-        scidb.Log.debug('  first data item: %s %s', class(results(1).data), format_size(results(1).data));
-    end
-
-    % Check if all data items are tables
-    all_tables = true;
-    for i = 1:n
-        if ~istable(results(i).data)
-            all_tables = false;
-            break;
-        end
-    end
-
-    if all_tables
-        % Table data: metadata columns + data columns, flattened per record
-        data_parts = cell(n, 1);
-        row_counts = zeros(n, 1);
-        for i = 1:n
-            data_parts{i} = results(i).data;
-            row_counts(i) = height(data_parts{i});
-        end
-        total_rows = sum(row_counts);
-        data_tbl = vertcat(data_parts{:});
-
-        meta_fields = fieldnames(results(1).metadata);
-        meta_tbl = table();
-        for f = 1:numel(meta_fields)
-            val1 = results(1).metadata.(meta_fields{f});
-            if isnumeric(val1)
-                col = zeros(total_rows, 1);
-            elseif isstring(val1) || ischar(val1)
-                col = strings(total_rows, 1);
-            else
-                col = cell(total_rows, 1);
-            end
-
-            row_offset = 0;
-            for i = 1:n
-                nr = row_counts(i);
-                idx = row_offset + (1:nr);
-                if isfield(results(i).metadata, meta_fields{f})
-                    val = results(i).metadata.(meta_fields{f});
-                else
-                    val = missing;
-                end
-                if isnumeric(val)
-                    col(idx) = double(val);
-                elseif isstring(val) || ischar(val)
-                    col(idx) = string(val);
-                else
-                    col(idx) = repmat({val}, nr, 1);
-                end
-                row_offset = row_offset + nr;
-            end
-            meta_tbl.(meta_fields{f}) = col;
-        end
-
-        tbl = [meta_tbl, data_tbl];
-    else
-        % Non-table data: nest into a cell/numeric column
-        type_parts = strsplit(class(var_inst), '.');
-        view_name = type_parts{end};
-
-        meta_fields = fieldnames(results(1).metadata);
-        tbl = table();
-        for f = 1:numel(meta_fields)
-            col_data = cell(n, 1);
-            for i = 1:n
-                if isfield(results(i).metadata, meta_fields{f})
-                    col_data{i} = results(i).metadata.(meta_fields{f});
-                else
-                    col_data{i} = missing;
-                end
-            end
-            tbl.(meta_fields{f}) = scidb.internal.normalize_cell_column(col_data);
-        end
-
-        data_col = cell(n, 1);
-        for i = 1:n
-            data_col{i} = results(i).data;
-        end
-        tbl.(view_name) = scidb.internal.normalize_cell_column(data_col);
-    end
-end
-
-
-% =========================================================================
-% Saving results
-% =========================================================================
-
-function save_results(result_tbl, outputs, output_names, config_nv, constant_nv, db_nv, py_db)
-%SAVE_RESULTS  Save results from the result table to output variable types.
-    save_all_t0 = tic;
-    n_outputs = numel(outputs);
-
-    scidb.Log.debug('save_results: %d outputs, result_tbl=%dx%d', ...
-        n_outputs, height(result_tbl), width(result_tbl));
-    for o_dbg = 1:n_outputs
-        scidb.Log.debug('  output %d: %s (%s)', o_dbg, output_names{o_dbg}, class(outputs{o_dbg}));
-    end
-
-    % Determine which columns are metadata vs data
-    all_col_names = result_tbl.Properties.VariableNames;
-    output_col_present = ismember(output_names, all_col_names);
-
-    if all(output_col_present)
-        % Standard mode: output columns exist by name
-        meta_cols = setdiff(all_col_names, output_names, 'stable');
-    else
-        % Flatten mode: outputs are tables, data columns have original names
-        schema_keys = cellstr(scifor.get_schema());
-        meta_cols = intersect(all_col_names, schema_keys, 'stable');
-    end
-    data_cols = setdiff(all_col_names, meta_cols, 'stable');
-
-    scidb.Log.debug('save_results: meta_cols=[%s], data_cols=[%s]', ...
-        strjoin(meta_cols, ', '), strjoin(data_cols, ', '));
-
-    % Batch save: accumulate data+metadata, flush once
-    batch_accum = cell(1, n_outputs);
-    for o = 1:n_outputs
-        batch_accum{o}.py_data = py.list();
-        batch_accum{o}.py_metas = py.list();
-        batch_accum{o}.count = 0;
-    end
-
-    % --- Fast batch path for single-output DataFrame results ---
-    % When all outputs are tables with the same schema, vertcat them into one
-    % large table, call to_python() once, and pass columnar metadata to
-    % Python. This avoids ~N per-row bridge crossings.
-    if n_outputs == 1 && all(output_col_present)
-        try
-            fast_ok = try_fast_batch_save(result_tbl, outputs, output_names, ...
-                meta_cols, config_nv, constant_nv, py_db);
-            if fast_ok
-                save_all_elapsed = toc(save_all_t0);
-                scidb.Log.info('save_results: fast batch saved all outputs in %.3fs', save_all_elapsed);
-                return;
-            end
-        catch fast_err
-            scidb.Log.warn('save_results: fast batch path failed, falling back to per-row: %s', ...
-                fast_err.message);
-        end
-    end
-
-    if all(output_col_present)
-        % Standard mode: one row = one save operation
-        scidb.Log.debug('save_results: standard mode, %d rows to accumulate', height(result_tbl));
-        for ri = 1:height(result_tbl)
-            row = result_tbl(ri, :);
-
-            save_nv = {};
-            for mc = 1:numel(meta_cols)
-                save_nv{end+1} = meta_cols{mc}; %#ok<AGROW>
-                val = row.(meta_cols{mc});
-                if iscell(val)
-                    save_nv{end+1} = val{1}; %#ok<AGROW>
-                else
-                    save_nv{end+1} = val; %#ok<AGROW>
-                end
-            end
-            save_nv = [save_nv, constant_nv, config_nv]; %#ok<AGROW>
-
-            for o = 1:n_outputs
-                if ~ismember(output_names{o}, row.Properties.VariableNames)
-                    continue;
-                end
-                output_value = row.(output_names{o});
-                if iscell(output_value)
-                    output_value = output_value{1};
-                end
-
-                scidb.Log.debug('  row %d, output %s: %s %s', ...
-                    ri, output_names{o}, class(output_value), format_size(output_value));
-
-                if isa(output_value, 'scidb.LineageFcnResult')
-                    % Lineage-aware save: route through scihist to preserve
-                    % lineage hash and provenance tracking.
-                    % Use row metadata + constants only (no __fn/__inputs
-                    % config keys — scihist strips those; see MEMORY.md).
-                    lineage_save_nv = {};
-                    for mc2 = 1:numel(meta_cols)
-                        lineage_save_nv{end+1} = meta_cols{mc2}; %#ok<AGROW>
-                        val2 = row.(meta_cols{mc2});
-                        if iscell(val2); val2 = val2{1}; end
-                        lineage_save_nv{end+1} = val2; %#ok<AGROW>
-                    end
-                    lineage_save_nv = [lineage_save_nv, constant_nv];
-                    try
-                        lineage_t0 = tic;
-                        type_name = class(outputs{o});
-                        out_py_class = scidb.internal.ensure_registered(type_name);
-                        py_kwargs = scidb.internal.metadata_to_pykwargs(lineage_save_nv{:});
-                        py.scihist.foreach.save(out_py_class, output_value.py_obj, pyargs(py_kwargs{:}));
-                        lineage_elapsed = toc(lineage_t0);
-                        meta_str = format_save_meta(save_nv);
-                        scidb.Log.info('[save] %s: %s (lineage) saved in %.3fs', meta_str, type_name, lineage_elapsed);
-                    catch err
-                        try
-                            meta_str = format_save_meta(save_nv);
-                        catch
-                            meta_str = '<metadata format error>';
-                        end
-                        scidb.Log.err('%s: lineage save failed: %s', meta_str, err.message);
-                        fprintf(2, '[SciStack] lineage save FAILED for %s: %s\n', meta_str, err.message);
-                        fprintf(2, '           %s\n', err.getReport('basic'));
-                    end
-                else
-                    % Unwrap BaseVariable to raw data if needed
-                    if isa(output_value, 'scidb.BaseVariable')
-                        output_value = output_value.data;
-                    end
-                    try
-                        batch_accum{o}.py_data.append(scidb.internal.to_python(output_value));
-                        batch_accum{o}.py_metas.append(scidb.internal.metadata_to_pydict(save_nv{:}));
-                        batch_accum{o}.count = batch_accum{o}.count + 1;
-                    catch err
-                        try
-                            meta_str = format_save_meta(save_nv);
-                        catch
-                            meta_str = '<metadata format error>';
-                        end
-                        scidb.Log.err('%s: failed to convert for batch: %s', meta_str, err.message);
+        scidb.Log.debug('scifor output %d (%s): table %dx%d cols=%s', ...
+            o, output_names{o}, height(tbl), width(tbl), ...
+            strjoin(string(tbl.Properties.VariableNames), ', '));
+        % If any cell in the output column is a scidb.LineageFcnResult,
+        % swap it for its py_obj so Python's save sees a real
+        % LineageFcnResult (isinstance pass) and routes via save_lineage_result.
+        oname = output_names{o};
+        if any(strcmp(tbl.Properties.VariableNames, oname))
+            col = tbl.(oname);
+            if iscell(col)
+                for r = 1:numel(col)
+                    if isa(col{r}, 'scidb.LineageFcnResult')
+                        col{r} = col{r}.py_obj;
                     end
                 end
+                tbl.(oname) = col;
+            elseif isa(col, 'scidb.LineageFcnResult')
+                % Should not happen (non-cell single-value column) but handle defensively
+                tbl.(oname) = col.py_obj;
             end
         end
-    elseif ~isempty(data_cols)
-        % Flatten mode: group rows by metadata, save each group as one table
-        group_keys = build_row_group_keys(result_tbl, meta_cols);
-        [unique_keys, ~, group_idx] = unique(group_keys, 'stable');
-        scidb.Log.debug('save_results: flatten mode, %d groups from %d rows', ...
-            numel(unique_keys), height(result_tbl));
-
-        for gi = 1:numel(unique_keys)
-            rows = find(group_idx == gi);
-            first_row = result_tbl(rows(1), :);
-
-            save_nv = {};
-            for mc = 1:numel(meta_cols)
-                save_nv{end+1} = meta_cols{mc}; %#ok<AGROW>
-                val = first_row.(meta_cols{mc});
-                if iscell(val)
-                    save_nv{end+1} = val{1}; %#ok<AGROW>
-                else
-                    save_nv{end+1} = val; %#ok<AGROW>
-                end
-            end
-            save_nv = [save_nv, constant_nv, config_nv]; %#ok<AGROW>
-
-            output_value = result_tbl(rows, data_cols);
-
-            for o = 1:n_outputs
-                try
-                    batch_accum{o}.py_data.append(scidb.internal.to_python(output_value));
-                    batch_accum{o}.py_metas.append(scidb.internal.metadata_to_pydict(save_nv{:}));
-                    batch_accum{o}.count = batch_accum{o}.count + 1;
-                catch err
-                    try
-                        meta_str = format_save_meta(save_nv);
-                    catch
-                        meta_str = '<metadata format error>';
-                    end
-                    scidb.Log.err('%s: failed to convert for batch: %s', meta_str, err.message);
-                end
-            end
-        end
+        py_result_dfs.append(scidb.internal.to_python(tbl));
     end
 
-    % Flush batch save
-    for o = 1:n_outputs
-        if batch_accum{o}.count > 0
-            type_name = class(outputs{o});
-            scidb.internal.ensure_registered(type_name);
-
-            % Log data shape/type from first item (MATLAB side, before Python conversion)
-            if batch_accum{o}.count > 0 && height(result_tbl) > 0
-                first_val = result_tbl.(output_names{o});
-                if iscell(first_val)
-                    first_val = first_val{1};
-                end
-                scidb.Log.info('[save] %s: %d items, MATLAB data: %s %s', ...
-                    type_name, batch_accum{o}.count, class(first_val), format_size(first_val));
-            end
-
-            batch_t0 = tic;
-            py.sci_matlab.bridge.for_each_batch_save( ...
-                type_name, batch_accum{o}.py_data, ...
-                batch_accum{o}.py_metas, py_db);
-            batch_elapsed = toc(batch_t0);
-            scidb.Log.info('[save] %s: batch saved %d items in %.3fs', ...
-                type_name, batch_accum{o}.count, batch_elapsed);
-        end
-    end
-    save_all_elapsed = toc(save_all_t0);
-    scidb.Log.info('save_results: saved all outputs in %.3fs', save_all_elapsed);
-end
-
-
-function ok = try_fast_batch_save(result_tbl, outputs, output_names, ...
-    meta_cols, config_nv, constant_nv, py_db)
-%TRY_FAST_BATCH_SAVE  Attempt fast columnar batch save for single-output DataFrame results.
-%   Returns true if the fast path succeeded, false if it should fall back.
-
-    ok = false;
-    n_rows = height(result_tbl);
-    out_name = output_names{1};
-
-    % Guard 1: output column must exist and be a cell array
-    if ~ismember(out_name, result_tbl.Properties.VariableNames)
-        return;
-    end
-    col_data = result_tbl.(out_name);
-    if ~iscell(col_data)
-        return;
-    end
-
-    % Guard 2: all elements must be tables (not LineageFcnResult, not empty)
-    for ri = 1:n_rows
-        if isempty(col_data{ri}) || ~istable(col_data{ri})
-            return;
-        end
-        if isa(col_data{ri}, 'scidb.LineageFcnResult')
-            return;
-        end
-    end
-
-    % Guard 3: all tables must have the same column names (vertcatable)
-    ref_cols = sort(string(col_data{1}.Properties.VariableNames));
-    for ri = 2:n_rows
-        this_cols = sort(string(col_data{ri}.Properties.VariableNames));
-        if ~isequal(ref_cols, this_cols)
-            return;
-        end
-    end
-
-    scidb.Log.debug('try_fast_batch_save: eligible, %d items', n_rows);
-    fast_t0 = tic;
-
-    % Step 1: vertcat all output tables and record row counts
-    row_counts = zeros(n_rows, 1, 'int64');
-    for ri = 1:n_rows
-        row_counts(ri) = int64(height(col_data{ri}));
-    end
-    combined_tbl = vertcat(col_data{:});
-    vertcat_elapsed = toc(fast_t0);
-    scidb.Log.debug('try_fast_batch_save: vertcat %d rows in %.3fs', height(combined_tbl), vertcat_elapsed);
-
-    % Step 2: single to_python call on the combined table
-    convert_t0 = tic;
-    py_dataframe = scidb.internal.to_python(combined_tbl);
-    convert_elapsed = toc(convert_t0);
-    scidb.Log.debug('try_fast_batch_save: to_python in %.3fs', convert_elapsed);
-
-    % Step 3: row_counts as numpy array
-    py_row_counts = py.numpy.array(row_counts);
-
-    % Step 4: build columnar metadata
-    meta_t0 = tic;
-    n_meta = numel(meta_cols);
-    py_meta_keys = py.list();
-    py_meta_columns = py.list();
-    for mc = 1:n_meta
-        py_meta_keys.append(meta_cols{mc});
-        col_vals = result_tbl.(meta_cols{mc});
-        if isnumeric(col_vals)
-            % Numeric column -> numpy array
-            py_meta_columns.append(py.numpy.array(col_vals));
-        elseif isstring(col_vals) || iscellstr(col_vals)
-            % String column -> join with record separator char(30) = \x1e
-            str_vals = string(col_vals);
-            joined = strjoin(str_vals, char(30));
-            py_meta_columns.append(char(joined));
-        elseif iscell(col_vals)
-            % Cell column: try to detect numeric vs string
-            is_numeric = true;
-            for ci = 1:numel(col_vals)
-                if ~isnumeric(col_vals{ci})
-                    is_numeric = false;
-                    break;
-                end
-            end
-            if is_numeric
-                py_meta_columns.append(py.numpy.array(cell2mat(col_vals)));
-            else
-                str_vals = cellfun(@(x) string(x), col_vals);
-                joined = strjoin(str_vals, char(30));
-                py_meta_columns.append(char(joined));
-            end
-        else
-            % Fallback: convert each element individually
-            py_col = py.list();
-            for ci = 1:numel(col_vals)
-                if iscell(col_vals)
-                    py_col.append(col_vals{ci});
-                else
-                    py_col.append(col_vals(ci));
-                end
-            end
-            py_meta_columns.append(py_col);
-        end
-    end
-    meta_elapsed = toc(meta_t0);
-    scidb.Log.debug('try_fast_batch_save: columnar metadata in %.3fs', meta_elapsed);
-
-    % Step 5: build common metadata from constant_nv + config_nv
-    common_t0 = tic;
-    common_nv = [constant_nv, config_nv];
-    if ~isempty(common_nv)
-        py_common = scidb.internal.metadata_to_pydict(common_nv{:});
-    else
-        py_common = py.dict();
-    end
-    common_elapsed = toc(common_t0);
-    scidb.Log.debug('try_fast_batch_save: common metadata in %.3fs', common_elapsed);
-
-    % Step 6: call Python bridge
-    type_name = class(outputs{1});
-    scidb.internal.ensure_registered(type_name);
+    % --- Call #2: Python save ---
     save_t0 = tic;
-    py.sci_matlab.bridge.for_each_batch_save_dataframe( ...
-        type_name, py_dataframe, py_row_counts, ...
-        py_meta_keys, py_meta_columns, py_common, py_db);
-    save_elapsed = toc(save_t0);
-    scidb.Log.info('[save] %s: fast batch %d items in %.3fs (vertcat=%.3fs, to_python=%.3fs, meta=%.3fs, save=%.3fs)', ...
-        type_name, n_rows, toc(fast_t0), vertcat_elapsed, convert_elapsed, ...
-        meta_elapsed + common_elapsed, save_elapsed);
+    py_result_df = py.sci_matlab.bridge.for_each_save( ...
+        handle, py_result_dfs, pyargs('save', logical(do_save)));
+    scidb.Log.info('for_each_save returned in %.3fs', toc(save_t0));
 
-    ok = true;
-end
-
-
-function keys = build_row_group_keys(tbl, meta_cols)
-%BUILD_ROW_GROUP_KEYS  Build a grouping key string per row from metadata columns.
-    n_rows = height(tbl);
-    keys = strings(n_rows, 1);
-    for ri = 1:n_rows
-        parts = cell(1, numel(meta_cols));
-        for mc = 1:numel(meta_cols)
-            val = tbl.(meta_cols{mc})(ri);
-            if iscell(val)
-                val = val{1};
-            end
-            if isnumeric(val)
-                parts{mc} = sprintf('%g', val);
-            else
-                parts{mc} = char(string(val));
-            end
-        end
-        keys(ri) = strjoin(parts, '|');
+    % --- Convert returned DataFrame to MATLAB table ---
+    if isa(py_result_df, 'py.NoneType')
+        result_tbl = table();
+    else
+        result_tbl = scidb.internal.from_python(py_result_df);
     end
-end
 
+    scidb.Log.debug('post-save result: %dx%d cols=%s', ...
+        height(result_tbl), width(result_tbl), ...
+        strjoin(string(result_tbl.Properties.VariableNames), ', '));
 
-function s = format_save_meta(save_nv)
-%FORMAT_SAVE_META  Format save metadata NV pairs for display.
-    parts = {};
-    for i = 1:2:numel(save_nv)
-        key = save_nv{i};
-        if numel(key) >= 2 && key(1) == '_' && key(2) == '_'
-            continue;  % Skip internal keys
-        end
-        val = save_nv{i+1};
-        if isnumeric(val) && isscalar(val)
-            parts{end+1} = sprintf('%s=%g', key, val); %#ok<AGROW>
-        elseif isstruct(val)
-            parts{end+1} = sprintf('%s=<struct>', key); %#ok<AGROW>
-        elseif ischar(val) || (isstring(val) && isscalar(val))
-            parts{end+1} = sprintf('%s=%s', key, char(val)); %#ok<AGROW>
-        else
+    % Flatten any nested-table output columns: when scifor was called with
+    % _nest_table_outputs=true, the returned table has one row per combo
+    % with each output column carrying a cell containing the per-combo
+    % inner table. Users expect a flat result where each row of an inner
+    % table becomes its own row in the result, with metadata replicated.
+    if ~isempty(result_tbl) && istable(result_tbl)
+        result_tbl = flatten_nested_table_outputs(result_tbl, output_names);
+        scidb.Log.debug('post-flatten result: %dx%d cols=%s', ...
+            height(result_tbl), width(result_tbl), ...
+            strjoin(string(result_tbl.Properties.VariableNames), ', '));
+    end
+
+    % --- Restore original MATLAB types for metadata columns. Python's
+    %     Step 5 stringifies schema-key values so DataFrame-side filtering
+    %     is consistent (numeric DB values vs. user-supplied strings); we
+    %     reverse that here so numeric inputs round-trip as numeric.
+    if ~isempty(result_tbl) && istable(result_tbl)
+        meta_keys_tracked = keys(meta_original_classes);
+        for mi = 1:numel(meta_keys_tracked)
+            k = meta_keys_tracked{mi};
+            if ~ismember(k, result_tbl.Properties.VariableNames)
+                continue;
+            end
+            orig_class = meta_original_classes(k);
+            col = result_tbl.(k);
             try
-                parts{end+1} = sprintf('%s=%s', key, char(string(val))); %#ok<AGROW>
+                switch orig_class
+                    case {'double', 'single', 'int8', 'int16', 'int32', ...
+                          'int64', 'uint8', 'uint16', 'uint32', 'uint64'}
+                        if isstring(col) || iscellstr(col) || ischar(col)
+                            num = str2double(string(col));
+                            if all(~isnan(num) | ismissing(string(col)))
+                                result_tbl.(k) = cast(num, orig_class);
+                            end
+                        end
+                    case 'logical'
+                        if isstring(col) || iscellstr(col)
+                            s = lower(string(col));
+                            result_tbl.(k) = s == "true" | s == "1";
+                        end
+                end
             catch
-                parts{end+1} = sprintf('%s=<%s>', key, class(val)); %#ok<AGROW>
+                % Best-effort coercion only; leave column as-is on failure.
             end
         end
     end
-    s = strjoin(parts, ', ');
-end
 
-
-function tbl = flatten_nested_table_outputs(result_tbl, output_names)
-%FLATTEN_NESTED_TABLE_OUTPUTS  Un-nest table outputs for user-facing return.
-%   When _nest_table_outputs was forced for saving, result columns may contain
-%   cell arrays of tables. This flattens them: metadata is replicated per
-%   data row and data columns are inlined.
-    if isempty(result_tbl) || ~istable(result_tbl)
-        tbl = result_tbl;
-        return;
-    end
-
-    % Find output columns that contain cell arrays of tables
-    table_out_cols = {};
-    for oi = 1:numel(output_names)
-        col_name = output_names{oi};
-        if ~ismember(col_name, result_tbl.Properties.VariableNames)
-            continue;
-        end
-        col = result_tbl.(col_name);
-        if iscell(col) && ~isempty(col) && istable(col{1})
-            table_out_cols{end+1} = col_name; %#ok<AGROW>
-        end
-    end
-
-    if isempty(table_out_cols)
-        tbl = result_tbl;
-        return;
-    end
-
-    % Metadata columns = everything except output columns
-    all_cols = result_tbl.Properties.VariableNames;
-    meta_cols = setdiff(all_cols, output_names, 'stable');
-
-    parts = cell(height(result_tbl), 1);
-    for ri = 1:height(result_tbl)
-        % Combine all table output columns into one data table
-        data_tbl = result_tbl.(table_out_cols{1}){ri};
-        for tc = 2:numel(table_out_cols)
-            extra = result_tbl.(table_out_cols{tc}){ri};
-            data_tbl = [data_tbl, extra]; %#ok<AGROW>
-        end
-        nr = height(data_tbl);
-
-        % Replicate metadata for each data row
-        meta_tbl = table();
-        for mc = 1:numel(meta_cols)
-            val = result_tbl.(meta_cols{mc})(ri);
-            if iscell(val)
-                val = val{1};
-            end
-            if isnumeric(val) && isscalar(val)
-                meta_tbl.(meta_cols{mc}) = repmat(val, nr, 1);
-            elseif ischar(val) || (isstring(val) && isscalar(val))
-                meta_tbl.(meta_cols{mc}) = repmat(string(val), nr, 1);
-            else
-                meta_tbl.(meta_cols{mc}) = repmat({val}, nr, 1);
-            end
-        end
-        % Remove data columns that overlap with metadata to avoid duplicates
-        overlap = intersect(data_tbl.Properties.VariableNames, meta_cols, 'stable');
-        if ~isempty(overlap)
-            data_tbl = removevars(data_tbl, overlap);
-        end
-        parts{ri} = [meta_tbl, data_tbl];
-    end
-    tbl = vertcat(parts{:});
+    scidb.Log.info('===== for_each(%s) done =====', fn_name);
 end
 
 
 % =========================================================================
-% Parallel execution (3-phase: pre-resolve -> parfor -> batch save)
+% Helpers (kept):
+%   - find_pathinput: used by the bridge spec builder and the
+%     _resolve_pathinput option
+%   - is_loadable / is_metadata_compatible: classification for spec building
+%   - describe_input_for_python: kind-tagged spec serializer for Python
+%   - split_options: name-value vs option splitter
 % =========================================================================
 
-function [completed, skipped, total] = run_parallel(fn, inputs, outputs, ...
-    meta_keys, meta_values, input_names, loadable_idx, ...
-    constant_names, constant_values, constant_nv, config_nv, ...
-    as_table_raw, fn_name, do_save, db_nv, where_nv, opts)
-%RUN_PARALLEL  Three-phase parallel execution for for_each.
+function out = flatten_nested_table_outputs(result_tbl, output_names)
+%FLATTEN_NESTED_TABLE_OUTPUTS  Expand nested-table output columns to flat rows.
+%   For each row of result_tbl, if an output column's cell holds a table,
+%   replicate that row's metadata across the inner table's rows and
+%   concat the inner table's data columns. Non-table outputs pass
+%   through unchanged. Output columns that contain a mix of tables and
+%   non-tables are left as-is on a per-row basis.
 
-    n_inputs = numel(input_names);
-    n_outputs = numel(outputs);
-
-    % Resolve database
-    if isempty(opts.db)
-        py_db = py.scidb.database.get_database();
-    else
-        py_db = opts.db;
+    if isempty(result_tbl) || ~istable(result_tbl) || height(result_tbl) == 0
+        out = result_tbl;
+        return;
     end
 
-    % Build combos
-    if isempty(meta_values)
-        combos = {{}};
-    else
-        combos = scidb.internal.cartesian_product(meta_values);
-    end
-    total = numel(combos);
-
-    % Pre-load all inputs
-    preloaded_results = cell(1, n_inputs);
-    preloaded_maps    = cell(1, n_inputs);
-    preloaded_keys    = cell(1, n_inputs);
-
-    for p = 1:n_inputs
-        if ~loadable_idx(p); continue; end
-
-        var_spec = inputs.(input_names{p});
-        if isa(var_spec, 'scifor.PathInput'); continue; end
-        if isa(var_spec, 'scidb.Merge'); continue; end
-        if istable(var_spec); continue; end
-        if isa(var_spec, 'scidb.Fixed') && istable(var_spec.var_type); continue; end
-
-        if isa(var_spec, 'scidb.Fixed')
-            var_inst = var_spec.var_type;
-            fixed_meta = var_spec.fixed_metadata;
-        else
-            var_inst = var_spec;
-            fixed_meta = struct();
+    % Identify nested-table output columns (output_names columns that
+    % contain at least one inner table).
+    nested_cols = string.empty;
+    for o = 1:numel(output_names)
+        oname = output_names{o};
+        if ~ismember(oname, result_tbl.Properties.VariableNames)
+            continue;
         end
-
-        type_name = class(var_inst);
-        py_class = scidb.internal.ensure_registered(type_name);
-
-        query_nv = {};
-        for k = 1:numel(meta_keys)
-            query_nv{end+1} = char(meta_keys(k)); %#ok<AGROW>
-            vals = meta_values{k};
-            if numel(vals) == 1
-                query_nv{end+1} = vals{1}; %#ok<AGROW>
-            else
-                if isnumeric(vals{1})
-                    query_nv{end+1} = cell2mat(vals); %#ok<AGROW>
-                else
-                    query_nv{end+1} = string(vals); %#ok<AGROW>
-                end
-            end
-        end
-
-        fixed_fields = fieldnames(fixed_meta);
-        for f = 1:numel(fixed_fields)
-            fld_name = fixed_fields{f};
-            fval = fixed_meta.(fld_name);
-            replaced = false;
-            for k = 1:2:numel(query_nv)
-                if strcmp(query_nv{k}, fld_name)
-                    query_nv{k+1} = fval;
-                    replaced = true;
+        col = result_tbl.(oname);
+        if iscell(col)
+            any_table = false;
+            for r = 1:numel(col)
+                if istable(col{r})
+                    any_table = true;
                     break;
                 end
             end
-            if ~replaced
-                query_nv{end+1} = fld_name; %#ok<AGROW>
-                query_nv{end+1} = fval; %#ok<AGROW>
+            if any_table
+                nested_cols(end+1) = string(oname); %#ok<AGROW>
             end
         end
+    end
 
-        q_keys = string.empty;
-        for k = 1:2:numel(query_nv)
-            q_keys(end+1) = string(query_nv{k}); %#ok<AGROW>
+    if isempty(nested_cols)
+        out = result_tbl;
+        return;
+    end
+
+    meta_cols = setdiff( ...
+        string(result_tbl.Properties.VariableNames), ...
+        [nested_cols, string(output_names)], 'stable');
+
+    pieces = {};
+    for r = 1:height(result_tbl)
+        % Find the first non-empty nested table in this row to determine
+        % how many rows this combo expands to. All nested columns are
+        % expected to share the same height per combo.
+        inner_h = 0;
+        for nc = 1:numel(nested_cols)
+            cell_val = result_tbl.(char(nested_cols(nc))){r};
+            if istable(cell_val)
+                inner_h = height(cell_val);
+                break;
+            end
         end
-        preloaded_keys{p} = sort(q_keys);
-
-        py_metadata = scidb.internal.metadata_to_pydict(query_nv{:});
-        if isempty(where_nv)
-            bulk = py.sci_matlab.bridge.load_and_extract( ...
-                py_class, py_metadata, ...
-                pyargs('version_id', 'latest', 'db', py_db));
-        else
-            bulk = py.sci_matlab.bridge.load_and_extract( ...
-                py_class, py_metadata, ...
-                pyargs('version_id', 'latest', 'db', py_db, ...
-                       'where', where_nv{2}.py_filter));
-        end
-        n_results = int64(bulk{'n'});
-
-        if n_results == 0
-            preloaded_results{p} = scidb.BaseVariable.empty(0, 0);
-            preloaded_maps{p} = containers.Map();
+        if inner_h == 0
+            % Pass the row through unchanged (no expansion needed).
+            pieces{end+1} = result_tbl(r, :); %#ok<AGROW>
             continue;
         end
 
-        results = scidb.BaseVariable.wrap_py_vars_batch(bulk);
-        preloaded_results{p} = results;
+        % Build the metadata block (replicated)
+        meta_row = result_tbl(r, cellstr(meta_cols));
+        meta_block = repmat(meta_row, inner_h, 1);
 
-        lookup = containers.Map('KeyType', 'char', 'ValueType', 'any');
-        for i = 1:numel(results)
-            key_str = result_meta_key(results(i).metadata, preloaded_keys{p});
-            if lookup.isKey(key_str)
-                lookup(key_str) = [lookup(key_str), i];
-            else
-                lookup(key_str) = i;
-            end
-        end
-        preloaded_maps{p} = lookup;
-    end
-
-    % ---- Phase A: Pre-resolve all inputs (serial) ----
-    scidb.Log.info('[parallel] Phase A: pre-resolving %d combinations...', total);
-
-    all_inputs = cell(1, total);
-    all_meta_nv = cell(1, total);
-    all_save_nv = cell(1, total);
-    resolve_ok = false(1, total);
-
-    as_table_set = resolve_as_table_set(as_table_raw, input_names, loadable_idx);
-    schema_keys = scifor.get_schema();
-
-    for c = 1:total
-        combo = combos{c};
-
-        meta_nv = {};
-        meta_parts = {};
-        for k = 1:numel(meta_keys)
-            val = combo{k};
-            meta_nv{end+1} = char(meta_keys(k)); %#ok<AGROW>
-            meta_nv{end+1} = val; %#ok<AGROW>
-            if isnumeric(val)
-                meta_parts{end+1} = sprintf('%s=%g', meta_keys(k), val); %#ok<AGROW>
-            else
-                meta_parts{end+1} = sprintf('%s=%s', meta_keys(k), string(val)); %#ok<AGROW>
-            end
-        end
-        metadata_str = strjoin(meta_parts, ', ');
-        all_meta_nv{c} = meta_nv;
-        all_save_nv{c} = [meta_nv, constant_nv, config_nv];
-
-        loaded = cell(1, n_inputs);
-        load_failed = false;
-
-        for p = 1:n_inputs
-            if ~loadable_idx(p)
-                loaded{p} = inputs.(input_names{p});
-                continue;
-            end
-
-            var_spec = inputs.(input_names{p});
-
-            if isa(var_spec, 'scifor.PathInput')
-                error('scidb:for_each', ...
-                    'parallel=true is not supported with PathInput.');
-            end
-
-            % Table inputs
-            if istable(var_spec)
-                metadata = struct();
-                for k = 1:numel(meta_keys)
-                    metadata.(char(meta_keys(k))) = combo{k};
-                end
-                wants_table = ~isempty(as_table_set) && ismember(string(input_names{p}), as_table_set);
-                loaded{p} = filter_table_for_combo_simple(var_spec, metadata, schema_keys, wants_table);
-                continue;
-            end
-
-            if isa(var_spec, 'scidb.Fixed')
-                var_inst = var_spec.var_type;
-            else
-                var_inst = var_spec;
-            end
-
-            if ~isempty(preloaded_maps{p})
-                fixed_meta = struct();
-                if isa(var_spec, 'scidb.Fixed')
-                    fixed_meta = var_spec.fixed_metadata;
-                end
-                key_str = combo_meta_key(meta_keys, combo, fixed_meta, preloaded_keys{p});
-
-                if preloaded_maps{p}.isKey(key_str)
-                    idx = preloaded_maps{p}(key_str);
-                    loaded{p} = preloaded_results{p}(idx);
-                else
-                    scidb.Log.info('[skip] %s: no data found for %s (%s)', ...
-                        metadata_str, input_names{p}, class(var_inst));
-                    load_failed = true;
-                    break;
-                end
-            else
-                if isa(var_spec, 'scidb.Fixed')
-                    load_nv = meta_nv;
-                    fixed_fields = fieldnames(var_spec.fixed_metadata);
-                    for f = 1:numel(fixed_fields)
-                        load_nv{end+1} = fixed_fields{f}; %#ok<AGROW>
-                        load_nv{end+1} = var_spec.fixed_metadata.(fixed_fields{f}); %#ok<AGROW>
+        % For each nested output column, fold the inner table in.
+        nested_block = table();
+        for nc = 1:numel(nested_cols)
+            nc_name = char(nested_cols(nc));
+            cell_val = result_tbl.(nc_name){r};
+            if istable(cell_val)
+                inner_cols = string(cell_val.Properties.VariableNames);
+                for ic = 1:numel(inner_cols)
+                    icn = char(inner_cols(ic));
+                    if ismember(icn, meta_block.Properties.VariableNames)
+                        % Inner column matches a metadata column: prefer
+                        % the inner value (it's the per-row data the user
+                        % chose to include in their output table).
+                        meta_block.(icn) = cell_val.(icn);
+                    elseif ismember(icn, nested_block.Properties.VariableNames)
+                        % Disambiguate name collisions across nested
+                        % outputs by prefixing with the output name.
+                        nested_block.(sprintf('%s_%s', nc_name, icn)) = cell_val.(icn);
+                    else
+                        nested_block.(icn) = cell_val.(icn);
                     end
-                else
-                    load_nv = meta_nv;
                 end
-                try
-                    loaded{p} = var_inst.load(load_nv{:}, db_nv{:}, where_nv{:});
-                catch err
-                    scidb.Log.info('[skip] %s: failed to load %s: %s', ...
-                        metadata_str, input_names{p}, err.message);
-                    load_failed = true;
-                    break;
-                end
-            end
-
-            % Unwrap LineageFcnResult/BaseVariable
-            if ~istable(loaded{p}) && ~isnumeric(loaded{p})
-                loaded{p} = scidb.internal.unwrap_input(loaded{p});
-            end
-
-            % Apply column selection if specified
-            if istable(loaded{p}) && ~isempty(var_inst.selected_columns)
-                cols = var_inst.selected_columns;
-                present = intersect(cols, string(loaded{p}.Properties.VariableNames), 'stable');
-                if numel(present) == 1
-                    loaded{p} = loaded{p}.(char(present(1)));
-                elseif numel(present) > 1
-                    loaded{p} = loaded{p}(:, cellstr(present));
-                end
+            else
+                % Non-table cell — wrap in a cell column of inner_h
+                % copies so widths line up.
+                nested_block.(nc_name) = repmat({cell_val}, inner_h, 1);
             end
         end
 
-        if load_failed
+        pieces{end+1} = [meta_block, nested_block]; %#ok<AGROW>
+    end
+
+    if isempty(pieces)
+        out = result_tbl;
+    else
+        out = vertcat(pieces{:});
+    end
+end
+
+
+function val = coerce_meta_columns(val, meta_original_classes)
+%COERCE_META_COLUMNS  Restore original MATLAB types on schema-key columns
+%   inside a loaded input.  Handles plain tables and scifor wrappers
+%   recursively.  Returns a fresh wrapper because scifor's wrappers
+%   have read-only properties.
+
+    if istable(val)
+        val = coerce_table_columns(val, meta_original_classes);
+        return;
+    end
+    if isa(val, 'scifor.Fixed')
+        if istable(val.data)
+            new_data = coerce_table_columns(val.data, meta_original_classes);
+        else
+            new_data = val.data;
+        end
+        % Flatten fixed_metadata struct to name-value pairs
+        fnames = fieldnames(val.fixed_metadata);
+        nv = cell(1, 2 * numel(fnames));
+        for i = 1:numel(fnames)
+            nv{2*i - 1} = fnames{i};
+            nv{2*i} = val.fixed_metadata.(fnames{i});
+        end
+        val = scifor.Fixed(new_data, nv{:});
+        return;
+    end
+    if isa(val, 'scifor.ColumnSelection')
+        if istable(val.data)
+            new_data = coerce_table_columns(val.data, meta_original_classes);
+        else
+            new_data = val.data;
+        end
+        val = scifor.ColumnSelection(new_data, val.columns);
+        return;
+    end
+    if isa(val, 'scifor.Merge')
+        n = numel(val.tables);
+        new_tables = cell(1, n);
+        for i = 1:n
+            inner = val.tables{i};
+            if istable(inner)
+                new_tables{i} = coerce_table_columns(inner, meta_original_classes);
+            else
+                % Recurse so nested wrappers also rebuild
+                new_tables{i} = coerce_meta_columns(inner, meta_original_classes);
+            end
+        end
+        val = scifor.Merge(new_tables{:});
+        return;
+    end
+end
+
+
+function tbl = coerce_table_columns(tbl, meta_original_classes)
+%COERCE_TABLE_COLUMNS  For each column whose name matches a metadata key
+%   we tracked the original MATLAB class for, convert string values back
+%   to that numeric / logical type.  Strings the user originally passed
+%   stay strings (the tracked class will be 'string' or 'char').
+    keys_tracked = keys(meta_original_classes);
+    for i = 1:numel(keys_tracked)
+        k = keys_tracked{i};
+        if ~ismember(k, tbl.Properties.VariableNames)
             continue;
         end
-
-        all_inputs{c} = loaded;
-        resolve_ok(c) = true;
-    end
-
-    n_resolved = sum(resolve_ok);
-    scidb.Log.info('[parallel] Phase A done: %d resolved, %d skipped', ...
-        n_resolved, total - n_resolved);
-
-    % ---- Phase B: parfor compute ----
-    scidb.Log.info('[parallel] Phase B: computing %d items with parfor...', n_resolved);
-
-    resolved_indices = find(resolve_ok);
-    par_inputs = cell(1, n_resolved);
-    par_meta_nv = cell(1, n_resolved);
-    for j = 1:n_resolved
-        par_inputs{j} = all_inputs{resolved_indices(j)};
-        par_meta_nv{j} = all_meta_nv{resolved_indices(j)};
-    end
-
-    results_par = cell(1, n_resolved);
-    compute_ok = true(1, n_resolved);
-    compute_errors = cell(1, n_resolved);
-
-    parfor j = 1:n_resolved
+        orig_class = meta_original_classes(k);
+        col = tbl.(k);
         try
-            r = fn(par_inputs{j}{:});
-            if ~iscell(r); r = {r}; end
-            results_par{j} = r;
-        catch err
-            compute_ok(j) = false;
-            compute_errors{j} = err.message;
-            results_par{j} = {};
-        end
-    end
-
-    for j = find(~compute_ok)
-        c = resolved_indices(j);
-        combo = combos{c};
-        m_parts = {};
-        for k = 1:numel(meta_keys)
-            val = combo{k};
-            if isnumeric(val)
-                m_parts{end+1} = sprintf('%s=%g', meta_keys(k), val); %#ok<AGROW>
-            else
-                m_parts{end+1} = sprintf('%s=%s', meta_keys(k), string(val)); %#ok<AGROW>
-            end
-        end
-        scidb.Log.info('[skip] %s: %s raised: %s', ...
-            strjoin(m_parts, ', '), fn_name, compute_errors{j});
-    end
-
-    n_computed = sum(compute_ok);
-    scidb.Log.info('[parallel] Phase B done: %d succeeded, %d failed', ...
-        n_computed, n_resolved - n_computed);
-
-    % ---- Phase C: Batch save ----
-    if do_save && n_computed > 0
-        scidb.Log.info('[parallel] Phase C: batch saving %d results...', n_computed);
-
-        for o = 1:n_outputs
-            type_name = class(outputs{o});
-            scidb.internal.ensure_registered(type_name);
-
-            py_data = py.list();
-            py_metas = py.list();
-            save_count = 0;
-
-            for j = find(compute_ok)
-                c = resolved_indices(j);
-                if o <= numel(results_par{j})
-                    raw_val = results_par{j}{o};
-                    if isa(raw_val, 'scidb.LineageFcnResult') || isa(raw_val, 'scidb.BaseVariable')
-                        raw_val = raw_val.data;
+            switch orig_class
+                case {'double', 'single', 'int8', 'int16', 'int32', ...
+                      'int64', 'uint8', 'uint16', 'uint32', 'uint64'}
+                    if isstring(col) || iscellstr(col)
+                        num = str2double(string(col));
+                        if all(~isnan(num) | ismissing(string(col)))
+                            tbl.(k) = cast(num, orig_class);
+                        end
                     end
-                    py_data.append(scidb.internal.to_python(raw_val));
-                    py_metas.append(scidb.internal.metadata_to_pydict(all_save_nv{c}{:}));
-                    save_count = save_count + 1;
-                end
+                case 'logical'
+                    if isstring(col) || iscellstr(col)
+                        s = lower(string(col));
+                        tbl.(k) = s == "true" | s == "1";
+                    end
             end
-
-            if save_count > 0
-                scidb.Log.debug('[parallel] save_batch: flushing %s — %d items', ...
-                    type_name, save_count);
-                par_batch_t0 = tic;
-                py.sci_matlab.bridge.for_each_batch_save( ...
-                    type_name, py_data, py_metas, py_db);
-                par_batch_elapsed = toc(par_batch_t0);
-                scidb.Log.info('[save] %s: %d items (batch) in %.3fs', type_name, save_count, par_batch_elapsed);
-            end
+        catch
+            % Leave column as-is on any failure
         end
-    end
-
-    completed = n_computed;
-    skipped = total - n_computed;
-end
-
-
-% =========================================================================
-% Helpers
-% =========================================================================
-
-function tf = is_loadable(var_spec)
-%IS_LOADABLE  Check if an input spec is loadable (var type, Fixed, Merge, etc.).
-    tf = isa(var_spec, 'scidb.BaseVariable') ...
-      || isa(var_spec, 'scidb.Fixed') ...
-      || isa(var_spec, 'scifor.PathInput') ...
-      || isa(var_spec, 'scidb.Merge') ...
-      || istable(var_spec) ...
-      || (isa(var_spec, 'scidb.Fixed') && istable(var_spec.var_type));
-end
-
-
-function tf = is_metadata_compatible(val)
-%IS_METADATA_COMPATIBLE  Return true if val can be used as a save metadata key.
-    tf = (isnumeric(val) && isscalar(val)) ...
-      || (islogical(val) && isscalar(val)) ...
-      || (isstring(val) && isscalar(val)) ...
-      || ischar(val) ...
-      || isstruct(val);
-end
-
-
-function cleaned = strip_internal_meta(metadata)
-%STRIP_INTERNAL_META  Remove internal version keys and constant keys from metadata.
-%   Mirrors Python's _stringify_meta() in foreach.py.
-%   Drops fields starting with 'x__' (MATLAB's jsondecode sanitizes '__' -> 'x__')
-%   and fields that came from constants (stored in x__constants / __constants).
-    fnames = fieldnames(metadata);
-
-    % Parse constant keys from __constants JSON (may be stored as x__constants)
-    const_keys = {};
-    for cfield = ["x__constants", "x___constants"]
-        if isfield(metadata, cfield)
-            try
-                decoded = jsondecode(metadata.(char(cfield)));
-                const_keys = fieldnames(decoded);
-            catch
-            end
-            break;
-        end
-    end
-
-    cleaned = struct();
-    for i = 1:numel(fnames)
-        f = fnames{i};
-        % Drop fields starting with x__ (internal version keys)
-        if numel(f) >= 3 && f(1) == 'x' && f(2) == '_' && f(3) == '_'
-            continue;
-        end
-        % Drop fields that came from constants
-        if ~isempty(const_keys) && ismember(f, const_keys)
-            continue;
-        end
-        cleaned.(f) = metadata.(f);
     end
 end
 
 
-function tf = has_pathinput(inputs)
-%HAS_PATHINPUT  Check if any input is a PathInput.
-    tf = false;
-    fnames = fieldnames(inputs);
-    for i = 1:numel(fnames)
-        v = inputs.(fnames{i});
-        if isa(v, 'scifor.PathInput')
-            tf = true; return;
-        end
-        if isa(v, 'scidb.Fixed') && isa(v.var_type, 'scifor.PathInput')
-            tf = true; return;
-        end
+function val = build_scifor_input_from_desc(desc)
+%BUILD_SCIFOR_INPUT_FROM_DESC  Rebuild a MATLAB scifor wrapper (or table)
+%   from a kind-tagged description produced by
+%   ``py.sci_matlab.bridge.for_each_describe_loaded_input``.
+%
+%   ``desc`` is a py.dict with a ``kind`` field. Cases:
+%     'dataframe'         -> MATLAB table  (via from_python)
+%     'fixed'             -> scifor.Fixed(inner, name, value, ...)
+%     'column_selection'  -> scifor.ColumnSelection(inner_table, cols)
+%     'merge'             -> scifor.Merge(inner1, inner2, ...)
+%     'raw'               -> from_python(value) (constants, etc.)
+
+    kind = char(desc{'kind'});
+    switch kind
+        case 'dataframe'
+            val = scidb.internal.from_python(desc{'data'});
+
+        case 'fixed'
+            inner_val = build_scifor_input_from_desc(desc{'inner'});
+            % fixed_metadata is a py.dict; flatten to name-value pairs
+            py_meta = desc{'fixed_metadata'};
+            keys_cell = cell(py.list(py_meta.keys()));
+            nv = {};
+            for ki = 1:numel(keys_cell)
+                k = char(keys_cell{ki});
+                nv{end+1} = k; %#ok<AGROW>
+                nv{end+1} = scidb.internal.from_python(py_meta{k}); %#ok<AGROW>
+            end
+            val = scifor.Fixed(inner_val, nv{:});
+
+        case 'column_selection'
+            inner_val = build_scifor_input_from_desc(desc{'inner'});
+            cols_py = cell(py.list(desc{'columns'}));
+            cols = cellfun(@char, cols_py, 'UniformOutput', false);
+            val = scifor.ColumnSelection(inner_val, cols);
+
+        case 'merge'
+            py_tables = desc{'tables'};
+            n = int64(py.len(py_tables));
+            tables_cell = cell(1, n);
+            for ti = 1:n
+                tables_cell{ti} = build_scifor_input_from_desc(py_tables{ti});
+            end
+            val = scifor.Merge(tables_cell{:});
+
+        case 'pathinput'
+            tmpl = char(desc{'template'});
+            root = char(desc{'root_folder'});
+            is_regex = logical(desc{'regex'});
+            if isempty(root)
+                val = scifor.PathInput(tmpl, 'regex', is_regex);
+            else
+                val = scifor.PathInput(tmpl, 'root_folder', root, 'regex', is_regex);
+            end
+
+        case 'raw'
+            val = scidb.internal.from_python(desc{'value'});
+
+        otherwise
+            error('scidb:for_each:UnknownInputKind', ...
+                'Unrecognized loaded-input kind from bridge: "%s"', kind);
     end
 end
 
@@ -1768,326 +670,97 @@ function pi = find_pathinput(inputs)
 end
 
 
-function propagate_schema(db)
-%PROPAGATE_SCHEMA  Propagate dataset_schema_keys from the db into scifor.set_schema().
-    if ~isempty(db) && ~isa(db, 'double')
-        if isprop(db, 'dataset_schema_keys') || isfield(db, 'dataset_schema_keys')
-            sk = cell(db.dataset_schema_keys);
-            keys = string.empty;
-            for s = 1:numel(sk)
-                keys(end+1) = string(sk{s}); %#ok<AGROW>
-            end
-            scifor.set_schema(keys);
-            return;
-        end
-    end
-
-    % Try global database
-    try
-        py_db = py.scidb.database.get_database();
-        sk = cell(py_db.dataset_schema_keys);
-        keys = string.empty;
-        for s = 1:numel(sk)
-            keys(end+1) = string(sk{s}); %#ok<AGROW>
-        end
-        scifor.set_schema(keys);
-    catch
-        % No database available — leave schema as-is
-    end
+function tf = is_loadable(var_spec) %#ok<DEFNU>
+%IS_LOADABLE  Check if an input spec is loadable (var type, Fixed, Merge, etc.).
+    tf = isa(var_spec, 'scidb.BaseVariable') ...
+      || isa(var_spec, 'scidb.Fixed') ...
+      || isa(var_spec, 'scifor.PathInput') ...
+      || isa(var_spec, 'scidb.Merge') ...
+      || istable(var_spec) ...
+      || (isa(var_spec, 'scidb.Fixed') && istable(var_spec.var_type));
 end
 
 
-function as_table_set = resolve_as_table_set(as_table_raw, input_names, loadable_idx)
-%RESOLVE_AS_TABLE_SET  Resolve as_table option to a set of input names.
-    if islogical(as_table_raw) && isscalar(as_table_raw) && as_table_raw
-        as_table_set = string(input_names(loadable_idx)');
-    elseif islogical(as_table_raw) && isscalar(as_table_raw) && ~as_table_raw
-        as_table_set = string.empty;
+function tf = is_metadata_compatible(val) %#ok<DEFNU>
+%IS_METADATA_COMPATIBLE  Return true if val can be used as a save metadata key.
+    tf = (isnumeric(val) && isscalar(val)) ...
+      || (islogical(val) && isscalar(val)) ...
+      || (isstring(val) && isscalar(val)) ...
+      || ischar(val) ...
+      || isstruct(val);
+end
+
+
+function spec = describe_input_for_python(val)
+%DESCRIBE_INPUT_FOR_PYTHON  Build a kind-tagged Python dict describing one
+%   for_each input, for the for_each_prepare bridge.
+
+    if isa(val, 'scidb.Merge')
+        sub_specs = cell(1, numel(val.var_specs));
+        for i = 1:numel(val.var_specs)
+            sub_specs{i} = describe_input_for_python(val.var_specs{i});
+        end
+        spec = py.dict(pyargs('kind', 'merge', 'specs', py.list(sub_specs)));
+
+    elseif isa(val, 'scidb.Fixed')
+        inner_desc = describe_input_for_python(val.var_type);
+        fmeta_py = py.dict();
+        fnames = fieldnames(val.fixed_metadata);
+        for i = 1:numel(fnames)
+            fmeta_py{fnames{i}} = scidb.internal.to_python( ...
+                val.fixed_metadata.(fnames{i}));
+        end
+        spec = py.dict(pyargs('kind', 'fixed', ...
+            'inner', inner_desc, ...
+            'fixed_metadata', fmeta_py));
+
+    elseif isa(val, 'scidb.BaseVariable') && ~isempty(val.selected_columns)
+        cols = val.selected_columns;
+        scidb.internal.ensure_registered(class(val));
+        spec = py.dict(pyargs('kind', 'column_selection', ...
+            'type_name', class(val), ...
+            'columns', py.list(cellstr(cols(:)'))));
+
+    elseif isa(val, 'scidb.BaseVariable')
+        scidb.internal.ensure_registered(class(val));
+        spec = py.dict(pyargs('kind', 'var_type', 'type_name', class(val)));
+
+    elseif isa(val, 'scifor.PathInput')
+        if strlength(val.root_folder) > 0
+            root_str = char(val.root_folder);
+        else
+            root_str = '';
+        end
+        spec = py.dict(pyargs('kind', 'pathinput', ...
+            'template', char(val.path_template), ...
+            'root_folder', root_str, ...
+            'regex', logical(val.regex)));
+
+    elseif istable(val)
+        % A literal MATLAB table input: ship as a constant DataFrame so
+        % Python's _is_loadable classifies it. Today's MATLAB scidb path
+        % wraps tables in scifor.Fixed before reaching for_each; raw
+        % tables are atypical here.
+        spec = py.dict(pyargs('kind', 'constant', ...
+            'value', scidb.internal.to_python(val)));
+
     else
-        as_table_set = as_table_raw;
+        spec = py.dict(pyargs('kind', 'constant', ...
+            'value', scidb.internal.to_python(val)));
     end
 end
 
-
-function result = filter_table_for_combo_simple(tbl, metadata, schema_keys, as_table)
-%FILTER_TABLE_FOR_COMBO_SIMPLE  Filter a MATLAB table for parallel branch.
-    col_names = string(tbl.Properties.VariableNames);
-    schema_keys_in_tbl = intersect(col_names, schema_keys);
-
-    if isempty(schema_keys_in_tbl)
-        result = tbl;
-        return;
-    end
-
-    mask = true(height(tbl), 1);
-    for k = 1:numel(schema_keys_in_tbl)
-        key = schema_keys_in_tbl(k);
-        if isfield(metadata, char(key))
-            val = metadata.(char(key));
-            col_data = tbl.(char(key));
-            if isnumeric(col_data)
-                if isstring(val) || ischar(val)
-                    val = str2double(string(val));
-                end
-                mask = mask & (col_data == val);
-            else
-                mask = mask & (string(col_data) == string(val));
-            end
-        end
-    end
-
-    sub = tbl(mask, :);
-
-    if as_table
-        result = sub;
-        return;
-    end
-
-    data_cols = setdiff(col_names, schema_keys, 'stable');
-    if height(sub) == 1 && numel(data_cols) == 1
-        val = sub.(char(data_cols(1)));
-        if iscell(val)
-            result = val{1};
-        else
-            result = val;
-        end
-    else
-        result = sub;
-    end
-end
-
-
-% =========================================================================
-% Preload lookup helpers
-% =========================================================================
-
-function key = build_meta_key(keys, vals)
-%BUILD_META_KEY  Build a sorted lookup key from metadata key-value pairs.
-    parts = cell(1, numel(keys));
-    for k = 1:numel(keys)
-        v = vals{k};
-        if isnumeric(v)
-            parts{k} = sprintf('%s=%g', keys(k), v);
-        else
-            parts{k} = sprintf('%s=%s', keys(k), string(v));
-        end
-    end
-    key = char(strjoin(sort(string(parts)), '|'));
-end
-
-
-function key = result_meta_key(metadata_struct, query_keys)
-%RESULT_META_KEY  Build lookup key from a loaded result's metadata struct.
-    vals = cell(1, numel(query_keys));
-    for k = 1:numel(query_keys)
-        vals{k} = metadata_struct.(char(query_keys(k)));
-    end
-    key = build_meta_key(query_keys, vals);
-end
-
-
-function key = combo_meta_key(meta_keys, combo, fixed_meta, query_keys)
-%COMBO_META_KEY  Build lookup key for a specific iteration combo.
-    effective = containers.Map('KeyType', 'char', 'ValueType', 'any');
-    for k = 1:numel(meta_keys)
-        effective(char(meta_keys(k))) = combo{k};
-    end
-    ff = fieldnames(fixed_meta);
-    for f = 1:numel(ff)
-        effective(ff{f}) = fixed_meta.(ff{f});
-    end
-    vals = cell(1, numel(query_keys));
-    for k = 1:numel(query_keys)
-        vals{k} = effective(char(query_keys(k)));
-    end
-    key = build_meta_key(query_keys, vals);
-end
-
-
-% =========================================================================
-% ForEachConfig version keys
-% =========================================================================
-
-function nv = build_config_nv(fn_name, inputs, input_names, loadable_idx, ...
-    where_filter, distribute, as_table_raw)
-%BUILD_CONFIG_NV  Build ForEachConfig version keys.
-    nv = {};
-
-    nv{end+1} = '__fn';
-    nv{end+1} = fn_name;
-
-    inputs_json = serialize_loadable_inputs(inputs, input_names, loadable_idx);
-    if ~strcmp(inputs_json, '{}')
-        nv{end+1} = '__inputs';
-        nv{end+1} = inputs_json;
-    end
-
-    % Serialize constant input NAMES as __constants JSON
-    % strip_internal_meta() only needs the keys to know which fields to drop;
-    % storing full values would duplicate large structs on every record.
-    const_struct = struct();
-    has_const = false;
-    for p = 1:numel(input_names)
-        if ~loadable_idx(p)
-            val = inputs.(input_names{p});
-            if is_metadata_compatible(val)
-                const_struct.(input_names{p}) = true;
-                has_const = true;
-            end
-        end
-    end
-    if has_const
-        nv{end+1} = '__constants';
-        nv{end+1} = jsonencode(const_struct);
-    end
-
-    if ~isempty(where_filter)
-        nv{end+1} = '__where';
-        nv{end+1} = char(string(where_filter.py_filter.to_key()));
-    end
-
-    if distribute
-        nv{end+1} = '__distribute';
-        nv{end+1} = true;
-    end
-
-    if islogical(as_table_raw) && isscalar(as_table_raw) && as_table_raw
-        nv{end+1} = '__as_table';
-        nv{end+1} = true;
-    elseif isstring(as_table_raw) && ~isempty(as_table_raw)
-        nv{end+1} = '__as_table';
-        nv{end+1} = strjoin(sort(as_table_raw), ',');
-    end
-
-end
-
-
-function json_str = serialize_loadable_inputs(inputs, input_names, loadable_idx)
-%SERIALIZE_LOADABLE_INPUTS  Serialize loadable inputs to a JSON string.
-    sorted_names = sort(string(input_names(loadable_idx)'));
-    parts = {};
-    for i = 1:numel(sorted_names)
-        name = sorted_names(i);
-        spec = inputs.(char(name));
-        key_str = input_spec_to_key(spec);
-        parts{end+1} = sprintf('"%s": "%s"', name, strrep(key_str, '"', '\"')); %#ok<AGROW>
-    end
-    json_str = ['{' strjoin(parts, ', ') '}'];
-end
-
-
-function key = input_spec_to_key(spec)
-%INPUT_SPEC_TO_KEY  Convert a single input spec to its canonical key string.
-    if isa(spec, 'scidb.Merge')
-        sub_parts = cell(1, numel(spec.var_specs));
-        for i = 1:numel(spec.var_specs)
-            sub_parts{i} = input_spec_to_key(spec.var_specs{i});
-        end
-        key = ['Merge(' strjoin(sub_parts, ', ') ')'];
-    elseif isa(spec, 'scidb.Fixed')
-        inner = spec.var_type;
-        if isa(inner, 'scidb.BaseVariable') && ~isempty(inner.selected_columns)
-            cols = inner.selected_columns;
-            if numel(cols) == 1
-                inner_key = sprintf('%s[''%s'']', class(inner), cols(1));
-            else
-                col_strs = arrayfun(@(c) sprintf('''%s''', c), cols, 'UniformOutput', false);
-                inner_key = sprintf('%s[[%s]]', class(inner), strjoin(col_strs, ', '));
-            end
-        else
-            inner_key = class(inner);
-        end
-        fields = sort(string(fieldnames(spec.fixed_metadata)));
-        if isempty(fields)
-            key = sprintf('Fixed(%s)', inner_key);
-        else
-            kv_parts = cell(1, numel(fields));
-            for f = 1:numel(fields)
-                val = spec.fixed_metadata.(char(fields(f)));
-                kv_parts{f} = sprintf('%s=%s', fields(f), format_repr(val));
-            end
-            key = sprintf('Fixed(%s, %s)', inner_key, strjoin(kv_parts, ', '));
-        end
-    elseif isa(spec, 'scidb.BaseVariable') && ~isempty(spec.selected_columns)
-        cols = spec.selected_columns;
-        if numel(cols) == 1
-            key = sprintf('%s[''%s'']', class(spec), cols(1));
-        else
-            col_strs = arrayfun(@(c) sprintf('''%s''', c), cols, 'UniformOutput', false);
-            key = sprintf('%s[[%s]]', class(spec), strjoin(col_strs, ', '));
-        end
-    elseif isa(spec, 'scidb.BaseVariable')
-        key = class(spec);
-    elseif isa(spec, 'scifor.PathInput')
-        if strlength(spec.root_folder) > 0
-            key = sprintf('PathInput("%s", root_folder="%s")', ...
-                spec.path_template, spec.root_folder);
-        else
-            key = sprintf('PathInput("%s")', spec.path_template);
-        end
-    elseif istable(spec)
-        key = sprintf('<table %dx%d>', height(spec), width(spec));
-    else
-        key = char(string(spec));
-    end
-end
-
-
-function s = format_repr(val)
-%FORMAT_REPR  Format a value in Python repr() style for version key strings.
-    if isnumeric(val) && isscalar(val)
-        if val == floor(val)
-            s = sprintf('%d', int64(val));
-        else
-            s = sprintf('%g', val);
-        end
-    elseif ischar(val) || (isstring(val) && isscalar(val))
-        s = sprintf('''%s''', char(val));
-    elseif islogical(val) && isscalar(val)
-        if val
-            s = 'True';
-        else
-            s = 'False';
-        end
-    else
-        s = char(string(val));
-    end
-end
-
-
-function s = schema_str(value)
-%SCHEMA_STR  Stringify a schema key value for comparison with DB strings.
-    cl = class(value);
-    if numel(cl) >= 3 && cl(1) == 'p' && cl(2) == 'y' && cl(3) == '.'
-        value = scidb.internal.from_python(value);
-    end
-    if isnumeric(value) && isscalar(value)
-        if value == floor(value)
-            s = sprintf('%d', int64(value));
-        else
-            s = sprintf('%g', value);
-        end
-    else
-        s = char(string(value));
-    end
-end
-
-
-% =========================================================================
-% Option parsing
-% =========================================================================
 
 function [meta_args, opts] = split_options(varargin)
 %SPLIT_OPTIONS  Separate known option flags from metadata name-value pairs.
     opts.dry_run = false;
     opts.save = true;
-    opts.preload = true;
     opts.as_table = string.empty;
     opts.db = [];
-    opts.parallel = false;
     opts.distribute = false;
     opts.where = [];
     opts.fn_name_override = '';
+    opts.fn_hash_override = '';
 
     meta_args = {};
     i = 1;
@@ -2102,7 +775,7 @@ function [meta_args, opts] = split_options(varargin)
                     opts.save = logical(varargin{i+1});
                     i = i + 2; continue;
                 case "preload"
-                    opts.preload = logical(varargin{i+1});
+                    % Accepted but no longer used (Python owns prepare).
                     i = i + 2; continue;
                 case "as_table"
                     val = varargin{i+1};
@@ -2120,7 +793,11 @@ function [meta_args, opts] = split_options(varargin)
                     opts.db = varargin{i+1};
                     i = i + 2; continue;
                 case "parallel"
-                    opts.parallel = logical(varargin{i+1});
+                    % Accepted but no longer supported (parallel branch deleted
+                    % per redesign plan Phase 0).
+                    if logical(varargin{i+1})
+                        scidb.Log.warn('parallel=true ignored: parfor branch removed in redesign');
+                    end
                     i = i + 2; continue;
                 case "distribute"
                     opts.distribute = logical(varargin{i+1});
@@ -2131,30 +808,12 @@ function [meta_args, opts] = split_options(varargin)
                 case "_fn_name"
                     opts.fn_name_override = char(varargin{i+1});
                     i = i + 2; continue;
+                case "_fn_hash"
+                    opts.fn_hash_override = char(varargin{i+1});
+                    i = i + 2; continue;
             end
         end
         meta_args{end+1} = varargin{i}; %#ok<AGROW>
         i = i + 1;
-    end
-end
-
-
-% =========================================================================
-% Utility
-% =========================================================================
-
-function s = format_size(val)
-%FORMAT_SIZE  Format the size of a value for debug logging.
-    if istable(val)
-        s = sprintf('%dx%d', height(val), width(val));
-    elseif isnumeric(val) || islogical(val)
-        sz = size(val);
-        s = sprintf('%s', mat2str(sz));
-    elseif ischar(val) || isstring(val)
-        s = sprintf('len=%d', strlength(string(val)));
-    elseif iscell(val)
-        s = sprintf('{%d}', numel(val));
-    else
-        s = sprintf('<%s>', class(val));
     end
 end

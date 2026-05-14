@@ -54,18 +54,32 @@ class PathInput:
         )
     """
 
-    def __init__(self, path_template: str, root_folder: str | Path | None = None):
+    def __init__(
+        self,
+        path_template: str,
+        root_folder: str | Path | None = None,
+        regex: bool = False,
+    ):
         self.path_template = path_template
         self.root_folder = Path(root_folder) if root_folder is not None else None
+        self.regex = bool(regex)
         self.__name__ = f"PathInput({path_template!r})"
 
     def to_key(self) -> str:
-        """Return a structured JSON string for version_keys serialization."""
-        return json.dumps({
+        """Return a structured JSON string for version_keys serialization.
+
+        ``regex`` is only included when ``True`` so existing non-regex
+        version keys remain byte-identical to records saved before this
+        flag existed.
+        """
+        payload: dict = {
             "__type": "PathInput",
             "template": self.path_template,
             "root_folder": str(self.root_folder) if self.root_folder is not None else None,
-        })
+        }
+        if self.regex:
+            payload["regex"] = True
+        return json.dumps(payload)
 
     def load(self, db=None, **metadata: Any) -> Path:
         """Resolve the template with the given metadata and return the path.
@@ -74,13 +88,67 @@ class PathInput:
             db: Accepted for compatibility with for_each's uniform db= passthrough.
                 Ignored since PathInput resolves file paths, not database records.
             **metadata: Template substitution values.
+
+        Substitution is literal — only ``{key}`` patterns where ``key`` is
+        one of the metadata names get replaced.  Anything else (e.g. a
+        regex quantifier like ``{0,2}``) passes through untouched, which
+        keeps the regex= path safe and matches MATLAB's ``strrep``
+        semantics so the two layers stay in sync.
+
+        When ``regex=True`` was passed at construction, the final path
+        segment is then treated as a regular expression rather than a
+        literal filename.  The last segment is matched against
+        ``^pattern$`` over the files (not directories) in the parent
+        directory.  Exactly one file must match — zero matches raise
+        ``FileNotFoundError`` and multiple matches raise ``RuntimeError``.
         """
-        resolved_path = Path(self.path_template.format(**metadata))
-        if self.root_folder is not None:
-            return (self.root_folder / resolved_path).resolve()
-        if not resolved_path.is_absolute():
-            return (_find_project_root() / resolved_path).resolve()
-        return resolved_path.resolve()
+        resolved_str = self.path_template
+        for key, value in metadata.items():
+            resolved_str = resolved_str.replace("{" + key + "}", str(value))
+        resolved_path = Path(resolved_str)
+
+        if not self.regex:
+            if self.root_folder is not None:
+                return (self.root_folder / resolved_path).resolve()
+            if not resolved_path.is_absolute():
+                return (_find_project_root() / resolved_path).resolve()
+            return resolved_path.resolve()
+
+        # regex=True: treat the last segment as a regex.  Split on '/'
+        # only — backslashes belong to the regex pattern (e.g. ``\d``,
+        # ``\.``) and must not be confused with Windows path separators.
+        # Templates that need Windows-style directories should use '/'.
+        if "/" in resolved_str:
+            dir_part, pattern = resolved_str.rsplit("/", 1)
+        else:
+            dir_part, pattern = "", resolved_str
+
+        if Path(dir_part).is_absolute():
+            dir_path = Path(dir_part)
+        elif self.root_folder is not None:
+            dir_path = self.root_folder / dir_part if dir_part else self.root_folder
+        else:
+            dir_path = _find_project_root() / dir_part if dir_part else _find_project_root()
+        dir_path = dir_path.resolve()
+
+        try:
+            entries = [e for e in dir_path.iterdir() if e.is_file()]
+        except OSError:
+            entries = []
+
+        matches = [e for e in entries if re.fullmatch(pattern, e.name)]
+
+        if not matches:
+            raise FileNotFoundError(
+                f"PathInput regex pattern {pattern!r} matched no files in {dir_path}"
+            )
+        if len(matches) > 1:
+            names = ", ".join(sorted(m.name for m in matches))
+            raise RuntimeError(
+                f"PathInput regex pattern {pattern!r} matched {len(matches)} files "
+                f"in {dir_path}: {names}"
+            )
+        return matches[0].resolve()
 
     def placeholder_keys(self) -> list[str]:
         """Return the list of unique placeholder keys in the template."""
