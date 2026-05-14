@@ -416,12 +416,31 @@ def _for_each_prepare(
     state object the loop and save phases consume.
     """
     # Track which keys the user passed with explicit (non-empty) values.
-    # Keys passed as [] are about to be resolved from the DB (Step 2) or
-    # the filesystem (Step 3) — those should not count as "user explicit"
-    # in Step 3's discovery branch, since the user delegated their values
-    # to resolution rather than asserting intent.
+    # Keys passed as an empty sequence ([], (), empty numpy array) are
+    # about to be resolved from the DB (Step 2) or the filesystem
+    # (Step 3) — those should not count as "user explicit" in Step 3's
+    # discovery branch, since the user delegated their values to
+    # resolution rather than asserting intent.
+    #
+    # Defensively accept any sized non-string sequence so that callers
+    # that pass numpy arrays / tuples (in addition to the usual lists)
+    # are classified the same way the MATLAB bridge's [] normalization
+    # produces.
+    def _is_empty_sequence(v):
+        if isinstance(v, str):
+            return False  # strings are scalar values, never "empty iterables"
+        try:
+            return len(v) == 0
+        except TypeError:
+            return False
     user_explicit_keys = {k for k, v in metadata_iterables.items()
-                           if not (isinstance(v, list) and len(v) == 0)}
+                           if not _is_empty_sequence(v)}
+    Log.info(
+        f"[scidb] entry: metadata_iterables keys={list(metadata_iterables.keys())}, "
+        f"types={[type(v).__name__ for v in metadata_iterables.values()]}, "
+        f"lens={[(len(v) if hasattr(v, '__len__') else 'N/A') for v in metadata_iterables.values()]}, "
+        f"user_explicit_keys={sorted(user_explicit_keys)}"
+    )
 
     # Step 2: Resolve empty lists to all distinct values from the database
     needs_resolve = [k for k, v in metadata_iterables.items()
@@ -532,6 +551,10 @@ def _for_each_prepare(
                         # producing {sub2,sessB} when only 3 of 4 files
                         # exist).
                         _discovered_combos = combos
+                        Log.info(
+                            f"[scidb] no user-explicit template keys; "
+                            f"_discovered_combos set to {len(combos)} disk combos"
+                        )
     else:
         Log.info("[scidb] Step 3: no PathInput detected, skipping filesystem discovery")
 
@@ -733,6 +756,10 @@ def _for_each_prepare(
     current_schema_keys = list(_scifor.get_schema() or [])
 
     base_combos = all_combos
+    Log.info(
+        f"[scidb] Step 12: all_combos={'None' if all_combos is None else len(all_combos)}, "
+        f"_discovered_combos={'None' if _discovered_combos is None else len(_discovered_combos)}"
+    )
     if base_combos is None and _discovered_combos is not None:
         # Use filesystem-discovered combos directly (avoids non-existent Cartesian combos)
         base_combos = _discovered_combos

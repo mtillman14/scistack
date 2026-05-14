@@ -700,6 +700,12 @@ def for_each_prepare(
         "rid_rename_map": rid_rename_map,
     }
 
+    from scidb.log import Log as _BridgeLog
+    _BridgeLog.info(
+        f"[bridge] for_each_prepare returning: full_combos={len(matlab_full_combos)}, "
+        f"extended_metadata_iterables keys={list(matlab_meta_iters.keys())}, "
+        f"meta sizes={[len(v) if hasattr(v, '__len__') else 'N/A' for v in matlab_meta_iters.values()]}"
+    )
     return {
         "handle": handle,
         "loaded_inputs": matlab_loaded_inputs,
