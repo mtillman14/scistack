@@ -266,7 +266,22 @@ interface FacetOptions {
   rows?: Matcher[]
   cols?: Matcher[]
   share_x?: boolean
-  share_y?: boolean
+  // No `share_y` — it became `Spec.y_axis`, see YAxis below.
+}
+
+/**
+ * What the y axis spans, and what separates spans.
+ *
+ * `scope` names the factors that get their OWN limits. Empty means one range
+ * across the whole dataset; naming every panel factor means each panel scales
+ * to itself; anything between is the useful middle ("one scale per subject").
+ * Only factors that separate panels — iterate and facet — may appear, because
+ * a colour or replicate factor lives inside a single panel.
+ */
+interface YAxis {
+  scope?: string[]
+  minimum?: number | null
+  maximum?: number | null
 }
 
 /**
@@ -302,6 +317,8 @@ interface Spec {
   kind: string
   aggregate?: { statistic: string; error: string }
   facet?: FacetOptions
+  /* Which factors get their own y limits, plus manual overrides. */
+  y_axis?: YAxis
   /* Order the x-axis factors nest in, outermost first. Membership is `roles`;
      this is only the order, so assigning a role can never make the spec
      invalid. */
@@ -343,6 +360,9 @@ interface DescribeResponse {
   /** Variables usable as a grouping FACTOR — recorded at or above this
    *  variable's level, so each row gets exactly one of their values. */
   groupable_with?: string[]
+  /** File types this matplotlib can write. Asked of the backend rather than
+   *  listed here, so the dropdown and the save cannot disagree. */
+  image_formats?: string[]
 }
 
 interface FigurePayload {
@@ -662,6 +682,22 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
 
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
     setSpec(prev => (prev ? { ...prev, facet: { ...(prev.facet ?? {}), ...patch } } : prev))
+  }, [])
+
+  const setYAxis = useCallback((patch: Partial<YAxis>) => {
+    setSpec(prev => (prev ? { ...prev, y_axis: { ...(prev.y_axis ?? {}), ...patch } } : prev))
+  }, [])
+
+  /** Add or remove one factor from the y-limit scope, keeping panel order. */
+  const toggleYScope = useCallback((name: string, on: boolean) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const current = prev.y_axis?.scope ?? []
+      const next = on
+        ? [...current.filter(f => f !== name), name]
+        : current.filter(f => f !== name)
+      return { ...prev, y_axis: { ...(prev.y_axis ?? {}), scope: next } }
+    })
   }, [])
 
   /**
@@ -998,6 +1034,20 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   const effCols = Math.max(1, gridMeta.cols ?? 1)
   const layoutNotes = gridMeta.layout_notes ?? []
 
+  // Only factors that separate PANELS can separate y limits — a colour or
+  // replicate factor lives inside one panel, so splitting on it would ask one
+  // axis for two ranges. Offering only these is how the control cannot be put
+  // into a state the backend has to refuse (it drops them with a warning).
+  const yScopeFactors = Object.entries(spec?.roles ?? {})
+    .filter(([, role]) => role === 'iterate' || role === 'facet')
+    .map(([name]) => name)
+  const yScope = (spec?.y_axis?.scope ?? []).filter(n => yScopeFactors.includes(n))
+  // The limits the backend actually applied, read back off the figure so the
+  // number on screen and the number in the box cannot disagree.
+  const appliedYLimits = (
+    figures[0]?.figure?.layout?.yaxis as { range?: [number, number] } | undefined
+  )?.range
+
   // --- export -------------------------------------------------------------
   const handleExport = useCallback(() => {
     if (!spec) return
@@ -1014,69 +1064,95 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   // The same fact as state, purely to re-render the button. The ref is the
   // one the handler reads; this only ever follows it.
   const [saving, setSaving] = useState(false)
+  const [imageFormat, setImageFormat] = useState('png')
+  // What the backend says it can write. A short, ordered shortlist first —
+  // these are the ones a paper needs — then whatever else is available.
+  const allFormats = describe?.image_formats ?? ['png', 'svg', 'pdf', 'eps']
+  const formatChoices = [
+    ...['png', 'svg', 'pdf', 'eps'].filter(f => allFormats.includes(f)),
+    ...allFormats.filter(f => !['png', 'svg', 'pdf', 'eps'].includes(f)),
+  ]
 
   /** Save one figure, or the whole fan-out.
    *
-   *  Two buttons rather than one because the costs are not comparable, and the
-   *  two take different SHAPES for the same reason. A save renders at FULL
-   *  resolution with no downsampling, so one figure is already more work than
-   *  the interactive resolve beside it — and the whole fan-out is that
-   *  multiplied by the figure count, against a fixed 30 s transport timeout.
-   *  Saving everything used to be the only behaviour, and the only behaviour
-   *  was the one that timed out.
-   *
-   *  So: one figure is a request/response, and the fan-out is a background job
-   *  that reports progress (`saveJob` below). No timeout value makes "save
-   *  thirty subjects" answerable in one round trip. */
+   *  Two buttons because the costs differ, but ONE shape: both are background
+   *  jobs that report progress (`saveJob` below). A save renders at FULL
+   *  resolution with no downsampling, and that is minutes per figure — 1543 s
+   *  for a two-figure fan-out (scidb.log 2026-09-11) — against a fixed 30 s
+   *  transport timeout. "Save current figure" was a request/response on the
+   *  theory that one figure is cheap; it timed out just as reliably as saving
+   *  everything did, and left the backend rendering a file nobody was waiting
+   *  for. No timeout value fixes that, so neither one asks for an answer. */
   const saveFigures = useCallback(
     async (scope: 'current' | 'all') => {
       if (!spec) return
       setNotice('')
-      const defaultName = `${title || 'figure'}.png`.replace(/[^\w.-]+/g, '_')
+      // A fan-out asks for a FOLDER. Its N filenames are the figure labels —
+      // not the user's to choose — so asking for a name only raised the
+      // question "which of the thirty is that?". One figure is one file, and
+      // there the name is the whole point.
+      const savingAll = scope === 'all'
+      const defaultName = `${title || 'figure'}.${imageFormat}`.replace(
+        /[^\w.-]+/g,
+        '_'
+      )
       try {
         let path: string | null = null
         if (isVSCodeMode) {
-          const picked = await callBackend('pick_save_path', { defaultName })
+          const picked = await callBackend(
+            savingAll ? 'pick_save_folder' : 'pick_save_path',
+            // Only the CHOSEN format, not every one available: the dialog's
+            // filter would otherwise let the user pick a second, different
+            // answer to a question the dropdown already asked, and the backend
+            // honours the dropdown.
+            savingAll ? {} : { defaultName, formats: [imageFormat] }
+          )
           path = (picked as { path: string | null }).path
           if (!path) return  // dialog cancelled
         } else {
-          path = window.prompt('Save the figure as:', defaultName)
+          path = window.prompt(
+            savingAll
+              ? `Folder to save ${figureCount} figures into:`
+              : 'Save the figure as:',
+            savingAll ? '' : defaultName
+          )
           if (!path) return
         }
 
-        if (scope === 'all') {
-          // Adopt the job id BEFORE awaiting: a fast first figure can report
-          // progress while this promise is still settling, and a handler that
-          // does not yet know the id would drop it.
-          const started = (await callBackend('plot_save_all', {
-            spec,
-            path,
-            ...sourceParams,
-          })) as { job_id: string }
-          saveJob.current = started.job_id
-          setSaving(true)
-          setNotice(`Saving ${figureCount} figures…`)
-          return
-        }
-
-        setNotice('Rendering at full resolution…')
-        const result = (await callBackend('plot_save_figure', {
+        // The id is OURS, and it is adopted before the request leaves. The job
+        // starts on a thread the moment the backend receives it, so a quick
+        // figure can report progress — or complete — while this promise is
+        // still settling; a handler that learned the id only from the response
+        // would drop those messages and leave the panel saving forever.
+        const job = `ps-${Math.random().toString(36).slice(2, 10)}`
+        saveJob.current = job
+        setSaving(true)
+        setNotice(
+          savingAll
+            ? `Saving ${figureCount} figures at full resolution…`
+            : 'Saving this figure at full resolution…'
+        )
+        await callBackend('plot_save_start', {
           spec,
           path,
-          figure_index: figureIndex,
+          job_id: job,
+          image_format: imageFormat,
+          // null, not omitted: the backend reads "which figure" from this one
+          // field, and `undefined` would be dropped by JSON. It also decides
+          // whether `path` is a file or the folder to fill.
+          figure_index: savingAll ? null : figureIndex,
           ...sourceParams,
-        })) as {
-          ok: boolean
-          error: string | null
-          files: string[]
-        }
-        if (!result.ok) setNotice(`Could not save: ${result.error}`)
-        else setNotice(`Saved ${result.files.join(', ')}`)
+        })
       } catch (err) {
+        // The id was adopted before the request; a request that never reached
+        // the backend has no job to report, so release the button here or it
+        // stays disabled until the panel is reopened.
+        saveJob.current = null
+        setSaving(false)
         setNotice(`Could not save: ${(err as Error).message}`)
       }
     },
-    [spec, sourceParams, title, figureIndex, figureCount]
+    [spec, sourceParams, title, figureIndex, figureCount, imageFormat]
   )
 
   useBackendMessage(
@@ -1091,16 +1167,30 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
       if (params.job_id !== saveJob.current) return
 
       if (kind === 'plot_save_progress') {
-        setNotice(`Saving ${params.done} of ${params.total}…`)
+        // Two stages, reported apart, because they are not the same size:
+        // resolving a figure at full resolution is minutes and writing it is
+        // seconds. A panel that said "0 of 2 saved" for twelve minutes was
+        // counting the cheap half and looked hung.
+        setNotice(
+          params.stage === 'resolving'
+            ? `Resolving figure ${params.done} of ${params.total} at full resolution…`
+            : `Saving ${params.done} of ${params.total}…`
+        )
       } else if (kind === 'plot_save_complete') {
         const files = (params.files ?? []) as string[]
+        const directory = params.directory as string | undefined
         const elapsed = params.elapsed as number | undefined
         saveJob.current = null
         setSaving(false)
+        // One file: name it. Many: name the FOLDER and the count — thirty full
+        // paths sharing one directory is not a message anyone reads, and it
+        // pushed the one fact that matters (it finished) off the end.
+        const where =
+          files.length === 1
+            ? files[0]
+            : `${files.length} files in ${directory ?? 'the chosen folder'}`
         setNotice(
-          `Saved ${files.length} figure(s)` +
-            (elapsed ? ` in ${elapsed.toFixed(1)}s` : '') +
-            `: ${files.join(', ')}`
+          `Saved ${where}` + (elapsed ? ` in ${elapsed.toFixed(1)}s` : '')
         )
       } else if (kind === 'plot_save_failed') {
         saveJob.current = null
@@ -1393,6 +1483,54 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
             </Section>
           )}
 
+          <Section title="Y axis">
+            <div style={styles.hint}>
+              Which plots share one y scale. Nothing ticked means every plot in
+              the dataset gets the same limits; ticking everything autoscales
+              each subplot to its own data.
+            </div>
+            {yScopeFactors.length === 0 ? (
+              <div style={styles.hint}>
+                One plot, so there is nothing to separate — give a factor the
+                <em> separate figures</em> or <em>subplot</em> role to scale
+                them apart.
+              </div>
+            ) : (
+              yScopeFactors.map(name => (
+                <label key={name} style={styles.factorRow}>
+                  <input
+                    type="checkbox"
+                    checked={yScope.includes(name)}
+                    onChange={e => toggleYScope(name, e.target.checked)}
+                  />
+                  <span style={styles.factorName}>{name}</span>
+                </label>
+              ))
+            )}
+            <div style={styles.gridSizeRow}>
+              <LimitInput
+                label="Min"
+                value={spec?.y_axis?.minimum ?? null}
+                onChange={v => setYAxis({ minimum: v })}
+              />
+              <LimitInput
+                label="Max"
+                value={spec?.y_axis?.maximum ?? null}
+                onChange={v => setYAxis({ maximum: v })}
+              />
+            </div>
+            {/* The rule AND the numbers it produced: "why is this 0.61?" has to
+                have an answer the user can read off the panel. */}
+            <div style={styles.layoutNote}>
+              {yScope.length === 0
+                ? 'Same limits everywhere'
+                : `Separate limits per ${yScope.join(', ')}`}
+              {appliedYLimits
+                ? ` — ${appliedYLimits[0].toPrecision(3)} to ${appliedYLimits[1].toPrecision(3)}`
+                : ''}
+            </div>
+          </Section>
+
           {summarizing && (
             <Section title="Summary">
               <label style={styles.factorRow}>
@@ -1424,13 +1562,42 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
           )}
 
           <div style={{ ...styles.actions, flexWrap: 'wrap' }}>
+            {/* Beside the save buttons, not in a menu: the format is part of
+                the save, and the two buttons share it. The list comes from the
+                backend (what this matplotlib can write), so a build without a
+                PDF writer cannot be asked for one. */}
+            <label style={styles.gridSizeField}>
+              <span style={styles.gridSizeLabel}>Format</span>
+              <select
+                value={imageFormat}
+                onChange={e => setImageFormat(e.target.value)}
+                disabled={saving}
+                style={{ ...styles.select, width: 80 }}
+              >
+                {formatChoices.map(fmt => (
+                  <option key={fmt} value={fmt}>{fmt.toUpperCase()}</option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
               style={styles.button}
               onClick={() => saveFigures('current')}
-              title="Render with matplotlib at full resolution — the same figure the pipeline would produce"
+              // Same one-job-at-a-time rule as the button beside it: both are
+              // background jobs now, and the progress readout follows one id.
+              disabled={saving}
+              title={
+                saving
+                  ? 'A save is already running'
+                  : 'Render with matplotlib at full resolution — the same figure ' +
+                    'the pipeline would produce. Runs in the background.'
+              }
             >
-              {figureCount > 1 ? 'Save current figure' : 'Save image'}
+              {saving
+                ? 'Saving…'
+                : figureCount > 1
+                  ? 'Save current figure'
+                  : 'Save image'}
             </button>
             {/* Only worth offering when there is more than one figure — and
                 worth keeping separate, because it costs figureCount times as
@@ -1746,6 +1913,49 @@ function GridSizeInput({ label, value, effective, onChange }: GridSizeInputProps
           ...styles.select,
           width: 56,
           ...(value === null ? styles.gridSizeAuto : null),
+        }}
+      />
+    </label>
+  )
+}
+
+interface LimitInputProps {
+  label: string
+  value: number | null
+  onChange: (value: number | null) => void
+}
+
+/**
+ * One end of a manual y range. Blank means "compute it".
+ *
+ * Deliberately NOT `Number(e.target.value)` unguarded: an empty box gives
+ * `Number('') === 0`, which would turn clearing the field into pinning the axis
+ * at zero — the opposite of what clearing means. A half-typed "-" or "1e" is
+ * held as-is too, rather than snapping the axis around while it is being typed.
+ */
+function LimitInput({ label, value, onChange }: LimitInputProps) {
+  const [text, setText] = useState<string | null>(null)
+  const shown = text ?? (value === null || value === undefined ? '' : String(value))
+  return (
+    <label style={styles.gridSizeField}>
+      <span style={styles.gridSizeLabel}>{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={shown}
+        placeholder="auto"
+        onChange={e => {
+          const next = e.target.value
+          setText(next)
+          if (next.trim() === '') onChange(null)
+          else if (Number.isFinite(Number(next))) onChange(Number(next))
+        }}
+        onBlur={() => setText(null)}
+        title="Blank computes the limit from the data"
+        style={{
+          ...styles.select,
+          width: 72,
+          ...(value === null || value === undefined ? styles.gridSizeAuto : null),
         }}
       />
     </label>

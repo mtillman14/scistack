@@ -24,6 +24,8 @@ from .base import (
     legend_levels,
     palette_for,
     panel_position,
+    panel_y_limits,
+    shares_y_axis,
     shows_legend,
     shows_x_labels,
     shows_y_labels,
@@ -52,10 +54,19 @@ def render(resolved: ResolvedPlot):
             figsize=(style.width, style.height),
             squeeze=False,
             sharex=resolved.spec.facet.share_x,
-            sharey=resolved.spec.facet.share_y,
+            # DERIVED, not configured. matplotlib's sharey ties the axes
+            # together, so one panel's autoscale drags every other panel with
+            # it — exactly wrong once `y_axis.scope` asks for per-panel ranges,
+            # and the set_ylim below would be silently overruled by whichever
+            # panel was drawn last.
+            sharey=shares_y_axis(resolved),
         )
 
         used: set[tuple[int, int]] = set()
+        # (row, col) -> panel, so the cosmetics pass can ask a CELL for its
+        # panel's limits. It walks the grid rather than the panel list (blank
+        # cells need hiding too), and the two orders are not the same.
+        at_cell: dict[tuple[int, int], Any] = {}
         for index, panel in enumerate(resolved.panels):
             row, col = panel_position(resolved, index)
             if (row, col) in used or not (0 <= row < n_rows and 0 <= col < n_cols):
@@ -77,6 +88,7 @@ def render(resolved: ResolvedPlot):
             col = min(max(col, 0), n_cols - 1)
             ax = axes[row][col]
             used.add((row, col))
+            at_cell[(row, col)] = panel
             _draw_panel(ax, panel.frame, resolved)
             if panel.key:
                 ax.set_title(panel.title, fontsize=10)
@@ -87,7 +99,7 @@ def render(resolved: ResolvedPlot):
                 if (row, col) not in used:
                     axes[row][col].set_visible(False)
 
-        _apply_axes_cosmetics(fig, axes, resolved, n_rows, n_cols, used)
+        _apply_axes_cosmetics(fig, axes, resolved, n_rows, n_cols, at_cell)
 
         if resolved.labels.title:
             fig.suptitle(resolved.labels.title)
@@ -282,7 +294,7 @@ def _draw_heatmap(ax, frame, resolved) -> None:
     ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
 
 
-def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, used) -> None:
+def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_cell) -> None:
     style = resolved.spec.style
     for row in range(n_rows):
         for col in range(n_cols):
@@ -302,8 +314,10 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, use
                 ax.set_xscale("log")
             if style.log_y:
                 ax.set_yscale("log")
-            if resolved.y_limits and resolved.kind is not PlotKind.HEATMAP:
-                ax.set_ylim(*resolved.y_limits)
+            panel = at_cell.get((row, col))
+            limits = panel_y_limits(resolved, panel) if panel else resolved.y_limits
+            if limits and resolved.kind is not PlotKind.HEATMAP:
+                ax.set_ylim(*limits)
             if resolved.x_plan:
                 # A nested axis is keyed by composed leaf keys the user must
                 # never see: ticks show the innermost layer, and the layers

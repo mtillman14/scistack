@@ -55,7 +55,16 @@ def shows_x_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
 
 
 def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
-    """Same idea on the other axis: nothing directly to the left."""
+    """Same idea on the other axis: nothing directly to the left.
+
+    **Unless the panels are on different scales**, in which case every panel
+    keeps its numbers. Hiding them is only honest when the hidden numbers would
+    have been identical; a grid of independently-scaled panels labelled down the
+    left column only reads as one shared scale, which is precisely the misread
+    that per-panel limits exist to enable in the first place.
+    """
+    if not shares_y_axis(resolved):
+        return True
     return (row, col - 1) not in occupied_cells(resolved)
 
 
@@ -153,6 +162,32 @@ def legend_levels(resolved: ResolvedPlot) -> list[Any]:
     seen = {str(level) for level in ordered}
     ordered.extend(value for key, value in present.items() if key not in seen)
     return ordered
+
+
+def shares_y_axis(resolved: ResolvedPlot) -> bool:
+    """Whether every panel draws the same y range, so one axis can serve them.
+
+    ONE rule, shared by both renderers — the same bargain as
+    :func:`shows_legend`. It is *derived*, not configured: the user says which
+    factors separate limits (``PlotSpec.y_axis.scope``) and whether the panels
+    end up agreeing follows from that plus the data.
+
+    It matters beyond the range itself, which is why it is a function rather
+    than an inline check. A shared axis also hides the inner panels' tick
+    labels: right when they genuinely share a scale, and a silent lie the moment
+    they do not — a grid of panels at different scales with numbers on only the
+    left column reads as one scale.
+    """
+    return resolved.y_limits is not None
+
+
+def panel_y_limits(resolved: ResolvedPlot, panel) -> tuple[float, float] | None:
+    """The range one panel draws, falling back to the figure's.
+
+    The fallback matters for a HEATMAP, whose panels carry no y limits at all,
+    and for any panel a scope left without a group of its own.
+    """
+    return panel.y_limits or resolved.y_limits
 
 
 def shows_legend(resolved: ResolvedPlot) -> bool:

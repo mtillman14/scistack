@@ -1056,11 +1056,35 @@ var PlotPanel = class _PlotPanel {
             const folder = vscode4.workspace.workspaceFolders?.[0]?.uri;
             const uri = await vscode4.window.showSaveDialog({
               defaultUri: folder ? vscode4.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
-              filters: { Images: ["png", "svg", "pdf"] }
+              // The panel sends the ONE format its dropdown selected, so the
+              // dialog cannot offer a second answer to a question already
+              // asked — the backend honours the dropdown either way.
+              filters: { Images: params.formats ?? ["png"] }
             });
             this.panel.webview.postMessage({
               id: msg.id,
               result: { path: uri?.fsPath ?? null }
+            });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) }
+            });
+          }
+          return;
+        }
+        if (method === "pick_save_folder") {
+          try {
+            const uris = await vscode4.window.showOpenDialog({
+              canSelectFiles: false,
+              canSelectFolders: true,
+              canSelectMany: false,
+              defaultUri: vscode4.workspace.workspaceFolders?.[0]?.uri,
+              openLabel: "Save figures here"
+            });
+            this.panel.webview.postMessage({
+              id: msg.id,
+              result: { path: uris?.[0]?.fsPath ?? null }
             });
           } catch (err) {
             this.panel.webview.postMessage({

@@ -76,9 +76,12 @@ from .spec import (
     Statistic,
     StyleOptions,
     VariantSet,
+    YAxis,
     grid_shape_for,
 )
 from .xaxis import XGroup, XPlan, leaf_key, plan_x_axis
+from .ylimits import describe as describe_y_limits
+from .ylimits import eligible_scope, limits_by_scope
 from .table import (
     CODE_FACTOR_PREFIX,
     FactorInfo,
@@ -109,6 +112,10 @@ __all__ = [
     "ErrorBand",
     "Aggregation",
     "FacetOptions",
+    "YAxis",
+    "eligible_scope",
+    "limits_by_scope",
+    "describe_y_limits",
     "grid_shape_for",
     "Matcher",
     "MatchOp",

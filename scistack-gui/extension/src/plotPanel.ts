@@ -90,17 +90,47 @@ export class PlotPanel {
           // Only the host can show a file dialog; a webview cannot save a file
           // at all, which is why plotly's own camera button fails here.
           try {
-            const params = (msg.params ?? {}) as { defaultName?: string };
+            const params = (msg.params ?? {}) as {
+              defaultName?: string;
+              formats?: string[];
+            };
             const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
             const uri = await vscode.window.showSaveDialog({
               defaultUri: folder
                 ? vscode.Uri.joinPath(folder, params.defaultName ?? 'figure.png')
                 : undefined,
-              filters: { Images: ['png', 'svg', 'pdf'] },
+              // The panel sends the ONE format its dropdown selected, so the
+              // dialog cannot offer a second answer to a question already
+              // asked — the backend honours the dropdown either way.
+              filters: { Images: params.formats ?? ['png'] },
             });
             this.panel.webview.postMessage({
               id: msg.id,
               result: { path: uri?.fsPath ?? null },
+            });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) },
+            });
+          }
+          return;
+        }
+
+        if (method === 'pick_save_folder') {
+          // Saving a fan-out writes N files whose names are the figure labels,
+          // so the only thing left to choose is WHERE — a folder, not a name.
+          try {
+            const uris = await vscode.window.showOpenDialog({
+              canSelectFiles: false,
+              canSelectFolders: true,
+              canSelectMany: false,
+              defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+              openLabel: 'Save figures here',
+            });
+            this.panel.webview.postMessage({
+              id: msg.id,
+              result: { path: uris?.[0]?.fsPath ?? null },
             });
           } catch (err) {
             this.panel.webview.postMessage({

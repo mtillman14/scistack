@@ -53,6 +53,42 @@ Log.error("save failed", layer="scidb", exc_info=True)
 (`scidb`, `scifor`, `sciduck`, `scihist`, `scilineage`, `scistack`,
 `scistack_gui`, `matlab`).
 
+## Timing a hot path
+
+```python
+with Log.timer("save_batch(PSD)", extra="114 items") as t:
+    with t.phase("canonical_hash"): ...
+    with t.phase("commit"): ...
+```
+
+One INFO summary on exit — `[timing] save_batch(PSD): 114 items, TOTAL=0.412s
+(canonical_hash=0.310s, commit=0.102s)` — plus a per-phase table at DEBUG.
+`TOTAL=` appears on the summary line and nowhere else; MATLAB's timing archives
+grep for it.
+
+**`live=True` for anything that can run for minutes.** A summary is a
+post-mortem, and an operation that has not finished yet has no post-mortem: a
+25-minute figure save (scidb.log 2026-09-11) logged nothing at all, and a save
+that timed out logged nothing ever. A live timer announces each phase as it
+starts and as it ends, and enables `t.note(...)` for progress inside a long
+phase:
+
+```python
+with Log.timer("save_figure", layer="scistack_gui", live=True) as t:
+    with t.phase("resolve", extra="2 figure(s)"):
+        t.note("figure %d/%d", 1, 2)
+```
+
+```
+[timing] save_figure: resolve started — 2 figure(s)
+[timing] save_figure: figure 1/2
+[timing] save_figure: resolve done in 771.402s
+[timing] save_figure: TOTAL=773.918s (resolve=771.402s, render_and_write=2.511s)
+```
+
+`t.note` is silent on a quiet timer, so the same instrumented code serves a
+fast path without flooding it.
+
 ## Contracts
 
 - **caplog**: level filtering happens on the two handlers, never on the

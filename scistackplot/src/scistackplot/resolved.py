@@ -71,6 +71,13 @@ class Panel:
     grid_col: int = 0
     #: All facet values keyed by factor name (empty when unfaceted).
     key: dict[str, Any] = field(default_factory=dict)
+    #: This panel's y range, or None to autoscale.
+    #:
+    #: **The authority** — ``ResolvedPlot.y_limits`` is derived from these and
+    #: exists only for the case where they all agree. Per panel rather than per
+    #: figure because ``PlotSpec.y_axis.scope`` may separate limits by a FACET
+    #: factor, which is what "autoscale each panel" means.
+    y_limits: tuple[float, float] | None = None
 
     @property
     def title(self) -> str:
@@ -120,7 +127,14 @@ class ResolvedPlot:
     #: panel that matched no rule. The layout never silently disobeys a rule;
     #: it says what it did instead. Surfaced in the GUI's Layout section.
     layout_notes: list[str] = field(default_factory=list)
+    #: The whole figure's y range — set only when every panel shares it, and
+    #: ``None`` when they differ. Derived from the panels in ``reduce``, never
+    #: computed separately, so the two can never disagree. A renderer reads the
+    #: None as "give each panel its own axis" (``render.base.shares_y_axis``).
     y_limits: tuple[float, float] | None = None
+    #: The factors that separated the limits, after ineligible ones were
+    #: dropped. Echoed back so the GUI can say WHY the axis reads as it does.
+    y_scope: list[str] = field(default_factory=list)
     #: Set when the data was reduced for transport (see reduce.MAX_TRANSPORT_POINTS).
     downsampled_from: int | None = None
     #: Notes about the FIGURE SET rather than about this figure's layout — at
@@ -180,6 +194,7 @@ class ResolvedPlot:
             ],
             "color_order": [_jsonable(v) for v in (self.color_order or [])] or None,
             "y_limits": list(self.y_limits) if self.y_limits else None,
+            "y_scope": list(self.y_scope),
             "downsampled_from": self.downsampled_from,
             "fanout_notes": list(self.fanout_notes),
             "panels": [
@@ -188,6 +203,10 @@ class ResolvedPlot:
                     "title": panel.title,
                     "grid_row": panel.grid_row,
                     "grid_col": panel.grid_col,
+                    # Per panel, because the figure-level value is absent
+                    # exactly when the panels differ — which is the case the
+                    # interactive view most needs to draw correctly.
+                    "y_limits": list(panel.y_limits) if panel.y_limits else None,
                     "rows": _frame_records(panel.frame),
                 }
                 for panel in self.panels

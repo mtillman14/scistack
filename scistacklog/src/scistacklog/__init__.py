@@ -127,18 +127,53 @@ class _StderrHandler(logging.StreamHandler):
 
 
 class _Timer:
-    """Collects named phase durations for :meth:`Log.timer`."""
+    """Collects named phase durations for :meth:`Log.timer`.
 
-    def __init__(self) -> None:
+    ``live`` makes a phase announce itself on entry and on exit instead of
+    waiting for the summary. That matters for operations measured in minutes:
+    the summary is a post-mortem, and an operation that has not finished yet
+    produces no summary at all — a 25-minute figure save (scidb.log 2026-09-11,
+    12:28 -> 12:54) was 25 minutes of complete silence followed by one line.
+    A phase that says "started" is the only way a log can distinguish "working"
+    from "hung".
+    """
+
+    def __init__(
+        self, *, name: str = "", layer: str = "scidb", live: bool = False
+    ) -> None:
         self.phases: list[tuple[str, float]] = []
+        self._name = name
+        self._layer = layer
+        self._live = live
 
     @contextmanager
-    def phase(self, name: str):
+    def phase(self, name: str, *, extra: str | None = None):
+        if self._live:
+            detail = f" — {extra}" if extra else ""
+            Log.info(
+                f"[timing] {self._name}: {name} started{detail}", layer=self._layer
+            )
         t0 = time.perf_counter()
         try:
             yield
         finally:
-            self.phases.append((name, time.perf_counter() - t0))
+            elapsed = time.perf_counter() - t0
+            self.phases.append((name, elapsed))
+            if self._live:
+                Log.info(
+                    f"[timing] {self._name}: {name} done in {elapsed:.3f}s",
+                    layer=self._layer,
+                )
+
+    def note(self, msg: str, *args) -> None:
+        """Progress *within* a phase — only when the timer is live.
+
+        For the loop a long phase is actually made of (figure 2 of 30, file 7 of
+        12). Silent on a quiet timer, so the same instrumented code serves the
+        interactive path without flooding it.
+        """
+        if self._live:
+            Log.info(f"[timing] {self._name}: {msg}", *args, layer=self._layer)
 
 
 class Log:
@@ -340,14 +375,27 @@ class Log:
 
     @classmethod
     @contextmanager
-    def timer(cls, name: str, *, layer: str = "scidb", extra: str | None = None):
+    def timer(
+        cls,
+        name: str,
+        *,
+        layer: str = "scidb",
+        extra: str | None = None,
+        live: bool = False,
+    ):
         """Phase timing for a hot operation, emitted under the ``[timing]`` tag.
 
         Yields a :class:`_Timer`; wrap sub-phases with ``t.phase("name")``
         (snake_case, never numbered). On exit emits one INFO summary line —
         ``[timing] name: TOTAL=…s (phase=…s, …)`` — plus one DEBUG table
         line per phase. The ``[timing]`` prefix is a stable grep target
-        (MATLAB timing-test archives rely on it).
+        (MATLAB timing-test archives rely on it); only the summary carries
+        ``TOTAL=``, so a parser looking for totals is unaffected by ``live``.
+
+        ``live=True`` additionally narrates each phase as it starts and ends,
+        at INFO, and enables :meth:`_Timer.note`. Use it for the paths that can
+        run for minutes (a full-resolution figure save), not for the ones that
+        run in milliseconds — see :class:`_Timer`.
 
         Usage::
 
@@ -355,7 +403,7 @@ class Log:
                 with t.phase("canonical_hash"): ...
                 with t.phase("commit"): ...
         """
-        t = _Timer()
+        t = _Timer(name=name, layer=layer, live=live)
         t0 = time.perf_counter()
         try:
             yield t

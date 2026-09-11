@@ -210,6 +210,9 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         # Variables usable as a grouping FACTOR — recorded at or above this
         # variable's schema level, so each row gets exactly one of their values.
         "groupable_with": groupable,
+        # What this matplotlib can write, so the format dropdown offers exactly
+        # what the save will accept rather than a second list that can drift.
+        "image_formats": supported_formats(),
     }
 
 
@@ -565,6 +568,7 @@ def save_figure(
     *,
     dpi: int = 200,
     figure_index: int | None = None,
+    image_format: str | None = None,
     csv_path: str | None = None,
     on_progress=None,
 ) -> dict:
@@ -581,44 +585,91 @@ def save_figure(
     reduced for transport, a saved figure must not be.
 
     ``figure_index`` saves ONE figure of an ITERATE fan-out — the one on screen
-    — and is what "Save current figure" sends. ``None`` saves every figure,
-    which is the slow path: it was the default, and it is why saving failed.
-    A save of a two-figure fan-out at full resolution is more work than the
-    interactive resolve beside it, and that resolve was already taking 25-27s
-    against a **30s** client timeout (``api.ts``), so the save crossed it and
-    surfaced as "Request plot_save_figure timed out" with nothing in the log to
-    say why — this function reported nothing at all until it succeeded.
-    See ``.claude/plan-plot-studio-fixes.md`` Stage 3.
+    — and is what "Save current figure" sends. ``None`` saves every figure.
 
-    ``on_progress(done, total, path)`` is called after each file is written, for
-    a caller that wants to report progress while it happens.
+    **``path`` may be a file or a folder**, decided by :func:`_destination`:
+    an existing directory, or a path with no suffix, is a folder; anything else
+    is a file. Saving a fan-out asks for a folder, because its N filenames are
+    the figure labels rather than anything the user chose — offering a name
+    there only raised "which of the thirty is that?". The files are then
+    ``<y measure>_<figure label>.<format>``, which is what the filename-plus-
+    suffix scheme produced anyway, so a caller passing a filename keeps its
+    exact old behaviour.
+
+    ``image_format`` is the extension to write (``png``, ``svg``, ``pdf``,
+    ``eps``, …), validated against what this matplotlib build actually supports
+    rather than a list hard-coded here. It wins over any suffix on ``path``;
+    with neither, a file keeps its own suffix and a folder gets PNG.
+
+    **Both are slow, and how slow was the thing nobody could see.** A
+    full-resolution resolve of a two-figure fan-out took **1543s** (scidb.log
+    2026-09-11 12:54) — ~12 minutes per figure, against a 30s client timeout in
+    ``api.ts``. Everything here therefore reports itself *while it runs*:
+    ``resolve`` narrates its phases (``narrate=True``), and every figure
+    resolved and every file written is announced to the log and to
+    ``on_progress``. The previous shape — one ``Log.timer`` summary on exit —
+    produced nothing at all for a save that timed out or was still running,
+    which is exactly the case worth diagnosing.
+
+    ``on_progress(stage, done, total, detail)`` is called as the work proceeds:
+    ``stage`` is ``"resolving"`` or ``"writing"``, ``detail`` is the figure
+    label or the file just written. Resolving is the dominant cost, so a caller
+    that only reported written files said nothing for the first twelve minutes.
     """
     import time
-    from pathlib import Path
 
     from scidb.log import Log
     from scistackplot import RoleError, render_matplotlib, resolve, resolve_one
 
+    def report(stage: str, done: int, total: int, detail: str | None = None) -> None:
+        if on_progress is not None:
+            on_progress(stage, done, total, detail)
+
+    # FIRST, before the database is touched and long before anything is drawn.
+    # Neither of these needs the spec, and a destination this process cannot
+    # write is the one failure worth finding instantly: discovered at `savefig`
+    # it costs the twelve minutes of rendering first, and inside a save job it
+    # arrives as a crashed thread rather than a message.
+    directory, named = _destination(path)
+    try:
+        suffix = _image_suffix(image_format, path, is_folder=named is None)
+    except ValueError as exc:
+        logger.info("[plot] save refused a format: %s", exc)
+        return {"ok": False, "error": str(exc), "files": []}
+
+    # live=True: every phase says when it starts, not only what it cost once it
+    # is over. See _Timer in scistacklog.
     with Log.timer(
         "save_figure",
         layer="scistack_gui",
         extra=f"index={'all' if figure_index is None else figure_index}",
+        live=True,
     ) as timing:
         with timing.phase("load"):
             _, spec, table = _load(
-                db, spec_payload, csv_path=csv_path, label="plot_save_figure"
+                db, spec_payload, csv_path=csv_path, label="plot_save_start"
             )
 
         # Resolving is the dominant cost and the reason a save can outlast the
         # client's patience, so it is timed as its own phase rather than folded
-        # into the total.
+        # into the total — and narrated figure by figure inside that phase.
         with timing.phase("resolve"):
             try:
                 if figure_index is None:
-                    resolved = list(resolve(spec, table))
+                    resolved = list(
+                        resolve(
+                            spec,
+                            table,
+                            narrate=True,
+                            on_figure=lambda position, total, label: report(
+                                "resolving", position, total, label
+                            ),
+                        )
+                    )
                 else:
+                    report("resolving", 1, 1, None)
                     figure, _labels, _position = resolve_one(
-                        spec, table, figure_index
+                        spec, table, figure_index, narrate=True
                     )
                     resolved = [figure]
             except RoleError as exc:
@@ -627,15 +678,17 @@ def save_figure(
                 logger.info("[plot] save refused an invalid spec: %s", exc)
                 return {"ok": False, "error": str(exc), "files": []}
 
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        suffix = target.suffix or ".png"
+        # The stem is the only part that needed the spec, which is why it is
+        # here and the format check is at the top.
+        stem = named or _slug(spec.y_measure) or "figure"
+        directory.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            "[plot] saving %d figure(s) of %s to %s (dpi=%d)",
+            "[plot] saving %d figure(s) of %s into %s as %s (dpi=%d)",
             len(resolved),
             spec.kind,
-            target,
+            directory,
+            suffix.lstrip("."),
             dpi,
         )
 
@@ -649,9 +702,21 @@ def save_figure(
                 # saving one frame of at a time would be a lie.
                 if len(resolved) > 1 or figure_index is not None:
                     slug = _slug(item.figure_label) or f"{len(written) + 1}"
-                    out = target.with_name(f"{target.stem}_{slug}{suffix}")
+                    out = directory / f"{stem}_{slug}{suffix}"
                 else:
-                    out = target.with_suffix(suffix)
+                    out = directory / f"{stem}{suffix}"
+
+                # Announced BEFORE the work, not only after: rendering a
+                # full-resolution panel grid is seconds to minutes, and a log
+                # that only speaks on success cannot say which figure a save
+                # died in.
+                logger.info(
+                    "[plot] rendering figure %d/%d (%s) to %s",
+                    len(written) + 1,
+                    len(resolved),
+                    item.figure_label or "single figure",
+                    out.name,
+                )
 
                 # Rendering and writing are timed apart because we did not know
                 # which dominates, and the answer decides where any further
@@ -678,11 +743,17 @@ def save_figure(
                     rendered - started,
                     finished - rendered,
                 )
-                if on_progress is not None:
-                    on_progress(len(written), len(resolved), str(out))
+                report("writing", len(written), len(resolved), str(out))
 
     logger.info("[plot] saved %d figure(s): %s", len(written), written)
-    return {"ok": True, "error": None, "files": written}
+    # `directory` alongside `files`: a thirty-figure save has thirty paths that
+    # all share one folder, and the folder is what the user wants told back.
+    return {
+        "ok": True,
+        "error": None,
+        "files": written,
+        "directory": str(directory),
+    }
 
 
 def _slug(text: str) -> str:
@@ -691,29 +762,114 @@ def _slug(text: str) -> str:
     return re.sub(r"[^0-9A-Za-z]+", "_", text).strip("_")
 
 
+def supported_formats() -> list[str]:
+    """The file types this matplotlib build can actually write, sorted.
+
+    Asked of matplotlib rather than hard-coded, so the GUI's dropdown and the
+    backend's validation cannot disagree, and neither can go stale when a
+    backend gains or loses a writer. (``.fig`` will never appear here — it is
+    MATLAB's own format and matplotlib has no writer for it.)
+    """
+    import matplotlib
+
+    matplotlib.use("Agg", force=False)
+    from matplotlib.backend_bases import FigureCanvasBase
+
+    return sorted(FigureCanvasBase.get_supported_filetypes())
+
+
+def _destination(path: str) -> tuple:
+    """``(directory, stem_or_None)`` — whether ``path`` names a file or a folder.
+
+    An existing directory is a folder, and so is a path with no suffix;
+    anything else is a file whose stem the caller chose.
+
+    The existence check comes FIRST and is not redundant: a real folder can
+    carry a dot (``~/analysis.v2``), and reading ``.v2`` as an image format
+    would turn a chosen destination into a guess. A folder that does not exist
+    yet cannot be told apart that way, which is why the suffix rule backs it up
+    — and why the GUI's folder picker only ever returns existing directories.
+    """
+    from pathlib import Path
+
+    target = Path(path)
+    if target.is_dir() or not target.suffix:
+        return target, None
+    return target.parent, target.stem
+
+
+def _image_suffix(image_format: str | None, path: str, *, is_folder: bool) -> str:
+    """``.png`` and friends — what to write, or ValueError naming the choices.
+
+    Order of authority: an explicit ``image_format``, then the suffix the caller
+    put on ``path``, then PNG. A folder skips the middle one on purpose — there
+    is no filename to read a format off, and ``~/analysis.v2`` must not be
+    mistaken for one.
+    """
+    from pathlib import Path
+
+    allowed = supported_formats()
+    chosen = (image_format or "").strip().lstrip(".").lower()
+    if not chosen and not is_folder:
+        chosen = Path(path).suffix.lstrip(".").lower()
+    if not chosen:
+        chosen = "png"
+
+    if chosen not in allowed:
+        raise ValueError(
+            f"Cannot save as {chosen!r} — this matplotlib writes: "
+            f"{', '.join(allowed)}."
+        )
+    return f".{chosen}"
+
+
 def start_save_job(
     db,
     spec_payload: dict,
     path: str,
     *,
     dpi: int = 200,
+    figure_index: int | None = None,
+    image_format: str | None = None,
     csv_path: str | None = None,
     job_id: str | None = None,
 ) -> dict:
-    """Save every figure of a fan-out on a background thread.
+    """Save on a background thread — one figure of a fan-out, or all of them.
+
+    ``figure_index`` is passed straight through to :func:`save_figure`: an
+    index saves that one figure, ``None`` saves every figure.
+
+    **Both go through a job. Neither is answerable in one round trip.** The
+    single-figure save used to be a request/response RPC on the theory that one
+    figure is cheap next to a fan-out. It is not: a full-resolution figure of a
+    1-D measure took ~12 minutes (scidb.log 2026-09-11, 1543s for two of them)
+    against a 30s client timeout in ``api.ts``, so "Save current figure" failed
+    exactly as reliably as "Save all" ever did — with the backend still working
+    on a file nobody was waiting for any more. There is no timeout value that
+    fixes that; the shape has to change.
 
     Returns ``{"job_id": ...}`` at once; the work reports itself through three
     messages, delivered over whichever transport is active
     (``ws.push_message`` picks):
 
-    * ``plot_save_progress`` — ``job_id``, ``done``, ``total``, ``path``
-    * ``plot_save_complete`` — ``job_id``, ``files``, ``elapsed``
+    * ``plot_save_progress`` — ``job_id``, ``stage``, ``done``, ``total``,
+      ``path`` (the file just written, or the figure label while resolving)
+    * ``plot_save_complete`` — ``job_id``, ``files``, ``directory``, ``elapsed``
     * ``plot_save_failed``   — ``job_id``, ``error``
 
+    Exactly one of ``plot_save_complete`` / ``plot_save_failed`` is always sent,
+    on every path including an unhandled exception — the panel disables its save
+    buttons for the duration and has no other way to learn it is over.
+
+    ``stage`` distinguishes ``"resolving"`` from ``"writing"`` because the two
+    are not comparable: resolving is minutes and writing is seconds, so a panel
+    that showed only "0 of 2 saved" for twelve minutes was reporting the cheap
+    half of the job.
+
     **Why a thread rather than a longer timeout.** Saving N figures at full
-    resolution is N times the work of the interactive resolve, and that resolve
-    already ran to 25-27s against a fixed 30s client timeout. No timeout value
-    makes "save 30 subjects" a request/response operation; the only honest
+    resolution is N times the work of the interactive resolve, and one figure of
+    it is already minutes. No timeout value makes "save 30 subjects" — or, as it
+    turns out, "save this one" — a request/response operation; the only honest
     shape is a job that reports progress.
 
     **The database is not held while this runs.** ``save_figure`` takes the
@@ -743,14 +899,17 @@ def start_save_job(
                 spec_payload,
                 path,
                 dpi=dpi,
+                figure_index=figure_index,
+                image_format=image_format,
                 csv_path=csv_path,
-                on_progress=lambda done, total, written: push_message(
+                on_progress=lambda stage, done, total, detail: push_message(
                     {
                         "type": "plot_save_progress",
                         "job_id": job,
+                        "stage": stage,
                         "done": done,
                         "total": total,
-                        "path": written,
+                        "path": detail,
                     }
                 ),
             )
@@ -788,11 +947,19 @@ def start_save_job(
                 "type": "plot_save_complete",
                 "job_id": job,
                 "files": result["files"],
+                # The one folder they all share — thirty full paths is not a
+                # message anyone reads.
+                "directory": result.get("directory"),
                 "elapsed": elapsed,
             }
         )
 
-    logger.info("[plot] starting save job %s -> %s", job, path)
+    logger.info(
+        "[plot] starting save job %s (%s) -> %s",
+        job,
+        "every figure" if figure_index is None else f"figure {figure_index}",
+        path,
+    )
     threading.Thread(target=_worker, daemon=True, name=f"plot-save-{job}").start()
     return {"job_id": job}
 

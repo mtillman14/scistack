@@ -1034,21 +1034,14 @@ def _h_plot_add_to_pipeline(params):
     )
 
 
-def _h_plot_save_figure(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import save_figure
+def _h_plot_save_start(params):
+    """Start a save job. ``figure_index`` picks one figure; absent saves all.
 
-    return save_figure(
-        get_db(),
-        params["spec"],
-        params["path"],
-        dpi=params.get("dpi", 200),
-        figure_index=params.get("figure_index"),
-        csv_path=params.get("csv_path"),
-    )
-
-
-def _h_plot_save_all(params):
+    One method for both, because both are background jobs now: a single
+    full-resolution figure is ~12 minutes of work (scidb.log 2026-09-11), so the
+    request/response save it used to be timed out just as surely as the fan-out
+    save did. See ``plot_service.start_save_job``.
+    """
     from scistack_gui.db import get_db
     from scistack_gui.services.plot_service import start_save_job
 
@@ -1057,7 +1050,13 @@ def _h_plot_save_all(params):
         params["spec"],
         params["path"],
         dpi=params.get("dpi", 200),
+        figure_index=params.get("figure_index"),
+        image_format=params.get("image_format"),
         csv_path=params.get("csv_path"),
+        # The client may name the job so it can adopt the id before the request
+        # leaves — a fast save can finish before the response arrives, and a
+        # panel that learns the id from the response drops those messages.
+        job_id=params.get("job_id"),
     )
 
 
@@ -1172,8 +1171,7 @@ METHODS = {
     "plot_resolve": _h_plot_resolve,
     "plot_export": _h_plot_export,
     "plot_add_to_pipeline": _h_plot_add_to_pipeline,
-    "plot_save_figure": _h_plot_save_figure,
-    "plot_save_all": _h_plot_save_all,
+    "plot_save_start": _h_plot_save_start,
     "plot_invalidate": _h_plot_invalidate,
 }
 
@@ -1211,12 +1209,11 @@ SELF_MANAGED_DB_METHODS = frozenset(
         "plot_variant_graph",
         "plot_resolve",
         "plot_export",
-        "plot_save_figure",
         # Spawns a thread and returns; the HANDLER touches nothing. Its worker
         # takes the connection through `save_figure` -> `_load` on its own
-        # schedule, which is the point — a save of thirty figures must not hold
-        # the DuckDB file for the minutes it spends in matplotlib.
-        "plot_save_all",
+        # schedule, which is the point — a save must not hold the DuckDB file
+        # for the minutes it spends in pandas and matplotlib.
+        "plot_save_start",
     }
 )
 

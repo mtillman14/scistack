@@ -501,10 +501,62 @@ def test_save_reports_progress_per_file(populated_db, tmp_path):
         populated_db,
         spec,
         str(tmp_path / "emg.png"),
-        on_progress=lambda done, total, path: seen.append((done, total)),
+        on_progress=lambda stage, done, total, detail: seen.append(
+            (stage, done, total)
+        ),
     )
 
-    assert seen == [(1, 2), (2, 2)]
+    assert [s for s in seen if s[0] == "writing"] == [
+        ("writing", 1, 2),
+        ("writing", 2, 2),
+    ]
+
+
+def test_save_reports_the_resolve_before_any_file_exists(populated_db, tmp_path):
+    """Resolving is the expensive half; it has to be reported while it happens.
+
+    A save of two figures at full resolution spent ~25 minutes in `resolve`
+    (scidb.log 2026-09-11 12:28 -> 12:54) and reported nothing until the first
+    PNG existed. The panel was indistinguishable from a hung one.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    seen = []
+    plot_service.save_figure(
+        populated_db,
+        spec,
+        str(tmp_path / "emg.png"),
+        on_progress=lambda stage, done, total, detail: seen.append(
+            (stage, done, total)
+        ),
+    )
+
+    # Every figure announces itself as it STARTS, before the file it becomes.
+    assert [s for s in seen if s[0] == "resolving"] == [
+        ("resolving", 1, 2),
+        ("resolving", 2, 2),
+    ]
+    assert seen[0][0] == "resolving"
+    assert seen.index(("resolving", 2, 2)) < seen.index(("writing", 2, 2))
+
+
+def test_an_indexed_save_reports_its_one_figure_too(populated_db, tmp_path):
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    seen = []
+    plot_service.save_figure(
+        populated_db,
+        spec,
+        str(tmp_path / "emg.png"),
+        figure_index=1,
+        on_progress=lambda stage, done, total, detail: seen.append(
+            (stage, done, total)
+        ),
+    )
+
+    assert seen == [("resolving", 1, 1), ("writing", 1, 1)]
 
 
 def test_a_bad_spec_is_a_message_on_the_indexed_save_too(populated_db, tmp_path):
@@ -527,6 +579,163 @@ def test_save_figure_reports_a_bad_spec_instead_of_raising(populated_db, tmp_pat
     result = plot_service.save_figure(populated_db, spec, str(tmp_path / "x.png"))
     assert result["ok"] is False
     assert result["files"] == []
+
+
+def test_saving_into_a_folder_names_the_files_after_the_figures(
+    populated_db, tmp_path
+):
+    """The fan-out case: a folder, not a filename.
+
+    Thirty figures have thirty names that are the figure labels, not anything
+    the user chose — asking for a filename only raised "which of the thirty is
+    that?". The stem falls back to the measure, so the names match exactly what
+    the filename-plus-suffix scheme produced.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    folder = tmp_path / "figures"
+    folder.mkdir()
+
+    result = plot_service.save_figure(populated_db, spec, str(folder))
+
+    assert result["ok"] is True
+    assert result["directory"] == str(folder)
+    assert {p.name for p in folder.glob("*.png")} == {
+        "RawSignal_subject_1.png",
+        "RawSignal_subject_2.png",
+    }
+
+
+def test_a_suffixless_path_is_a_folder_even_before_it_exists(
+    populated_db, tmp_path
+):
+    """The folder picker returns existing directories, but the browser prompt
+    does not — a path the user typed has to work the first time."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    folder = tmp_path / "not" / "yet"
+
+    result = plot_service.save_figure(populated_db, spec, str(folder))
+
+    assert result["ok"] is True
+    assert result["directory"] == str(folder)
+    assert [p.name for p in folder.glob("*")] == ["RawSignal.png"]
+
+
+def test_an_existing_folder_with_a_dot_is_not_read_as_a_format(
+    populated_db, tmp_path
+):
+    """`~/analysis.v2` is a real folder, and `.v2` is not an image format.
+
+    The existence check is what keeps a chosen destination from turning into a
+    guess — without it this writes `analysis.png` beside the folder instead of
+    a figure inside it.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    folder = tmp_path / "analysis.v2"
+    folder.mkdir()
+
+    result = plot_service.save_figure(populated_db, spec, str(folder))
+
+    assert result["ok"] is True
+    assert [p.name for p in folder.glob("*")] == ["RawSignal.png"]
+
+
+def test_a_filename_still_means_a_file(populated_db, tmp_path):
+    """The rule is additive: every caller that passed a filename before keeps
+    the behaviour it had."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    target = tmp_path / "chosen.png"
+
+    result = plot_service.save_figure(populated_db, spec, str(target))
+
+    assert result["files"] == [str(target)]
+
+
+# --- image formats ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("fmt", ["png", "svg", "pdf", "eps"])
+def test_every_offered_format_is_written(populated_db, tmp_path, fmt):
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+
+    result = plot_service.save_figure(
+        populated_db, spec, str(tmp_path / "fig"), image_format=fmt
+    )
+
+    assert result["ok"] is True
+    written = Path(result["files"][0])
+    assert written.suffix == f".{fmt}"
+    assert written.exists() and written.stat().st_size > 0
+
+
+def test_the_format_wins_over_the_paths_suffix(populated_db, tmp_path):
+    """The dropdown is the answer; the filename's extension is a leftover.
+
+    They agree in the GUI (the default name is built from the dropdown, and the
+    dialog is filtered to it), so this only decides a conflict that the UI does
+    not produce — but it has to decide it the same way every time.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+
+    result = plot_service.save_figure(
+        populated_db, spec, str(tmp_path / "fig.png"), image_format="svg"
+    )
+
+    assert [Path(f).name for f in result["files"]] == ["fig.svg"]
+
+
+def test_an_unwritable_format_is_refused_before_anything_is_done(
+    populated_db, tmp_path, monkeypatch
+):
+    """Caught at the very top — before the resolve, not just before savefig.
+
+    Order matters here, not merely the refusal. Discovered at `savefig`, a bad
+    format costs the twelve minutes of rendering first and (inside a job)
+    arrives as a crashed thread rather than a message; discovered after the
+    resolve, it still costs all of it. Nothing about the format depends on the
+    spec, so nothing about the spec should be loaded to check it.
+
+    `.fig` is the real case: MATLAB's own format, which matplotlib cannot write.
+    """
+    import scistackplot
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    touched: list[str] = []
+    monkeypatch.setattr(
+        scistackplot, "resolve", lambda *a, **k: touched.append("resolve")
+    )
+    monkeypatch.setattr(
+        scistackplot, "resolve_one", lambda *a, **k: touched.append("resolve_one")
+    )
+    monkeypatch.setattr(
+        scistackplot, "render_matplotlib", lambda item: touched.append("render")
+    )
+    folder = tmp_path / "out"
+
+    result = plot_service.save_figure(
+        populated_db, spec, str(folder), image_format="fig"
+    )
+
+    assert result["ok"] is False
+    assert "fig" in result["error"]
+    # The message names what IS available rather than only what is not.
+    assert "png" in result["error"]
+    assert touched == [], "the spec was resolved before the format was checked"
+    # And nothing was created on the way to refusing — not even the folder.
+    assert not folder.exists()
+
+
+def test_the_offered_formats_are_what_matplotlib_can_write(populated_db):
+    """One list, asked of matplotlib — so the dropdown cannot offer a format
+    the save would refuse."""
+    import matplotlib
+    from matplotlib.backend_bases import FigureCanvasBase
+
+    offered = plot_service.describe(populated_db, "RawSignal")["image_formats"]
+
+    assert offered == sorted(FigureCanvasBase.get_supported_filetypes())
+    assert "png" in offered and "svg" in offered
+    assert "fig" not in offered, "matplotlib has no MATLAB .fig writer"
 
 
 def test_save_figure_creates_missing_parent_directories(populated_db, tmp_path):
@@ -619,8 +828,15 @@ def test_a_save_job_writes_every_figure_and_reports_each(
     progress = [m for m in messages if m["type"] == "plot_save_progress"]
     done = next(m for m in messages if m["type"] == "plot_save_complete")
 
-    # One progress message per figure, in order, all carrying the job id.
-    assert [(m["done"], m["total"]) for m in progress] == [(1, 2), (2, 2)]
+    # Two progress messages per figure — one when it starts resolving (the
+    # expensive half) and one when its file exists — in order, all carrying
+    # the job id.
+    assert [(m["stage"], m["done"], m["total"]) for m in progress] == [
+        ("resolving", 1, 2),
+        ("resolving", 2, 2),
+        ("writing", 1, 2),
+        ("writing", 2, 2),
+    ]
     assert {m["job_id"] for m in messages} == {started["job_id"]}
     assert len(done["files"]) == 2
     assert {p.name for p in tmp_path.glob("*.png")} == {
@@ -716,16 +932,16 @@ def test_an_invalid_spec_ends_the_job_rather_than_hanging(
     assert not list(tmp_path.glob("*.png"))
 
 
-def test_save_all_reaches_both_transports(
+def test_save_reaches_both_transports(
     client, populated_db, tmp_path, captured_pushes
 ):
     from scistack_gui.server import METHODS
 
-    assert "plot_save_all" in METHODS
+    assert "plot_save_start" in METHODS
 
     spec = plot_service.describe(populated_db, "RawSignal")["spec"]
     response = client.post(
-        "/api/plot/save-all",
+        "/api/plot/save",
         json={"spec": spec, "path": str(tmp_path / "http.png")},
     )
 
@@ -734,6 +950,104 @@ def test_save_all_reaches_both_transports(
     # Drained, not left running: a daemon thread still writing into tmp_path
     # after the test returns is a flake waiting to happen.
     _drain(captured_pushes, "plot_save_complete")
+
+
+def test_there_is_one_save_method_and_it_is_a_job(client):
+    """The synchronous save is GONE, not deprecated — beta, clean break.
+
+    It existed on the theory that one figure fits a round trip. One
+    full-resolution figure is ~12 minutes (scidb.log 2026-09-11), so it did not,
+    and leaving it reachable would leave the timeout reachable.
+    """
+    from scistack_gui.server import METHODS
+
+    assert "plot_save_figure" not in METHODS
+    assert "plot_save_all" not in METHODS
+
+    # Asked of the route table, not of a request: the SPA catch-all
+    # (`@app.get("/{full_path:path}")` in app.py) matches every path for GET, so
+    # a POST to a deleted API route answers 405 rather than 404 and "not 404"
+    # would pass just as well against a route that still existed.
+    posts = {
+        route.path
+        for route in client.app.routes
+        if "POST" in (getattr(route, "methods", None) or ())
+    }
+    assert "/api/plot/save" in posts
+    assert "/api/plot/save-all" not in posts
+
+
+def test_saving_one_figure_is_a_job_too(
+    client, populated_db, tmp_path, captured_pushes
+):
+    """The regression this stage exists for.
+
+    "Save current figure" was a request/response RPC against a 30s client
+    timeout, and the work behind it is minutes. It now returns a job id like
+    every other save, and reports one file when that figure is on disk.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+
+    started = plot_service.start_save_job(
+        populated_db, spec, str(tmp_path / "emg.png"), figure_index=1
+    )
+    assert "job_id" in started
+
+    messages = _drain(captured_pushes, "plot_save_complete")
+    done = next(m for m in messages if m["type"] == "plot_save_complete")
+
+    assert [Path(f).name for f in done["files"]] == ["emg_subject_2.png"]
+    # One figure resolved, not the fan-out: the whole point of the index.
+    assert [
+        (m["stage"], m["done"], m["total"])
+        for m in messages
+        if m["type"] == "plot_save_progress"
+    ] == [("resolving", 1, 1), ("writing", 1, 1)]
+
+
+def test_a_save_job_reports_the_folder_it_filled(
+    populated_db, tmp_path, captured_pushes
+):
+    """What ends the panel's "Saving…" state, and what it says afterwards.
+
+    Thirty full paths sharing one directory is not a message anyone reads, and
+    printing them pushed the one fact that matters — it finished — off the end.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+    folder = tmp_path / "out"
+    folder.mkdir()
+
+    plot_service.start_save_job(populated_db, spec, str(folder))
+
+    done = next(
+        m
+        for m in _drain(captured_pushes, "plot_save_complete")
+        if m["type"] == "plot_save_complete"
+    )
+    assert done["directory"] == str(folder)
+    assert len(done["files"]) == 2
+
+
+def test_a_client_supplied_job_id_is_honoured(
+    populated_db, tmp_path, captured_pushes
+):
+    """The panel adopts the id BEFORE the request leaves.
+
+    A quick save can complete while the response is still in flight; a panel
+    that learned the id from the response would drop the completion and sit on
+    "Saving…" forever with the file already written.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+
+    started = plot_service.start_save_job(
+        populated_db, spec, str(tmp_path / "emg.png"), job_id="ps-abc123"
+    )
+
+    assert started["job_id"] == "ps-abc123"
+    messages = _drain(captured_pushes, "plot_save_complete")
+    assert {m["job_id"] for m in messages} == {"ps-abc123"}
 
 
 # --- both transports reach the same code -----------------------------------
@@ -751,29 +1065,43 @@ def test_http_route_and_rpc_handler_share_the_service(client, populated_db):
 
 
 def test_figure_index_reaches_the_service_over_both_transports(
-    client, populated_db, tmp_path
+    client, populated_db, tmp_path, captured_pushes
 ):
-    """`figure_index` had to be added in three places — the service, the RPC
-    handler and the pydantic request model. A transport that drops it silently
-    saves the whole fan-out, which is the slow path this exists to avoid."""
+    """`figure_index` had to be added in four places — the service, the job, the
+    RPC handler and the pydantic request model. A transport that drops it
+    silently saves the whole fan-out, which is the slow path this exists to
+    avoid."""
     from scistack_gui.server import METHODS
 
     spec = plot_service.describe(populated_db, "RawSignal")["spec"]
     spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
 
-    over_http = client.post(
+    client.post(
         "/api/plot/save",
         json={"spec": spec, "path": str(tmp_path / "http.png"), "figure_index": 0},
-    ).json()
-    over_rpc = METHODS["plot_save_figure"](
-        {"spec": spec, "path": str(tmp_path / "rpc.png"), "figure_index": 0}
+    )
+    over_http = next(
+        m
+        for m in _drain(captured_pushes, "plot_save_complete")
+        if m["type"] == "plot_save_complete"
     )
 
-    assert len(over_http["files"]) == 1
-    assert len(over_rpc["files"]) == 1
-    # Same figure, so the same label lands in both names.
-    assert Path(over_http["files"][0]).name == "http_subject_1.png"
-    assert Path(over_rpc["files"][0]).name == "rpc_subject_1.png"
+    # One job at a time: the drain watches the shared list, so the second save
+    # starts from an empty one rather than matching the first one's completion.
+    captured_pushes.clear()
+    METHODS["plot_save_start"](
+        {"spec": spec, "path": str(tmp_path / "rpc.png"), "figure_index": 0}
+    )
+    over_rpc = next(
+        m
+        for m in _drain(captured_pushes, "plot_save_complete")
+        if m["type"] == "plot_save_complete"
+    )
+
+    # One figure each, and the SAME figure — so the same label lands in both
+    # names and neither transport quietly saved the fan-out.
+    assert [Path(f).name for f in over_http["files"]] == ["http_subject_1.png"]
+    assert [Path(f).name for f in over_rpc["files"]] == ["rpc_subject_1.png"]
 
 
 # --- cache invalidation after a run ----------------------------------------

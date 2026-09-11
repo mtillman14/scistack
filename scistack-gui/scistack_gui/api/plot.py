@@ -141,36 +141,38 @@ class SaveRequest(BaseModel):
     path: str
     dpi: int = 200
     #: Which figure of an ITERATE fan-out to save; None saves all of them.
+    #: This also decides what `path` means — one file, or the folder N files
+    #: go into. See `plot_service.save_figure`.
     figure_index: int | None = None
+    #: png / svg / pdf / eps — validated against what matplotlib can write.
+    image_format: str | None = None
     csv_path: str | None = None
+    #: Client-chosen job id, so the panel can adopt it before the request
+    #: leaves; None lets the server mint one.
+    job_id: str | None = None
 
 
 @router.post("/plot/save")
 def plot_save(req: SaveRequest, db: DatabaseManager = Depends(get_db)) -> dict:
+    """Start a save job. Returns a job id immediately; progress arrives as
+    ``plot_save_progress`` / ``plot_save_complete`` / ``plot_save_failed``
+    notifications.
+
+    One route for one figure and for all of them — ``figure_index`` is the only
+    difference, and neither fits a request/response budget. The separate
+    ``/plot/save-all`` is gone with the synchronous save it complemented; a save
+    at full resolution is minutes of work (see ``plot_service.start_save_job``).
+    """
     try:
-        return plot_service.save_figure(
+        return plot_service.start_save_job(
             db,
             req.spec,
             req.path,
             dpi=req.dpi,
             figure_index=req.figure_index,
+            image_format=req.image_format,
             csv_path=req.csv_path,
-        )
-    except (ValueError, KeyError, OSError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.post("/plot/save-all")
-def plot_save_all(req: SaveRequest, db: DatabaseManager = Depends(get_db)) -> dict:
-    """Start a background save of every figure. Returns a job id immediately.
-
-    ``figure_index`` on the request is ignored: this endpoint IS the
-    save-everything path, and honouring it would make two parameters mean the
-    same thing.
-    """
-    try:
-        return plot_service.start_save_job(
-            db, req.spec, req.path, dpi=req.dpi, csv_path=req.csv_path
+            job_id=req.job_id,
         )
     except (ValueError, KeyError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

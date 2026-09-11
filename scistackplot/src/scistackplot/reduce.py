@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 import numpy as np
@@ -41,7 +41,8 @@ from .spec import (
     grid_shape_for,
 )
 from .table import LongTable, natural_sort_key
-from .xaxis import XPlan, leaf_key, plan_x_axis
+from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
+from .ylimits import eligible_scope, limits_by_scope, limits_for
 from .groups import apply_level_groups
 from .variants import apply_variant_sets, strip_answered_roles
 
@@ -49,6 +50,17 @@ LAYER = "scistackplot"
 
 #: Default index column name created when a 1-D measure is exploded.
 DEFAULT_INDEX_COLUMN = "index"
+
+#: Joins the factor values identifying one polyline (``__series``). Only ever
+#: built and compared, never parsed. Two levels whose text contains it can
+#: compose to the same key and be drawn as one line — inherited from the join
+#: this replaced, and not something a separator choice can rule out.
+SERIES_SEPARATOR = " | "
+
+#: How a missing factor value appears in a composed key. It needs SOME text:
+#: a row whose subject is null is still a row, and the alternative — pandas 3's
+#: `astype(str)` preserving NA — is a TypeError in the middle of a figure.
+MISSING_LEVEL_TEXT = "nan"
 
 #: Rows per figure above which the GUI path downsamples before serializing.
 #: 1-D data over hundreds of trials is megabytes, and it crosses the webview
@@ -64,6 +76,11 @@ MAX_TRANSPORT_POINTS = 20_000
 #: ``PlotSpec`` later lands in the key automatically, so the worst a forgotten
 #: update can do is miss the cache — never serve a plan built for a different
 #: question.
+#:
+#: ``y_axis`` is deliberately NOT here: the plan carries the fan-out's computed
+#: y limits (``_Plan.y_limits``), so a changed scope has to build a new one. It
+#: is a checkbox and two boxes rather than a dragged slider, so the re-plan is
+#: per click, not per frame.
 _PLAN_IRRELEVANT_FIELDS = ("kind", "facet", "style")
 
 #: How many plans are kept. Two: the pattern being served is narrow — the panel
@@ -118,6 +135,8 @@ def resolve(
     table: LongTable,
     *,
     max_points: int | None = None,
+    narrate: bool = False,
+    on_figure=None,
 ) -> list[ResolvedPlot]:
     """
     Reduce ``spec`` against ``table``.
@@ -126,23 +145,56 @@ def resolve(
     factors — the interactive equivalent of the pipeline's ``for_each`` fan-out
     over iterated schema keys. The two must always produce the same figure set;
     ``tests/test_fanout_parity.py`` asserts it.
+
+    ``narrate`` logs each figure and each phase **while it runs** rather than
+    only on exit — for the interactive save, where one figure is minutes of work
+    and the silence was indistinguishable from a hang. It is opt-in, not implied
+    by ``max_points=None``: a pipeline endpoint also resolves at full resolution,
+    once per iteration, and a 500-iteration run does not want eight lines each.
+
+    ``on_figure(position, total, label)`` is called **as each figure starts**,
+    for a caller reporting progress to a user. Before, not after: a fan-out of
+    two figures that reports only completions is silent for the entire first
+    figure, which is the half of the time the user is actually waiting.
     """
-    with Log.timer("resolve", layer=LAYER, extra=str(spec.kind)):
-        plan = _plan(spec, table)
-        figures = [
-            _build_figure(
-                group,
-                plan.spec,
-                plan.table,
-                plan.roles,
-                plan.shape,
-                plan.index_column,
-                figure_key=key,
-                max_points=max_points,
-                explode=plan.explode,
+    with Log.timer(
+        "resolve", layer=LAYER, extra=str(spec.kind), live=narrate
+    ) as timing:
+        with timing.phase("plan"):
+            plan = _plan(spec, table)
+
+        total = len(plan.groups)
+        Log.info(
+            "resolving %s of %r: %d figure(s) over %s%s",
+            spec.kind,
+            plan.spec.y_measure,
+            total,
+            plan.iterate or "no fan-out",
+            "" if max_points else " at full resolution (no downsampling)",
+            layer=LAYER,
+        )
+
+        figures: list[ResolvedPlot] = []
+        for position, (key, group) in enumerate(plan.groups, start=1):
+            timing.note("figure %d/%d: %s", position, total, _figure_label(key) or "-")
+            if on_figure is not None:
+                on_figure(position, total, _figure_label(key))
+            figures.append(
+                _build_figure(
+                    group,
+                    plan.spec,
+                    plan.table,
+                    plan.roles,
+                    plan.shape,
+                    plan.index_column,
+                    figure_key=key,
+                    max_points=max_points,
+                    explode=plan.explode,
+                    narrate=narrate,
+                    y_scope=plan.y_scope,
+                    y_limits=plan.y_limits,
+                )
             )
-            for key, group in plan.groups
-        ]
         for figure in figures:
             figure.fanout_notes = plan.notes
 
@@ -193,6 +245,14 @@ class _Plan:
     #: still nested: the expensive per-figure work (exploding, aggregating,
     #: panels, downsampling) has not happened yet.
     groups: list[tuple[dict, "pd.DataFrame"]]
+    #: The y-limit scope, after ineligible factors were dropped.
+    y_scope: list[str] = field(default_factory=list)
+    #: ``{scope values: (low, high)}`` for the WHOLE fan-out, computed here
+    #: rather than per figure — a scope of ``[]`` means one range across every
+    #: figure, including the ones ``resolve_one`` never builds. Computed off the
+    #: table (see :mod:`scistackplot.ylimits`), so knowing it costs a numpy pass
+    #: over 48 rows rather than a reduction of 17 million.
+    y_limits: dict = field(default_factory=dict)
 
     @property
     def labels(self) -> list[str]:
@@ -310,6 +370,18 @@ def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
     else:
         groups = [({}, frame)]
 
+    # Computed HERE, over the filtered frame, for the whole fan-out at once —
+    # a scope of [] means one range across every figure, including the ones
+    # `resolve_one` deliberately never builds. Off the table rather than off the
+    # figures, so it stays a numpy pass over 48 rows (see `ylimits`).
+    y_scope = eligible_scope(spec.y_axis.scope, roles, table)
+    scoped = replace(table, frame=frame)
+    y_limits = (
+        {}
+        if spec.y_axis.is_manual
+        else limits_by_scope(scoped, spec, y_scope)
+    )
+
     return _Plan(
         spec=spec,
         table=table,
@@ -320,6 +392,8 @@ def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
         iterate=iterate,
         notes=_fanout_notes(spec, table),
         groups=groups,
+        y_scope=y_scope,
+        y_limits=y_limits,
     )
 
 
@@ -329,6 +403,7 @@ def resolve_one(
     index: int,
     *,
     max_points: int | None = None,
+    narrate: bool = False,
 ) -> tuple[ResolvedPlot, list[str], int]:
     """Build ONE figure of a fan-out. Returns ``(figure, every label, index)``.
 
@@ -346,11 +421,27 @@ def resolve_one(
     filter or a variant selection narrows the data, and the panel's cursor is a
     moment behind the spec it is already re-resolving. An out-of-range index is
     a normal transient.
+
+    ``narrate`` is opt-in, exactly as in :func:`resolve`.
     """
-    with Log.timer("resolve_one", layer=LAYER, extra=str(spec.kind)):
-        plan = _plan(spec, table)
+    with Log.timer(
+        "resolve_one", layer=LAYER, extra=str(spec.kind), live=narrate
+    ) as timing:
+        with timing.phase("plan"):
+            plan = _plan(spec, table)
         position = max(0, min(int(index), len(plan.groups) - 1))
         key, group = plan.groups[position]
+        if narrate:
+            Log.info(
+                "resolving %s of %r: figure %d of %d (%s) at full resolution "
+                "(no downsampling)",
+                spec.kind,
+                plan.spec.y_measure,
+                position + 1,
+                len(plan.groups),
+                _figure_label(key) or "no fan-out",
+                layer=LAYER,
+            )
         figure = _build_figure(
             group,
             plan.spec,
@@ -361,6 +452,9 @@ def resolve_one(
             figure_key=key,
             max_points=max_points,
             explode=plan.explode,
+            narrate=narrate,
+            y_scope=plan.y_scope,
+            y_limits=plan.y_limits,
         )
         figure.fanout_notes = plan.notes
         Log.info(
@@ -588,6 +682,13 @@ def _collapse_aggregates(
 # ---------------------------------------------------------------------------
 
 
+def _figure_label(figure_key: dict[str, Any]) -> str:
+    """``subject=03, pass=1`` — the same text ``ResolvedPlot.figure_label``
+    produces, available before the figure exists so the log can name what it is
+    working on rather than what it finished."""
+    return ", ".join(f"{k}={v}" for k, v in figure_key.items())
+
+
 def _build_figure(
     frame: pd.DataFrame,
     spec: PlotSpec,
@@ -599,89 +700,141 @@ def _build_figure(
     figure_key: dict[str, Any],
     max_points: int | None,
     explode: bool = False,
+    narrate: bool = False,
+    y_scope: list[str] | None = None,
+    y_limits: dict | None = None,
 ) -> ResolvedPlot:
-    # This figure's own rows, expanded and collapsed here rather than once over
-    # the whole fan-out (see `_Plan.explode`). The order is fixed: aggregating a
-    # 1-D measure averages sample-by-sample, so the index column has to exist
-    # before the collapse groups on it.
-    if explode:
-        frame, index_column = _explode_1d(frame, spec.y_measure, index_column)
-    frame = _collapse_aggregates(frame, spec, roles, index_column)
+    # ``narrate`` makes this function announce each phase as it starts. A
+    # full-resolution figure is minutes of work (scidb.log 2026-09-11: 1543s for
+    # two of them), and until the phases said so while they ran, the only
+    # evidence available was one summary line that a timed-out save never
+    # reached. The interactive path leaves it off: at 20k rows the narration
+    # would outnumber the work.
+    with Log.timer(
+        "build_figure",
+        layer=LAYER,
+        extra=_figure_label(figure_key) or str(spec.kind),
+        live=narrate,
+    ) as timing:
+        # This figure's own rows, expanded and collapsed here rather than once
+        # over the whole fan-out (see `_Plan.explode`). The order is fixed:
+        # aggregating a 1-D measure averages sample-by-sample, so the index
+        # column has to exist before the collapse groups on it.
+        if explode:
+            with timing.phase("explode", extra=f"{len(frame)} row(s)"):
+                frame, index_column = _explode_1d(frame, spec.y_measure, index_column)
+        with timing.phase("collapse_aggregates"):
+            frame = _collapse_aggregates(frame, spec, roles, index_column)
 
-    color = _role_holder(roles, Role.COLOR)
-    # Several factors may share the x axis, nested. `x_layers` is only the
-    # ORDER; membership is the roles dict, and `ordered_x_layers` reconciles
-    # them so neither control can produce a spec the other rejects.
-    x_layers = [
-        name
-        for name in spec.ordered_x_layers(roles)
-        if name in frame.columns
-    ]
-    x_factor = x_layers[0] if x_layers else None
-    # Several factors may be faceted at once; their combined levels are the
-    # panels, and FacetOptions decides how those panels are arranged.
-    facet_names = [
-        name
-        for name, role in roles.items()
-        if role is Role.FACET and name in frame.columns
-    ]
+        color = _role_holder(roles, Role.COLOR)
+        # Several factors may share the x axis, nested. `x_layers` is only the
+        # ORDER; membership is the roles dict, and `ordered_x_layers` reconciles
+        # them so neither control can produce a spec the other rejects.
+        x_layers = [
+            name
+            for name in spec.ordered_x_layers(roles)
+            if name in frame.columns
+        ]
+        x_factor = x_layers[0] if x_layers else None
+        # Several factors may be faceted at once; their combined levels are the
+        # panels, and FacetOptions decides how those panels are arranged.
+        facet_names = [
+            name
+            for name, role in roles.items()
+            if role is Role.FACET and name in frame.columns
+        ]
 
-    original_rows = len(frame)
-    if max_points is not None and original_rows > max_points:
-        frame = _downsample(frame, max_points, index_column)
+        original_rows = len(frame)
+        if max_points is not None and original_rows > max_points:
+            with timing.phase("downsample"):
+                frame = _downsample(frame, max_points, index_column)
 
-    panels: list[Panel] = []
+        panels: list[Panel] = []
 
-    if facet_names:
-        groups = _ordered_groups(frame, facet_names, table)
-    else:
-        groups = [((), frame)]
+        with timing.phase("facet_groups"):
+            if facet_names:
+                groups = _ordered_groups(frame, facet_names, table)
+            else:
+                groups = [((), frame)]
 
-    for key_values, group in groups:
-        key = dict(zip(facet_names, key_values, strict=True))
-        panel_frame = _panel_frame(
-            group, spec, table, shape, x_layers, color, index_column
+        # The dominant phase at full resolution, and the one worth a per-panel
+        # heartbeat: a figure that stops here has stopped in a specific panel.
+        with timing.phase("panel_frames", extra=f"{len(groups)} panel(s)"):
+            for position, (key_values, group) in enumerate(groups, start=1):
+                key = dict(zip(facet_names, key_values, strict=True))
+                timing.note(
+                    "panel %d/%d (%s): %d row(s)",
+                    position,
+                    len(groups),
+                    ", ".join(str(v) for v in key.values()) or "unfaceted",
+                    len(group),
+                )
+                panel_frame = _panel_frame(
+                    group, spec, table, shape, x_layers, color, index_column
+                )
+                panels.append(
+                    Panel(
+                        frame=panel_frame,
+                        key=key,
+                        # The panel's OWN limits, from the figure's key plus its
+                        # own facet values: the scope decides which of those two
+                        # actually separate anything.
+                        y_limits=limits_for(
+                            y_limits or {},
+                            {**figure_key, **key},
+                            y_scope or [],
+                            spec.y_axis,
+                        ),
+                    )
+                )
+
+        with timing.phase("grid_layout"):
+            n_rows, n_cols, row_labels, col_labels, layout_notes = _assign_grid(
+                panels, spec.facet
+            )
+
+            encoding = _encoding_for(spec.kind, color, shape)
+            labels = _labels_for(spec, table, x_layers, color, index_column, figure_key)
+
+            # A nested axis is composed once, here, from labels only — so both
+            # renderers draw the same brackets and codegen can replay the result
+            # instead of re-deriving it (same bargain as plan_layout).
+            x_plan = (
+                _plan_nested_x(panels, table, x_layers) if len(x_layers) > 1 else None
+            )
+
+        # The FIGURE's limits: the panels' own, when they all agree. Not a
+        # second computation — every consumer that reads one number per figure
+        # (the GUI, `render.base.shared_y_limits`) has to get the same answer
+        # the panels got, and `None` here now means "the panels differ", which
+        # is exactly when a renderer must stop sharing an axis.
+        figure_limits = _figure_limits(panels)
+
+        return ResolvedPlot(
+            kind=spec.kind,
+            panels=panels,
+            encoding=encoding,
+            labels=labels,
+            spec=spec,
+            figure_key=figure_key,
+            x_order=(
+                list(x_plan.order)
+                if x_plan
+                else (_level_order(table, x_factor, panels, X) if x_factor else None)
+            ),
+            x_plan=x_plan,
+            color_order=_level_order(table, color, panels, COLOR) if color else None,
+            grid_rows=n_rows,
+            grid_cols=n_cols,
+            row_labels=row_labels,
+            col_labels=col_labels,
+            layout_notes=layout_notes,
+            y_limits=figure_limits,
+            y_scope=list(y_scope or []),
+            downsampled_from=(
+                original_rows if max_points and original_rows > max_points else None
+            ),
         )
-        panels.append(Panel(frame=panel_frame, key=key))
-
-    n_rows, n_cols, row_labels, col_labels, layout_notes = _assign_grid(
-        panels, spec.facet
-    )
-
-    encoding = _encoding_for(spec.kind, color, shape)
-    labels = _labels_for(spec, table, x_layers, color, index_column, figure_key)
-
-    # A nested axis is composed once, here, from labels only — so both
-    # renderers draw the same brackets and codegen can replay the result
-    # instead of re-deriving it (same bargain as plan_layout).
-    x_plan = _plan_nested_x(panels, table, x_layers) if len(x_layers) > 1 else None
-
-    y_limits = None
-    if spec.facet.share_y and len(panels) > 1:
-        y_limits = _shared_limits(panels, encoding)
-
-    return ResolvedPlot(
-        kind=spec.kind,
-        panels=panels,
-        encoding=encoding,
-        labels=labels,
-        spec=spec,
-        figure_key=figure_key,
-        x_order=(
-            list(x_plan.order)
-            if x_plan
-            else (_level_order(table, x_factor, panels, X) if x_factor else None)
-        ),
-        x_plan=x_plan,
-        color_order=_level_order(table, color, panels, COLOR) if color else None,
-        grid_rows=n_rows,
-        grid_cols=n_cols,
-        row_labels=row_labels,
-        col_labels=col_labels,
-        layout_notes=layout_notes,
-        y_limits=y_limits,
-        downsampled_from=original_rows if max_points and original_rows > max_points else None,
-    )
 
 
 def _panel_frame(
@@ -711,10 +864,7 @@ def _panel_frame(
         # Nested axis: one position per COMBINATION of the layers, identified
         # by a composed key. The layer values stay as their own columns too, so
         # `plan_x_axis` can order them and the renderers can label the groups.
-        out[X] = [
-            leaf_key(values)
-            for values in zip(*(group[name].astype(str) for name in x_layers))
-        ]
+        out[X] = _composed_key(group, x_layers, LEAF_SEPARATOR)
         for name in x_layers:
             out[name] = group[name].values
     elif x_factor:
@@ -737,12 +887,7 @@ def _panel_frame(
             if name in group.columns and name != x_factor
         ]
         if series_cols:
-            out[SERIES] = (
-                group[series_cols]
-                .astype(str)
-                .agg(" | ".join, axis=1)
-                .values
-            )
+            out[SERIES] = _composed_key(group, series_cols, SERIES_SEPARATOR)
         else:
             out[SERIES] = ""
 
@@ -756,6 +901,75 @@ def _panel_frame(
         out = out.sort_values(X, kind="stable")
 
     return out.reset_index(drop=True)
+
+
+def _composed_key(
+    frame: pd.DataFrame, columns: list[str], separator: str
+) -> np.ndarray:
+    """One string per row, composed from ``columns`` — **per distinct
+    combination, never per row**.
+
+    This is the identity of a polyline (which replicate is this sample part of?)
+    and of a nested-x leaf (which combination of layers is this tick?). Both are
+    categorical facts about the row's FACTORS, and a 1-D measure explodes into
+    hundreds of thousands of samples that all share them: a 24-row frame of EMG
+    traces becomes 8.9 million rows carrying 24 distinct answers.
+
+    The previous implementation asked each row: ``group[cols].astype(str).agg("
+    | ".join, axis=1)`` is a Python call **per row**, and the interactive path
+    never paid it because ``_downsample`` runs first (20 015 rows instead of
+    8 906 400). At full resolution — the save path, and only the save path — one
+    figure took ~770s (scidb.log 2026-09-11, 1543s for two).
+
+    So: factorize each column (one C-level hash pass), fold the codes together
+    into a dense combination id, build the text ONCE per distinct combination,
+    and take. The Python loop below runs over combinations — 24 of them, not 8.9
+    million — and everything touching every row is a numpy/pandas primitive.
+
+    The strings are identical to the join it replaces — by construction, since
+    the text still comes from pandas' own ``astype(str)``, just applied to the
+    levels. The one deliberate difference is a **missing** factor value, which
+    the old form could not survive at all under pandas 3 (see below): here it is
+    a level like any other (``use_na_sentinel=False``, rather than a -1 sentinel
+    that would index the text backwards), named ``MISSING_LEVEL_TEXT``.
+    """
+    rows = len(frame)
+    if not columns:
+        return np.full(rows, "", dtype=object)
+
+    # Dense combination id per row, rebuilt column by column. Re-factorizing
+    # after each fold keeps the id in [0, distinct_so_far) — without it the
+    # composed key is a product of level counts and overflows int64 on a wide
+    # enough frame.
+    combined = np.zeros(rows, dtype=np.int64)
+    labels: list[str] = [""]
+
+    for position, column in enumerate(columns):
+        # The Series, not `.to_numpy()`: pandas factorizes an arrow-backed
+        # string column in place, where materializing it as objects would build
+        # 8.9 million Python strings on the way to counting 24 of them.
+        codes, uniques = pd.factorize(frame[column], use_na_sentinel=False)
+        width = max(len(uniques), 1)
+        combined, keys = pd.factorize(combined * width + codes)
+
+        # `.astype(str)`, not `str(value)` — on the LEVELS rather than the rows.
+        # Delegating to pandas is what keeps the text identical to the join this
+        # replaces for every dtype it renders differently from Python (a numpy
+        # scalar, an extension dtype).
+        #
+        # Except for missing values, where there is nothing to be identical to:
+        # pandas 3's `astype(str)` PRESERVES NA rather than writing "nan", so the
+        # join this replaces raised `TypeError: sequence item: expected str` on
+        # any factor column with a gap in it. A missing level is a level here.
+        text = list(pd.Index(uniques).astype(str).fillna(MISSING_LEVEL_TEXT))
+        labels = [
+            text[code]
+            if position == 0
+            else labels[previous] + separator + text[code]
+            for previous, code in (divmod(int(key), width) for key in keys)
+        ]
+
+    return np.asarray(labels, dtype=object)[combined]
 
 
 def _matrix_frame(group: pd.DataFrame, measure: str) -> pd.DataFrame:
@@ -1234,25 +1448,20 @@ def _labels_for(
     )
 
 
-def _shared_limits(panels: list[Panel], encoding: Encoding) -> tuple[float, float] | None:
-    lows: list[float] = []
-    highs: list[float] = []
-    for panel in panels:
-        frame = panel.frame
-        columns = [c for c in (encoding.y, encoding.y_low, encoding.y_high) if c and c in frame.columns]
-        for column in columns:
-            values = pd.to_numeric(frame[column], errors="coerce").dropna()
-            if len(values):
-                lows.append(float(values.min()))
-                highs.append(float(values.max()))
-    if not lows:
+def _figure_limits(panels: list[Panel]) -> tuple[float, float] | None:
+    """The figure's y limits, or None when its panels do not share one range.
+
+    Read off the panels rather than recomputed, so the figure-level number and
+    the panel-level ones cannot disagree. ``None`` is meaningful: it is how a
+    renderer learns it must give each panel its own axis instead of sharing one
+    (``render.base.shares_y_axis``).
+    """
+    if not panels:
         return None
-    low, high = min(lows), max(highs)
-    if low == high:
-        pad = abs(low) * 0.05 or 1.0
-        return (low - pad, high + pad)
-    pad = (high - low) * 0.05
-    return (low - pad, high + pad)
+    first = panels[0].y_limits
+    if first is None:
+        return None
+    return first if all(panel.y_limits == first for panel in panels) else None
 
 
 def unique_values(frame: pd.DataFrame, column: str) -> list[Any]:

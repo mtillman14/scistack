@@ -258,7 +258,11 @@ class FacetOptions:
     rows: list[Matcher] = field(default_factory=list)
     cols: list[Matcher] = field(default_factory=list)
     share_x: bool = True
-    share_y: bool = True
+    # NOTE: there is no `share_y`. It moved to `PlotSpec.y_axis` (:class:`YAxis`)
+    # and became a question with more than two answers — "which factors separate
+    # the limits" rather than "do the facets share them". `share_y=True` is
+    # `YAxis(scope=[])` and `share_y=False` is a scope naming every panel
+    # factor; keeping both would be two controls deciding one thing.
 
     @property
     def row_rules(self) -> list[Matcher]:
@@ -272,6 +276,81 @@ class FacetOptions:
     @property
     def has_rules(self) -> bool:
         return bool(self.row_rules or self.col_rules)
+
+
+@dataclass(frozen=True)
+class YAxis:
+    """What the y axis spans — and, more importantly, **what separates spans**.
+
+    The old control was ``FacetOptions.share_y``: one boolean, all the facets of
+    a figure share limits or they do not, with figures always scaled to
+    themselves. That cannot express the two things a reader actually needs —
+    "every plot in this study on one scale, so I can compare them" and
+    "autoscale this panel, so I can see its shape" — let alone anything between.
+
+    So limits are **split by a set of factors**:
+
+    ================================ ==========================================
+    ``scope``                        one limit per…
+    ================================ ==========================================
+    ``[]``                           the whole dataset — every panel, every
+                                     figure, one range
+    ``["subject"]``                  subject; all that subject's facets share it
+    ``["subject", "ColName"]``       subject AND facet — true per-panel
+                                     autoscale
+    ================================ ==========================================
+
+    Only factors that **separate panels** may appear: ITERATE (a factor per
+    figure) and FACET (a factor per subplot). A COLOR or FREE factor lives
+    *within* a panel, so splitting on it would ask one axis to have two ranges;
+    :func:`~scistackplot.ylimits.eligible_scope` drops those and says so rather
+    than failing or silently obeying.
+
+    ``minimum``/``maximum`` override whatever ``scope`` computed, independently:
+    a floor of 0 with a computed ceiling is a normal thing to want. They are
+    spelled out rather than ``min``/``max`` because those shadow builtins in
+    every comprehension that touches them.
+    """
+
+    #: Panel factors that separate limits. Empty means one range for everything.
+    scope: list[str] = field(default_factory=list)
+    minimum: float | None = None
+    maximum: float | None = None
+
+    @property
+    def is_manual(self) -> bool:
+        """Whether BOTH ends are pinned — the case that needs no data at all."""
+        return self.minimum is not None and self.maximum is not None
+
+    def to_dict(self) -> dict:
+        return {
+            "scope": list(self.scope),
+            "minimum": self.minimum,
+            "maximum": self.maximum,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "YAxis":
+        return cls(
+            scope=list(raw.get("scope") or []),
+            minimum=_as_float(raw.get("minimum")),
+            maximum=_as_float(raw.get("maximum")),
+        )
+
+
+def _as_float(value: Any) -> float | None:
+    """A y-limit bound, or None for "compute it".
+
+    An empty box in the GUI arrives as ``""``, and ``float("")`` raises — which
+    would make clearing a limit an error rather than the way you ask for the
+    computed one.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -385,6 +464,8 @@ class PlotSpec:
     aggregate: Aggregation = field(default_factory=Aggregation)
     index_column: str | None = None
     facet: FacetOptions = field(default_factory=FacetOptions)
+    #: What the y axis spans, and what separates spans. See :class:`YAxis`.
+    y_axis: YAxis = field(default_factory=YAxis)
     style: StyleOptions = field(default_factory=StyleOptions)
     filters: list[Filter] = field(default_factory=list)
     #: Variables joined in as FACTORS rather than plotted — a subject-level
@@ -484,10 +565,10 @@ class PlotSpec:
             "n_rows": self.facet.n_rows,
             "n_cols": self.facet.n_cols,
             "share_x": self.facet.share_x,
-            "share_y": self.facet.share_y,
             "rows": [_matcher_to_dict(m) for m in self.facet.rows],
             "cols": [_matcher_to_dict(m) for m in self.facet.cols],
         }
+        raw["y_axis"] = self.y_axis.to_dict()
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
         raw["level_groups"] = [g.to_dict() for g in self.level_groups]
         raw["x_layers"] = list(self.x_layers)
@@ -509,6 +590,7 @@ class PlotSpec:
             ),
             index_column=raw.get("index_column"),
             facet=_facet_from_dict(raw.get("facet") or {}),
+            y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions(**(raw.get("style") or {})),
             filters=[Filter(**f) for f in (raw.get("filters") or [])],
             factor_variables=list(raw.get("factor_variables") or []),
@@ -596,7 +678,6 @@ def _facet_from_dict(raw: dict) -> FacetOptions:
         rows=[_matcher_from_dict(m) for m in (raw.get("rows") or [])],
         cols=[_matcher_from_dict(m) for m in (raw.get("cols") or [])],
         share_x=raw.get("share_x", True),
-        share_y=raw.get("share_y", True),
     )
 
 

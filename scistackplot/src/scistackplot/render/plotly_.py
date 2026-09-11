@@ -28,6 +28,8 @@ from .base import (
     legend_levels,
     palette_for,
     panel_position,
+    panel_y_limits,
+    shares_y_axis,
     shows_legend,
     shows_x_labels,
     shows_y_labels,
@@ -118,6 +120,7 @@ def render(resolved: ResolvedPlot) -> dict:
                 n_cols,
                 bottom=shows_x_labels(resolved, row, col),
                 leftmost=shows_y_labels(resolved, row, col),
+                y_limits=panel_y_limits(resolved, panel),
             )
             if panel.key:
                 layout["annotations"].append(
@@ -376,6 +379,7 @@ def _add_axes(
     *,
     bottom: bool = True,
     leftmost: bool = True,
+    y_limits: tuple[float, float] | None = None,
 ) -> None:
     x_key = "xaxis" if slot == 1 else f"xaxis{slot}"
     y_key = "yaxis" if slot == 1 else f"yaxis{slot}"
@@ -421,10 +425,13 @@ def _add_axes(
     if slot != 1:
         if resolved.spec.facet.share_x:
             layout[x_key]["matches"] = "x"
-        if resolved.spec.facet.share_y:
+        # `matches` on y is DERIVED, exactly as matplotlib's sharey is: linking
+        # panels that hold different ranges would make zooming one rescale the
+        # rest, silently discarding the per-panel limits below.
+        if shares_y_axis(resolved):
             layout[y_key]["matches"] = "y"
-    if resolved.y_limits and resolved.kind is not PlotKind.HEATMAP:
-        layout[y_key]["range"] = list(resolved.y_limits)
+    if y_limits and resolved.kind is not PlotKind.HEATMAP:
+        layout[y_key]["range"] = list(y_limits)
 
 
 def _panel_title(text, row, col, n_rows, n_cols) -> dict:

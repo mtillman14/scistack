@@ -333,6 +333,44 @@ def test_timer_emits_summary_even_when_body_raises(tmp_path):
     assert "[timing] save_batch(X): TOTAL=" in log_file.read_text(encoding="utf-8")
 
 
+def test_live_timer_announces_each_phase_as_it_starts(tmp_path):
+    """A live timer speaks DURING the work, not only after it.
+
+    The case this exists for: a figure save whose resolve ran for 25 minutes
+    (scidb.log 2026-09-11 12:28 -> 12:54) and whose only instrumentation was a
+    summary emitted on exit — so a save that timed out, or was still running
+    when the log was read, described itself not at all.
+    """
+    log_file = tmp_path / "scidb.log"
+    Log.set_path(str(log_file))
+    with Log.timer("save_figure", live=True) as t:
+        with t.phase("resolve", extra="2 figure(s)"):
+            t.note("figure %d/%d", 1, 2)
+    lines = read_lines(log_file)
+
+    assert any("save_figure: resolve started — 2 figure(s)" in l for l in lines)
+    assert any("save_figure: figure 1/2" in l for l in lines)
+    assert any("save_figure: resolve done in" in l for l in lines)
+    # The summary still comes last, and is still the only line carrying TOTAL=
+    # — the shape MATLAB's timing archives grep for.
+    assert "[timing] save_figure: TOTAL=" in lines[-1]
+    assert len([l for l in lines if "TOTAL=" in l]) == 1
+
+
+def test_a_quiet_timer_says_nothing_until_it_is_done(tmp_path):
+    """The default is unchanged: one summary, no narration, no notes."""
+    log_file = tmp_path / "scidb.log"
+    Log.set_path(str(log_file))
+    with Log.timer("load(PSD)") as t:
+        with t.phase("find"):
+            t.note("this is not worth a line")
+    lines = read_lines(log_file)
+
+    assert len(lines) == 1
+    assert "[timing] load(PSD): TOTAL=" in lines[0]
+    assert "not worth a line" not in lines[0]
+
+
 def test_positional_matlab_call_shapes(tmp_path):
     """MATLAB calls py.scidb.log.Log.info(msg) and set_level(level[, sink])."""
     log_file = tmp_path / "scidb.log"
