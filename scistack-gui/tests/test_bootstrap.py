@@ -133,8 +133,8 @@ class TestCreateProjectEndpoint:
     def test_create_on_existing_path_leaves_no_stray_config_files(
         self, api_client, tmp_path
     ):
-        """Regression: the eager entities-file setup must not run before
-        the existing-path check -- otherwise a rejected request would still
+        """Regression: project initialization must not run before the
+        existing-path check -- otherwise a rejected request would still
         write scistack.toml/entities files into a folder the caller never
         intended to modify."""
         _make_existing_db(tmp_path / "study.duckdb")
@@ -252,6 +252,74 @@ class TestCreateProjectEagerEntitiesFile:
         assert resp.status_code == 200
         assert not (tmp_path / "scistack.toml").exists()
         assert not (tmp_path / "src" / "scistack_entities.toml").exists()
+
+    def test_create_keeps_a_project_s_existing_entities_file(
+        self, api_client, tmp_path
+    ):
+        """The reported bug's other half: creating a database in a project
+        that ALREADY declares an entities file must not re-point it.
+
+        The wizard's field always sends its default, and this endpoint used
+        to apply it unconditionally -- so a project declaring
+        ``entities_file = "pipeline/my_entities.toml"`` had the key swapped
+        for a brand-new empty ``src/scistack_entities.toml``, and everything
+        it declared disappeared from the GUI."""
+        (tmp_path / "scistack.toml").write_text(
+            'modules = []\nentities_file = "pipeline/my_entities.toml"\n'
+        )
+        (tmp_path / "pipeline").mkdir()
+        declared = tmp_path / "pipeline" / "my_entities.toml"
+        declared.write_text(
+            'variables = ["RawEmg"]\n\n[parameters]\nSAMPLING_RATE_HZ = 1000\n'
+        )
+
+        resp = api_client.post(
+            "/api/bootstrap/create",
+            json={
+                "folder": str(tmp_path),
+                "filename": "study",
+                "schema_keys": ["subject"],
+                # exactly what the wizard sends when the user leaves the
+                # field at its default
+                "entities_file": "src/scistack_entities.toml",
+            },
+        )
+        assert resp.status_code == 200
+
+        with open(tmp_path / "scistack.toml", "rb") as f:
+            written = tomllib.load(f)
+        assert written["entities_file"] == "pipeline/my_entities.toml"
+        assert not (tmp_path / "src" / "scistack_entities.toml").exists()
+        assert "SAMPLING_RATE_HZ" in declared.read_text()
+
+        from scistack_gui import registry as _registry
+
+        assert "SAMPLING_RATE_HZ" in _registry.get_parameters_registry()
+
+    def test_create_finds_an_entities_file_the_config_does_not_name(
+        self, api_client, tmp_path
+    ):
+        """A scistack.toml with no entities_file key, next to a pre-existing
+        src/scistack_entities.toml: its declarations must reach the GUI."""
+        (tmp_path / "scistack.toml").write_text("modules = []\n")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "scistack_entities.toml").write_text(
+            "[parameters]\nSAMPLING_RATE_HZ = 1000\n"
+        )
+
+        resp = api_client.post(
+            "/api/bootstrap/create",
+            json={
+                "folder": str(tmp_path),
+                "filename": "study",
+                "schema_keys": ["subject"],
+            },
+        )
+        assert resp.status_code == 200
+
+        from scistack_gui import registry as _registry
+
+        assert "SAMPLING_RATE_HZ" in _registry.get_parameters_registry()
 
     def test_create_skips_eager_setup_for_packaged_project(self, api_client, tmp_path):
         """A pyproject.toml with [tool.scistack] already present makes this

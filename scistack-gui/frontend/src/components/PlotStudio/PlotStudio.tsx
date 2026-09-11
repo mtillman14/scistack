@@ -53,6 +53,37 @@ interface FactorInfo {
   is_variant: boolean
   /** Levels are the measure's own struct/dict fields, not a condition. */
   is_field: boolean
+  /** A dataset schema key (subject, session, …) rather than a variant or a
+   *  struct field. Reported by the backend so the panel never works it out by
+   *  intersecting two lists. */
+  is_schema_key?: boolean
+  /** Levels surviving `spec.filters`, measured with the same function the
+   *  figure uses. Absent on the pre-filter (`describe`) view. */
+  selected?: (string | number)[]
+}
+
+/** A factor derived by bucketing another factor's levels. */
+interface LevelGroup {
+  /** The new factor's name, e.g. "Phase". */
+  name: string
+  /** The factor being bucketed, e.g. "session". */
+  source: string
+  /** `{level: group label}`. */
+  mapping: Record<string, string>
+  /** null DROPS rows the mapping does not name; a string buckets them. There is
+   *  no "leave them unlabelled" — a NaN group becomes its own silent series. */
+  unmatched: string | null
+}
+
+/** A row filter, applied before anything else is reduced. */
+interface Filter {
+  column: string
+  /** Keep only these levels. Absent means "every level" — an all-levels list is
+   *  never stored, because it would rot as soon as new data arrived. */
+  include?: (string | number)[]
+  exclude?: (string | number)[]
+  minimum?: number
+  maximum?: number
 }
 
 interface TableInfo {
@@ -94,10 +125,49 @@ interface VariantSetInfo {
    *  showing: a variant selecting a combination nobody ran looks exactly like a
    *  working one until its series fails to appear. */
   row_count: number
-  /** Code axes this variant left open and whose versions its rows disagree on,
-   *  `{column: version count}`. Reported here because the code columns are no
-   *  longer offered as factors — the fix is on this row, not in Factors. */
-  spans: Record<string, number>
+  /** Code axes this variant left open and whose versions its rows disagree on.
+   *  Reported here because the code columns are no longer offered as factors —
+   *  the fix is on this row, not in Factors.
+   *
+   *  Carries WHICH LOCATIONS hold WHICH VERSION, not just a count: this is now
+   *  reported for the ordinary per-location "latest" state too (reversed
+   *  2026-09-11), and "pools 2 versions" on the most common state in the system
+   *  would be noise. "v2 is only subject 01" is a sentence you can act on. */
+  spans: Record<string, SpanInfo>
+  /** What the selection resolved to — `latest` becomes the per-location flag,
+   *  so this is not the same thing as `selection`. */
+  resolved: Record<string, unknown>
+  /** Variant combinations that DO exist, populated ONLY when `row_count` is 0.
+   *  The pin is applied blindly, so an empty figure comes from controls that
+   *  look correctly filled in; this is what makes it self-explaining. */
+  available: Record<string, string>[]
+}
+
+interface SpanInfo {
+  /** The function whose versions disagree, without the `Code:` prefix. */
+  function: string
+  /** Version -> how many rows of this variant it built. */
+  versions: Record<string, number>
+  /** Version -> the schema locations holding it, capped backend-side. */
+  locations: Record<string, string[]>
+  /** What a location string means, outermost first (`["subject","session"]`),
+   *  so `01/pre` can be read without guessing. */
+  schema_levels: string[]
+  /** True when some version's location list was cut short. */
+  truncated: boolean
+}
+
+/** One span as a sentence. Mirrors `scistackplot.variants.describe_span` — the
+ *  backend log, this tag and the figure banner must not word the same span
+ *  three different ways. */
+function describeSpan(span: SpanInfo): string {
+  const parts = Object.entries(span.versions).map(([version, count]) => {
+    const where = span.locations?.[version] ?? []
+    if (where.length === 0) return `${version} (${count} row(s))`
+    const listed = where.join(', ')
+    return `${version} (${span.truncated ? `${listed}, …` : listed})`
+  })
+  return `${span.function}: ${parts.join('; ')}`
 }
 
 interface VariantSummary {
@@ -170,15 +240,35 @@ interface GridMeta {
 interface VariantSet {
   name: string | null
   selection: Record<string, unknown>
+  /** Which variable this row draws from; null/absent means the primary measure.
+   *  Rows over different variables stack into the same `Variant` factor, which
+   *  is how "Raw vs Filtered" and "v1 vs v2" become one mechanism. */
+  variable?: string | null
 }
 
 interface Spec {
   measures: string[]
+  /** Variable supplying the x axis of a relational plot. Separate from
+   *  `measures` because it JOINS (one x per y) where extra series STACK. */
+  x_measure?: string | null
   roles: Record<string, Role>
   kind: string
   aggregate?: { statistic: string; error: string }
   facet?: FacetOptions
   variant_policy?: string
+  /* Order the x-axis factors nest in, outermost first. Membership is `roles`;
+     this is only the order, so assigning a role can never make the spec
+     invalid. */
+  x_layers?: string[]
+  /* Variables joined in as FACTORS rather than plotted — a subject-level
+     Condition holding stim/sham. They take a role like any other factor. */
+  factor_variables?: string[]
+  /* Factors derived by bucketing another factor's levels (session -> Phase). */
+  level_groups?: LevelGroup[]
+  /* Row filters: the schema-key picker and the Filters section both write
+     these. A cleared picker removes its entry entirely rather than storing
+     every level. */
+  filters?: Filter[]
   /* One entry per row of the Variants section. One row is a pin (the figure
      shows that variant); several are a comparison, and a `Variant` factor
      appears in Factors carrying whichever role the user gives it. */
@@ -194,15 +284,46 @@ interface DescribeResponse {
   table?: TableInfo
   spec?: Spec
   capabilities?: Capabilities
+  /** Variables that can supply an x axis (joined). */
   joinable_with?: string[]
+  /** Variables that can be plotted as another series (stacked) — same shape,
+   *  same schema level. What the Variants rows' variable dropdown offers. */
+  stackable_with?: string[]
+  /** Why each OTHER variable is not offered, `{name: reason}`. The variant
+   *  picker draws every variable node on the canvas, so one it cannot offer has
+   *  to say why in place — an un-clickable node with no explanation is
+   *  indistinguishable from a broken dialog. */
+  stackable_refused?: Record<string, string>
+  /** Variables usable as a grouping FACTOR — recorded at or above this
+   *  variable's level, so each row gets exactly one of their values. */
+  groupable_with?: string[]
 }
 
 interface FigurePayload {
+  /** Position in the whole fan-out — not in `figures`, which holds one entry
+   *  while the navigator is showing a single figure. */
+  index: number
   key: Record<string, unknown>
   label: string
   figure: { data: unknown[]; layout: Record<string, unknown> }
   row_count: number
   downsampled_from: number | null
+}
+
+/** What `plot_resolve` returns. The fan-out is described in full (labels,
+ *  count) while only the selected figure carries a payload — a 1-D measure
+ *  across thirty subjects is megabytes per figure. */
+interface ResolveResponse {
+  ok: boolean
+  error: string | null
+  figures: FigurePayload[]
+  figure_labels: string[]
+  figure_count: number
+  figure_index: number
+  /** Notes about the FIGURE SET: schema keys promoted to ITERATE because a
+   *  nested key iterates. Never silently — a user who asked for one figure per
+   *  trial and got one per subject-and-trial would think it was broken. */
+  notes: string[]
 }
 
 interface Props {
@@ -230,6 +351,13 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   const [spec, setSpec] = useState<Spec | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
   const [figures, setFigures] = useState<FigurePayload[]>([])
+  // Which figure of the ITERATE fan-out is on screen. The fan-out runs in
+  // schema order (outermost key most significant), so stepping past subject
+  // 1's last trial lands on subject 2's first — the backend orders it, this is
+  // just a cursor into that list.
+  const [figureIndex, setFigureIndex] = useState(0)
+  const [figureLabels, setFigureLabels] = useState<string[]>([])
+  const [fanoutNotes, setFanoutNotes] = useState<string[]>([])
   const [specError, setSpecError] = useState('')
   const [loadError, setLoadError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -240,6 +368,9 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   const [controlsHidden, setControlsHidden] = useState(false)
   // Index of the variant row whose DAG popup is open, or null.
   const [variantEditor, setVariantEditor] = useState<number | null>(null)
+  // "+ Add variant" is a two-step pick, not an immediate append — see
+  // addVariantFromPicker for why the row is created on apply instead.
+  const [addingVariant, setAddingVariant] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const [canvasHeight, setCanvasHeight] = useState(0)
   const observerRef = useRef<ResizeObserver | null>(null)
@@ -286,32 +417,151 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     return () => { cancelled = true }
   }, [variable, sourceParams])
 
+  // Which factors fan the figure set out. Changing THAT is what invalidates a
+  // cursor into the fan-out; changing a colour or a plot kind does not, and
+  // resetting to figure 1 on every spec edit would make the panel unusable
+  // while browsing. A fan-out that merely got shorter is handled by the
+  // backend's clamp instead.
+  const iterateSignature = useMemo(
+    () =>
+      Object.entries(spec?.roles ?? {})
+        .filter(([, role]) => role === 'iterate')
+        .map(([name]) => name)
+        .sort()
+        .join('|'),
+    [spec?.roles]
+  )
+  useEffect(() => { setFigureIndex(0) }, [iterateSignature])
+
   // --- resolve on every spec change (debounced) ---------------------------
   const timer = useRef<number | null>(null)
+  // The spec the capability report was last fetched for. Stepping the
+  // navigator re-resolves (that is the point — only the shown figure is
+  // serialized) but cannot change which plot kinds are legal, so it must not
+  // cost a second RPC per arrow press.
+  const capsSpecRef = useRef<string | null>(null)
+  const specKey = useMemo(() => JSON.stringify(spec ?? null), [spec])
+  // Monotonic id of the newest request. A reply whose id is not the current one
+  // is stale and is DROPPED — see below for why that matters so much here.
+  const generation = useRef(0)
   useEffect(() => {
     if (!spec) return
     if (timer.current) window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => {
+      // Every spec change supersedes the one before it. Without this counter the
+      // panel had no notion of a stale reply at all: the 180 ms debounce only
+      // coalesces keystrokes, so a drag across role dropdowns fires a resolve
+      // every 180 ms while each one takes 4-16 s, and the backend runs each in
+      // its own thread (server.py spawns one per request and never cancels).
+      // Measured 2026-09-10: four to six full resolves in flight at once, each
+      // re-exploding ~4 million rows and slowing the others down, with resolve
+      // times climbing 4s -> 7.8s -> 10.1s -> 16.2s as they piled up — until one
+      // crossed the fixed 30 s transport timeout and surfaced as "Request
+      // plot_resolve timed out". Nothing had hung; the panel was competing with
+      // its own abandoned work.
+      //
+      // This cannot ABORT the in-flight work (the JSON-RPC transport has no
+      // cancel, and the server would have to learn to interrupt a running
+      // resolve). What it does is stop stale replies from overwriting fresh
+      // ones, and stop `busy` from being cleared by a request nobody is waiting
+      // for. The backend-side fix is the frame cache below, which makes each
+      // resolve cheap enough that overlap stops mattering.
+      const mine = ++generation.current
       setBusy(true)
+      const needCapabilities = capsSpecRef.current !== specKey
       Promise.all([
-        callBackend('plot_resolve', { spec, ...sourceParams }),
-        callBackend('plot_capabilities', { spec, ...sourceParams }).catch(() => null),
+        callBackend('plot_resolve', { spec, figure_index: figureIndex, ...sourceParams }),
+        needCapabilities
+          ? callBackend('plot_capabilities', { spec, ...sourceParams }).catch(() => null)
+          : Promise.resolve(null),
       ])
         .then(([resolved, caps]) => {
-          const result = resolved as { ok: boolean; error: string | null; figures: FigurePayload[] }
+          if (mine !== generation.current) return
+          const result = resolved as ResolveResponse
           setSpecError(result.ok ? '' : (result.error ?? 'Could not resolve this plot.'))
           setFigures(result.figures ?? [])
-          if (caps) setCapabilities(caps as Capabilities)
+          setFigureLabels(result.figure_labels ?? [])
+          setFanoutNotes(result.notes ?? [])
+          // Adopt the index the backend actually rendered. It clamps a stale
+          // cursor against a fan-out that shrank, and the arrows must never
+          // disagree with the figure on screen. React bails out when the value
+          // is unchanged, so this cannot loop.
+          if (typeof result.figure_index === 'number') setFigureIndex(result.figure_index)
+          if (caps) {
+            setCapabilities(caps as Capabilities)
+            capsSpecRef.current = specKey
+          }
         })
-        .catch(err => setSpecError((err as Error).message))
-        .finally(() => setBusy(false))
+        .catch(err => {
+          if (mine !== generation.current) return
+          setSpecError((err as Error).message)
+        })
+        .finally(() => {
+          // Only the newest request may say the panel is idle. A superseded one
+          // finishing late would otherwise clear the spinner while the resolve
+          // the user is actually waiting for is still running.
+          if (mine === generation.current) setBusy(false)
+        })
     }, 180)
     return () => { if (timer.current) window.clearTimeout(timer.current) }
-  }, [spec, sourceParams])
+  }, [spec, specKey, figureIndex, sourceParams])
+
+  // --- figure navigation --------------------------------------------------
+  const figureCount = figureLabels.length
+  const stepFigure = useCallback(
+    (delta: number) =>
+      setFigureIndex(current =>
+        Math.max(0, Math.min(current + delta, Math.max(0, figureCount - 1)))
+      ),
+    [figureCount]
+  )
+
+  useEffect(() => {
+    if (figureCount < 2) return
+    const onKey = (event: KeyboardEvent) => {
+      // Never steal the arrows from a field the user is typing in.
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+      if (event.key === 'ArrowRight') stepFigure(1)
+      else if (event.key === 'ArrowLeft') stepFigure(-1)
+      else return
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [figureCount, stepFigure])
 
   // --- spec edits ---------------------------------------------------------
   const setRole = useCallback((factor: string, role: Role) => {
-    setSpec(prev => (prev ? { ...prev, roles: { ...prev.roles, [factor]: role } } : prev))
+    setSpec(prev => {
+      if (!prev) return prev
+      const roles = { ...prev.roles, [factor]: role }
+      // Keep the x order in step with membership: a factor newly on x joins the
+      // end of the nesting, one leaving drops out. The backend reconciles these
+      // anyway (`ordered_x_layers`), so this only keeps the control honest.
+      const current = prev.x_layers ?? []
+      const x_layers =
+        role === 'x'
+          ? current.includes(factor)
+            ? current
+            : [...current, factor]
+          : current.filter(name => name !== factor)
+      return { ...prev, roles, x_layers }
+    })
+  }, [])
+
+  /** Move an x layer one step outward (-1) or inward (+1). */
+  const moveXLayer = useCallback((factor: string, delta: number) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const layers = [...(prev.x_layers ?? [])]
+      const from = layers.indexOf(factor)
+      const to = from + delta
+      if (from < 0 || to < 0 || to >= layers.length) return prev
+      layers.splice(to, 0, ...layers.splice(from, 1))
+      return { ...prev, x_layers: layers }
+    })
   }, [])
 
   const setKind = useCallback((kind: string) => {
@@ -349,21 +599,152 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     []
   )
 
+  /**
+   * Keep only `levels` of `column`, or drop the filter when `levels` is null.
+   *
+   * "Every level selected" is stored as NO filter rather than as a list of all
+   * of them: a list would freeze today's levels into the spec, and the figure
+   * would silently stop showing subject 13 the day it arrives.
+   */
+  const setLevelFilter = useCallback(
+    (column: string, levels: (string | number)[] | null) => {
+      setSpec(prev => {
+        if (!prev) return prev
+        const others = (prev.filters ?? []).filter(f => f.column !== column)
+        const filters = levels === null ? others : [...others, { column, include: levels }]
+        return { ...prev, filters }
+      })
+    },
+    []
+  )
+
+  /** Numeric bounds on a measure. Either end may be null (open). */
+  const setRangeFilter = useCallback(
+    (column: string, minimum: number | null, maximum: number | null) => {
+      setSpec(prev => {
+        if (!prev) return prev
+        const others = (prev.filters ?? []).filter(f => f.column !== column)
+        if (minimum === null && maximum === null) return { ...prev, filters: others }
+        const filter: Filter = { column }
+        if (minimum !== null) filter.minimum = minimum
+        if (maximum !== null) filter.maximum = maximum
+        return { ...prev, filters: [...others, filter] }
+      })
+    },
+    []
+  )
+
+  /** Join a variable in as a factor, or drop it again. */
+  const toggleFactorVariable = useCallback((name: string, on: boolean) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const current = prev.factor_variables ?? []
+      return {
+        ...prev,
+        factor_variables: on
+          ? [...current.filter(n => n !== name), name]
+          : current.filter(n => n !== name),
+        // A role assigned to a factor that is going away would be an unknown
+        // factor to `validate`, which refuses the whole figure.
+        roles: on
+          ? prev.roles
+          : Object.fromEntries(
+              Object.entries(prev.roles).filter(([factor]) => factor !== name)
+            ),
+      }
+    })
+  }, [])
+
+  const addLevelGroup = useCallback((source: string, levels: (string | number)[]) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      // Every level starts in its own bucket, named after itself: the figure is
+      // unchanged until the user actually merges two of them, so adding a group
+      // can never silently redraw the plot.
+      const mapping: Record<string, string> = {}
+      levels.forEach(level => { mapping[String(level)] = String(level) })
+      const group: LevelGroup = {
+        name: `${source} group`,
+        source,
+        mapping,
+        unmatched: null,
+      }
+      return { ...prev, level_groups: [...(prev.level_groups ?? []), group] }
+    })
+  }, [])
+
+  const editLevelGroup = useCallback((index: number, patch: Partial<LevelGroup>) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const groups = [...(prev.level_groups ?? [])]
+      if (!groups[index]) return prev
+      groups[index] = { ...groups[index], ...patch }
+      return { ...prev, level_groups: groups }
+    })
+  }, [])
+
+  const removeLevelGroup = useCallback((index: number) => {
+    setSpec(prev =>
+      prev
+        ? {
+            ...prev,
+            level_groups: (prev.level_groups ?? []).filter((_, i) => i !== index),
+          }
+        : prev
+    )
+  }, [])
+
   /** Average across variant factors no row selected. The deliberate opt-in that
    *  `roles.validate` demands — pooling looks exactly like not pooling. */
   const setPooling = useCallback((pool: boolean) => {
     setSpec(prev => (prev ? { ...prev, variant_policy: pool ? 'pool' : 'facet' } : prev))
   }, [])
 
-  /** Add a row. Its selection starts empty — "all variants" — because the honest
-   *  starting point for a new comparison is everything, narrowed on the DAG. */
-  const addVariantSet = useCallback(() => {
-    setSpec(prev =>
-      prev
-        ? { ...prev, variant_sets: [...(prev.variant_sets ?? []), { name: null, selection: {} }] }
-        : prev
-    )
-  }, [])
+  /** Commit the row the "+ Add variant" picker built.
+   *
+   *  The row is created HERE, on apply — not by the "+" click. Clicking "+"
+   *  used to append an empty row immediately, which meant the list grew before
+   *  the user had said anything and a cancelled thought left "(not set)"
+   *  behind. Now "+" asks two questions (which variable, which variant) and
+   *  nothing enters the spec until both are answered.
+   *
+   *  The row arrives already pinned, because the picker seeded its selection
+   *  from `variants.default_selection` — so a new row is ONE variant, the same
+   *  way the panel opened on one. An empty selection would mean "every variant
+   *  of this variable", which is never what clicking "+" meant. */
+  const addVariantFromPicker = useCallback(
+    (next: {
+      selection: Record<string, unknown>
+      name: string
+      variable?: string
+    }) => {
+      setSpec(prev => {
+        if (!prev) return prev
+        const rows = prev.variant_sets ?? []
+        // Adding the FIRST row to an empty list would pin the figure to that
+        // row alone — so the variable already being plotted becomes an explicit
+        // row first. One click then reads as "RawEMG, and…" instead of silently
+        // replacing the figure with whatever the new row ends up naming.
+        const seeded =
+          rows.length === 0
+            ? [{ name: null, selection: {}, variable: prev.measures[0] }]
+            : rows
+        return {
+          ...prev,
+          variant_sets: [
+            ...seeded,
+            {
+              name: next.name || null,
+              selection: next.selection,
+              variable: next.variable ?? null,
+            },
+          ],
+        }
+      })
+      setAddingVariant(false)
+    },
+    []
+  )
 
   const removeVariantSet = useCallback((index: number) => {
     setSpec(prev =>
@@ -372,6 +753,27 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
         : prev
     )
   }, [])
+
+  /** Adopt a combination the data actually holds, from the empty-state panel.
+   *
+   *  Replaces the selection outright rather than merging into it. The pin that
+   *  produced the empty figure is exactly what has to go, and merging would
+   *  keep the latest flag beside an explicit version — rows that are
+   *  simultaneously the newest and an old version, which is nothing at all.
+   *  Same rule as the popup's `withoutLatestFlag`: an explicit choice
+   *  supersedes the shortcut. */
+  const adoptCombination = useCallback(
+    (index: number, combination: Record<string, string>) => {
+      setSpec(prev => {
+        if (!prev) return prev
+        const sets = [...(prev.variant_sets ?? [])]
+        if (!sets[index]) return prev
+        sets[index] = { ...sets[index], selection: { ...combination } }
+        return { ...prev, variant_sets: sets }
+      })
+    },
+    []
+  )
 
   const editVariantSet = useCallback((index: number, patch: Partial<VariantSet>) => {
     setSpec(prev => {
@@ -388,6 +790,42 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   // both a `Code:` column and the `Variant` factor that consumed it.
   const factors = capabilities?.factors ?? describe?.table?.factors ?? []
 
+  // Schema keys get their own section: "plot subject 01, trial 2" is a
+  // different question from "narrow this factor", asked far more often, and the
+  // keys are the same few every time. Everything else filterable — a struct's
+  // fields, a joined group variable — lands in Filters. Variant factors are
+  // excluded: selecting variants is the Variants section's job, and offering it
+  // twice is how the two answers start disagreeing.
+  const schemaKeys = useMemo(
+    () => factors.filter(f => f.is_schema_key),
+    [factors]
+  )
+  const otherFilterable = useMemo(
+    () => factors.filter(f => !f.is_schema_key && !f.is_variant),
+    [factors]
+  )
+  // Membership from roles, order from x_layers — the same reconciliation the
+  // backend does, so the control shows what the figure will draw.
+  const xLayers = useMemo(() => {
+    const holders = Object.entries(spec?.roles ?? {})
+      .filter(([, role]) => role === 'x')
+      .map(([name]) => name)
+    const ordered = (spec?.x_layers ?? []).filter(name => holders.includes(name))
+    return [...ordered, ...holders.filter(name => !ordered.includes(name))]
+  }, [spec?.roles, spec?.x_layers])
+
+  const groupable = describe?.groupable_with ?? []
+  // Only real factors can be bucketed — not a factor this spec already derived
+  // (bucketing a bucket answers nothing) and not a variant axis.
+  const derivedNames = useMemo(
+    () => new Set((spec?.level_groups ?? []).map(g => g.name)),
+    [spec?.level_groups]
+  )
+  const bucketable = useMemo(
+    () => factors.filter(f => !f.is_variant && !derivedNames.has(f.name)),
+    [factors, derivedNames]
+  )
+
   // Rows come from the SPEC, annotations from the backend. The spec is the
   // source of truth and updates on the keystroke; `capabilities` is a debounced
   // echo, so rendering rows from it would make "+ Add variant" appear to do
@@ -400,17 +838,68 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
         return {
           explicitName: set.name,
           autoLabel: info?.auto_label ?? '(not set)',
-          defined: Object.keys(set.selection ?? {}).length > 0,
+          // Naming a variable is saying something, so such a row is defined
+          // even with nothing selected: "also plot FilteredEMG, all of it".
+          defined:
+            Object.keys(set.selection ?? {}).length > 0 || Boolean(set.variable),
           rowCount: info?.row_count,
           spans: info?.spans ?? {},
+          variable: set.variable ?? null,
         }
       }),
     [spec?.variant_sets, capabilities]
   )
-  // The section exists whenever this source has variants at all — a project
-  // with none never sees it, and one that does always has a row to edit.
+  // --- what the canvas has to report about the pin ------------------------
+  // Both of these come off `capabilities.variants.sets`, measured by the same
+  // mask the renderer applied, so the figure and the message about it cannot
+  // disagree.
+  // The index is carried, not looked up later: `variant_summary` reports one
+  // entry per `spec.variant_sets` IN ORDER, so position is the only reliable
+  // identity a row has — two rows can share a name, and a name can change while
+  // a debounced capability report is still in flight.
+  const definedSets = useMemo(
+    () =>
+      (capabilities?.variants?.sets ?? [])
+        .map((set, index) => ({ set, index }))
+        .filter(({ set }) => set.defined),
+    [capabilities]
+  )
+
+  // Rows whose data was built by more than one version of some function. This
+  // is now reported for the ordinary per-location "latest" state too (the
+  // 2026-09-11 reversal), which is only tolerable because the message names
+  // WHICH locations hold WHICH version — see SpanInfo.
+  const spanningSets = useMemo(
+    () => definedSets.filter(({ set }) => Object.keys(set.spans ?? {}).length > 0),
+    [definedSets]
+  )
+
+  // The figure is empty AND the variants are why. Not "some row is empty": with
+  // two rows and one of them matching, the figure is drawn and the per-row "no
+  // data" tag is the right weight. Replacing a real figure with an explanation
+  // would be worse than the tag.
+  const emptyPin = useMemo(
+    () =>
+      definedSets.length > 0 &&
+      definedSets.every(({ set }) => set.row_count === 0)
+        ? definedSets
+        : [],
+    [definedSets]
+  )
+
+  const stackable = describe?.stackable_with ?? []
+  // The section is reachable whenever there is anything for it to say: this
+  // source has pipeline variants, the spec already holds rows, OR another
+  // variable could be plotted alongside this one.
+  //
+  // That last clause was missing, and it made the whole multi-variable feature
+  // unreachable: a project that never edited a function and swept no parameters
+  // has no variant factors and no default row, so the section stayed hidden and
+  // there was no way to add the second series.
   const hasVariants = Boolean(
-    (capabilities?.variants?.factors ?? []).length > 0 || variantRows.length > 0
+    (capabilities?.variants?.factors ?? []).length > 0 ||
+      variantRows.length > 0 ||
+      stackable.length > 0
   )
   const summarizing = spec?.kind === 'bar' || spec?.kind === 'band'
   const faceted = Object.values(spec?.roles ?? {}).includes('facet')
@@ -496,9 +985,12 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   }
 
   const gridRows = (figures[0]?.figure?.layout?.meta as { rows?: number } | undefined)?.rows ?? 1
+  // The navigator strip and any fan-out note sit above the figure and take
+  // their height out of it.
+  const chrome = (figureCount > 1 ? 34 : 0) + fanoutNotes.length * 30
   const available = figures.length > 1
-    ? Math.round(canvasHeight / 2) - 28
-    : canvasHeight - 16
+    ? Math.round((canvasHeight - chrome) / 2) - 28
+    : canvasHeight - chrome - 16
   // Fill the pane, but never squeeze a tall facet grid: each row needs room for
   // its own tick labels and the next row's title.
   const figureHeight = Math.max(320, gridRows * 240, available)
@@ -524,15 +1016,21 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
           {hasVariants && (
             <Section title="Variants">
               <div style={styles.hint}>
-                Each row is one variant of the pipeline. Two or more become a
-                factor you can colour or facet by.
+                Each row is one variant: a variable, narrowed to one version of
+                the pipeline that produced it. Two or more become a factor you
+                can colour or facet by.
               </div>
               <VariantRows
                 rows={variantRows}
+                primary={spec?.measures?.[0] ?? title}
+                stackable={stackable}
                 onRename={(index, name) => editVariantSet(index, { name })}
+                onSetVariable={(index, variable) =>
+                  editVariantSet(index, { variable })
+                }
                 onEdit={index => setVariantEditor(index)}
                 onRemove={removeVariantSet}
-                onAdd={addVariantSet}
+                onAdd={() => setAddingVariant(true)}
               />
               <label style={styles.poolRow} title="Average across variant factors no row selected — results from different pipeline variants are combined">
                 <input
@@ -544,6 +1042,73 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
                 Pool unselected variants
               </label>
               <VariantReadout summary={capabilities?.variants} />
+            </Section>
+          )}
+
+          {schemaKeys.length > 0 && (
+            <Section title="Schema keys">
+              <div style={styles.hint}>
+                Which records to plot. Everything is included until you say
+                otherwise.
+              </div>
+              {schemaKeys.map(factor => (
+                <LevelPicker
+                  key={factor.name}
+                  factor={factor}
+                  onChange={levels => setLevelFilter(factor.name, levels)}
+                />
+              ))}
+            </Section>
+          )}
+
+          <Section title="Filters">
+            <div style={styles.hint}>
+              Narrow what is drawn without changing what anything means.
+            </div>
+            {otherFilterable.map(factor => (
+              <LevelPicker
+                key={factor.name}
+                factor={factor}
+                onChange={levels => setLevelFilter(factor.name, levels)}
+              />
+            ))}
+            {spec && capabilities?.shape === 'scalar' && (
+              <RangeFilter
+                measure={spec.measures[0]}
+                filter={(spec.filters ?? []).find(f => f.column === spec.measures[0])}
+                onChange={(minimum, maximum) =>
+                  setRangeFilter(spec.measures[0], minimum, maximum)
+                }
+              />
+            )}
+          </Section>
+
+          {(groupable.length > 0 || (spec?.level_groups ?? []).length > 0) && (
+            <Section title="Groups">
+              <div style={styles.hint}>
+                Grouping the data already records, and buckets you define. Both
+                become factors you can colour or facet by.
+              </div>
+              {groupable.map(name => (
+                <label key={name} style={styles.kindRow}>
+                  <input
+                    type="checkbox"
+                    checked={(spec?.factor_variables ?? []).includes(name)}
+                    onChange={e => toggleFactorVariable(name, e.target.checked)}
+                    style={{ marginRight: 6 }}
+                  />
+                  {name}
+                </label>
+              ))}
+              {(spec?.level_groups ?? []).map((group, index) => (
+                <LevelGroupEditor
+                  key={index}
+                  group={group}
+                  onEdit={patch => editLevelGroup(index, patch)}
+                  onRemove={() => removeLevelGroup(index)}
+                />
+              ))}
+              <BucketAdder factors={bucketable} onAdd={addLevelGroup} />
             </Section>
           )}
 
@@ -571,6 +1136,47 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
               </label>
             ))}
           </Section>
+
+          {xLayers.length > 1 && (
+            <Section title="X grouping">
+              <div style={styles.hint}>
+                Outermost first: the top factor's groups sit side by side, each
+                split by the one below it.
+              </div>
+              {xLayers.map((name, index) => (
+                <div key={name} style={styles.xLayerRow}>
+                  <span style={styles.xLayerDepth}>{index + 1}</span>
+                  <span style={styles.factorName}>
+                    {factors.find(f => f.name === name)?.display ?? name}
+                  </span>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.navButton,
+                      ...(index === 0 ? styles.navButtonOff : null),
+                    }}
+                    disabled={index === 0}
+                    onClick={() => moveXLayer(name, -1)}
+                    title="Move outward"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.navButton,
+                      ...(index === xLayers.length - 1 ? styles.navButtonOff : null),
+                    }}
+                    disabled={index === xLayers.length - 1}
+                    onClick={() => moveXLayer(name, 1)}
+                    title="Move inward"
+                  >
+                    ↓
+                  </button>
+                </div>
+              ))}
+            </Section>
+          )}
 
           <Section title="Plot type">
             {(capabilities?.kinds ?? []).map(info => (
@@ -687,8 +1293,94 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     >
       <div style={styles.canvas} ref={canvasRef}>
         {specError && <div style={styles.specError}>{specError}</div>}
+        {/* Say what the fan-out did that the spec did not literally ask for —
+            iterating a nested key iterates its ancestors, so the figure count
+            is larger than "one per trial" would suggest. */}
+        {fanoutNotes.map((note, index) => (
+          <div key={index} style={styles.layoutNote}>{note}</div>
+        ))}
+        {figureCount > 1 && (
+          <FigureNavigator
+            index={figureIndex}
+            count={figureCount}
+            label={figureLabels[figureIndex] ?? ''}
+            onStep={stepFigure}
+          />
+        )}
+        {/* The figure IS drawn, and its points were computed by more than one
+            version of the same function. On the canvas rather than only on the
+            sidebar row because that was the explicit requirement: a tag in a
+            section the user may have collapsed is not prominent.
+            Informational, not an error — per-location "latest" legitimately
+            produces this, and it is the figure that cannot show it. The
+            sentence names the locations so it can be acted on or dismissed at a
+            glance.
+            Deliberately says nothing about the pipeline canvas: a partially
+            re-run PathInput loader reads GREEN there while producing exactly
+            this state, so pointing at the canvas would mislead in the one case
+            where this banner is the only signal
+            (.claude/plan-pathinput-loader-staleness-gap.md). */}
+        {spanningSets.map(({ set, index }) => (
+          <div key={`span-${index}`} style={styles.spanBanner}>
+            <strong>{set.name}</strong> mixes{' '}
+            {Object.values(set.spans).map(describeSpan).join(' | ')}. Pin a
+            version on the row, or split it into one variant per version.
+          </div>
+        ))}
         {busy && <div style={styles.note}>Resolving…</div>}
-        {!specError && figures.length === 0 && !busy && (
+        {/* Why the figure is empty, where the figure would have been.
+            Reachable by design: the opening pin is applied blindly (latest
+            code, first parameter value) because a rule that quietly picks a
+            different value to avoid an empty figure is no longer predictable.
+            The cost of that choice is paid here — the panel has to name what
+            was attempted AND what exists, or the controls look correctly filled
+            in and simply broken. */}
+        {!specError && !busy && emptyPin.length > 0 && (
+          <div style={styles.emptyPin}>
+            <div style={styles.emptyPinTitle}>
+              No records match {emptyPin.length > 1 ? 'these variants' : 'this variant'}.
+            </div>
+            {emptyPin.map(({ set, index }) => (
+              <div key={index} style={styles.emptyPinBlock}>
+                <div style={styles.emptyPinAttempt}>
+                  <strong>{set.name}</strong> is asking for{' '}
+                  <code style={styles.emptyPinCode}>
+                    {Object.entries(set.resolved ?? {})
+                      .map(([key, value]) => `${key}=${String(value)}`)
+                      .join(', ') || 'everything'}
+                  </code>
+                </div>
+                {set.available.length > 0 ? (
+                  <>
+                    <div style={styles.emptyPinHint}>
+                      These combinations have records — click one to plot it:
+                    </div>
+                    <div style={styles.emptyPinOptions}>
+                      {set.available.map((combination, position) => (
+                        <button
+                          key={position}
+                          type="button"
+                          style={styles.emptyPinOption}
+                          onClick={() => adoptCombination(index, combination)}
+                        >
+                          {Object.entries(combination)
+                            .map(([key, value]) => `${key}=${value}`)
+                            .join(', ')}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div style={styles.emptyPinHint}>
+                    This variable has no records at all yet — run the pipeline
+                    that produces it.
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {!specError && figures.length === 0 && !busy && emptyPin.length === 0 && (
           <div style={styles.note}>Nothing to plot with these settings.</div>
         )}
         {figures.map((figure, index) => (
@@ -699,7 +1391,10 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
               ...(figures.length === 1 ? { height: '100%' } : null),
             }}
           >
-            {figure.label && <div style={styles.figureLabel}>{figure.label}</div>}
+            {/* The navigator already names the figure it is showing. */}
+            {figure.label && figureCount < 2 && (
+              <div style={styles.figureLabel}>{figure.label}</div>
+            )}
             {figure.downsampled_from && (
               <div style={styles.downsampleNote}>
                 Showing a reduced view of {figure.downsampled_from.toLocaleString()} points —
@@ -737,7 +1432,12 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
 
       {variantEditor !== null && !csvPath && (
         <VariantDagPopup
-          variable={describe?.variable ?? variable}
+          // The ROW's variable, not the panel's: a row plotting RawEMG must
+          // edit RawEMG's axes, or the popup offers versions from a variable
+          // this row does not draw.
+          variable={
+            variantRows[variantEditor]?.variable ?? describe?.variable ?? variable
+          }
           selection={(spec?.variant_sets?.[variantEditor]?.selection ?? {}) as Record<string, unknown>}
           name={variantRows[variantEditor]?.explicitName ?? ''}
           placeholder={variantRows[variantEditor]?.autoLabel ?? ''}
@@ -748,6 +1448,22 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
             editVariantSet(variantEditor, { selection, name: name || null })
             setVariantEditor(null)
           }}
+        />
+      )}
+
+      {/* "+ Add variant": pick a variable on the canvas, then a variant of it.
+          Any plottable variable, not only the one being plotted — that is what
+          makes overlaying RawEMG on FilteredEMG reachable at all. */}
+      {addingVariant && !csvPath && (
+        <VariantDagPopup
+          pick
+          variable={describe?.variable ?? variable}
+          pickable={stackable}
+          refusals={describe?.stackable_refused ?? {}}
+          selection={{}}
+          name=""
+          onCancel={() => setAddingVariant(false)}
+          onApply={addVariantFromPicker}
         />
       )}
     </Shell>
@@ -920,13 +1636,21 @@ interface VariantRow {
   defined: boolean
   /** Rows it contributes, once the backend has measured it. */
   rowCount?: number
-  /** Code axes it leaves open and disagrees on, `{column: version count}`. */
-  spans: Record<string, number>
+  /** Which variable this row draws from; null means the plot's primary measure. */
+  variable: string | null
+  /** Code axes it leaves open and disagrees on, with which locations hold
+   *  which version. See `SpanInfo`. */
+  spans: Record<string, SpanInfo>
 }
 
 interface VariantRowsProps {
   rows: VariantRow[]
+  /** The plot's primary measure — what a row with no variable draws from. */
+  primary: string
+  /** Other variables a row may draw from (same shape, same schema level). */
+  stackable: string[]
   onRename: (index: number, name: string | null) => void
+  onSetVariable: (index: number, variable: string | null) => void
   onEdit: (index: number) => void
   onRemove: (index: number) => void
   onAdd: () => void
@@ -945,7 +1669,16 @@ interface VariantRowsProps {
  * coordinates are pipeline nodes, and the pipeline canvas is already the
  * picture of that space — see VariantDagPopup.
  */
-function VariantRows({ rows, onRename, onEdit, onRemove, onAdd }: VariantRowsProps) {
+function VariantRows({
+  rows,
+  primary,
+  stackable,
+  onRename,
+  onSetVariable,
+  onEdit,
+  onRemove,
+  onAdd,
+}: VariantRowsProps) {
   return (
     <div style={styles.variantPicker}>
       {rows.map((row, index) => (
@@ -961,6 +1694,38 @@ function VariantRows({ rows, onRename, onEdit, onRemove, onAdd }: VariantRowsPro
                 : 'The name this variant carries in the figure'
             }
           />
+          {/* Which variable this row draws from — ALWAYS shown, as a dropdown
+              when there is something to switch to and as a plain label when
+              there is not.
+              It used to appear only when another variable could be stacked, so
+              the common single-variable case rendered a row that never said what
+              it was plotting. With rows now able to name different variables,
+              a row that does not state its own is unreadable: two rows called
+              "current" and "v1" say nothing about which is EMG and which is
+              force. The name is the subject of the row; the selection is only
+              what narrows it. */}
+          {stackable.length > 0 ? (
+            <select
+              value={row.variable ?? ''}
+              onChange={e => onSetVariable(index, e.target.value || null)}
+              style={styles.variantVariableSelect}
+              title="The variable this variant plots"
+            >
+              <option value="">{primary}</option>
+              {stackable.map(name => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span
+              style={styles.variantVariableLabel}
+              title="The variable this variant plots — nothing else here can be plotted alongside it"
+            >
+              {row.variable ?? primary}
+            </span>
+          )}
           <button
             type="button"
             style={styles.variantSelectButton}
@@ -983,7 +1748,7 @@ function VariantRows({ rows, onRename, onEdit, onRemove, onAdd }: VariantRowsPro
           {/* An unfilled row is inert, not broken: it must not wear the same
               warning as a selection that genuinely matched nothing. */}
           {!row.defined && (
-            <span style={styles.variantUnsetTag} title="Nothing selected yet — this variant does not affect the figure. Click Select.">
+            <span style={styles.variantUnsetTag} title="Nothing chosen yet — this row does not affect the figure. Pick a variable, or Select a variant on the graph.">
               not set
             </span>
           )}
@@ -996,13 +1761,14 @@ function VariantRows({ rows, onRename, onEdit, onRemove, onAdd }: VariantRowsPro
             <span
               style={styles.variantEmptyTag}
               title={
-                `This variant pools ${Object.entries(row.spans)
-                  .map(([column, n]) => `${n} versions of ${column}`)
-                  .join(', ')} — its rows were built by more than one version ` +
-                `of that code. Pin a version on it, or split it into one variant per version.`
+                `This variant's rows were built by more than one version of the ` +
+                `code: ${Object.values(row.spans)
+                  .map(describeSpan)
+                  .join(' | ')}. Pin a version on it, or split it into one ` +
+                `variant per version.`
               }
             >
-              pools {Object.values(row.spans)[0]} versions
+              pools {Object.keys(Object.values(row.spans)[0].versions).length} versions
             </span>
           )}
         </div>
@@ -1011,9 +1777,9 @@ function VariantRows({ rows, onRename, onEdit, onRemove, onAdd }: VariantRowsPro
         type="button"
         style={styles.variantAdd}
         onClick={onAdd}
-        title="Compare against another variant"
+        title="Plot another variable, or another variant of this one, alongside"
       >
-        + Add variant
+        + Add series
       </button>
     </div>
   )
@@ -1037,6 +1803,267 @@ function VariantReadout({ summary }: { summary?: VariantSummary }) {
         : `${selected_combinations} of ${total_combinations} variant combination${
             total_combinations === 1 ? '' : 's'
           }`}
+    </div>
+  )
+}
+
+/**
+ * Step through an ITERATE fan-out one figure at a time.
+ *
+ * The order is the backend's (`scistackplot.roles.fanout_keys`): schema keys
+ * outermost-first, each in its declared level order. So with a `[subject,
+ * trial]` schema this walks subject 1's trials, then rolls over to subject 2's
+ * first trial — the arrows are a plain cursor, and none of that ordering is
+ * decided here.
+ */
+function FigureNavigator({
+  index,
+  count,
+  label,
+  onStep,
+}: {
+  index: number
+  count: number
+  label: string
+  onStep: (delta: number) => void
+}) {
+  return (
+    <div style={styles.navigator}>
+      <button
+        type="button"
+        style={{ ...styles.navButton, ...(index === 0 ? styles.navButtonOff : null) }}
+        onClick={() => onStep(-1)}
+        disabled={index === 0}
+        title="Previous figure (←)"
+      >
+        ◀
+      </button>
+      <span style={styles.navLabel}>{label || '(unlabelled)'}</span>
+      <span style={styles.navCount}>
+        {index + 1} of {count}
+      </span>
+      <button
+        type="button"
+        style={{
+          ...styles.navButton,
+          ...(index >= count - 1 ? styles.navButtonOff : null),
+        }}
+        onClick={() => onStep(1)}
+        disabled={index >= count - 1}
+        title="Next figure (→)"
+      >
+        ▶
+      </button>
+    </div>
+  )
+}
+
+/**
+ * One factor's levels, with a checkbox each and a "3 of 12" readout.
+ *
+ * Collapsed by default: a schema key can have thirty levels, and the common
+ * case is not filtering at all. The count is the backend's — `selected` is
+ * measured through the same `apply_filters` the figure uses, so this can never
+ * claim a selection the figure disagrees with.
+ */
+function LevelPicker({
+  factor,
+  onChange,
+}: {
+  factor: FactorInfo
+  onChange: (levels: (string | number)[] | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const levels = factor.levels ?? []
+  const selected = factor.selected ?? levels
+  const chosen = new Set(selected.map(String))
+  const all = chosen.size === levels.length
+
+  const toggle = (level: string | number) => {
+    const next = new Set(chosen)
+    if (next.has(String(level))) next.delete(String(level))
+    else next.add(String(level))
+    // Back to everything selected means "no filter", not a list of all levels.
+    if (next.size === levels.length) onChange(null)
+    else onChange(levels.filter(l => next.has(String(l))))
+  }
+
+  return (
+    <div style={styles.levelPicker}>
+      <button
+        type="button"
+        style={styles.levelPickerHead}
+        onClick={() => setOpen(v => !v)}
+        title={`Choose which ${factor.display} values to plot`}
+      >
+        <span style={styles.factorName}>{factor.display}</span>
+        <span style={all ? styles.levelCount : styles.levelCountFiltered}>
+          {all ? `all ${levels.length}` : `${chosen.size} of ${levels.length}`}
+        </span>
+        <span style={styles.levelChevron}>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div style={styles.levelList}>
+          {levels.map(level => (
+            <label key={String(level)} style={styles.levelRow}>
+              <input
+                type="checkbox"
+                checked={chosen.has(String(level))}
+                onChange={() => toggle(level)}
+                style={{ marginRight: 6 }}
+              />
+              {String(level)}
+            </label>
+          ))}
+          {!all && (
+            <button type="button" style={styles.levelReset} onClick={() => onChange(null)}>
+              Select all
+            </button>
+          )}
+          {chosen.size === 0 && (
+            <div style={styles.levelEmpty}>
+              Nothing selected — the figure will be empty.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Sort one factor's levels into named buckets.
+ *
+ * A text box per level, prefilled with the level's own name: typing the same
+ * word into two of them merges those levels. That is the whole interaction —
+ * "pre and post1 are both baseline" is exactly what the user says, and nothing
+ * happens to the figure until they say it.
+ */
+function LevelGroupEditor({
+  group,
+  onEdit,
+  onRemove,
+}: {
+  group: LevelGroup
+  onEdit: (patch: Partial<LevelGroup>) => void
+  onRemove: () => void
+}) {
+  const [open, setOpen] = useState(true)
+  const buckets = Object.entries(group.mapping)
+  return (
+    <div style={styles.levelPicker}>
+      <div style={styles.variantSetRow}>
+        <input
+          value={group.name}
+          onChange={e => onEdit({ name: e.target.value })}
+          style={styles.variantNameInput}
+          title="The name this derived factor carries in the figure"
+        />
+        <button
+          type="button"
+          style={styles.variantSelectButton}
+          onClick={() => setOpen(v => !v)}
+          title={`Buckets of ${group.source}`}
+        >
+          {open ? '▾' : '▸'} {group.source}
+        </button>
+        <button type="button" style={styles.variantRemove} onClick={onRemove} title="Remove">
+          ✕
+        </button>
+      </div>
+      {open && (
+        <div style={styles.levelList}>
+          {buckets.map(([level, label]) => (
+            <div key={level} style={styles.bucketRow}>
+              <span style={styles.bucketLevel}>{level}</span>
+              <span style={styles.bucketArrow}>→</span>
+              <input
+                value={label}
+                onChange={e =>
+                  onEdit({ mapping: { ...group.mapping, [level]: e.target.value } })
+                }
+                style={styles.bucketInput}
+                placeholder="(drop)"
+              />
+            </div>
+          ))}
+          <label style={styles.levelRow} title="Levels with an empty bucket are dropped from the figure unless you name a catch-all">
+            <input
+              type="checkbox"
+              checked={group.unmatched !== null}
+              onChange={e => onEdit({ unmatched: e.target.checked ? 'other' : null })}
+              style={{ marginRight: 6 }}
+            />
+            Keep the rest as
+            <input
+              value={group.unmatched ?? ''}
+              disabled={group.unmatched === null}
+              onChange={e => onEdit({ unmatched: e.target.value })}
+              style={{ ...styles.bucketInput, marginLeft: 6 }}
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** "+ Add group" — pick which factor's levels to bucket. */
+function BucketAdder({
+  factors,
+  onAdd,
+}: {
+  factors: FactorInfo[]
+  onAdd: (source: string, levels: (string | number)[]) => void
+}) {
+  if (factors.length === 0) return null
+  return (
+    <select
+      value=""
+      style={styles.variantAdd}
+      onChange={e => {
+        const factor = factors.find(f => f.name === e.target.value)
+        if (factor) onAdd(factor.name, factor.levels)
+      }}
+    >
+      <option value="">+ Group levels of…</option>
+      {factors.map(factor => (
+        <option key={factor.name} value={factor.name}>
+          {factor.display}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+/** Numeric bounds on the measure: the outlier trim, not a level picker. */
+function RangeFilter({
+  measure,
+  filter,
+  onChange,
+}: {
+  measure: string
+  filter?: Filter
+  onChange: (minimum: number | null, maximum: number | null) => void
+}) {
+  const parse = (text: string) => (text.trim() === '' ? null : Number(text))
+  return (
+    <div style={styles.rangeRow}>
+      <span style={styles.factorName}>{measure}</span>
+      <input
+        type="number"
+        value={filter?.minimum ?? ''}
+        placeholder="min"
+        style={styles.rangeInput}
+        onChange={e => onChange(parse(e.target.value), filter?.maximum ?? null)}
+      />
+      <input
+        type="number"
+        value={filter?.maximum ?? ''}
+        placeholder="max"
+        style={styles.rangeInput}
+        onChange={e => onChange(filter?.minimum ?? null, parse(e.target.value))}
+      />
     </div>
   )
 }
@@ -1242,6 +2269,109 @@ const styles: Record<string, React.CSSProperties> = {
   figureBlock: { marginBottom: 14 },
   figureLabel: {
     fontSize: 11, fontFamily: 'monospace', color: '#aaa', marginBottom: 2,
+  },
+  navigator: {
+    display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6,
+    padding: '3px 6px', background: '#16162a', border: '1px solid #2c2c4a',
+    borderRadius: 4,
+  },
+  navButton: {
+    background: '#22223c', color: '#ddd', border: '1px solid #3a3a5a',
+    borderRadius: 3, cursor: 'pointer', fontSize: 12, lineHeight: 1,
+    padding: '3px 8px',
+  },
+  navButtonOff: { opacity: 0.35, cursor: 'default' },
+  navLabel: {
+    flex: 1, fontSize: 11, fontFamily: 'monospace', color: '#ccc',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  navCount: { fontSize: 11, color: '#888', whiteSpace: 'nowrap' },
+  levelPicker: { marginBottom: 4 },
+  levelPickerHead: {
+    display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+    background: 'transparent', border: 'none', color: '#ddd', cursor: 'pointer',
+    fontSize: 11, padding: '3px 0', textAlign: 'left',
+  },
+  levelCountFiltered: {
+    fontSize: 10, color: '#fbbf24', background: '#2a2416',
+    border: '1px solid #6b5a1a', borderRadius: 8, padding: '0 6px',
+  },
+  levelChevron: { fontSize: 9, color: '#777' },
+  levelList: {
+    maxHeight: 160, overflowY: 'auto', padding: '2px 0 4px 10px',
+    borderLeft: '1px solid #2c2c4a', marginLeft: 2,
+  },
+  levelRow: {
+    display: 'flex', alignItems: 'center', fontSize: 11, color: '#bbb',
+    padding: '1px 0', cursor: 'pointer',
+  },
+  levelReset: {
+    background: 'transparent', border: 'none', color: '#7aa2f7',
+    cursor: 'pointer', fontSize: 10, padding: '2px 0',
+  },
+  levelEmpty: { fontSize: 10, color: '#fbbf24', paddingTop: 2 },
+  xLayerRow: { display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0' },
+  xLayerDepth: {
+    fontSize: 9, color: '#888', background: '#22223c', borderRadius: 8,
+    padding: '0 5px', minWidth: 14, textAlign: 'center',
+  },
+  bucketRow: { display: 'flex', alignItems: 'center', gap: 4, padding: '1px 0' },
+  bucketLevel: {
+    fontSize: 10, color: '#bbb', fontFamily: 'monospace',
+    minWidth: 54, overflow: 'hidden', textOverflow: 'ellipsis',
+  },
+  bucketArrow: { fontSize: 9, color: '#666' },
+  bucketInput: {
+    flex: 1, minWidth: 40, background: '#1a1a2e', color: '#ddd',
+    border: '1px solid #3a3a5a', borderRadius: 3, fontSize: 10, padding: '1px 4px',
+  },
+  rangeRow: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 },
+  rangeInput: {
+    width: 62, background: '#1a1a2e', color: '#ddd',
+    border: '1px solid #3a3a5a', borderRadius: 3, fontSize: 10, padding: '2px 4px',
+  },
+  variantVariableSelect: {
+    background: '#1a1a2e', color: '#ddd', border: '1px solid #3a3a5a',
+    borderRadius: 3, fontSize: 10, padding: '2px 4px', maxWidth: 110,
+  },
+  // The same information as the dropdown, when there is nothing to switch to.
+  // Styled as text rather than as a disabled control: a greyed-out select
+  // invites clicking and then refuses, which is worse than a plain label.
+  variantVariableLabel: {
+    fontSize: 10, color: '#9a9ab8', fontFamily: 'monospace',
+    maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  // Informational blue, NOT the amber of specError/downsampleNote. Per-location
+  // "latest" legitimately produces a spanning figure; this is a statement of
+  // fact about what is drawn, not a warning that something broke. Colouring it
+  // like an error would train the user to dismiss the one message that says
+  // their subjects were computed by different code.
+  spanBanner: {
+    fontSize: 11, color: '#a9c7ff', background: '#161a2e',
+    border: '1px solid #2f4172', borderRadius: 4, padding: 8, marginBottom: 8,
+    lineHeight: 1.5,
+  },
+  emptyPin: {
+    fontSize: 11, color: '#ddd', background: '#16162a',
+    border: '1px solid #3a3a5a', borderRadius: 6, padding: 14, marginBottom: 8,
+    lineHeight: 1.6,
+  },
+  emptyPinTitle: { fontSize: 12, color: '#fff', marginBottom: 8 },
+  emptyPinBlock: { marginTop: 10 },
+  emptyPinAttempt: { color: '#bbb' },
+  emptyPinCode: {
+    fontFamily: 'monospace', fontSize: 10, color: '#fbbf24',
+    background: '#0e0e1a', borderRadius: 3, padding: '1px 4px',
+  },
+  emptyPinHint: { color: '#8a8aa8', fontSize: 10, marginTop: 6 },
+  emptyPinOptions: {
+    display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6,
+  },
+  emptyPinOption: {
+    background: '#1a1a2e', color: '#9d92f5', border: '1px solid #4c3a8a',
+    borderRadius: 4, cursor: 'pointer', fontSize: 10, padding: '3px 8px',
+    fontFamily: 'monospace',
   },
   downsampleNote: { fontSize: 10, color: '#fbbf24', marginBottom: 4 },
   codeOverlay: {

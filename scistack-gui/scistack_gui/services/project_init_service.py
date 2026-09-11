@@ -32,6 +32,7 @@ a project costs exactly the registry loads it always did.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -86,11 +87,23 @@ _M_STUB = """% Read-only entity declarations for this project.
 """
 
 
-def ensure_project_files(db_path: Path, project: "Path | None" = None) -> InitResult:
+def ensure_project_files(
+    db_path: Path,
+    project: "Path | None" = None,
+    entities_file: "str | Path | None" = None,
+) -> InitResult:
     """Ensure scistack.toml and the TOML entities file exist. Idempotent.
 
     Call BEFORE the first ``load_config``: this can create the config file
     the load is about to read.
+
+    *entities_file* is where to put one **if the project has none** -- the
+    creation wizard's "Entities file" field, relative to the project root;
+    ``None`` means the conventional ``src/scistack_entities.toml``. A project
+    that already declares one keeps it, and the request is reported rather
+    than applied: creating a database must never silently re-point an
+    existing project's declarations at a new, empty file (which is what the
+    wizard did, since it always sent its default).
 
     A packaged project (``pyproject.toml`` at the root) is left completely
     alone and reported instead -- ``config._reject_packaged_project``'s
@@ -122,7 +135,21 @@ def ensure_project_files(db_path: Path, project: "Path | None" = None) -> InitRe
     # Already fully set up: don't rewrite scistack.toml just to put back what
     # it already says. set_entities_file re-renders the whole file, which
     # would bump its mtime on every open and churn the user's git status.
-    from scidb.entities import entities_path
+    from scidb.entities import entities_path, is_entities_opt_out
+    from scifor.discovery import read_scistack_section
+
+    # read_scistack_section, not the GUI's own reader: it swallows a parse
+    # error into None, and an unparseable config must not turn "should I
+    # create a file?" into a crash on project open.
+    if existing is not None and is_entities_opt_out(read_scistack_section(existing)):
+        # The user cleared the entities file on purpose. Creating one here
+        # would silently put it back on the next open.
+        logger.info(
+            "[project_init] %s opts out of an entities file "
+            '(entities_file = ""); not creating one',
+            existing,
+        )
+        return result
 
     configured = entities_path(project_root) if existing is not None else None
     if configured is not None and configured.exists():
@@ -132,11 +159,36 @@ def ensure_project_files(db_path: Path, project: "Path | None" = None) -> InitRe
             configured,
         )
         result.entities_file = configured
+        if entities_file is not None and not _same_file(
+            configured, project_root, entities_file
+        ):
+            message = (
+                f"This project already declares its entities in {configured}; "
+                f"keeping it rather than switching to the requested "
+                f"{entities_file}. Change it in 📁 Paths if that is really "
+                f"what you want."
+            )
+            logger.warning("[project_init] %s", message)
+            result.warnings.append(message)
         return result
+
+    if configured is not None:
+        # The config names a file that isn't there yet (only an explicit key
+        # can say that -- the conventional fallback resolves only when the
+        # file exists). Create the file the project already names, not the
+        # one the caller asked for: the key is a decision already made.
+        logger.info(
+            "[project_init] %s declares %s, which does not exist yet; creating it",
+            existing,
+            configured,
+        )
+        target: "str | Path | None" = configured
+    else:
+        target = entities_file
 
     had_config = existing is not None
     try:
-        entities_file = config_mod.set_entities_file(Path(db_path))
+        created_file = config_mod.set_entities_file(Path(db_path), target)
     except ValueError as e:
         logger.info("[project_init] Refused to initialize config: %s", e)
         result.warnings.append(str(e))
@@ -146,15 +198,25 @@ def ensure_project_files(db_path: Path, project: "Path | None" = None) -> InitRe
         result.warnings.append(f"Could not write project files: {e}")
         return result
 
-    result.entities_file = entities_file
+    result.entities_file = created_file
     if not had_config:
         result.created.append(str(project_root / "scistack.toml"))
         logger.info(
             "[project_init] Created %s", project_root / "scistack.toml"
         )
-    result.created.append(str(entities_file))
-    logger.info("[project_init] Entities file ready at %s", entities_file)
+    result.created.append(str(created_file))
+    logger.info("[project_init] Entities file ready at %s", created_file)
     return result
+
+
+def _same_file(configured: Path, project_root: Path, requested: "str | Path") -> bool:
+    """Whether *requested* (relative to *project_root*, or absolute) names the
+    file already *configured* -- so asking for what is already there is not
+    reported as a conflict."""
+    requested = Path(requested)
+    if not requested.is_absolute():
+        requested = project_root / requested
+    return os.path.normpath(str(requested)) == os.path.normpath(str(configured))
 
 
 def ensure_language_stubs(config) -> InitResult:

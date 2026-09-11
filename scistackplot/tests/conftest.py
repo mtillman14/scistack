@@ -43,6 +43,10 @@ def scalar_table(scalar_frame) -> LongTable:
         factors=["subject", "session", "trial"],
         measures=["StepLength"],
         name="StepLength",
+        # Every scidb-backed table carries its schema depth, so the shared
+        # fixtures do too: nesting decides which keys a fan-out iterates
+        # together (roles.iterate_ancestors) and in which order.
+        schema_levels=["subject", "session", "trial"],
     )
 
 
@@ -71,6 +75,7 @@ def series_table(series_frame) -> LongTable:
         factors=["subject", "session", "trial"],
         measures=["Signal"],
         name="Signal",
+        schema_levels=["subject", "session", "trial"],
     )
 
 
@@ -98,6 +103,7 @@ def variant_table(variant_frame) -> LongTable:
         measures=["Peak"],
         variant_factors=["bandpass.low_hz"],
         name="Peak",
+        schema_levels=["subject"],
     )
 
 
@@ -138,6 +144,7 @@ def bilateral_table() -> LongTable:
         measures=["RawEMG"],
         field_factors=["ColName"],
         name="RawEMG",
+        schema_levels=["subject", "trial"],
     )
 
 
@@ -170,4 +177,5 @@ def struct_table() -> LongTable:
         measures=["RawEMG"],
         field_factors=["ColName"],
         name="RawEMG",
+        schema_levels=["subject", "trial"],
     )

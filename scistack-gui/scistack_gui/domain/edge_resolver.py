@@ -30,8 +30,13 @@ BINDING_PARAMETER = "parameter"  # ref: declared Parameter name
 # Deliberately NOT a fourth binding kind. A glue node is transient — it has no
 # saved output, so nothing can bind *to* it. What it does is interpose on the
 # binding of whichever function parameter it feeds: the parameter still binds
-# to the upstream VARIABLE, and the chain rides alongside in
+# to whatever is at the HEAD of the chain, and the chain rides alongside in
 # ``ResolvedEdges.glue_chains``. See docs/claude/free-code-glue-nodes.md §5.
+#
+# The head may be any binding kind, not only a variable. Restricting it to
+# variables is what made ``Parameter -> glue -> fn`` drop the parameter
+# entirely (2026-09-10): the head resolved to None, the binding was skipped,
+# and a MATLAB run then bound the REMAINING arguments by position.
 GLUE_NODE_TYPE = "glueNode"
 
 
@@ -114,8 +119,16 @@ class ResolvedEdges:
     output_types: list[str]  # ordered list of output variable labels
     # ``{param_name: [glue node name, ...]}`` in application order, for
     # parameters fed through one or more glue nodes. The parameter's own
-    # binding still names the upstream VARIABLE — glue interposes on a
-    # binding, it is never a binding of its own, and it is never a step.
+    # binding names whatever sits at the HEAD of the chain — a variable, a
+    # Parameter or a PathInput. Glue interposes on a binding, it is never a
+    # binding of its own, and it is never a step.
+    #
+    # Which of those heads is RUNNABLE is scidb's call, not this module's:
+    # ``scidb.glue`` applies a variable head at the Step-10/11 fusion point, a
+    # Parameter head before fan-out, and refuses a PathInput head outright
+    # (``GlueUnsupportedInputError``). Resolving the binding honestly here and
+    # letting scidb refuse is what keeps an unsupported head a loud error
+    # instead of a silently missing argument.
     glue_chains: dict[str, list[str]] = field(default_factory=dict)
 
     @property
@@ -165,6 +178,52 @@ def node_id_to_var_label(
     return None
 
 
+def resolve_source_binding(
+    source_node_id: str,
+    manual_nodes: dict[str, dict],
+    existing_node_labels: dict[str, str],
+) -> dict | None:
+    """The binding a SOURCE node contributes, or ``None`` if it is not a
+    bindable source (a function node, a glue node, an unknown id).
+
+    This answers only "what kind of thing is feeding this edge, and what is its
+    declared name" — never "which parameter does it fill", which is the
+    ``targetHandle``'s job alone and stays with the caller.
+
+    One function because there are two callers that must agree: an edge
+    arriving directly at a function node, and the head of a glue chain. They
+    disagreed until 2026-09-10 — the glue path recognised only variables — and
+    the disagreement cost a silently-dropped ``Parameter`` argument.
+
+    Resolution order matches the edge scan it was extracted from: PathInput
+    prefix, then Parameter (by id prefix or by manual-node type), then
+    variable. Order matters because ``node_id_to_var_label`` falls back to
+    parsing the id, so it must not see a ``param__``/``pi__`` id first.
+    """
+    bare = strip_placement(source_node_id)
+
+    if bare.startswith(PATH_INPUT_ID_PREFIX):
+        return pathinput_binding(bare[len(PATH_INPUT_ID_PREFIX) :])
+
+    # Parameter node (Constant and Sweep are one concept and one id prefix
+    # since D6) — either DB-derived (``param__`` prefix) or a still-manual
+    # node whose metadata says parameterNode.
+    src_meta = manual_nodes.get(source_node_id)
+    if bare.startswith(PARAM_ID_PREFIX):
+        return parameter_binding(
+            src_meta["label"] if src_meta else bare[len(PARAM_ID_PREFIX) :]
+        )
+    if src_meta and src_meta.get("type") == "parameterNode":
+        return parameter_binding(src_meta["label"])
+
+    var_label = node_id_to_var_label(
+        source_node_id, existing_node_labels, manual_nodes
+    )
+    if var_label:
+        return variable_binding([var_label])
+    return None
+
+
 def bare_fn_node_ids(fn_node_ids) -> set[str]:
     """A function's node-id set reduced to bare canonical ids.
 
@@ -202,13 +261,19 @@ def resolve_glue_chain(
     manual_nodes: dict[str, dict],
     existing_node_labels: dict[str, str],
     _seen: set[str] | None = None,
-) -> tuple[list[str], str | None]:
-    """Walk back from a glue node to the variable it ultimately reshapes.
+) -> tuple[list[str], dict | None]:
+    """Walk back from a glue node to the thing it ultimately reshapes.
 
-    Returns ``(chain_names, variable_label)`` — the glue node names in
-    APPLICATION order (upstream first) and the source variable's label, or
-    ``(chain, None)`` when the chain does not terminate at a variable (an
-    unwired glue node, or one fed by something that has no saved records).
+    Returns ``(chain_names, head_binding)`` — the glue node names in
+    APPLICATION order (upstream first) and the binding of whatever sits at the
+    head of the chain, or ``(chain, None)`` when the chain is not wired to a
+    bindable source at all.
+
+    The head is resolved by ``resolve_source_binding``, so a Parameter or a
+    PathInput head resolves exactly as it would on a direct edge. This used to
+    return a bare variable label and ``None`` for everything else, which made
+    the caller skip the binding entirely — a ``Parameter -> glue -> fn`` chain
+    lost its argument with only a warning to show for it.
 
     Glue chains: a glue node may be fed by another glue node, which is how a
     two-step reshape is expressed. The recursion is depth-guarded by
@@ -247,22 +312,32 @@ def resolve_glue_chain(
         )
         return [name], None
     if len(incoming) > 1:
+        # Name the edges AND their handles. The common cause is a rename: the
+        # glue's parameter was ``value``, an edge was drawn to ``in__value``,
+        # the parameter was renamed and a second edge drawn to ``in__<new>``
+        # — leaving the STALE edge first in the list and therefore the one
+        # followed. Without the handles in the log that is invisible.
         logger.warning(
-            "[edge_resolver] glue node %r has %d incoming edges; only the first "
-            "is the piped input (extra glue inputs are not expressible on the "
-            "canvas yet) — the others are ignored",
+            "[edge_resolver] glue node %r has %d incoming edges %s; only the "
+            "first is the piped input (extra glue inputs are not expressible "
+            "on the canvas yet) — the others are ignored. If one names a "
+            "parameter the glue no longer has, delete that edge",
             name,
             len(incoming),
+            [
+                f"{e.get('id')}:{e.get('targetHandle')}<-{e.get('source')}"
+                for e in incoming
+            ],
         )
 
     source = incoming[0].get("source", "")
     if is_glue_node(source, manual_nodes):
-        upstream_chain, var_label = resolve_glue_chain(
+        upstream_chain, head = resolve_glue_chain(
             source, manual_edges, manual_nodes, existing_node_labels, _seen
         )
-        return [*upstream_chain, name], var_label
+        return [*upstream_chain, name], head
 
-    return [name], node_id_to_var_label(source, existing_node_labels, manual_nodes)
+    return [name], resolve_source_binding(source, manual_nodes, existing_node_labels)
 
 
 def resolve_function_edges(
@@ -350,86 +425,81 @@ def resolve_function_edges(
             # Edge into this function (variable input, PathInput, Parameter).
             th = edge.get("targetHandle") or ""
 
-            # Glue → fn. The parameter still binds to the upstream VARIABLE;
-            # the glue chain rides alongside so the run can fuse it in memory.
-            # This is the only new case a glue node adds to edge resolution —
-            # it reuses the same in__/out__ handles a function node has.
+            # Glue → fn. The parameter binds to whatever is at the HEAD of the
+            # chain — variable, Parameter or PathInput — and the glue chain
+            # rides alongside so the run can fuse it in memory. This is the
+            # only new case a glue node adds to edge resolution — it reuses
+            # the same in__/out__ handles a function node has.
             if is_glue_node(source, manual_nodes):
                 if not th.startswith("in__"):
                     _drop(edge, "glue edge carries no 'in__<param>' handle")
                     continue
                 param = th[len("in__") :]
-                chain, var_label = resolve_glue_chain(
+                chain, head = resolve_glue_chain(
                     source, manual_edges, manual_nodes, existing_node_labels
                 )
                 if chain:
                     glue_chains[param] = chain
-                if var_label:
-                    _bind(param, variable_binding([var_label]), edge)
+                if head is not None:
+                    _bind(param, head, edge)
+                    # §6's diagnostic trail assumed the head was always a
+                    # variable. State the kind: it decides WHERE scidb applies
+                    # the chain (fusion point / before fan-out / refused).
+                    logger.info(
+                        "[edge_resolver] parameter %r is fed through glue [%s] "
+                        "from %s %r",
+                        param,
+                        " > ".join(chain),
+                        head["kind"],
+                        head["ref"],
+                    )
                 else:
                     logger.warning(
-                        "[edge_resolver] parameter %r is fed by glue %s, but the "
-                        "chain does not start from a variable — wire the first "
-                        "glue node's input",
+                        "[edge_resolver] parameter %r is fed by glue [%s], but "
+                        "the chain is not wired to anything — connect a "
+                        "variable, Parameter or PathInput to the first glue "
+                        "node's input handle",
                         param,
                         " > ".join(chain) or "<unnamed>",
                     )
                 continue
 
+            # What kind of source is this, and what is its declared name? One
+            # decision, shared with the glue-chain head above.
+            src_binding = resolve_source_binding(
+                source, manual_nodes, existing_node_labels
+            )
+            src_kind = src_binding["kind"] if src_binding else None
+
             # PathInput → fn. The declared name and the parameter it fills
             # routinely differ, so ONLY the handle can say which param this
             # is; build_edges encodes both names in the DB-derived edge id
             # for the same reason (see graph_builder.candidate_edge_id).
-            if bare_source.startswith(PATH_INPUT_ID_PREFIX):
+            if src_kind == BINDING_PATHINPUT:
                 if th.startswith("in__"):
-                    param = th[len("in__") :]
-                    _bind(
-                        param,
-                        pathinput_binding(bare_source[len(PATH_INPUT_ID_PREFIX) :]),
-                        edge,
-                    )
+                    _bind(th[len("in__") :], src_binding, edge)
                 else:
                     _drop(edge, "PathInput edge carries no 'in__<param>' handle")
                 continue
 
-            # Parameter node (Constant and Sweep are one concept and one id
-            # prefix since D6) — either DB-derived (param__ prefix) or a
-            # still-manual node whose metadata says parameterNode.
-            param_label = None
-            if bare_source.startswith(PARAM_ID_PREFIX):
-                src_meta = manual_nodes.get(source)
-                param_label = (
-                    src_meta["label"]
-                    if src_meta
-                    else bare_source[len(PARAM_ID_PREFIX) :]
-                )
-            else:
-                src_meta = manual_nodes.get(source)
-                if src_meta and src_meta.get("type") == "parameterNode":
-                    param_label = src_meta["label"]
-
-            if param_label is not None:
+            if src_kind == BINDING_PARAMETER:
                 if th.startswith(PARAM_ID_PREFIX):
                     # DB-derived Parameter edge: build_edges writes the
                     # constant's own name into BOTH the node id and the
                     # handle, so here the parameter name and the declared
                     # name are the same string by construction.
-                    _bind(
-                        th[len(PARAM_ID_PREFIX) :],
-                        parameter_binding(param_label),
-                        edge,
-                    )
+                    _bind(th[len(PARAM_ID_PREFIX) :], src_binding, edge)
                 elif th.startswith("in__"):
-                    _bind(th[len("in__") :], parameter_binding(param_label), edge)
+                    _bind(th[len("in__") :], src_binding, edge)
                 else:
                     _drop(edge, "Parameter edge carries no parameter handle")
                 continue
 
             # Variable → fn.
-            var_label = node_id_to_var_label(source, existing_node_labels, manual_nodes)
-            if var_label:
+            if src_kind == BINDING_VARIABLE:
                 if th.startswith("in__"):
                     param = th[len("in__") :]
+                    var_label = src_binding["ref"][0]
                     # Several variable edges onto one handle is EachOf, not a
                     # conflict — accumulate instead of going through _bind.
                     existing = bindings.get(param)
@@ -437,7 +507,7 @@ def resolve_function_edges(
                         if var_label not in existing["ref"]:
                             existing["ref"].append(var_label)
                     else:
-                        _bind(param, variable_binding([var_label]), edge)
+                        _bind(param, src_binding, edge)
                 else:
                     _drop(edge, "variable edge carries no 'in__<param>' handle")
 

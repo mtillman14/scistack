@@ -1356,13 +1356,23 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
 %BUILD_GLUE_CHAINS  Normalize the glue= option for MATLAB and for Python.
 %
 %   Returns HANDLES, a struct mapping each glued input name to a cell array
-%   of function handles (applied in order), and PY_GLUE, the matching Python
-%   dict of {name, source_text, per_schema_key} entries.
+%   of MATLAB function handles (applied in order), and PY_GLUE, the matching
+%   Python dict of {name, language, source_text, source_file, per_schema_key}
+%   entries.
 %
 %   Python needs the SOURCE TEXT, not the handle: the glue's content hash is
 %   what the virtual record id — and therefore the consuming function's
 %   invocation identity — is derived from. Without it an edited glue body
 %   would leave every downstream record green and stale.
+%
+%   A chain element may be EITHER:
+%     * a MATLAB function handle — the body runs here, in apply_matlab_glue;
+%     * a struct with fields NAME, LANGUAGE ('python') and SOURCE_FILE — the
+%       body runs in Python's for_each_prepare. That is the only site a
+%       CONSTANT-fed glue can run (scidb.glue.apply_constant_glue applies it
+%       while the version keys are being built, so the glued value is what
+%       lands in __constants), and prepare is Python on both run paths. Such
+%       an element contributes NO handle: MATLAB must not apply it again.
 
     handles = struct();
     py_glue = py.dict();
@@ -1374,12 +1384,12 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
     for pi = 1:numel(params)
         param = params{pi};
         entry = glue_opt.(param);
-        if isa(entry, 'function_handle')
+        if isa(entry, 'function_handle') || isstruct(entry)
             entry = {entry};
         elseif ~iscell(entry)
             error('scidb:glue:badChain', ...
-                ['glue.%s must be a function handle or a cell array of ' ...
-                 'function handles; got %s.'], param, class(entry));
+                ['glue.%s must be a function handle, a python-glue struct, ' ...
+                 'or a cell array of those; got %s.'], param, class(entry));
         end
         if isempty(entry)
             continue;
@@ -1391,12 +1401,31 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
         end
 
         chain_list = py.list();
+        matlab_handles = {};
+        labels = {};
         for ci = 1:numel(entry)
             h = entry{ci};
+            if isstruct(h)
+                % Python glue: named and located by the GUI, applied by
+                % Python's prepare. No handle to collect.
+                if ~isfield(h, 'name') || ~isfield(h, 'source_file')
+                    error('scidb:glue:badChain', ...
+                        ['glue.%s element %d is a struct but has no name/' ...
+                         'source_file fields.'], param, ci);
+                end
+                chain_list.append(py.dict(pyargs( ...
+                    'name', h.name, ...
+                    'language', 'python', ...
+                    'source_text', '', ...
+                    'source_file', h.source_file, ...
+                    'per_schema_key', false)));
+                labels{end+1} = sprintf('%s (python)', h.name); %#ok<AGROW>
+                continue;
+            end
             if ~isa(h, 'function_handle')
                 error('scidb:glue:badChain', ...
-                    'glue.%s element %d is a %s, not a function handle.', ...
-                    param, ci, class(h));
+                    ['glue.%s element %d is a %s, not a function handle or ' ...
+                     'a python-glue struct.'], param, ci, class(h));
             end
             name = func2str(h);
             if startsWith(name, '@')
@@ -1409,14 +1438,19 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
             src = read_function_source(name);
             chain_list.append(py.dict(pyargs( ...
                 'name', name, ...
+                'language', 'matlab', ...
                 'source_text', src, ...
                 'source_file', which(name), ...
                 'per_schema_key', false)));
+            matlab_handles{end+1} = h; %#ok<AGROW>
+            labels{end+1} = name; %#ok<AGROW>
         end
         py_glue{param} = chain_list;
-        handles.(param) = entry;
+        if ~isempty(matlab_handles)
+            handles.(param) = matlab_handles;
+        end
         scidb.Log.info('[glue] ''%s'': chain = [%s]', param, ...
-            strjoin(cellfun(@func2str, entry, 'UniformOutput', false), ', '));
+            strjoin(labels, ', '));
     end
 end
 

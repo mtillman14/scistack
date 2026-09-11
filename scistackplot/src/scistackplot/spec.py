@@ -46,7 +46,16 @@ class Role(str, Enum):
 #: property of which factor was assigned where. The old FACET_ROW/FACET_COL
 #: pair forced that decision into the role and still could not express
 #: "arrange these 13 muscles as left/right x muscle group".
-SINGLE_ASSIGNMENT_ROLES = (Role.X, Role.COLOR)
+#:
+#: X left for the same reason: "stim and sham side by side, each split by
+#: session" is one axis carrying two factors, nested. Which factor is the outer
+#: grouping is an ORDER (``PlotSpec.x_layers``), not a different role.
+SINGLE_ASSIGNMENT_ROLES = (Role.COLOR,)
+
+#: How many factors may share the x axis. Three is not arbitrary: a fourth
+#: level of nesting cannot be read off an axis, and the label stack below the
+#: plot grows taller than the plot.
+MAX_X_LAYERS = 3
 
 #: Roles that leave a factor's levels as multiple rows in one cell, i.e. that
 #: can produce a distribution. AGGREGATE is NOT here: it collapses first.
@@ -202,6 +211,50 @@ class Filter:
 
 
 @dataclass(frozen=True)
+class LevelGroup:
+    """A factor derived by bucketing another factor's levels.
+
+    For a ``session`` key whose values are ``pre, post1, post2, post3``, this is
+    how "baseline vs post" becomes a factor you can colour or facet by without
+    editing any data. A key whose levels *already are* the groups needs none of
+    this — it is a factor with a role today.
+
+    Kept as a spec field rather than a column somewhere so it travels with the
+    figure: the same bucketing is part of what the plot means, and a reader
+    re-opening the spec sees the definition rather than an unexplained column.
+    """
+
+    #: The new factor's name, e.g. ``"Phase"``.
+    name: str
+    #: The existing factor whose levels are being bucketed, e.g. ``"session"``.
+    source: str
+    #: ``{level: group label}``. Levels are matched as text.
+    mapping: dict[str, str] = field(default_factory=dict)
+    #: What happens to levels the mapping does not name. ``None`` DROPS those
+    #: rows — "just these two groups, ignore the rest" — and any other value is
+    #: the bucket they land in. There is no third option where they stay
+    #: unlabelled: a NaN group silently becomes its own series.
+    unmatched: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "source": self.source,
+            "mapping": dict(self.mapping),
+            "unmatched": self.unmatched,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "LevelGroup":
+        return cls(
+            name=raw["name"],
+            source=raw["source"],
+            mapping=dict(raw.get("mapping") or {}),
+            unmatched=raw.get("unmatched"),
+        )
+
+
+@dataclass(frozen=True)
 class Aggregation:
     statistic: Statistic = Statistic.MEAN
     error: ErrorBand = ErrorBand.SD
@@ -274,13 +327,38 @@ class VariantSet:
 
     name: str | None = None
     selection: dict[str, Any] = field(default_factory=dict)
+    #: Which variable this row draws from. ``None`` means the plot's primary
+    #: measure (``PlotSpec.measures[0]``).
+    #:
+    #: This is what makes "plot Raw against Filtered" the same feature as "plot
+    #: v1 against v2": a row is one series, and a series is a variable plus a
+    #: region of that variable's variant space. Rows over different variables
+    #: stack into the same ``Variant`` factor, so they take a colour or a facet
+    #: like any other level, and the export already had the shape for it — one
+    #: ``for_each`` input per row (see ``codegen.variant_params``).
+    #:
+    #: It also removes an ambiguity that would otherwise be a silent wrong
+    #: figure. ``resolve_selection`` drops selection keys naming a column the
+    #: frame lacks — right for a stale spec, but with two variables in one frame
+    #: a row pinning ``Code:filterEMG=v1`` names nothing about ``Force`` and
+    #: would claim every ``Force`` row too, drawing it once per variant. Naming
+    #: the variable makes "not applicable here" and "stale" distinguishable.
+    variable: str | None = None
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "selection": dict(self.selection)}
+        return {
+            "name": self.name,
+            "selection": dict(self.selection),
+            "variable": self.variable,
+        }
 
     @classmethod
     def from_dict(cls, raw: dict) -> "VariantSet":
-        return cls(name=raw.get("name"), selection=dict(raw.get("selection") or {}))
+        return cls(
+            name=raw.get("name"),
+            selection=dict(raw.get("selection") or {}),
+            variable=raw.get("variable"),
+        )
 
 
 @dataclass(frozen=True)
@@ -302,18 +380,43 @@ class PlotSpec:
     """
     A complete, serializable plot description.
 
-    ``measures[0]`` is always the y measure. A second measure, when present,
-    supplies x for an x–y scatter (in which case no factor may hold ``Role.X``).
+    ``measures[0]`` is the y measure. Plotting several variables together is
+    :attr:`variant_sets`' job — one row per series — not a longer ``measures``
+    list: rows stack into the ``Variant`` factor, and a factor can take a role.
     """
 
     measures: list[str]
+    #: Variable supplying the x axis of a relational (x–y) plot, or None.
+    #:
+    #: A field of its own rather than ``measures[1]``, because it is a different
+    #: operation from an overlaid series and the positional form hid that. An x
+    #: measure is a **wide join** — one x value per row of y — while overlaid
+    #: variables **stack long** into one value column. Conflating them meant
+    #: "the second measure" silently meant one or the other depending on
+    #: context. When set, no factor may hold ``Role.X``.
+    x_measure: str | None = None
     roles: dict[str, Role] = field(default_factory=dict)
+    #: Order of the factors sharing the x axis, **outermost first**.
+    #:
+    #: Membership is the roles dict (who holds ``Role.X``); this is only the
+    #: order they nest in, so assigning a role can never produce an invalid
+    #: spec — a name here that no longer holds X is ignored, and an X-holder
+    #: missing from here is appended. :meth:`ordered_x_layers` is the one place
+    #: those two are reconciled.
+    x_layers: list[str] = field(default_factory=list)
     kind: PlotKind = PlotKind.SCATTER
     aggregate: Aggregation = field(default_factory=Aggregation)
     index_column: str | None = None
     facet: FacetOptions = field(default_factory=FacetOptions)
     style: StyleOptions = field(default_factory=StyleOptions)
     filters: list[Filter] = field(default_factory=list)
+    #: Variables joined in as FACTORS rather than plotted — a subject-level
+    #: ``Condition`` holding stim/sham, say. They classify as CATEGORICAL and so
+    #: are rightly refused as measures; as factors they take a role like any
+    #: other and give you the grouping the data already records.
+    factor_variables: list[str] = field(default_factory=list)
+    #: Factors derived by bucketing another factor's levels.
+    level_groups: list[LevelGroup] = field(default_factory=list)
     variant_policy: VariantPolicy = VariantPolicy.FACET
     #: Named variants to plot — one entry per row of the GUI's Variants section.
     #:
@@ -335,9 +438,38 @@ class PlotSpec:
     def y_measure(self) -> str:
         return self.measures[0]
 
-    @property
-    def x_measure(self) -> str | None:
-        return self.measures[1] if len(self.measures) > 1 else None
+    def variant_variables(self) -> list[str]:
+        """Every variable this spec plots, primary first, in row order.
+
+        The union a source has to load and stack. A row without a ``variable``
+        draws from the primary measure, so the primary is always present.
+        """
+        names = list(self.measures[:1])
+        for variant in self.variant_sets:
+            if variant.variable and variant.variable not in names:
+                names.append(variant.variable)
+        return names
+
+    def ordered_x_layers(self, roles: dict[str, Role] | None = None) -> list[str]:
+        """The factors on x, outermost first.
+
+        Reconciles two sources that are edited independently — which factors
+        hold ``Role.X`` (a dropdown per factor) and what order they nest in (a
+        list the user reorders). Names that no longer hold X are dropped, and
+        X-holders the order never mentioned are appended in declaration order,
+        so neither widget can put the spec in a state the other rejects.
+
+        ``roles`` defaults to the spec's own; pass completed roles when the
+        table may have defaulted some.
+        """
+        holders = [
+            name
+            for name, role in (roles if roles is not None else self.roles).items()
+            if role is Role.X
+        ]
+        ordered = [name for name in self.x_layers if name in holders]
+        ordered.extend(name for name in holders if name not in ordered)
+        return ordered
 
     def factors_with_role(self, role: Role) -> list[str]:
         """Factors carrying ``role``, in the spec's declared order."""
@@ -382,6 +514,8 @@ class PlotSpec:
             "cols": [_matcher_to_dict(m) for m in self.facet.cols],
         }
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
+        raw["level_groups"] = [g.to_dict() for g in self.level_groups]
+        raw["x_layers"] = list(self.x_layers)
         # TOML has no null; drop empty optionals so a round trip is stable.
         return _drop_nulls(raw)
 
@@ -390,7 +524,9 @@ class PlotSpec:
         agg = raw.get("aggregate") or {}
         return cls(
             measures=list(raw["measures"]),
+            x_measure=raw.get("x_measure"),
             roles={k: Role(v) for k, v in (raw.get("roles") or {}).items()},
+            x_layers=list(raw.get("x_layers") or []),
             kind=PlotKind(raw.get("kind", PlotKind.SCATTER)),
             aggregate=Aggregation(
                 statistic=Statistic(agg.get("statistic", Statistic.MEAN)),
@@ -400,6 +536,10 @@ class PlotSpec:
             facet=_facet_from_dict(raw.get("facet") or {}),
             style=StyleOptions(**(raw.get("style") or {})),
             filters=[Filter(**f) for f in (raw.get("filters") or [])],
+            factor_variables=list(raw.get("factor_variables") or []),
+            level_groups=[
+                LevelGroup.from_dict(g) for g in (raw.get("level_groups") or [])
+            ],
             variant_policy=VariantPolicy(
                 raw.get("variant_policy", VariantPolicy.FACET)
             ),

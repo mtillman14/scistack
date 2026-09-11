@@ -167,6 +167,80 @@ def test_plotly_legend_entry_appears_once_per_level(series_table):
     assert len(shown) == 2
 
 
+def test_a_colour_level_keeps_its_colour_in_every_panel(scalar_frame):
+    """Regression: the palette was indexed by ENUMERATION, not by level.
+
+    `color_groups` omits a level with no rows in the panel it is splitting, so a
+    facet grid where one panel lacks a level handed the *next* level that
+    level's colour — one series drawn in two colours, with the legend agreeing
+    with only some of the panels. Wrong in a way that looks like data.
+    """
+    from scistackplot import LongTable
+
+    # Subject 01 never ran the "post" session, so its panel has one colour
+    # level where the others have two.
+    frame = scalar_frame[
+        ~((scalar_frame["subject"] == "01") & (scalar_frame["session"] == "post"))
+    ]
+    table = LongTable.from_frame(
+        frame,
+        factors=["subject", "session", "trial"],
+        measures=["StepLength"],
+        level_order={"session": ["pre", "post"]},
+        schema_levels=["subject", "session", "trial"],
+    )
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"trial": Role.X, "session": Role.COLOR, "subject": Role.FACET},
+        kind=PlotKind.BOX,
+    )
+
+    payload = render_plotly(resolve(spec, table)[0])
+    colours: dict[str, set] = {}
+    for trace in payload["data"]:
+        colours.setdefault(trace["name"], set()).add(trace["marker"]["color"])
+
+    assert set(colours) == {"pre", "post"}
+    for level, used in colours.items():
+        assert len(used) == 1, f"{level} was drawn in {len(used)} different colours"
+    assert colours["pre"] != colours["post"]
+
+
+def test_both_backends_draw_the_same_x_group_spans(scalar_frame):
+    """Brackets come from one computation, so the two views cannot disagree."""
+    from scistackplot import LongTable
+
+    frame = scalar_frame.assign(
+        group=scalar_frame["subject"].map({"01": "stim", "02": "stim", "03": "sham"})
+    )
+    table = LongTable.from_frame(
+        frame,
+        factors=["group", "session", "subject", "trial"],
+        measures=["StepLength"],
+        level_order={"group": ["stim", "sham"], "session": ["pre", "post"]},
+    )
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"group": Role.X, "session": Role.X, "trial": Role.FREE},
+        x_layers=["group", "session"],
+        kind=PlotKind.BOX,
+    )
+    figure = resolve(spec, table)[0]
+
+    payload = render_plotly(figure)
+    labels = {a["text"] for a in payload["layout"]["annotations"]}
+    assert {"stim", "sham"} <= labels
+    # One bracket per group span.
+    assert len(payload["layout"].get("shapes", [])) == len(figure.x_plan.groups)
+    # Ticks show the inner layer, never the composed key.
+    assert payload["layout"]["xaxis"]["ticktext"].count("pre") == 2
+
+    drawn = render_matplotlib(figure)
+    texts = {t.get_text() for t in drawn.axes[0].texts}
+    assert {"stim", "sham"} <= texts
+    matplotlib.pyplot.close(drawn)
+
+
 # --- legends ---------------------------------------------------------------
 
 

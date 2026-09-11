@@ -555,6 +555,7 @@ def generate_matlab_command(
     entities_script: str | None = None,
     entities_file: str | None = None,
     variable_inputs: dict[str, "str | list[str]"] | None = None,
+    glue: dict[str, list[dict]] | None = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -582,6 +583,16 @@ def generate_matlab_command(
         emits a guarded ``pyenv`` preamble that binds (or verifies) the
         interpreter before any ``py.*`` call is made. When ``None``/empty,
         no preamble is emitted (preserves behavior for non-GUI callers).
+    glue
+        Optional ``{param_name: [{"name", "language", "source_file"}, ...]}``
+        in application order — the glue chains wired into this function's
+        input bindings. Emitted as ``+scidb/for_each.m``'s ``glue`` option.
+
+        Omitting it is not neutral: a MATLAB run then executes with the glue
+        SILENTLY DROPPED, which is the exact failure
+        ``docs/claude/free-code-glue-nodes.md`` §2 exists to prevent. The
+        MATLAB half was built with the feature; only this thread was missing
+        (2026-09-10).
     sweeps
         Optional ``{param_name: [values]}`` — a Sweep has no DB-history
         representation (always fans out to ``EachOf``/``Sweep`` fresh at
@@ -704,15 +715,19 @@ def generate_matlab_command(
             function_name,
         )
         lines.extend(timing.summary_lines())
+        template_glue_str = _format_glue_struct(glue)
+        template_tail = (
+            f", ...\n        'glue', {template_glue_str}" if template_glue_str else ""
+        )
         lines.append("try")
         lines.append("    % Run (fill in inputs/outputs)")
         lines.append(f"    scihist.for_each(@{function_name}, ...")
         lines.append(f"        {inputs_str}, ...")
         if template_schema_str:
             lines.append(f"        {outputs_str}, ...")
-            lines.append(f"        {template_schema_str});")
+            lines.append(f"        {template_schema_str}{template_tail});")
         else:
-            lines.append(f"        {outputs_str});")
+            lines.append(f"        {outputs_str}{template_tail});")
         lines.append("    scidb.close_database(db);")
         lines.append("catch scistack_err__")
         lines.append(
@@ -761,6 +776,7 @@ def generate_matlab_command(
             matlab_fn="scihist.for_each",
             sweeps=sweeps,
             variable_inputs=variable_inputs,
+            glue=glue,
         )
     )
 
@@ -868,6 +884,7 @@ def _for_each_call_lines(
     indent: str = "    ",
     sweeps: dict[str, list] | None = None,
     variable_inputs: dict[str, "str | list[str]"] | None = None,
+    glue: dict[str, list[dict]] | None = None,
 ) -> list[str]:
     """One (indented) ``<matlab_fn>(@function_name, ...)`` block per grouped
     (inputs, constants) entry — the call body shared between a single
@@ -925,16 +942,65 @@ def _for_each_call_lines(
             iterate_keys, schema_filter, constants, function_name
         )
 
+        # Glue rides on the call as a trailing 'glue' name/value pair — it is
+        # a property of an INPUT BINDING, never a step, so it never appears in
+        # the inputs struct and never gets a for_each call of its own.
+        glue_str = _format_glue_struct(glue)
+
         lines.append(f"{indent}% Run")
         lines.append(f"{indent}{matlab_fn}(@{function_name}, ...")
         lines.append(f"{indent}    {inputs_str}, ...")
+        tail = f", ...\n{indent}    'glue', {glue_str}" if glue_str else ""
         if schema_str:
             lines.append(f"{indent}    {outputs_str}, ...")
-            lines.append(f"{indent}    {schema_str});")
+            lines.append(f"{indent}    {schema_str}{tail});")
         else:
-            lines.append(f"{indent}    {outputs_str});")
+            lines.append(f"{indent}    {outputs_str}{tail});")
         lines.append("")
     return lines
+
+
+def _format_glue_struct(glue: dict[str, list[dict]] | None) -> str:
+    """``struct(...)`` for ``+scidb/for_each.m``'s ``glue`` option, or ``""``.
+
+    Each param maps to a cell array of chain elements in application order.
+    An element is either a MATLAB function handle (``@glue_x``) or, for
+    **Python** glue, a struct naming the body and its file. Python glue
+    reaches a MATLAB run only on a constant-fed parameter, where
+    ``scidb.glue.apply_constant_glue`` applies it inside ``for_each_prepare``
+    — see ``build_glue_chains`` in ``+scidb/for_each.m``.
+
+    A one-element cell must be written ``{{...}}`` inside ``struct()``:
+    ``struct('p', {x})`` builds a 1x1 STRUCT ARRAY with field ``p = x``, not a
+    field holding a cell. The extra brace is what makes it a cell-valued
+    field, and getting it wrong turns the chain into a scalar MATLAB silently
+    accepts.
+    """
+    if not glue:
+        return ""
+    parts = []
+    for param, chain in glue.items():
+        elements = []
+        for spec in chain:
+            if (spec.get("language") or "matlab") == "python":
+                elements.append(
+                    "struct('name', {}, 'language', 'python', "
+                    "'source_file', {})".format(
+                        _format_matlab_value(spec.get("name", "")),
+                        _format_matlab_value(spec.get("source_file") or ""),
+                    )
+                )
+            else:
+                elements.append(f"@{spec.get('name', '')}")
+        if elements:
+            parts.append(
+                "{}, {{{{{}}}}}".format(
+                    _format_matlab_value(param), ", ".join(elements)
+                )
+            )
+    if not parts:
+        return ""
+    return f"struct({', '.join(parts)})"
 
 
 def generate_matlab_pipeline_command(

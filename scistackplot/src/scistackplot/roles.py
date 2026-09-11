@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 
 from .shape import Shape
-from .spec import SINGLE_ASSIGNMENT_ROLES, PlotSpec, Role, VariantPolicy
+from .spec import MAX_X_LAYERS, SINGLE_ASSIGNMENT_ROLES, PlotSpec, Role, VariantPolicy
 from .table import LongTable
 from .variants import CURRENT_VARIANT_NAME, VARIANT_FACTOR
 
@@ -75,7 +75,9 @@ def default_roles(table: LongTable, measure: str | None = None) -> dict[str, Rol
     return roles
 
 
-def complete_roles(spec: PlotSpec, table: LongTable) -> dict[str, Role]:
+def complete_roles(
+    spec: PlotSpec, table: LongTable, *, promote: bool = True
+) -> dict[str, Role]:
     """
     Every factor in ``table`` mapped to a role.
 
@@ -90,6 +92,14 @@ def complete_roles(spec: PlotSpec, table: LongTable) -> dict[str, Role]:
     prevent — and ``validate`` would refuse it a moment later anyway, so the
     alternative is an error message instead of the figure they asked for. Same
     reasoning as ``default_roles`` giving the first variant factor COLOR.
+
+    Finally, schema keys nested above an iterated key are promoted to ITERATE
+    (:func:`iterate_ancestors`). It happens **here**, rather than only where the
+    fan-out is built, so that every consumer sees one consistent assignment: if
+    ``reduce`` fanned out over a key that ``capability`` still believed was FREE,
+    the panel would advertise a distribution for figures holding a single
+    observation. ``promote=False`` returns the roles as declared, which is what
+    reporting the promotion needs.
     """
     roles = {name: role for name, role in spec.roles.items() if table.has_factor(name)}
     for factor in table.factors:
@@ -104,7 +114,78 @@ def complete_roles(spec: PlotSpec, table: LongTable) -> dict[str, Role]:
             )
             continue
         roles.setdefault(factor.name, Role.FREE)
+
+    if promote:
+        for name in iterate_ancestors(roles, table):
+            roles[name] = Role.ITERATE
     return roles
+
+
+def iterate_ancestors(roles: dict[str, Role], table: LongTable) -> list[str]:
+    """
+    Schema keys that must iterate because a key nested under them does.
+
+    "One figure per trial" is never really one figure per trial: with a schema
+    of ``[subject, trial]``, trial 1 belongs to a subject, and a figure holding
+    every subject's trial 1 pools unrelated observations. So an iterated key
+    iterates its ancestors too — the fan-out becomes one figure per
+    (subject, trial), which is also what makes stepping past subject 1's last
+    trial roll over to subject 2's first.
+
+    Promoted **only from FREE**. A user who assigned an ancestor a channel meant
+    it: ``subject=colour, trial=separate figures`` is a legitimate figure (every
+    subject coloured, one figure per trial) and must survive. FREE is the one
+    role that would silently pool, and pooling is the mistake this prevents;
+    ``AGGREGATE`` remains the way to say "average the subjects away" on purpose.
+
+    Pure, and called twice per resolve — once by :func:`complete_roles` to apply
+    it and once by ``reduce._fanout_notes`` to report it — rather than threading
+    the result through as state. The reporting call must pass **unpromoted**
+    roles (``complete_roles(..., promote=False)``): read back off its own output
+    this returns nothing, because every ancestor is ITERATE by then, and the
+    note explaining a fan-out four times the expected size would never appear.
+    """
+    if not table.schema_levels:
+        return []
+    promoted: list[str] = []
+    for name, role in roles.items():
+        if role is not Role.ITERATE or name not in table.schema_levels:
+            continue
+        for ancestor in table.schema_levels[: table.schema_levels.index(name)]:
+            if (
+                table.has_factor(ancestor)
+                and roles.get(ancestor, Role.FREE) is Role.FREE
+                and ancestor not in promoted
+            ):
+                promoted.append(ancestor)
+    return promoted
+
+
+def fanout_keys(spec: PlotSpec, table: LongTable) -> list[str]:
+    """
+    The factors this spec fans out over, **in the order the figures run**.
+
+    Ordered by the table's declared factor order — for a scidb source that is
+    variants, then schema keys outermost-first — and NOT by the order the roles
+    dict happens to hold. Dict order is whichever role the user clicked first,
+    so assigning ``trial`` before ``subject`` produced a trial-major fan-out:
+    figures ordered trial-1-subject-1, trial-1-subject-2, …, which makes the
+    exported ``PathOutput`` template and the panel's next/previous arrows both
+    run in an order nobody asked for.
+
+    One definition, used by ``reduce.resolve`` (the interactive fan-out) and by
+    ``scistackplotdb.endpoint`` (the ``for_each`` iteration keys), because those
+    two disagreeing is this layer's worst failure — see
+    ``scistackplotdb/tests/test_fanout_parity.py``.
+    """
+    roles = complete_roles(spec, table)
+    order = table.factor_names
+    names = [
+        name
+        for name, role in roles.items()
+        if role is Role.ITERATE and table.has_factor(name)
+    ]
+    return sorted(names, key=order.index)
 
 
 def validate(spec: PlotSpec, table: LongTable) -> None:
@@ -112,17 +193,20 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
     # --- measures exist -------------------------------------------------
     if not spec.measures:
         raise RoleError("PlotSpec.measures is empty — name at least a y measure.")
-    for measure in spec.measures:
-        if measure not in table.measure_names:
+    if len(spec.measures) > 1:
+        raise RoleError(
+            f"PlotSpec.measures names one y measure; got {spec.measures}. "
+            f"To plot several variables together, add a variant row per "
+            f"variable (VariantSet(variable=...)) — they stack into the "
+            f"'Variant' factor and can take a colour or a facet. For an x-y "
+            f"plot, set x_measure."
+        )
+    for measure in [*spec.measures, spec.x_measure]:
+        if measure is not None and measure not in table.measure_names:
             raise RoleError(
                 f"Measure {measure!r} is not in the table. "
                 f"Available measures: {table.measure_names}"
             )
-    if len(spec.measures) > 2:
-        raise RoleError(
-            f"At most 2 measures are supported (y, and optionally x); "
-            f"got {len(spec.measures)}: {spec.measures}"
-        )
 
     # --- roles name real factors ----------------------------------------
     unknown = [name for name in spec.roles if not table.has_factor(name)]
@@ -144,6 +228,21 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
     shape = table.shape_of(spec.y_measure)
 
     # --- x-axis ownership ------------------------------------------------
+    x_layers = spec.ordered_x_layers()
+    if len(x_layers) > MAX_X_LAYERS:
+        raise RoleError(
+            f"At most {MAX_X_LAYERS} factors can share the x axis; got "
+            f"{len(x_layers)}: {x_layers}. A fourth level of nesting cannot be "
+            f"read off an axis — move one to 'color', a facet role, or "
+            f"'separate figures'."
+        )
+    if len(x_layers) > 1 and shape is not Shape.SCALAR:
+        raise RoleError(
+            f"Nested x grouping needs a categorical axis, but measure "
+            f"{spec.y_measure!r} is {shape} — its x axis is "
+            f"{'its within-observation index' if shape is Shape.SERIES_1D else 'the matrix itself'}. "
+            f"Group a 1-D measure with 'color' and facets instead."
+        )
     x_holder = spec.first_with_role(Role.X)
     if spec.x_measure is not None and x_holder is not None:
         raise RoleError(
@@ -209,25 +308,36 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
     from .capability import default_plot
     from .spec import FacetOptions, PlotKind, VariantSet, grid_shape_for
 
-    from .variants import apply_variant_sets
+    from .variants import apply_variant_sets, default_selection
 
     measure = measure or (table.measure_names[0] if table.measures else None)
     if measure is None:
         raise RoleError("This table has no measures to plot.")
 
-    # When the source can say which rows are current, open on those, as ONE
-    # named variant. A scidb variable whose function was edited holds records
-    # from both the old and the new code; showing all of them at once answers a
-    # question nobody asked, and showing an arbitrary one is how the wrong data
-    # gets plotted.
+    # Open on ONE variant, as a single named row.
+    #
+    # Every variant axis is pinned, not just the code ones: latest body, first
+    # parameter value (`variants.default_selection` owns the rule and states it
+    # in full). Pinning only "current code" left a swept parameter unanswered,
+    # so `default_roles` found a multi-level variant factor with no role and put
+    # it on COLOUR — a variable produced at 5 cutoffs opened as 5 overlaid
+    # series before the user had said anything at all. Comparing is what a
+    # second row is for.
     #
     # A single row is deliberately the opening state rather than zero: the GUI's
-    # Variants section always has a row to edit, and "current results" is a
-    # variant like any other — the user adds a second row to compare against it
-    # instead of first discovering a hidden pin and clearing it.
+    # Variants section always has a row to edit, and this pin is a variant like
+    # any other — the user adds a second row to compare against it instead of
+    # first discovering a hidden pin and clearing it.
+    #
+    # The name stays "current" even though the row now also pins parameters,
+    # which under-describes it. Fixing that means teaching `auto_label` to spell
+    # the latest FLAG as "current" (it would otherwise render the raw
+    # `CodeIsLatest=True`), and the label belongs with the rest of the Variants
+    # section work rather than here.
+    selection = default_selection(table)
     variant_sets = (
-        [VariantSet(name=CURRENT_VARIANT_NAME, selection=dict(table.default_pin))]
-        if table.default_pin
+        [VariantSet(name=CURRENT_VARIANT_NAME, selection=selection)]
+        if selection
         else []
     )
 

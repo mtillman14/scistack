@@ -155,6 +155,29 @@ def describe(
     # opens as a wrapped grid of subplots, not one overplotted axis.
     spec = default_spec(table, variable)
 
+    # Offers AND refusals: the variant picker draws every variable node on the
+    # canvas, so one it cannot offer has to say why in place.
+    stacking = (
+        source.stackable_report(variable)
+        if hasattr(source, "stackable_report")
+        else {"offered": source.stackable_with(variable), "rejected": {}}
+    )
+    stackable = stacking["offered"]
+    groupable = source.groupable_with(variable)
+    # Which optional sections the panel can show, and why. Each of these gates a
+    # control that is simply absent when the list is empty, so an empty list has
+    # to be visible somewhere — otherwise "no other variable qualifies" and "the
+    # feature is missing" look identical from the outside.
+    logger.info(
+        "[plot] describe(%s): %d stackable %s, %d groupable %s, %d joinable",
+        variable,
+        len(stackable),
+        stackable,
+        len(groupable),
+        groupable,
+        len(source.joinable_with(variable)),
+    )
+
     return {
         "catalog": catalog,
         "variable": variable,
@@ -163,7 +186,17 @@ def describe(
         "table": table.describe(),
         "spec": spec.to_dict(),
         "capabilities": capabilities(spec, table),
+        # Two different offers, deliberately kept apart: variables that can
+        # STACK with this one (another series — a variant row) and variables
+        # that can be JOINED as its x axis (a relational plot).
         "joinable_with": source.joinable_with(variable),
+        "stackable_with": stackable,
+        # Why each remaining variable is NOT offered, so the picker can draw it
+        # refused-with-a-reason instead of leaving it inert and unexplained.
+        "stackable_refused": stacking["rejected"],
+        # Variables usable as a grouping FACTOR — recorded at or above this
+        # variable's schema level, so each row gets exactly one of their values.
+        "groupable_with": groupable,
     }
 
 
@@ -196,7 +229,7 @@ def capabilities_for(db, spec_payload: dict, *, csv_path: str | None = None) -> 
 
     source = get_source(db, csv_path=csv_path)
     spec = _spec_from_payload(spec_payload)
-    table = source.get_table(list(spec.measures))
+    table = _table_for(source, spec)
     return capabilities(spec, table)
 
 
@@ -220,15 +253,132 @@ def variant_graph(
     """
     source = get_source(db, csv_path=csv_path)
     if csv_path or not hasattr(source, "variant_graph"):
-        return {"variable": variable, "axes": [], "versions": {}, "chain_functions": []}
+        return {
+            "variable": variable,
+            "axes": [],
+            "versions": {},
+            "chain_functions": [],
+            # Present-but-empty, not absent: the picker reads this key on every
+            # reply, and a CSV having no variants is an answer, not a gap.
+            "default_selection": {},
+        }
     graph = source.variant_graph(variable, functions or [])
+
+    # What a NEW row for this variable should open on. Sent with the graph
+    # because the picker needs it at exactly the moment it has the graph: a row
+    # created by "+ Add variant" must arrive already pinned to one variant, or
+    # clicking + silently adds every variant of that variable to the figure.
+    #
+    # Read from scistackplot rather than recomputed here (CLAUDE.md NOTE 3) —
+    # the panel's opening pin and a row added later must be the same rule, or
+    # the two disagree about what "one variant" means.
+    from scistackplot import default_selection
+
+    graph["default_selection"] = default_selection(source.get_table([variable]))
+
     logger.info(
-        "[plot] variant_graph(%s): %d axes, %d function(s) with versions",
+        "[plot] variant_graph(%s): %d axes, %d function(s) with versions, "
+        "default selection %s",
         variable,
         len(graph["axes"]),
         len(graph["versions"]),
+        graph["default_selection"] or "none",
     )
+    graph["node_bindings"] = axis_node_bindings(db, graph["axes"])
     return graph
+
+
+#: Prefix ``graph_builder`` puts on a function's input-port handle. The suffix is
+#: the function's own ARGUMENT name.
+PARAM_HANDLE_PREFIX = "param__"
+
+
+def axis_node_bindings(db, axes: list[dict], pipeline_id: str = "main") -> dict:
+    """Which canvas node supplies each variant axis — ``{column: node_id}``.
+
+    **Bound by PORT, never by name.** An edge into a function carries
+    ``targetHandle = "param__<the function's own argument name>"``
+    (``graph_builder.build_edges``, both the DB-derived and the manual path),
+    and that argument name is exactly ``VariantAxis.param``. So the node feeding
+    that port is the node holding the axis — whatever the node is called, and
+    whatever type it is.
+
+    The popup used to do this itself by comparing ``axis.param`` against a
+    node's **label**, which is the Parameter ENTITY's name. Those are two
+    different namespaces and they coincide only until someone renames a
+    Parameter or wires a port from a glue node; after that the axis silently
+    dropped out of the dialog, its node dimmed to "not a variant here", and the
+    axis was listed as living in a nested pipeline. Measured on a real project
+    2026-09-11 — see ``.claude/plan-plot-studio-variant-axis-fixes.md``
+    Finding 2.
+
+    It lives here, not in the webview, because it is a rule about what scidb's
+    namespacing means (CLAUDE.md NOTE 3) — and because a rule in TSX has no
+    test. Code axes are absent from the result: they bind to a function node by
+    function NAME, one namespace, no port involved.
+
+    Failure-tolerant: a dialog that cannot bind its axes is still worth opening
+    with everything inert, and the caller sees an empty mapping.
+    """
+    if not axes:
+        return {}
+    try:
+        from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+        built = get_pipeline_graph(db, pipeline_id)
+        nodes = built.get("nodes") or []
+        edges = built.get("edges") or []
+        label_of = {n["id"]: (n.get("data") or {}).get("label", "") for n in nodes}
+        type_of = {n["id"]: n.get("type") for n in nodes}
+
+        params = [a for a in axes if a.get("kind") == "param"]
+        bindings: dict[str, str] = {}
+        for edge in edges:
+            handle = edge.get("targetHandle") or ""
+            if not handle.startswith(PARAM_HANDLE_PREFIX):
+                continue
+            argument = handle[len(PARAM_HANDLE_PREFIX) :]
+            function = label_of.get(edge.get("target"), "")
+            for axis in params:
+                if axis.get("function") == function and axis.get("param") == argument:
+                    bindings[axis["column"]] = edge.get("source")
+                    break
+
+        unbound = [a["column"] for a in params if a["column"] not in bindings]
+        logger.info(
+            "[plot] axis bindings: %s%s",
+            {
+                column: f"{label_of.get(node, '?')} [{type_of.get(node, '?')}]"
+                for column, node in bindings.items()
+            }
+            or "none",
+            f" — {len(unbound)} axis/axes feed no port on this canvas: {unbound}"
+            if unbound
+            else "",
+        )
+        return bindings
+    except Exception:
+        logger.exception("[plot] axis/node binding failed — axes will be inert")
+        return {}
+
+
+def _invalid_spec(exc) -> dict:
+    """A role conflict is a user-correctable state, not a server fault.
+
+    The panel shows the message — which names the one-line fix — instead of an
+    error toast. Shared by both resolve paths so the two cannot report the same
+    conflict in two shapes.
+    """
+    logger.info("[plot] invalid spec: %s", exc)
+    return {
+        "ok": False,
+        "error": str(exc),
+        "figures": [],
+        "figure_labels": [],
+        "figure_count": 0,
+        "figure_index": 0,
+        "notes": [],
+    }
 
 
 def resolve_figures(
@@ -236,6 +386,7 @@ def resolve_figures(
     spec_payload: dict,
     *,
     max_points: int | None = None,
+    figure_index: int | None = None,
     csv_path: str | None = None,
 ) -> dict:
     """
@@ -244,40 +395,104 @@ def resolve_figures(
     Returns plotly.js figure dicts — plain JSON, built without the plotly
     package. Downsampling is applied here and only here: the export path
     (``export_code``) never reduces data for transport.
+
+    ``figure_index`` selects ONE figure out of an ITERATE fan-out, for the
+    panel's next/previous navigator — and now only that figure is **built**, not
+    merely the only one serialized. Building a figure is where the cost is
+    (panels, aggregation, downsampling over the whole group), so reducing all of
+    them to show one meant a two-figure fan-out cost twice what the user was
+    looking at, on every control change. The labels the navigator needs come
+    from the group keys, which never required the figures
+    (``reduce.resolve_one``). ``None`` returns them all, which is what a library
+    caller or a test wants.
     """
-    from scistackplot import MAX_TRANSPORT_POINTS, RoleError, render_plotly, resolve
+    from scistackplot import (
+        MAX_TRANSPORT_POINTS,
+        RoleError,
+        render_plotly,
+        resolve,
+        resolve_one,
+    )
 
     source = get_source(db, csv_path=csv_path)
     spec = _spec_from_payload(spec_payload)
-    table = source.get_table(list(spec.measures))
+    table = _table_for(source, spec)
 
     budget = MAX_TRANSPORT_POINTS if max_points is None else max_points
+    if figure_index is not None:
+        try:
+            figure, labels, index = resolve_one(
+                spec, table, figure_index, max_points=budget
+            )
+        except RoleError as exc:
+            return _invalid_spec(exc)
+        rendered = [
+            {
+                "index": index,
+                "key": figure.to_dict()["figure_key"],
+                "label": figure.figure_label,
+                "figure": render_plotly(figure),
+                "row_count": figure.row_count,
+                "downsampled_from": figure.downsampled_from,
+            }
+        ]
+        logger.info(
+            "[plot] resolved %s: figure %d of %d rendered, %d row(s)",
+            spec.kind,
+            index,
+            len(labels),
+            figure.row_count,
+        )
+        return {
+            "ok": True,
+            "error": None,
+            "figures": rendered,
+            "figure_labels": labels,
+            "figure_count": len(labels),
+            "figure_index": index,
+            "notes": list(figure.fanout_notes),
+        }
+
     try:
         resolved = resolve(spec, table, max_points=budget)
     except RoleError as exc:
-        # A role conflict is a user-correctable state, not a server fault: the
-        # panel shows the message (which names the one-line fix) instead of an
-        # error toast.
-        logger.info("[plot] invalid spec: %s", exc)
-        return {"ok": False, "error": str(exc), "figures": []}
+        return _invalid_spec(exc)
+
+    labels = [item.figure_label for item in resolved]
+    selected = list(enumerate(resolved))
+    index = 0
 
     figures = [
         {
+            "index": position,
             "key": item.to_dict()["figure_key"],
             "label": item.figure_label,
             "figure": render_plotly(item),
             "row_count": item.row_count,
             "downsampled_from": item.downsampled_from,
         }
-        for item in resolved
+        for position, item in selected
     ]
     logger.info(
-        "[plot] resolved %s: %d figure(s), %d row(s)",
+        "[plot] resolved %s: %d of %d figure(s) rendered (index=%s), %d row(s)",
         spec.kind,
         len(figures),
+        len(resolved),
+        index,
         sum(f["row_count"] for f in figures),
     )
-    return {"ok": True, "error": None, "figures": figures}
+    return {
+        "ok": True,
+        "error": None,
+        "figures": figures,
+        # Every label, always: the navigator has to name the figures it is not
+        # showing, and they are cheap next to the payloads.
+        "figure_labels": labels,
+        "figure_count": len(resolved),
+        "figure_index": index,
+        # Identical on every figure — it describes the fan-out, not a figure.
+        "notes": list(resolved[0].fanout_notes) if resolved else [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -300,13 +515,13 @@ def export_code(
 
     source = get_source(db, csv_path=csv_path)
     spec = _spec_from_payload(spec_payload)
-    table = source.get_table(list(spec.measures))
+    table = _table_for(source, spec)
 
     code = generate_endpoint(
         spec,
         table,
         input_variable=spec.measures[0],
-        x_variable=spec.measures[1] if len(spec.measures) > 1 else None,
+        x_variable=spec.x_measure,
         function_name=function_name,
         output_variable=output_variable,
         path_template=path_template,
@@ -350,7 +565,7 @@ def save_figure(
 
     source = get_source(db, csv_path=csv_path)
     spec = _spec_from_payload(spec_payload)
-    table = source.get_table(list(spec.measures))
+    table = _table_for(source, spec)
 
     try:
         resolved = resolve(spec, table)
@@ -474,6 +689,21 @@ def add_to_pipeline(
 # ---------------------------------------------------------------------------
 # Payload helpers
 # ---------------------------------------------------------------------------
+
+
+def _table_for(source, spec):
+    """Load every variable this spec plots, in one table.
+
+    ``spec.variant_variables()`` is the union — the primary measure plus any
+    variable a variant row names — so adding a row for another variable is all
+    it takes to get that variable loaded and stacked. ``x_measure`` is passed
+    separately because it joins rather than stacks.
+    """
+    return source.get_table(
+        spec.variant_variables(),
+        x_measure=spec.x_measure,
+        factor_variables=list(spec.factor_variables),
+    )
 
 
 def _spec_from_payload(payload: dict):

@@ -1000,6 +1000,7 @@ def _h_plot_resolve(params):
         get_db(),
         params["spec"],
         max_points=params.get("max_points"),
+        figure_index=params.get("figure_index"),
         csv_path=params.get("csv_path"),
     )
 
@@ -1427,6 +1428,26 @@ def main():
         create_new,
     )
 
+    # Make the project's declaration surfaces exist BEFORE the config is
+    # read, exactly as bootstrap.open_or_create_project does for the browser
+    # entry points -- this path duplicates that sequence inline and had
+    # simply never been given this step, so creating a database from VS Code
+    # in a folder that already held a scistack_entities.toml left the project
+    # in folder-scan mode with no entities_file, and the file's Variables /
+    # Parameters / PathInputs never reached the registry. Skipped in
+    # single-file (--module) mode, which has no project root to initialize.
+    if not args.module:
+        from scistack_gui.services.project_init_service import ensure_project_files
+
+        try:
+            init = ensure_project_files(db_path, args.project)
+            if init.created:
+                logger.info("[startup] project init created: %s", init.created)
+            for warning in init.warnings:
+                logger.warning("[startup] project init: %s", warning)
+        except Exception:
+            logger.exception("[startup] project file initialization failed")
+
     # Import user code first (same order as __main__.py) so that
     # configure_database() can auto-register the user's variable classes.
     from scistack_gui import registry
@@ -1610,6 +1631,8 @@ def main():
     # next /api/info call (see _h_get_info).
     from scistack_gui import startup as _startup
 
+    if registry._config is not None:
+        _startup.check_windows_config_paths(registry._config)
     _startup.check_lockfile_staleness(db_path.parent)
 
     # Signal readiness

@@ -124,6 +124,16 @@ class LongTable:
     #: old and the new code, and only scidb can say which is which. A CSV has
     #: no such notion and leaves this None.
     default_pin: dict[str, Any] | None = None
+    #: The dataset's schema keys that this table carries, **outermost first**
+    #: (``["subject", "session", "trial"]``). Empty for sources with no
+    #: hierarchy, which is the honest answer for a CSV.
+    #:
+    #: Two things need it and neither can derive it from the frame. Nesting:
+    #: ``trial`` is meaningless without the ``subject`` it belongs to, so
+    #: iterating it iterates that subject too (``roles.iterate_ancestors``).
+    #: And ordering: a fan-out has to run subject-major so that stepping past
+    #: the last trial of subject 1 rolls over to subject 2's first trial.
+    schema_levels: list[str] = field(default_factory=list)
     #: Name of the per-row "my whole code chain is the newest at my own schema
     #: location" flag, when the source attaches one (scidb's ``CodeIsLatest``).
     #:
@@ -159,6 +169,11 @@ class LongTable:
     def has_factor(self, name: str) -> bool:
         return any(f.name == name for f in self.factors)
 
+    def is_schema_key(self, name: str) -> bool:
+        """Whether this factor is a dataset schema key rather than a variant,
+        a struct field, or anything else a source synthesized."""
+        return name in self.schema_levels
+
     def shape_of(self, measure: str) -> Shape:
         return self.measure(measure).shape
 
@@ -187,6 +202,8 @@ class LongTable:
         default_pin: dict[str, Any] | None = None,
         latest_column: str | None = None,
         factor_origins: dict[str, dict] | None = None,
+        schema_levels: Iterable[str] = (),
+        measure_labels: dict[str, str] | None = None,
     ) -> "LongTable":
         """
         Build a LongTable, inferring column roles when they aren't given.
@@ -234,7 +251,14 @@ class LongTable:
             )
 
         measure_infos = [
-            MeasureInfo(name=column, shape=classify_column(frame[column]))
+            MeasureInfo(
+                name=column,
+                shape=classify_column(frame[column]),
+                # A stacked table's value column is named after the primary
+                # variable but holds several; the label is how the axis says so
+                # without the column name lying about what is in it.
+                label=(measure_labels or {}).get(column),
+            )
             for column in measures
         ]
 
@@ -253,6 +277,10 @@ class LongTable:
             }
             or None,
             latest_column=latest_column if latest_column in frame.columns else None,
+            # Only keys this table actually carries: a variable saved at subject
+            # level has no `trial` column, and an ancestor list naming one would
+            # promote a factor that cannot be grouped by.
+            schema_levels=[key for key in schema_levels if key in frame.columns],
         )
 
     def describe(self) -> dict:
@@ -269,6 +297,12 @@ class LongTable:
                     "level_count": len(f.levels),
                     "is_variant": f.is_variant,
                     "is_field": f.is_field,
+                    # A dataset schema key rather than a variant, a struct
+                    # field, or anything else a source synthesized. Reported
+                    # rather than left to the consumer to work out by
+                    # intersecting two lists — which is policy, and policy
+                    # lives here (CLAUDE.md NOTE 3).
+                    "is_schema_key": self.is_schema_key(f.name),
                     "origin": f.origin,
                 }
                 for f in self.factors

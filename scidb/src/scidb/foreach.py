@@ -194,10 +194,19 @@ class _ForEachState:
     # stored one column per key. scifor rebuilds the mapping per combo; see
     # _resolve_mapping_inputs.
     mapping_inputs: Any = None  # dict | None
-    # {param_name: [GlueSpec]} the caller attached to this call, and the
-    # subset that must run post-slice rather than on the bulk loaded table
-    # (the D4 per-schema-key opt-in, plus whole-table glue on a per-combo
-    # input). See scidb.glue.
+    # The inputs spec as prepare left it — identical to the caller's dict
+    # except that a Parameter-fed glue chain has been folded into its values
+    # (scidb.glue.apply_constant_glue). ForEachConfig hashed THIS dict, so
+    # the save path must read it too or the recorded selectors and the
+    # recorded version_keys would describe two different calls.
+    inputs: Any = None  # dict | None
+    # {param_name: [GlueSpec]} the caller attached to this call MINUS anything
+    # already applied during prepare — i.e. Parameter-fed chains, which run
+    # before fan-out (scidb.glue.apply_constant_glue). This is the set MATLAB
+    # is told to apply, so leaving those in would run them twice.
+    # per_combo_glue is the further subset that must run post-slice rather
+    # than on the bulk loaded table (the D4 per-schema-key opt-in, plus
+    # whole-table glue on a per-combo input). See scidb.glue.
     glue_chains: Any = None  # dict[str, list[GlueSpec]] | None
     per_combo_glue: Any = None  # dict[str, list[GlueSpec]] | None
     # {param: (chain_hash, input_set_signature, {source_rid: virtual_rid})}.
@@ -485,6 +494,13 @@ def for_each(
                 db=db,
                 distribute=distribute,
                 where=concrete_where,
+                # Glue must ride along. Without it every alternative of an
+                # EachOf input ran with the glue SILENTLY DROPPED — the
+                # chains never reached prepare, so nothing was reshaped, no
+                # virtual glue record was written, and the run reported
+                # success. Any glue on a function with a multi-valued
+                # Parameter or a multi-type input was affected.
+                glue=glue,
                 introspect=introspect,
                 track_lineage=track_lineage,
                 skip_computed=skip_computed,
@@ -618,6 +634,14 @@ def for_each(
         if isinstance(v, (PerComboLoader, PerComboLoaderMerge))
     }
     _has_variable_inputs = any(_is_loadable(v) for v in inputs.values())
+    # Params the caller asked to receive as whole DataFrames. Normalization must
+    # leave these alone — see `_normalize_variable_inputs`. Same resolution rule
+    # as scifor's `as_table_set` (True means every loadable input).
+    _as_table_params = (
+        {name for name, spec in inputs.items() if _is_loadable(spec)}
+        if as_table is True
+        else set(as_table or ())
+    )
     _per_combo_glue = state.per_combo_glue or {}
     if _per_combo or _inject_combo_metadata or _has_variable_inputs or _per_combo_glue:
         wrap_reasons = []
@@ -683,7 +707,11 @@ def for_each(
             # dict structure restored) — the form the function expects.
             if _has_variable_inputs:
                 resolved = _normalize_variable_inputs(
-                    resolved, current_combo, inputs, _loaded_inputs_ref
+                    resolved,
+                    current_combo,
+                    inputs,
+                    _loaded_inputs_ref,
+                    as_table_params=_as_table_params,
                 )
 
             # Per-schema-key glue (the D4 opt-in) runs here, on the
@@ -769,7 +797,10 @@ def for_each(
         result_tbl = _for_each_save_resolved(
             state=state,
             result_tbl=result_tbl,
-            inputs=inputs,
+            # state.inputs, not the local `inputs`: prepare folded any
+            # Parameter-fed glue into the values, and that folded dict is what
+            # ForEachConfig hashed.
+            inputs=state.inputs if state.inputs is not None else inputs,
             outputs=outputs,
             save=save,
             db=db,
@@ -1394,10 +1425,33 @@ def _for_each_prepare(
     #     fails before any data is loaded (and before the dry-run shortcut,
     #     which must display the same call the real run would make). ---
     glue_chains = _glue.normalize_glue(glue)
+    # Chains still to apply downstream (the fusion point, or MATLAB's loop).
+    # ``glue_chains`` itself stays WHOLE: it feeds ForEachConfig, where glue
+    # names contribute to the call_id, and a Parameter-fed chain is just as
+    # much part of the call site as a variable-fed one.
+    deferred_glue_chains = glue_chains
     if glue_chains:
-        _glue.check_run_language(glue_chains, glue_language)
-        _glue.refuse_pathinput_glue(inputs, glue_chains)
         _glue.log_chains(glue_chains)
+        _glue.refuse_pathinput_glue(inputs, glue_chains)
+
+        # Split by what feeds each param, then validate BOTH halves before
+        # running any body — the two halves obey opposite language rules
+        # (docs/claude/free-code-glue-nodes.md §1), and a run that is going to
+        # be refused should be refused before it reshapes anything.
+        constant_chains, deferred_glue_chains = _glue.split_constant_chains(
+            inputs, glue_chains
+        )
+        _glue.check_constant_glue_language(constant_chains, glue_language)
+        _glue.check_run_language(deferred_glue_chains, glue_language)
+
+        # Constant-fed glue (the Parameter case) is applied HERE, before Step 8
+        # builds the version keys, so the recorded constant is the glued value.
+        # ``inputs`` is copied first: it is the caller's dict, and mutating it
+        # would double-apply the chain if the caller reused it for a second
+        # for_each call.
+        if constant_chains:
+            inputs = dict(inputs)
+            _glue.apply_constant_glue(inputs, constant_chains)
     else:
         Log.debug("[glue] no glue chains on this call")
 
@@ -1835,7 +1889,7 @@ def _for_each_prepare(
     #     would apply there identically — which is exactly why glue is
     #     required to match the run's language. ---
     glue_fusion = _glue.GlueFusion()
-    if glue_chains:
+    if deferred_glue_chains:
         with Log.step(f"apply_glue({fn_name})"):
             # MATLAB glue bodies run in +scidb/for_each.m, after prepare
             # returns and before the loop — but the *identity* half (the
@@ -1843,12 +1897,12 @@ def _for_each_prepare(
             # languages share one provenance recipe.
             if glue_language != "python":
                 Log.info(
-                    f"[glue] {len(glue_chains)} chain(s) deferred to the "
-                    f"{glue_language} side; identity recorded here"
+                    f"[glue] {len(deferred_glue_chains)} chain(s) deferred to "
+                    f"the {glue_language} side; identity recorded here"
                 )
             glue_fusion = _glue.fuse_glue(
                 loaded_inputs,
-                glue_chains,
+                deferred_glue_chains,
                 schema_keys=list(_scifor.get_schema() or []),
                 apply_bulk=(glue_language == "python"),
             )
@@ -2790,7 +2844,10 @@ def _for_each_prepare(
         path_extra_keys=_path_placeholder_names or None,
         skip_computed_count=_skip_computed_count,
         mapping_inputs=mapping_inputs or None,
-        glue_chains=glue_chains or None,
+        inputs=inputs,
+        # The DEFERRED set: a Parameter-fed chain has already run (before
+        # fan-out), so it must not be handed to MATLAB's loop to run again.
+        glue_chains=deferred_glue_chains or None,
         per_combo_glue=per_combo_glue or None,
         glue_virtual=glue_fusion.virtual or None,
     )
@@ -2939,6 +2996,7 @@ def _normalize_variable_inputs(
     current_combo: dict,
     inputs: dict,
     loaded_inputs: "dict | None" = None,
+    as_table_params: "set[str] | None" = None,
 ) -> dict:
     """Normalize variable inputs to the raw data the function expects.
 
@@ -2951,11 +3009,20 @@ def _normalize_variable_inputs(
     This is the value the function previously received as ``BaseVariable.data``
     after LineageFcn unwrapped its reconstructed input — now produced directly.
 
+    ``as_table_params`` is what the caller asked to receive as whole DataFrames,
+    and those are passed through untouched. Unwrapping them was a real bug with a
+    narrow trigger: this normalization only runs for combos carrying a ``__rid_*``
+    key, which are added when EVERY schema key is iterated, so an ``as_table``
+    input silently arrived as a bare scalar in exactly that case and nowhere
+    else. A ``plot_``/``stat_`` endpoint iterating down to the leaf level then
+    received a float where its body expects a frame.
+
     Args:
         resolved: Dict of param_name → raw_data from scifor
         current_combo: Combo dict with __rid_* → record_id + schema keys
         inputs: Original inputs dict with param_name → variable_class or Fixed()
         loaded_inputs: The spread DataFrames from _for_each_prepare (state.loaded_inputs).
+        as_table_params: Param names the caller declared ``as_table``.
 
     Returns:
         Dict with normalized raw data for variable inputs, pass-through for others
@@ -2963,12 +3030,13 @@ def _normalize_variable_inputs(
     import pandas as pd
 
     reconstructed = {}
+    as_table_params = as_table_params or set()
 
     for param_name, raw_value in resolved.items():
         # Check if this param is a variable input (has __rid_* entry)
         rid_key = f"__rid_{param_name}"
-        if rid_key not in current_combo:
-            # Not a variable - pass through as-is
+        if rid_key not in current_combo or param_name in as_table_params:
+            # Not a variable, or the caller wants the whole table — pass through.
             reconstructed[param_name] = raw_value
             continue
 

@@ -216,8 +216,48 @@ Both can be used together. If the same package appears via both `packages` and a
 - **No config file at all**: not an error. `load_config` falls back to folder-scan discovery rooted at the project root (`_folder_scan_config`), and `services.project_init_service.ensure_project_files` creates a `scistack.toml` + entities file at open/create time. This is server-side for both front ends; the VS Code extension used to pre-check and prompt for it in `projectInit.ts`, which was removed along with the "How should SciStack discover your pipeline code?" picker.
 - **Both files in the same directory**: `pyproject.toml` is used; `scistack.toml` is ignored.
 
+## Paths are cross-platform, in both directions
+
+A config file is committed and shared: the same project gets opened on
+Windows and on macOS. Both halves of that have to be handled, and both used
+to be wrong (fixed 2026-09-10).
+
+**Reading** — `scifor.discovery.resolve_config_path(root, raw)` is the single
+place a raw config string becomes a `Path`. Backslash is treated as a
+separator whenever the host is not Windows, because on POSIX `\` is a legal
+*filename* character: `entities_file = "src\scistack_entities.toml"` written
+by a Windows session does not error on macOS, it names a file called
+`src\scistack_entities.toml` in the **project root**. The GUI created and
+read exactly that file, and everything derived from its location moved with
+it — MATLAB classdef stubs sit beside the entities file, so they went to
+`<root>/scistack_matlab_variables` instead of
+`<root>/src/scistack_matlab_variables`. That was the visible symptom.
+
+`scistack_gui.config` routes every read through `_config_path` (Path form) or
+`_config_pattern` (glob patterns, expanded as text); `scidb.entities`
+resolution goes through the same scifor function. Nothing joins a raw string
+onto the project root directly.
+
+**Writing** — relative keys (`entities_file`, `glue_dir`) point *inside* the
+project, so they must round-trip on another machine. They are recorded with
+forward slashes (`config._portable_relpath`), which Windows accepts natively.
+`str(WindowsPath("src/x.toml"))` is `src\x.toml`, which is how the broken
+values got written in the first place.
+
+**Windows-absolute values** (`Y:\LabMembers\...`, `\\server\share`) are a
+different problem: there is no such drive on a Mac and nothing to guess.
+`resolve_config_path` returns them unchanged rather than gluing them onto the
+project root (which produced `/Users/me/project/y:\LabMembers\...` in every
+error message), and `startup.check_windows_config_paths` records a
+non-blocking `windows_config_paths` startup notice listing them so the user
+can re-add them in 📁 Paths.
+
+Absolute `modules`/`matlab.sources` entries are machine-specific by nature —
+this makes them *fail legibly*, it does not make them portable.
+
 ## Implementation
 
-- **Parser**: `scistack_gui/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_extract_scistack_section()`
+- **Parser**: `scistack_gui/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_extract_scistack_section()`, `_config_path()`
+- **Cross-platform path reading**: `scifor/discovery.py` — `resolve_config_path()`, `normalize_config_separators()`, `is_windows_absolute()`
 - **Config/entities-file creation**: `scistack_gui/services/project_init_service.py` — `ensure_project_files()`, called from `bootstrap.open_or_create_project()`
 - **VS Code server argv**: `extension/src/serverArgs.ts` — `buildServerArgs()`; never passes `--module`/`--project`, so the project root is always `--project-root` (the workspace folder)

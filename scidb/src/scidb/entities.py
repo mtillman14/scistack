@@ -70,7 +70,11 @@ from pathlib import Path
 from typing import Any
 
 from scifor import EachOf, PathInput
-from scifor.discovery import find_project_config, read_scistack_section
+from scifor.discovery import (
+    find_project_config,
+    read_scistack_section,
+    resolve_config_path,
+)
 from scistacklog import Log
 
 from .parameter import Parameter
@@ -459,37 +463,109 @@ def project_root(start: "Path | str | None" = None) -> "Path | None":
     return config.parent if config is not None else None
 
 
-def entities_path(start: "Path | str | None" = None) -> "Path | None":
-    """The entities file for the project containing *start* (default: cwd).
+def resolve_entities_path(
+    root: "Path | str", section: "dict | None"
+) -> "Path | None":
+    """The entities file of a project rooted at *root* whose scistack
+    section is *section*.
 
-    ``entities_file`` in the project config wins. Failing that, the
-    conventional ``src/scistack_entities.toml`` is accepted **only if it
-    already exists** -- guessing a path that doesn't would report a
-    missing-file error against a file the user never asked for.
+    The rule itself, factored out of :func:`entities_path` so that a caller
+    which has *already* located the project config and parsed its section --
+    ``scistack_gui.config.load_config`` -- asks this function rather than
+    reimplementing it. The two used to disagree: only this side had the
+    conventional fallback, so a project whose entities file sat at
+    ``src/scistack_entities.toml`` with no ``entities_file`` key was read by
+    scidb and by MATLAB, and invisible to the GUI's registry -- its
+    Variables, Parameters and PathInputs simply never appeared.
+
+    The rule, in order:
+
+    - ``entities_file = "some/path.toml"`` wins, resolved against *root*.
+    - ``entities_file = ""`` is an **explicit opt-out**: this project has no
+      entities file and the conventional path must NOT be adopted. It is
+      what the GUI's "clear entities file" writes, which is the only way to
+      say "stop reading that file" about a file sitting at the default
+      location (deleting the key would just fall through to the next rule).
+    - no key at all: the conventional ``src/scistack_entities.toml``,
+      accepted **only if it already exists** -- guessing a path that doesn't
+      would report a missing-file error against a file the user never asked
+      for.
+    - a key that is not a string: warned about, then treated as absent.
+
+    The declared path is resolved through
+    :func:`scifor.discovery.resolve_config_path`, so a value written by a
+    Windows session (``src\\scistack_entities.toml``) still finds
+    ``src/scistack_entities.toml`` here instead of naming a backslashed file
+    in the project root -- which is what put MATLAB classdef stubs in the
+    root rather than beside the entities file.
     """
-    config = _project_config(start)
-    if config is None:
-        return None
-
-    root = config.parent
-    section = read_scistack_section(config) or {}
+    root = Path(root)
+    section = section or {}
     raw = section.get("entities_file")
     if isinstance(raw, str) and raw:
-        resolved = Path(os.path.normpath(os.path.abspath(str(root / raw))))
-        Log.debug("[entities] %s declares entities_file=%s", config, resolved)
+        resolved = Path(
+            os.path.normpath(os.path.abspath(str(resolve_config_path(root, raw))))
+        )
+        Log.debug("[entities] %s declares entities_file=%s", root, resolved)
         return resolved
+    if isinstance(raw, str):
+        Log.info(
+            "[entities] %s declares entities_file = \"\" (explicit opt-out); "
+            "no entities file for this project",
+            root,
+        )
+        return None
+    if raw is not None:
+        # Not a string at all. Falling through to the conventional path is
+        # the right recovery, but silently would leave the user staring at
+        # entities that load from a file they did not name.
+        Log.warn(
+            "[entities] %s declares entities_file = %r, which is not a path "
+            "string; ignoring it",
+            root,
+            raw,
+        )
 
-    fallback = root / DEFAULT_ENTITIES_RELPATH
+    fallback = Path(
+        os.path.normpath(os.path.abspath(str(root / DEFAULT_ENTITIES_RELPATH)))
+    )
     if fallback.exists():
         Log.info(
             "[entities] %s declares no entities_file; using the conventional %s",
-            config,
+            root,
             fallback,
         )
         return fallback
     Log.debug("[entities] %s declares no entities_file and %s does not exist",
-              config, fallback)
+              root, fallback)
     return None
+
+
+def is_entities_opt_out(section: "dict | None") -> bool:
+    """Whether *section* says, explicitly, that this project has no entities
+    file -- ``entities_file = ""``.
+
+    :func:`resolve_entities_path` returns ``None`` for this and for "nothing
+    is configured and nothing is at the conventional path", which are the
+    same answer to "what should I read?" but opposite answers to "should I
+    create one?". Only a caller asking the second question needs this
+    (``scistack_gui.services.project_init_service``, which would otherwise
+    re-create and re-point at an entities file on every project open, undoing
+    the user's clear).
+    """
+    return section is not None and section.get("entities_file") == ""
+
+
+def entities_path(start: "Path | str | None" = None) -> "Path | None":
+    """The entities file for the project containing *start* (default: cwd).
+
+    Locates the project config, then applies :func:`resolve_entities_path`
+    -- which is where the rule lives, and is documented.
+    """
+    config = _project_config(start)
+    if config is None:
+        return None
+    return resolve_entities_path(config.parent, read_scistack_section(config))
 
 
 _cache: "dict[str, tuple[float, EntitiesFile]]" = {}

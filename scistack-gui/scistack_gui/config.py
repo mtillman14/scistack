@@ -40,6 +40,34 @@ logger = logging.getLogger(__name__)
 DEFAULT_GLUE_RELPATH = "src/scistack_glue"
 
 
+def _config_path(project_root: Path, raw) -> Path:
+    """A path *read from* scistack.toml/pyproject.toml, made absolute.
+
+    Every raw config value goes through here rather than
+    ``_normalize(project_root / raw)`` so that separator handling lives in
+    exactly one place -- ``scifor.discovery.resolve_config_path``, which the
+    non-GUI readers (``scidb.entities``) use too. A config written on
+    Windows records ``src\\scistack_entities.toml``; joined naively on macOS
+    that names a backslashed FILE in the project root, which is how classdef
+    stubs ended up in the root instead of beside the entities file. A
+    Windows-absolute value (``Y:\\LabMembers\\...``) has no meaning here at
+    all and is left alone to fail as a missing path, with a warning, rather
+    than being glued onto the project root.
+    """
+    from scifor.discovery import resolve_config_path
+
+    return _normalize(resolve_config_path(project_root, str(raw)))
+
+
+def _config_pattern(entry: str) -> str:
+    """A glob pattern read from the config, with separators this platform
+    understands. The Path form goes through :func:`_config_path`; a glob is
+    expanded as text, so it needs the string half of the same rule."""
+    from scifor.discovery import normalize_config_separators
+
+    return normalize_config_separators(entry)
+
+
 def _normalize(p) -> Path:
     """Return *p* as an absolute, normalized :class:`Path` without following
     symlinks or canonicalizing Windows mapped drives.
@@ -335,7 +363,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
             matched = sorted(
                 Path(m)
                 for m in _glob.glob(
-                    str(project_root / entry),
+                    str(project_root / _config_pattern(entry)),
                     recursive=True,
                 )
                 if m.endswith(".py")
@@ -346,7 +374,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
                 logger.debug("[config] Glob matched %d .py files", len(matched))
             modules.extend(matched)
         else:
-            p = _normalize(project_root / entry)
+            p = _config_path(project_root, entry)
             if p.is_dir():
                 # Recursively discover all .py files in the directory,
                 # pruning noise dirs (.venv, node_modules, etc.) the same
@@ -383,21 +411,42 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     logger.info("[config] Resolved %d module files total", len(modules))
 
     # --- entities_file (TOML, the write target) ---
+    #
+    # scidb owns "where is this project's entities file" (CLAUDE.md NOTE 3);
+    # this used to read the key here instead, which meant it MISSED scidb's
+    # conventional-path fallback. A project with a pre-existing
+    # src/scistack_entities.toml and no entities_file key therefore had its
+    # entities read by scidb and by MATLAB and never loaded into the GUI
+    # registry -- see .claude/plan-preexisting-entities-on-db-create-26-09-10.md
+    # and resolve_entities_path for the full rule, including the `""`
+    # opt-out that clear_entities_file writes.
     logger.info("[config] Processing entities_file")
-    entities_file: Path | None = None
-    raw_ef = section.get("entities_file")
-    if raw_ef is not None:
-        entities_file = _normalize(project_root / raw_ef)
-        logger.info("[config] entities_file set to: %s", entities_file)
+    from scidb.entities import resolve_entities_path
+
+    entities_file: Path | None = resolve_entities_path(project_root, section)
+    if entities_file is None:
+        logger.info(
+            "[config] No entities file for %s (no entities_file key and no "
+            "conventional src/scistack_entities.toml, or an explicit opt-out)",
+            project_root,
+        )
+    elif section.get("entities_file"):
+        logger.info("[config] entities_file set to: %s (declared in %s)",
+                    entities_file, toml_path)
     else:
-        logger.debug("[config] No entities_file configured")
+        logger.info(
+            "[config] entities_file set to: %s (conventional path; %s declares "
+            "no entities_file key)",
+            entities_file,
+            toml_path,
+        )
 
     # --- glue_dir (the second writable surface: one file per glue node) ---
     logger.info("[config] Processing glue_dir")
     glue_dir: Path | None = None
     raw_gd = section.get("glue_dir")
     if raw_gd is not None:
-        glue_dir = _normalize(project_root / raw_gd)
+        glue_dir = _config_path(project_root, raw_gd)
         logger.info("[config] glue_dir set to: %s", glue_dir)
         # Folded into modules so glue nodes are found by ordinary discovery —
         # they are real functions in real files, and get no new discovery path.
@@ -423,7 +472,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     variable_file: Path | None = None
     raw_vf = section.get("variable_file")
     if raw_vf is not None:
-        variable_file = _normalize(project_root / raw_vf)
+        variable_file = _config_path(project_root, raw_vf)
         # Folded into modules so its declarations are still discovered even
         # if nothing else in the config covers it. Before the entities file
         # became TOML this was guaranteed by set_variable_file, which always
@@ -506,7 +555,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     matlab_variable_dir: Path | None = None
     raw_mvd = matlab_section.get("variable_dir")
     if raw_mvd is not None:
-        matlab_variable_dir = _normalize(project_root / raw_mvd)
+        matlab_variable_dir = _config_path(project_root, raw_mvd)
         logger.debug("[config] matlab_variable_dir set to: %s", matlab_variable_dir)
     else:
         logger.debug("[config] No matlab_variable_dir configured")
@@ -514,7 +563,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     matlab_entities_file: Path | None = None
     raw_mef = matlab_section.get("entities_file")
     if raw_mef is not None:
-        matlab_entities_file = _normalize(project_root / raw_mef)
+        matlab_entities_file = _config_path(project_root, raw_mef)
         logger.info(
             "[config] matlab_entities_file set to: %s", matlab_entities_file
         )
@@ -696,7 +745,7 @@ def _resolve_glob_paths(
             matched = sorted(
                 Path(p)
                 for p in _glob.glob(
-                    str(project_root / entry),
+                    str(project_root / _config_pattern(entry)),
                     recursive=True,
                 )
                 if p.endswith(".m")
@@ -707,7 +756,7 @@ def _resolve_glob_paths(
                 logger.debug("[config] Glob matched %d .m files", len(matched))
             result.extend(matched)
         else:
-            p = _normalize(project_root / entry)
+            p = _config_path(project_root, entry)
             if p.is_dir():
                 # Recursively discover all .m files in the directory,
                 # pruning noise dirs and MATLAB private/@class/+package
@@ -1001,6 +1050,21 @@ def _folder_scan_config(root: Path) -> SciStackConfig:
 # doesn't otherwise depend on).
 
 
+def _portable_relpath(rel: Path) -> str:
+    """A project-relative path as it should be RECORDED in scistack.toml.
+
+    Forward slashes, always. These keys are the portable ones -- they point
+    inside the project, so the same repo opened on another machine must
+    resolve them -- and ``str(WindowsPath("src/x.toml"))`` is
+    ``src\\x.toml``, which on macOS names a backslashed file in the project
+    root rather than ``src/x.toml``. Windows accepts ``/`` natively, so
+    POSIX form is correct on both. Readers additionally tolerate the
+    backslashed form already committed to existing configs -- see
+    ``scifor.discovery.resolve_config_path``.
+    """
+    return rel.as_posix()
+
+
 def _toml_str(s: str) -> str:
     """Render *s* as a quoted TOML basic string, escaping backslashes
     (important for Windows paths) and double quotes."""
@@ -1084,8 +1148,13 @@ def _load_raw_scistack_section(toml_path: Path) -> dict:
 
 
 def _resolve_raw_entry(entry: str, project_root: Path) -> Path:
-    p = Path(entry)
-    return _normalize(p) if p.is_absolute() else _normalize(project_root / entry)
+    """A raw ``modules``/``matlab.sources`` entry as an absolute path.
+
+    Same separator handling as everything else read from the config -- the
+    Paths popup compares against these, so an entry written on Windows must
+    resolve to the same path here that ``load_config`` resolved it to, or
+    "remove this path" silently matches nothing."""
+    return _config_path(project_root, entry)
 
 
 def _reject_packaged_project(toml_path: Path | None) -> None:
@@ -1419,7 +1488,9 @@ def set_entities_file(
         )
 
     try:
-        entities_file_for_toml: "Path | str" = entities_file.relative_to(project_root)
+        entities_file_for_toml: "Path | str" = _portable_relpath(
+            entities_file.relative_to(project_root)
+        )
     except ValueError:
         entities_file_for_toml = entities_file
 
@@ -1502,7 +1573,9 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
         logger.info("[config] set_glue_dir: %s already exists", glue_dir)
 
     try:
-        glue_dir_for_toml: "Path | str" = glue_dir.relative_to(project_root)
+        glue_dir_for_toml: "Path | str" = _portable_relpath(
+            glue_dir.relative_to(project_root)
+        )
     except ValueError:
         glue_dir_for_toml = glue_dir
 
@@ -1530,16 +1603,20 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
 
 
 def clear_entities_file(db_path: Path) -> Path:
-    """Remove the ``entities_file`` key from scistack.toml (loose-script
-    projects only).
+    """Stop pointing at an entities file (loose-script projects only).
 
-    Never deletes the file on disk -- this only stops new GUI-created
-    declarations from targeting it automatically, and its existing
-    declarations keep being discovered (``registry`` scans it whenever the
-    key is set; with the key gone, ``scidb.entities`` still finds it at the
-    conventional path). Consistent with the project's
+    Never deletes the file on disk. Consistent with the project's
     ``feedback_never_delete_mark_hidden`` ethos: "remove" means stop
     pointing at it, never destroy it.
+
+    Written as ``entities_file = ""``, an explicit opt-out, rather than by
+    deleting the key: with the key simply gone,
+    ``scidb.entities.resolve_entities_path`` falls back to the conventional
+    ``src/scistack_entities.toml``, so clearing a file at that (default,
+    overwhelmingly common) location would be a silent no-op. The empty
+    string is also honoured by scidb and MATLAB, which the key-deletion form
+    never was -- clearing used to leave the file live for everything except
+    the GUI.
     """
     logger.info("[config] clear_entities_file: db_path=%s", db_path)
     project_root = resolve_project_root(None, db_path)
@@ -1554,7 +1631,7 @@ def clear_entities_file(db_path: Path) -> Path:
     matlab_section = dict(section.get("matlab", {}))
     content = _render_scistack_toml(
         modules=list(section.get("modules", [])),
-        entities_file=None,
+        entities_file="",
         glue_dir=section.get("glue_dir"),
         variable_file=section.get("variable_file"),
         packages=list(section.get("packages", [])),
@@ -1566,5 +1643,9 @@ def clear_entities_file(db_path: Path) -> Path:
         matlab_entities_file=matlab_section.get("entities_file"),
     )
     toml_path.write_text(content)
-    logger.info("[config] clear_entities_file: wrote %s (cleared entities_file)", toml_path)
+    logger.info(
+        '[config] clear_entities_file: wrote %s (entities_file = "", explicit '
+        "opt-out; the file itself is untouched)",
+        toml_path,
+    )
     return toml_path

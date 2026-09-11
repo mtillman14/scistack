@@ -40,6 +40,7 @@ def open_or_create_project(
     module: Path | None = None,
     project: Path | None = None,
     init_project_files: bool = True,
+    entities_file: "str | Path | None" = None,
 ) -> BootstrapResult:
     """Import pipeline code, then open (or create) ``db_path``.
 
@@ -99,10 +100,15 @@ def open_or_create_project(
     # with an explicit ``entities_file: null`` means "leave this project in
     # the pure folder-scan state", and initializing anyway would override a
     # choice the user made on purpose.
+    #
+    # ``entities_file`` is where to put one if the project has none -- the
+    # creation wizard's field. It is create-only: a project that already
+    # declares an entities file keeps it, so creating a database in a project
+    # that already has declarations cannot re-point them at an empty file.
     if not module and init_project_files:
         from scistack_gui.services.project_init_service import ensure_project_files
 
-        init = ensure_project_files(db_path, project)
+        init = ensure_project_files(db_path, project, entities_file)
         warnings.extend(init.warnings)
 
     # Import user code first so that configure_database() can auto-register
@@ -240,6 +246,8 @@ def open_or_create_project(
 
     from scistack_gui import startup as _startup
 
+    if loaded_config is not None:
+        _startup.check_windows_config_paths(loaded_config)
     _startup.check_lockfile_staleness(db_path.parent)
     for err in _startup.get_startup_errors():
         logger.warning("[bootstrap] startup warning [%s]: %s", err.kind, err.message)

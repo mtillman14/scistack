@@ -3,15 +3,18 @@ Browser-frontend project-creation wizard endpoints.
 
 POST /api/bootstrap/create — create a new .duckdb (folder + filename +
                               schema keys) and load pipeline code into it.
-                              Also eagerly writes scistack.toml + the
-                              configured entities file (default
-                              src/scistack_entities.toml) for loose-script
-                              projects, via config.set_entities_file, so a
-                              freshly-created project never sits in the
+                              Also gives loose-script projects a scistack.toml
+                              + an entities file (default
+                              src/scistack_entities.toml) if they have none,
+                              so a freshly-created project never sits in the
                               pure-folder-scan config state that
                               pre-existing projects opened without ever
                               running this endpoint still can (see
                               docs/claude/code-discovery-categories.md).
+                              Create-only: a project that already declares
+                              an entities file keeps it, whatever the
+                              wizard's field says -- see
+                              services.project_init_service.
 POST /api/bootstrap/open   — open an existing .duckdb and load pipeline code
 
 These exist so the standalone browser frontend can bootstrap a project the
@@ -48,9 +51,12 @@ class CreateProjectRequest(BaseModel):
     module: str | None = None
     project: str | None = None
     entities_file: str | None = "src/scistack_entities.toml"
-    """Relative to the *project root*, not to ``folder`` -- ``folder`` is
-    where the database goes, which is typically a datasets directory. See
-    ``config.resolve_project_root``."""
+    """Where to create an entities file *if this project has none*.
+
+    Relative to the *project root*, not to ``folder`` -- ``folder`` is where
+    the database goes, which is typically a datasets directory. See
+    ``config.resolve_project_root``. An explicit ``null`` opts out of project
+    initialization entirely."""
 
 
 class OpenProjectRequest(BaseModel):
@@ -92,33 +98,14 @@ def create_project(req: CreateProjectRequest) -> dict:
 
     db_path = _resolve_db_path(req.folder, req.filename)
     if db_path.exists():
-        # Checked here (not just inside open_or_create_project, below)
-        # because the eager entities-file setup right after this must NOT
-        # run when creation is ultimately going to fail -- otherwise a
-        # failed "create on an already-existing path" request would still
-        # leave a stray scistack.toml/entities file behind.
+        # Checked here as well as inside open_or_create_project so the
+        # frontend gets a 409 with this message rather than a bare
+        # FileExistsError string.
         raise HTTPException(
             status_code=409, detail=f"Database already exists: {db_path}"
         )
     module = Path(req.module).expanduser() if req.module else None
     project = Path(req.project).expanduser() if req.project else None
-
-    if req.entities_file:
-        from scistack_gui import config as config_mod
-
-        try:
-            entities_file = config_mod.set_entities_file(db_path, req.entities_file)
-            logger.info(
-                "[api.bootstrap] eagerly configured entities file: %s",
-                entities_file,
-            )
-        except ValueError as exc:
-            # Packaged project (pyproject.toml already present somewhere
-            # above db_path) -- entities_file must be hand-added there;
-            # don't fail project creation over it.
-            logger.info(
-                "[api.bootstrap] skipping eager entities-file setup: %s", exc
-            )
 
     try:
         open_or_create_project(
@@ -129,6 +116,15 @@ def create_project(req: CreateProjectRequest) -> dict:
             # An explicit null entities_file is an opt-out, so bootstrap's
             # own initialization must not put the files back.
             init_project_files=bool(req.entities_file),
+            # Where to put one IF the project has none. This used to be a
+            # separate eager config_mod.set_entities_file call right here,
+            # which unconditionally re-pointed the key -- so creating a
+            # database in a project that already declared its entities
+            # somewhere else silently swapped in a new empty file and the
+            # existing declarations vanished from the GUI. Routing it
+            # through project_init_service makes it create-only, like every
+            # other step there.
+            entities_file=req.entities_file,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

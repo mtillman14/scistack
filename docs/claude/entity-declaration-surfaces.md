@@ -123,7 +123,9 @@ by the edit actually disappears rather than lingering from the last scan.
 
 ## Init: what a project is guaranteed to have
 
-`bootstrap.open_or_create_project` → `project_init_service`:
+`bootstrap.open_or_create_project` **and `server.py`'s JSON-RPC `main()`**
+(the VS Code entry point, which duplicates the startup sequence inline and
+must call the same step — it did not until 2026-09-10) → `project_init_service`:
 
 1. `scistack.toml` at the resolved project root (created if absent).
 2. `entities_file` key + `src/scistack_entities.toml` (created if absent).
@@ -141,6 +143,20 @@ location *if the file already exists*. The result was a project with no
 writable surface at all — the log read `entities_file=None (writable)` — and
 no stub directory either, since `variable_stub_dir` returns `None` when
 there is no entities file to sit beside.
+
+Step 2 is deliberately a no-op when the config says `entities_file = ""`
+(the explicit opt-out `clear_entities_file` writes) — otherwise every
+project open would silently put back the file the user just cleared.
+
+**The mirror-image failure, 2026-09-10.** Step 2 asks *scidb* whether the
+project already has an entities file, and scidb's answer includes the
+conventional fallback. So for a project with a pre-existing
+`src/scistack_entities.toml` and no `entities_file` key, init correctly
+concluded "nothing to create" — and `config.load_config`, which did **not**
+have the fallback, then reported `entities_file=None`, so the registry never
+opened the file. Its Variables/Parameters/PathInputs were live for scidb and
+MATLAB and invisible in the GUI. Both sides now go through
+`scidb.entities.resolve_entities_path`; there is one rule.
 
 ## Who decides that a variable type is unusable
 

@@ -91,10 +91,10 @@ export interface ParameterNodeData {
 interface Props {
   id: string
   data: ParameterNodeData & {
-    /** Set by the variant popup: which functions this parameter feeds, used to
-     *  match it to a variant axis (branch params are namespaced per producing
-     *  function, so the name alone can be ambiguous). */
-    variantConsumers?: string[]
+    /** Set by the variant popup: the variant-axis COLUMN this node supplies,
+     *  resolved there from the pipeline edges' `targetHandle`. Absent on the
+     *  canvas, and absent in the popup for a node that feeds no axis. */
+    variantAxisColumn?: string | null
   }
 }
 
@@ -115,7 +115,7 @@ export default function ParameterNode({ id, data }: Props) {
     return (
       <VariantParameterNode
         label={data.label}
-        axis={variant.axisForParameter(data.label, data.variantConsumers ?? [])}
+        axis={variant.axisForColumn(data.variantAxisColumn)}
         selection={variant}
       />
     )
@@ -197,7 +197,7 @@ function PipelineParameterNode({ id, data }: Props) {
  * downstream of it distinguishes this measure's records — renders inert rather
  * than offering checkboxes that would do nothing.
  */
-function VariantParameterNode({
+export function VariantParameterNode({
   label,
   axis,
   selection,

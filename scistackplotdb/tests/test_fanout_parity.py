@@ -23,18 +23,48 @@ pytest.importorskip("seaborn")
 
 
 def _run_generated(code, tmp_path):
+    """Execute the generated endpoint, returning the files and any failures.
+
+    ``for_each`` records a per-combo failure and carries on (see
+    ``scifor.foreach._record_iteration_failure``) — deliberately, since one bad
+    combination should not abandon a long run. That makes the naive form of this
+    test useless when it fails: every combo raises, no file is written, and the
+    assertion says only "0 != 12" while the reason sits in a log nobody captured.
+
+    So the summary event is captured and handed back, and the assertions below
+    put it in their message. A parity failure has to explain itself; it is the
+    one failure in this layer that means the exported pipeline draws something
+    different from what the user previewed.
+    """
     from scidb import PathOutput, for_each
 
     from conftest import StepLength, StepLengthFigure
 
+    failures: dict[str, list[str]] = {}
+
+    def _capturing_for_each(*args, **kwargs):
+        def _progress(event):
+            if event.get("event") == "summary":
+                failures.update(event.get("failure_reasons") or {})
+
+        return for_each(*args, _progress_fn=_progress, **kwargs)
+
     namespace = {
-        "for_each": for_each,
+        "for_each": _capturing_for_each,
         "PathOutput": PathOutput,
         "StepLength": StepLength,
         "StepLengthFigure": StepLengthFigure,
     }
     exec(compile(code.source, "<generated>", "exec"), namespace)  # noqa: S102
-    return sorted(tmp_path.glob("fig_*.png"))
+    return sorted(tmp_path.glob("fig_*.png")), failures
+
+
+def _explain(code, failures) -> str:
+    """Assertion message: what the pipeline hit, and the source it hit it in."""
+    reasons = "\n".join(
+        f"  {len(combos)}x {reason}" for reason, combos in failures.items()
+    ) or "  (none recorded)"
+    return f"\nfor_each failures:\n{reasons}\n\ngenerated source:\n{code.source}"
 
 
 def test_interactive_fanout_matches_pipeline_fanout(seeded, tmp_path):
@@ -53,9 +83,9 @@ def test_interactive_fanout_matches_pipeline_fanout(seeded, tmp_path):
         input_variable="StepLength",
         path_template=str(tmp_path / "fig_{subject}.png"),
     )
-    files = _run_generated(code, tmp_path)
+    files, failures = _run_generated(code, tmp_path)
 
-    assert len(files) == len(interactive) == 3
+    assert len(files) == len(interactive) == 3, _explain(code, failures)
     assert {path.stem.removeprefix("fig_") for path in files} == {
         figure.figure_key["subject"] for figure in interactive
     }
@@ -81,10 +111,44 @@ def test_two_iterate_keys_fan_out_the_same_both_ways(seeded, tmp_path):
         input_variable="StepLength",
         path_template=str(tmp_path / "fig_{subject}_{session}.png"),
     )
-    files = _run_generated(code, tmp_path)
+    files, failures = _run_generated(code, tmp_path)
 
     assert len(interactive) == 6  # 3 subjects x 2 sessions
-    assert len(files) == len(interactive)
+    assert len(files) == len(interactive), _explain(code, failures)
+
+
+def test_a_promoted_ancestor_fans_out_the_same_both_ways(seeded, tmp_path):
+    """Iterating a nested key alone: the promotion must reach the pipeline.
+
+    This is the case the promotion exists for, and the one where the two paths
+    could most easily diverge — the spec literally names only `trial`, so an
+    endpoint built from `spec.iterate_factors` would run once per trial NUMBER
+    (2 figures pooling every subject) while the preview showed one figure per
+    location (12). The parity here is the guard on that.
+    """
+    source = ScidbSource(seeded)
+    table = source.get_table(["StepLength"])
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"trial": Role.ITERATE},
+        kind=PlotKind.SCATTER,
+    )
+
+    interactive = resolve(spec, table)
+    code = generate_endpoint(
+        spec,
+        table,
+        input_variable="StepLength",
+        path_template=str(tmp_path / "fig_{subject}_{session}_{trial}.png"),
+    )
+    files, failures = _run_generated(code, tmp_path)
+
+    assert len(interactive) == 3 * 2 * 2  # every (subject, session, trial)
+    assert len(files) == len(interactive), _explain(code, failures)
+    assert {path.stem.removeprefix("fig_") for path in files} == {
+        "_".join(str(v) for v in figure.figure_key.values())
+        for figure in interactive
+    }
 
 
 def test_no_iterate_produces_exactly_one_figure_both_ways(seeded, tmp_path):
@@ -103,7 +167,7 @@ def test_no_iterate_produces_exactly_one_figure_both_ways(seeded, tmp_path):
         input_variable="StepLength",
         path_template=str(tmp_path / "fig_all.png"),
     )
-    files = _run_generated(code, tmp_path)
+    files, failures = _run_generated(code, tmp_path)
 
     assert len(interactive) == 1
-    assert len(files) == 1
+    assert len(files) == 1, _explain(code, failures)

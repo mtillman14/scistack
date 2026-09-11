@@ -1,9 +1,20 @@
 # Named Variant Rows, and the Variant-Selection DAG
 
-> Status: **built 2026-09-08, uncommitted, Python tests not yet run.**
+> Status: **built 2026-09-08; substantially revised 2026-09-11 (stages 1-8 of
+> `.claude/plan-default-variant-selection.md` and
+> `.claude/plan-plot-studio-variant-axis-fixes.md`), tests passing, uncommitted.**
+>
+> Three rules here were **reversed** on 2026-09-11 and the old reasoning is
+> recorded beside each so nobody restores it by accident: what a table opens on
+> (§1), whether per-location "latest" is reported as pooling (§3), and how an
+> axis finds its node (§5). Also: the section is called **Variants** — it was
+> briefly renamed "Series" in the 26.09.09 multi-variable work and renamed back,
+> because one row is one variant.
 > Plan: `.claude/plan-plot-variant-rows.md`. Prerequisite reading:
 > `variant-selection.md` (what a variant *is*, and why `Code:<fn>` columns
-> exist), `plotting-library-design.md` (roles, the `PlotSpec`).
+> exist), `plotting-library-design.md` (roles, the `PlotSpec`). Companion:
+> `variant-axis-node-binding.md` (which canvas node supplies an axis — read it
+> before touching anything in §5).
 >
 > This is the GUI half of `variant-selection.md` §5, plus the one thing that
 > document left open: how a variant figure is written **as code**. Four things
@@ -20,9 +31,28 @@ VariantSet(name=None,       selection={"bandpass.low_hz": ["20", "50"]})
 ```
 
 - **One row is a pin.** The figure shows that variant and nothing else. This is
-  what a table opens on (`default_spec` seeds one row named `current` from the
-  source's `default_pin`), which is why the section always has something to
-  edit rather than starting empty.
+  what a table opens on (`default_spec` seeds one row named `current`), which is
+  why the section always has something to edit rather than starting empty.
+
+  **A plot opens on exactly ONE variant, with every axis pinned** — not just the
+  code ones. `variants.default_selection` owns the rule: code axes to the latest
+  body (via the per-location flag), branch-param axes to the first level in
+  declared order. Until 2026-09-11 the opening row carried only the source's
+  `default_pin` — the `CodeIsLatest` flag — which left a swept parameter
+  unanswered, so `default_roles` found a multi-level variant factor with no role
+  and put it on COLOUR. A variable produced at five filter cutoffs opened as
+  **five overlaid series** before the user had said anything. Plotting one thing
+  is the common case; comparing is what a second row is for.
+
+  The pin is applied **blindly**: real data is ragged, so (latest code) x (first
+  value) may be a combination nobody ran, and the figure comes out empty. That
+  is deliberate — a rule that quietly picks a different value to avoid an empty
+  figure is no longer a rule anyone can predict — and it is paid for by the
+  empty state explaining itself (§3).
+
+  `default_pin` still exists and still means what it always did: the selection
+  the SOURCE recommends, i.e. which rows are *current*, which only scidb can
+  know. `default_selection` seeds from it and finishes the job.
 - **Two or more rows are a comparison.** They collapse into a synthetic
   `Variant` factor whose levels are the names, and it takes a role — colour,
   facet, separate figures — like any other factor. That is the whole feature:
@@ -70,6 +100,28 @@ Getting the first case wrong is how subjects disappear from a figure with no
 error anywhere. `"latest"` is **not** a synonym for "the highest ordinal", here
 or in `scidb.Variant(code_version="latest")` — same rule, same reason.
 
+### The trap this sets for anything that pins alongside a code axis
+
+Read the table above again with one question in mind: *what makes a selection
+"the first case"?* `resolve_selection` decides with
+
+```python
+pinned_elsewhere = any(k not in latest_axes for k in present)
+```
+
+— **any** other key at all, not just another code axis. So adding a branch-param
+pin beside `Code:f = "latest"` silently moves the selection into the second row
+of that table, and the code axis stops resolving through the per-location flag
+and becomes the global highest ordinal. Every schema location never re-run under
+the newest code drops out of the figure, with no error.
+
+This is exactly why `default_selection` pins the **boolean flag**
+(`{CodeIsLatest: True}`) and never the string `"latest"`, even though the string
+reads better: a bool is not a latest-axis, so `latest_axes` stays empty, the
+selection is returned unchanged, and the per-location meaning survives whatever
+else is pinned beside it. `test_pinning_a_param_does_not_turn_latest_global`
+exists to catch a well-meaning edit that "tidies" this into the string form.
+
 ## 3. What leaves the factor list, and what an unfilled row does
 
 Once "baseline" *means* `Code:bandpass == v1`, `apply_variant_sets` removes
@@ -92,19 +144,78 @@ Once "baseline" *means* `Code:bandpass == v1`, `apply_variant_sets` removes
   intersection. Nothing about "current code" decides which filter cutoff to
   plot, so a variant that leaves `low_hz` open still owes the user a decision.
 
-Because code axes leave unconditionally, a variant that neither pins a version
-nor asks for the current one, but whose rows were built by two versions, is
-pooling code silently. `spanned_code_axes` catches that and reports it **on the
-row** (`spans` in `variant_summary`, an amber "pools 2 versions" tag, and a
-`Log.warn`) — the fix is on the row (pin it, or split it), not in Factors. A
-selection resolving through the latest flag is never counted: spanning ordinals
-across locations is what per-location "latest" *means*.
+Because code axes leave unconditionally, a variant whose rows were built by two
+versions is pooling code silently. `spanned_code_axes` catches that and reports
+it — the fix is on the row (pin it, or split it), not in Factors.
+
+### The latest flag is no longer exempt (reversed 2026-09-11)
+
+**What this document used to say**, and what the code used to do:
+
+> A selection resolving through the latest flag is never counted: spanning
+> ordinals across locations is what per-location "latest" *means*, and warning
+> about it would cry wolf on the most ordinary state there is.
+
+That argument is right about **frequency** and wrong about **consequence**. The
+state it stayed silent about is a figure whose points were computed by different
+bodies of the same function — which a reader cannot see and must not have to
+assume away. The user's call: if the body actually used differs between schema
+locations, say so, prominently.
+
+What makes that tolerable rather than noisy is that the report names **which
+locations hold which version**. `spans` is no longer `{column: count}` but
+`{column: {function, versions, locations, schema_levels, truncated}}`, and
+`describe_span` turns it into one sentence shared by the `Log.warn`, the row tag
+and the figure banner — "v1 (02, 03); v2 (01)" is something you can act on or
+dismiss at a glance, where "pools 2 versions" on the commonest state in the
+system is not.
+
+**When does this actually fire?** Only across schema locations —
+`is_latest` is resolved per location (`provenance_query.py`, `for bucket in
+peers.values()`), so within one location exactly one chain wins and a single
+subject can never contribute two versions. Two versions under "current" means
+either a **partial re-run** after a body edit, or **staggered processing**:
+subjects 1-3 processed, the function improved, subjects 4-6 processed. Nobody
+failed to re-run anything in that second case — the dataset simply accumulated
+across a code change, which is the normal path in a study collecting data over
+months, and it is the case that looks exactly like a correct figure.
+
+In a uniformly re-run project every location is on one version, `nunique() == 1`,
+and nothing fires.
+
+**It is not a duplicate of the canvas turning red.** Usually the producing node
+does go red — `check_node_state` derives its expected set from the current
+function hash — but not always, and the banner deliberately does not point at
+the canvas. A partially re-run `PathInput`-only loader reads **green** while
+producing precisely this state
+(`.claude/plan-pathinput-loader-staleness-gap.md`), so the banner is the only
+signal in the one case where it matters most.
+
+### The empty figure explains itself
+
+The counterpart to pinning blindly (§1). `variant_summary` reports, for a
+defined row that matched nothing, `resolved` (what the selection actually became
+— `latest` resolves to the flag, so it is not the same as `selection`) and
+`available` (combinations that DO have records, scoped to the row's own
+variable). The panel draws that **in place of the figure**, each combination a
+button that adopts it.
+
+Computed only when `row_count == 0`: on the common path it is pure cost, and
+"what else is there" only matters when the answer to "what did I get" is
+nothing.
 
 ### An unfilled row is inert
 
-A row with an **empty selection** — what "+ Add variant" creates — is skipped
-everywhere: `defined_sets` filters it out of `apply_variant_sets`, `_answered`,
-and `codegen`. It claims no rows, contributes no level, and decides nothing.
+A row with an **empty selection** is skipped everywhere: `defined_sets` filters
+it out of `apply_variant_sets`, `_answered`, and `codegen`. It claims no rows,
+contributes no level, and decides nothing.
+
+> **Narrowed 2026-09-11.** This used to be the state "+ Add variant" created on
+> every click. It no longer is: "+" opens a two-step picker (§5) and the row is
+> built on Apply, already pinned to one variant. The rule survives as the net
+> for a **cancelled or half-finished** selection, not as the normal opening
+> state of a new row — so the reasoning below is about why an empty selection
+> must stay inert *if one occurs*, not about what clicking "+" does.
 
 This is load-bearing, not politeness. Treating an empty selection as "all
 variants" (which is what it means once applied) meant clicking "+" changed the
@@ -237,7 +348,63 @@ for:
    state.
 
 `PipelineNode` is replaced outright by an inert stand-in for the same reason;
-its insides are a different scope anyway.
+its insides are a different scope anyway. So are `VariableNode` and
+`PathInputNode` — see "what is inert and what is not" below.
+
+### An axis finds its node by PORT, never by name (fixed 2026-09-11)
+
+Full write-up: **`docs/claude/variant-axis-node-binding.md`**. The short version,
+because it caused two user-visible bugs at once:
+
+`VariantAxis.param` is the producing function's **argument** name (`config`, from
+scidb's `fn.param` branch-param key). A `ParameterNode`'s label is the
+**Parameter entity's** name (`delsys_config`). The popup used to match those two
+strings. They agree only until someone renames a Parameter or feeds a function
+port from a glue node — after which the axis vanished from the dialog, its node
+dimmed to "not a variant here", *and* it was listed under "defined in a nested
+pipeline", which was simply a wrong guess at the cause.
+
+The binding is now `plot_service.axis_node_bindings`, keyed on the edge's
+`targetHandle` (`param__<argument name>` — exactly `VariantAxis.param`, on both
+the DB-derived and the manual edge paths). It lives in Python, not the webview,
+because it is a rule about what scidb's namespacing means and because a rule in
+TSX has no test. The popup receives `node_bindings` on the variant graph and
+reads it back.
+
+Binding by port means **the node type stops mattering**: whatever is wired into
+`filterDelsys`'s `config` argument supplies that axis, Parameter or glue node or
+anything wired there later.
+
+### What is inert, and what is not
+
+Before this, every node that *could* hold an axis was dimmed (the name match
+failed) while `VariableNode`, `PathInputNode` and `GlueNode` rendered as their
+canvas selves — undimmed and looking interactive. That is backwards: a dimmed
+node is saying "I do not distinguish these records", and a Variable node is
+exactly that.
+
+| node | in the popup |
+|---|---|
+| Parameter, Glue | the axis bound to its port, or inert with "not a variant here" |
+| Function | its recorded versions, or inert when it has only one |
+| Variable, PathInput | **always inert**, with the reason |
+| Pipeline | inert stand-in; its insides are another scope |
+
+Variable/PathInput/Glue are overridden in the popup's `nodeTypes` rather than
+given a branch inside the shared component. Same boundary rule, and it keeps
+variant-only rendering in the popup file instead of spreading through the canvas
+components.
+
+### Adding a row: two questions, on the canvas
+
+"+ Add variant" does not append a row. It opens the canvas on **"Which
+variable?"** — any plottable variable, not only the one being plotted, which is
+what makes overlaying `RawEMG` on `FilteredEMG` reachable at all. A variable that
+cannot stack is **drawn with its reason** rather than omitted
+(`ScidbSource.stackable_report`, whose refusals were computed from the beginning
+and only ever logged). Then the variant step, on the same canvas. The row is
+created on Apply, already pinned by `default_selection` — so a new row is one
+variant, the same way the panel opened on one.
 
 ### Why the whole pipeline, not the relevant subgraph
 
@@ -257,9 +424,15 @@ what the user means by making it.
 
 ### Axes with no node on this canvas
 
-The popup opens at the root scope, so an axis produced inside a nested pipeline
-has no node to click. Those are listed as plain checkbox rows beneath the graph
+An axis that binds to no node is listed as plain checkbox rows beneath the graph
 — an axis is never unreachable just because of where the popup opened.
+
+The heading says "No node on this canvas", not "defined in a nested pipeline".
+Nesting is one reason (the popup opens at the root scope) but it was never the
+only one, and while the binding was name-based it was usually the *wrong* one:
+every axis whose Parameter had been renamed landed there too, under a heading
+asserting a cause that had nothing to do with it. A list that says what it knows
+beats one that guesses.
 
 ## 6. Where each piece lives
 
@@ -270,11 +443,25 @@ has no node to click. Those are listed as plain checkbox rows beneath the graph
 | axes + versions for the popup | `ScidbSource.variant_graph` | Reuses the source's frame cache; opening a dialog must not re-read the variable. |
 | `scidb.Variant` → selection | `scistackplotdb.variant_set` | Needs both vocabularies; scistackplot must stay scidb-free. |
 | what a selection keeps | `scistackplot.variants.variant_set_mask` | One definition, so the GUI's "4 of 24" and the renderer's rows cannot disagree. |
-| the rows' data model + counts | `scistackplot.capability.variant_summary` | Adds `sets` (label, auto label, **row_count**) beside the axes. `row_count == 0` is the number that catches real mistakes. |
+| the rows' data model + counts | `scistackplot.capability.variant_summary` | Adds `sets` (label, auto label, **row_count**) beside the axes. `row_count == 0` is the number that catches real mistakes, and is what gates `available`. |
+| what a table OPENS on | `scistackplot.variants.default_selection` | One rule for the panel's first figure and for a row added later, or the two disagree about what "one variant" means. Not in the GUI: a library caller must open on the same figure (CLAUDE.md NOTE 3). |
+| which node supplies an axis | `scistack_gui.services.plot_service.axis_node_bindings` | Needs the canvas graph, so it cannot live in scistackplot — but it is still a rule about scidb's namespacing, and a rule in TSX has no test. See `variant-axis-node-binding.md`. |
+| what can be plotted alongside, **and why not** | `ScidbSource.stackable_report` | The refusals were always computed and only logged. The picker draws every variable node, so one it cannot offer has to say why in place. |
+| one span as a sentence | `scistackplot.variants.describe_span` (+ its TS mirror) | The log, the row tag and the figure banner must not word the same span three ways. |
 
 ## 7. Known limits
 
 - **The popup is root-scope only** (§5).
+- **A partially re-run `PathInput`-only loader reads green on the canvas** while
+  its records span two versions, so the §3 banner is the only signal there.
+  Diagnosed and deferred: `.claude/plan-pathinput-loader-staleness-gap.md`.
+- **Nothing caches the exploded frame.** A 1-D struct measure re-explodes on
+  every resolve (measured: 24 rows → 8.5 M samples, ×356 650). Cancellation and
+  building only the visible figure (`reduce.resolve_one`) removed the pile-up
+  that turned that into a 30 s transport timeout, but the per-resolve cost is
+  unchanged. Caching it properly means memoising on the *derived* table — the
+  explode runs after filters and variant selection — which is why it was not
+  done blind.
 - **`FactorInfo.levels` are computed on the unfiltered frame** and are not
   recomputed after a selection, so a legend may carry a level with no rows.
   Pre-existing behaviour, kept deliberately: it makes level order stable as

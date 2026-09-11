@@ -47,6 +47,26 @@ class Emg(BaseVariable):
     schema_version = 1
 
 
+class EmgFiltered(BaseVariable):
+    """A SECOND dict-valued variable with the same muscles as ``Emg``.
+
+    The archetypal "plot these two together" case: Raw vs Filtered EMG, both
+    keyed by muscle, compared muscle by muscle.
+    """
+
+    schema_version = 1
+
+
+class Condition(BaseVariable):
+    """Subject-level TEXT — the grouping case (stim vs sham).
+
+    Classifies as CATEGORICAL, so it is rightly refused as a measure; as a
+    *factor* it is exactly the grouping a study already records.
+    """
+
+    schema_version = 1
+
+
 class Scaled(BaseVariable):
     """Produced by a pipeline step, so it can carry branch params."""
 
@@ -87,6 +107,9 @@ def seeded(db):
     rng = np.random.default_rng(0)
     for subject in SUBJECTS:
         Mass.save(70.0 + int(subject), subject=subject)
+        # Subjects 01 and 03 stim, 02 sham — an uneven split, so a test cannot
+        # pass by accident on symmetric counts.
+        Condition.save("stim" if int(subject) % 2 else "sham", subject=subject)
         for session in SESSIONS:
             for trial in TRIALS:
                 StepLength.save(
@@ -106,6 +129,16 @@ def seeded(db):
                         "RHAM": rng.normal(0.0, 1.0, size=8),
                         "RTA": rng.normal(0.0, 1.0, size=8),
                         "LMG": rng.normal(0.0, 1.0, size=8),
+                    },
+                    subject=subject,
+                    session=session,
+                    trial=trial,
+                )
+                EmgFiltered.save(
+                    {
+                        "RHAM": rng.normal(0.0, 0.5, size=8),
+                        "RTA": rng.normal(0.0, 0.5, size=8),
+                        "LMG": rng.normal(0.0, 0.5, size=8),
                     },
                     subject=subject,
                     session=session,

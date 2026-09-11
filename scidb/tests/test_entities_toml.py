@@ -16,6 +16,7 @@ these lock down, in order of how much would silently break without them:
 
 from __future__ import annotations
 
+import os
 import textwrap
 
 import pytest
@@ -494,6 +495,76 @@ class TestProjectResolution:
 
     def test_no_config_at_all(self, tmp_path):
         assert entities.entities_path(tmp_path) is None
+
+    def test_empty_key_is_an_explicit_opt_out(self, tmp_path):
+        """``entities_file = ""`` must NOT fall through to the conventional
+        path -- it is what the GUI's "clear entities file" writes, and the
+        whole point is to stop reading a file sitting at that very path."""
+        (tmp_path / "scistack.toml").write_text(
+            'entities_file = ""\n', encoding="utf-8"
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "scistack_entities.toml").write_text(
+            "[parameters]\nA = 1\n", encoding="utf-8"
+        )
+
+        assert entities.entities_path(tmp_path) is None
+        assert entities.load_for_project(tmp_path).parameters == {}
+
+
+class TestResolveEntitiesPath:
+    """The rule on its own, for callers that already located the project
+    config and parsed its section (``scistack_gui.config.load_config``)."""
+
+    def test_declared_key_wins_and_resolves_against_the_root(self, tmp_path):
+        resolved = entities.resolve_entities_path(
+            tmp_path, {"entities_file": "src/things.toml"}
+        )
+
+        assert resolved == tmp_path / "src" / "things.toml"
+
+    def test_conventional_fallback_only_when_the_file_exists(self, tmp_path):
+        assert entities.resolve_entities_path(tmp_path, {}) is None
+
+        (tmp_path / "src").mkdir()
+        conventional = tmp_path / "src" / "scistack_entities.toml"
+        conventional.write_text("[parameters]\nA = 1\n", encoding="utf-8")
+
+        assert entities.resolve_entities_path(tmp_path, {}) == conventional
+
+    def test_empty_key_opts_out_even_when_the_file_exists(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "scistack_entities.toml").write_text(
+            "[parameters]\nA = 1\n", encoding="utf-8"
+        )
+
+        assert entities.resolve_entities_path(tmp_path, {"entities_file": ""}) is None
+
+    def test_missing_section_is_treated_as_empty(self, tmp_path):
+        assert entities.resolve_entities_path(tmp_path, None) is None
+
+    @pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
+    def test_a_windows_written_key_still_finds_the_file(self, tmp_path):
+        """``entities_file = "src\\scistack_entities.toml"`` -- written by a
+        Windows session, read here. Naively joined it names a backslashed
+        file in the project ROOT, which is where the MATLAB classdef stub
+        directory then went too (it sits beside the entities file)."""
+        (tmp_path / "src").mkdir()
+        real = tmp_path / "src" / "scistack_entities.toml"
+        real.write_text("[parameters]\nA = 1\n", encoding="utf-8")
+
+        resolved = entities.resolve_entities_path(
+            tmp_path, {"entities_file": "src\\scistack_entities.toml"}
+        )
+
+        assert resolved == real
+        assert resolved.parent == tmp_path / "src"
+
+    def test_opt_out_predicate_distinguishes_cleared_from_unset(self, tmp_path):
+        assert entities.is_entities_opt_out({"entities_file": ""}) is True
+        assert entities.is_entities_opt_out({}) is False
+        assert entities.is_entities_opt_out(None) is False
+        assert entities.is_entities_opt_out({"entities_file": "e.toml"}) is False
 
     def test_load_for_project_reads_through_the_config(self, tmp_path):
         (tmp_path / "scistack.toml").write_text(

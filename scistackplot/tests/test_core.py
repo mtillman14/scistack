@@ -107,9 +107,25 @@ def test_unknown_measure_is_rejected(scalar_table):
         validate(PlotSpec(measures=["Nope"]), scalar_table)
 
 
-def test_two_factors_cannot_share_the_x_axis(scalar_table):
+def test_two_factors_may_share_the_x_axis(scalar_table):
+    """Nested grouping: "stim and sham side by side, each split by session".
+
+    X used to be single-assignment. It is not: which factor is the OUTER
+    grouping is an order (``x_layers``), not a different role — see
+    test_x_nesting.py for the composition.
+    """
     spec = PlotSpec(
         measures=["StepLength"], roles={"subject": Role.X, "session": Role.X}
+    )
+
+    validate(spec, scalar_table)  # must not raise
+
+
+def test_colour_still_accepts_only_one_factor(scalar_table):
+    """The single-assignment rule survives where it still makes sense: two
+    factors cannot both be the colour channel."""
+    spec = PlotSpec(
+        measures=["StepLength"], roles={"subject": Role.COLOR, "session": Role.COLOR}
     )
     with pytest.raises(RoleError, match="accepts one factor"):
         validate(spec, scalar_table)
@@ -128,7 +144,9 @@ def test_second_measure_owns_x(scalar_frame):
     table = LongTable.from_frame(
         frame, factors=["subject", "session", "trial"], measures=["StepLength", "Speed"]
     )
-    spec = PlotSpec(measures=["StepLength", "Speed"], roles={"subject": Role.X})
+    spec = PlotSpec(
+        measures=["StepLength"], x_measure="Speed", roles={"subject": Role.X}
+    )
     with pytest.raises(RoleError, match="already supplies the x axis"):
         validate(spec, table)
 

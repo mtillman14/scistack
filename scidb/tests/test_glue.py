@@ -13,6 +13,9 @@ Covers:
 - non-table (scalar) values skip the row contract
 - fusion through ``for_each``: both loaded-column naming modes, Merge inputs,
   PathInput refusal, and the per-schema-key opt-in
+- glue on a CONSTANT-fed parameter (the Parameter case): applied in prepare so
+  the glued value is what lands in ``__constants``, the inverted language
+  rule, and the EachOf recursion that used to drop glue entirely
 """
 
 import logging
@@ -31,10 +34,12 @@ from scidb import (
     GlueSpec,
     GlueUnsupportedInputError,
     Merge,
+    Parameter,
     PathInput,
     configure_database,
     for_each,
 )
+from scifor import EachOf
 from scidb.glue import (
     apply_glue_chain,
     bulk_chain,
@@ -654,3 +659,208 @@ class TestFusionThroughForEach:
             session=[],
         )
         assert result is not None and not result.empty
+
+
+# ===========================================================================
+# Glue on a constant-fed parameter (the Parameter case)
+# ===========================================================================
+def scale_signal(emg, factor):
+    return float(np.sum(emg["signal"]) * factor)
+
+
+def glue_double_factor(factor):
+    return factor * 2
+
+
+def glue_pick_high(config):
+    return config["high"]
+
+
+class TestConstantGlue:
+    """A ``Parameter``-fed parameter is glued in prepare, before the version
+    keys are built, so the GLUED value is what lands in ``__constants``.
+
+    That placement is the whole point: it makes an edited glue body invalidate
+    downstream results through ``skip_computed``'s ordinary binding compare,
+    with no virtual glue record — see ``apply_constant_glue``.
+    """
+
+    def test_a_single_valued_parameter_is_glued(self, db):
+        _seed_dataframe_variable(db)
+        results = for_each(
+            scale_signal,
+            inputs={"emg": RawEMG, "factor": Parameter(3)},
+            outputs=[Analyzed],
+            db=db,
+            as_table=True,
+            glue={"factor": _spec(glue_double_factor)},
+            subject=[],
+            session=[],
+        )
+        # sum(signal) = 3.0 per subject, factor 3 doubled to 6 -> 18.0
+        assert sorted(float(r) for r in results["Analyzed"]) == [18.0, 18.0]
+
+    def test_a_dict_valued_parameter_is_restructured(self, db):
+        _seed_dataframe_variable(db)
+        results = for_each(
+            scale_signal,
+            inputs={
+                "emg": RawEMG,
+                "factor": Parameter({"low": 1, "high": 10}),
+            },
+            outputs=[Analyzed],
+            db=db,
+            as_table=True,
+            glue={"factor": _spec(glue_pick_high)},
+            subject=[],
+            session=[],
+        )
+        assert sorted(float(r) for r in results["Analyzed"]) == [30.0, 30.0]
+
+    def test_every_value_of_a_multi_valued_parameter_is_glued(self, db):
+        """The fan-out and the glue compose without either knowing about the
+        other: ``for_each``'s Step 1 expands the EachOf into one recursive
+        call per value, and each call glues its own concrete value."""
+        _seed_dataframe_variable(db)
+        results = for_each(
+            scale_signal,
+            inputs={"emg": RawEMG, "factor": Parameter(1, 2)},
+            outputs=[Analyzed],
+            db=db,
+            as_table=True,
+            glue={"factor": _spec(glue_double_factor)},
+            subject=[],
+            session=[],
+        )
+        # factors 1 and 2 doubled to 2 and 4; sum(signal) = 3.0 per subject.
+        assert sorted(float(r) for r in results["Analyzed"]) == [6.0, 6.0, 12.0, 12.0]
+
+    def test_editing_a_constant_glue_body_recomputes(self, db):
+        """The reason for the placement. ``__constants`` holds the POST-glue
+        value, so an edited body changes a binding ``skip_computed`` compares
+        and the consumer recomputes — with no virtual glue record involved.
+
+        If the raw Parameter value were recorded instead, the edit would leave
+        every downstream record green and stale (§2)."""
+
+        def glue_triple_factor(factor):
+            return factor * 3
+
+        _seed_dataframe_variable(db)
+        first = for_each(
+            scale_signal,
+            inputs={"emg": RawEMG, "factor": Parameter(3)},
+            outputs=[Analyzed],
+            db=db,
+            as_table=True,
+            skip_computed=True,
+            glue={"factor": GlueSpec(name="glue_f", fn=glue_double_factor)},
+            subject=[],
+            session=[],
+        )
+        assert sorted(float(r) for r in first["Analyzed"]) == [18.0, 18.0]
+
+        # Same node NAME, edited body: 3 -> 9 instead of 3 -> 6.
+        second = for_each(
+            scale_signal,
+            inputs={"emg": RawEMG, "factor": Parameter(3)},
+            outputs=[Analyzed],
+            db=db,
+            as_table=True,
+            skip_computed=True,
+            glue={"factor": GlueSpec(name="glue_f", fn=glue_triple_factor)},
+            subject=[],
+            session=[],
+        )
+        assert sorted(float(r) for r in second["Analyzed"]) == [27.0, 27.0], (
+            "the edited constant glue did not recompute"
+        )
+
+    def test_matlab_glue_on_a_constant_is_refused(self, db):
+        """The inverted language rule. A constant-fed chain runs in prepare —
+        Python on both run paths — so MATLAB glue cannot be applied there, and
+        moving it to a per-combo site would record the pre-glue constant."""
+        _seed_dataframe_variable(db)
+        with pytest.raises(GlueLanguageMismatchError, match="Parameter"):
+            for_each(
+                scale_signal,
+                inputs={"emg": RawEMG, "factor": Parameter(3)},
+                outputs=[Analyzed],
+                db=db,
+                as_table=True,
+                glue={
+                    "factor": GlueSpec(
+                        name="glue_m",
+                        language="matlab",
+                        source_text="function y=f(x)\ny=x*2;\nend",
+                    )
+                },
+                subject=[],
+                session=[],
+            )
+
+    def test_a_multi_type_variable_input_is_not_treated_as_a_constant(self):
+        """An ``EachOf`` of variable CLASSES is a multi-type input, not a
+        Parameter. Its data is loaded, so its glue belongs at the fusion point
+        — the constant predicates must not claim it."""
+        from scidb.glue import is_constant_axis, is_constant_input
+
+        # Plain values: constants.
+        assert is_constant_input(7)
+        assert is_constant_input({"low": 1})
+        assert is_constant_input(None)
+
+        # Variable classes and multi-type inputs: not constants, either way.
+        assert not is_constant_input(RawEMG)
+        assert not is_constant_input(EachOf(RawEMG, Force))
+        assert not is_constant_axis(EachOf(RawEMG, Force))
+
+        # An unexpanded Parameter is an axis, not a value — for_each's Step 1
+        # normally expands it before prepare, but the MATLAB bridge does not.
+        assert not is_constant_input(Parameter(3))
+        assert is_constant_axis(Parameter(3))
+        assert is_constant_axis(Parameter(1, 2))
+
+    def test_an_unexpanded_parameter_axis_is_glued_per_alternative(self):
+        """The MATLAB bridge calls prepare directly, with no Step 1 in front
+        of it, so an unexpanded Parameter can arrive. Gluing the EachOf object
+        would hand the user's code the axis instead of a value."""
+        from scidb.glue import apply_constant_glue, split_constant_chains
+
+        inputs = {"factor": Parameter(1, 2)}
+        chains = normalize_glue({"factor": _spec(glue_double_factor)})
+        constant_chains, deferred = split_constant_chains(inputs, chains)
+
+        assert set(constant_chains) == {"factor"}
+        assert deferred == {}
+
+        apply_constant_glue(inputs, constant_chains)
+        assert isinstance(inputs["factor"], EachOf)
+        assert list(inputs["factor"].alternatives) == [2, 4]
+
+
+class TestGlueSurvivesEachOfExpansion:
+    def test_glue_is_not_dropped_by_an_eachof_input(self, db):
+        """``for_each``'s Step 1 recursion used to omit ``glue=``, so every
+        alternative of an EachOf input ran with the glue silently dropped —
+        nothing reshaped, no virtual record, and a successful-looking run."""
+        _seed_dataframe_variable(db)
+        seen = []
+
+        def glue_peek(emg):
+            seen.append(len(emg))
+            return emg
+
+        for_each(
+            scale_signal,
+            inputs={"emg": RawEMG, "factor": Parameter(1, 2)},
+            outputs=[Analyzed],
+            db=db,
+            as_table=True,
+            glue={"emg": _spec(glue_peek)},
+            subject=[],
+            session=[],
+        )
+        # Two alternatives of `factor` -> two recursive calls, each of which
+        # must have applied the chain to the loaded emg table.
+        assert len(seen) == 2

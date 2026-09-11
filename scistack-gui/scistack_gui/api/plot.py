@@ -37,6 +37,8 @@ class DescribeRequest(BaseModel):
 class SpecRequest(BaseModel):
     spec: dict
     max_points: int | None = None
+    #: Which figure of an ITERATE fan-out to render; None renders all of them.
+    figure_index: int | None = None
     csv_path: str | None = None
 
 
@@ -91,7 +93,11 @@ def plot_variant_graph(
 def plot_resolve(req: SpecRequest, db: DatabaseManager = Depends(get_db)) -> dict:
     try:
         return plot_service.resolve_figures(
-            db, req.spec, max_points=req.max_points, csv_path=req.csv_path
+            db,
+            req.spec,
+            max_points=req.max_points,
+            figure_index=req.figure_index,
+            csv_path=req.csv_path,
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

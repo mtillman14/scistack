@@ -103,6 +103,11 @@ class ResolvedPlot:
     #: The ITERATE factor values that select this figure out of the fan-out.
     figure_key: dict[str, Any] = field(default_factory=dict)
     x_order: list[Any] | None = None
+    #: Set when several factors share the x axis: the composed leaf order plus
+    #: the spans each higher layer covers. ``x_order`` mirrors ``x_plan.order``
+    #: so every existing consumer keeps working; renderers read this only to
+    #: draw the group labels and brackets beneath the ticks.
+    x_plan: Any = None
     color_order: list[Any] | None = None
     #: Subplot grid shape, decided in ``reduce`` from FacetOptions.
     grid_rows: int = 1
@@ -118,6 +123,11 @@ class ResolvedPlot:
     y_limits: tuple[float, float] | None = None
     #: Set when the data was reduced for transport (see reduce.MAX_TRANSPORT_POINTS).
     downsampled_from: int | None = None
+    #: Notes about the FIGURE SET rather than about this figure's layout — at
+    #: present, schema keys promoted to ITERATE because a nested key iterates.
+    #: Identical on every figure of a fan-out (it describes the fan-out), which
+    #: is why the GUI reads it from the first one.
+    fanout_notes: list[str] = field(default_factory=list)
 
     @property
     def figure_label(self) -> str:
@@ -159,9 +169,19 @@ class ResolvedPlot:
                 "layout_notes": list(self.layout_notes),
             },
             "x_order": [_jsonable(v) for v in (self.x_order or [])] or None,
+            "x_groups": [
+                {
+                    "label": group.label,
+                    "depth": group.depth,
+                    "start": group.start,
+                    "end": group.end,
+                }
+                for group in (self.x_plan.groups if self.x_plan else [])
+            ],
             "color_order": [_jsonable(v) for v in (self.color_order or [])] or None,
             "y_limits": list(self.y_limits) if self.y_limits else None,
             "downsampled_from": self.downsampled_from,
+            "fanout_notes": list(self.fanout_notes),
             "panels": [
                 {
                     "key": {k: _jsonable(v) for k, v in panel.key.items()},

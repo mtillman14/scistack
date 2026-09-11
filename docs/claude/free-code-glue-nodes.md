@@ -1,7 +1,11 @@
 # Free-Code "Glue" Nodes
 
-> **Status: IMPLEMENTED across all six stages, 2026-09-03 — uncommitted, and
-> the Python test suites have not been run yet.**
+> **Status: IMPLEMENTED across all six stages, 2026-09-03. Amended
+> 2026-09-10** after the first real GUI test, which found four defects: a glue
+> chain could only start from a *variable* (§4a), a constant-fed chain had no
+> application site (§1), the MATLAB run command never emitted `glue` at all,
+> and `for_each`'s EachOf recursion dropped `glue=` (§1). All fixed;
+> **uncommitted, and the Python test suites have not been run.**
 > Plan of record: `.claude/plan-free-code-glue-nodes-26-09-03.md` (decisions
 > D1–D6), which carries the per-stage status and the two places the
 > implementation deliberately departs from the plan. If you are reading this
@@ -104,6 +108,41 @@ entry telling MATLAB which params carry MATLAB glue.
 This is also why glue language must match the run language: the alternative is
 two application sites whose ordering semantics have to be kept in agreement for
 a mixed chain, for no user benefit.
+
+### The one exception: a constant-fed parameter
+
+A `Parameter`-fed parameter has **no loaded table at all** — a `scidb.Parameter`
+*is* a `scifor.EachOf`, a fan-out axis, and by the time prepare runs,
+`for_each`'s Step 1 has already expanded it into one recursive call per
+concrete value. Its glue is therefore applied earlier still, in
+`scidb.glue.apply_constant_glue`, **before Step 8 builds the version keys**.
+
+That placement is not a convenience, it is the identity story. The value that
+lands in `__constants` *is* the glued value, so an edited glue body changes the
+constant's content hash — one of the bindings `skip_computed` compares — and
+downstream results invalidate **with no virtual glue record at all**. §2's
+staleness hole is closed here rather than merely warned about.
+
+The language rule inverts with it, for the same reason it exists: a glue node
+runs where its input exists, and prepare is Python on **both** run paths. So a
+constant-fed chain must be **Python glue even in a MATLAB run**, and MATLAB glue
+on one is refused. Applying it per-combo on the MATLAB side instead would record
+the *pre*-glue constant and reintroduce exactly the silent staleness this
+placement removes.
+
+That is also why Python glue can cross into a MATLAB run at all: the GUI emits
+the chain element as `struct('name', …, 'language', 'python', 'source_file', …)`
+rather than a handle (`+scidb/for_each.m:build_glue_chains`), and
+`scimatlab.bridge` loads the body with `scidb.glue.resolve_python_glue` —
+MATLAB's interpreter has no function registry, so the *path* is what travels.
+
+**A multi-valued Parameter needs no special handling.** The fan-out and the glue
+compose without either knowing about the other: Step 1 makes one recursive call
+per value, and each call glues its own. That recursion did **not** forward
+`glue=` until 2026-09-10, so any glue on a function with a multi-valued
+Parameter (or a multi-type variable input) was silently dropped in every
+alternative — reshaping nothing, writing no virtual record, and reporting
+success.
 
 The D4 per-schema-key toggle uses a different site again — the existing
 `PerComboLoader` function wrapper (Step 16), applied to the already-sliced value
@@ -253,6 +292,30 @@ end
 params. Exactly **one** return value: glue feeds a single parameter of a single
 consumer, so a second output would have nothing to bind to.
 
+### 4a. What may feed a glue node
+
+The head of a chain may be **any bindable source**, and which one it is decides
+where scidb applies the chain:
+
+| Head | Applied | Identity |
+|---|---|---|
+| Variable | The Step-10/11 fusion point (§1) | Virtual glue record (§2) |
+| Parameter / plain constant | `apply_constant_glue`, before the version keys | The glued value in `__constants` |
+| PathInput | Refused (`GlueUnsupportedInputError`) | — |
+
+`edge_resolver.resolve_source_binding` is the single place that decides which,
+shared with the direct-edge path so the two cannot disagree. **They did.** Until
+2026-09-10 `resolve_glue_chain` resolved its head with `node_id_to_var_label`,
+which returns `None` for anything that is not a `variableNode` — so a
+`Parameter → glue → fn` chain resolved to nothing, `resolve_function_edges`
+skipped the binding, and the parameter **vanished from the function's inputs
+entirely**. In a MATLAB run the remaining arguments then bound by POSITION:
+`filterDelsys(loaded_data, config, Fs)` ran as `filterDelsys(loaded_data, Fs)`.
+
+The GUI now binds the head honestly and lets **scidb** decide what is runnable.
+That is the important half: a refusal names the problem, whereas a dropped
+binding is indistinguishable from a forgotten edge.
+
 **The column names are the genuinely non-obvious part**, because they depend on
 how the variable stores its data (`_load_var_type_all` assembly modes):
 
@@ -311,6 +374,14 @@ The log trail is designed to make that a two-minute read:
    that proves a glue edit propagated into the invocation graph.
 5. `[glue] '<param>': no glue chain` — DEBUG, when wiring was expected to carry
    one; catches an edge drawn to the wrong handle.
+6. `[edge_resolver] parameter '<p>' is fed through glue [<chain>] from <kind>
+   '<ref>'` — INFO, at graph build and before every run. The **kind** is the
+   thing to read: it decides which of §4a's three application sites applies.
+7. `[glue] '<param>': applied N node(s) to the constant value` — INFO, the
+   constant-fed path, stating that the glued value is what gets recorded.
+8. `[edge_resolver] glue node '<g>' has N incoming edges [<id>:<handle>…]` —
+   WARNING listing the **handles**, because the usual cause is a renamed glue
+   parameter leaving a stale edge that is still the one followed.
 
 ---
 
@@ -320,6 +391,10 @@ The log trail is designed to make that a two-minute read:
 - **Cross-language glue chains** (§1).
 - **Glue on a PathInput-fed param** — a `PathInput` is always a
   `PerComboLoader`, so no table exists at the fusion point. Refused.
+- **MATLAB glue on a constant-fed param** — §1's exception; refused, with the
+  reason and the alternatives in the message. (Glue on a constant-fed param is
+  otherwise *supported*, in Python. It used to be neither supported nor
+  refused, just silently dropped — see §4a.)
 - **Glue → variable node wiring** — there is no saved output to land.
 - **Persisting glue data** in any form. Only the provenance node is written.
 - **Two storage forms** (a one-liner in GUI state *plus* files for multi-line

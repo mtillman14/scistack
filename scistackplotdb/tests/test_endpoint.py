@@ -35,6 +35,36 @@ def test_iterate_roles_become_foreach_keywords(table, iterating_spec):
     assert "trial=[]" not in code.foreach_source
 
 
+def test_a_nested_iterated_key_carries_its_ancestors_into_for_each(table):
+    """The fan-out decision is made once, in scistackplot, so the pipeline
+    inherits it.
+
+    Iterating `trial` alone would run the endpoint once per trial NUMBER,
+    pooling every subject into one figure — a different figure set from the one
+    the panel previewed.
+    """
+    spec = PlotSpec(measures=["StepLength"], roles={"trial": Role.ITERATE})
+    code = generate_endpoint(spec, table, input_variable="StepLength")
+
+    assert code.iterate_keys == ["subject", "session", "trial"]
+    for key in ("subject", "session", "trial"):
+        assert f"{key}=[]," in code.foreach_source
+        # Every iterated key must reach the filename, or two figures collide.
+        assert f"{{{key}}}" in code.path_template
+
+
+def test_for_each_keys_run_in_schema_order_not_role_order(table):
+    """Dict order is click order; the PathOutput template must not inherit it."""
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"trial": Role.ITERATE, "subject": Role.ITERATE, "session": Role.X},
+    )
+    code = generate_endpoint(spec, table, input_variable="StepLength")
+
+    assert code.iterate_keys == ["subject", "trial"]
+    assert code.path_template.index("{subject}") < code.path_template.index("{trial}")
+
+
 def test_plot_input_is_passed_as_a_table(table, iterating_spec):
     """plot_ does not default as_table on (only stat_ does), so say it."""
     code = generate_endpoint(iterating_spec, table, input_variable="StepLength")
@@ -73,9 +103,10 @@ def test_generated_source_compiles(table, iterating_spec):
 
 def test_second_measure_is_passed_as_a_second_input(seeded):
     source = ScidbSource(seeded)
-    table = source.get_table(["StepLength", "Mass"])
+    table = source.get_table(["StepLength"], x_measure="Mass")
     spec = PlotSpec(
-        measures=["StepLength", "Mass"],
+        measures=["StepLength"],
+        x_measure="Mass",
         roles={"subject": Role.COLOR, "session": Role.FREE, "trial": Role.FREE},
         kind=PlotKind.SCATTER,
     )

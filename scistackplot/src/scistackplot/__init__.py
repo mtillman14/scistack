@@ -44,10 +44,17 @@ from .codegen import (
     generate_plot_function,
     generate_script,
 )
-from .reduce import MAX_TRANSPORT_POINTS, resolve
+from .reduce import MAX_TRANSPORT_POINTS, resolve, resolve_one
 from .render import render_matplotlib, render_plotly
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
-from .roles import RoleError, complete_roles, default_roles, default_spec, validate
+from .roles import (
+    RoleError,
+    complete_roles,
+    default_roles,
+    default_spec,
+    fanout_keys,
+    validate,
+)
 from .shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource
 from .spec import (
@@ -55,6 +62,7 @@ from .spec import (
     ErrorBand,
     FacetOptions,
     Filter,
+    LevelGroup,
     MatchOp,
     Matcher,
     PlotKind,
@@ -66,6 +74,7 @@ from .spec import (
     VariantSet,
     grid_shape_for,
 )
+from .xaxis import XGroup, XPlan, leaf_key, plan_x_axis
 from .table import (
     CODE_FACTOR_PREFIX,
     FactorInfo,
@@ -79,7 +88,10 @@ from .variants import (
     VARIANT_FACTOR,
     apply_variant_sets,
     auto_label,
+    SPAN_LOCATION_LIMIT,
+    default_selection,
     defined_sets,
+    describe_span,
     spanned_code_axes,
     strip_answered_roles,
     variant_set_mask,
@@ -99,6 +111,7 @@ __all__ = [
     "MatchOp",
     "StyleOptions",
     "Filter",
+    "LevelGroup",
     "VariantPolicy",
     "VariantSet",
     # data
@@ -124,10 +137,13 @@ __all__ = [
     "CURRENT_VARIANT_NAME",
     "LATEST",
     "apply_variant_sets",
+    "default_selection",
     "variant_set_mask",
     "auto_label",
     "defined_sets",
     "spanned_code_axes",
+    "describe_span",
+    "SPAN_LOCATION_LIMIT",
     "strip_answered_roles",
     "default_plot",
     "why_unavailable",
@@ -135,10 +151,16 @@ __all__ = [
     "default_roles",
     "default_spec",
     "complete_roles",
+    "fanout_keys",
     "validate",
     "RoleError",
     # resolution + rendering
     "resolve",
+    "resolve_one",
+    "XPlan",
+    "XGroup",
+    "plan_x_axis",
+    "leaf_key",
     "ResolvedPlot",
     "Panel",
     "Encoding",

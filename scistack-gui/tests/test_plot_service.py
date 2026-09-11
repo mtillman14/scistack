@@ -84,14 +84,221 @@ def test_iterate_role_produces_one_payload_per_level(populated_db):
 
 
 def test_invalid_spec_returns_a_message_not_an_exception(populated_db):
-    """A role conflict is user-correctable state, so the panel shows it."""
+    """A role conflict is user-correctable state, so the panel shows it.
+
+    Two factors on COLOUR, not on x: x became multi-assignment when nested
+    grouping landed, and colour is where single-assignment still means
+    something.
+    """
     spec = plot_service.describe(populated_db, "RawSignal")["spec"]
-    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+    spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
     result = plot_service.resolve_figures(populated_db, spec)
 
     assert result["ok"] is False
     assert "one factor" in result["error"]
     assert result["figures"] == []
+
+
+def test_nesting_a_1d_measures_x_axis_is_refused_with_a_message(populated_db):
+    """RawSignal is 1-D: its x axis is the sample index, so it has no
+    categorical axis to nest groups on. Still a message, not an exception."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+    result = plot_service.resolve_figures(populated_db, spec)
+
+    assert result["ok"] is False
+    assert "categorical axis" in result["error"]
+    assert result["figures"] == []
+
+
+def test_describe_offers_the_variables_that_can_be_plotted_together(populated_db):
+    """The Variants section's variable dropdown is built from this.
+
+    Regression: the section was gated on the project HAVING pipeline variants,
+    so a project that never edited a function could not reach the control at
+    all — the data was here, and nothing rendered it.
+    """
+    described = plot_service.describe(populated_db, "RawSignal")
+
+    assert described["stackable_with"] == ["FilteredSignal"]
+
+
+def test_describe_says_why_a_variable_is_not_offered(populated_db):
+    """The picker draws EVERY variable node on the canvas, so one it cannot
+    offer has to say why in place.
+
+    The reasons were computed from the beginning and only ever logged, so a
+    variable a user expected to plot alongside was simply absent from the
+    dropdown — indistinguishable from a missing feature. The three criteria
+    (shape, dict-vs-value, schema level) are strict enough that "I expected to
+    see that one" is the likely case, not the rare one.
+    """
+    described = plot_service.describe(populated_db, "RawSignal")
+    refused = described["stackable_refused"]
+
+    # Whatever else the fixture holds, a refusal must carry a reason and must
+    # never contradict the offers.
+    assert set(refused) & set(described["stackable_with"]) == set()
+    assert "RawSignal" not in refused, "a variable is not refused against itself"
+    assert all(reason for reason in refused.values()), (
+        "a refusal with an empty reason is worse than no refusal — the node "
+        "would render un-clickable with nothing to explain it"
+    )
+
+
+def test_variant_graph_carries_the_default_selection_for_a_new_row(populated_db):
+    """A row added by "+ Add variant" must arrive pinned to ONE variant.
+
+    The picker seeds its selection from this. Left to an empty selection, the
+    new row would mean "every variant of this variable" and clicking "+" would
+    silently add all of them to the figure — the thing the opening pin exists
+    to prevent, reintroduced one button later.
+
+    It comes from ``scistackplot.default_selection``, the same rule the panel
+    opens on, so a row added later and the row that was already there cannot
+    disagree about what "one variant" means.
+    """
+    from scistackplot import default_selection
+
+    graph = plot_service.variant_graph(populated_db, "FilteredSignal")
+    source = plot_service.get_source(populated_db)
+
+    assert "default_selection" in graph
+    assert graph["default_selection"] == default_selection(
+        source.get_table(["FilteredSignal"])
+    )
+
+
+def test_two_series_over_two_variables_resolve_together(populated_db):
+    """Raw vs Filtered: the whole point of todo #1, end to end through the
+    service the panel actually calls."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["variant_sets"] = [
+        {"name": "Raw", "selection": {}, "variable": "RawSignal"},
+        {"name": "Filtered", "selection": {}, "variable": "FilteredSignal"},
+    ]
+    # RawSignal is 1-D, so `default_roles` already put `subject` on colour —
+    # the comparison is what this figure is about, so it takes the channel and
+    # subjects become replicates.
+    spec["roles"] = {**spec["roles"], "subject": "free", "Variant": "color"}
+
+    result = plot_service.resolve_figures(populated_db, spec)
+
+    assert result["ok"] is True, result["error"]
+    names = {trace.get("name") for trace in result["figures"][0]["figure"]["data"]}
+    assert {"Raw", "Filtered"} <= names
+
+    reported = plot_service.capabilities_for(populated_db, spec)
+    assert [s["variable"] for s in reported["variants"]["sets"]] == [
+        "RawSignal",
+        "FilteredSignal",
+    ]
+    # Both rows contributed; a row matching nothing is the failure that looks
+    # like success.
+    assert all(s["row_count"] > 0 for s in reported["variants"]["sets"])
+
+
+def test_resolve_describes_the_whole_fanout_it_did_not_send(populated_db):
+    """Labels and count for every figure, payload for the one being shown.
+
+    The navigator has to name figures it is not displaying, and the labels are
+    cheap next to the payloads — a 1-D measure across thirty subjects is
+    megabytes per figure, crossing the webview boundary on every interaction.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    result = plot_service.resolve_figures(populated_db, spec, figure_index=1)
+
+    assert result["figure_count"] == 2
+    assert len(result["figure_labels"]) == 2
+    assert len(result["figures"]) == 1
+    assert result["figure_index"] == 1
+    assert result["figures"][0]["label"] == result["figure_labels"][1]
+    assert result["figures"][0]["index"] == 1
+
+
+def test_resolve_without_an_index_still_returns_every_figure(populated_db):
+    """None is the library/test caller's answer, and stays the default."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    result = plot_service.resolve_figures(populated_db, spec)
+
+    assert len(result["figures"]) == result["figure_count"] == 2
+
+
+def test_an_out_of_range_index_clamps(populated_db):
+    """A cursor outlives the fan-out it was pointing into.
+
+    Narrowing a filter shrinks the figure set while the panel's index is still
+    a moment behind, so this is a normal transient — not a bad request.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    assert plot_service.resolve_figures(populated_db, spec, figure_index=99)[
+        "figure_index"
+    ] == 1
+    assert plot_service.resolve_figures(populated_db, spec, figure_index=-4)[
+        "figure_index"
+    ] == 0
+
+
+def test_iterating_a_nested_key_iterates_its_ancestors(populated_db):
+    """Schema is [subject, session]: one figure per session is really four.
+
+    And the panel is told, because a user who asked for two figures and
+    received four would think something was broken.
+    """
+    # `subject` must be FREE for promotion to apply: RawSignal is 1-D, so the
+    # default spec puts subject on COLOUR, and an ancestor the user assigned a
+    # channel is deliberately left alone.
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "session": "iterate", "subject": "free"}
+    result = plot_service.resolve_figures(populated_db, spec)
+
+    assert result["figure_count"] == 4
+    assert all("subject=" in label for label in result["figure_labels"])
+    assert result["notes"] and "subject" in result["notes"][0]
+
+
+def test_an_ancestor_on_a_channel_is_not_promoted(populated_db):
+    """`subject=colour, session=separate figures` is a legitimate figure.
+
+    This is the default state for a 1-D measure, so it is also the common one:
+    promotion must not quietly turn two figures into four.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    assert spec["roles"]["subject"] == "color"
+    spec["roles"] = {**spec["roles"], "session": "iterate"}
+    result = plot_service.resolve_figures(populated_db, spec)
+
+    assert result["figure_count"] == 2
+    assert result["notes"] == []
+
+
+def test_the_fanout_rolls_over_at_a_subject_boundary(populated_db):
+    """Subject-major order: after subject 1's last session comes subject 2's first."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "session": "iterate", "subject": "free"}
+    labels = plot_service.resolve_figures(populated_db, spec)["figure_labels"]
+
+    assert [label.split(",")[0] for label in labels] == [
+        "subject=1",
+        "subject=1",
+        "subject=2",
+        "subject=2",
+    ]
+
+
+def test_a_failed_resolve_still_answers_the_navigator(populated_db):
+    """The panel reads these keys unconditionally; a role error must not KeyError it."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+    result = plot_service.resolve_figures(populated_db, spec, figure_index=3)
+
+    assert result["ok"] is False
+    assert result["figure_count"] == 0
+    assert result["figure_labels"] == [] and result["notes"] == []
 
 
 def test_max_points_downsamples_for_transport(populated_db):
@@ -480,11 +687,18 @@ def _component_body(path: str, name: str) -> str:
     from pathlib import Path
 
     source = (Path(__file__).parent.parent / path).read_text()
-    match = re.search(rf"\nfunction {name}\(", source)
+    # `export` optional: VariantParameterNode is exported so the variant popup
+    # can reuse the same widget for a glue node that supplies an axis, rather
+    # than growing a second copy of the checkbox list.
+    match = re.search(rf"\n(?:export )?function {name}\(", source)
     assert match, f"{path} has no {name!r} component"
     rest = source[match.end() :]
     # Up to the next top-level declaration — enough to cover the component.
-    end = re.search(r"\n(function |const styles)", rest)
+    # `const ` and `export ` are terminators too, not just `const styles`: a
+    # component followed by a top-level const (VariantDagPopup's `nodeTypes`)
+    # would otherwise capture the entire rest of the file, and the assertion
+    # below would fail on code that is not the component's.
+    end = re.search(r"\n(function |export |const )", rest)
     return rest[: end.start()] if end else rest
 
 
@@ -493,6 +707,14 @@ def _component_body(path: str, name: str) -> str:
     [
         ("frontend/src/components/DAG/ParameterNode.tsx", "VariantParameterNode"),
         ("frontend/src/components/DAG/FunctionNode.tsx", "VariantFunctionNode"),
+        # Step one of "+ Add variant". Same risk, one step earlier: it is a
+        # node rendered in the popup, drawn from the same canvas graph, and a
+        # backend call from it would make choosing what to PLOT write execution
+        # state.
+        (
+            "frontend/src/components/PlotStudio/VariantDagPopup.tsx",
+            "PickableVariableNode",
+        ),
     ],
 )
 def test_variant_mode_nodes_never_call_the_backend(path, component):
@@ -514,3 +736,187 @@ def test_variant_mode_nodes_never_call_the_backend(path, component):
         f"{component} calls the backend — variant selection is display state "
         f"and must never write execution state (hide/unhide/run)."
     )
+
+
+# --- axis -> canvas node binding ------------------------------------------
+
+
+@pytest.fixture
+def swept_db(populated_db):
+    """The same pipeline run at a SECOND ``low_hz``, so the axis has two levels.
+
+    One value is a constant and Stage 2 drops it — a column that cannot separate
+    two records is not an axis. Two values make it a real one, which is the
+    precondition for anything below to be testable at all.
+    """
+    import numpy as np
+    from scidb import for_each
+
+    from conftest import FilteredSignal, RawSignal, bandpass_filter
+
+    assert np  # imported for the fixture's own seeding contract
+    for_each(
+        bandpass_filter,
+        inputs={"signal": RawSignal, "low_hz": 40},
+        outputs=[FilteredSignal],
+        subject=[1, 2],
+        session=["pre", "post"],
+    )
+    plot_service.invalidate()
+    return populated_db
+
+
+def test_a_param_axis_binds_to_the_node_feeding_its_port(swept_db):
+    source = plot_service.get_source(swept_db)
+    axes = source.variant_graph("FilteredSignal")["axes"]
+    params = [a for a in axes if a["kind"] == "param"]
+    assert params, "two low_hz values must produce a branch-param axis"
+
+    bindings = plot_service.axis_node_bindings(swept_db, axes)
+
+    assert set(bindings) == {a["column"] for a in params}
+
+
+def test_binding_survives_a_parameter_renamed_away_from_the_argument(swept_db):
+    """The reported bug, as a regression test.
+
+    A Parameter node is labelled with the Parameter ENTITY's name; the axis is
+    namespaced by the producing function's ARGUMENT name. Matching those two
+    strings works only while they happen to agree. Here they deliberately do
+    not: a differently-named node is wired to the `low_hz` PORT, exactly as the
+    real project wired `delsys_sampling_frequency` into `filterDelsys`'s `Fs`.
+
+    Binding by port must be unaffected. Binding by label loses the axis, dims
+    the node to "not a variant here", and reports the axis as living in a
+    nested pipeline.
+    """
+    from scistack_gui import pipeline_store
+
+    source = plot_service.get_source(swept_db)
+    axes = source.variant_graph("FilteredSignal")["axes"]
+    column = next(a["column"] for a in axes if a["kind"] == "param")
+    argument = next(a["param"] for a in axes if a["column"] == column)
+    function = next(a["function"] for a in axes if a["column"] == column)
+
+    from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+    graph = get_pipeline_graph(swept_db, "main")
+    target = next(
+        n["id"]
+        for n in graph["nodes"]
+        if n["type"] == "functionNode" and n["data"]["label"] == function
+    )
+    pipeline_store.write_manual_edge(
+        swept_db,
+        {
+            "id": "manual__renamed",
+            "source": "param__nothing_like_the_argument_name",
+            "target": target,
+            "targetHandle": f"param__{argument}",
+        },
+    )
+
+    bindings = plot_service.axis_node_bindings(swept_db, axes)
+
+    assert bindings[column] == "param__nothing_like_the_argument_name", (
+        "the axis must follow the PORT, not the name of whatever feeds it"
+    )
+
+
+def test_an_axis_feeding_no_port_on_this_canvas_is_unbound(swept_db):
+    """Not an error: the popup lists it beneath the graph so it stays
+    reachable. What matters is that it is absent rather than mis-bound."""
+    invented = [
+        {
+            "column": "somewhere_else.cutoff",
+            "kind": "param",
+            "function": "not_on_this_canvas",
+            "param": "cutoff",
+            "levels": ["1", "2"],
+        }
+    ]
+
+    assert plot_service.axis_node_bindings(swept_db, invented) == {}
+
+
+def test_code_axes_are_not_port_bound(swept_db):
+    """They bind to a function node by function NAME — one namespace, no port
+    involved — so they must not appear in this mapping at all."""
+    code = [
+        {
+            "column": "Code:bandpass_filter",
+            "kind": "code",
+            "function": "bandpass_filter",
+            "param": None,
+            "levels": ["v1", "v2"],
+        }
+    ]
+
+    assert plot_service.axis_node_bindings(swept_db, code) == {}
+
+
+# --- building only the figure being looked at ------------------------------
+
+
+def test_figure_index_builds_one_figure_and_labels_them_all(populated_db):
+    """The panel shows one figure at a time; it must not PAY for the others.
+
+    Reducing every figure to serialize one made a fan-out cost N times what the
+    user was looking at, on every control change — and building a figure is
+    where the cost is (panels, aggregation, downsampling over the whole group).
+    The labels the navigator needs come from the group keys, which never
+    required the figures.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    result = plot_service.resolve_figures(populated_db, spec, figure_index=1)
+
+    assert result["ok"] is True
+    assert len(result["figures"]) == 1, "only the requested figure is built"
+    assert result["figures"][0]["index"] == 1
+    assert result["figure_count"] == 2
+    assert result["figure_labels"] == ["subject=1", "subject=2"], (
+        "every label, including the figure that was not built — the navigator "
+        "has to name where it would step to"
+    )
+
+
+def test_an_out_of_range_figure_index_is_clamped_not_rejected(populated_db):
+    """The fan-out shrinks whenever a filter narrows the data, and the panel's
+    cursor is a moment behind the spec it is already re-resolving."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    result = plot_service.resolve_figures(populated_db, spec, figure_index=99)
+
+    assert result["ok"] is True
+    assert result["figure_index"] == 1
+    assert result["figures"][0]["label"] == "subject=2"
+
+
+def test_one_figure_matches_what_resolving_all_of_them_gives(populated_db):
+    """The deferred path must not be a second implementation. Same spec, same
+    figure — otherwise the panel and an export disagree about what it drew."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    one = plot_service.resolve_figures(populated_db, spec, figure_index=1)
+    every = plot_service.resolve_figures(populated_db, spec)
+
+    assert one["figure_labels"] == every["figure_labels"]
+    assert one["figures"][0]["key"] == every["figures"][1]["key"]
+    assert one["figures"][0]["row_count"] == every["figures"][1]["row_count"]
+
+
+def test_an_invalid_spec_is_a_message_on_the_deferred_path_too(populated_db):
+    """Both resolve paths share `_invalid_spec`, so a role conflict cannot come
+    back as a message on one and an exception on the other."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
+
+    result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
+
+    assert result["ok"] is False
+    assert "one factor" in result["error"]
+    assert result["figures"] == []

@@ -50,6 +50,10 @@ HIDDEN_PREFIX = "__"
 # classifier over it (and over ``plot_``/``stat_``).
 GLUE_PREFIX = "glue_"
 
+# "no such input", distinct from an input whose value is legitimately None —
+# a Parameter may hold None, and that is still a constant worth gluing.
+_MISSING = object()
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -153,10 +157,15 @@ class GlueSpec:
                 f"GlueSpec '{self.name}': language must be 'python' or 'matlab', "
                 f"got {self.language!r}"
             )
-        if self.language == "python" and self.fn is None and self._hash is None:
+        if (
+            self.language == "python"
+            and self.fn is None
+            and self._hash is None
+            and not self.source_text
+        ):
             raise ValueError(
-                f"GlueSpec '{self.name}': python glue needs either a callable "
-                f"or an explicit hash"
+                f"GlueSpec '{self.name}': python glue needs a callable, an "
+                f"explicit hash, or its source text"
             )
 
     @property
@@ -216,10 +225,15 @@ def _compute_glue_hash(spec: GlueSpec) -> str:
     truncated; it is spelled out here rather than imported because scidb sits
     *below* scimatlab and must not depend on it.
     """
-    if spec.language == "python":
+    if spec.language == "python" and spec.fn is not None:
         from scilineage.hashing import compute_function_hash
 
         return compute_function_hash(spec.fn, truncate=16)
+    # Python glue whose body could not be loaded (see resolve_python_glue)
+    # falls through to the text hash. It is a DIFFERENT number than the AST
+    # hash the same glue gets where its callable is available, so identity is
+    # degraded — but resolve_python_glue has already warned, and a wrong-but-
+    # stable hash beats crashing the run at spec construction.
     text = spec.source_text or ""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
@@ -346,6 +360,12 @@ def check_run_language(chains: GlueChains, run_language: str) -> None:
     Python glue in a MATLAB run would technically work for free (it happens
     inside ``for_each_prepare``). It is refused anyway so the exported plain
     script stays faithful and there is one rule instead of an asymmetric one.
+
+    **Constant-fed chains are exempt and must not be passed here** — see
+    :func:`apply_constant_glue`, which enforces the opposite rule for them
+    (Python always, whatever the run's language) because its application site
+    is Python on both run paths. ``_for_each_prepare`` splits the chains before
+    calling either.
     """
     for param, chain in chains.items():
         for spec in chain:
@@ -355,6 +375,223 @@ def check_run_language(chains: GlueChains, run_language: str) -> None:
                     f"{spec.language} but this is a {run_language} run; a glue "
                     f"node executes in the language of the run"
                 )
+
+
+def resolve_python_glue(name: str, source_file: str | None) -> Callable | None:
+    """Load a Python glue callable from the file that declares it.
+
+    Used when a Python glue chain has to reach a process that has no function
+    registry — chiefly a **MATLAB run**, where ``scimatlab.bridge`` runs inside
+    MATLAB's own interpreter and only ``scidb``/``scifor`` are configured. The
+    GUI knows every glue node's path, so it sends the path and this resolves
+    the body at the far end.
+
+    Loading by location rather than by import name is deliberate and matches
+    ``registry``'s loose-file handling: ``glue_dir`` is a flat directory of
+    one-function files that is not necessarily a package.
+
+    Returns ``None`` (with a warning) rather than raising — the caller still
+    has the spec's hash for identity, and a chain that cannot be applied is
+    reported by ``apply_glue_chain``/``GlueSpec.call`` with the glue named.
+    """
+    if not source_file:
+        Log.warn(
+            f"[glue] '{name}': no source file recorded, so its Python body "
+            f"cannot be loaded here"
+        )
+        return None
+
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(source_file)
+    if not path.is_file():
+        Log.warn(f"[glue] '{name}': source file {path} does not exist")
+        return None
+
+    try:
+        spec = importlib.util.spec_from_file_location(f"_scistack_glue_{name}", path)
+        if spec is None or spec.loader is None:
+            Log.warn(f"[glue] '{name}': {path} is not importable")
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001 - a bad glue file must not kill the run
+        Log.warn(f"[glue] '{name}': failed to load {path}: {exc}")
+        return None
+
+    fn = getattr(module, name, None)
+    if not callable(fn):
+        Log.warn(f"[glue] '{name}': {path} defines no function called '{name}'")
+        return None
+    return fn
+
+
+def is_constant_input(spec: Any) -> bool:
+    """Whether an input spec is a plain constant value at prepare time.
+
+    Essentially ``_convert_inputs``' "constant — pass through unchanged"
+    branch: not a ``ColName`` marker and not loadable. A ``Parameter``-fed
+    input is one of these by the time prepare runs — ``for_each``'s Step 1 has
+    already expanded the ``EachOf`` into one recursive call per concrete value.
+
+    ``PathInput`` and an unexpanded ``EachOf`` are excluded explicitly even
+    though ``_is_loadable`` also returns False for both. Neither is a *value*:
+    a PathInput resolves per combo (glue on it is refused outright by
+    ``refuse_pathinput_glue``, which runs first), and an EachOf is a fan-out
+    axis — see :func:`is_constant_axis` for that case. Relying on
+    ``_is_loadable`` happening to say False for them would rest this
+    correctness on a docstring about *loading*.
+    """
+    from scifor import ColName, EachOf, PathInput
+
+    from .foreach import _is_loadable
+
+    if isinstance(spec, (ColName, EachOf, PathInput)):
+        return False
+    return not _is_loadable(spec)
+
+
+def is_constant_axis(spec: Any) -> bool:
+    """Whether an input spec is an unexpanded fan-out over constant values.
+
+    A ``Parameter`` **is** a ``scifor.EachOf``. On the pure-Python path
+    ``for_each``'s Step 1 expands it before prepare, so this is normally
+    False — but ``scimatlab.bridge`` calls ``_for_each_prepare`` directly, with
+    no Step 1 in front of it, so an unexpanded Parameter can arrive there.
+
+    An ``EachOf`` of variable CLASSES is a multi-type input, not a Parameter
+    (``build_run_inputs`` builds exactly that shape for a handle with several
+    variable edges on it). Its data is loaded, so its glue belongs at the
+    fusion point — hence the per-alternative test rather than a bare
+    ``isinstance``.
+    """
+    from scifor import EachOf
+
+    return (
+        isinstance(spec, EachOf)
+        and bool(spec.alternatives)
+        and all(is_constant_input(a) for a in spec.alternatives)
+    )
+
+
+def split_constant_chains(
+    inputs: dict[str, Any], chains: GlueChains
+) -> tuple[GlueChains, GlueChains]:
+    """Split chains into ``(constant_fed, deferred)``.
+
+    ``constant_fed`` is applied here in prepare (:func:`apply_constant_glue`);
+    ``deferred`` goes on to the Step-10/11 fusion point, or to MATLAB's loop.
+    The two obey **opposite** language rules, so the split has to happen before
+    either is validated.
+
+    A chain naming a param that is not an input at all lands in ``deferred``,
+    where ``fuse_glue`` reports it as "chain declared but no such input on this
+    call" — one place that warning is worded, not two.
+    """
+    constant_fed: GlueChains = {}
+    deferred: GlueChains = {}
+    for param, chain in chains.items():
+        spec = inputs.get(param, _MISSING)
+        if spec is not _MISSING and (
+            is_constant_input(spec) or is_constant_axis(spec)
+        ):
+            constant_fed[param] = chain
+        else:
+            deferred[param] = chain
+    return constant_fed, deferred
+
+
+def check_constant_glue_language(chains: GlueChains, run_language: str) -> None:
+    """Refuse non-Python glue on a constant-fed parameter.
+
+    The inverse of :func:`check_run_language`, for the reason spelled out in
+    :func:`apply_constant_glue`: the application site is ``_for_each_prepare``,
+    which is Python on both run paths.
+    """
+    for param in sorted(chains):
+        for spec in chains[param]:
+            if spec.language != "python":
+                raise GlueLanguageMismatchError(
+                    f"glue '{spec.name}' on parameter '{param}' is "
+                    f"{spec.language}, but '{param}' is fed by a Parameter (or "
+                    f"a plain constant). Constant glue is applied while "
+                    f"building the version keys, which happens in Python on "
+                    f"every run — including a {run_language} one — so it must "
+                    f"be Python glue. Either rewrite '{spec.name}' in Python, "
+                    f"glue a variable input instead, or reshape the value "
+                    f"inside the function."
+                )
+
+
+def apply_constant_glue(inputs: dict[str, Any], chains: GlueChains) -> None:
+    """Apply glue attached to a **constant-valued** input, in prepare.
+
+    Mutates ``inputs`` in place, replacing each glued value with the reshaped
+    one. ``chains`` must already be the constant-fed half
+    (:func:`split_constant_chains`), language-checked by
+    :func:`check_constant_glue_language`.
+
+    This is the ``Parameter`` case (and a bare constant passed directly).
+
+    Why here, and not at the Step-10/11 fusion point
+    ------------------------------------------------
+    A constant never becomes a loaded table, so the fusion point has nothing
+    to reshape: it would fall into the "not a table — glue applied to the value
+    as-is" branch, *after* ``ForEachConfig`` has already hashed the pre-glue
+    value.
+
+    Applying it here — before Step 8 builds the version keys — gets **identity
+    right for free**. The value that lands in ``__constants`` IS the glued
+    value, so editing a glue body changes the constant's content hash, which is
+    one of the bindings ``skip_computed`` compares. Downstream results
+    invalidate with **no virtual glue record at all**: §2's staleness hole is
+    closed here rather than merely warned about, as it must be for ``Merge`` /
+    ``PerComboLoader``.
+
+    A multi-valued ``Parameter`` needs no special handling. ``for_each``'s
+    Step 1 expands it into one recursive call per value *before* prepare, so
+    each call glues its own concrete value and records it — the fan-out and
+    the glue compose without either knowing about the other.
+
+    The language rule (§1) is inverted here, deliberately
+    ----------------------------------------------------
+    ``_for_each_prepare`` is Python on *both* run paths, so this site can only
+    execute Python. A constant-fed chain must therefore be **Python glue even
+    in a MATLAB run** — the exact opposite of :func:`check_run_language`'s rule,
+    for the exact same reason (a glue node executes where its input exists).
+    MATLAB glue on a constant-fed param is refused rather than silently moved
+    to a per-combo site, because a per-combo site would record the *pre*-glue
+    constant and reintroduce the silent staleness this placement removes.
+    """
+    from scifor import EachOf
+
+    for param in sorted(chains):
+        chain = chains[param]
+        before = inputs[param]
+
+        if is_constant_axis(before):
+            # An unexpanded fan-out (the MATLAB bridge path, which has no
+            # Step 1 in front of it). Map over the alternatives: gluing the
+            # EachOf object itself would hand the user's code the axis.
+            values = list(before.alternatives)
+            inputs[param] = EachOf(
+                *(apply_glue_chain(v, chain, param=param) for v in values)
+            )
+            detail = f"{len(values)} unexpanded value(s)"
+        else:
+            inputs[param] = apply_glue_chain(before, chain, param=param)
+            detail = (
+                f"the constant value ({type(before).__name__} -> "
+                f"{type(inputs[param]).__name__})"
+            )
+
+        Log.info(
+            f"[glue] '{param}': applied {len(chain)} node(s) to {detail} "
+            f"before the version keys were built, so the glued value is what "
+            f"lands in __constants and an edit to a glue body invalidates "
+            f"downstream results"
+        )
 
 
 def bulk_chain(chain: Sequence[GlueSpec]) -> list[GlueSpec]:

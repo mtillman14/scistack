@@ -9,8 +9,9 @@ and never a ``StepSpec`` in the compiled pipeline (D5).
 Covers:
 - the handle-id contract (the ids the frontend renders are the ids the
   backend resolves), in the style of TestHandleIdsMatchTheFrontend
-- edge resolution: a glued param still binds to the upstream VARIABLE, with
-  the chain riding alongside; glue→glue chains; cycles; unwired glue
+- edge resolution: a glued param binds to whatever is at the HEAD of the
+  chain — variable, Parameter or PathInput — with the chain riding alongside;
+  glue→glue chains; cycles; unwired glue
 - ``build_backend_pipeline`` produces the same step count with and without
   glue on the canvas
 - the per-node Run route refuses a glue node instead of reporting a
@@ -103,8 +104,9 @@ class TestEdgeResolution:
         edges = [_edge("e1", "g1", "fn__analyze", "in__emg")]
         resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
 
-        # The chain is known but there is no variable behind it, so the
-        # parameter stays unbound rather than binding to nothing.
+        # The chain is known but nothing is wired behind it, so the parameter
+        # stays unbound rather than binding to nothing. This is now the ONLY
+        # reason a glued parameter goes unbound — see TestGlueChainHeadKinds.
         assert resolved.glue_chains == {"emg": ["glue_x"]}
         assert "emg" not in resolved.bindings
 
@@ -114,8 +116,8 @@ class TestEdgeResolution:
             _edge("e1", "g2", "g1", "in__value"),
             _edge("e2", "g1", "g2", "in__value"),
         ]
-        chain, var_label = resolve_glue_chain("g1", edges, manual_nodes, {})
-        assert var_label is None
+        chain, head = resolve_glue_chain("g1", edges, manual_nodes, {})
+        assert head is None
         assert len(chain) <= 2
 
     def test_no_glue_leaves_the_chain_map_empty(self):
@@ -132,6 +134,90 @@ class TestEdgeResolution:
         resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
         assert resolved.bindings == {}
         assert resolved.glue_chains == {}
+
+
+class TestGlueChainHeadKinds:
+    """A glue chain may start from ANY bindable source, not only a variable.
+
+    The regression this class exists for (2026-09-10): ``Parameter -> glue ->
+    fn`` resolved its head to ``None``, so ``resolve_function_edges`` skipped
+    the binding entirely and the parameter simply vanished from the function's
+    inputs. In a MATLAB run the remaining arguments then bound by POSITION —
+    ``filterDelsys(loaded_data, config, Fs)`` ran as
+    ``filterDelsys(loaded_data, Fs)``.
+    """
+
+    def test_a_parameter_fed_glue_binds_the_parameter(self):
+        manual_nodes = {"g1": _glue_node("glue_config_filter")}
+        edges = [
+            _edge("e1", "param__delsys_config", "g1", "in__config"),
+            _edge("e2", "g1", "fn__analyze", "in__config"),
+        ]
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+
+        assert resolved.parameter_params == {"config": "delsys_config"}
+        assert resolved.glue_chains == {"config": ["glue_config_filter"]}
+        # And it must NOT masquerade as a variable input.
+        assert resolved.input_types == {}
+
+    def test_a_manual_parameter_node_head_binds_by_its_label(self):
+        manual_nodes = {
+            "g1": _glue_node("glue_config_filter"),
+            "p1": {"type": "parameterNode", "label": "delsys_config"},
+        }
+        edges = [
+            _edge("e1", "p1", "g1", "in__config"),
+            _edge("e2", "g1", "fn__analyze", "in__config"),
+        ]
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        assert resolved.parameter_params == {"config": "delsys_config"}
+
+    def test_a_pathinput_fed_glue_binds_and_leaves_scidb_to_refuse_it(self):
+        """§7 scopes PathInput glue out, but the refusal belongs to scidb.
+
+        Dropping the binding here made an unsupported wiring look like a
+        missing argument. Binding it means ``refuse_pathinput_glue`` raises
+        ``GlueUnsupportedInputError`` with a message that names the problem.
+        """
+        manual_nodes = {"g1": _glue_node("glue_x")}
+        edges = [
+            _edge("e1", "pathInput__raw_files", "g1", "in__value"),
+            _edge("e2", "g1", "fn__analyze", "in__path"),
+        ]
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+
+        assert resolved.path_input_params == {"path": "raw_files"}
+        assert resolved.glue_chains == {"path": ["glue_x"]}
+
+    def test_a_glue_chain_from_a_parameter_survives_a_second_glue_hop(self):
+        manual_nodes = {"g1": _glue_node("glue_a"), "g2": _glue_node("glue_b")}
+        edges = [
+            _edge("e1", "param__cfg", "g1", "in__value"),
+            _edge("e2", "g1", "g2", "in__value"),
+            _edge("e3", "g2", "fn__analyze", "in__config"),
+        ]
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+
+        assert resolved.glue_chains == {"config": ["glue_a", "glue_b"]}
+        assert resolved.parameter_params == {"config": "cfg"}
+
+    def test_a_stale_input_edge_is_named_with_its_handle(self, caplog):
+        """C4: a renamed glue parameter leaves the STALE edge first in the
+        list, and therefore the one followed. The warning has to carry the
+        handles or the cause is invisible in the log."""
+        import logging
+
+        manual_nodes = {"g1": _glue_node("glue_config_filter")}
+        edges = [
+            _edge("e1", "param__cfg", "g1", "in__value"),  # stale after rename
+            _edge("e2", "param__cfg", "g1", "in__config"),
+            _edge("e3", "g1", "fn__analyze", "in__config"),
+        ]
+        with caplog.at_level(logging.WARNING):
+            resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+
+        text = caplog.text
+        assert "in__value" in text and "in__config" in text
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +450,73 @@ class TestExport:
         assert _py_glue_literal(None) == ""
         assert _matlab_glue_struct(None) == ""
         assert _glue_comments(None, "#") == []
+
+
+class TestMatlabRunCommandCarriesGlue:
+    """The generated MATLAB *run* command must fill in ``for_each``'s ``glue``
+    option. It never did: the MATLAB half of the feature was built and
+    ``+scidb/for_each.m`` accepted ``glue``, but nothing in the command
+    generator ever passed one, so every MATLAB run executed with the glue
+    silently dropped (2026-09-10)."""
+
+    def test_matlab_glue_becomes_a_handle(self):
+        from scistack_gui.api.matlab_command import _format_glue_struct
+
+        src = _format_glue_struct(
+            {"emg": [{"name": "glue_a", "language": "matlab", "source_file": "/a.m"}]}
+        )
+        assert src == "struct('emg', {{@glue_a}})"
+
+    def test_python_glue_becomes_a_located_struct(self):
+        """Python glue reaches a MATLAB run only on a constant-fed param,
+        where prepare applies it. MATLAB cannot make a handle for it, and the
+        bridge has no registry — so it crosses as name + file."""
+        from scistack_gui.api.matlab_command import _format_glue_struct
+
+        src = _format_glue_struct(
+            {
+                "config": [
+                    {
+                        "name": "glue_config_filter",
+                        "language": "python",
+                        "source_file": "/p/glue_config_filter.py",
+                    }
+                ]
+            }
+        )
+        assert "'language', 'python'" in src
+        assert "glue_config_filter" in src
+        assert "/p/glue_config_filter.py" in src
+        # Still a cell-valued field, not a struct array.
+        assert src.startswith("struct('config', {{") and src.endswith("}})")
+
+    def test_no_glue_emits_no_option(self):
+        from scistack_gui.api.matlab_command import _format_glue_struct
+
+        assert _format_glue_struct(None) == ""
+        assert _format_glue_struct({}) == ""
+
+    def test_the_generated_command_contains_the_glue_option(self):
+        from scistack_gui.api.matlab_command import generate_matlab_command
+
+        cmd = generate_matlab_command(
+            function_name="filterDelsys",
+            db_path="/tmp/x.duckdb",
+            schema_keys=["subject"],
+            variable_inputs={"loaded_data": "RawEMG"},
+            output_types=["FilteredEMG"],
+            glue={
+                "config": [
+                    {
+                        "name": "glue_config_filter",
+                        "language": "python",
+                        "source_file": "/p/glue_config_filter.py",
+                    }
+                ]
+            },
+        )
+        assert "'glue'" in cmd
+        assert "glue_config_filter" in cmd
 
 
 # ---------------------------------------------------------------------------

@@ -425,13 +425,32 @@ def test_a_variant_that_pools_versions_says_so_on_its_own_row():
 
     entry = variant_summary(spec, table)["sets"][0]
 
-    assert entry["spans"] == {"Code:filter": 2}
+    assert set(entry["spans"]) == {"Code:filter"}
+    assert entry["spans"]["Code:filter"]["versions"] == {"v1": 2, "v2": 2}
     assert "Code:filter" not in apply_variant_sets(spec, table).factor_names
 
 
-def test_latest_spanning_ordinals_is_not_reported_as_pooling():
-    """Per-location "latest" spanning v1 and v2 is what current results ARE —
-    warning about it would cry wolf on the most ordinary state there is."""
+def test_latest_spanning_ordinals_IS_reported_as_pooling():
+    """Reversed 2026-09-11, by the user, deliberately.
+
+    This test used to assert the opposite: a selection resolving through the
+    per-location ``CodeIsLatest`` flag was never counted as spanning, because
+    spanning ordinals is what per-location "latest" *means* and reporting it
+    would cry wolf on the most ordinary state in the system.
+
+    That argument is about frequency, and the thing it stayed silent about is a
+    figure whose points were computed by **different versions of the same
+    function** — which a reader cannot see and must not have to assume away. The
+    requirement now is the opposite: if the body actually used differs between
+    schema locations, say so prominently.
+
+    What makes it actionable rather than noisy is naming the locations, which is
+    why ``spans`` carries them; see
+    ``test_a_span_names_which_locations_hold_which_version``.
+
+    Do not re-exempt the flag without re-reading
+    ``docs/claude/plot-variant-rows.md`` §3, which argued for the old rule.
+    """
     table = _table(
         _latest_frame(), ["Code:f"], latest_column="CodeIsLatest"
     )
@@ -440,7 +459,12 @@ def test_latest_spanning_ordinals_is_not_reported_as_pooling():
         variant_sets=[VariantSet("current", {"CodeIsLatest": True})],
     )
 
-    assert variant_summary(spec, table)["sets"][0]["spans"] == {}
+    spans = variant_summary(spec, table)["sets"][0]["spans"]
+
+    # Subject 01 contributes its v2 record, subject 02 its v1 — both current at
+    # their own location, and two different bodies in one figure.
+    assert set(spans) == {"Code:f"}
+    assert spans["Code:f"]["versions"] == {"v1": 1, "v2": 1}
 
 
 def test_the_latest_flag_does_not_answer_branch_params():
@@ -528,7 +552,22 @@ def test_a_role_naming_nothing_at_all_is_still_an_error():
         validate(spec, table)
 
 
-def test_an_unselected_variant_column_stays_a_factor():
+def test_an_unselected_code_axis_is_reported_on_the_ROW_not_resurrected():
+    """A code axis a variant left open still has to be surfaced — but where?
+
+    This test used to assert the column came back as a factor. That was the
+    earlier rule, and `_answered` deliberately replaced it: **every** code axis
+    is answered once any variant is defined, because "which version of the code"
+    is the question the Variants section exists to answer, and offering it again
+    in Factors asks the user to decide the same thing twice with no way to tell
+    which answer wins.
+
+    The distinction is not lost, it moved. `spanned_code_axes` reports it on the
+    row that pooled it — where the fix is (pin a version there, or split the row
+    in two), and where the GUI shows it as "pools 2 versions".
+    """
+    from scistackplot.capability import variant_summary
+
     table = _table(
         pd.DataFrame(
             {
@@ -546,9 +585,14 @@ def test_an_unselected_variant_column_stays_a_factor():
 
     derived = apply_variant_sets(spec, table)
 
-    assert "Code:load" in derived.factor_names, (
-        "nothing selected it, so it is still a distinction the user must resolve"
+    assert "Code:load" not in derived.factor_names, (
+        "code axes belong to the Variants section entirely — see _answered"
     )
+    spans = variant_summary(spec, table)["sets"][0]["spans"]
+    assert set(spans) == {"Code:load"}, (
+        "the variant pools two versions of the loader, and must say so"
+    )
+    assert spans["Code:load"]["versions"] == {"v1": 1, "v2": 1}
 
 
 def test_rows_matching_no_variant_are_dropped():

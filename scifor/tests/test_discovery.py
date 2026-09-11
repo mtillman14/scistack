@@ -15,8 +15,10 @@ from scifor.discovery import (
     headless_matplotlib,
     is_test_modname,
     is_test_path,
+    is_windows_absolute,
     purge_module,
     read_project_name,
+    resolve_config_path,
     sibling_import_dirs,
     walk_package,
 )
@@ -551,3 +553,59 @@ class TestPurgeModule:
 
     def test_purge_nonexistent_is_noop(self):
         purge_module("_definitely_not_in_sys_modules_xyz")
+
+
+class TestResolveConfigPath:
+    """A scistack.toml is a shared, committed file: the same project is
+    opened on Windows and on macOS, and the GUI wrote its paths with the
+    host's separator.
+
+    Reading ``entities_file = "src\\scistack_entities.toml"`` naively on
+    POSIX does not error -- ``\\`` is a legal filename character -- it names
+    a FILE called ``src\\scistack_entities.toml`` in the project root. The
+    entities file was then created and read there, and everything derived
+    from its location moved with it: MATLAB classdef stubs landed in
+    ``<root>/scistack_matlab_variables`` instead of
+    ``<root>/src/scistack_matlab_variables``.
+    """
+
+    def test_forward_slashes_resolve_against_the_root(self, tmp_path):
+        assert resolve_config_path(tmp_path, "src/e.toml") == tmp_path / "src" / "e.toml"
+
+    @pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
+    def test_windows_relative_path_is_read_as_a_path(self, tmp_path):
+        resolved = resolve_config_path(tmp_path, "src\\scistack_entities.toml")
+
+        assert resolved == tmp_path / "src" / "scistack_entities.toml"
+        assert resolved.name == "scistack_entities.toml"
+        assert resolved.parent == tmp_path / "src"
+
+    @pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
+    def test_the_stub_directory_follows_the_corrected_parent(self, tmp_path):
+        """The symptom, stated directly: stubs go beside the entities file."""
+        resolved = resolve_config_path(tmp_path, "src\\scistack_entities.toml")
+
+        assert resolved.parent / "scistack_matlab_variables" == (
+            tmp_path / "src" / "scistack_matlab_variables"
+        )
+
+    def test_posix_absolute_path_ignores_the_root(self, tmp_path):
+        assert resolve_config_path(tmp_path, "/opt/shared/e.toml") == Path(
+            "/opt/shared/e.toml"
+        )
+
+    @pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
+    def test_windows_absolute_path_is_not_glued_onto_the_root(self, tmp_path):
+        """``Y:\\LabMembers\\...`` cannot resolve here, and joining it onto
+        the project root produced the nonsense
+        ``/Users/me/project/y:\\LabMembers\\...`` in every error message."""
+        resolved = resolve_config_path(tmp_path, "Y:\\LabMembers\\MTillman\\repo")
+
+        assert not str(resolved).startswith(str(tmp_path))
+
+    def test_is_windows_absolute(self):
+        assert is_windows_absolute("Y:\\LabMembers")
+        assert is_windows_absolute("y:/LabMembers")
+        assert is_windows_absolute("\\\\server\\share")
+        assert not is_windows_absolute("src\\e.toml")
+        assert not is_windows_absolute("/opt/shared")

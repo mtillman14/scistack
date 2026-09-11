@@ -26,7 +26,8 @@ from dataclasses import dataclass, field
 from scistacklog import Log
 from scistackplot import LongTable, PlotSpec, default_function_name
 from scistackplot import generate_plot_function
-from scistackplot.codegen import variant_params
+from scistackplot.codegen import group_param, variant_params
+from scistackplot.roles import fanout_keys
 from scistackplot.variants import defined_sets
 
 from .load import LATEST_COLUMN
@@ -69,7 +70,11 @@ def generate_endpoint(
     ``x_variable`` is the optional second measure for an x–y scatter.
     """
     name = function_name or default_function_name(spec)
-    iterate_keys = list(spec.iterate_factors)
+    # NOT spec.iterate_factors: the fan-out includes schema keys promoted
+    # because a nested key iterates, and runs in schema order. The preview and
+    # the generated for_each have to agree on both — that is what
+    # tests/test_fanout_parity.py checks.
+    iterate_keys = fanout_keys(spec, table)
     output = output_variable or default_output_variable(input_variable)
     template = path_template or default_path_template(name, iterate_keys)
 
@@ -168,11 +173,15 @@ def variant_expression(input_variable: str, variant_set) -> str:
 
 
 def _single_variant_expression(input_variable: str, spec) -> str:
-    """The lone variant's pin, or the bare variable when nothing is selected."""
+    """The lone variant's pin, or the bare variable when nothing is selected.
+
+    The row may name its own variable, in which case that is what the endpoint
+    loads — ``input_variable`` is only the default.
+    """
     sets = defined_sets(spec.variant_sets)
     if len(sets) != 1:
         return input_variable
-    return variant_expression(input_variable, sets[0])
+    return variant_expression(sets[0].variable or input_variable, sets[0])
 
 
 def _foreach_call(
@@ -194,12 +203,13 @@ def _foreach_call(
         # produce no input, so indexing the raw list would pair a parameter with
         # the wrong variant's selection.
         inputs = [
-            f'        "{param}": {variant_expression(input_variable, variant)},'
-            for (param, _label), variant in zip(
+            f'        "{generated.param}": '
+            f"{variant_expression(generated.variable, variant)},"
+            for generated, variant in zip(
                 variant_inputs, defined_sets(spec.variant_sets), strict=True
             )
         ]
-        table_inputs = [param for param, _ in variant_inputs]
+        table_inputs = [generated.param for generated in variant_inputs]
     else:
         pinned = _single_variant_expression(input_variable, spec)
         inputs = [f'        "df": {pinned},']
@@ -207,6 +217,13 @@ def _foreach_call(
     if x_variable:
         inputs.append(f'        "df_x": {x_variable},')
         table_inputs.append("df_x")
+    for group in spec.factor_variables:
+        # A grouping variable arrives as its own input and is merged onto the
+        # data inside the function: `as_table` hands a function schema keys and
+        # data columns only, so a subject-level Condition cannot ride along on
+        # the measure's frame.
+        inputs.append(f'        "{group_param(group)}": {group},')
+        table_inputs.append(group_param(group))
     inputs.append(f'        "filename": PathOutput("{path_template}"),')
 
     lines = [

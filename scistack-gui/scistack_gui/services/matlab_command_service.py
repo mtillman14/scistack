@@ -192,6 +192,112 @@ def _collect_variable_inputs(
     return dict(resolved.input_types)
 
 
+def _collect_glue_chains(
+    function_name: str, manual_edges: list[dict], manual_nodes: dict
+) -> dict[str, list[dict]]:
+    """``{param_name: [{"name", "language", "source_file"}, ...]}`` for every
+    glue chain wired into *function_name*, in application order.
+
+    Serializable on purpose: ``execution_service.build_run_glue`` produces live
+    ``GlueSpec`` objects for an in-process Python run, but a MATLAB run crosses
+    a generated script, so the chain has to survive as text. The language and
+    the file are both load-bearing at the far end —
+    ``+scidb/for_each.m:build_glue_chains`` emits a handle for MATLAB glue and
+    a struct for Python glue, and ``scimatlab.bridge`` loads the Python body
+    from the file because MATLAB's interpreter has no function registry.
+
+    Reads the same ``ResolvedEdges`` the PathInput, Parameter and Variable
+    collectors read — one scan of the wiring for all four kinds.
+    """
+    resolved = _resolve_matlab_wiring(function_name, manual_edges, manual_nodes)
+    if not resolved.glue_chains:
+        return {}
+
+    from scistack_gui.services.glue_service import list_glue_nodes
+
+    by_name = {entry["name"]: entry for entry in list_glue_nodes()}
+
+    out: dict[str, list[dict]] = {}
+    for param, names in resolved.glue_chains.items():
+        chain = []
+        for name in names:
+            entry = by_name.get(name)
+            if entry is None:
+                logger.warning(
+                    "generate_matlab_command: %s: parameter '%s' is wired "
+                    "through glue '%s', which is not discovered in source — "
+                    "the chain is dropped rather than emitted as a call that "
+                    "would fail in MATLAB",
+                    function_name,
+                    param,
+                    name,
+                )
+                chain = []
+                break
+            chain.append(
+                {
+                    "name": name,
+                    "language": entry.get("language", "python"),
+                    "source_file": str(entry.get("path") or ""),
+                }
+            )
+        if chain:
+            out[param] = chain
+            _warn_on_glue_language(function_name, param, chain, resolved.bindings)
+    if out:
+        logger.info(
+            "generate_matlab_command: %s: glue chains %s",
+            function_name,
+            {p: [s["name"] + f"({s['language']})" for s in c] for p, c in out.items()},
+        )
+    return out
+
+
+def _warn_on_glue_language(
+    function_name: str, param: str, chain: list[dict], bindings: dict
+) -> None:
+    """Warn before the run about a chain scidb will refuse, or accept.
+
+    Two opposite rules meet here, and which one applies depends on what feeds
+    the parameter (``docs/claude/free-code-glue-nodes.md`` §1):
+
+    * a **variable**-fed chain runs where its table exists — in MATLAB, for a
+      MATLAB run — so Python glue is refused by ``check_run_language``;
+    * a **constant**-fed chain (a Parameter) runs in ``for_each_prepare``,
+      which is Python on both run paths, so it must be Python glue and
+      ``apply_constant_glue`` refuses MATLAB.
+
+    scidb raises either way, with a message that explains itself. This exists
+    only so the contradiction is visible in ``scidb.log`` *before* the user
+    waits on a MATLAB launch — the canvas gives no signal today.
+    """
+    from scistack_gui.domain.edge_resolver import BINDING_PARAMETER
+
+    kind = (bindings.get(param) or {}).get("kind")
+    wanted = "python" if kind == BINDING_PARAMETER else "matlab"
+    wrong = [s["name"] for s in chain if s["language"] != wanted]
+    if not wrong:
+        return
+    why = (
+        "a Parameter-fed chain is applied before the version keys are built, "
+        "which happens in Python on every run"
+        if wanted == "python"
+        else "a variable-fed chain is applied to the loaded table, which in a "
+        "MATLAB run exists on the MATLAB side"
+    )
+    logger.warning(
+        "generate_matlab_command: %s: parameter '%s' is fed through glue %s, "
+        "which is not %s glue — %s. scidb will refuse this run; rewrite the "
+        "glue in %s or reshape the value inside the function",
+        function_name,
+        param,
+        wrong,
+        wanted,
+        why,
+        wanted,
+    )
+
+
 def _collect_edge_path_inputs(
     function_name: str, saved_pis: dict, manual_edges: list[dict], manual_nodes: dict
 ) -> dict[str, dict]:
@@ -292,6 +398,11 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         function_name, manual_edges, manual_nodes
     )
 
+    # Collect glue chains. Without this the generated script ran with the glue
+    # silently dropped — the MATLAB half of the feature was built, but nothing
+    # ever filled in the ``glue`` option (2026-09-10).
+    glue_chains = _collect_glue_chains(function_name, manual_edges, manual_nodes)
+
     # Infer output types from manual edges when no DB variants exist.
     # Always prefer edge inference over params-supplied output_types for
     # functions with no DB history — the node's output_types field may contain
@@ -369,6 +480,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         entities_script=_entities_script(),
         entities_file=_entities_file(),
         variable_inputs=variable_inputs if variable_inputs else None,
+        glue=glue_chains if glue_chains else None,
     )
     logger.info(
         "generate_matlab_command: fn=%s, command_length=%d", function_name, len(cmd)

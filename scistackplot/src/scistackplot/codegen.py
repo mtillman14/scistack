@@ -17,9 +17,11 @@ from __future__ import annotations
 import json
 import keyword
 import re
+from typing import NamedTuple
 
+from .groups import apply_level_groups
 from .reduce import plan_layout
-from .roles import complete_roles
+from .roles import complete_roles, fanout_keys
 from .shape import Shape
 from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic
 from .table import LongTable
@@ -44,6 +46,22 @@ _SEABORN_ERRORBAR = {
 
 _SERIES_COLUMN = "_series"
 
+#: Column the generated code creates when NO factor holds ``Role.X`` and the
+#: measure is not 1-D: every point sits at one categorical position, which is
+#: exactly what ``reduce._panel_frame`` does (``out[X] = ""``).
+#:
+#: This used to fall back to ``table.factor_names[0]``, which was wrong two ways.
+#: It drew a different figure from the preview for any scalar spec with no x
+#: factor, and — once a nested ITERATE key promotes its ancestors — that first
+#: factor is an iteration key, so it is NOT a column of the frame the endpoint
+#: receives and every combo raised.
+_X_CONSTANT = "Observation"
+
+#: Separator joining a nested axis's layer values in generated code. Readable on
+#: purpose — a reader of the exported figure sees "stim · pre" as a tick, where
+#: the interactive path uses an invisible control character it never displays.
+_NESTED_JOIN = " · "
+
 
 def generate_plot_function(
     spec: PlotSpec,
@@ -59,12 +77,12 @@ def generate_plot_function(
     ``filename`` and closes.
     """
     name = function_name or default_function_name(spec)
-    table = apply_variant_sets(spec, table)
+    table = apply_level_groups(spec, apply_variant_sets(spec, table))
     roles = complete_roles(spec, table)
     shape = table.shape_of(spec.y_measure)
 
     body: list[str] = []
-    body.extend(_variant_preamble(spec))
+    body.extend(_variant_preamble(spec, table))
     body.extend(_preamble(spec, table, roles, shape))
     body.extend(_plot_call(spec, table, roles, shape))
 
@@ -80,8 +98,16 @@ def generate_plot_function(
     return "\n".join(lines) + "\n"
 
 
-def variant_params(spec: PlotSpec) -> list[tuple[str, str]]:
-    """``[(param_name, variant label)]`` — one input per named variant.
+class VariantInput(NamedTuple):
+    """One generated ``for_each`` input: its parameter, label, and variable."""
+
+    param: str
+    label: str
+    variable: str
+
+
+def variant_params(spec: PlotSpec) -> list[VariantInput]:
+    """One input per named variant row.
 
     Counted over :func:`~scistackplot.variants.defined_sets` — a row the user
     added but has not filled in yet selects nothing and must not become an
@@ -98,12 +124,16 @@ def variant_params(spec: PlotSpec) -> list[tuple[str, str]]:
     distinguish variants — those exist only in ``scistackplotdb``'s loader. So
     the split has to happen where the *load* happens, one input per variant, and
     the labels are re-attached here.
+
+    Each row also carries **its own variable**, which is what makes "Raw vs
+    Filtered" the same generated shape as "v1 vs v2": two inputs, two
+    ``Variant(...)`` wrappers, one concat.
     """
     sets = defined_sets(spec.variant_sets)
     if len(sets) < 2:
         return []
     used: set[str] = set()
-    params: list[tuple[str, str]] = []
+    params: list[VariantInput] = []
     for index, variant in enumerate(sets):
         label = set_name(variant, index)
         base = re.sub(r"[^0-9a-zA-Z]+", "_", label).strip("_").lower() or "variant"
@@ -113,33 +143,95 @@ def variant_params(spec: PlotSpec) -> list[tuple[str, str]]:
         while candidate in used:
             candidate, suffix = f"{base}_{suffix}", suffix + 1
         used.add(candidate)
-        params.append((candidate, label))
+        params.append(
+            VariantInput(candidate, label, variant.variable or spec.y_measure)
+        )
     return params
+
+
+def single_variant_variable(spec: PlotSpec) -> str | None:
+    """The lone row's variable when it is not the primary measure.
+
+    A one-row spec keeps the plain ``df`` input, but that input may still be a
+    *different variable* than ``measures[0]`` — in which case its data column
+    arrives under that variable's name and has to be renamed into the one the
+    plot call uses.
+    """
+    sets = defined_sets(spec.variant_sets)
+    if len(sets) != 1:
+        return None
+    variable = sets[0].variable
+    return variable if variable and variable != spec.y_measure else None
+
+
+def group_param(variable: str) -> str:
+    """Parameter name a grouping variable arrives under.
+
+    Prefixed so it cannot collide with ``df``/``df_x`` or with a variant row's
+    parameter, and named after the variable so the generated call reads as what
+    it is. Defined here, beside the signature it appears in, so
+    ``scistackplotdb.endpoint`` and this module cannot disagree about it.
+    """
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", variable).strip("_").lower() or "group"
+    return f"group_{slug}"
 
 
 def function_params(spec: PlotSpec) -> list[str]:
     """The generated function's signature, in for_each input order."""
     variants = variant_params(spec)
-    if not variants:
-        return ["df", "filename"]
-    return [param for param, _ in variants] + ["filename"]
+    data = [variant.param for variant in variants] if variants else ["df"]
+    groups = [group_param(name) for name in spec.factor_variables]
+    return [*data, *groups, "filename"]
 
 
-def _variant_preamble(spec: PlotSpec) -> list[str]:
+def _variant_preamble(spec: PlotSpec, table: LongTable) -> list[str]:
     """Concatenate the per-variant inputs into one labelled ``df``."""
     variants = variant_params(spec)
+    y = spec.y_measure
+    # Dict/struct variables arrive as one column PER FIELD, so their value
+    # column is not named after the variable and there is nothing to rename —
+    # the fields align across inputs on their own, and the melt further down
+    # turns them into the value column. Emitting the rename anyway would put a
+    # line in the user's code referring to a column that is not there.
+    melts_fields = bool(table.field_factors)
     if not variants:
-        return []
+        # One row, but possibly of another variable: its data column arrives
+        # under that variable's name.
+        other = single_variant_variable(spec)
+        if not other or melts_fields:
+            return []
+        return [
+            f"# This row plots {other}; the call below reads one value column.",
+            f"df = df.rename(columns={{{other!r}: {y!r}}})",
+            "",
+        ]
+
+    spans_variables = len({variant.variable for variant in variants}) > 1
     lines = [
         "# One input per named variant (each loaded through its own",
         "# Variant(...) filter), labelled and stacked into one frame.",
-        "df = pd.concat(",
-        "    [",
     ]
-    lines.extend(
-        f"        {param}.assign(**{{{VARIANT_FACTOR!r}: {label!r}}}),"
-        for param, label in variants
-    )
+    if spans_variables and melts_fields:
+        lines.append(
+            "# These variables store one column per field; the fields align "
+            f"across\n    # inputs, and the melt below turns them into "
+            f"{y!r} + a field factor."
+        )
+    elif spans_variables:
+        # Each variable's data column arrives under its own name; the figure
+        # draws ONE value column and tells the rows apart by their label.
+        lines.append(
+            f"# Each variable's values are renamed into {y!r} so they stack; "
+            f"the {VARIANT_FACTOR!r} column is what keeps them apart."
+        )
+    lines.extend(["df = pd.concat(", "    ["])
+    for variant in variants:
+        frame = variant.param
+        if variant.variable != y and not melts_fields:
+            frame = f"{frame}.rename(columns={{{variant.variable!r}: {y!r}}})"
+        lines.append(
+            f"        {frame}.assign(**{{{VARIANT_FACTOR!r}: {variant.label!r}}}),"
+        )
     lines.extend(["    ],", "    ignore_index=True,", ")", ""])
     return lines
 
@@ -182,12 +274,22 @@ def extract_spec(source: str) -> PlotSpec | None:
 
 
 def _docstring(spec: PlotSpec, table: LongTable, roles: dict) -> str:
-    iterate = spec.iterate_factors
+    # The keys the for_each will actually carry — promoted ancestors included,
+    # in schema order — not the ones the spec literally names.
+    iterate = fanout_keys(spec, table)
     note = ""
     if iterate:
         note = (
             f"\n\n    One figure per {', '.join(iterate)} — these are the "
             f"for_each iteration keys, so they are NOT columns here."
+        )
+    shape_of_y = table.shape_of(spec.y_measure)
+    if _nested_x_layers(spec, table, roles, shape_of_y):
+        note += (
+            "\n\n    The x axis nests "
+            f"{' > '.join(_nested_x_layers(spec, table, roles, shape_of_y))}; "
+            "seaborn has no\n    empty category, so the groups are separated by "
+            "ORDER here rather than\n    by the gaps the interactive view draws."
         )
     if spec.facet.has_rules and not _seaborn_can_express_layout(spec, table, roles):
         note += (
@@ -205,6 +307,23 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict) -> str:
 def _preamble(spec, table, roles, shape) -> list[str]:
     """Melt, filters, 1-D explosion, aggregation — the order resolve() uses."""
     lines: list[str] = []
+
+    # Grouping variables arrive as their own inputs (a subject-level Condition
+    # cannot ride along on a trial-level measure's frame) and are merged back on
+    # whatever schema keys they share. The join keys are computed from the
+    # frames rather than hard-coded so the generated code stays readable and
+    # keeps working if the variable is later saved at a different level.
+    for name in spec.factor_variables:
+        param = group_param(name)
+        lines.extend(
+            [
+                f"# {name}: one value per {param}'s schema level, broadcast to every row",
+                f"_on = [c for c in {param}.columns if c in df.columns]",
+                f"df = df.merge({param}.drop_duplicates(subset=_on), "
+                f'on=_on, how="left")',
+                "",
+            ]
+        )
 
     # A dict/struct variable arrives at the endpoint as one column per field
     # (scidb's multi_column storage). The interactive path melts it in
@@ -239,6 +358,49 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             filter_lines.append(f"df = df[df[{flt.column!r}] <= {flt.maximum!r}]")
     if filter_lines:
         lines.extend([*filter_lines, ""])
+
+    # Derived grouping factors. The interactive path builds these in
+    # `groups.apply_level_groups`; the endpoint receives the raw table, so the
+    # same mapping has to be emitted here or the exported figure is not the one
+    # that was previewed.
+    for group in spec.level_groups:
+        if not group.name or not group.source:
+            continue
+        mapping = {str(key): value for key, value in group.mapping.items()}
+        lines.append(f"# {group.source} -> {group.name}")
+        lines.append(f"_groups = {mapping!r}")
+        lines.append(
+            f"df[{group.name!r}] = df[{group.source!r}].astype(str).map(_groups)"
+        )
+        if group.unmatched is None:
+            lines.append(f"df = df[df[{group.name!r}].notna()]")
+        else:
+            lines.append(
+                f"df[{group.name!r}] = df[{group.name!r}].fillna({group.unmatched!r})"
+            )
+        lines.append("")
+
+    # No factor on x and not a 1-D measure: every point shares one categorical
+    # position. The preview builds that column in reduce; the endpoint has to
+    # build it too, or seaborn is handed an x that is not in the frame.
+    if _x_expression(spec, table, roles, shape) == _X_CONSTANT:
+        lines.extend([f"df[{_X_CONSTANT!r}] = \"\"", ""])
+
+    # Nested x: one position per combination of the layers. The ORDER is
+    # emitted as a resolved list rather than re-derived — replaying the nesting
+    # rules in generated code would be a second implementation that can drift
+    # from the preview (same reason the facet layout emits `col_order`).
+    layers = _nested_x_layers(spec, table, roles, shape)
+    if layers:
+        lines.extend(
+            [
+                f"# nested x axis: {' > '.join(layers)}",
+                f"_layers = {layers!r}",
+                f"df[{_X_NESTED!r}] = df[_layers].astype(str).agg("
+                f"{_NESTED_JOIN!r}.join, axis=1)",
+                "",
+            ]
+        )
 
     index_column = spec.index_column or table.index_column or "index"
     if shape is Shape.SERIES_1D and not table.measure(spec.y_measure).exploded:
@@ -320,6 +482,43 @@ def _facet_layout_args(spec, table: LongTable, facets: list[str]) -> list[str]:
     return args
 
 
+def _nested_x_args(spec, table: LongTable, roles, shape) -> list[str]:
+    """``order=[...]`` reproducing the composed nested axis.
+
+    The RESOLVED order, computed by the same :func:`~scistackplot.xaxis.plan_x_axis`
+    the preview used, rather than the nesting rules re-applied in generated
+    code. A second implementation is a second thing that can drift, and the
+    failure would be a re-ordered axis nobody notices.
+
+    Spacers are dropped: seaborn has no concept of an empty category, so the
+    exported figure groups by ordering alone. The docstring says so — the
+    interactive view's gaps are the one thing the export cannot reproduce.
+    """
+    layers = _nested_x_layers(spec, table, roles, shape)
+    if not layers:
+        return []
+
+    from .xaxis import LEAF_SEPARATOR, is_spacer, plan_x_axis
+
+    frame = table.frame
+    present = [name for name in layers if name in frame.columns]
+    if len(present) != len(layers):
+        return []
+    combinations = list(
+        frame[layers].astype(str).drop_duplicates().itertuples(index=False, name=None)
+    )
+    plan = plan_x_axis(
+        combinations,
+        [[str(level) for level in table.factor(name).levels] for name in layers],
+    )
+    order = [
+        key.replace(LEAF_SEPARATOR, _NESTED_JOIN)
+        for key in plan.order
+        if not is_spacer(key)
+    ]
+    return [f"order={order!r}"] if order else []
+
+
 def _seaborn_can_express_layout(spec, table: LongTable, roles) -> bool:
     """Whether ``_facet_layout_args`` reproduced the rules (see ``_docstring``)."""
     facets = [name for name, role in roles.items() if role is Role.FACET]
@@ -357,6 +556,7 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     if len(facets) > 1:
         args.append(f"row={facets[1]!r}")
     args.extend(_facet_layout_args(spec, table, facets))
+    args.extend(_nested_x_args(spec, table, roles, shape))
 
     estimator = (
         '"median"' if spec.aggregate.statistic is Statistic.MEDIAN else '"mean"'
@@ -400,8 +600,11 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
         args.append(f"palette={style.palette!r}")
 
     lines = [f"g = {call}(", *[f"    {arg}," for arg in args], ")"]
+    # The constant-x column is scaffolding, not a variable anyone measured —
+    # reduce._labels_for leaves the label empty in that case, so this must too.
+    x_label = style.x_label or ("" if x == _X_CONSTANT else x)
     lines.append(
-        f"g.set_axis_labels({(style.x_label or x)!r}, "
+        f"g.set_axis_labels({x_label!r}, "
         f"{(style.y_label or spec.y_measure)!r})"
     )
     if style.log_x:
@@ -455,19 +658,34 @@ def _color_level_count(spec: PlotSpec, table: LongTable, color: str) -> int:
     return len(levels)
 
 
+#: Column the generated code builds for a nested x axis.
+_X_NESTED = "_x"
+
+
+def _nested_x_layers(spec, table, roles, shape) -> list[str]:
+    """The factors sharing the x axis, when there is more than one."""
+    if spec.x_measure or shape is not Shape.SCALAR:
+        return []
+    layers = [name for name in spec.ordered_x_layers(roles) if table.has_factor(name)]
+    return layers if len(layers) > 1 else []
+
+
 def _x_expression(spec, table, roles, shape) -> str:
     if spec.x_measure:
         return spec.x_measure
     if shape is Shape.SERIES_1D:
         return spec.index_column or table.index_column or "index"
-    holder = _role_holder(roles, Role.X)
-    return holder or (table.factor_names[0] if table.factors else "index")
+    if _nested_x_layers(spec, table, roles, shape):
+        return _X_NESTED
+    return _role_holder(roles, Role.X) or _X_CONSTANT
 
 
 def _x_is_categorical(spec, table, roles, shape) -> bool:
     if spec.x_measure or shape is Shape.SERIES_1D:
         return False
-    return _role_holder(roles, Role.X) is not None
+    # The constant fallback is a single categorical position, so it is
+    # categorical too — the interactive renderers draw it that way.
+    return True
 
 
 def _role_holder(roles: dict[str, Role], role: Role) -> str | None:
@@ -524,11 +742,20 @@ def _script_inputs(spec: PlotSpec) -> tuple[str, list[str]]:
         return "df, ", []
 
     lines: list[str] = [""]
-    for (param, label), variant in zip(
+    for generated, variant in zip(
         variants, defined_sets(spec.variant_sets), strict=True
     ):
+        param, label = generated.param, generated.label
         lines.append(f"# variant {label!r}")
-        lines.append(f"{param} = df")
+        if generated.variable != spec.y_measure:
+            # A standalone script starts from ONE flat table, so a row drawing
+            # on another variable can only mean another column of it.
+            lines.append(
+                f"{param} = df.rename(columns="
+                f"{{{generated.variable!r}: {spec.y_measure!r}}})"
+            )
+        else:
+            lines.append(f"{param} = df")
         for column, value in variant.selection.items():
             if isinstance(value, str) and value == LATEST:
                 lines.append(
@@ -543,7 +770,7 @@ def _script_inputs(spec: PlotSpec) -> tuple[str, list[str]]:
                 test = f"{param}[{column!r}].astype(str) == {str(value)!r}"
             lines.append(f"{param} = {param}[{test}]")
     lines.append("")
-    return "".join(f"{param}, " for param, _ in variants), lines
+    return "".join(f"{generated.param}, " for generated in variants), lines
 
 
 def spec_json_block(spec: PlotSpec) -> str:

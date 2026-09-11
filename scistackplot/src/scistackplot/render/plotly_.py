@@ -26,7 +26,7 @@ from .base import (
     color_groups,
     grid_shape,
     legend_levels,
-    palette_color,
+    palette_for,
     panel_position,
     shows_legend,
     shows_x_labels,
@@ -70,7 +70,9 @@ def render(resolved: ResolvedPlot) -> dict:
                 "l": 60,
                 "r": _right_margin(resolved) if legend_on else BARE_RIGHT_MARGIN,
                 "t": 40,
-                "b": 50,
+                # Each nested group layer needs a label row below the ticks, or
+                # the brackets are drawn off the bottom of the figure.
+                "b": 50 + 28 * (resolved.x_plan.depth if resolved.x_plan else 0),
             },
             "hovermode": "closest",
             "annotations": [],
@@ -121,8 +123,69 @@ def render(resolved: ResolvedPlot) -> dict:
                 layout["annotations"].append(
                     _panel_title(panel.title, row, col, n_rows, n_cols)
                 )
+            _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot)
 
         return {"data": traces, "layout": layout}
+
+
+#: Vertical room, in paper fraction, for one row of nested group labels.
+X_GROUP_ROW = 0.045
+
+
+def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
+    """Label and bracket each higher x layer beneath the tick labels.
+
+    Drawn in PAPER coordinates from the cell's own domain, so the brackets sit
+    under the panel they describe in a facet grid — a data-coordinate
+    annotation would be clipped by the axis range and would move when the user
+    zooms.
+
+    Only under panels that show tick labels: repeating "stim | sham" under every
+    row of a grid is the same noise ``shows_x_labels`` already suppresses for
+    the ticks themselves.
+    """
+    plan = resolved.x_plan
+    if not plan or not plan.groups or not shows_x_labels(resolved, row, col):
+        return
+
+    x0, y0, cell_width, _cell_height = _cell(row, col, n_rows, n_cols)
+    positions = max(1, len(plan.order))
+
+    for group in plan.groups:
+        # Leaf index -> paper x. Centre of a leaf cell is (i + 0.5) / n.
+        left = x0 + cell_width * (group.start / positions)
+        right = x0 + cell_width * ((group.end + 1) / positions)
+        # Deeper layers sit closer to the axis; depth 0 is furthest below.
+        rows_below = plan.depth - group.depth
+        y = y0 - X_GROUP_ROW * rows_below - 0.03
+
+        layout["annotations"].append(
+            {
+                "text": group.label,
+                "x": (left + right) / 2.0,
+                "y": y,
+                "xref": "paper",
+                "yref": "paper",
+                "showarrow": False,
+                "font": {"size": 10},
+                "xanchor": "center",
+                "yanchor": "top",
+            }
+        )
+        layout.setdefault("shapes", []).append(
+            {
+                "type": "line",
+                "xref": "paper",
+                "yref": "paper",
+                # Inset slightly so adjacent brackets read as separate spans
+                # rather than one continuous rule.
+                "x0": left + cell_width * 0.004,
+                "x1": right - cell_width * 0.004,
+                "y0": y + 0.008,
+                "y1": y + 0.008,
+                "line": {"color": "#888888", "width": 1},
+            }
+        )
 
 
 def to_figure(resolved: ResolvedPlot):
@@ -168,7 +231,7 @@ def _panel_traces(
         ]
 
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
-        color = palette_color(index)
+        color = palette_for(resolved, level, index)
         label = str(level) if level is not None else resolved.labels.y
         show_legend = legend_on and level is not None and label not in seen_legend
         if show_legend:
@@ -327,6 +390,18 @@ def _add_axes(
         # Tick labels and the axis title share ONE rule (base.shows_x_labels).
         "showticklabels": bottom,
         "title": {"text": resolved.labels.x if bottom else ""},
+        # A nested axis is keyed by composed leaf keys the user must never see;
+        # the ticks show the innermost layer's value, with the layers above it
+        # drawn as brackets (see _add_x_groups). Spacer positions get no tick.
+        **(
+            {
+                "tickmode": "array",
+                "tickvals": list(resolved.x_plan.order),
+                "ticktext": list(resolved.x_plan.tick_labels),
+            }
+            if resolved.x_plan
+            else {}
+        ),
         "type": "log" if resolved.spec.style.log_x else "-",
         # Upright, always. Plotly rotates category tick labels towards vertical
         # once a cell is too narrow for them, so the same figure reads

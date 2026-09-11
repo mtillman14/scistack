@@ -270,6 +270,16 @@ def attach_variants(
     pinned, and a stable leading position beats having them appear wherever the
     branch-param iteration order happened to put them.
 
+    **Only columns that actually distinguish something are attached.** A branch
+    param holding the same value on every record is dropped: it cannot separate
+    two records, so as a factor it asks the user to choose between one thing,
+    and the ``variant`` tag makes it look like a swept parameter that needs a
+    decision. Code axes were always filtered this way (scidb omits
+    single-version functions); branch params were not, because
+    ``branch_params_batch`` returns every upstream *constant* regardless of
+    whether it varies. Absence counts as a value in that test — a key present on
+    some records and missing on others does tell them apart.
+
     See ``docs/claude/variant-selection.md`` and
     ``docs/claude/function-version-variants.md``.
     """
@@ -302,17 +312,53 @@ def attach_variants(
         )
 
     # --- branch params ---
-    param_keys: list[str] = []
+    candidate_keys: list[str] = []
     for info in ident.values():
         for key in info["branch_params"]:
-            if key not in param_keys:
-                param_keys.append(key)
+            if key not in candidate_keys:
+                candidate_keys.append(key)
 
-    for key in param_keys:
-        frame[key] = [
+    param_keys: list[str] = []
+    constants: dict[str, Any] = {}
+    for key in candidate_keys:
+        values = [
             _stringify(ident.get(rid, {}).get("branch_params", {}).get(key))
             for rid in record_ids
         ]
+        # A constant is not an axis.
+        #
+        # A variant column exists for exactly one reason: to stop records that
+        # DIFFER from being overplotted as replicates. A column holding the same
+        # value on every record cannot do that, so offering it as a factor asks
+        # the user to choose between one thing — and, being tagged `variant`, it
+        # is indistinguishable from a genuinely swept parameter until you count
+        # its levels.
+        #
+        # Code axes have had this guard from the start: scidb's
+        # `code_version_ordinals` omits single-version functions, which is why an
+        # unedited project gets no `Code:` columns at all. Branch params never
+        # got the matching rule, because `branch_params_batch` returns every
+        # upstream CONSTANT whether it varies or not — the name promises a branch,
+        # the query does not check for one. Measured on a real project
+        # (2026-09-11): `filterDelsys.config` and `filterDelsys.Fs` each held ONE
+        # level across both records and still demanded a role.
+        #
+        # **Absence counts as a value.** The test is over the raw list, not over
+        # the non-null values, because a key present on some records and missing
+        # on others genuinely does tell them apart — dropping it there would
+        # reintroduce the very overplotting this function exists to prevent. A
+        # key missing everywhere is all-None, one distinct value, and goes.
+        #
+        # Known gap, pre-existing and deliberately not addressed here: a
+        # partially-present key survives with None on the records that lack it,
+        # and `FactorInfo.levels` drops nulls, so those rows carry a level-less
+        # NaN. Code axes solve this with MISSING_VERSION_LEVEL; branch params
+        # have no equivalent sentinel yet.
+        if len(set(values)) <= 1:
+            constants[key] = values[0] if values else None
+            continue
+        frame[key] = values
+        param_keys.append(key)
         # Branch params are namespaced ``{producing_fn}.{param}`` by
         # `_build_upstream_closure`. A bare key (no dot) is possible in principle
         # and split defensively rather than assumed away.
@@ -327,6 +373,47 @@ def attach_variants(
         )
 
     keys = code_keys + param_keys
+
+    if constants:
+        # Never silent. These values are real provenance — they are simply not a
+        # CHOICE — and a user hunting for the filter cutoff they swept needs to
+        # see that this layer looked at it and found one value, rather than that
+        # it was never there.
+        Log.info(
+            "%d constant branch param(s) are not variant axes (one value over "
+            "%d record(s)): %s",
+            len(constants),
+            len(record_ids),
+            {key: _truncate(value) for key, value in sorted(constants.items())},
+            layer=LAYER,
+        )
+
+    if keys:
+        counts = {
+            column: int(frame[column].astype(str).nunique(dropna=False))
+            for column in keys
+        }
+        # A code axis reporting one level means scidb emitted a single-version
+        # function, which `code_version_ordinals` promises not to do. Deliberately
+        # NOT filtered here: duplicating that rule would hide the regression
+        # instead of surfacing it.
+        thin = sorted(
+            column for column in code_keys if counts.get(column, 0) <= 1
+        )
+        if thin:
+            Log.warn(
+                "code axis/axes %s hold one version — scidb is expected to omit "
+                "single-version functions, so this is a provenance bug, not a "
+                "plotting one",
+                thin,
+                layer=LAYER,
+            )
+        Log.info(
+            "variant axis levels over %d record(s): %s",
+            len(record_ids),
+            counts,
+            layer=LAYER,
+        )
 
     latest_column = None
     if code_keys:
@@ -362,3 +449,15 @@ def _stringify(value: Any) -> Any:
     if isinstance(value, bool):
         return str(value)
     return str(value)
+
+
+def _truncate(value: Any, limit: int = 60) -> Any:
+    """Shorten a value for a log line.
+
+    A struct-valued branch param stringifies to its whole repr — measured at
+    ~100 characters for one filter config, and unbounded in principle. Several
+    of those on one line buries the key names the line exists to report.
+    """
+    if not isinstance(value, str) or len(value) <= limit:
+        return value
+    return f"{value[: limit - 1]}…"

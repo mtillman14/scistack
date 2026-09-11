@@ -27,7 +27,7 @@ from scistacklog import Log
 
 from .resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW, Z
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
-from .roles import complete_roles, validate
+from .roles import complete_roles, fanout_keys, iterate_ancestors, validate
 from .shape import Shape
 from .spec import (
     ErrorBand,
@@ -40,6 +40,8 @@ from .spec import (
     grid_shape_for,
 )
 from .table import LongTable, natural_sort_key
+from .xaxis import XPlan, leaf_key, plan_x_axis
+from .groups import apply_level_groups
 from .variants import apply_variant_sets, strip_answered_roles
 
 LAYER = "scistackplot"
@@ -68,82 +70,29 @@ def resolve(
     ``tests/test_fanout_parity.py`` asserts it.
     """
     with Log.timer("resolve", layer=LAYER, extra=str(spec.kind)):
-        # Named variants become a ``Variant`` factor BEFORE anything else looks
-        # at the table, so validation, roles, faceting and rendering all see one
-        # ordinary factor rather than each needing a variant special case.
-        base = table
-        table = apply_variant_sets(spec, table)
-        spec = strip_answered_roles(spec, base, table)
-        validate(spec, table)
-        roles = complete_roles(spec, table)
-
-        frame = table.frame
-        frame = _apply_filters(frame, spec)
-        frame, roles = _apply_variant_policy(frame, spec, table, roles)
-
-        y_measure = spec.y_measure
-        shape = table.shape_of(y_measure)
-        index_column = spec.index_column or table.index_column or DEFAULT_INDEX_COLUMN
-
-        if shape is Shape.SERIES_1D and not table.measure(y_measure).exploded:
-            frame, index_column = _explode_1d(frame, y_measure, index_column)
-        elif shape is not Shape.SERIES_1D:
-            index_column = None
-
-        frame = _collapse_aggregates(frame, spec, roles, index_column)
-
-        Log.debug(
-            "resolve: measure=%s shape=%s kind=%s rows=%d roles=%s",
-            y_measure,
-            shape,
-            spec.kind,
-            len(frame),
-            {k: str(v) for k, v in roles.items()},
-            layer=LAYER,
-        )
-
-        # A factor can be absent from the frame if it was aggregated away or
-        # filtered to nothing; grouping by it would raise rather than degrade.
-        iterate = [
-            name
-            for name, role in roles.items()
-            if role is Role.ITERATE and name in frame.columns
-        ]
-        figures: list[ResolvedPlot] = []
-
-        if iterate:
-            for key_values, group in _ordered_groups(frame, iterate, table):
-                figures.append(
-                    _build_figure(
-                        group,
-                        spec,
-                        table,
-                        roles,
-                        shape,
-                        index_column,
-                        figure_key=dict(zip(iterate, key_values, strict=True)),
-                        max_points=max_points,
-                    )
-                )
-        else:
-            figures.append(
-                _build_figure(
-                    frame,
-                    spec,
-                    table,
-                    roles,
-                    shape,
-                    index_column,
-                    figure_key={},
-                    max_points=max_points,
-                )
+        plan = _plan(spec, table)
+        figures = [
+            _build_figure(
+                group,
+                plan.spec,
+                plan.table,
+                plan.roles,
+                plan.shape,
+                plan.index_column,
+                figure_key=key,
+                max_points=max_points,
             )
+            for key, group in plan.groups
+        ]
+        for figure in figures:
+            figure.fanout_notes = plan.notes
 
         Log.info(
-            "resolved %s of %r: %d figure(s), %d panel(s), %d row(s)",
+            "resolved %s of %r: %d figure(s) over %s, %d panel(s), %d row(s)",
             spec.kind,
-            y_measure,
+            plan.spec.y_measure,
             len(figures),
+            plan.iterate or "no fan-out",
             sum(len(f.panels) for f in figures),
             sum(f.row_count for f in figures),
             layer=LAYER,
@@ -151,32 +100,231 @@ def resolve(
         return figures
 
 
+@dataclass
+class _Plan:
+    """Everything decided before any figure is built.
+
+    Split out so one figure of a fan-out can be built without building the
+    others — every step here is shared by all of them, and every step below is
+    per figure.
+    """
+
+    spec: PlotSpec
+    table: LongTable
+    roles: dict
+    shape: Shape
+    index_column: str | None
+    iterate: list[str]
+    notes: list[str]
+    #: ``(figure_key, frame)`` per figure, IN ORDER. The frames are views; the
+    #: expensive per-figure work (panels, downsampling) has not happened yet.
+    groups: list[tuple[dict, "pd.DataFrame"]]
+
+    @property
+    def labels(self) -> list[str]:
+        """Every figure's label — knowable without building any of them."""
+        return [
+            ", ".join(f"{k}={v}" for k, v in key.items()) for key, _ in self.groups
+        ]
+
+
+def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
+    """Resolve everything up to, but not including, per-figure work."""
+    # Named variants become a ``Variant`` factor BEFORE anything else looks
+    # at the table, so validation, roles, faceting and rendering all see one
+    # ordinary factor rather than each needing a variant special case.
+    base = table
+    table = apply_variant_sets(spec, table)
+    # Derived grouping factors, after the variants have claimed their
+    # columns. Both are derived tables built BEFORE validation and role
+    # completion, so nothing below this line knows either factor was
+    # synthesized (docs/claude/synthetic-factors.md).
+    table = apply_level_groups(spec, table)
+    spec = strip_answered_roles(spec, base, table)
+    validate(spec, table)
+    roles = complete_roles(spec, table)
+
+    frame = table.frame
+    frame = apply_filters(frame, spec)
+    frame, roles = _apply_variant_policy(frame, spec, table, roles)
+
+    y_measure = spec.y_measure
+    shape = table.shape_of(y_measure)
+    index_column = spec.index_column or table.index_column or DEFAULT_INDEX_COLUMN
+
+    if shape is Shape.SERIES_1D and not table.measure(y_measure).exploded:
+        frame, index_column = _explode_1d(frame, y_measure, index_column)
+    elif shape is not Shape.SERIES_1D:
+        index_column = None
+
+    frame = _collapse_aggregates(frame, spec, roles, index_column)
+
+    Log.debug(
+        "resolve: measure=%s shape=%s kind=%s rows=%d roles=%s",
+        y_measure,
+        shape,
+        spec.kind,
+        len(frame),
+        {k: str(v) for k, v in roles.items()},
+        layer=LAYER,
+    )
+
+    # A factor can be absent from the frame if it was aggregated away or
+    # filtered to nothing; grouping by it would raise rather than degrade.
+    iterate = [name for name in fanout_keys(spec, table) if name in frame.columns]
+    if iterate:
+        groups = [
+            (dict(zip(iterate, key_values, strict=True)), group)
+            for key_values, group in _ordered_groups(frame, iterate, table)
+        ]
+    else:
+        groups = [({}, frame)]
+
+    return _Plan(
+        spec=spec,
+        table=table,
+        roles=roles,
+        shape=shape,
+        index_column=index_column,
+        iterate=iterate,
+        notes=_fanout_notes(spec, table),
+        groups=groups,
+    )
+
+
+def resolve_one(
+    spec: PlotSpec,
+    table: LongTable,
+    index: int,
+    *,
+    max_points: int | None = None,
+) -> tuple[ResolvedPlot, list[str], int]:
+    """Build ONE figure of a fan-out. Returns ``(figure, every label, index)``.
+
+    The interactive panel shows one figure at a time and serializes only that
+    one, but it was reducing all of them to get there: ``resolve`` builds every
+    figure, and building a figure is where the cost is — panels, aggregation and
+    downsampling over the whole group. A two-figure fan-out therefore cost twice
+    what the user was looking at, every time any control moved.
+
+    Nothing is lost by deferring the rest. The fan-out's SIZE and LABELS come
+    from the group keys (:attr:`_Plan.labels`), which are known as soon as the
+    frame is grouped — the labels never depended on the figures being built.
+
+    ``index`` is clamped rather than rejected: the fan-out shrinks whenever a
+    filter or a variant selection narrows the data, and the panel's cursor is a
+    moment behind the spec it is already re-resolving. An out-of-range index is
+    a normal transient.
+    """
+    with Log.timer("resolve_one", layer=LAYER, extra=str(spec.kind)):
+        plan = _plan(spec, table)
+        position = max(0, min(int(index), len(plan.groups) - 1))
+        key, group = plan.groups[position]
+        figure = _build_figure(
+            group,
+            plan.spec,
+            plan.table,
+            plan.roles,
+            plan.shape,
+            plan.index_column,
+            figure_key=key,
+            max_points=max_points,
+        )
+        figure.fanout_notes = plan.notes
+        Log.info(
+            "resolved %s of %r: figure %d of %d over %s, %d panel(s), %d row(s) "
+            "(%d figure(s) not built)",
+            spec.kind,
+            plan.spec.y_measure,
+            position + 1,
+            len(plan.groups),
+            plan.iterate or "no fan-out",
+            len(figure.panels),
+            figure.row_count,
+            len(plan.groups) - 1,
+            layer=LAYER,
+        )
+        return figure, plan.labels, position
+
+
+def _fanout_notes(spec: PlotSpec, table: LongTable) -> list[str]:
+    """What the fan-out did that the user did not literally ask for.
+
+    Only the ancestor promotion, for now. It must be *said*: a user who asked
+    for one figure per trial and silently received one per subject-and-trial
+    would count the figures and think something was broken.
+
+    Computed from the roles **as declared** — ``complete_roles`` has already
+    applied the promotion, so asking the promoted roles what was promoted
+    returns nothing at all.
+    """
+    declared = complete_roles(spec, table, promote=False)
+    promoted = iterate_ancestors(declared, table)
+    if not promoted:
+        return []
+    asked = [name for name, role in declared.items() if role is Role.ITERATE]
+    note = (
+        f"Also showing one figure per {', '.join(promoted)}: "
+        f"{', '.join(asked)} is nested under {'them' if len(promoted) > 1 else 'it'}, "
+        f"so a figure per {asked[-1] if asked else 'key'} alone would pool "
+        f"unrelated observations."
+    )
+    Log.info("fan-out promoted %s to ITERATE", promoted, layer=LAYER)
+    return [note]
+
+
 # ---------------------------------------------------------------------------
 # Stage helpers
 # ---------------------------------------------------------------------------
 
 
-def _apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
+def apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
+    """Rows surviving ``spec.filters``.
+
+    Public because the GUI's pickers report "3 of 12 selected" and that readout
+    has to be measured with exactly the rule the figure uses — the same reason
+    ``variants.row_mask`` is shared. A count the figure disagrees with is worse
+    than no count.
+
+    Level membership is compared **as text**, matching ``variant_set_mask``: a
+    selection crosses JSON as strings while the column may hold ``01`` (string)
+    or ``1`` (int) depending on the source, and a silently empty figure is the
+    worst possible answer to a picker the user just clicked.
+    """
     if not spec.filters:
         return frame
     mask = pd.Series(True, index=frame.index)
     for flt in spec.filters:
         if flt.column not in frame.columns:
+            # A spec outlives the table it was written against — a filter naming
+            # a column this table lacks is stale, not fatal.
             Log.warn(
                 "filter on unknown column %r ignored", flt.column, layer=LAYER
             )
             continue
         column = frame[flt.column]
+        before = int(mask.sum())
         if flt.include is not None:
-            mask &= column.isin(list(flt.include))
+            as_text = column.astype(str)
+            mask &= as_text.isin({str(v) for v in flt.include})
         if flt.exclude is not None:
-            mask &= ~column.isin(list(flt.exclude))
+            as_text = column.astype(str)
+            mask &= ~as_text.isin({str(v) for v in flt.exclude})
         if flt.minimum is not None:
             mask &= pd.to_numeric(column, errors="coerce") >= flt.minimum
         if flt.maximum is not None:
             mask &= pd.to_numeric(column, errors="coerce") <= flt.maximum
+        # Per column, so an empty figure names the filter that emptied it
+        # rather than only the total.
+        Log.debug(
+            "filter on %s: %d -> %d row(s)",
+            flt.column,
+            before,
+            int(mask.sum()),
+            layer=LAYER,
+        )
     filtered = frame[mask]
-    Log.debug(
+    Log.info(
         "filters kept %d of %d row(s)", len(filtered), len(frame), layer=LAYER
     )
     return filtered
@@ -255,11 +403,18 @@ def _explode_1d(
     exploded[measure] = pd.to_numeric(exploded[measure], errors="coerce")
     exploded[index_column] = pd.to_numeric(exploded[index_column], errors="coerce")
 
-    Log.debug(
-        "exploded 1-D measure %r: %d row(s) -> %d sample(s)",
+    # INFO, not DEBUG: this is the dominant cost of a resolve and the one number
+    # that explains a slow panel. A 12-field struct of 1-D arrays goes from a
+    # 24-row frame to several million here, on EVERY resolve — nothing caches the
+    # exploded frame — and without this line at INFO the only visible trace is
+    # the downsample warning, which reports the figure's rows rather than the
+    # frame's. Cheap: one line per resolve, no extra work.
+    Log.info(
+        "exploded 1-D measure %r: %d row(s) -> %d sample(s) (x%d)",
         measure,
         len(frame),
         len(exploded),
+        round(len(exploded) / len(frame)) if len(frame) else 0,
         layer=LAYER,
     )
     return exploded, index_column
@@ -326,7 +481,15 @@ def _build_figure(
     max_points: int | None,
 ) -> ResolvedPlot:
     color = _role_holder(roles, Role.COLOR)
-    x_factor = _role_holder(roles, Role.X)
+    # Several factors may share the x axis, nested. `x_layers` is only the
+    # ORDER; membership is the roles dict, and `ordered_x_layers` reconciles
+    # them so neither control can produce a spec the other rejects.
+    x_layers = [
+        name
+        for name in spec.ordered_x_layers(roles)
+        if name in frame.columns
+    ]
+    x_factor = x_layers[0] if x_layers else None
     # Several factors may be faceted at once; their combined levels are the
     # panels, and FacetOptions decides how those panels are arranged.
     facet_names = [
@@ -349,7 +512,7 @@ def _build_figure(
     for key_values, group in groups:
         key = dict(zip(facet_names, key_values, strict=True))
         panel_frame = _panel_frame(
-            group, spec, table, shape, x_factor, color, index_column
+            group, spec, table, shape, x_layers, color, index_column
         )
         panels.append(Panel(frame=panel_frame, key=key))
 
@@ -358,7 +521,12 @@ def _build_figure(
     )
 
     encoding = _encoding_for(spec.kind, color, shape)
-    labels = _labels_for(spec, table, x_factor, color, index_column, figure_key)
+    labels = _labels_for(spec, table, x_layers, color, index_column, figure_key)
+
+    # A nested axis is composed once, here, from labels only — so both
+    # renderers draw the same brackets and codegen can replay the result
+    # instead of re-deriving it (same bargain as plan_layout).
+    x_plan = _plan_nested_x(panels, table, x_layers) if len(x_layers) > 1 else None
 
     y_limits = None
     if spec.facet.share_y and len(panels) > 1:
@@ -371,7 +539,12 @@ def _build_figure(
         labels=labels,
         spec=spec,
         figure_key=figure_key,
-        x_order=_level_order(table, x_factor, panels, X) if x_factor else None,
+        x_order=(
+            list(x_plan.order)
+            if x_plan
+            else (_level_order(table, x_factor, panels, X) if x_factor else None)
+        ),
+        x_plan=x_plan,
         color_order=_level_order(table, color, panels, COLOR) if color else None,
         grid_rows=n_rows,
         grid_cols=n_cols,
@@ -388,12 +561,13 @@ def _panel_frame(
     spec: PlotSpec,
     table: LongTable,
     shape: Shape,
-    x_factor: str | None,
+    x_layers: list[str],
     color: str | None,
     index_column: str | None,
 ) -> pd.DataFrame:
     """Build the canonical ``__x``/``__y``/… frame the renderers consume."""
     y_measure = spec.y_measure
+    x_factor = x_layers[0] if x_layers else None
 
     if shape is Shape.MATRIX_2D:
         return _matrix_frame(group, y_measure)
@@ -405,6 +579,16 @@ def _panel_frame(
         out[X] = pd.to_numeric(group[spec.x_measure], errors="coerce")
     elif shape is Shape.SERIES_1D and index_column and index_column in group.columns:
         out[X] = pd.to_numeric(group[index_column], errors="coerce")
+    elif len(x_layers) > 1:
+        # Nested axis: one position per COMBINATION of the layers, identified
+        # by a composed key. The layer values stay as their own columns too, so
+        # `plan_x_axis` can order them and the renderers can label the groups.
+        out[X] = [
+            leaf_key(values)
+            for values in zip(*(group[name].astype(str) for name in x_layers))
+        ]
+        for name in x_layers:
+            out[name] = group[name].values
     elif x_factor:
         out[X] = group[x_factor].values
     else:
@@ -574,6 +758,42 @@ def _level_rank(table: LongTable, column: str, value: Any) -> tuple:
         if level == value or str(level) == str(value):
             return (0, position)
     return (1,) + natural_sort_key(value)
+
+
+def _plan_nested_x(
+    panels: list[Panel], table: LongTable, x_layers: list[str]
+) -> XPlan:
+    """Compose the nested axis from the combinations the panels actually hold.
+
+    Observed combinations, never the Cartesian product: real designs are ragged
+    — a sham group with no post session — and reserving a position for a
+    combination nobody ran leaves a hole that reads as missing data.
+
+    Taken across ALL panels so a faceted figure shares one axis; a panel missing
+    a combination gets a gap in the same place as its neighbours rather than a
+    differently-shaped axis.
+    """
+    combinations: list[tuple] = []
+    for panel in panels:
+        present = [name for name in x_layers if name in panel.frame.columns]
+        if len(present) != len(x_layers) or panel.frame.empty:
+            continue
+        combinations.extend(
+            panel.frame[x_layers].astype(str).drop_duplicates().itertuples(
+                index=False, name=None
+            )
+        )
+    layer_orders = [
+        [str(level) for level in _factor_levels(table, name)] for name in x_layers
+    ]
+    return plan_x_axis(combinations, layer_orders)
+
+
+def _factor_levels(table: LongTable, name: str) -> list[Any]:
+    try:
+        return table.factor(name).levels
+    except KeyError:
+        return []
 
 
 def _level_order(
@@ -849,7 +1069,7 @@ def _encoding_for(kind: PlotKind, color: str | None, shape: Shape) -> Encoding:
 def _labels_for(
     spec: PlotSpec,
     table: LongTable,
-    x_factor: str | None,
+    x_layers: list[str],
     color: str | None,
     index_column: str | None,
     figure_key: dict[str, Any],
@@ -859,8 +1079,14 @@ def _labels_for(
         x_label = style.x_label
     elif spec.x_measure:
         x_label = table.measure(spec.x_measure).display
-    elif x_factor:
-        x_label = table.factor(x_factor).display
+    elif len(x_layers) > 1:
+        # Nested: the layers read outermost-last, matching how the rows of
+        # labels stack under the axis (leaf ticks nearest the plot).
+        x_label = " / ".join(
+            table.factor(name).display for name in reversed(x_layers)
+        )
+    elif x_layers:
+        x_label = table.factor(x_layers[0]).display
     elif index_column:
         x_label = index_column
     else:

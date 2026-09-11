@@ -41,8 +41,29 @@ export interface FunctionVersion {
 export interface VariantSelectionValue {
   /** The selection being edited: `{column: level | level[] | 'latest'}`. */
   selection: Record<string, unknown>
-  /** Axes of the plotted measure, keyed by the node they belong to. */
-  axisForParameter: (parameterLabel: string, functionLabels: string[]) => VariantAxis | null
+  /** The axis a node supplies, by the column the popup already bound to it.
+   *
+   *  Binding happens ONCE, in the popup, from the pipeline EDGES — an edge into
+   *  a function carries `targetHandle = "param__<the function's argument
+   *  name>"`, which is exactly `VariantAxis.param`. The node then only has to
+   *  read back what it was given.
+   *
+   *  This replaced `axisForParameter(label, consumers)`, which compared
+   *  `axis.param` against the node's LABEL. Those are two different namespaces:
+   *  `axis.param` is the producing function's ARGUMENT name (scidb's `fn.param`
+   *  branch-param key) while a Parameter node is labelled with the Parameter
+   *  ENTITY's name. They coincide only while nobody has renamed a Parameter or
+   *  fed a function port from a glue node — after which the axis silently fell
+   *  out of the graph, its node dimmed to "not a variant here", and the axis
+   *  was reported as living in a nested pipeline. Measured on a real project
+   *  2026-09-11; see .claude/plan-plot-studio-variant-axis-fixes.md Finding 2.
+   *
+   *  Binding by port also means the node TYPE stops mattering: whatever feeds
+   *  the port holds the axis, whether that is a Parameter, a glue node, or
+   *  anything else wired there later. */
+  axisForColumn: (column: string | null | undefined) => VariantAxis | null
+  /** Code axes bind by function NAME, which is what a function node is labelled
+   *  with — one namespace, no port involved. */
   axisForFunction: (functionLabel: string) => VariantAxis | null
   /** Every recorded version of a function, newest last. Empty = never run. */
   versionsFor: (functionLabel: string) => FunctionVersion[]

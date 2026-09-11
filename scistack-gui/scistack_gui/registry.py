@@ -293,6 +293,16 @@ def load_from_config(config: SciStackConfig) -> dict:
     # disagree, what the user just edited is what they should see.
     if config.entities_file is not None:
         _load_entities_file(config.entities_file)
+    else:
+        # Logged, not silent: "my entities file's declarations don't show up
+        # in the GUI" is answered by this line, and used to have no record at
+        # all -- config.load_config missed scidb's conventional-path fallback,
+        # so a real file on disk landed here as None. See
+        # .claude/plan-preexisting-entities-on-db-create-26-09-10.md.
+        logger.info(
+            "[registry] No entities file configured for %s; nothing to load "
+            "from one", config.project_root,
+        )
 
     new_fns = set(_functions.keys())
     new_vars = set(BaseVariable._all_subclasses.keys())

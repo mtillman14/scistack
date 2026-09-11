@@ -18,9 +18,20 @@
  * the point: the popup is doing something different from the canvas of the same
  * shape sitting in another tab, and looking different is how a user knows.
  *
- * Node components are reused verbatim (VariantSelectionContext switches their
- * mode) so this stays a mirror of the canvas as the canvas changes, rather than
- * a copy that slowly drifts from it.
+ * Node components with two meanings are reused (VariantSelectionContext
+ * switches their mode) so this stays a mirror of the canvas as the canvas
+ * changes, rather than a copy that slowly drifts from it. Node types that can
+ * only ever be inert here — a Variable, a PathInput — are overridden in
+ * `nodeTypes` instead, which keeps the variant-only rendering in this file and
+ * leaves the canvas components untouched.
+ *
+ * **Axes bind to nodes by PORT, not by name** (`axisByNode`). An edge into a
+ * function carries `targetHandle = "param__<the function's argument name>"`,
+ * which is exactly `VariantAxis.param`; the node feeding that port is the node
+ * that holds the axis, whatever it is called and whatever type it is. Matching
+ * `axis.param` against a node's LABEL — the Parameter ENTITY's name — is a
+ * different namespace and silently loses the axis the moment anyone renames a
+ * Parameter or feeds a port from a glue node.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -36,15 +47,13 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
-import VariableNode from '../DAG/VariableNode'
 import FunctionNode from '../DAG/FunctionNode'
-import ParameterNode from '../DAG/ParameterNode'
-import PathInputNode from '../DAG/PathInputNode'
-import GlueNode from '../DAG/GlueNode'
+import ParameterNode, { VariantParameterNode } from '../DAG/ParameterNode'
 import { applyDagreLayout } from '../../layout'
 import { callBackend } from '../../api'
 import {
   VariantSelectionProvider,
+  useVariantSelection,
   type FunctionVersion,
   type VariantAxis,
   type VariantSelectionValue,
@@ -70,14 +79,113 @@ function InertPipelineNode({ data }: { data: { label?: string } }) {
   )
 }
 
+/**
+ * A Variable node during the "which variable?" step of adding a variant.
+ *
+ * Its own component rather than a mode inside `VariableNode` for the reason the
+ * whole popup is built around: the branch lives at the component boundary, so
+ * the canvas keeps mounting execution state and the popup keeps mounting
+ * selection state, and neither grows a conditional hook.
+ *
+ * A refused variable is drawn, not hidden. "FilteredEMG is here and RawEMG is
+ * not" leaves the user to guess whether the missing one is unsupported, broken,
+ * or simply not loaded; the reason on the node answers it in place. The reasons
+ * are the backend's (`stackable_report`), so the dialog cannot invent a rule the
+ * renderer does not apply.
+ */
+function PickableVariableNode({
+  data,
+}: {
+  data: { label?: string; pickable?: boolean; refusal?: string; onPick?: () => void }
+}) {
+  const pickable = Boolean(data.pickable)
+  return (
+    <div
+      style={{
+        ...styles.pickNode,
+        ...(pickable ? styles.pickNodeReady : styles.pickNodeRefused),
+      }}
+      onClick={pickable ? data.onPick : undefined}
+      title={
+        pickable
+          ? 'Plot this variable — click to choose which of its variants'
+          : `Cannot be plotted alongside: ${data.refusal ?? 'not compatible'}`
+      }
+    >
+      <Handle type="target" position={Position.Left} />
+      <div style={styles.pickNodeLabel}>{data.label ?? 'variable'}</div>
+      <div style={styles.pickNodeHint}>
+        {pickable ? 'click to plot' : (data.refusal ?? 'not compatible')}
+      </div>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  )
+}
+
+/**
+ * Any non-parameter node that feeds a function port — a glue node, most often.
+ *
+ * Binding by PORT rather than by name means the node type stops mattering:
+ * whatever is wired into `filterDelsys`'s `config` argument supplies that axis,
+ * whether that is a Parameter, a glue node reshaping one, or something wired
+ * there later. Before this, only ParameterNode was ever consulted, so a
+ * glue-fed axis had no node to click at all.
+ */
+function VariantSupplierNode({
+  data,
+}: {
+  data: { label?: string; variantAxisColumn?: string | null }
+}) {
+  const selection = useVariantSelection()
+  if (!selection) return null
+  return (
+    <VariantParameterNode
+      label={data.label ?? ''}
+      axis={selection.axisForColumn(data.variantAxisColumn)}
+      selection={selection}
+    />
+  )
+}
+
+/**
+ * A node that can never be a variant axis: a Variable, a PathInput.
+ *
+ * Drawn inert rather than as its canvas self. These used to render verbatim —
+ * undimmed and looking interactive — while every node that COULD hold an axis
+ * was dimmed, which is exactly backwards: the informative thing about a dimmed
+ * node is "I do not distinguish these records", and that is precisely what a
+ * Variable node is.
+ */
+function InertVariantNode({ data, hint }: { data: { label?: string }; hint: string }) {
+  return (
+    <div style={styles.inertNode} title={`${data.label ?? ''} — ${hint}`}>
+      <Handle type="target" position={Position.Left} />
+      <div style={styles.inertNodeLabel}>{data.label ?? ''}</div>
+      <div style={styles.inertNodeHint}>{hint}</div>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  )
+}
+
+const InertVariableNode = (props: { data: { label?: string } }) => (
+  <InertVariantNode {...props} hint="a variable, not a variant axis" />
+)
+const InertPathInputNode = (props: { data: { label?: string } }) => (
+  <InertVariantNode {...props} hint="a file path, not a variant axis" />
+)
+
 const nodeTypes = {
-  variableNode: VariableNode,
+  variableNode: InertVariableNode,
   functionNode: FunctionNode,
-  glueNode: GlueNode,
+  glueNode: VariantSupplierNode,
   parameterNode: ParameterNode,
-  pathInputNode: PathInputNode,
+  pathInputNode: InertPathInputNode,
   pipelineNode: InertPipelineNode,
 }
+
+/** Step one of "+ Add variant": only Variable nodes do anything. */
+const pickNodeTypes = { ...nodeTypes, variableNode: PickableVariableNode }
+
 
 interface VariantGraph {
   axes: VariantAxis[]
@@ -86,10 +194,21 @@ interface VariantGraph {
   /** Name of the per-row "newest at my own schema location" flag. The opening
    *  variant selects on it, and any explicit choice here has to clear it. */
   latest_column: string
+  /** What a new row for this variable should open on — one variant, from
+   *  `variants.default_selection`. Same rule the panel opens on, so a row added
+   *  later and the row that was already there mean the same thing by "one
+   *  variant". Empty for a source with no variant axes. */
+  default_selection?: Record<string, unknown>
+  /** `{axis column: canvas node id}` — which node on the pipeline canvas
+   *  supplies each branch-param axis, bound by PORT in
+   *  `plot_service.axis_node_bindings`. An axis absent from this mapping feeds
+   *  no port on this canvas and falls into the list below the graph. */
+  node_bindings?: Record<string, string>
 }
 
 interface Props {
-  /** The measure being plotted — the axes are its. */
+  /** The measure being plotted — the axes are its. In `pick` mode this is only
+   *  the DEFAULT offer; the user may choose another variable entirely. */
   variable: string
   /** Selection being edited, `{column: level | level[] | 'latest'}`. */
   selection: Record<string, unknown>
@@ -97,7 +216,20 @@ interface Props {
    *  "still following the selection" — `placeholder` is what that resolves to. */
   name: string
   placeholder?: string
-  onApply: (next: { selection: Record<string, unknown>; name: string }) => void
+  /** Adding a NEW row rather than editing one: the popup opens on a variable
+   *  pick first, and only then on that variable's variants. Two steps because
+   *  they are two different questions — "what am I plotting" precedes "which
+   *  version of it" — and the canvas is the right picture for both. */
+  pick?: boolean
+  /** Variables that may be picked in step one, besides `variable` itself. */
+  pickable?: string[]
+  /** Why each other variable may not be picked, from `stackable_report`. */
+  refusals?: Record<string, string>
+  onApply: (next: {
+    selection: Record<string, unknown>
+    name: string
+    variable?: string
+  }) => void
   onCancel: () => void
 }
 
@@ -106,6 +238,9 @@ export default function VariantDagPopup({
   selection: initial,
   name: initialName,
   placeholder,
+  pick = false,
+  pickable = [],
+  refusals = {},
   onApply,
   onCancel,
 }: Props) {
@@ -116,8 +251,11 @@ export default function VariantDagPopup({
   const [name, setName] = useState(initialName)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  // null while step one is still open. In edit mode there is no step one, so it
+  // is the variable being edited from the start and nothing else can set it.
+  const [chosen, setChosen] = useState<string | null>(pick ? null : variable)
 
-  // --- the graph ----------------------------------------------------------
+  // --- the pipeline canvas, independent of which variable is chosen --------
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -129,41 +267,10 @@ export default function VariantDagPopup({
         const layout = (await callBackend('get_layout', { pipeline_id: 'main' })) as
           Record<string, unknown>
         const saved = (layout.positions ?? layout) as Record<string, { x: number; y: number }>
-        const functions = pipeline.nodes
-          .filter(n => n.type === 'functionNode')
-          .map(n => (n.data as { label: string }).label)
-        const variantGraph = (await callBackend('plot_variant_graph', {
-          variable,
-          functions,
-        })) as VariantGraph
         if (cancelled) return
 
-        // Which functions each parameter feeds — branch params are namespaced
-        // per producing function, so "low_hz" alone can match two axes.
-        const consumers = new Map<string, string[]>()
-        const labelOf = new Map(pipeline.nodes.map(n => [n.id, (n.data as { label?: string }).label ?? '']))
-        const typeOf = new Map(pipeline.nodes.map(n => [n.id, n.type]))
-        for (const edge of pipeline.edges) {
-          if (typeOf.get(edge.source) !== 'parameterNode') continue
-          if (typeOf.get(edge.target) !== 'functionNode') continue
-          const key = labelOf.get(edge.source) ?? ''
-          consumers.set(key, [...(consumers.get(key) ?? []), labelOf.get(edge.target) ?? ''])
-        }
-
-        const prepared = pipeline.nodes.map(node =>
-          node.type === 'parameterNode'
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  variantConsumers: consumers.get((node.data as { label: string }).label) ?? [],
-                },
-              }
-            : node
-        )
-        setNodes(applyDagreLayout(prepared, pipeline.edges, saved))
+        setNodes(applyDagreLayout(pipeline.nodes, pipeline.edges, saved))
         setEdges(pipeline.edges)
-        setGraph(variantGraph)
       } catch (err) {
         if (!cancelled) setError((err as Error).message)
       } finally {
@@ -171,7 +278,36 @@ export default function VariantDagPopup({
       }
     })()
     return () => { cancelled = true }
-  }, [variable])
+  }, [])
+
+  // --- the chosen variable's axes -----------------------------------------
+  // Separate from the canvas load so step one can draw immediately, and so
+  // picking a variable costs one RPC rather than re-fetching the pipeline.
+  useEffect(() => {
+    if (!chosen || nodes.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const functions = nodes
+          .filter(n => n.type === 'functionNode')
+          .map(n => (n.data as { label: string }).label)
+        const variantGraph = (await callBackend('plot_variant_graph', {
+          variable: chosen,
+          functions,
+        })) as VariantGraph
+        if (cancelled) return
+        setGraph(variantGraph)
+        // A NEW row opens on one variant, by the same rule the panel itself
+        // opens on (`variants.default_selection`, sent with the graph). Left
+        // empty it would mean "every variant of this variable", so clicking
+        // "+ Add variant" would quietly add all of them to the figure.
+        if (pick) setSelection(variantGraph.default_selection ?? {})
+      } catch (err) {
+        if (!cancelled) setError((err as Error).message)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [chosen, nodes, pick])
 
   // Escape cancels — a modal that traps you is worse than one you can leave.
   useEffect(() => {
@@ -203,19 +339,10 @@ export default function VariantDagPopup({
       return next
     }
 
-    const axisForParameter = (label: string, functionLabels: string[]) => {
-      const candidates = axes.filter(a => a.kind === 'param' && a.param === label)
-      if (candidates.length <= 1) return candidates[0] ?? null
-      // Two producing functions use this parameter name; the edge tells us
-      // which one this node actually feeds.
-      return (
-        candidates.find(a => a.function && functionLabels.includes(a.function)) ?? null
-      )
-    }
-
     return {
       selection,
-      axisForParameter,
+      axisForColumn: (column: string | null | undefined) =>
+        (column && byColumn.get(column)) || null,
       axisForFunction: (label: string) =>
         axes.find(a => a.kind === 'code' && a.function === label) ?? null,
       versionsFor: (label: string) => graph?.versions?.[label] ?? [],
@@ -265,36 +392,107 @@ export default function VariantDagPopup({
     }
   }, [axes, graph, selection])
 
-  // Axes with no node on this canvas (produced inside a nested pipeline, say)
-  // would otherwise be unreachable — the popup opens at the root scope.
+  /** Step one is still open: no variable chosen, so there are no axes to show. */
+  const choosing = pick && chosen === null
+
+  /**
+   * Which node supplies which axis, inverted from the backend's mapping.
+   *
+   * The binding itself is `plot_service.axis_node_bindings`, deliberately NOT
+   * computed here: it is a rule about what scidb's namespacing means (an edge's
+   * `targetHandle` carries the function's own argument name, which is exactly
+   * `VariantAxis.param`), and a rule written in TSX has no test. This popup used
+   * to derive it by comparing `axis.param` against a node's LABEL — the
+   * Parameter ENTITY's name, a different namespace — and silently lost every
+   * axis the moment a Parameter was renamed or a port was fed from a glue node.
+   */
+  const axisByNode = useMemo(() => {
+    const bound = new Map<string, string>()
+    for (const [column, nodeId] of Object.entries(graph?.node_bindings ?? {})) {
+      if (nodeId) bound.set(nodeId, column)
+    }
+    return bound
+  }, [graph])
+
+  // Each node told which axis it supplies, so the node components only read
+  // back what was bound here rather than re-deriving it from names.
+  const boundNodes = useMemo(
+    () =>
+      nodes.map(node => ({
+        ...node,
+        data: { ...node.data, variantAxisColumn: axisByNode.get(node.id) ?? null },
+      })),
+    [nodes, axisByNode]
+  )
+
+  // Axes that bound to no node at all. A nested pipeline is one reason — the
+  // popup opens at the root scope — but no longer the only one it can assume,
+  // so the list says what it knows rather than asserting a cause.
   const unmapped = useMemo(() => {
-    const labels = new Set(
-      nodes.map(n => (n.data as { label?: string }).label ?? '')
+    const placed = new Set(axisByNode.values())
+    const functions = new Set(
+      nodes
+        .filter(n => n.type === 'functionNode')
+        .map(n => (n.data as { label?: string }).label ?? '')
     )
     return axes.filter(axis =>
       axis.kind === 'code'
-        ? !labels.has(axis.function ?? '')
-        : !labels.has(axis.param ?? '')
+        ? !functions.has(axis.function ?? '')
+        : !placed.has(axis.column)
     )
-  }, [axes, nodes])
+  }, [axes, axisByNode, nodes])
+
+  // Step one only: which variables may be clicked, and why the rest may not.
+  // Every variable node is drawn either way — a refused one says its reason in
+  // place rather than being quietly inert.
+  const pickingNodes = useMemo(() => {
+    if (!choosing) return boundNodes
+    const offered = new Set([variable, ...pickable])
+    return boundNodes.map(node =>
+      node.type === 'variableNode'
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              pickable: offered.has((node.data as { label?: string }).label ?? ''),
+              refusal: refusals[(node.data as { label?: string }).label ?? ''],
+              onPick: () => setChosen((node.data as { label?: string }).label ?? null),
+            },
+          }
+        : node
+    )
+  }, [choosing, boundNodes, variable, pickable, refusals])
 
   return (
     <div style={styles.backdrop} onClick={onCancel}>
       <div style={styles.dialog} onClick={e => e.stopPropagation()}>
         <div style={styles.header}>
           <div style={styles.headerLeft}>
-            <span style={styles.title}>Select variant</span>
-            <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder={placeholder || 'variant name'}
-              style={styles.nameInput}
-              title="What this variant is called in the figure"
-            />
+            <span style={styles.title}>
+              {choosing ? 'Which variable?' : 'Select variant'}
+            </span>
+            {/* The chosen variable, once there is one. A row names a variable
+                AND a variant, and after step one the second question is
+                meaningless without the answer to the first on screen. */}
+            {!choosing && (
+              <span style={styles.chosenVariable} title="The variable this variant plots">
+                {chosen}
+              </span>
+            )}
+            {!choosing && (
+              <input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder={placeholder || 'variant name'}
+                style={styles.nameInput}
+                title="What this variant is called in the figure"
+              />
+            )}
           </div>
           <span style={styles.subtitle}>
-            Checkboxes and versions here choose what the FIGURE shows. Nothing
-            on this graph changes what a run does.
+            {choosing
+              ? 'Click the variable to plot. Anything that cannot be drawn alongside this figure says why.'
+              : 'Checkboxes and versions here choose what the FIGURE shows. Nothing on this graph changes what a run does.'}
           </span>
         </div>
 
@@ -305,9 +503,9 @@ export default function VariantDagPopup({
             <VariantSelectionProvider value={value}>
               <ReactFlowProvider>
                 <ReactFlow
-                  nodes={nodes}
+                  nodes={pickingNodes}
                   edges={edges}
-                  nodeTypes={nodeTypes}
+                  nodeTypes={choosing ? pickNodeTypes : nodeTypes}
                   nodesDraggable={false}
                   nodesConnectable={false}
                   // MUST stay true. React Flow gives a node wrapper
@@ -330,10 +528,10 @@ export default function VariantDagPopup({
           )}
         </div>
 
-        {unmapped.length > 0 && (
+        {!choosing && unmapped.length > 0 && (
           <div style={styles.unmapped}>
             <div style={styles.unmappedTitle}>
-              Not on this canvas (defined in a nested pipeline)
+              No node on this canvas
             </div>
             {unmapped.map(axis => (
               <div key={axis.column} style={styles.unmappedRow}>
@@ -359,13 +557,38 @@ export default function VariantDagPopup({
           <button type="button" style={styles.button} onClick={onCancel}>
             Cancel
           </button>
-          <button
-            type="button"
-            style={styles.primaryButton}
-            onClick={() => onApply({ selection, name })}
-          >
-            Apply
-          </button>
+          {/* Step one back to nothing: leaving the popup open on the variable
+              pick is cheaper than cancelling and re-opening when the wrong
+              node was clicked. Only in `pick` mode — editing an existing row
+              has no step to go back to, and its variable is the row's. */}
+          {pick && !choosing && (
+            <button
+              type="button"
+              style={styles.button}
+              onClick={() => {
+                setChosen(null)
+                setGraph(null)
+                setSelection({})
+              }}
+            >
+              ← Variable
+            </button>
+          )}
+          {/* Nothing to apply until a variable is chosen: a row with no
+              variable and no selection is the inert row that clicking "+" used
+              to create, and the whole point of this dialog is that "+" no
+              longer creates one. */}
+          {!choosing && (
+            <button
+              type="button"
+              style={styles.primaryButton}
+              onClick={() =>
+                onApply({ selection, name, variable: chosen ?? undefined })
+              }
+            >
+              Apply
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -430,5 +653,30 @@ const styles: Record<string, React.CSSProperties> = {
   },
   inertNodeHint: {
     fontSize: 10, color: '#8a8aa8', fontStyle: 'italic', textAlign: 'center',
+  },
+  // The chosen variable, beside the title in step two.
+  chosenVariable: {
+    fontFamily: 'monospace', fontSize: 12, color: '#9d92f5',
+    background: '#22223a', border: '1px solid #4c3a8a', borderRadius: 4,
+    padding: '2px 8px',
+  },
+  pickNode: {
+    borderRadius: 6, padding: '8px 12px', minWidth: 150, textAlign: 'center',
+  },
+  pickNodeReady: {
+    background: '#1e2a44', border: '2px solid #4f7fd0', cursor: 'pointer',
+  },
+  // Drawn, not hidden, and not merely dim: the reason is the content. A node
+  // the user expected to click has to say why it cannot be, in place.
+  pickNodeRefused: {
+    background: '#22223a', border: '2px dashed #3a3a5a', opacity: 0.6,
+    cursor: 'not-allowed',
+  },
+  pickNodeLabel: {
+    fontWeight: 600, color: '#ddd', fontFamily: 'monospace', fontSize: 13,
+  },
+  pickNodeHint: {
+    fontSize: 9, color: '#8a8aa8', fontStyle: 'italic', marginTop: 2,
+    maxWidth: 200, whiteSpace: 'normal', lineHeight: 1.3,
   },
 }

@@ -118,6 +118,89 @@ def read_scistack_section(toml_path: Path) -> dict | None:
     return extract_scistack_section(data, toml_path.name)
 
 
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def is_windows_absolute(raw: str) -> bool:
+    """Whether *raw* is a Windows-absolute path (``Y:\\...`` or ``\\\\host``).
+
+    On POSIX neither form means anything -- ``Path.is_absolute()`` says
+    False, so the value gets silently joined onto the project root and
+    produces nonsense like ``/Users/me/project/y:\\LabMembers\\...``. Callers
+    use this to say so instead.
+    """
+    return bool(_WINDOWS_DRIVE_RE.match(raw)) or raw.startswith("\\\\")
+
+
+def normalize_config_separators(raw: str) -> str:
+    """*raw* with separators this platform understands.
+
+    Backslash → forward slash, on POSIX only, and never for a
+    Windows-absolute value (there is nothing to salvage in ``Y:\\...`` here).
+    Split out from :func:`resolve_config_path` for the callers that need the
+    STRING rather than a Path -- glob patterns, which are expanded as text.
+    """
+    if os.sep != "\\" and "\\" in raw and not is_windows_absolute(raw):
+        return raw.replace("\\", "/")
+    return raw
+
+
+def resolve_config_path(root: Path, raw: str) -> Path:
+    """Resolve *raw*, a path written in a project config, against *root*.
+
+    Config files travel between machines -- the same repo checked out on
+    Windows and macOS, a scistack.toml committed to git -- and the GUI wrote
+    them with the *host's* separator. A Windows session recording
+    ``entities_file = "src\\scistack_entities.toml"`` produced a value that,
+    read back on macOS, names a FILE called ``src\\scistack_entities.toml``
+    in the project root: ``\\`` is a legal filename character on POSIX, so
+    nothing errors, the wrong file is created and read, and everything
+    derived from its location moves with it (the MATLAB classdef stub
+    directory lands in the project root instead of ``src/``). Backslash is
+    therefore treated as a separator here whenever this is not Windows.
+
+    The reverse direction needs nothing: Windows accepts ``/`` natively,
+    which is why the writers now record ``/`` (see
+    ``scistack_gui.config._portable_relpath``).
+
+    A Windows-*absolute* value (``Y:\\LabMembers\\...``) is a different
+    problem -- there is no such drive here and no sane way to guess what it
+    should be -- so it is returned as-is for the caller to report as
+    missing, rather than being joined onto *root*.
+    """
+    if os.sep != "\\" and "\\" in raw:
+        if is_windows_absolute(raw):
+            logger.warning(
+                "Config path %r is a Windows absolute path and cannot resolve "
+                "on this platform", raw
+            )
+            return Path(raw)
+        converted = normalize_config_separators(raw)
+        logger.info(
+            "Config path %r was written on Windows; reading it as %r",
+            raw,
+            converted,
+        )
+        # Reading it literally, as every version before this one did, CREATES
+        # things: a "src\scistack_entities.toml" in the project root that the
+        # GUI then wrote declarations into. Say so, loudly and with both
+        # paths -- the alternative is the user watching entities disappear
+        # the moment this fix lands, with nothing in the log to explain it.
+        literal = root / raw
+        if literal.exists():
+            logger.warning(
+                "%s exists: it was created by reading the Windows path %r "
+                "literally on this platform. It is NOT being read any more -- "
+                "%s is. Move anything you need out of it, then delete it.",
+                literal,
+                raw,
+                root / converted,
+            )
+        raw = converted
+    p = Path(raw)
+    return p if p.is_absolute() else root / p
+
+
 def find_project_config(start: Path) -> Path | None:
     """Walk up from *start* for the nearest config file that actually
     carries a scistack section, or ``None``.

@@ -37,13 +37,13 @@ def available_plots(
     shape: Shape,
     roles: dict[str, Role],
     *,
-    n_measures: int = 1,
+    has_x_measure: bool = False,
 ) -> list[PlotKind]:
     """Plot kinds that can be rendered for this shape and role assignment."""
     if shape is Shape.MATRIX_2D:
         return [PlotKind.HEATMAP]
 
-    if n_measures >= 2:
+    if has_x_measure:
         # x comes from a second measure: a relational scatter, optionally with
         # a connecting line when the x measure is ordered.
         return [PlotKind.SCATTER, PlotKind.LINE]
@@ -69,7 +69,7 @@ def default_plot(
     shape: Shape,
     roles: dict[str, Role],
     *,
-    n_measures: int = 1,
+    has_x_measure: bool = False,
 ) -> PlotKind | None:
     """
     The kind to select when a table is first opened.
@@ -78,12 +78,12 @@ def default_plot(
     1-D → one line per observation, or a mean line with a shaded error region
     once there are replicates; 2-D → heatmap.
     """
-    kinds = available_plots(shape, roles, n_measures=n_measures)
+    kinds = available_plots(shape, roles, has_x_measure=has_x_measure)
     if not kinds:
         return None
 
     replicates = has_replicates(roles)
-    if n_measures >= 2:
+    if has_x_measure:
         return PlotKind.SCATTER
     if shape is Shape.SERIES_1D:
         return PlotKind.BAND if replicates else PlotKind.LINE
@@ -122,6 +122,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     which kinds are selectable, why the others are not, and what the default
     would be for the current role assignment.
     """
+    from .groups import apply_level_groups
     from .roles import complete_roles
     from .variants import apply_variant_sets, strip_answered_roles
 
@@ -130,17 +131,17 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     # factor) is what they are computed against — exactly as ``resolve`` does,
     # stale-role drop included, or the panel would offer a role selector for a
     # factor the render is about to reject.
-    derived = apply_variant_sets(spec, table)
+    derived = apply_level_groups(spec, apply_variant_sets(spec, table))
     spec = strip_answered_roles(spec, table, derived)
     roles = complete_roles(spec, derived)
     shape = derived.shape_of(spec.y_measure)
-    n_measures = len(spec.measures)
-    allowed = available_plots(shape, roles, n_measures=n_measures)
+    has_x_measure = spec.x_measure is not None
+    allowed = available_plots(shape, roles, has_x_measure=has_x_measure)
 
     return {
         "shape": str(shape),
         "has_replicates": has_replicates(roles),
-        "default": str(default_plot(shape, roles, n_measures=n_measures) or ""),
+        "default": str(default_plot(shape, roles, has_x_measure=has_x_measure) or ""),
         "available": [str(k) for k in allowed],
         "kinds": [
             {
@@ -151,9 +152,44 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
             for kind in PlotKind
         ],
         "roles": {name: str(role) for name, role in roles.items()},
-        "factors": derived.describe()["factors"],
+        "factors": factor_summary(spec, derived),
         "variants": variant_summary(spec, table),
     }
+
+
+def factor_summary(spec: PlotSpec, derived: LongTable) -> list[dict]:
+    """Every factor the panel renders, plus which of its levels survive filters.
+
+    ``levels`` is what the table holds; ``selected`` is what ``spec.filters``
+    leaves, measured through :func:`~scistackplot.reduce.apply_filters` — the
+    function the figure itself uses. That shared rule is the point: a picker
+    reading "3 of 12 selected" beside a figure built from a different 3 would be
+    worse than showing no count at all.
+
+    A filter that empties a factor is reported honestly as zero selected. It is
+    a legitimate state to be in while clicking, and ``resolve`` renders the
+    empty figure rather than raising.
+    """
+    from .reduce import apply_filters
+
+    factors = derived.describe()["factors"]
+    if not spec.filters:
+        # Nothing filtered: everything is selected, and no frame scan is needed
+        # on the common path.
+        for entry in factors:
+            entry["selected"] = list(entry["levels"])
+        return factors
+
+    kept = apply_filters(derived.frame, spec)
+    for entry in factors:
+        name = entry["name"]
+        surviving = (
+            set(kept[name].astype(str)) if name in kept.columns else set()
+        )
+        entry["selected"] = [
+            level for level in entry["levels"] if str(level) in surviving
+        ]
+    return factors
 
 
 def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
@@ -196,9 +232,10 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
     from .variants import (
         auto_label,
         defined_sets,
+        resolve_selection,
+        row_mask,
         set_name,
         spanned_code_axes,
-        variant_set_mask,
     )
 
     frame = table.frame
@@ -210,10 +247,10 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
     kept_mask = pd.Series(not defined_sets(spec.variant_sets), index=frame.index)
     claimed = pd.Series(False, index=frame.index)
     for index, variant in enumerate(spec.variant_sets):
-        defined = bool(variant.selection)
+        defined = bool(variant.selection) or bool(variant.variable)
         if defined:
-            mask = variant_set_mask(
-                frame, variant.selection, latest_column=table.latest_column
+            mask = row_mask(
+                frame, spec, variant, latest_column=table.latest_column
             )
             # First-match-wins, mirroring apply_variant_sets: the count shown
             # must be the number of rows this variant contributes to the figure,
@@ -231,6 +268,9 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
                 "auto_label": auto_label(variant.selection, index=index),
                 "explicit_name": variant.name,
                 "selection": dict(variant.selection),
+                # None means the primary measure; the GUI shows that as the
+                # dropdown's default rather than inventing a name for it.
+                "variable": variant.variable,
                 "defined": defined,
                 "row_count": int(fresh.sum()),
                 # Code axes this variant leaves open and disagrees on. Reported
@@ -240,6 +280,30 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
                 "spans": spanned_code_axes(frame[fresh], variant.selection, table)
                 if defined
                 else {},
+                # What this selection actually resolved to, and — when it
+                # resolved to nothing — what it could have selected instead.
+                #
+                # A pin is applied blindly (`variants.default_selection`), so a
+                # combination nobody ever ran selects zero rows and draws an
+                # empty figure from controls that look correctly filled in.
+                # "Empty" on its own is indistinguishable from a broken panel;
+                # the attempted combination beside the available ones is what
+                # turns it into something the user can act on in one step.
+                #
+                # Computed only for a defined row that matched nothing: on the
+                # common path this is pure cost, and the answer ("what else is
+                # there") is only ever interesting when the answer to "what did
+                # I get" is nothing.
+                "resolved": _jsonable_selection(
+                    resolve_selection(
+                        frame, variant.selection, latest_column=table.latest_column
+                    )
+                )
+                if defined
+                else {},
+                "available": _available_combinations(frame, spec, variant, table)
+                if defined and not fresh.any()
+                else [],
             }
         )
 
@@ -284,3 +348,62 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
         "policy": str(spec.variant_policy),
         "latest_column": table.latest_column,
     }
+
+
+#: Variant combinations offered when a selection matched nothing. A list long
+#: enough to find the near miss in, short enough to read without scrolling —
+#: and bounded, because a ragged project can hold hundreds.
+AVAILABLE_COMBINATION_LIMIT = 12
+
+
+def _jsonable_selection(selection: dict) -> dict:
+    """A resolved selection as plain JSON.
+
+    ``resolve_selection`` hands back whatever the frame holds — numpy scalars,
+    booleans, lists — and this crosses a JSON-RPC boundary.
+    """
+    from .table import _jsonable
+
+    def one(value):
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [_jsonable(item) for item in value]
+        return _jsonable(value)
+
+    return {key: one(value) for key, value in selection.items()}
+
+
+def _available_combinations(frame, spec, variant, table) -> list[dict]:
+    """Variant combinations that DO exist, for a selection that matched none.
+
+    Scoped to the row's own variable, because that is what the row is asking
+    about: offering ``FilteredEMG``'s combinations to a row that plots
+    ``RawEMG`` would send the user to fix the wrong thing.
+
+    Ordered by the axes' declared level order so the list reads the same way
+    twice, and capped at :data:`AVAILABLE_COMBINATION_LIMIT` — a ragged project
+    can hold hundreds, and a wall of them answers nothing that the first dozen
+    does not.
+    """
+    from .table import natural_sort_key
+    from .variants import VARIABLE_COLUMN
+
+    names = [f.name for f in table.variant_factors if f.name in frame.columns]
+    if not names:
+        return []
+
+    rows = frame
+    if VARIABLE_COLUMN in frame.columns:
+        wanted = variant.variable or spec.y_measure
+        rows = frame[frame[VARIABLE_COLUMN].astype(str) == wanted]
+    if rows.empty:
+        return []
+
+    combos = rows[names].astype(str).drop_duplicates()
+    ordered = sorted(
+        (tuple(row) for row in combos.itertuples(index=False)),
+        key=lambda values: tuple(natural_sort_key(v) for v in values),
+    )
+    return [
+        dict(zip(names, values, strict=True))
+        for values in ordered[:AVAILABLE_COMBINATION_LIMIT]
+    ]

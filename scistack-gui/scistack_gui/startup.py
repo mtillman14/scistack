@@ -26,6 +26,7 @@ Usage (from a server entry point)::
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -211,3 +212,84 @@ def check_lockfile_staleness(project_root: Path) -> StartupError | None:
     )
     _record(err)
     return err
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform config paths
+# ---------------------------------------------------------------------------
+def check_windows_config_paths(config) -> "StartupError | None":
+    """Report scistack.toml paths that were written on Windows.
+
+    A config is a shared, committed file: the same project opened on Windows
+    and on macOS reads the same ``modules``/``entities_file`` values. Written
+    with backslashes, those values do not error on POSIX -- ``\\`` is a legal
+    filename character, so they quietly name the wrong thing.
+    ``scifor.discovery.resolve_config_path`` now reads them correctly, but a
+    *relative* one has usually already caused a file to be created at the
+    literal path (a ``src\\scistack_entities.toml`` in the project root), and
+    an *absolute* one (``Y:\\LabMembers\\...``) cannot be salvaged here at
+    all -- there is no such drive on this machine.
+
+    Non-blocking: everything still opens, and the affected paths are named
+    rather than guessed at.
+    """
+    from scifor.discovery import is_windows_absolute, read_scistack_section
+
+    from scistack_gui.config import locate_config_at
+
+    project_root = getattr(config, "project_root", None)
+    if project_root is None or os.sep == "\\":
+        return None
+
+    toml_path = locate_config_at(project_root)
+    if toml_path is None:
+        return None
+    section = read_scistack_section(toml_path) or {}
+
+    windows_values = sorted(_windows_path_values(section))
+    if not windows_values:
+        return None
+
+    unresolvable = [v for v in windows_values if is_windows_absolute(v)]
+    lines = [f"  {v}" for v in windows_values]
+    if unresolvable:
+        lines.append("")
+        lines.append(
+            "These name a Windows drive and cannot resolve on this machine; "
+            "re-add them in 📁 Paths:"
+        )
+        lines.extend(f"  {v}" for v in unresolvable)
+    err = StartupError(
+        kind="windows_config_paths",
+        message=(
+            f"{toml_path} contains {len(windows_values)} path(s) written with "
+            f"Windows separators. Relative ones are read correctly, but a file "
+            f"may have been created at the literal path (check for a name "
+            f"containing a backslash in {project_root}); absolute ones "
+            f"(Y:\\...) cannot resolve here at all."
+        ),
+        details="\n".join(lines),
+        blocking=False,
+    )
+    _record(err)
+    logger.warning("[startup] %s\n%s", err.message, err.details)
+    return err
+
+
+def _windows_path_values(section: dict) -> set[str]:
+    """Every string in *section* that looks like a Windows path."""
+    found: set[str] = set()
+
+    def visit(value) -> None:
+        if isinstance(value, str):
+            if "\\" in value:
+                found.add(value)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+
+    visit(section)
+    return found

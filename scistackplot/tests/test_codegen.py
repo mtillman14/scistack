@@ -143,6 +143,32 @@ def test_iterate_factors_are_documented_as_foreach_keys(scalar_table):
     assert "for_each iteration keys" in source
 
 
+def test_a_spec_with_no_x_factor_builds_its_own_x_column(scalar_table, scalar_frame):
+    """Regression: the x fallback named a column the endpoint does not have.
+
+    `reduce._panel_frame` puts every point at ONE categorical position when no
+    factor holds Role.X. Codegen used to fall back to `table.factor_names[0]`
+    instead — a different figure from the preview, and a hard failure once a
+    nested ITERATE key promotes its ancestors, because that first factor is then
+    an iteration key and so is NOT a column of the frame the function receives.
+    """
+    spec = PlotSpec(measures=["StepLength"], roles={"trial": Role.ITERATE})
+    source = generate_plot_function(spec, scalar_table)
+
+    assert "df['Observation'] = \"\"" in source
+    assert "x='Observation'" in source
+
+    # The frame an endpoint would receive: iterated keys are for_each keywords.
+    one_location = scalar_frame[
+        (scalar_frame["subject"] == "01")
+        & (scalar_frame["session"] == "pre")
+        & (scalar_frame["trial"] == "1")
+    ].drop(columns=["subject", "session", "trial"])
+    figure = _run(source, one_location, "plot_steplength")
+    assert figure.axes
+    matplotlib.pyplot.close(figure)
+
+
 def test_embedded_spec_round_trips_out_of_generated_source(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],

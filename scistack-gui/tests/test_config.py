@@ -1,5 +1,6 @@
 """Tests for scistack_gui.config — config loading edge cases."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -1011,6 +1012,139 @@ def test_remove_path_rejects_packaged_project(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# load_config's entities_file -- one answer, scidb's
+#
+# This used to read the `entities_file` key here and stop, missing
+# scidb.entities' conventional-path fallback. A project holding a
+# src/scistack_entities.toml with no key had its entities read by scidb and
+# by MATLAB and NEVER loaded into the GUI registry, so nothing it declared
+# showed up in the GUI -- the reported "entities aren't populated when I
+# create a database in a folder that already has one". See
+# .claude/plan-preexisting-entities-on-db-create-26-09-10.md.
+# ---------------------------------------------------------------------------
+
+
+def test_entities_file_falls_back_to_the_conventional_path(tmp_path):
+    """No entities_file key, but src/scistack_entities.toml is right there."""
+    (tmp_path / "scistack.toml").write_text("modules = []\n")
+    (tmp_path / "src").mkdir()
+    conventional = tmp_path / "src" / "scistack_entities.toml"
+    conventional.write_text('variables = ["RawEMG"]\n')
+
+    config = load_config(tmp_path, tmp_path / "proj.duckdb")
+
+    assert config.entities_file == _normalize(conventional)
+
+
+def test_entities_file_is_none_when_the_conventional_file_is_absent(tmp_path):
+    """No key and no file: nothing is guessed into existence."""
+    (tmp_path / "scistack.toml").write_text("modules = []\n")
+
+    assert load_config(tmp_path, tmp_path / "proj.duckdb").entities_file is None
+
+
+def test_entities_file_empty_key_opts_out_of_the_fallback(tmp_path):
+    """What clear_entities_file writes must actually stop the file being
+    read, even though it sits at the conventional path."""
+    (tmp_path / "scistack.toml").write_text('modules = []\nentities_file = ""\n')
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "scistack_entities.toml").write_text('variables = ["RawEMG"]\n')
+
+    assert load_config(tmp_path, tmp_path / "proj.duckdb").entities_file is None
+
+
+def test_entities_file_key_still_wins_over_the_conventional_path(tmp_path):
+    (tmp_path / "scistack.toml").write_text('entities_file = "declared.toml"\n')
+    (tmp_path / "declared.toml").write_text('variables = ["A"]\n')
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "scistack_entities.toml").write_text('variables = ["B"]\n')
+
+    config = load_config(tmp_path, tmp_path / "proj.duckdb")
+
+    assert config.entities_file == _normalize(tmp_path / "declared.toml")
+
+
+def test_packaged_project_also_gets_the_conventional_fallback(tmp_path):
+    """The GUI refuses to WRITE a pyproject.toml, but reading is not writing:
+    a packaged project with the conventional file must still discover it."""
+    (tmp_path / "pyproject.toml").write_text("[tool.scistack]\nmodules = []\n")
+    (tmp_path / "src").mkdir()
+    conventional = tmp_path / "src" / "scistack_entities.toml"
+    conventional.write_text('variables = ["RawEMG"]\n')
+
+    config = load_config(tmp_path, tmp_path / "proj.duckdb")
+
+    assert config.entities_file == _normalize(conventional)
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform config paths
+#
+# A scistack.toml is committed and shared: the same project gets opened on
+# Windows and on macOS. The GUI wrote its paths with the HOST separator, so a
+# Windows session recorded `entities_file = "src\scistack_entities.toml"`. On
+# POSIX that is not an error -- `\` is a legal filename character -- it names
+# a file called `src\scistack_entities.toml` in the project ROOT. The entities
+# file was created and read there, and the MATLAB classdef stub directory
+# (which sits beside the entities file) went to `<root>/scistack_matlab_variables`
+# instead of `<root>/src/scistack_matlab_variables`. Observed 2026-09-09.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
+def test_windows_written_entities_file_resolves_into_src(tmp_path):
+    (tmp_path / "scistack.toml").write_text(
+        'modules = []\nentities_file = "src\\\\scistack_entities.toml"\n'
+    )
+    (tmp_path / "src").mkdir()
+    real = tmp_path / "src" / "scistack_entities.toml"
+    real.write_text('variables = ["RawEMG"]\n')
+
+    config = load_config(tmp_path, tmp_path / "proj.duckdb")
+
+    assert config.entities_file == _normalize(real)
+    assert config.entities_file.parent == _normalize(tmp_path / "src")
+
+
+@pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
+def test_windows_written_module_entry_resolves(tmp_path):
+    (tmp_path / "scistack.toml").write_text('modules = ["src\\\\steps.py"]\n')
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "steps.py").write_text("def a(x):\n    return x\n")
+
+    config = load_config(tmp_path, tmp_path / "proj.duckdb")
+
+    assert _normalize(tmp_path / "src" / "steps.py") in config.modules
+
+
+@pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
+def test_windows_absolute_module_entry_is_not_glued_onto_the_root(tmp_path):
+    """`Y:\\LabMembers\\...` names a mapped drive that does not exist here.
+    Joining it onto the project root produced the nonsense path
+    `/Users/me/project/y:\\LabMembers\\...` in every discovery error."""
+    (tmp_path / "scistack.toml").write_text(
+        'modules = ["Y:\\\\LabMembers\\\\MTillman\\\\repo"]\n'
+    )
+
+    config = load_config(tmp_path, tmp_path / "proj.duckdb")
+
+    assert all(not str(p).startswith(str(tmp_path)) for p in config.modules)
+
+
+def test_entities_file_is_recorded_with_forward_slashes(tmp_path):
+    """The write half: relative keys point INSIDE the project, so they must
+    round-trip on another platform. Windows reads `/` natively."""
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+
+    set_entities_file(db_path, None)
+
+    data = _read_raw_section(tmp_path / "scistack.toml")
+    assert data["entities_file"] == "src/scistack_entities.toml"
+    assert "\\" not in data["entities_file"]
+
+
+# ---------------------------------------------------------------------------
 # set_entities_file / clear_entities_file
 #
 # Regression coverage for the "creating a PathInput/Parameter/Variable from
@@ -1208,7 +1342,13 @@ def test_set_entities_file_rejects_packaged_project(tmp_path):
         set_entities_file(db_path, None)
 
 
-def test_clear_entities_file_removes_key_but_keeps_file(tmp_path):
+def test_clear_entities_file_writes_an_explicit_opt_out_and_keeps_file(tmp_path):
+    """Cleared as ``entities_file = ""``, not by deleting the key.
+
+    load_config now honours scidb's conventional-path fallback, so a deleted
+    key would leave a file at the default src/scistack_entities.toml still
+    fully live -- clearing would be a silent no-op for the overwhelmingly
+    common case. The empty string says "no entities file" to every layer."""
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
     entities_file = set_entities_file(db_path, None)
@@ -1218,8 +1358,9 @@ def test_clear_entities_file_removes_key_but_keeps_file(tmp_path):
 
     assert written == toml_path
     data = _read_raw_section(toml_path)
-    assert "entities_file" not in data
+    assert data["entities_file"] == ""
     assert entities_file.exists()  # never deletes the file itself
+    assert load_config(tmp_path, db_path).entities_file is None
 
 
 def test_clear_entities_file_noop_when_no_config_file(tmp_path):

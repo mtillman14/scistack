@@ -22,7 +22,7 @@ from .base import (
     grid_shape,
     is_categorical_x,
     legend_levels,
-    palette_color,
+    palette_for,
     panel_position,
     shows_legend,
     shows_x_labels,
@@ -144,7 +144,7 @@ def _draw_points(ax, frame, resolved, *, jitter: bool) -> None:
             subset[resolved.encoding.y].to_numpy(dtype=float),
             s=style.marker_size,
             alpha=style.alpha,
-            color=palette_color(index),
+            color=palette_for(resolved, level, index),
             label=str(level) if level is not None else None,
         )
 
@@ -153,7 +153,7 @@ def _draw_lines(ax, frame, resolved) -> None:
     style = resolved.spec.style
     series_column = resolved.encoding.series
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
-        color = palette_color(index)
+        color = palette_for(resolved, level, index)
         if series_column and series_column in subset.columns:
             series_groups = list(subset.groupby(series_column, sort=False))
         else:
@@ -175,7 +175,7 @@ def _draw_lines(ax, frame, resolved) -> None:
 def _draw_band(ax, frame, resolved) -> None:
     encoding = resolved.encoding
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
-        color = palette_color(index)
+        color = palette_for(resolved, level, index)
         positions, _ = x_positions(subset[encoding.x], resolved)
         centre = subset[encoding.y].to_numpy(dtype=float)
         ax.plot(
@@ -217,7 +217,7 @@ def _draw_bars(ax, frame, resolved) -> None:
             width=width,
             yerr=error,
             capsize=3,
-            color=palette_color(index),
+            color=palette_for(resolved, level, index),
             alpha=resolved.spec.style.alpha,
             label=str(level) if level is not None else None,
         )
@@ -249,7 +249,7 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
         if not datasets:
             continue
 
-        color = palette_color(index)
+        color = palette_for(resolved, level, index)
         if violin:
             parts = ax.violinplot(
                 datasets, positions=positions, widths=width * 0.9, showmeans=True
@@ -304,7 +304,16 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, use
                 ax.set_yscale("log")
             if resolved.y_limits and resolved.kind is not PlotKind.HEATMAP:
                 ax.set_ylim(*resolved.y_limits)
-            if is_categorical_x(resolved) and resolved.kind in (
+            if resolved.x_plan:
+                # A nested axis is keyed by composed leaf keys the user must
+                # never see: ticks show the innermost layer, and the layers
+                # above it become brackets under the axis.
+                plan = resolved.x_plan
+                ax.set_xticks(range(len(plan.order)))
+                ax.set_xticklabels(plan.tick_labels)
+                if bottom:
+                    _draw_x_groups(ax, plan)
+            elif is_categorical_x(resolved) and resolved.kind in (
                 PlotKind.SCATTER,
                 PlotKind.STRIP,
             ):
@@ -323,6 +332,44 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, use
             # differently just because it gained a facet).
             ax.tick_params(labelbottom=bottom, labelleft=leftmost)
             ax.tick_params(axis="x", rotation=0)
+
+
+#: Height of one nested-group label row, as a fraction of the axes height.
+X_GROUP_ROW = 0.07
+
+
+def _draw_x_groups(ax, plan) -> None:
+    """Label and bracket each higher x layer beneath the tick labels.
+
+    Blended coordinates — x in DATA space (leaf positions are data positions on
+    a categorical axis) and y in AXES space (a fixed distance below the axis
+    regardless of the measure's range). The alternative, data coordinates for
+    both, would put the brackets at a y that moves with the data.
+    """
+    from matplotlib.transforms import blended_transform_factory
+
+    transform = blended_transform_factory(ax.transData, ax.transAxes)
+    for group in plan.groups:
+        rows_below = plan.depth - group.depth
+        y = -0.10 - X_GROUP_ROW * rows_below
+        ax.plot(
+            [group.start - 0.35, group.end + 0.35],
+            [y + 0.02, y + 0.02],
+            transform=transform,
+            color="#888888",
+            linewidth=0.8,
+            clip_on=False,
+        )
+        ax.text(
+            group.centre,
+            y,
+            group.label,
+            transform=transform,
+            ha="center",
+            va="top",
+            fontsize=9,
+            clip_on=False,
+        )
 
 
 #: Breathing room between the panels and the legend strip, as a fraction of the

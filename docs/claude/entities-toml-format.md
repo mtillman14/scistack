@@ -133,6 +133,23 @@ Read half:
   project config (mtime-cached), via `scifor.discovery.find_project_config`,
   which `scistack_gui.config` also uses, so the GUI and a plain script can
   never disagree about which project a path belongs to.
+- `resolve_entities_path(root, section)` — the resolution **rule**, split
+  out so a caller that already located the config and parsed its section
+  (`scistack_gui.config.load_config`) asks scidb instead of reimplementing
+  it. Three cases, in order: an `entities_file = "..."` key wins; an
+  `entities_file = ""` is an explicit opt-out (what the GUI's "clear
+  entities file" writes — the only way to stop reading a file that sits at
+  the *conventional* path, since deleting the key would just fall through);
+  otherwise the conventional `src/scistack_entities.toml`, **only if it
+  already exists**. `is_entities_opt_out(section)` separates the opt-out
+  from "there is simply nothing here", which matters only to
+  `project_init_service`, i.e. the caller deciding whether to *create* one.
+
+  The GUI used to read the key itself and stop, so it missed the
+  conventional fallback: a project holding `src/scistack_entities.toml`
+  with no key had its entities read by scidb and MATLAB and never loaded
+  into the GUI registry — nothing it declared appeared in the GUI at all
+  (2026-09-10; `.claude/plan-preexisting-entities-on-db-create-26-09-10.md`).
 - module `__getattr__` — `entities.WINDOW_SECONDS`.
 
 Write half — `find_entry_span`, `render_*`, `upsert_entry`, `add_variable`.

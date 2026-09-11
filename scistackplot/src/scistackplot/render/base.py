@@ -183,3 +183,23 @@ DEFAULT_PALETTE = (
 
 def palette_color(index: int, palette: tuple[str, ...] = DEFAULT_PALETTE) -> str:
     return palette[index % len(palette)]
+
+
+def palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
+    """The colour a level carries — the same one in every panel.
+
+    Indexed by the level's position in the **declared** order, never by how many
+    groups this particular panel happened to draw. :func:`color_groups` omits a
+    level with no rows in the panel it is splitting, so enumerating its output
+    handed the *next* level that level's colour: one series drawn in two colours
+    across a facet grid, with the legend agreeing with only some of the panels.
+    A figure wrong in a way that looks like data.
+
+    ``fallback`` covers a level the declared order never mentioned — the same
+    "never drop data" case ``color_groups`` ends with.
+    """
+    order = resolved.color_order or []
+    for position, candidate in enumerate(order):
+        if str(candidate) == str(level):
+            return palette_color(position)
+    return palette_color(fallback)

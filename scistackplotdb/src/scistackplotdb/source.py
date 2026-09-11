@@ -23,6 +23,7 @@ from scistackplot import (
     natural_sort_key,
 )
 from scistackplot.sources import BaseSource
+from scistackplot.variants import VARIABLE_COLUMN
 
 from .hierarchy import join_frames, joinable, joined_levels
 from .load import (
@@ -170,32 +171,63 @@ class ScidbSource(BaseSource):
             self._frames[variable] = load_variable(self._db, variable)
         return self._frames[variable]
 
-    def get_table(self, measures: list[str]) -> LongTable:
+    def get_table(
+        self,
+        measures: list[str],
+        *,
+        x_measure: str | None = None,
+        factor_variables: list[str] | None = None,
+    ) -> LongTable:
         """
-        Build the long table for one or two variables.
+        Build the long table for a plot's variables.
 
-        A second measure supplies the x axis of a relational scatter; if the
-        two live at different schema depths, the shallower one is broadcast
-        down the hierarchy (see :mod:`.hierarchy`).
+        ``measures`` are the y variables. Several of them **stack**: one value
+        column plus a :data:`~scistackplot.variants.VARIABLE_COLUMN` saying
+        which variable each row came from, which is what lets a variant row
+        claim its own variable's rows and no others.
+
+        ``x_measure`` is the x axis of a relational plot and **joins** instead —
+        one x value per row of y, broadcast down the hierarchy when it lives at
+        a shallower level (see :mod:`.hierarchy`).
+
+        ``factor_variables`` are variables joined in as **factors** rather than
+        plotted: a subject-level ``Condition`` holding stim/sham becomes a
+        column every row carries, and takes a role like any other factor.
+
+        The two are genuinely different operations, which is why they are
+        different parameters. Stacking two variables that a wide join would
+        have paired gives twice the rows and no pairing; joining two variables
+        that should have stacked silently drops every row without a partner.
         """
         if not measures:
             raise ValueError("get_table needs at least one measure (variable name).")
-        if len(measures) > 2:
+        if len(measures) > 1 and x_measure is not None:
             raise ValueError(
-                f"At most 2 measures (y, and optionally x); got {measures}"
+                f"An x measure pairs with ONE y measure; got y={measures} and "
+                f"x={x_measure!r}. Stacked variables have no single value to "
+                f"pair each x with."
             )
 
+        factor_variables = list(factor_variables or [])
         known = registered_variables(self._db)
-        unknown = [name for name in measures if name not in known]
+        requested = [
+            *measures,
+            *([x_measure] if x_measure else []),
+            *factor_variables,
+        ]
+        unknown = [name for name in requested if name not in known]
         if unknown:
             # Same failure shape as the CSV source's unknown-column error, so
             # callers (and the GUI) handle one kind of "no such measure".
             raise KeyError(f"Unknown variable(s) {unknown}. Available: {known}")
 
+        if len(measures) > 1:
+            return self._stacked_table(measures, factor_variables)
+
         primary = self._variable_frame(measures[0])
         field_columns: list[str] = []
 
-        if len(measures) == 1:
+        if x_measure is None:
             if len(primary.data_columns) > 1:
                 frame, field_factor = self._melt_fields(primary, measures[0])
                 field_columns = [field_factor]
@@ -209,10 +241,11 @@ class ScidbSource(BaseSource):
             latest_column = primary.latest_column
             default_pin = {latest_column: True} if latest_column else None
         else:
-            secondary = self._variable_frame(measures[1])
+            secondary = self._variable_frame(x_measure)
+            pair = (measures[0], x_measure)
             multi = [
                 name
-                for name, frame in zip(measures, (primary, secondary), strict=True)
+                for name, frame in zip(pair, (primary, secondary), strict=True)
                 if len(frame.data_columns) > 1
             ]
             if multi:
@@ -227,12 +260,12 @@ class ScidbSource(BaseSource):
             # cannot separate them — one rename key silently shadows the other
             # and the first measure's column vanishes.
             left = replace(primary, frame=self._named_frame(primary, measures[0]))
-            right = replace(secondary, frame=self._named_frame(secondary, measures[1]))
+            right = replace(secondary, frame=self._named_frame(secondary, x_measure))
             frame = join_frames(
                 left,
                 right,
                 left_value=measures[0],
-                right_value=measures[1],
+                right_value=x_measure,
             )
             levels = joined_levels(primary, secondary)
             variant_columns = list(
@@ -244,13 +277,17 @@ class ScidbSource(BaseSource):
                     for axis in primary.variant_axes + secondary.variant_axes
                 }.values()
             )
-            measure_names = list(measures)
+            measure_names = [measures[0], x_measure]
             # `join_frames` now carries both sides' flags through the merge and
             # ANDs them, so the pin-latest default applies to two-measure plots
             # too. It used to drop the flag, which made a relational scatter the
             # one place the default silently stopped protecting the figure.
             latest_column = LATEST_COLUMN if LATEST_COLUMN in frame.columns else None
             default_pin = {latest_column: True} if latest_column else None
+
+        frame, group_columns = self._attach_factor_variables(
+            frame, levels, factor_variables
+        )
 
         # Variant columns first, and code versions lead within them (see
         # `attach_variants`). The variants are what a reader has to make a
@@ -259,6 +296,7 @@ class ScidbSource(BaseSource):
         # schema happened to leave them.
         factors = [c for c in variant_columns if c in frame.columns]
         factors.extend(key for key in levels if key in frame.columns)
+        factors.extend(group_columns)
         factors.extend(c for c in field_columns if c in frame.columns)
 
         level_order = {
@@ -277,12 +315,232 @@ class ScidbSource(BaseSource):
             default_pin=default_pin,
             latest_column=latest_column,
             factor_origins={axis["column"]: axis for axis in variant_axes},
+            # The variable's own schema depth, outermost first — the nesting
+            # that decides which keys a fan-out has to iterate together and in
+            # which order (roles.iterate_ancestors / roles.fanout_keys).
+            schema_levels=levels,
         )
         Log.debug(
             "get_table(%s): %d row(s), factors=%s",
             measures,
             len(frame),
             factors,
+            layer=LAYER,
+        )
+        return table
+
+    def _attach_factor_variables(
+        self, frame, levels: list[str], factor_variables: list[str]
+    ):
+        """Join grouping variables onto the frame as ordinary factor columns.
+
+        A ``Condition`` recorded per subject is broadcast down to every one of
+        that subject's rows — the same prefix-merge :mod:`.hierarchy` performs
+        for an x measure, and the reason "stim vs sham" needs no new concept
+        once the database already records it.
+
+        A grouping variable's own **variant columns are deliberately dropped**.
+        Which version of the code produced a group label is not what the figure
+        is comparing, and carrying those columns in would put a variant factor
+        on screen that ``roles.validate`` then demands a role for. If a
+        variable's variants are the subject, it belongs in a variant row.
+        """
+        attached: list[str] = []
+        if not factor_variables:
+            return frame, attached
+
+        for name in factor_variables:
+            variable = self._variable_frame(name)
+            if len(variable.data_columns) > 1:
+                raise ValueError(
+                    f"{name!r} stores one column per dict/struct field, so it "
+                    f"has no single value to group by."
+                )
+            if len(variable.levels) > len(levels) or levels[
+                : len(variable.levels)
+            ] != list(variable.levels):
+                # Deeper than the data, or a different branch of the schema:
+                # merging would multiply rows or match nothing, and either way
+                # the figure would be quietly wrong about how many observations
+                # it holds.
+                raise ValueError(
+                    f"{name!r} sits at {variable.levels}, which is not a prefix "
+                    f"of {levels} — there is no unambiguous way to attach one "
+                    f"of its values to each row. Group by a variable recorded "
+                    f"at or above the level of the data."
+                )
+            on = list(variable.levels)
+            right = self._named_frame(variable, name)[[*on, name]].drop_duplicates(
+                subset=on
+            )
+            frame = frame.merge(right, on=on, how="left")
+            attached.append(name)
+            Log.info(
+                "attached %r as a factor on %s (%d level(s))",
+                name,
+                on,
+                frame[name].nunique(dropna=True),
+                layer=LAYER,
+            )
+        return frame, attached
+
+    def _stacked_table(
+        self, measures: list[str], factor_variables: list[str] | None = None
+    ) -> LongTable:
+        """Several variables as ONE measure plus a ``Variable`` column.
+
+        The long form a multi-series figure needs: Raw and Filtered become rows
+        of the same value column, told apart by a column the variant rows then
+        consume into the ``Variant`` factor.
+
+        The value column is named after the **primary** measure, so everything
+        downstream — ``spec.y_measure``, the renderers, the generated
+        ``y=`` argument — keeps working unchanged, and the measure's *label*
+        carries every variable's name so the axis does not claim to be one of
+        them. The alternative, a neutral column name, would have made
+        ``spec.measures`` stop naming a real variable.
+        """
+        frames = [self._variable_frame(name) for name in measures]
+
+        # Dict/struct variables stack too, provided they carry the SAME fields:
+        # RawEMG and FilteredEMG, both keyed by muscle, are the archetypal
+        # "plot these two together" case. Each is melted into one value column
+        # plus a shared ``ColName`` factor first, so what stacks is the melted
+        # long form — after which nothing downstream can tell the difference
+        # between this and two scalar variables.
+        multi = [f for f in frames if len(f.data_columns) > 1]
+        if multi and len(multi) != len(frames):
+            single = [f.name for f in frames if len(f.data_columns) == 1]
+            raise ValueError(
+                f"{[f.name for f in multi]} store one column per dict/struct "
+                f"field, but {single} store a single value — there is no "
+                f"correspondence between one number and a set of fields. Plot "
+                f"them separately."
+            )
+        field_columns: list[str] = []
+        if multi:
+            shared = set(multi[0].data_columns)
+            for frame in multi[1:]:
+                shared &= set(frame.data_columns)
+            if not shared:
+                raise ValueError(
+                    f"{measures} share no fields — "
+                    + "; ".join(
+                        f"{f.name} has {sorted(f.data_columns)}" for f in multi
+                    )
+                    + ". Stacking them would put every field on its own subplot "
+                    "with a single series, which is not a comparison."
+                )
+            differing = {
+                f.name: sorted(set(f.data_columns) - shared)
+                for f in multi
+                if set(f.data_columns) != shared
+            }
+            if differing:
+                # Not fatal — the shared fields still compare — but never
+                # silent: a muscle missing from one variable would otherwise
+                # look like a subplot that simply has less data.
+                Log.warn(
+                    "stacking %s on their %d shared field(s); these appear in "
+                    "only one variable and are dropped: %s",
+                    measures,
+                    len(shared),
+                    differing,
+                    layer=LAYER,
+                )
+
+        shapes = {f.name: self._shape_of(f.name) for f in frames}
+        distinct = set(shapes.values())
+        if len(distinct) > 1:
+            raise ValueError(
+                f"Variables plotted together must hold the same kind of value; "
+                f"got { {k: str(v) for k, v in shapes.items()} }. A scalar and a "
+                f"1-D signal have no common axis to share."
+            )
+
+        levels = frames[0].levels
+        mismatched = {f.name: f.levels for f in frames if f.levels != levels}
+        if mismatched:
+            # Deliberately refused rather than broadcast. Broadcasting a
+            # subject-level value across that subject's trials would make one
+            # observation look like several — fine for an x axis (one x per y,
+            # which `x_measure` does) but a silent inflation of n when the rows
+            # are the data. Say so instead of guessing.
+            raise ValueError(
+                f"Variables plotted together must sit at the same schema level; "
+                f"{measures[0]} is at {levels} but { mismatched } differ. Plot "
+                f"them separately, or pair them with x_measure for a relational "
+                f"plot (which broadcasts the shallower one)."
+            )
+
+        primary = measures[0]
+        stacked = []
+        for frame in frames:
+            if multi:
+                # Melt to the SHARED fields only, and into the primary's value
+                # column, so every variable contributes the same two columns.
+                named, field_factor = self._melt_fields(
+                    frame, primary, fields=sorted(shared)
+                )
+                if field_factor not in field_columns:
+                    field_columns.append(field_factor)
+            else:
+                named = self._named_frame(frame, primary)
+            named[VARIABLE_COLUMN] = frame.name
+            stacked.append(named)
+        combined = pd.concat(stacked, ignore_index=True, sort=False)
+        combined, group_columns = self._attach_factor_variables(
+            combined, levels, list(factor_variables or [])
+        )
+
+        variant_columns = list(
+            dict.fromkeys(c for f in frames for c in f.variant_columns)
+        )
+        variant_axes = list(
+            {axis["column"]: axis for f in frames for axis in f.variant_axes}.values()
+        )
+        latest_column = (
+            LATEST_COLUMN if LATEST_COLUMN in combined.columns else None
+        )
+
+        factors = [c for c in variant_columns if c in combined.columns]
+        factors.extend(key for key in levels if key in combined.columns)
+        factors.extend(group_columns)
+        factors.extend(c for c in field_columns if c in combined.columns)
+        factors.append(VARIABLE_COLUMN)
+        level_order = {
+            name: self._ordered(
+                name, [str(v) for v in combined[name].dropna().unique()]
+            )
+            for name in factors
+        }
+        # Declared order, not observed: the user listed the variables.
+        level_order[VARIABLE_COLUMN] = list(measures)
+
+        table = LongTable.from_frame(
+            combined,
+            factors=factors,
+            measures=[primary],
+            level_order=level_order,
+            variant_factors=variant_columns,
+            # Marked as fields so `default_roles` gives them one subplot each —
+            # 13 muscles overplotted on one axis is not a figure anyone wanted,
+            # and that must hold whether one dict variable is plotted or two.
+            field_factors=field_columns,
+            name=primary,
+            # No latest pin: the flag means different things per variable, and
+            # the rows the user named are what selects here.
+            default_pin=None,
+            latest_column=latest_column,
+            factor_origins={axis["column"]: axis for axis in variant_axes},
+            schema_levels=levels,
+            measure_labels={primary: " / ".join(measures)},
+        )
+        Log.info(
+            "stacked %s into one value column: %d row(s), levels=%s",
+            measures,
+            len(combined),
+            levels,
             layer=LAYER,
         )
         return table
@@ -299,7 +557,9 @@ class ScidbSource(BaseSource):
 
         return variant_graph(self._db, self._variable_frame(variable), functions)
 
-    def _melt_fields(self, variable_frame, measure: str):
+    def _melt_fields(
+        self, variable_frame, measure: str, *, fields: list[str] | None = None
+    ):
         """
         Turn a dict/struct variable's columns into ONE measure plus a field
         factor.
@@ -333,6 +593,11 @@ class ScidbSource(BaseSource):
                 f"Variable {variable_frame.name!r} has no plottable fields "
                 f"(columns: {variable_frame.data_columns})."
             )
+
+        if fields is not None:
+            # Stacking with another dict variable: melt only the fields they
+            # share, so every variable contributes the same ColName levels.
+            usable = [column for column in usable if column in set(fields)]
 
         id_vars = [c for c in frame.columns if c not in variable_frame.data_columns]
         field_factor = FIELD_FACTOR
@@ -377,8 +642,109 @@ class ScidbSource(BaseSource):
             )
         return columns[0]
 
+    def stackable_with(self, measure: str) -> list[str]:
+        """Variables that can be plotted as another series alongside ``measure``.
+
+        The offers only. :meth:`stackable_report` is the same computation with
+        the refusals kept, for a caller that has to *show* the rejected
+        candidates rather than silently omit them.
+        """
+        return self.stackable_report(measure)["offered"]
+
+    def stackable_report(self, measure: str) -> dict:
+        """Variables that can be plotted as another SERIES alongside ``measure``.
+
+        Stacking needs the same shape (a scalar and a signal share no axis) and
+        the same schema level (see :meth:`_stacked_table` on why the shallower
+        one is not broadcast).
+
+        Dict/struct variables stack with each other when they **share fields** —
+        RawEMG and FilteredEMG, both keyed by muscle, is the archetypal case —
+        and each is melted to those shared fields first. What cannot stack is a
+        dict with a plain value: there is no correspondence between one number
+        and a set of fields.
+
+        Distinct from :meth:`joinable_with`, which answers the different
+        question of what can supply an x axis.
+
+        Returns ``{"offered": [...], "rejected": {name: reason}}``. The refusals
+        were computed here from the beginning but only ever logged; the variant
+        picker draws every variable on the pipeline canvas, so a candidate it
+        cannot offer has to say **why** in place rather than be absent. "EMG is
+        not clickable" with no reason is indistinguishable from a broken dialog.
+        """
+        own_shape = self._shape_of(measure)
+        own_levels = self._levels_of(measure)
+        own_columns = data_columns_for(self._db, measure)
+        own_fields = set(own_columns) if len(own_columns) > 1 else None
+        result: list[str] = []
+        rejected: dict[str, str] = {}
+        for candidate in registered_variables(self._db):
+            if candidate == measure:
+                continue
+            shape = self._shape_of(candidate)
+            levels = self._levels_of(candidate)
+            columns = data_columns_for(self._db, candidate)
+            fields = set(columns) if len(columns) > 1 else None
+            if shape is not own_shape:
+                rejected[candidate] = f"shape {shape} != {own_shape}"
+            elif (fields is None) != (own_fields is None):
+                rejected[candidate] = (
+                    "one is a dict/struct and the other a single value"
+                )
+            elif fields is not None and not (fields & own_fields):
+                rejected[candidate] = (
+                    f"no shared fields (has {sorted(fields)})"
+                )
+            elif levels != own_levels:
+                rejected[candidate] = f"schema level {levels} != {own_levels}"
+            else:
+                result.append(candidate)
+        # Say why, per candidate. An empty dropdown is indistinguishable from a
+        # missing feature, and the three criteria here are strict enough that a
+        # variable a user expected to see is the likely case, not the rare one.
+        Log.info(
+            "stackable_with(%s): %d offered %s; %d rejected %s",
+            measure,
+            len(result),
+            result,
+            len(rejected),
+            rejected or "",
+            layer=LAYER,
+        )
+        return {"offered": result, "rejected": rejected}
+
+    def groupable_with(self, measure: str) -> list[str]:
+        """Variables usable as a grouping FACTOR for ``measure``.
+
+        Anything recorded at or above the measure's level, with one data column
+        — a per-subject ``Condition``, a per-session ``Protocol``. Categorical
+        ones come first because that is what a group usually is, but numeric
+        ones are offered too rather than guessed at: a group coded ``1``/``2``
+        is a group, and ``sources/csv.py`` already documents that bare numeric
+        IDs are indistinguishable from measurements by shape alone.
+        """
+        own = self._levels_of(measure)
+        categorical: list[str] = []
+        other: list[str] = []
+        for candidate in registered_variables(self._db):
+            if candidate == measure:
+                continue
+            if len(data_columns_for(self._db, candidate)) > 1:
+                continue
+            levels = self._levels_of(candidate)
+            if len(levels) > len(own) or own[: len(levels)] != levels:
+                continue
+            target = (
+                categorical
+                if self._shape_of(candidate) is Shape.CATEGORICAL
+                else other
+            )
+            target.append(candidate)
+        return categorical + other
+
     def joinable_with(self, measure: str) -> list[str]:
-        """Variables that can share a plot with ``measure``."""
+        """Variables that can supply an x axis for ``measure``."""
         own = self._levels_of(measure)
         result = []
         for candidate in registered_variables(self._db):

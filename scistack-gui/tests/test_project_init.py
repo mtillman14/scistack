@@ -81,6 +81,83 @@ class TestEnsureProjectFiles:
 
         assert declared.read_text() == 'variables = ["Existing"]\n'
 
+    def test_a_requested_path_never_re_points_an_existing_entities_file(
+        self, tmp_path
+    ):
+        """The wizard always sends its default path. Applying it to a project
+        that already declares one would swap live declarations for an empty
+        file -- so it is reported, not applied."""
+        (tmp_path / "scistack.toml").write_text(
+            'modules = []\nentities_file = "pipeline/e.toml"\n', encoding="utf-8"
+        )
+        (tmp_path / "pipeline").mkdir()
+        (tmp_path / "pipeline" / "e.toml").write_text(
+            'variables = ["Existing"]\n', encoding="utf-8"
+        )
+
+        result = ensure_project_files(
+            tmp_path / "data.duckdb", entities_file="src/scistack_entities.toml"
+        )
+
+        assert result.created == []
+        assert result.entities_file == tmp_path / "pipeline" / "e.toml"
+        assert not (tmp_path / "src" / "scistack_entities.toml").exists()
+        assert any("pipeline" in w for w in result.warnings)
+
+    def test_requesting_the_file_already_configured_is_not_a_conflict(self, tmp_path):
+        (tmp_path / "scistack.toml").write_text(
+            'entities_file = "src/scistack_entities.toml"\n', encoding="utf-8"
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "scistack_entities.toml").write_text(
+            "variables = []\n", encoding="utf-8"
+        )
+
+        result = ensure_project_files(
+            tmp_path / "data.duckdb", entities_file="src/scistack_entities.toml"
+        )
+
+        assert result.warnings == []
+        assert result.entities_file == tmp_path / "src" / "scistack_entities.toml"
+
+    def test_a_declared_but_missing_entities_file_is_created_where_declared(
+        self, tmp_path
+    ):
+        """The key is a decision already made; a requested path must not
+        override it just because the file hasn't been created yet."""
+        (tmp_path / "scistack.toml").write_text(
+            'modules = []\nentities_file = "pipeline/e.toml"\n', encoding="utf-8"
+        )
+
+        result = ensure_project_files(
+            tmp_path / "data.duckdb", entities_file="src/scistack_entities.toml"
+        )
+
+        assert (tmp_path / "pipeline" / "e.toml").exists()
+        assert result.entities_file == tmp_path / "pipeline" / "e.toml"
+        assert not (tmp_path / "src" / "scistack_entities.toml").exists()
+
+    def test_a_requested_path_is_used_when_the_project_has_none(self, tmp_path):
+        result = ensure_project_files(
+            tmp_path / "data.duckdb", entities_file="pipeline/mine.toml"
+        )
+
+        assert (tmp_path / "pipeline" / "mine.toml").exists()
+        assert result.entities_file == tmp_path / "pipeline" / "mine.toml"
+
+    def test_an_explicit_opt_out_is_not_undone_on_reopen(self, tmp_path):
+        """``entities_file = ""`` is what "clear entities file" writes.
+        Re-creating one here would silently put it back every open."""
+        (tmp_path / "scistack.toml").write_text(
+            'modules = []\nentities_file = ""\n', encoding="utf-8"
+        )
+
+        result = ensure_project_files(tmp_path / "data.duckdb")
+
+        assert result.created == []
+        assert result.entities_file is None
+        assert not (tmp_path / "src" / "scistack_entities.toml").exists()
+
     def test_a_packaged_project_is_reported_not_written(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "demo"\n', encoding="utf-8"
@@ -167,3 +244,127 @@ class TestLanguageStubs:
             project_root = tmp_path
 
         assert ensure_language_stubs(_Config()).created == []
+
+
+class TestPreExistingEntitiesFileIsPopulated:
+    """The reported bug, end to end: create a database in a project that
+    ALREADY has a scistack_entities.toml, and everything it declares must
+    reach the GUI.
+
+    It did not, because two layers disagreed about where the entities file
+    is. ``scidb.entities`` falls back to the conventional
+    ``src/scistack_entities.toml`` when no ``entities_file`` key is set;
+    ``scistack_gui.config.load_config`` did not, and the registry follows the
+    GUI's answer. So ``ensure_project_files`` asked scidb, was told the
+    project already had an entities file, and skipped writing the key --
+    after which ``load_config`` returned ``entities_file=None`` and the
+    registry never opened a file that was sitting right there. Its entities
+    stayed live for scidb and MATLAB and invisible in the GUI. See
+    ``.claude/plan-preexisting-entities-on-db-create-26-09-10.md``.
+    """
+
+    def _project(self, tmp_path, config_text: str):
+        (tmp_path / "scistack.toml").write_text(config_text, encoding="utf-8")
+        src = tmp_path / "src"
+        src.mkdir(exist_ok=True)
+        (src / "scistack_entities.toml").write_text(
+            'variables = ["RawEmg"]\n'
+            "\n"
+            "[parameters]\n"
+            "SAMPLING_RATE_HZ = 1000\n"
+            "\n"
+            "[path_inputs]\n"
+            'EMG_FILE = "{subject}/emg.csv"\n',
+            encoding="utf-8",
+        )
+        from scidb import entities
+
+        entities.clear_cache()
+
+        # Exactly what opening/creating a database does, in order.
+        ensure_project_files(tmp_path / "data.duckdb")
+        from scistack_gui import registry as _registry
+        from scistack_gui.config import load_config
+
+        config = load_config(None, tmp_path / "data.duckdb")
+        _registry.load_from_config(config)
+        return config
+
+    def test_entities_load_when_the_config_has_no_entities_file_key(self, tmp_path):
+        from scidb import BaseVariable
+        from scistack_gui import registry as _registry
+
+        config = self._project(tmp_path, "modules = []\n")
+
+        assert config.entities_file == tmp_path / "src" / "scistack_entities.toml"
+        assert "SAMPLING_RATE_HZ" in _registry.get_parameters_registry()
+        assert "EMG_FILE" in _registry.get_path_inputs_registry()
+        assert "RawEmg" in BaseVariable._all_subclasses
+
+    def test_they_reach_the_sidebar_and_the_canvas(self, tmp_path):
+        """Registry membership is the mechanism; these two are what the user
+        actually looks at."""
+        from scistack_gui.services.layout_service import get_parameters, get_path_inputs
+
+        self._project(tmp_path, "modules = []\n")
+
+        assert any(p["name"] == "SAMPLING_RATE_HZ" for p in get_parameters())
+        assert any(p["name"] == "EMG_FILE" for p in get_path_inputs())
+
+    def test_still_works_when_there_is_no_config_file_at_all(self, tmp_path):
+        """The bare-folder case: ensure_project_files writes the scistack.toml
+        that makes the pre-existing entities file discoverable, instead of
+        leaving the project in folder-scan mode where entities_file is None
+        by construction."""
+        from scidb import entities
+        from scistack_gui import registry as _registry
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "scistack_entities.toml").write_text(
+            "[parameters]\nSAMPLING_RATE_HZ = 1000\n", encoding="utf-8"
+        )
+        entities.clear_cache()
+
+        ensure_project_files(tmp_path / "data.duckdb")
+        from scistack_gui.config import load_config
+
+        config = load_config(None, tmp_path / "data.duckdb")
+        _registry.load_from_config(config)
+
+        assert config.entities_file == tmp_path / "src" / "scistack_entities.toml"
+        assert "SAMPLING_RATE_HZ" in _registry.get_parameters_registry()
+
+
+class TestEveryEntryPointInitializesTheProject:
+    """``server.py``'s JSON-RPC ``main()`` (the VS Code extension's entry
+    point) duplicates ``bootstrap.open_or_create_project``'s startup sequence
+    inline rather than calling it, and had simply never been given the
+    ``ensure_project_files`` step -- so creating a database from VS Code in a
+    bare folder holding a scistack_entities.toml left it undiscovered.
+
+    Checked at the source level because ``main()`` parses argv, opens a
+    database and blocks on stdin; there is no way to exercise it here. The
+    point is only that the call has not gone missing again."""
+
+    def _calls_in(self, module) -> set[str]:
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(module))
+        return {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+
+    @pytest.mark.parametrize("module_name", ["server", "bootstrap"])
+    def test_calls_ensure_project_files(self, module_name):
+        import importlib
+
+        module = importlib.import_module(f"scistack_gui.{module_name}")
+
+        assert "ensure_project_files" in self._calls_in(module), (
+            f"scistack_gui.{module_name} no longer calls ensure_project_files; "
+            "projects opened through it will have no entities file configured"
+        )

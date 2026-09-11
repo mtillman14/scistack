@@ -67,7 +67,7 @@ def test_join_kind_classifies_prefixes():
 
 def test_shallow_variable_broadcasts_across_deeper_rows(seeded):
     source = ScidbSource(seeded)
-    table = source.get_table(["StepLength", "Mass"])
+    table = source.get_table(["StepLength"], x_measure="Mass")
 
     # One subject-level Mass value reused across that subject's 4 trial rows.
     assert len(table.frame) == 12
@@ -80,7 +80,7 @@ def test_join_keeps_both_measures_when_data_columns_share_a_name(seeded):
     default), so the join has to rename before merging — renaming afterwards
     lets one key shadow the other and the first measure's column disappears.
     """
-    table = ScidbSource(seeded).get_table(["StepLength", "Mass"])
+    table = ScidbSource(seeded).get_table(["StepLength"], x_measure="Mass")
 
     assert {"StepLength", "Mass"} <= set(table.frame.columns)
     assert table.measure_names == ["StepLength", "Mass"]
@@ -163,8 +163,21 @@ def test_struct_shape_is_classified_from_a_field(seeded):
     assert table.shape_of("Emg") is Shape.SERIES_1D
 
 
-def test_struct_cannot_be_paired_with_a_second_measure(seeded):
-    with pytest.raises(ValueError, match="no single value"):
+def test_struct_cannot_be_paired_with_an_x_measure(seeded):
+    """PAIRING is the x-axis join: one x value per y, so a dict variable with
+    13 fields has no single number to pair each x with."""
+    with pytest.raises(ValueError, match="no single value to pair"):
+        ScidbSource(seeded).get_table(["Emg"], x_measure="Mass")
+
+
+def test_struct_cannot_stack_with_a_plain_value(seeded):
+    """STACKING is the other operation, and it fails for its own reason: there
+    is no correspondence between one number and a set of fields.
+
+    (Two dict variables that SHARE fields do stack — see
+    test_variant_rows_multivariable.py.)
+    """
+    with pytest.raises(ValueError, match="single value"):
         ScidbSource(seeded).get_table(["Emg", "Mass"])
 
 
@@ -409,7 +422,16 @@ def test_table_carries_a_default_pin_for_the_latest_code(two_code_versions):
 
 
 def test_no_default_pin_without_code_versions(two_variants):
-    """Constants-only variants must still open on every variant, as before."""
+    """``default_pin`` is the SOURCE's opinion about which rows are *current*,
+    and with no code versions it has none — so it stays None.
+
+    It is no longer the whole opening selection. ``default_spec`` pins every
+    variant axis on top of this (``variants.default_selection``), so a
+    constants-only variable still opens on ONE of its variants; see
+    ``test_default_spec_pins_a_swept_param_with_no_code_versions``. Keeping the
+    two separate is the point: only scidb can say which records are current,
+    while "which parameter value do we open on" is a plotting decision.
+    """
     table = ScidbSource(two_variants).get_table(["Scaled"])
 
     assert table.default_pin is None
@@ -426,6 +448,36 @@ def test_default_spec_opens_on_one_named_variant(two_code_versions):
     assert spec.variant_sets[0].name == CURRENT_VARIANT_NAME
     assert spec.variant_sets[0].selection == {"CodeIsLatest": True}
     validate(spec, apply_variant_sets(spec, table))  # must not raise
+
+
+def test_default_spec_pins_a_swept_param_with_no_code_versions(two_variants):
+    """A constants-only variable opens on ONE of its variants.
+
+    ``two_variants`` ran ``scale_signal`` at ``factor`` 2 and 3, so there are two
+    records per location and no code edit anywhere. The source has no opinion
+    about which is current (``default_pin is None``), but the panel must still
+    open on one line rather than two: the second record is a different pipeline
+    variant, and drawing both unasked makes them look like replicates.
+
+    This is the case the old rule missed entirely — it pinned only code axes, so
+    a swept parameter reached ``default_roles`` as an unanswered multi-level
+    variant factor and became COLOUR.
+    """
+    from scistackplot import apply_variant_sets, default_spec
+
+    table = ScidbSource(two_variants).get_table(["Scaled"])
+    spec = default_spec(table, "Scaled")
+
+    assert len(spec.variant_sets) == 1
+    assert spec.variant_sets[0].selection == {"scale_signal.factor": "2"}
+    assert spec.roles.get("scale_signal.factor") is None
+
+    derived = apply_variant_sets(spec, table)
+    assert "scale_signal.factor" not in derived.factor_names
+    validate(spec, derived)  # must not raise
+
+    # One record per location, not two.
+    assert resolve(spec, table)[0].row_count == 3 * 2 * 2
 
 
 def test_pinned_render_keeps_only_the_newest_rows(two_code_versions):

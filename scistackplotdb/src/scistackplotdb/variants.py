@@ -198,6 +198,24 @@ def variant_graph(db, variable_frame, functions: list[str] | None = None) -> dic
         len(chain),
         layer=LAYER,
     )
+    # Each axis in the vocabulary the PICKER has to match on. `param` here is the
+    # producing function's ARGUMENT name (scidb's `fn.param` namespacing) — not
+    # the name of the Parameter entity feeding it, which is what the canvas node
+    # is labelled with. The two coincide only until someone renames a Parameter
+    # or wires the port from a glue node, and when they stop coinciding the axis
+    # silently drops out of the graph. Logged so the popup's binding can be
+    # checked against what it was actually given.
+    for axis in axes:
+        Log.info(
+            "  axis %s: kind=%s function=%s param=%s, %d level(s) %s",
+            axis["column"],
+            axis["kind"],
+            axis["function"],
+            axis["param"],
+            len(axis["levels"]),
+            axis["levels"][:10],
+            layer=LAYER,
+        )
     return {
         "variable": variable_frame.name,
         "axes": axes,

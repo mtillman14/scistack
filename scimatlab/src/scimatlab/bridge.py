@@ -91,32 +91,51 @@ class MatlabLineageFcn:
 def _reconstruct_glue_chains(glue):
     """MATLAB glue structs → ``{param: [GlueSpec]}``.
 
-    Each entry is ``{name, source_text, per_schema_key}``. There is no
-    callable: a ``.m`` function cannot execute inside Python's prepare step,
-    so MATLAB runs the bodies itself in ``+scidb/for_each.m``. Python needs
-    only the *source text*, which is what the glue's content hash — and so the
-    virtual record id the consumer binds to — is derived from.
+    Each entry is ``{name, language, source_text, source_file,
+    per_schema_key}``.
+
+    **MATLAB glue** (the default, and what a handle in the ``glue`` option
+    becomes) carries no callable: a ``.m`` function cannot execute inside
+    Python's prepare step, so MATLAB runs the bodies itself in
+    ``+scidb/for_each.m``. Python needs only the *source text*, which is what
+    the glue's content hash — and so the virtual record id the consumer binds
+    to — is derived from.
+
+    **Python glue** reaches a MATLAB run only for a CONSTANT-fed parameter,
+    where ``scidb.glue.apply_constant_glue`` applies it during prepare
+    (Python's, on both run paths) so the glued value lands in ``__constants``.
+    That needs a live callable, and this process has no function registry, so
+    the body is loaded from the ``source_file`` the GUI recorded. If it cannot
+    be loaded the spec still carries its hash, and the failure is reported
+    where the glue is named rather than silently reshaping nothing.
 
     Returns ``{}`` for None / empty, so callers can pass it through unguarded.
     """
     if glue is None or isinstance(glue, type(None)) or not glue:
         return {}
 
-    from scidb.glue import GlueSpec
+    from scidb.glue import GlueSpec, resolve_python_glue
 
     chains: dict = {}
     for param, entries in dict(glue).items():
         specs = []
         for entry in list(entries):
             spec = dict(entry)
+            name = str(spec.get("name", "glue"))
+            language = str(spec.get("language", "matlab")) or "matlab"
+            source_file = str(spec["source_file"]) if spec.get("source_file") else None
+            fn = (
+                resolve_python_glue(name, source_file)
+                if language == "python"
+                else None
+            )
             specs.append(
                 GlueSpec(
-                    name=str(spec.get("name", "glue")),
-                    language="matlab",
+                    name=name,
+                    fn=fn,
+                    language=language,
                     source_text=str(spec.get("source_text", "")),
-                    source_file=(
-                        str(spec["source_file"]) if spec.get("source_file") else None
-                    ),
+                    source_file=source_file,
                     per_schema_key=bool(spec.get("per_schema_key", False)),
                 )
             )
@@ -1126,7 +1145,10 @@ def for_each_save(
     result_tbl = _for_each_save_resolved(
         state=state,
         result_tbl=result_tbl,
-        inputs=inputs,
+        # state.inputs, not the cached spec: prepare folded any constant-fed
+        # glue chain into the values, and that folded dict is what
+        # ForEachConfig hashed. Same rule as scidb.for_each's own save call.
+        inputs=state.inputs if state.inputs is not None else inputs,
         outputs=outputs,
         save=bool(save),
         db=db if db is not None and not isinstance(db, type(None)) else None,
