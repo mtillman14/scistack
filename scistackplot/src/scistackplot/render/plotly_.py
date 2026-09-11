@@ -29,6 +29,7 @@ from .base import (
     palette_for,
     panel_position,
     panel_y_limits,
+    panel_y_title,
     shares_y_axis,
     shows_legend,
     shows_x_labels,
@@ -121,11 +122,10 @@ def render(resolved: ResolvedPlot) -> dict:
                 bottom=shows_x_labels(resolved, row, col),
                 leftmost=shows_y_labels(resolved, row, col),
                 y_limits=panel_y_limits(resolved, panel),
+                panel=panel,
             )
-            if panel.key:
-                layout["annotations"].append(
-                    _panel_title(panel.title, row, col, n_rows, n_cols)
-                )
+            # No panel-title annotation: a facet is named by its y-axis title
+            # (base.panel_y_title), which costs the grid no vertical room.
             _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot)
 
         return {"data": traces, "layout": layout}
@@ -151,7 +151,9 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
     if not plan or not plan.groups or not shows_x_labels(resolved, row, col):
         return
 
-    x0, y0, cell_width, _cell_height = _cell(row, col, n_rows, n_cols)
+    x0, y0, cell_width, _cell_height = _cell(
+        row, col, n_rows, n_cols, _x_depth(resolved)
+    )
     positions = max(1, len(plan.order))
 
     for group in plan.groups:
@@ -380,13 +382,16 @@ def _add_axes(
     bottom: bool = True,
     leftmost: bool = True,
     y_limits: tuple[float, float] | None = None,
+    panel=None,
 ) -> None:
     x_key = "xaxis" if slot == 1 else f"xaxis{slot}"
     y_key = "yaxis" if slot == 1 else f"yaxis{slot}"
     x_anchor = "y" if slot == 1 else f"y{slot}"
     y_anchor = "x" if slot == 1 else f"x{slot}"
 
-    x0, y0, cell_width, cell_height = _cell(row, col, n_rows, n_cols)
+    x0, y0, cell_width, cell_height = _cell(
+        row, col, n_rows, n_cols, _x_depth(resolved)
+    )
 
     layout[x_key] = {
         "domain": [x0, x0 + cell_width],
@@ -417,8 +422,16 @@ def _add_axes(
         "domain": [y0, y0 + cell_height],
         "anchor": y_anchor,
         "showticklabels": leftmost,
-        "title": {"text": resolved.labels.y if leftmost else ""},
+        # Tick labels and the axis title do NOT share a rule here (unlike x):
+        # a faceted panel's title names that panel, so it is drawn even where
+        # the shared tick labels are suppressed. See base.panel_y_title.
+        "title": {"text": panel_y_title(resolved, panel, leftmost=leftmost)},
         "type": "log" if resolved.spec.style.log_y else "-",
+        # No automargin here, deliberately, even though the x axes use it: an
+        # inner column's title is rotated text drawn into X_GAP (which is sized
+        # for it), and plotly's automargin answers a crowded subplot axis by
+        # growing the FIGURE's left margin — it would take back across the whole
+        # width the room this change just gave the panels.
     }
     # Link the axes when the spec asks for shared scales, so panning/zooming one
     # subplot moves them all — and so hiding tick labels stays truthful.
@@ -432,24 +445,6 @@ def _add_axes(
             layout[y_key]["matches"] = "y"
     if y_limits and resolved.kind is not PlotKind.HEATMAP:
         layout[y_key]["range"] = list(y_limits)
-
-
-def _panel_title(text, row, col, n_rows, n_cols) -> dict:
-    x0, y0, cell_width, cell_height = _cell(row, col, n_rows, n_cols)
-    _, y_gap = _gaps(n_rows, n_cols)
-    return {
-        "text": text,
-        "showarrow": False,
-        "xref": "paper",
-        "yref": "paper",
-        "x": x0 + cell_width / 2,
-        # A quarter of the ACTUAL gap: a tall grid has less room here, and a
-        # title that ignored that sat inside the panel above.
-        "y": min(1.0, y0 + cell_height + y_gap * 0.25),
-        "xanchor": "center",
-        "yanchor": "bottom",
-        "font": {"size": 11},
-    }
 
 
 #: Approximate width of one legend character at the webview's font size, in px.
@@ -473,28 +468,42 @@ def _right_margin(resolved: ResolvedPlot) -> int:
 
 
 #: Space between subplot cells, as a fraction of the figure. The vertical gap is
-#: much larger than the horizontal one because a row costs more: tick labels
-#: hang below a cell and the next row's title sits above it, and at 0.06 they
-#: collided.
-X_GAP = 0.05
-Y_GAP = 0.14
+#: still the larger of the two — x tick labels hang below a cell — but it used
+#: to be 0.14 because a panel TITLE also sat above the next row and at 0.06 the
+#: two collided. Facet names moved onto the y axis (base.panel_y_title), so that
+#: strip is no longer spent on captions and the panels keep the height.
+X_GAP = 0.06
+Y_GAP = 0.09
 
 
-def _gaps(n_rows: int, n_cols: int) -> tuple[float, float]:
+def _x_depth(resolved: ResolvedPlot) -> int:
+    """Rows of nested x-group labels that hang below a cell (0 when flat)."""
+    return resolved.x_plan.depth if resolved.x_plan else 0
+
+
+def _gaps(n_rows: int, n_cols: int, x_depth: int = 0) -> tuple[float, float]:
     """
     Gap between cells, never more than half the figure in total.
 
-    One function so the cell domains and the panel titles agree about how much
-    room there is between two rows — a title placed with the nominal gap while
-    the cells used a smaller one lands inside the panel above it.
+    One function so every consumer of the layout agrees about how much room
+    there is between two cells — the y-axis titles of the inner columns are
+    drawn into the horizontal gap, and the x tick labels into the vertical one.
+
+    ``x_depth`` is why the vertical gap is not just a constant: a nested x axis
+    draws a row of group labels and brackets under each panel that shows tick
+    labels (:func:`_add_x_groups`), and in a grid that is INSIDE the gap rather
+    than in the figure's bottom margin. Sizing the gap from the same number the
+    brackets are placed with is what stops them landing on the row below.
     """
     return (
         min(X_GAP, 0.5 / (n_cols - 1)) if n_cols > 1 else 0.0,
-        min(Y_GAP, 0.5 / (n_rows - 1)) if n_rows > 1 else 0.0,
+        min(Y_GAP + X_GROUP_ROW * x_depth, 0.5 / (n_rows - 1)) if n_rows > 1 else 0.0,
     )
 
 
-def _cell(row, col, n_rows, n_cols) -> tuple[float, float, float, float]:
+def _cell(
+    row, col, n_rows, n_cols, x_depth: int = 0
+) -> tuple[float, float, float, float]:
     """
     (x0, y0, width, height) of one grid cell, in paper coordinates.
 
@@ -506,7 +515,7 @@ def _cell(row, col, n_rows, n_cols) -> tuple[float, float, float, float]:
     absorbed by the figure's pixel height instead (the GUI sizes it from
     ``layout.meta.rows``).
     """
-    x_gap, y_gap = _gaps(n_rows, n_cols)
+    x_gap, y_gap = _gaps(n_rows, n_cols, x_depth)
     cell_width = (1.0 - x_gap * (n_cols - 1)) / n_cols
     cell_height = (1.0 - y_gap * (n_rows - 1)) / n_rows
     # Plotly's y domain runs bottom-up; our rows run top-down.

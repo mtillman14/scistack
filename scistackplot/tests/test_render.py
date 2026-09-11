@@ -366,6 +366,49 @@ def test_panel_titles_show_the_value_not_the_key(struct_table, wrapped_grid):
     assert all("ColName=" not in p.title for p in resolved.panels)
 
 
+def test_plotly_names_a_facet_on_its_y_axis_not_above_it(struct_table, wrapped_grid):
+    """The facet name IS the y-axis title, and no caption sits above the panel.
+
+    A caption spends a strip of every grid row on text; the axis title is room
+    the panel already spends. Both halves are asserted together because half of
+    this change alone leaves the panels either unnamed or named twice.
+    """
+    resolved = resolve(wrapped_grid, struct_table)[0]
+    payload = render_plotly(resolved)
+    layout = payload["layout"]
+
+    titles = {p.title for p in resolved.panels}
+    # slots: 1=(0,0) 2=(0,1) 3=(1,0) — including slot 2, which is NOT leftmost.
+    assert {layout[f"yaxis{s}"]["title"]["text"] for s in ("", "2", "3")} == titles
+    assert layout["yaxis2"]["showticklabels"] is False
+
+    drawn = {a.get("text") for a in layout["annotations"]}
+    assert not (drawn & titles)
+
+
+def test_matplotlib_names_a_facet_on_its_y_axis_not_above_it(
+    struct_table, wrapped_grid
+):
+    resolved = resolve(wrapped_grid, struct_table)[0]
+    figure = render_matplotlib(resolved)
+
+    visible = [ax for ax in figure.axes if ax.get_visible()]
+    assert {ax.get_ylabel() for ax in visible} == {p.title for p in resolved.panels}
+    assert not any(ax.get_title() for ax in visible)
+    matplotlib.pyplot.close(figure)
+
+
+def test_an_unfaceted_y_axis_still_names_the_measure(scalar_table, box_spec):
+    """The facet rule must not cost a lone plot its measure label."""
+    resolved = resolve(box_spec, scalar_table)[0]
+    layout = render_plotly(resolved)["layout"]
+    assert layout["yaxis"]["title"]["text"] == resolved.labels.y
+
+    figure = render_matplotlib(resolved)
+    assert figure.axes[0].get_ylabel() == resolved.labels.y
+    matplotlib.pyplot.close(figure)
+
+
 def test_plotly_ships_its_grid_shape(struct_table, wrapped_grid):
     payload = render_plotly(resolve(wrapped_grid, struct_table)[0])
     # 3 panels 2 wide -> 2 rows, 2 columns. The panel reads `rows`/`cols` back
@@ -399,14 +442,23 @@ def test_plotly_links_shared_axes(struct_table, wrapped_grid):
     assert payload["layout"]["yaxis2"]["matches"] == "y"
 
 
-def test_plotly_rows_do_not_overlap(struct_table, wrapped_grid):
-    """Each row's cell must clear the one below with room for tick labels."""
+def test_plotly_rows_clear_each_other_without_paying_for_captions(
+    struct_table, wrapped_grid
+):
+    """Each row's cell must clear the one below with room for tick labels.
+
+    The upper bound is the point: the gap used to be 0.14 because a panel
+    CAPTION sat in it as well. Facet names moved onto the y axis, so a gap that
+    large again would mean the grid is still paying for captions it no longer
+    draws — vertical room the panels should have got back.
+    """
     layout = render_plotly(resolve(wrapped_grid, struct_table)[0])["layout"]
     top_row = layout["yaxis"]["domain"]
     bottom_row = layout["yaxis3"]["domain"]
 
+    gap = top_row[0] - bottom_row[1]
     assert bottom_row[1] < top_row[0]
-    assert top_row[0] - bottom_row[1] >= 0.1
+    assert 0.05 <= gap < 0.12
 
 
 def test_matplotlib_keeps_ticklabels_above_an_empty_cell(struct_table, wrapped_grid):

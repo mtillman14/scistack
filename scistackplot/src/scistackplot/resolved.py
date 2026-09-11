@@ -82,12 +82,18 @@ class Panel:
     @property
     def title(self) -> str:
         """
-        Subplot caption: the facet VALUES only.
+        What names this panel: the facet VALUES only.
 
         The key is already obvious from the figure — every panel in a grid is
         faceted by the same factor, so repeating "ColName=" on all 13 subplots
         is noise. (``ResolvedPlot.figure_label`` keeps ``key=value``: there the
         figures are separate files and the key is not otherwise visible.)
+
+        Renderers draw this as the panel's **y-axis title**, not as a caption
+        above it (``render.base.panel_y_title``) — the axis title is room the
+        panel already spends, so the name costs the grid no height. The property
+        keeps its name because it is also the panel's identity in logs, in
+        ``to_dict`` and in the GUI.
         """
         return " · ".join(str(v) for v in self.key.values())
 

@@ -262,6 +262,48 @@ def test_a_ruled_column_layout_is_exported_as_col_order(bilateral_table):
     assert "seaborn cannot express" not in source
 
 
+def test_facet_names_are_exported_as_y_labels_not_titles(
+    scalar_table, scalar_frame
+):
+    """
+    Export parity for the facet naming rule (render.base.panel_y_title).
+
+    seaborn captions every facet by default, so the preview's rule — the facet
+    values ARE the y-axis title, and nothing sits above the panel — has to be
+    said in the generated code too. Run, not just grepped: the ylabel loop reads
+    ``axes_dict``, and a snippet that raises is worse than no export at all.
+    """
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.X, "session": Role.FACET, "trial": Role.FREE},
+        kind=PlotKind.BOX,
+    )
+    source = generate_plot_function(spec, scalar_table)
+    assert 'g.set_titles("")' in source
+
+    figure = _run(source, scalar_frame, "plot_steplength")
+    panels = [ax for ax in figure.axes if ax.get_visible()]
+    assert panels
+    assert not any(ax.get_title() for ax in panels)
+    assert {ax.get_ylabel() for ax in panels} == {
+        str(level) for level in scalar_table.factor("session").levels
+    }
+    matplotlib.pyplot.close(figure)
+
+
+def test_an_unfaceted_export_keeps_the_measure_on_the_y_axis(scalar_table):
+    """No facets, nothing to rename the axis after — and no titles to suppress."""
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        kind=PlotKind.BOX,
+    )
+    source = generate_plot_function(spec, scalar_table)
+
+    assert "set_titles" not in source
+    assert "'StepLength'" in source.split("set_axis_labels")[1].split("\n")[0]
+
+
 def test_a_layout_with_holes_says_seaborn_cannot_express_it(struct_table):
     """
     Rules that leave an empty cell have no col_wrap equivalent — seaborn would

@@ -68,6 +68,28 @@ def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
     return (row, col - 1) not in occupied_cells(resolved)
 
 
+def panel_y_title(resolved: ResolvedPlot, panel, *, leftmost: bool) -> str:
+    """The y-axis title one panel carries.
+
+    Keyed off the panel's own facet KEY rather than off the spec's roles, so a
+    FACET factor that resolved to a single keyless panel reads as the ordinary
+    plot it is instead of as a grid of one.
+
+    ONE rule for both renderers, and the reason a faceted figure has no subplot
+    captions: **the facet values ARE the y-axis title**. A caption above every
+    panel costs a strip of vertical room in each row of the grid — the axis
+    title is room the panel was already spending, so the same information
+    arrives for free and the panels get the height back.
+
+    It follows that a faceted panel labels its axis wherever it sits: the text
+    identifies THIS panel, so the "leftmost only" rule (which exists to stop a
+    shared label being repeated) does not apply to it.
+    """
+    if panel is not None and panel.key:
+        return panel.title
+    return resolved.labels.y if leftmost else ""
+
+
 def is_categorical_x(resolved: ResolvedPlot) -> bool:
     """
     Whether the x axis is a set of discrete positions rather than a number line.

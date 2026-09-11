@@ -631,6 +631,21 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
         f"g.set_axis_labels({x_label!r}, "
         f"{(style.y_label or spec.y_measure)!r})"
     )
+    if facets:
+        # Same rule as the preview (render.base.panel_y_title): the facet values
+        # ARE the panel's y-axis title, and no caption sits above it. seaborn
+        # does the opposite by default, so both halves have to be said here or
+        # the exported figure spends vertical room the preview gave to the data.
+        # A two-factor grid keys axes_dict by (row, col), which is the reverse
+        # of the panel key's order — hence the reversed().
+        lines.extend(
+            [
+                'g.set_titles("")',
+                "for _key, _ax in g.axes_dict.items():",
+                "    _values = _key if isinstance(_key, tuple) else (_key,)",
+                '    _ax.set_ylabel(" · ".join(str(v) for v in reversed(_values)))',
+            ]
+        )
     if style.log_x:
         lines.append('g.set(xscale="log")')
     if style.log_y:

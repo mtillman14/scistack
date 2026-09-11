@@ -25,6 +25,7 @@ from .base import (
     palette_for,
     panel_position,
     panel_y_limits,
+    panel_y_title,
     shares_y_axis,
     shows_legend,
     shows_x_labels,
@@ -90,8 +91,9 @@ def render(resolved: ResolvedPlot):
             used.add((row, col))
             at_cell[(row, col)] = panel
             _draw_panel(ax, panel.frame, resolved)
-            if panel.key:
-                ax.set_title(panel.title, fontsize=10)
+            # No subplot caption: a faceted panel is named by its y-axis title
+            # instead (base.panel_y_title), which buys back the row of vertical
+            # space a title costs in every row of the grid.
 
         # Blank out grid cells no panel landed in (a wrapped grid's remainder).
         for row in range(n_rows):
@@ -308,13 +310,14 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
             # back everywhere.
             bottom = shows_x_labels(resolved, row, col)
             leftmost = shows_y_labels(resolved, row, col)
+            panel = at_cell.get((row, col))
             ax.set_xlabel(resolved.labels.x if bottom else "")
-            ax.set_ylabel(resolved.labels.y if leftmost else "")
+            # The facet values, when this is a facet — see base.panel_y_title.
+            ax.set_ylabel(panel_y_title(resolved, panel, leftmost=leftmost))
             if style.log_x:
                 ax.set_xscale("log")
             if style.log_y:
                 ax.set_yscale("log")
-            panel = at_cell.get((row, col))
             limits = panel_y_limits(resolved, panel) if panel else resolved.y_limits
             if limits and resolved.kind is not PlotKind.HEATMAP:
                 ax.set_ylim(*limits)

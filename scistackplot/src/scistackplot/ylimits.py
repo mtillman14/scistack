@@ -146,7 +146,10 @@ def limits_for(
     consulted, which is what lets a manual range be set on an empty figure.
     """
     if y_axis.is_manual:
-        return (float(y_axis.minimum), float(y_axis.maximum))
+        # _ordered here too: BOTH ends typed by hand is exactly the case where a
+        # swapped pair reaches an axis untouched, because this path never
+        # consults the data and so never passed through the ordering below.
+        return _ordered(float(y_axis.minimum), float(y_axis.maximum))
 
     group = tuple(key.get(name) for name in scope)
     found = limits.get(group)
@@ -423,8 +426,21 @@ def _ordered(low: float, high: float) -> tuple[float, float]:
     A hand-typed minimum above the computed maximum is a typo, not an inverted
     axis: matplotlib would silently flip the axis and the figure would read
     upside down with nothing to say why.
+
+    Swapping is reported rather than done quietly — the user typed one of those
+    two numbers and the figure is about to disagree with it, so the log is the
+    only place that can say which way round the axis actually ended up.
     """
-    return (low, high) if low <= high else (high, low)
+    if low <= high:
+        return (low, high)
+    Log.warn(
+        "y limits arrived inverted (%s above %s) — drawing them the other way "
+        "round rather than flipping the axis",
+        low,
+        high,
+        layer=LAYER,
+    )
+    return (high, low)
 
 
 def _padded(low: float, high: float) -> tuple[float, float]:

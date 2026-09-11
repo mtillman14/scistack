@@ -94,6 +94,12 @@ Ops are `starts_with`, `ends_with`, `contains`, `not_contains`, `equals` and
 `regex`; a panel matching no rule lands in a trailing "other" row or column
 rather than vanishing.
 
+Each panel is named on its **y axis**, not by a caption above it. A caption
+spends a strip of every row of the grid on text; the axis title is room the
+panel was already spending, so a 4x3 grid gets that height back for the data.
+The generated seaborn code says the same thing (`g.set_titles("")`), because
+the export must be the figure you previewed.
+
 ## Ordering is not cosmetic
 
 Zero-padded IDs (`"01"`, `"02"`, … `"10"`) sort lexicographically into

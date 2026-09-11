@@ -225,6 +225,56 @@ def test_facets_share_one_composed_axis(grouped_table):
     assert figure.x_plan is not None
 
 
+def test_group_brackets_stay_out_of_the_row_below():
+    """
+    The brackets hang INSIDE the vertical gap, so the gap has to be sized for
+    them — that is why ``_gaps`` takes the x depth rather than being a constant.
+
+    The case is a wrapped grid: the panel at (0, 1) has an empty cell below it,
+    so it is the bottom of its own column and draws tick labels and group
+    brackets into the gap that separates the two rows.
+    """
+    from scistackplot import FacetOptions, render_plotly
+    from scistackplot.render.plotly_ import X_GROUP_ROW
+
+    rows = [
+        {"group": g, "session": s, "site": site, "subject": p, "StepLength": 1.0}
+        for g in ["stim", "sham"]
+        for s in ["pre", "post"]
+        for site in ["A", "B", "C"]
+        for p in ["01", "02"]
+    ]
+    table = LongTable.from_frame(
+        pd.DataFrame(rows),
+        factors=["group", "session", "site", "subject"],
+        measures=["StepLength"],
+        schema_levels=["subject"],
+    )
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={
+            "group": Role.X,
+            "session": Role.X,
+            "site": Role.FACET,
+            "subject": Role.FREE,
+        },
+        x_layers=["group", "session"],
+        kind=PlotKind.BOX,
+        facet=FacetOptions(n_cols=2),
+    )
+
+    layout = render_plotly(resolve(spec, table)[0])["layout"]
+    # slots: 1=(0,0) 2=(0,1) 3=(1,0). Only (0,1) and (1,0) draw brackets — and
+    # the top row's are the ones in the right-hand column.
+    top_row_brackets = [a["y"] for a in layout["annotations"] if a["x"] > 0.5]
+    assert top_row_brackets
+    lowest_in_top_row = min(top_row_brackets)
+    row_below_top = layout["yaxis3"]["domain"][1]
+
+    # Clearance for the label's own height, not merely a non-overlap.
+    assert lowest_in_top_row - row_below_top >= X_GROUP_ROW
+
+
 # --- refusals --------------------------------------------------------------
 
 
