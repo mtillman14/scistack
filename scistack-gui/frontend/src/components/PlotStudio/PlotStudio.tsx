@@ -19,20 +19,44 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-cartesian-dist-min'
 import { callBackend, isVSCodeMode } from '../../api'
+import { useBackendMessage } from '../../hooks/useBackendMessage'
 import VariantDagPopup from './VariantDagPopup'
 
 const Plot = createPlotlyComponent(Plotly)
 
 type Role = 'iterate' | 'x' | 'color' | 'facet' | 'aggregate' | 'free'
 
-const ROLE_OPTIONS: { value: Role; label: string; hint: string }[] = [
-  { value: 'x', label: 'X axis', hint: 'Position along the x axis' },
-  { value: 'color', label: 'Color', hint: 'One coloured series per level' },
-  { value: 'facet', label: 'Facet', hint: 'One subplot per level — arrange them under Layout' },
-  { value: 'iterate', label: 'Separate figures', hint: 'One whole figure per level' },
-  { value: 'aggregate', label: 'Average over', hint: 'Collapse this factor to its mean' },
-  { value: 'free', label: 'Replicates', hint: 'Keep as repeated observations' },
-]
+/** One entry of a factor's role dropdown, as the backend reports it.
+ *
+ *  There is deliberately no constant list here any more. The panel used to
+ *  offer all six roles for every factor while `roles.validate` refused several
+ *  of them, so picking one could produce an error instead of a plot: X on a 1-D
+ *  measure (its x axis is the sample index), X when an `x_measure` already
+ *  supplies the axis, a second factor on COLOR. The labels were wrong too —
+ *  "Average over" and "Replicates" describe a table, not the traces a 1-D user
+ *  is looking at.
+ *
+ *  Both are now answered by `capability.role_options`, which derives them by
+ *  asking `validate` itself, so this component renders whatever it is given
+ *  (CLAUDE.md NOTE 3). */
+interface RoleOption {
+  role: Role
+  label: string
+  hint: string
+  available: boolean
+  /** validate's own message, naming the one-line fix. Null when available. */
+  reason: string | null
+}
+
+/** The dropdown's contents when the backend has not reported any — which only
+ *  happens before the first capability report lands. One entry, the role the
+ *  spec already holds, so the control shows the truth instead of being empty.
+ *  Never a guess at what else is legal: that is exactly the question this
+ *  stage moved to the backend. */
+function fallbackRoles(current: Role | undefined): RoleOption[] {
+  const role = current ?? 'free'
+  return [{ role, label: role, hint: '', available: true, reason: null }]
+}
 
 const KIND_LABELS: Record<string, string> = {
   scatter: 'Scatter',
@@ -60,6 +84,12 @@ interface FactorInfo {
   /** Levels surviving `spec.filters`, measured with the same function the
    *  figure uses. Absent on the pre-filter (`describe`) view. */
   selected?: (string | number)[]
+  /** What this factor's dropdown offers, and what it refuses. */
+  roles?: RoleOption[]
+  /** Whether this factor may group the x axis — the Grouping section's
+   *  question, reported apart from `roles` because X is not in that menu. */
+  x_available?: boolean
+  x_reason?: string | null
 }
 
 /** A factor derived by bucketing another factor's levels. */
@@ -178,7 +208,6 @@ interface VariantSummary {
    *  flag. */
   total_combinations: number
   selected_combinations: number
-  policy: string
 }
 
 interface Capabilities {
@@ -191,7 +220,25 @@ interface Capabilities {
    *  and the columns its selections consumed excluded. The panel renders these
    *  rather than `describe.table.factors`, which is the pre-selection view. */
   factors?: FactorInfo[]
+  grouping?: GroupingInfo
   variants?: VariantSummary
+}
+
+/** Whether factors may group the x axis, and how they group it now.
+ *
+ *  A factor on x IS a categorical grouping — the nested axis is composed from
+ *  the observed level combinations, with spacers between groups. Continuous x
+ *  comes from `x_measure`, or from the sample index for 1-D data, so this is
+ *  offered for scalar measures and refused with a reason otherwise. The
+ *  backend decides; this panel renders the answer. */
+interface GroupingInfo {
+  available: boolean
+  /** Why the x axis cannot be grouped. Null when it can. */
+  reason: string | null
+  /** Factors on x, outermost first — membership and order already reconciled
+   *  the same way the figure does it. */
+  layers: string[]
+  max_layers: number
 }
 
 type MatchOp = 'starts_with' | 'ends_with' | 'contains' | 'not_contains' | 'equals' | 'regex'
@@ -255,7 +302,6 @@ interface Spec {
   kind: string
   aggregate?: { statistic: string; error: string }
   facet?: FacetOptions
-  variant_policy?: string
   /* Order the x-axis factors nest in, outermost first. Membership is `roles`;
      this is only the order, so assigning a role can never make the spec
      invalid. */
@@ -444,35 +490,46 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   // Monotonic id of the newest request. A reply whose id is not the current one
   // is stale and is DROPPED — see below for why that matters so much here.
   const generation = useRef(0)
-  useEffect(() => {
-    if (!spec) return
-    if (timer.current) window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => {
-      // Every spec change supersedes the one before it. Without this counter the
-      // panel had no notion of a stale reply at all: the 180 ms debounce only
-      // coalesces keystrokes, so a drag across role dropdowns fires a resolve
-      // every 180 ms while each one takes 4-16 s, and the backend runs each in
-      // its own thread (server.py spawns one per request and never cancels).
-      // Measured 2026-09-10: four to six full resolves in flight at once, each
-      // re-exploding ~4 million rows and slowing the others down, with resolve
-      // times climbing 4s -> 7.8s -> 10.1s -> 16.2s as they piled up — until one
-      // crossed the fixed 30 s transport timeout and surfaced as "Request
-      // plot_resolve timed out". Nothing had hung; the panel was competing with
-      // its own abandoned work.
-      //
-      // This cannot ABORT the in-flight work (the JSON-RPC transport has no
-      // cancel, and the server would have to learn to interrupt a running
-      // resolve). What it does is stop stale replies from overwriting fresh
-      // ones, and stop `busy` from being cleared by a request nobody is waiting
-      // for. The backend-side fix is the frame cache below, which makes each
-      // resolve cheap enough that overlap stops mattering.
+  // --- single-flight ------------------------------------------------------
+  // At most ONE resolve is in flight, and at most one waiting behind it.
+  //
+  // The generation counter below drops stale REPLIES, which was never the whole
+  // problem: the backend still ran every superseded request to completion. The
+  // 180 ms debounce only coalesces keystrokes, so a drag across role dropdowns
+  // fired a resolve every 180 ms while each took 4-16 s, and the server spawns a
+  // thread per request and never cancels (server.py). Measured 2026-09-10 and
+  // again 2026-09-11: four to six full resolves in flight at once, each
+  // re-exploding millions of rows and slowing the others down, with resolve
+  // times climbing 3.3s -> 7.6s -> 15.2s -> 27.7s as they piled up — until one
+  // crossed the fixed 30 s transport timeout and surfaced as "Request
+  // plot_resolve timed out". Nothing had hung; the panel was competing with its
+  // own abandoned work.
+  //
+  // Holding one back turns that drag into two resolves total: the one already
+  // running, and the state the user actually stopped on. Intermediate specs are
+  // never sent at all, which is the only way to not pay for them — the
+  // transport has no cancel, so anything already dispatched runs to completion.
+  const inFlight = useRef(false)
+  const queued = useRef<{ spec: Spec; figureIndex: number; specKey: string } | null>(null)
+
+  // Explicitly typed because it calls itself (to drain `queued`), and an
+  // inferred self-referential const is a TS error rather than a cycle.
+  const launchResolve: (spec: Spec, index: number, key: string) => void = useCallback(
+    (nextSpec: Spec, nextIndex: number, nextKey: string) => {
+      inFlight.current = true
       const mine = ++generation.current
       setBusy(true)
-      const needCapabilities = capsSpecRef.current !== specKey
+      const needCapabilities = capsSpecRef.current !== nextKey
       Promise.all([
-        callBackend('plot_resolve', { spec, figure_index: figureIndex, ...sourceParams }),
+        callBackend('plot_resolve', {
+          spec: nextSpec,
+          figure_index: nextIndex,
+          ...sourceParams,
+        }),
         needCapabilities
-          ? callBackend('plot_capabilities', { spec, ...sourceParams }).catch(() => null)
+          ? callBackend('plot_capabilities', { spec: nextSpec, ...sourceParams }).catch(
+              () => null
+            )
           : Promise.resolve(null),
       ])
         .then(([resolved, caps]) => {
@@ -489,7 +546,7 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
           if (typeof result.figure_index === 'number') setFigureIndex(result.figure_index)
           if (caps) {
             setCapabilities(caps as Capabilities)
-            capsSpecRef.current = specKey
+            capsSpecRef.current = nextKey
           }
         })
         .catch(err => {
@@ -497,14 +554,42 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
           setSpecError((err as Error).message)
         })
         .finally(() => {
+          inFlight.current = false
+          const next = queued.current
+          queued.current = null
+          if (next) {
+            // Someone changed the spec while this was running. Send the LAST
+            // such state — everything before it is already superseded and
+            // sending it would be exactly the pile-up this exists to stop.
+            launchResolve(next.spec, next.figureIndex, next.specKey)
+            return
+          }
           // Only the newest request may say the panel is idle. A superseded one
           // finishing late would otherwise clear the spinner while the resolve
           // the user is actually waiting for is still running.
           if (mine === generation.current) setBusy(false)
         })
+    },
+    [sourceParams]
+  )
+
+  useEffect(() => {
+    if (!spec) return
+    if (timer.current) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => {
+      if (inFlight.current) {
+        // Replaces any earlier waiter rather than queueing behind it.
+        queued.current = { spec, figureIndex, specKey }
+        // The panel is still working on the user's behalf, so it must still say
+        // so — the running request may be for a spec they have already moved on
+        // from, and clearing `busy` when it lands would be a lie.
+        setBusy(true)
+        return
+      }
+      launchResolve(spec, figureIndex, specKey)
     }, 180)
     return () => { if (timer.current) window.clearTimeout(timer.current) }
-  }, [spec, specKey, figureIndex, sourceParams])
+  }, [spec, specKey, figureIndex, sourceParams, launchResolve])
 
   // --- figure navigation --------------------------------------------------
   const figureCount = figureLabels.length
@@ -694,12 +779,6 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     )
   }, [])
 
-  /** Average across variant factors no row selected. The deliberate opt-in that
-   *  `roles.validate` demands — pooling looks exactly like not pooling. */
-  const setPooling = useCallback((pool: boolean) => {
-    setSpec(prev => (prev ? { ...prev, variant_policy: pool ? 'pool' : 'facet' } : prev))
-  }, [])
-
   /** Commit the row the "+ Add variant" picker built.
    *
    *  The row is created HERE, on apply — not by the "+" click. Clicking "+"
@@ -720,19 +799,15 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     }) => {
       setSpec(prev => {
         if (!prev) return prev
-        const rows = prev.variant_sets ?? []
-        // Adding the FIRST row to an empty list would pin the figure to that
-        // row alone — so the variable already being plotted becomes an explicit
-        // row first. One click then reads as "RawEMG, and…" instead of silently
-        // replacing the figure with whatever the new row ends up naming.
-        const seeded =
-          rows.length === 0
-            ? [{ name: null, selection: {}, variable: prev.measures[0] }]
-            : rows
+        // Row 0 already exists: `roles.default_spec` seeds it for every table,
+        // variants or not. This used to seed it HERE, lazily, on the way to
+        // adding the second — which meant the panel opened with an empty
+        // Variants list saying nothing about the variable on screen, and put a
+        // rule about what a figure opens on in TypeScript (CLAUDE.md NOTE 3).
         return {
           ...prev,
           variant_sets: [
-            ...seeded,
+            ...(prev.variant_sets ?? []),
             {
               name: next.name || null,
               selection: next.selection,
@@ -806,6 +881,13 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   )
   // Membership from roles, order from x_layers — the same reconciliation the
   // backend does, so the control shows what the figure will draw.
+  //
+  // Derived from the SPEC rather than read off `capabilities.grouping.layers`,
+  // for the reason the Variants rows are: the spec updates on the click and
+  // the capability report is a debounced echo, so a checkbox reading the echo
+  // would visibly lag the tick. The backend's copy is what the FIGURE uses;
+  // this one only has to agree with it, and `ordered_x_layers` is the shared
+  // definition both are written from.
   const xLayers = useMemo(() => {
     const holders = Object.entries(spec?.roles ?? {})
       .filter(([, role]) => role === 'x')
@@ -813,6 +895,10 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     const ordered = (spec?.x_layers ?? []).filter(name => holders.includes(name))
     return [...ordered, ...holders.filter(name => !ordered.includes(name))]
   }, [spec?.roles, spec?.x_layers])
+
+  // Policy, though, comes from the backend: whether the x axis can be grouped
+  // at all for this measure's shape, and why not when it cannot.
+  const grouping = capabilities?.grouping
 
   const groupable = describe?.groupable_with ?? []
   // Only real factors can be bucketed — not a factor this spec already derived
@@ -921,32 +1007,108 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
       .catch(err => setNotice(`Export failed: ${(err as Error).message}`))
   }, [spec, sourceParams])
 
-  const handleSave = useCallback(async () => {
-    if (!spec) return
-    setNotice('')
-    const defaultName = `${title || 'figure'}.png`.replace(/[^\w.-]+/g, '_')
-    try {
-      let path: string | null = null
-      if (isVSCodeMode) {
-        const picked = await callBackend('pick_save_path', { defaultName })
-        path = (picked as { path: string | null }).path
-        if (!path) return  // dialog cancelled
-      } else {
-        path = window.prompt('Save the figure as:', defaultName)
-        if (!path) return
+  // The background save's job id. A ref, not state: the first figure can
+  // report progress before the render that set it has committed, and the
+  // message handler has to be able to match that id immediately.
+  const saveJob = useRef<string | null>(null)
+  // The same fact as state, purely to re-render the button. The ref is the
+  // one the handler reads; this only ever follows it.
+  const [saving, setSaving] = useState(false)
+
+  /** Save one figure, or the whole fan-out.
+   *
+   *  Two buttons rather than one because the costs are not comparable, and the
+   *  two take different SHAPES for the same reason. A save renders at FULL
+   *  resolution with no downsampling, so one figure is already more work than
+   *  the interactive resolve beside it — and the whole fan-out is that
+   *  multiplied by the figure count, against a fixed 30 s transport timeout.
+   *  Saving everything used to be the only behaviour, and the only behaviour
+   *  was the one that timed out.
+   *
+   *  So: one figure is a request/response, and the fan-out is a background job
+   *  that reports progress (`saveJob` below). No timeout value makes "save
+   *  thirty subjects" answerable in one round trip. */
+  const saveFigures = useCallback(
+    async (scope: 'current' | 'all') => {
+      if (!spec) return
+      setNotice('')
+      const defaultName = `${title || 'figure'}.png`.replace(/[^\w.-]+/g, '_')
+      try {
+        let path: string | null = null
+        if (isVSCodeMode) {
+          const picked = await callBackend('pick_save_path', { defaultName })
+          path = (picked as { path: string | null }).path
+          if (!path) return  // dialog cancelled
+        } else {
+          path = window.prompt('Save the figure as:', defaultName)
+          if (!path) return
+        }
+
+        if (scope === 'all') {
+          // Adopt the job id BEFORE awaiting: a fast first figure can report
+          // progress while this promise is still settling, and a handler that
+          // does not yet know the id would drop it.
+          const started = (await callBackend('plot_save_all', {
+            spec,
+            path,
+            ...sourceParams,
+          })) as { job_id: string }
+          saveJob.current = started.job_id
+          setSaving(true)
+          setNotice(`Saving ${figureCount} figures…`)
+          return
+        }
+
+        setNotice('Rendering at full resolution…')
+        const result = (await callBackend('plot_save_figure', {
+          spec,
+          path,
+          figure_index: figureIndex,
+          ...sourceParams,
+        })) as {
+          ok: boolean
+          error: string | null
+          files: string[]
+        }
+        if (!result.ok) setNotice(`Could not save: ${result.error}`)
+        else setNotice(`Saved ${result.files.join(', ')}`)
+      } catch (err) {
+        setNotice(`Could not save: ${(err as Error).message}`)
       }
-      setNotice('Rendering at full resolution…')
-      const result = (await callBackend('plot_save_figure', { spec, path, ...sourceParams })) as {
-        ok: boolean
-        error: string | null
-        files: string[]
+    },
+    [spec, sourceParams, title, figureIndex, figureCount]
+  )
+
+  useBackendMessage(
+    useCallback((msg) => {
+      // Both transports, one handler: the WebSocket path delivers the dict as
+      // sent (`type`, fields at the top level) and the JSON-RPC path wraps it
+      // (`method` + `params`). Same normalization every other consumer does.
+      const kind = (msg.type ?? msg.method) as string
+      const params = (msg.params ?? msg) as Record<string, unknown>
+      if (!kind?.startsWith('plot_save_')) return
+      // Ignore another panel's job — two Plot Studio tabs can save at once.
+      if (params.job_id !== saveJob.current) return
+
+      if (kind === 'plot_save_progress') {
+        setNotice(`Saving ${params.done} of ${params.total}…`)
+      } else if (kind === 'plot_save_complete') {
+        const files = (params.files ?? []) as string[]
+        const elapsed = params.elapsed as number | undefined
+        saveJob.current = null
+        setSaving(false)
+        setNotice(
+          `Saved ${files.length} figure(s)` +
+            (elapsed ? ` in ${elapsed.toFixed(1)}s` : '') +
+            `: ${files.join(', ')}`
+        )
+      } else if (kind === 'plot_save_failed') {
+        saveJob.current = null
+        setSaving(false)
+        setNotice(`Could not save: ${params.error}`)
       }
-      if (!result.ok) setNotice(`Could not save: ${result.error}`)
-      else setNotice(`Saved ${result.files.join(', ')}`)
-    } catch (err) {
-      setNotice(`Could not save: ${(err as Error).message}`)
-    }
-  }, [spec, sourceParams, title])
+    }, [])
+  )
 
   const handleAddToPipeline = useCallback(() => {
     if (!spec) return
@@ -1032,15 +1194,6 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
                 onRemove={removeVariantSet}
                 onAdd={() => setAddingVariant(true)}
               />
-              <label style={styles.poolRow} title="Average across variant factors no row selected — results from different pipeline variants are combined">
-                <input
-                  type="checkbox"
-                  checked={spec?.variant_policy === 'pool'}
-                  onChange={e => setPooling(e.target.checked)}
-                  style={{ marginRight: 6 }}
-                />
-                Pool unselected variants
-              </label>
               <VariantReadout summary={capabilities?.variants} />
             </Section>
           )}
@@ -1083,34 +1236,61 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
             )}
           </Section>
 
-          {(groupable.length > 0 || (spec?.level_groups ?? []).length > 0) && (
-            <Section title="Groups">
-              <div style={styles.hint}>
-                Grouping the data already records, and buckets you define. Both
-                become factors you can colour or facet by.
-              </div>
-              {groupable.map(name => (
-                <label key={name} style={styles.kindRow}>
-                  <input
-                    type="checkbox"
-                    checked={(spec?.factor_variables ?? []).includes(name)}
-                    onChange={e => toggleFactorVariable(name, e.target.checked)}
-                    style={{ marginRight: 6 }}
+          {/* Grouping: what groups EXIST, then which of them group the x axis.
+              These were two sections with near-identical names ("Groups" and
+              an "X grouping" list that only appeared once two factors already
+              held X, making it unreachable until the user found the role
+              dropdown). One question, one place, read top to bottom. */}
+          <Section title="Grouping">
+            {(groupable.length > 0 || (spec?.level_groups ?? []).length > 0) && (
+              <>
+                <div style={styles.hint}>
+                  Grouping the data already records, and buckets you define.
+                  Both become factors you can colour, facet, or group the x
+                  axis by.
+                </div>
+                {groupable.map(name => (
+                  <label key={name} style={styles.kindRow}>
+                    <input
+                      type="checkbox"
+                      checked={(spec?.factor_variables ?? []).includes(name)}
+                      onChange={e => toggleFactorVariable(name, e.target.checked)}
+                      style={{ marginRight: 6 }}
+                    />
+                    {name}
+                  </label>
+                ))}
+                {(spec?.level_groups ?? []).map((group, index) => (
+                  <LevelGroupEditor
+                    key={index}
+                    group={group}
+                    onEdit={patch => editLevelGroup(index, patch)}
+                    onRemove={() => removeLevelGroup(index)}
                   />
-                  {name}
-                </label>
-              ))}
-              {(spec?.level_groups ?? []).map((group, index) => (
-                <LevelGroupEditor
-                  key={index}
-                  group={group}
-                  onEdit={patch => editLevelGroup(index, patch)}
-                  onRemove={() => removeLevelGroup(index)}
-                />
-              ))}
-              <BucketAdder factors={bucketable} onAdd={addLevelGroup} />
-            </Section>
-          )}
+                ))}
+                <BucketAdder factors={bucketable} onAdd={addLevelGroup} />
+              </>
+            )}
+
+            {/* The x axis itself. Scalar-only, and the backend says so —
+                a 1-D measure's x is its sample index, and a joined x_measure
+                is a measured value, neither of which is a grouping. */}
+            {grouping?.available ? (
+              <XGrouping
+                factors={factors}
+                layers={xLayers}
+                maxLayers={grouping.max_layers}
+                onToggle={(name, on) => setRole(name, on ? 'x' : 'free')}
+                onMove={moveXLayer}
+              />
+            ) : (
+              grouping?.reason && (
+                <div style={styles.hint}>
+                  <strong>X axis:</strong> {grouping.reason}
+                </div>
+              )
+            )}
+          </Section>
 
           <Section title="Factors">
             <div style={styles.hint}>Each factor does exactly one thing.</div>
@@ -1127,56 +1307,28 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
                   onChange={e => setRole(factor.name, e.target.value as Role)}
                   style={styles.select}
                 >
-                  {ROLE_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value} title={option.hint}>
+                  {/* `factors` falls back to describe's raw table, which
+                      carries no role report — an empty <select> would be a
+                      dead control, so show at least what it is set to. */}
+                  {(factor.roles ?? fallbackRoles(spec?.roles?.[factor.name])).map(option => (
+                    <option
+                      key={option.role}
+                      value={option.role}
+                      // Disabled rather than hidden: a role that is unavailable
+                      // BECAUSE of another choice ("something else already has
+                      // Color") has to stay visible, or the control silently
+                      // shrinks and the user cannot see what to undo.
+                      disabled={!option.available}
+                      title={option.reason ?? option.hint}
+                    >
                       {option.label}
+                      {option.available ? '' : ' —'}
                     </option>
                   ))}
                 </select>
               </label>
             ))}
           </Section>
-
-          {xLayers.length > 1 && (
-            <Section title="X grouping">
-              <div style={styles.hint}>
-                Outermost first: the top factor's groups sit side by side, each
-                split by the one below it.
-              </div>
-              {xLayers.map((name, index) => (
-                <div key={name} style={styles.xLayerRow}>
-                  <span style={styles.xLayerDepth}>{index + 1}</span>
-                  <span style={styles.factorName}>
-                    {factors.find(f => f.name === name)?.display ?? name}
-                  </span>
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.navButton,
-                      ...(index === 0 ? styles.navButtonOff : null),
-                    }}
-                    disabled={index === 0}
-                    onClick={() => moveXLayer(name, -1)}
-                    title="Move outward"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.navButton,
-                      ...(index === xLayers.length - 1 ? styles.navButtonOff : null),
-                    }}
-                    disabled={index === xLayers.length - 1}
-                    onClick={() => moveXLayer(name, 1)}
-                    title="Move inward"
-                  >
-                    ↓
-                  </button>
-                </div>
-              ))}
-            </Section>
-          )}
 
           <Section title="Plot type">
             {(capabilities?.kinds ?? []).map(info => (
@@ -1275,11 +1427,33 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
             <button
               type="button"
               style={styles.button}
-              onClick={handleSave}
+              onClick={() => saveFigures('current')}
               title="Render with matplotlib at full resolution — the same figure the pipeline would produce"
             >
-              Save image
+              {figureCount > 1 ? 'Save current figure' : 'Save image'}
             </button>
+            {/* Only worth offering when there is more than one figure — and
+                worth keeping separate, because it costs figureCount times as
+                much as the button beside it. */}
+            {figureCount > 1 && (
+              <button
+                type="button"
+                style={styles.button}
+                onClick={() => saveFigures('all')}
+                // One job at a time. A second would write to the same files
+                // from a second thread, and the progress readout can only
+                // follow one id.
+                disabled={saving}
+                title={
+                  saving
+                    ? 'A save is already running'
+                    : `Render all ${figureCount} figures at full resolution, ` +
+                      `one file each — runs in the background`
+                }
+              >
+                {saving ? 'Saving…' : `Save all ${figureCount} figures`}
+              </button>
+            )}
             <button type="button" style={styles.button} onClick={handleExport}>
               Export code
             </button>
@@ -2068,6 +2242,110 @@ function RangeFilter({
   )
 }
 
+/**
+ * Which factors group the x axis, and how they nest.
+ *
+ * Both halves of one question, in one control. Membership used to be a value
+ * in each factor's role dropdown and the order a separate section that only
+ * appeared once two factors already held X — so the ordering UI was
+ * unreachable until you had found the dropdown, and nothing said the two were
+ * related.
+ *
+ * Checked rows carry a depth number and move with the arrows; unchecked ones
+ * sit below. `maxLayers` is the backend's limit (a fourth level of nesting
+ * cannot be read off an axis), enforced here by disabling the rest rather than
+ * letting the user pick one and be refused.
+ */
+function XGrouping({
+  factors,
+  layers,
+  maxLayers,
+  onToggle,
+  onMove,
+}: {
+  factors: FactorInfo[]
+  layers: string[]
+  maxLayers: number
+  onToggle: (factor: string, on: boolean) => void
+  onMove: (factor: string, delta: number) => void
+}) {
+  const groupable = factors.filter(f => f.x_available || layers.includes(f.name))
+  const full = layers.length >= maxLayers
+  const display = (name: string) =>
+    factors.find(f => f.name === name)?.display ?? name
+
+  return (
+    <>
+      <div style={styles.hint}>
+        Group the x axis by one or more factors. Outermost first: the top
+        factor's groups sit side by side, each split by the one below it.
+      </div>
+      {layers.map((name, index) => (
+        <div key={name} style={styles.xLayerRow}>
+          <span style={styles.xLayerDepth}>{index + 1}</span>
+          <input
+            type="checkbox"
+            checked
+            onChange={() => onToggle(name, false)}
+            title="Stop grouping by this factor"
+            style={{ marginRight: 6 }}
+          />
+          <span style={styles.factorName}>{display(name)}</span>
+          <button
+            type="button"
+            style={{
+              ...styles.navButton,
+              ...(index === 0 ? styles.navButtonOff : null),
+            }}
+            disabled={index === 0}
+            onClick={() => onMove(name, -1)}
+            title="Move outward"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            style={{
+              ...styles.navButton,
+              ...(index === layers.length - 1 ? styles.navButtonOff : null),
+            }}
+            disabled={index === layers.length - 1}
+            onClick={() => onMove(name, 1)}
+            title="Move inward"
+          >
+            ↓
+          </button>
+        </div>
+      ))}
+      {groupable
+        .filter(f => !layers.includes(f.name))
+        .map(factor => (
+          <label
+            key={factor.name}
+            style={{ ...styles.kindRow, opacity: full ? 0.45 : 1 }}
+            title={
+              full
+                ? `At most ${maxLayers} factors can share the x axis.`
+                : factor.x_reason ?? 'Group the x axis by this factor'
+            }
+          >
+            <input
+              type="checkbox"
+              checked={false}
+              disabled={full || !factor.x_available}
+              onChange={e => onToggle(factor.name, e.target.checked)}
+              style={{ marginRight: 6 }}
+            />
+            {factor.display}
+          </label>
+        ))}
+      {layers.length === 0 && groupable.length === 0 && (
+        <div style={styles.hint}>No factor here can group the x axis.</div>
+      )}
+    </>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={styles.section}>
@@ -2217,10 +2495,6 @@ const styles: Record<string, React.CSSProperties> = {
     alignSelf: 'flex-start', padding: '3px 10px', background: 'transparent',
     color: '#9d92f5', border: '1px dashed #4c3a8a', borderRadius: 4,
     cursor: 'pointer', fontSize: 11,
-  },
-  poolRow: {
-    display: 'flex', alignItems: 'center', fontSize: 11, color: '#bbb',
-    marginTop: 8, cursor: 'pointer',
   },
   variantRow: { display: 'flex', flexDirection: 'column', gap: 2 },
   variantName: {

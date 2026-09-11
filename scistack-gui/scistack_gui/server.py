@@ -1043,6 +1043,20 @@ def _h_plot_save_figure(params):
         params["spec"],
         params["path"],
         dpi=params.get("dpi", 200),
+        figure_index=params.get("figure_index"),
+        csv_path=params.get("csv_path"),
+    )
+
+
+def _h_plot_save_all(params):
+    from scistack_gui.db import get_db
+    from scistack_gui.services.plot_service import start_save_job
+
+    return start_save_job(
+        get_db(),
+        params["spec"],
+        params["path"],
+        dpi=params.get("dpi", 200),
         csv_path=params.get("csv_path"),
     )
 
@@ -1159,8 +1173,52 @@ METHODS = {
     "plot_export": _h_plot_export,
     "plot_add_to_pipeline": _h_plot_add_to_pipeline,
     "plot_save_figure": _h_plot_save_figure,
+    "plot_save_all": _h_plot_save_all,
     "plot_invalidate": _h_plot_invalidate,
 }
+
+
+#: Methods that acquire the DuckDB connection themselves, for as long as they
+#: actually need it, instead of letting :func:`_handle_request` hold it across
+#: the whole call.
+#:
+#: Every entry is plot work, and they are here for one measured reason: a plot
+#: resolve spends nearly all of its time in pandas and matplotlib, with the
+#: database touched only while the variable frames load. Holding the file lock
+#: for the rest of it blocked MATLAB for the full duration — the 2026-09-11 log
+#: shows one 31-second hold (12:27:39 acquire, 12:28:10 release) for work that
+#: needed the database for well under a second of it.
+#:
+#: The precedent is :func:`_h_start_run`, which has owned its own connection
+#: since the MATLAB run-ownership work (docs/claude/matlab-run-database-ownership.md).
+#: It is NOT listed here: it acquires *in addition to* the blanket hold and
+#: hands off to a thread, which is a different arrangement from these.
+#:
+#: A method added here that then forgets to wrap its own database access will
+#: fail with a closed connection rather than silently working, because the
+#: JSON-RPC server closes the connection whenever the refcount hits zero. That
+#: is why the list is the plot methods whose cost is CPU-bound reduction and
+#: rendering, and not simply every ``plot_*`` handler:
+#:
+#: * ``plot_add_to_pipeline`` writes source files and reloads the registry
+#:   through services that reach the database by their own routes
+#:   (``target_file_service``), so it keeps the blanket hold.
+#: * ``plot_invalidate`` only drops a dict; there is no hold worth narrowing.
+SELF_MANAGED_DB_METHODS = frozenset(
+    {
+        "plot_describe",
+        "plot_capabilities",
+        "plot_variant_graph",
+        "plot_resolve",
+        "plot_export",
+        "plot_save_figure",
+        # Spawns a thread and returns; the HANDLER touches nothing. Its worker
+        # takes the connection through `save_figure` -> `_load` on its own
+        # schedule, which is the point — a save of thirty figures must not hold
+        # the DuckDB file for the minutes it spends in matplotlib.
+        "plot_save_all",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1276,8 +1334,9 @@ def _handle_request(req: dict) -> None:
         # increments the refcount on success (see its docstring).
         acquired = False
         try:
-            acquire_db_connection()
-            acquired = True
+            if method not in SELF_MANAGED_DB_METHODS:
+                acquire_db_connection()
+                acquired = True
             result = handler(params)
             elapsed_ms = (time.monotonic() - t0) * 1000
             # Read RPCs answer at INFO with what they actually returned; a
@@ -1376,6 +1435,15 @@ def main():
         "resort, which is usually a datasets folder.",
     )
     args = parser.parse_args()
+
+    # This process drops the DuckDB lock between requests (see the dispatch
+    # loop below and close_initial_connection). Declaring it lets db.py's
+    # narrow-hold helper be a real acquire here and a no-op in the standalone
+    # FastAPI process, where the connection is held for the life of the process
+    # and releasing it would close the one every later request depends on.
+    from scistack_gui.db import set_connection_policy
+
+    set_connection_policy("per_request")
 
     if args.project_root is not None:
         from scistack_gui.config import set_project_root_hint

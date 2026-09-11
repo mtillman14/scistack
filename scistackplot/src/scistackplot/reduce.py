@@ -18,7 +18,9 @@ You can have either, both, or neither.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import threading
+from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
 import numpy as np
@@ -36,7 +38,6 @@ from .spec import (
     PlotSpec,
     Role,
     Statistic,
-    VariantPolicy,
     grid_shape_for,
 )
 from .table import LongTable, natural_sort_key
@@ -53,6 +54,63 @@ DEFAULT_INDEX_COLUMN = "index"
 #: 1-D data over hundreds of trials is megabytes, and it crosses the webview
 #: boundary on every interaction. Export never downsamples (max_points=None).
 MAX_TRANSPORT_POINTS = 20_000
+
+#: Spec fields that change how a figure LOOKS but not what data goes into it.
+#: Excluded from the plan cache key, which is the whole reason the cache pays
+#: off: these are the controls a user drags, and none of them should re-filter,
+#: re-fold variants or re-group anything.
+#:
+#: Everything else is included by omission, on purpose. A field added to
+#: ``PlotSpec`` later lands in the key automatically, so the worst a forgotten
+#: update can do is miss the cache — never serve a plan built for a different
+#: question.
+_PLAN_IRRELEVANT_FIELDS = ("kind", "facet", "style")
+
+#: How many plans are kept. Two: the pattern being served is narrow — the panel
+#: re-resolves the SAME data repeatedly while the user changes how it is drawn.
+#:
+#: Cheap to hold, because the frames in a plan are the NESTED ones. Exploding
+#: moved into the figures (``_Plan.explode``), so a plan for a 1-D measure keeps
+#: the 24-row frame rather than the 17-million-sample one. Had these two changes
+#: landed the other way round, this cache would have been the memory problem.
+_PLAN_CACHE_ENTRIES = 2
+
+#: ``(id(table), spec key) -> (table, plan)``.
+#:
+#: The table is kept in the VALUE, not just the key, and that is load-bearing:
+#: a strong reference pins the object so CPython cannot recycle its ``id`` onto
+#: a different table and serve this plan for it. (The same id-reuse trap the
+#: GUI's source cache documents.) Lookups still verify identity before
+#: returning, so the pinning is belt-and-braces rather than the only guard.
+_plan_cache: dict[tuple, tuple[LongTable, "_Plan"]] = {}
+_plan_cache_lock = threading.Lock()
+
+
+def _plan_cache_key(spec: PlotSpec, table: LongTable) -> "tuple | None":
+    """A hashable identity for "this spec's data question, against this table".
+
+    Returns None when the spec cannot be serialized, which disables caching for
+    that call rather than failing it — a plan that cannot be keyed is still a
+    perfectly good plan.
+    """
+    try:
+        raw = spec.to_dict()
+        for field_name in _PLAN_IRRELEVANT_FIELDS:
+            raw.pop(field_name, None)
+        return (id(table), json.dumps(raw, sort_keys=True, default=str))
+    except Exception:  # pragma: no cover - a spec that will fail louder later
+        return None
+
+
+def clear_plan_cache() -> None:
+    """Drop every cached plan.
+
+    The data underneath a plan cannot change without the table object changing
+    too (sources rebuild tables rather than mutating them), so this exists for
+    tests and for callers that would rather not hold the frames.
+    """
+    with _plan_cache_lock:
+        _plan_cache.clear()
 
 
 def resolve(
@@ -81,6 +139,7 @@ def resolve(
                 plan.index_column,
                 figure_key=key,
                 max_points=max_points,
+                explode=plan.explode,
             )
             for key, group in plan.groups
         ]
@@ -114,10 +173,25 @@ class _Plan:
     roles: dict
     shape: Shape
     index_column: str | None
+    #: Whether each figure must explode its own 1-D rows into samples.
+    #:
+    #: The explode used to happen once, HERE, over the whole frame — and that
+    #: made a fan-out pay for every figure in it on every resolve. The
+    #: 2026-09-11 log shows the cost plainly: ``exploded 1-D measure
+    #: 'FilteredEMG': 48 row(s) -> 17119200 sample(s)`` immediately followed by
+    #: ``downsampled 8906400 row(s)`` — half the samples were built for a figure
+    #: the panel was not showing and threw away. At 30 subjects it is 30x.
+    #:
+    #: So the frames below stay nested and each figure explodes its own group.
+    #: Grouping first is safe because the fan-out keys are ordinary factor
+    #: columns, present and unchanged before the explode; exploding only ever
+    #: multiplies rows WITHIN a group.
+    explode: bool
     iterate: list[str]
     notes: list[str]
-    #: ``(figure_key, frame)`` per figure, IN ORDER. The frames are views; the
-    #: expensive per-figure work (panels, downsampling) has not happened yet.
+    #: ``(figure_key, frame)`` per figure, IN ORDER. The frames are views, and
+    #: still nested: the expensive per-figure work (exploding, aggregating,
+    #: panels, downsampling) has not happened yet.
     groups: list[tuple[dict, "pd.DataFrame"]]
 
     @property
@@ -129,7 +203,62 @@ class _Plan:
 
 
 def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
-    """Resolve everything up to, but not including, per-figure work."""
+    """Resolve everything up to, but not including, per-figure work.
+
+    Memoized. Every control change re-resolves, and most of them — plot kind,
+    grid shape, colours — do not change a single row of what is planned here,
+    yet each one re-folded the variants, re-ran the filters and re-grouped the
+    frame. Concurrent duplicates made it worse: the 2026-09-11 log shows four
+    resolves in flight at once, each redoing all of it.
+
+    A cached plan is shared, never copied, so the same rule the tables rely on
+    applies here too: nothing downstream mutates it. ``_build_figure`` takes the
+    group frames and builds new ones (explode, collapse, downsample, panels).
+    """
+    key = _plan_cache_key(spec, table)
+    if key is not None:
+        with _plan_cache_lock:
+            hit = _plan_cache.get(key)
+        # Identity re-checked under the assumption that ids can be recycled;
+        # the strong reference held below should make this impossible.
+        if hit is not None and hit[0] is table:
+            Log.debug("plan cache: hit (%d entries)", len(_plan_cache), layer=LAYER)
+            return _with_presentation(hit[1], spec)
+
+    plan = _build_plan(spec, table)
+
+    if key is not None:
+        with _plan_cache_lock:
+            _plan_cache[key] = (table, plan)
+            while len(_plan_cache) > _PLAN_CACHE_ENTRIES:
+                _plan_cache.pop(next(iter(_plan_cache)))
+    return _with_presentation(plan, spec)
+
+
+def _with_presentation(plan: "_Plan", spec: PlotSpec) -> "_Plan":
+    """Put the look-only fields back onto a plan's spec.
+
+    Necessary because ``_build_figure`` reads ``plan.spec`` — not the caller's
+    spec — for the plot kind, the facet grid and the style. Those are exactly
+    the fields the cache key ignores, so without this a cached plan would render
+    the FIRST kind it was built with and switching from lines to a box plot
+    would silently do nothing.
+
+    Driven off the same constant as the key, so the two cannot drift: a field
+    excluded from the key is, by construction, restored here.
+    """
+    changed = {
+        name: getattr(spec, name)
+        for name in _PLAN_IRRELEVANT_FIELDS
+        if getattr(plan.spec, name) != getattr(spec, name)
+    }
+    if not changed:
+        return plan
+    return replace(plan, spec=replace(plan.spec, **changed))
+
+
+def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
+    """:func:`_plan` without the cache — always does the full work."""
     # Named variants become a ``Variant`` factor BEFORE anything else looks
     # at the table, so validation, roles, faceting and rendering all see one
     # ordinary factor rather than each needing a variant special case.
@@ -146,18 +275,17 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
 
     frame = table.frame
     frame = apply_filters(frame, spec)
-    frame, roles = _apply_variant_policy(frame, spec, table, roles)
+    _warn_if_pooling_variants(spec, table, roles)
 
     y_measure = spec.y_measure
     shape = table.shape_of(y_measure)
     index_column = spec.index_column or table.index_column or DEFAULT_INDEX_COLUMN
 
-    if shape is Shape.SERIES_1D and not table.measure(y_measure).exploded:
-        frame, index_column = _explode_1d(frame, y_measure, index_column)
-    elif shape is not Shape.SERIES_1D:
+    # Whether each figure has to explode its own rows. Deliberately NOT done
+    # here — see `_Plan.explode`.
+    explode = shape is Shape.SERIES_1D and not table.measure(y_measure).exploded
+    if shape is not Shape.SERIES_1D:
         index_column = None
-
-    frame = _collapse_aggregates(frame, spec, roles, index_column)
 
     Log.debug(
         "resolve: measure=%s shape=%s kind=%s rows=%d roles=%s",
@@ -169,8 +297,10 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
         layer=LAYER,
     )
 
-    # A factor can be absent from the frame if it was aggregated away or
-    # filtered to nothing; grouping by it would raise rather than degrade.
+    # A factor can be absent from the frame if it was filtered to nothing;
+    # grouping by it would raise rather than degrade. (An ITERATE factor is
+    # never aggregated away — a factor carries one role — so moving the
+    # collapse into the figures below does not widen what this can miss.)
     iterate = [name for name in fanout_keys(spec, table) if name in frame.columns]
     if iterate:
         groups = [
@@ -186,6 +316,7 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
         roles=roles,
         shape=shape,
         index_column=index_column,
+        explode=explode,
         iterate=iterate,
         notes=_fanout_notes(spec, table),
         groups=groups,
@@ -229,6 +360,7 @@ def resolve_one(
             plan.index_column,
             figure_key=key,
             max_points=max_points,
+            explode=plan.explode,
         )
         figure.fanout_notes = plan.notes
         Log.info(
@@ -330,48 +462,31 @@ def apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
     return filtered
 
 
-def _apply_variant_policy(
-    frame: pd.DataFrame,
-    spec: PlotSpec,
-    table: LongTable,
-    roles: dict[str, Role],
-) -> tuple[pd.DataFrame, dict[str, Role]]:
+def _warn_if_pooling_variants(
+    spec: PlotSpec, table: LongTable, roles: dict[str, Role]
+) -> None:
+    """Say so, loudly, when a figure combines pipeline variants.
+
+    Pooling is now something the user asks for by assigning the factor
+    'aggregate' or 'free' in Factors (``roles.validate`` refuses it by
+    accident, never on purpose) — but a pooled figure looks EXACTLY like an
+    unpooled one, so the request still has to leave a trace. This is the
+    warning the deleted ``variant_policy='pool'`` branch used to emit; the
+    switch moved, the trace did not.
     """
-    Honor ``variant_policy`` for variant factors nothing selected.
-
-    Selection itself happens earlier and elsewhere —
-    :func:`~scistackplot.variants.apply_variant_sets` has already folded
-    ``spec.variant_sets`` into the ``Variant`` factor by the time ``resolve``
-    gets here. What is left is the question this enum answers: what happens to a
-    variant factor no set constrained. FACET (the default) needs nothing —
-    ``roles.validate`` has already refused to let such a factor sit in
-    FREE/AGGREGATE. POOL is the deliberate opt-in to averaging across them, and
-    always says so in the log, because a pooled figure looks exactly like an
-    unpooled one.
-    """
-    variant_names = [f.name for f in table.variant_factors]
-    if not variant_names:
-        return frame, roles
-
-    if spec.variant_policy is VariantPolicy.POOL:
-        unassigned = [
-            name
-            for name in variant_names
-            if roles.get(name, Role.FREE) in (Role.FREE, Role.AGGREGATE)
-        ]
-        if unassigned:
-            Log.warn(
-                "variant_policy='pool': averaging across variant factor(s) %s — "
-                "results from different pipeline variants are being combined",
-                unassigned,
-                layer=LAYER,
-            )
-            roles = dict(roles)
-            for name in unassigned:
-                roles[name] = Role.AGGREGATE
-        return frame, roles
-
-    return frame, roles
+    pooled = [
+        f.name
+        for f in table.variant_factors
+        if len(f.levels) > 1
+        and roles.get(f.name, Role.FREE) in (Role.FREE, Role.AGGREGATE)
+    ]
+    if pooled:
+        Log.warn(
+            "pooling variant factor(s) %s — results from different pipeline "
+            "variants are being combined, as this spec asks",
+            pooled,
+            layer=LAYER,
+        )
 
 
 def _explode_1d(
@@ -405,10 +520,14 @@ def _explode_1d(
 
     # INFO, not DEBUG: this is the dominant cost of a resolve and the one number
     # that explains a slow panel. A 12-field struct of 1-D arrays goes from a
-    # 24-row frame to several million here, on EVERY resolve — nothing caches the
-    # exploded frame — and without this line at INFO the only visible trace is
-    # the downsample warning, which reports the figure's rows rather than the
-    # frame's. Cheap: one line per resolve, no extra work.
+    # 24-row frame to several million here, and nothing caches the result.
+    # Without this line at INFO the only visible trace is the downsample
+    # warning, which reports the figure's rows rather than the frame's.
+    #
+    # Now emitted once per FIGURE BUILT rather than once per resolve (see
+    # `_Plan.explode`), which is the point: a fan-out whose figures are not
+    # being looked at should produce no line here at all, and a second line
+    # appearing is a fan-out actually being rendered, not waste.
     Log.info(
         "exploded 1-D measure %r: %d row(s) -> %d sample(s) (x%d)",
         measure,
@@ -479,7 +598,16 @@ def _build_figure(
     *,
     figure_key: dict[str, Any],
     max_points: int | None,
+    explode: bool = False,
 ) -> ResolvedPlot:
+    # This figure's own rows, expanded and collapsed here rather than once over
+    # the whole fan-out (see `_Plan.explode`). The order is fixed: aggregating a
+    # 1-D measure averages sample-by-sample, so the index column has to exist
+    # before the collapse groups on it.
+    if explode:
+        frame, index_column = _explode_1d(frame, spec.y_measure, index_column)
+    frame = _collapse_aggregates(frame, spec, roles, index_column)
+
     color = _role_holder(roles, Role.COLOR)
     # Several factors may share the x axis, nested. `x_layers` is only the
     # ORDER; membership is the roles dict, and `ordered_x_layers` reconciles

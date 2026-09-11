@@ -9,6 +9,7 @@ transports reach the same code.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -433,6 +434,92 @@ def test_save_figure_writes_one_file_per_iterated_figure(populated_db, tmp_path)
     }
 
 
+def test_save_figure_saves_only_the_requested_figure(populated_db, tmp_path):
+    """"Save current figure": the whole point of Stage 3.
+
+    Saving every figure at full resolution is what crossed the 30s client
+    timeout — a save is more work than the interactive resolve beside it, and
+    that was already taking 25-27s on the user's data."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    result = plot_service.save_figure(
+        populated_db, spec, str(tmp_path / "emg.png"), figure_index=1
+    )
+
+    assert result["ok"] is True
+    # Named for the figure it holds, not "emg.png" — a fan-out saved one frame
+    # at a time must not produce files that cannot be told apart.
+    assert [p.name for p in tmp_path.glob("*.png")] == ["emg_subject_2.png"]
+    assert result["files"] == [str(tmp_path / "emg_subject_2.png")]
+
+
+def test_saving_one_figure_builds_only_that_figure(populated_db, tmp_path, monkeypatch):
+    """Not merely writing one file — building one. Resolving all of them and
+    saving one would cost exactly what this exists to avoid."""
+    import scistackplot
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    calls = []
+    original = scistackplot.resolve
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scistackplot, "resolve", spy)
+
+    plot_service.save_figure(
+        populated_db, spec, str(tmp_path / "emg.png"), figure_index=0
+    )
+
+    assert calls == [], "the whole fan-out was resolved to save one figure"
+
+
+def test_an_out_of_range_figure_index_clamps(populated_db, tmp_path):
+    """The panel's cursor can be a moment behind a fan-out that just shrank;
+    `resolve_one` clamps rather than rejecting, and saving inherits that."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    result = plot_service.save_figure(
+        populated_db, spec, str(tmp_path / "emg.png"), figure_index=99
+    )
+
+    assert result["ok"] is True
+    assert len(result["files"]) == 1
+
+
+def test_save_reports_progress_per_file(populated_db, tmp_path):
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+
+    seen = []
+    plot_service.save_figure(
+        populated_db,
+        spec,
+        str(tmp_path / "emg.png"),
+        on_progress=lambda done, total, path: seen.append((done, total)),
+    )
+
+    assert seen == [(1, 2), (2, 2)]
+
+
+def test_a_bad_spec_is_a_message_on_the_indexed_save_too(populated_db, tmp_path):
+    """Both save paths share the refusal, like both resolve paths do."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+
+    result = plot_service.save_figure(
+        populated_db, spec, str(tmp_path / "x.png"), figure_index=0
+    )
+
+    assert result["ok"] is False
+    assert result["files"] == []
+
+
 def test_save_figure_reports_a_bad_spec_instead_of_raising(populated_db, tmp_path):
     spec = plot_service.describe(populated_db, "RawSignal")["spec"]
     spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
@@ -481,6 +568,174 @@ def test_csv_padded_ids_keep_numeric_order(tmp_path):
     assert levels == [f"s{n:02d}" for n in range(1, 11)]
 
 
+# --- the background save job (Stage 4) -------------------------------------
+#
+# Saving N figures at full resolution is N times the interactive resolve, and
+# that resolve already ran to 25-27s against a fixed 30s client timeout. No
+# timeout value makes "save thirty subjects" a request/response operation, so
+# it became a job that reports progress.
+
+
+def _drain(messages, kind, timeout=60.0):
+    """Wait for a terminal save message, then return every message seen.
+
+    Polls rather than joining the thread: `start_save_job` deliberately does
+    not hand its thread back (nothing in the product has a use for it), and the
+    notification IS the completion signal the GUI relies on — so waiting on it
+    tests the thing the panel actually depends on.
+    """
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any((m.get("type") == kind) for m in messages):
+            return messages
+        time.sleep(0.02)
+    raise AssertionError(
+        f"no {kind!r} within {timeout}s; saw {[m.get('type') for m in messages]}"
+    )
+
+
+@pytest.fixture
+def captured_pushes(monkeypatch):
+    """Collect every push_message the job emits, over either transport."""
+    from scistack_gui.api import ws as ws_mod
+
+    messages: list = []
+    monkeypatch.setattr(ws_mod, "push_message", messages.append)
+    return messages
+
+
+def test_a_save_job_writes_every_figure_and_reports_each(
+    populated_db, tmp_path, captured_pushes
+):
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+
+    started = plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
+    assert "job_id" in started
+
+    messages = _drain(captured_pushes, "plot_save_complete")
+    progress = [m for m in messages if m["type"] == "plot_save_progress"]
+    done = next(m for m in messages if m["type"] == "plot_save_complete")
+
+    # One progress message per figure, in order, all carrying the job id.
+    assert [(m["done"], m["total"]) for m in progress] == [(1, 2), (2, 2)]
+    assert {m["job_id"] for m in messages} == {started["job_id"]}
+    assert len(done["files"]) == 2
+    assert {p.name for p in tmp_path.glob("*.png")} == {
+        "emg_subject_1.png",
+        "emg_subject_2.png",
+    }
+
+
+def test_a_save_job_does_not_hold_the_database_while_rendering(
+    populated_db, tmp_path, captured_pushes, per_request_policy, monkeypatch
+):
+    """The user's stated requirement for this stage: a long save must leave the
+    .duckdb file free so MATLAB and the rest of the GUI can work meanwhile."""
+    import scistackplot
+
+    db_mod = per_request_policy
+    seen = []
+    original = scistackplot.render_matplotlib
+
+    def spy(item):
+        seen.append((db_mod._db_refcount, db_mod._db_open))
+        return original(item)
+
+    monkeypatch.setattr(scistackplot, "render_matplotlib", spy)
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+
+    plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
+    _drain(captured_pushes, "plot_save_complete")
+
+    assert seen, "render was never reached"
+    assert all(refcount == 0 for refcount, _ in seen), (
+        "the save job held the DuckDB connection while rendering"
+    )
+    assert all(not is_open for _, is_open in seen)
+
+
+def test_a_failing_save_job_announces_itself(
+    populated_db, tmp_path, captured_pushes, monkeypatch
+):
+    """A thread that dies quietly leaves the panel waiting for a completion
+    that can never arrive."""
+    import scistackplot
+
+    def boom(item):
+        raise RuntimeError("renderer exploded")
+
+    monkeypatch.setattr(scistackplot, "render_matplotlib", boom)
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
+
+    messages = _drain(captured_pushes, "plot_save_failed")
+    failed = next(m for m in messages if m["type"] == "plot_save_failed")
+    assert "renderer exploded" in failed["error"]
+
+
+def test_a_failed_save_job_releases_the_database(
+    populated_db, tmp_path, captured_pushes, per_request_policy, monkeypatch
+):
+    """A leaked refcount never falls back to zero, so the connection is never
+    closed again and the file stays locked for the life of the process."""
+    import scistackplot
+
+    db_mod = per_request_policy
+    monkeypatch.setattr(
+        scistackplot,
+        "render_matplotlib",
+        lambda item: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
+    _drain(captured_pushes, "plot_save_failed")
+
+    assert db_mod._db_refcount == 0
+
+
+def test_an_invalid_spec_ends_the_job_rather_than_hanging(
+    populated_db, tmp_path, captured_pushes
+):
+    """A refusal is not a crash, but it still has to END the job — the panel
+    cannot tell a refusal from silence."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = {**spec, "roles": {**spec["roles"], "subject": "x", "session": "x"}}
+
+    plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
+
+    messages = _drain(captured_pushes, "plot_save_failed")
+    failed = next(m for m in messages if m["type"] == "plot_save_failed")
+    assert failed["error"]
+    assert not list(tmp_path.glob("*.png"))
+
+
+def test_save_all_reaches_both_transports(
+    client, populated_db, tmp_path, captured_pushes
+):
+    from scistack_gui.server import METHODS
+
+    assert "plot_save_all" in METHODS
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    response = client.post(
+        "/api/plot/save-all",
+        json={"spec": spec, "path": str(tmp_path / "http.png")},
+    )
+
+    assert response.status_code == 200
+    assert "job_id" in response.json()
+    # Drained, not left running: a daemon thread still writing into tmp_path
+    # after the test returns is a flake waiting to happen.
+    _drain(captured_pushes, "plot_save_complete")
+
+
 # --- both transports reach the same code -----------------------------------
 
 
@@ -493,6 +748,32 @@ def test_http_route_and_rpc_handler_share_the_service(client, populated_db):
 
     rpc_result = METHODS["plot_describe"]({"variable": "RawSignal"})
     assert rpc_result["spec"] == http_result["spec"]
+
+
+def test_figure_index_reaches_the_service_over_both_transports(
+    client, populated_db, tmp_path
+):
+    """`figure_index` had to be added in three places — the service, the RPC
+    handler and the pydantic request model. A transport that drops it silently
+    saves the whole fan-out, which is the slow path this exists to avoid."""
+    from scistack_gui.server import METHODS
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+
+    over_http = client.post(
+        "/api/plot/save",
+        json={"spec": spec, "path": str(tmp_path / "http.png"), "figure_index": 0},
+    ).json()
+    over_rpc = METHODS["plot_save_figure"](
+        {"spec": spec, "path": str(tmp_path / "rpc.png"), "figure_index": 0}
+    )
+
+    assert len(over_http["files"]) == 1
+    assert len(over_rpc["files"]) == 1
+    # Same figure, so the same label lands in both names.
+    assert Path(over_http["files"][0]).name == "http_subject_1.png"
+    assert Path(over_rpc["files"][0]).name == "rpc_subject_1.png"
 
 
 # --- cache invalidation after a run ----------------------------------------
@@ -920,3 +1201,130 @@ def test_an_invalid_spec_is_a_message_on_the_deferred_path_too(populated_db):
     assert result["ok"] is False
     assert "one factor" in result["error"]
     assert result["figures"] == []
+
+
+# --- connection lifecycle (Stage 2) ----------------------------------------
+#
+# Plot work is CPU-bound and long: the 2026-09-11 log shows a resolve holding
+# the DuckDB file lock from 12:27:39 to 12:28:10 while it reduced and rendered
+# in pandas, blocking MATLAB for 31s over a database it needed for well under a
+# second of that. These tests pin the narrowing down, in both directions —
+# the lock IS dropped before the expensive part, and the standalone process is
+# NOT made to close a connection it holds for life.
+
+
+@pytest.fixture
+def per_request_policy():
+    """Run the body under the JSON-RPC server's connection policy."""
+    from scistack_gui import db as db_mod
+
+    previous = db_mod.connection_policy()
+    was_open = db_mod._db_open
+    db_mod.set_connection_policy("per_request")
+    try:
+        yield db_mod
+    finally:
+        db_mod.set_connection_policy(previous)
+        db_mod._db_refcount = 0
+        # Restore the entry state, and only that. Reopening unconditionally
+        # would resurrect a manager pointing at a previous test's deleted
+        # tmp_path, creating an empty database file as a side effect.
+        if was_open and not db_mod._db_open and db_mod._db is not None:
+            db_mod._db.reopen()
+            db_mod._db_open = True
+
+
+def test_every_self_managed_method_exists(populated_db):
+    """A typo here is silent: the name simply never matches, the method keeps
+    the blanket hold, and the narrowing quietly does nothing."""
+    from scistack_gui.server import METHODS, SELF_MANAGED_DB_METHODS
+
+    assert SELF_MANAGED_DB_METHODS <= set(METHODS)
+
+
+def test_resolve_drops_the_connection_before_reducing(
+    populated_db, per_request_policy, monkeypatch
+):
+    """The property the whole stage exists for.
+
+    `resolve_one` runs after the frames are loaded, and by then nobody should
+    be holding the database — that is the window MATLAB gets back.
+    """
+    import scistackplot
+
+    db_mod = per_request_policy
+    seen = {}
+    original = scistackplot.resolve_one
+
+    def spy(*args, **kwargs):
+        seen["refcount"] = db_mod._db_refcount
+        seen["open"] = db_mod._db_open
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scistackplot, "resolve_one", spy)
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
+
+    assert result["ok"] is True
+    assert seen["refcount"] == 0, "the reduce phase still holds the DuckDB lock"
+    assert seen["open"] is False, "the DuckDB file lock is still held while reducing"
+
+
+def test_the_load_phase_does_hold_the_connection(
+    populated_db, per_request_policy, monkeypatch
+):
+    """The other half: narrowing must not become 'never acquires at all', which
+    would pass the test above while failing on a database MATLAB has open."""
+    db_mod = per_request_policy
+    seen = {}
+    original = plot_service._table_for
+
+    def spy(source, spec):
+        seen["refcount"] = db_mod._db_refcount
+        return original(source, spec)
+
+    monkeypatch.setattr(plot_service, "_table_for", spy)
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    plot_service.resolve_figures(populated_db, spec, figure_index=0)
+
+    assert seen["refcount"] == 1
+
+
+def test_persistent_policy_never_closes_the_connection(populated_db):
+    """Standalone/FastAPI holds one connection for the life of the process and
+    no request acquires. An acquire/release pair there would drop the refcount
+    to zero and close the connection that every later request expects to find
+    open — `get_db` hands back the manager without reopening it."""
+    from scistack_gui import db as db_mod
+
+    assert db_mod.connection_policy() == "persistent"
+    was_open, was_ref = db_mod._db_open, db_mod._db_refcount
+    db_mod._db_open = True
+    db_mod._db_refcount = 0
+    try:
+        with db_mod.db_connection("test"):
+            pass
+
+        assert db_mod._db_open is True
+        assert db_mod._db_refcount == 0
+    finally:
+        db_mod._db_open, db_mod._db_refcount = was_open, was_ref
+
+
+def test_a_csv_spec_takes_no_connection(per_request_policy):
+    """There is no database in the CSV path; acquiring the project's DuckDB
+    lock to plot a loose file would block MATLAB for no reason at all."""
+    db_mod = per_request_policy
+    db_mod._db_refcount = 0
+
+    with db_mod.db_connection("test", needed=False):
+        assert db_mod._db_refcount == 0
+
+
+def test_an_unknown_policy_is_refused():
+    from scistack_gui import db as db_mod
+
+    with pytest.raises(ValueError, match="Unknown connection policy"):
+        db_mod.set_connection_policy("whenever")

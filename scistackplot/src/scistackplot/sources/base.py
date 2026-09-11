@@ -61,8 +61,27 @@ class DataSource(Protocol):
         ...
 
 
+#: How many built tables a source keeps. Small on purpose: the entries are whole
+#: frames (millions of rows for a 1-D measure), and the access pattern they serve
+#: is narrow — the panel asks for the SAME table over and over while the user
+#: moves controls, and only changes which one when a variant row names another
+#: variable. Four covers that with room to spare; a larger cache would mostly
+#: hold frames nobody is going to ask for again.
+TABLE_CACHE_ENTRIES = 4
+
+#: Placeholder the stacked value column carries during the melt, before it is
+#: renamed to the primary measure. See :meth:`BaseSource._stacked` for why the
+#: rename is unavoidable. Deliberately not a plausible column name: it only has
+#: to survive one call, and it must not collide with a real one.
+_STACK_VALUE = "__stacked_value__"
+
+
 class BaseSource:
-    """Small shared implementation for sources backed by a single table."""
+    """Small shared implementation for sources backed by a single table.
+
+    Also owns the built-table cache for *every* source, ``ScidbSource``
+    included — see :meth:`get_table`.
+    """
 
     name: str = "table"
 
@@ -73,6 +92,74 @@ class BaseSource:
         return self._table().describe()
 
     def get_table(
+        self,
+        measures: list[str],
+        *,
+        x_measure: str | None = None,
+        factor_variables: list[str] | None = None,
+    ) -> LongTable:
+        """The long table for these measures, built once per distinct request.
+
+        **Why this is memoized.** Building the table is melt + stack + join, and
+        the panel asks for the same one repeatedly: ``plot_resolve`` and
+        ``plot_capabilities`` each build it on every control change, so a single
+        click paid for it twice, and four concurrent resolves paid for it eight
+        times. The 2026-09-11 log shows exactly that — ``melted 'FilteredEMG'``
+        and ``stacked [...]`` repeating in pairs on every action while
+        ``load_variable`` (the layer below, already cached) ran once.
+
+        Keyed on everything that changes the result. Note ``measures`` is
+        order-sensitive and stays a tuple rather than a set: the order decides
+        which measure is primary and what the ``Variable`` column's level order
+        is.
+
+        **Sharing a table between callers is safe** because nothing downstream
+        mutates it — ``apply_variant_sets`` copies before writing its factor,
+        and every other step (filters, explode, aggregate) builds a new frame.
+        There is no in-place write anywhere in ``scistackplot`` or
+        ``scistackplotdb``, and ``test_a_cached_table_is_not_mutated_by_use``
+        exists to keep it that way.
+
+        Staleness is the caller's business, as it already was for the frames
+        underneath: a run that writes records drops the whole source
+        (``plot_service.invalidate``), and this cache goes with it.
+        """
+        memo = self._table_cache()
+        key = (
+            tuple(measures),
+            x_measure,
+            tuple(factor_variables or ()),
+        )
+        if key in memo:
+            return memo[key]
+
+        table = self._build_table(
+            measures, x_measure=x_measure, factor_variables=factor_variables
+        )
+        memo[key] = table
+        while len(memo) > TABLE_CACHE_ENTRIES:
+            # Insertion-ordered dict: the oldest key is the first one.
+            memo.pop(next(iter(memo)))
+        return table
+
+    def _table_cache(self) -> dict:
+        """The memo, created on first use.
+
+        Lazy rather than set in ``__init__`` so every source inherits the cache
+        without having to remember to call up — including the ones that define
+        no ``__init__`` at all.
+        """
+        memo = getattr(self, "_built_tables", None)
+        if memo is None:
+            memo = {}
+            self._built_tables = memo
+        return memo
+
+    def invalidate_tables(self) -> None:
+        """Drop built tables. Call when the rows underneath may have changed."""
+        self._table_cache().clear()
+
+    def _build_table(
         self,
         measures: list[str],
         *,
@@ -101,6 +188,14 @@ class BaseSource:
         gait CSV are as much "Raw vs Filtered" as two scidb variables are, and
         keeping the standalone path capable of it is what keeps the DataSource
         protocol honest rather than scidb-shaped.
+
+        The melt goes via :data:`_STACK_VALUE` and is renamed afterwards. It has
+        to: the stacked column takes the PRIMARY measure's name, the primary is
+        always one of the columns being melted, and ``DataFrame.melt`` refuses a
+        ``value_name`` that matches any column it is melting. Passing the name
+        directly raised ``ValueError`` for every possible input, so stacking on
+        a CSV or DataFrame source never worked at all — found 2026-09-11 by the
+        first test to ask for it.
         """
         from ..variants import VARIABLE_COLUMN
 
@@ -111,8 +206,8 @@ class BaseSource:
             id_vars=id_vars,
             value_vars=list(measures),
             var_name=VARIABLE_COLUMN,
-            value_name=primary,
-        )
+            value_name=_STACK_VALUE,
+        ).rename(columns={_STACK_VALUE: primary})
         level_order = {f.name: list(f.levels) for f in table.factors}
         # Declared order, not observed: the user listed the measures.
         level_order[VARIABLE_COLUMN] = list(measures)

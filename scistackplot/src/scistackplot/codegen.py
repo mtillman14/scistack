@@ -135,7 +135,10 @@ def variant_params(spec: PlotSpec) -> list[VariantInput]:
     used: set[str] = set()
     params: list[VariantInput] = []
     for index, variant in enumerate(sets):
-        label = set_name(variant, index)
+        # `latest_column` is the table's to know and there is no table here, so
+        # a row pinned to the latest flag slugifies the raw column name. It
+        # only affects the generated PARAMETER name, never which rows load.
+        label = set_name(variant, index, primary=spec.y_measure)
         base = re.sub(r"[^0-9a-zA-Z]+", "_", label).strip("_").lower() or "variant"
         if base[0].isdigit() or keyword.iskeyword(base):
             base = f"v_{base}"

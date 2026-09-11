@@ -312,7 +312,12 @@ def test_single_code_version_attaches_no_column(two_variants):
 
 
 def test_two_code_versions_are_refused_not_pooled(two_code_versions):
-    """The reported bug: these two silently overplotted as one line."""
+    """The reported bug: these two silently overplotted as one line.
+
+    The code axis is left UNASSIGNED, which is what makes the pooling silent —
+    since Stage 8 the refusal is specifically about roles nobody chose, and
+    naming it FREE here would be asking for the pooling this guards against.
+    """
     table = ScidbSource(two_code_versions).get_table(["Scaled"])
     spec = PlotSpec(
         measures=["Scaled"],
@@ -320,7 +325,6 @@ def test_two_code_versions_are_refused_not_pooled(two_code_versions):
             "session": Role.X,
             "subject": Role.FREE,
             "trial": Role.FREE,
-            "Code:scale_signal": Role.FREE,
         },
         kind=PlotKind.BOX,
     )
@@ -439,14 +443,22 @@ def test_no_default_pin_without_code_versions(two_variants):
 
 def test_default_spec_opens_on_one_named_variant(two_code_versions):
     """The panel always has a row to edit, and it starts on current results."""
-    from scistackplot import CURRENT_VARIANT_NAME, apply_variant_sets, default_spec
+    from scistackplot import apply_variant_sets, default_spec
+    from scistackplot.variants import set_name
 
     table = ScidbSource(two_code_versions).get_table(["Scaled"])
     spec = default_spec(table, "Scaled")
 
     assert len(spec.variant_sets) == 1
-    assert spec.variant_sets[0].name == CURRENT_VARIANT_NAME
-    assert spec.variant_sets[0].selection == {"CodeIsLatest": True}
+    row = spec.variant_sets[0]
+    assert row.selection == {"CodeIsLatest": True}
+    # No hardcoded name any more: the row is named for what it plots, with the
+    # latest FLAG spelled as "current" rather than as `CodeIsLatest=True`.
+    assert row.name is None
+    assert (
+        set_name(row, 0, primary="Scaled", latest_column=table.latest_column)
+        == "Scaled · current"
+    )
     validate(spec, apply_variant_sets(spec, table))  # must not raise
 
 

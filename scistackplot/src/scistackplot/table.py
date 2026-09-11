@@ -65,8 +65,9 @@ class FactorInfo:
     name: str
     levels: list[Any]
     #: True when this factor came from pipeline branch params rather than the
-    #: dataset schema. The GUI marks these; pooling them needs a deliberate
-    #: ``VariantPolicy.POOL``.
+    #: dataset schema. The GUI marks these; pooling them means assigning
+    #: 'aggregate' or 'free' deliberately, which ``roles.validate`` allows only
+    #: when the spec says so rather than by defaulting.
     is_variant: bool = False
     #: True when this factor's levels are the measure's own FIELDS (the keys of
     #: a dict/struct variable, melted into long format) rather than an

@@ -12,7 +12,6 @@ from scistackplot import (
     PlotKind,
     PlotSpec,
     Role,
-    VariantPolicy,
     resolve,
 )
 from scistackplot.resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW
@@ -257,11 +256,12 @@ def test_variant_on_colour_keeps_both_variants_separate(variant_table):
 
 
 def test_explicit_pool_averages_variants_together(variant_table):
+    """Assigning the variant factor AGGREGATE is the new spelling of the
+    deleted ``variant_policy='pool'`` — one switch instead of two."""
     spec = PlotSpec(
         measures=["Peak"],
-        roles={"subject": Role.X},
+        roles={"subject": Role.X, "bandpass.low_hz": Role.AGGREGATE},
         kind=PlotKind.SCATTER,
-        variant_policy=VariantPolicy.POOL,
     )
     resolved = resolve(spec, variant_table)[0]
     assert resolved.row_count == 3

@@ -97,29 +97,6 @@ class ErrorBand(str, Enum):
         return self.value
 
 
-class VariantPolicy(str, Enum):
-    """
-    What to do when the source supplies branch-param (variant) factors.
-
-    ``POOL`` must be chosen deliberately. Pooling variants silently plots two
-    different pipelines' results as if they were replicates of one — a figure
-    that is wrong in a way that looks like data. See the design doc.
-
-    There is no ``PIN`` member. Pinning is what a one-entry
-    :attr:`PlotSpec.variant_sets` *is*, and a policy that meant "obey the sets"
-    beside sets that already say what to keep was two switches for one decision
-    — the state where the policy said ``facet`` and a set said ``v1`` had no
-    defensible meaning. Selecting is now always the sets' job; this enum only
-    answers what happens to variant factors *nothing* selected.
-    """
-
-    FACET = "facet"   # variants become an ordinary factor the user assigns
-    POOL = "pool"     # explicitly average across variants
-
-    def __str__(self) -> str:
-        return self.value
-
-
 class MatchOp(str, Enum):
     """How a facet-layout rule tests a panel's label."""
 
@@ -417,7 +394,6 @@ class PlotSpec:
     factor_variables: list[str] = field(default_factory=list)
     #: Factors derived by bucketing another factor's levels.
     level_groups: list[LevelGroup] = field(default_factory=list)
-    variant_policy: VariantPolicy = VariantPolicy.FACET
     #: Named variants to plot — one entry per row of the GUI's Variants section.
     #:
     #: One entry is a pin: the figure shows that variant and nothing else.
@@ -500,7 +476,6 @@ class PlotSpec:
         raw = asdict(self)
         raw["roles"] = {k: str(v) for k, v in self.roles.items()}
         raw["kind"] = str(self.kind)
-        raw["variant_policy"] = str(self.variant_policy)
         raw["aggregate"] = {
             "statistic": str(self.aggregate.statistic),
             "error": str(self.aggregate.error),
@@ -540,9 +515,6 @@ class PlotSpec:
             level_groups=[
                 LevelGroup.from_dict(g) for g in (raw.get("level_groups") or [])
             ],
-            variant_policy=VariantPolicy(
-                raw.get("variant_policy", VariantPolicy.FACET)
-            ),
             variant_sets=[
                 VariantSet.from_dict(s) for s in (raw.get("variant_sets") or [])
             ],

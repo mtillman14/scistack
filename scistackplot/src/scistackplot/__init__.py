@@ -35,6 +35,11 @@ from .capability import (
     available_plots,
     capabilities,
     default_plot,
+    factors_menu,
+    grouping_summary,
+    role_hint,
+    role_label,
+    role_options,
     variant_summary,
     why_unavailable,
 )
@@ -70,7 +75,6 @@ from .spec import (
     Role,
     Statistic,
     StyleOptions,
-    VariantPolicy,
     VariantSet,
     grid_shape_for,
 )
@@ -83,7 +87,6 @@ from .table import (
     natural_sort_key,
 )
 from .variants import (
-    CURRENT_VARIANT_NAME,
     LATEST,
     VARIANT_FACTOR,
     apply_variant_sets,
@@ -112,7 +115,6 @@ __all__ = [
     "StyleOptions",
     "Filter",
     "LevelGroup",
-    "VariantPolicy",
     "VariantSet",
     # data
     "LongTable",
@@ -134,7 +136,6 @@ __all__ = [
     "CODE_FACTOR_PREFIX",
     # named variants
     "VARIANT_FACTOR",
-    "CURRENT_VARIANT_NAME",
     "LATEST",
     "apply_variant_sets",
     "default_selection",
@@ -147,6 +148,11 @@ __all__ = [
     "strip_answered_roles",
     "default_plot",
     "why_unavailable",
+    "role_options",
+    "role_label",
+    "role_hint",
+    "grouping_summary",
+    "factors_menu",
     "capabilities",
     "default_roles",
     "default_spec",

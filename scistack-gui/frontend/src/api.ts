@@ -243,6 +243,9 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     plot_export:            { path: '/api/plot/export', method: 'POST', body: true },
     plot_add_to_pipeline:   { path: '/api/plot/add-to-pipeline', method: 'POST', body: true },
     plot_save_figure:       { path: '/api/plot/save', method: 'POST', body: true },
+    // Returns a job id immediately; progress arrives as notifications. Saving
+    // a whole fan-out at full resolution cannot fit a request/response budget.
+    plot_save_all:          { path: '/api/plot/save-all', method: 'POST', body: true },
     plot_invalidate:        { path: '/api/plot/invalidate', method: 'POST' },
   };
 

@@ -32,6 +32,24 @@ _db_path: Path | None = None
 _db_open = False  # is the DuckDB connection currently held?
 _db_refcount = 0  # number of concurrent callers holding the connection
 _db_lifecycle_lock = threading.Lock()
+
+# How this process manages the connection. The two GUI transports genuinely
+# differ and nothing else in this module can tell them apart:
+#
+#   "persistent"   — standalone/FastAPI. The connection is opened at startup and
+#                    held for the life of the process; no request acquires or
+#                    releases (grep: acquire_db_connection has no callers
+#                    outside server.py). Narrowing a hold here is meaningless,
+#                    and an acquire/release pair would be actively harmful — the
+#                    release drops the refcount to 0 and CLOSES the connection
+#                    that every later request expects to find open, since
+#                    get_db() returns the manager without reopening it.
+#   "per_request"  — the JSON-RPC server. It deliberately drops the lock between
+#                    requests so MATLAB can open the same file.
+#
+# Set by server.py at startup. Declared here rather than sniffed, because a
+# wrong guess is a closed connection in a live process.
+_connection_policy = "persistent"
 # Name of the external process the database has been deliberately handed to
 # (see external_db_access), or None. While set, acquiring is refused up
 # front instead of racing MATLAB for the file lock.
@@ -312,6 +330,69 @@ def release_db_connection() -> None:
             "[db] release_db_connection complete: refcount=%d, closed=%s",
             _db_refcount,
             closed,
+        )
+
+
+def set_connection_policy(policy: str) -> None:
+    """Declare how this process manages the DuckDB connection.
+
+    See :data:`_connection_policy`. Called once, by the JSON-RPC server at
+    startup; the default suits the standalone/FastAPI process.
+    """
+    global _connection_policy
+    if policy not in ("persistent", "per_request"):
+        raise ValueError(
+            f"Unknown connection policy {policy!r} — "
+            f"expected 'persistent' or 'per_request'."
+        )
+    _connection_policy = policy
+    logger.info("[db] connection policy set to %r", policy)
+
+
+def connection_policy() -> str:
+    """The current policy — for tests and for logging."""
+    return _connection_policy
+
+
+@contextmanager
+def db_connection(label: str = "", *, needed: bool = True):
+    """Hold the DuckDB connection for the narrowest window a caller can manage.
+
+    Plot work is the motivating case and states the problem well: resolving a
+    figure spent 25-27s in pandas and matplotlib while
+    :func:`~scistack_gui.server._handle_request` held the file lock across the
+    *whole* RPC, so MATLAB could not open the database for the full 27 seconds
+    (2026-09-11 log, 12:27:39 acquire -> 12:28:10 release). The database is only
+    needed while the variable frames load; everything after that is in memory.
+
+    Under the ``persistent`` policy this is a no-op — see
+    :data:`_connection_policy` for why acquiring there would close the very
+    connection the next request needs.
+
+    ``needed=False`` skips the acquire entirely, for a caller that turns out not
+    to touch the database at all (plotting a CSV, say). The context still works,
+    so callers don't need two code paths.
+
+    The hold time is logged, because "the lock is held for less time now" is the
+    entire point of this and an unmeasured claim about it is worthless.
+    """
+    if not needed or _connection_policy != "per_request":
+        yield
+        return
+
+    started = time.monotonic()
+    acquire_db_connection()
+    try:
+        yield
+    finally:
+        # Mirrors _handle_request: a failed acquire raises before the try, so
+        # release is only ever reached for a hold we actually took.
+        release_db_connection()
+        held = time.monotonic() - started
+        logger.info(
+            "[db] %s: held the DuckDB connection for %.3fs",
+            label or "db_connection",
+            held,
         )
 
 

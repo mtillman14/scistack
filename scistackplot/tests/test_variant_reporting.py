@@ -280,10 +280,21 @@ def test_a_row_that_matched_rows_does_not_pay_for_the_list():
 
 def test_an_unfilled_row_reports_neither():
     """An unfilled row is inert — it claims nothing, so it has not "matched
-    nothing" and must not be decorated as though it had."""
-    spec = PlotSpec(measures=["value"], variant_sets=[VariantSet(None, {})])
+    nothing" and must not be decorated as though it had.
 
-    entry = variant_summary(spec, _ragged_combinations())["sets"][0]
+    Row **1**, because row 0 is no longer a blank: `default_spec` seeds it for
+    every table and it means "the primary measure, unnarrowed". A row the user
+    ADDED and left empty is the blank this protects.
+    """
+    spec = PlotSpec(
+        measures=["value"],
+        variant_sets=[
+            VariantSet("baseline", {"Code:f": "v1"}),
+            VariantSet(None, {}),
+        ],
+    )
+
+    entry = variant_summary(spec, _ragged_combinations())["sets"][1]
 
     assert entry["defined"] is False
     assert entry["available"] == []

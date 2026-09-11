@@ -12,9 +12,9 @@ from __future__ import annotations
 import math
 
 from .shape import Shape
-from .spec import MAX_X_LAYERS, SINGLE_ASSIGNMENT_ROLES, PlotSpec, Role, VariantPolicy
+from .spec import MAX_X_LAYERS, SINGLE_ASSIGNMENT_ROLES, PlotSpec, Role
 from .table import LongTable
-from .variants import CURRENT_VARIANT_NAME, VARIANT_FACTOR
+from .variants import VARIABLE_COLUMN, VARIANT_FACTOR
 
 
 class RoleError(ValueError):
@@ -112,6 +112,18 @@ def complete_roles(
             roles[factor.name] = (
                 Role.COLOR if Role.COLOR not in taken else Role.FACET
             )
+            continue
+        if factor.name == VARIABLE_COLUMN and factor.name not in roles:
+            # FREE would pool two different QUANTITIES — EMG drawn as a
+            # replicate of force — which `validate` refuses outright, so
+            # defaulting to it would hand the user an error instead of a
+            # figure. FACET is the shape the request came in as: "two mean +
+            # error band plots", one panel each.
+            #
+            # Its own branch because `Variable` is not a variant factor
+            # (ScidbSource appends it to `factors`, never to
+            # `variant_factors`), so the clause above does not reach it.
+            roles[factor.name] = Role.FACET
             continue
         roles.setdefault(factor.name, Role.FREE)
 
@@ -263,26 +275,53 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
             f"matrix itself, so factor {x_holder!r} cannot hold role 'x'."
         )
 
-    # --- variants must not be pooled by accident -------------------------
-    if spec.variant_policy is VariantPolicy.FACET:
-        # Completed roles, not the spec's raw ones: the synthetic ``Variant``
-        # factor is defaulted rather than assigned (see complete_roles), and
-        # reading spec.roles here would reject the very figure that defaulting
-        # exists to produce.
-        assigned = complete_roles(spec, table)
-        pooled = [
-            f.name
-            for f in table.variant_factors
-            if len(f.levels) > 1
-            and assigned.get(f.name, Role.FREE) in (Role.FREE, Role.AGGREGATE)
-        ]
-        if pooled:
+    # --- variants must not be pooled by ACCIDENT --------------------------
+    #
+    # Pooling variants is legal and sometimes exactly right: five variants of a
+    # 1-D measure averaged into one trace (AGGREGATE), or left as replicates so
+    # BAND can draw a mean ± error across them (FREE). What must never happen is
+    # pooling nobody asked for — two pipelines' results silently read as
+    # replicates of one condition.
+    #
+    # The difference is visible in the spec: a role the user chose is in
+    # ``spec.roles``; a role nobody chose is filled in by ``complete_roles``. So
+    # the test is on the DEFAULTED ones only. (This replaces ``variant_policy``,
+    # which was a second switch for the same decision — the state where the
+    # policy said "facet" and a factor was explicitly set to "free" had no
+    # defensible meaning.)
+    assigned = complete_roles(spec, table)
+    pooled = [
+        f.name
+        for f in table.variant_factors
+        if len(f.levels) > 1
+        and f.name not in spec.roles
+        and assigned.get(f.name, Role.FREE) in (Role.FREE, Role.AGGREGATE)
+    ]
+    if pooled:
+        raise RoleError(
+            f"Variant factor(s) {pooled} would be pooled: their levels are "
+            f"different pipeline variants, not replicates, so averaging or "
+            f"overplotting them silently mixes results. Assign them "
+            f"'color'/'facet'/'iterate', select the variants you want with "
+            f"PlotSpec.variant_sets, or — to pool them deliberately — set them "
+            f"to 'aggregate' or 'free' yourself."
+        )
+
+    # --- variables must never be pooled at all ----------------------------
+    #
+    # `Variable` is a factor only when the figure draws more than one (see
+    # `variants._answered`), and then it must SEPARATE them. Averaging EMG with
+    # force, or overplotting them as replicates of each other, is not a figure
+    # anyone wants — unlike variants of one variable, which is why this is a
+    # flat refusal where the rule above is an opt-in.
+    if table.has_factor(VARIABLE_COLUMN):
+        variable_role = assigned.get(VARIABLE_COLUMN, Role.FREE)
+        if variable_role in (Role.FREE, Role.AGGREGATE):
             raise RoleError(
-                f"Variant factor(s) {pooled} would be pooled: their levels are "
-                f"different pipeline variants, not replicates, so averaging or "
-                f"overplotting them silently mixes results. Assign them "
-                f"'color'/'facet'/'iterate', select the variants you want with "
-                f"PlotSpec.variant_sets, or opt in with variant_policy='pool'."
+                f"{VARIABLE_COLUMN!r} cannot hold role {variable_role}: its "
+                f"levels are different variables, so averaging or overplotting "
+                f"them combines unrelated quantities. Give it "
+                f"'color'/'facet'/'iterate'/'x' to keep them apart."
             )
 
     # --- 1-D needs an index ---------------------------------------------
@@ -314,7 +353,8 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
     if measure is None:
         raise RoleError("This table has no measures to plot.")
 
-    # Open on ONE variant, as a single named row.
+    # Open on ONE variant, as a single row — ALWAYS, even when there is nothing
+    # to pin.
     #
     # Every variant axis is pinned, not just the code ones: latest body, first
     # parameter value (`variants.default_selection` owns the rule and states it
@@ -324,22 +364,22 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
     # series before the user had said anything at all. Comparing is what a
     # second row is for.
     #
-    # A single row is deliberately the opening state rather than zero: the GUI's
-    # Variants section always has a row to edit, and this pin is a variant like
-    # any other — the user adds a second row to compare against it instead of
-    # first discovering a hidden pin and clearing it.
+    # The row is seeded unconditionally because it is what the Variants section
+    # SHOWS: a project with no variant axes at all used to open with an empty
+    # list, so the section said nothing about the variable being plotted and
+    # the user's first row appeared only once they added a second (the GUI was
+    # seeding row 0 lazily, in TypeScript — a NOTE 3 violation this removes).
     #
-    # The name stays "current" even though the row now also pins parameters,
-    # which under-describes it. Fixing that means teaching `auto_label` to spell
-    # the latest FLAG as "current" (it would otherwise render the raw
-    # `CodeIsLatest=True`), and the label belongs with the rest of the Variants
-    # section work rather than here.
-    selection = default_selection(table)
-    variant_sets = (
-        [VariantSet(name=CURRENT_VARIANT_NAME, selection=selection)]
-        if selection
-        else []
-    )
+    # It carries no `variable`: None means "the primary measure", which keeps
+    # the row INERT while its selection is empty (`defined_sets`). Naming the
+    # measure explicitly would make every table grow a one-level `Variant`
+    # factor that says nothing.
+    #
+    # The name is left to `set_name`, which builds it from the variable and the
+    # selection — "FilteredEMG", or "FilteredEMG · current" once there are code
+    # versions to be current among. The old hardcoded "current" named the pin
+    # after the least interesting thing about it.
+    variant_sets = [VariantSet(selection=default_selection(table))]
 
     # Roles describe the table AS RESOLVED, so they are derived after the
     # variants are chosen — never before. Defaulting against the undecided table

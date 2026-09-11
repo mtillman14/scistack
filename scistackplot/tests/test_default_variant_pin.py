@@ -28,6 +28,7 @@ from __future__ import annotations
 import pandas as pd
 from scistackplot import (
     LongTable,
+    PlotSpec,
     default_selection,
     default_spec,
     resolve,
@@ -142,11 +143,22 @@ def test_each_axis_is_pinned_independently():
 
 def test_a_table_with_no_variants_pins_nothing():
     """The CSV path, and any scidb variable whose pipeline never branched. It
-    must cost nothing and change nothing."""
-    frame = pd.DataFrame({"subject": ["01", "02"], "value": [1.0, 2.0]})
+    must cost nothing and change nothing.
 
-    assert default_selection(_table(frame, [])) == {}
-    assert default_spec(_table(frame, []), "value").variant_sets == []
+    Since Stage 7 the spec still carries its one seeded row — the Variants
+    section always has something to show — but that row pins NOTHING and is
+    inert, which is what "changes nothing" means here. See
+    `test_the_seeded_row_stays_inert` for the other half.
+    """
+    frame = pd.DataFrame({"subject": ["01", "02"], "value": [1.0, 2.0]})
+    table = _table(frame, [])
+
+    assert default_selection(table) == {}
+
+    rows = default_spec(table, "value").variant_sets
+    assert len(rows) == 1
+    assert rows[0].selection == {}
+    assert rows[0].variable is None
 
 
 # --- the worked example ---------------------------------------------------
@@ -276,3 +288,198 @@ def test_a_pin_matching_no_rows_resolves_rather_than_raising():
     resolved = resolve(spec, table)
     assert resolved, "an empty figure is still a figure"
     assert resolved[0].row_count == 0
+
+
+# --- Stage 7: the Variants section always has a row, named for its variable --
+#
+# Reported 2026-09-11: a project with no variant axes opened with an EMPTY
+# Variants list, so the section said nothing about the variable being plotted,
+# and the user's first row only appeared once they added a second. The names
+# were no better — scidb.log 12:26:18 shows two rows called "FilteredEMG" and
+# "latest", the second of which plots RawEMG and never says so.
+
+
+def test_a_table_with_no_variants_still_opens_with_one_row(scalar_table):
+    from scistackplot import default_spec
+
+    spec = default_spec(scalar_table, "StepLength")
+
+    assert len(spec.variant_sets) == 1
+    assert spec.variant_sets[0].selection == {}
+
+
+def test_the_seeded_row_stays_inert(scalar_table):
+    """It must not make every table grow a one-level `Variant` factor.
+
+    The row carries no `variable` — None means "the primary measure" — so with
+    an empty selection `defined_sets` ignores it and `apply_variant_sets`
+    returns the table untouched. Naming the measure explicitly would have said
+    something, and said it about every project that has no variants at all.
+    """
+    from scistackplot import apply_variant_sets, default_spec, defined_sets
+
+    spec = default_spec(scalar_table, "StepLength")
+
+    assert spec.variant_sets[0].variable is None
+    assert defined_sets(spec.variant_sets) == []
+    assert apply_variant_sets(spec, scalar_table) is scalar_table
+
+
+def test_the_seeded_row_is_named_for_the_measure(scalar_table):
+    from scistackplot import default_spec
+    from scistackplot.variants import set_name
+
+    spec = default_spec(scalar_table, "StepLength")
+
+    assert set_name(spec.variant_sets[0], 0, primary="StepLength") == "StepLength"
+
+
+# --- naming: the variable first, the selection as a qualifier ---------------
+
+
+def test_a_row_names_its_own_variable_over_the_primary():
+    from scistackplot import VariantSet
+    from scistackplot.variants import set_name
+
+    row = VariantSet(variable="RawEMG")
+
+    assert set_name(row, 0, primary="FilteredEMG") == "RawEMG"
+
+
+def test_a_row_with_a_variable_and_a_selection_names_both():
+    """The reported bug: a row plotting RawEMG was called "latest"."""
+    from scistackplot import VariantSet
+    from scistackplot.variants import set_name
+
+    row = VariantSet(variable="RawEMG", selection={"bandpass.low_hz": "20"})
+
+    assert set_name(row, 0, primary="FilteredEMG") == "RawEMG · low_hz=20"
+
+
+def test_the_latest_flag_reads_as_current():
+    """`CodeIsLatest=True` in a legend tells a reader nothing."""
+    from scistackplot import VariantSet
+    from scistackplot.variants import set_name
+
+    row = VariantSet(selection={"CodeIsLatest": True})
+
+    name = set_name(row, 0, primary="Scaled", latest_column="CodeIsLatest")
+
+    assert name == "Scaled · current"
+
+
+def test_a_false_latest_flag_does_not_read_as_current():
+    """"Not the current code" is a real thing to ask for, and must not be
+    labelled as its opposite."""
+    from scistackplot import VariantSet
+    from scistackplot.variants import set_name
+
+    row = VariantSet(selection={"CodeIsLatest": False})
+
+    name = set_name(row, 0, primary="Scaled", latest_column="CodeIsLatest")
+
+    assert name == "Scaled · not CodeIsLatest"
+
+
+def test_an_explicit_name_wins():
+    from scistackplot import VariantSet
+    from scistackplot.variants import set_name
+
+    row = VariantSet(name="baseline", variable="RawEMG", selection={"a": "1"})
+
+    assert set_name(row, 0, primary="FilteredEMG") == "baseline"
+
+
+def test_two_rows_on_one_variable_stay_distinguishable():
+    """Names are the Variant factor's LEVELS, so two rows sharing a name would
+    merge into one legend entry and silently pool their data."""
+    from scistackplot import VariantSet
+    from scistackplot.variants import set_name
+
+    rows = [
+        VariantSet(selection={"bandpass.low_hz": "20"}),
+        VariantSet(selection={"bandpass.low_hz": "40"}),
+    ]
+
+    names = [set_name(row, i, primary="FilteredEMG") for i, row in enumerate(rows)]
+
+    assert names == ["FilteredEMG · low_hz=20", "FilteredEMG · low_hz=40"]
+    assert len(set(names)) == 2
+
+
+def test_an_unfilled_row_with_no_primary_is_still_not_set():
+    """The library caller's view, where there is no primary to fall back on."""
+    from scistackplot import VariantSet
+    from scistackplot.variants import set_name
+
+    assert set_name(VariantSet(), 0) == "(not set)"
+    assert set_name(VariantSet(), 1) == "(not set 2)"
+
+
+def test_adding_a_row_beside_the_seeded_one_draws_BOTH():
+    """The trap Stage 7 set for itself.
+
+    Row 0 is seeded empty and inert, so a naive `defined_sets` would fold only
+    the row the user just added — replacing the figure with that row alone
+    instead of drawing it alongside what was already there. The GUI used to
+    avoid this by quietly filling in row 0's variable on the way to adding the
+    second, which put the rule in TypeScript; it now lives in `defined_sets`.
+    """
+    from scistackplot import (
+        DataFrameSource,
+        VariantSet,
+        apply_variant_sets,
+        defined_sets,
+    )
+    from scistackplot.variants import VARIANT_FACTOR
+
+    # Stacked through the REAL path rather than hand-built: a stacked table
+    # names its value column after the primary measure, and that name is also
+    # the first level of `Variable` — which is exactly what lets a row with no
+    # `variable` of its own (row 0) claim the primary's rows via
+    # `row_mask`'s `variant.variable or spec.y_measure` fallback. A hand-built
+    # frame that got this wrong would test nothing real.
+    source = DataFrameSource(
+        pd.DataFrame(
+            {
+                "subject": ["01", "01"],
+                "FilteredEMG": [1.0, 2.0],
+                "RawEMG": [3.0, 4.0],
+            }
+        ),
+        factors=["subject"],
+        measures=["FilteredEMG", "RawEMG"],
+        name="FilteredEMG",
+    )
+    table = source.get_table(["FilteredEMG", "RawEMG"])
+
+    spec = PlotSpec(
+        measures=["FilteredEMG"],
+        variant_sets=[
+            VariantSet(),                      # seeded row 0 — the primary
+            VariantSet(variable="RawEMG"),     # what "+ Add variant" produces
+        ],
+    )
+
+    assert len(defined_sets(spec.variant_sets)) == 2
+
+    derived = apply_variant_sets(spec, table)
+    levels = [
+        f.levels for f in derived.factors if f.name == VARIANT_FACTOR
+    ][0]
+
+    assert levels == ["FilteredEMG", "RawEMG"], "the seeded row must still be drawn"
+    assert len(derived.frame) == 4
+
+
+def test_a_lone_seeded_row_still_folds_to_nothing():
+    """The other side: one unnarrowed series needs no `Variant` factor, and
+    every project without variants must keep paying nothing for this."""
+    from scistackplot import VariantSet, apply_variant_sets, defined_sets
+
+    frame = pd.DataFrame({"subject": ["01", "02"], "value": [1.0, 2.0]})
+    table = _table(frame, [])
+    spec = PlotSpec(measures=["value"], variant_sets=[VariantSet()])
+
+    assert defined_sets(spec.variant_sets) == []
+    assert apply_variant_sets(spec, table) is table

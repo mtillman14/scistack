@@ -171,7 +171,7 @@ class ScidbSource(BaseSource):
             self._frames[variable] = load_variable(self._db, variable)
         return self._frames[variable]
 
-    def get_table(
+    def _build_table(
         self,
         measures: list[str],
         *,
@@ -180,6 +180,9 @@ class ScidbSource(BaseSource):
     ) -> LongTable:
         """
         Build the long table for a plot's variables.
+
+        Called by :meth:`~scistackplot.sources.base.BaseSource.get_table`, which
+        memoizes the result — this method always does the full work.
 
         ``measures`` are the y variables. Several of them **stack**: one value
         column plus a :data:`~scistackplot.variants.VARIABLE_COLUMN` saying
@@ -774,3 +777,8 @@ class ScidbSource(BaseSource):
             self._frames.pop(variable, None)
             self._shapes.pop(variable, None)
             self._levels.pop(variable, None)
+        # Built tables are derived from those frames, so they are stale too —
+        # and they are keyed by measure NAMES, which cannot say which variable a
+        # stacked table drew from. Dropping all of them is the only answer that
+        # is right for the per-variable case as well.
+        self.invalidate_tables()

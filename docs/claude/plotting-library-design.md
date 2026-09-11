@@ -176,8 +176,14 @@ instead of offering combinations that cannot be built.
 different pipelines' results get overplotted as if they were replicates of one,
 and the resulting figure is quietly wrong. Variants must surface as first-class
 factors, assignable to `COLOR`/`FACET_*`/`ITERATE` like any other. Pooling them
-requires an explicit `variant_policy="pool"`, mirroring the `AcrossVariants`
-decision already made for statistics.
+requires assigning the factor `AGGREGATE` or `FREE` **deliberately** —
+`roles.validate` refuses it for a factor nobody assigned, which is the case that
+would be silent. (This replaced a `variant_policy` flag: two switches for one
+decision, with no defensible meaning when they disagreed.)
+
+Variants pool **within** a variable, never across two. When a figure draws more
+than one variable, `Variable` becomes an ordinary factor that must separate
+them — see `scistackplot/tests/test_multi_variable_pooling.py`.
 
 **4. Payload budget.** 1D data across hundreds of trials is megabytes, and it
 crosses a webview boundary on every interaction. Aggregation and downsampling

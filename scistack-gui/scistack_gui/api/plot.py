@@ -140,6 +140,8 @@ class SaveRequest(BaseModel):
     spec: dict
     path: str
     dpi: int = 200
+    #: Which figure of an ITERATE fan-out to save; None saves all of them.
+    figure_index: int | None = None
     csv_path: str | None = None
 
 
@@ -147,6 +149,27 @@ class SaveRequest(BaseModel):
 def plot_save(req: SaveRequest, db: DatabaseManager = Depends(get_db)) -> dict:
     try:
         return plot_service.save_figure(
+            db,
+            req.spec,
+            req.path,
+            dpi=req.dpi,
+            figure_index=req.figure_index,
+            csv_path=req.csv_path,
+        )
+    except (ValueError, KeyError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/plot/save-all")
+def plot_save_all(req: SaveRequest, db: DatabaseManager = Depends(get_db)) -> dict:
+    """Start a background save of every figure. Returns a job id immediately.
+
+    ``figure_index`` on the request is ignored: this endpoint IS the
+    save-everything path, and honouring it would make two parameters mean the
+    same thing.
+    """
+    try:
+        return plot_service.start_save_job(
             db, req.spec, req.path, dpi=req.dpi, csv_path=req.csv_path
         )
     except (ValueError, KeyError, OSError) as exc:

@@ -34,7 +34,7 @@ from scistackplot import (
     variant_set_mask,
     variant_summary,
 )
-from scistackplot.spec import VariantPolicy, VariantSet
+from scistackplot.spec import VariantSet
 
 
 def _table(
@@ -402,6 +402,23 @@ def test_an_unfilled_variant_reads_as_unset_not_as_matching_nothing():
     assert entry["auto_label"] == "(not set 2)"
 
 
+def test_an_empty_row_zero_is_stated_not_unset():
+    """Row 0 always exists (`default_spec` seeds it) and means "the primary
+    measure, unnarrowed" — a complete statement about the figure. Tagging it
+    "not set" would tell the user their default row does nothing, when it is
+    the whole figure. A row they ADDED and left empty is the real blank
+    (the test above)."""
+    table = _two_version_table()
+    spec = PlotSpec(measures=["value"], variant_sets=[VariantSet(None, {})])
+
+    entry = variant_summary(spec, table)["sets"][0]
+
+    assert entry["defined"] is True
+    assert entry["auto_label"] == "value"
+    # It still folds to nothing: one series needs no `Variant` factor.
+    assert apply_variant_sets(spec, table) is table
+
+
 def test_only_unfilled_variants_is_the_same_as_none():
     table = _two_version_table()
     spec = PlotSpec(measures=["value"], variant_sets=[VariantSet(None, {})])
@@ -653,6 +670,16 @@ def test_a_multi_level_variant_factor_defaults_to_colour_not_pooling():
 
 
 def test_pooling_still_has_to_be_asked_for():
+    """Asked for means ASSIGNED — the Stage 8 rule, and the first time this
+    test matches its own name.
+
+    It used to refuse a variant factor on FREE unconditionally, which also
+    refused the figures the user wanted: five variants of a measure averaged
+    into one line, or left as replicates for a mean ± error band. The property
+    worth keeping is not "never pool" but "never pool SILENTLY", and the spec
+    already records the difference — a role the user chose is in ``spec.roles``,
+    a role nobody chose is filled in by ``complete_roles``.
+    """
     from scistackplot.roles import validate
 
     table = _table(
@@ -661,10 +688,18 @@ def test_pooling_still_has_to_be_asked_for():
         ),
         ["Code:filter"],
     )
-    spec = PlotSpec(measures=["value"], roles={"Code:filter": Role.FREE})
 
+    # Nobody assigned it: pooling would be silent, so it is refused.
     with pytest.raises(RoleError, match="pooled"):
-        validate(spec, table)
+        validate(PlotSpec(measures=["value"], roles={}), table)
+
+    # Assigned on purpose: allowed, and `reduce` logs that it happened.
+    validate(
+        PlotSpec(measures=["value"], roles={"Code:filter": Role.FREE}), table
+    )
+    validate(
+        PlotSpec(measures=["value"], roles={"Code:filter": Role.AGGREGATE}), table
+    )
 
 
 # --- labels ----------------------------------------------------------------
@@ -704,7 +739,7 @@ def _two_axis_table() -> LongTable:
 
 def test_summary_lists_every_variant_factor_and_its_levels():
     table = _two_axis_table()
-    spec = PlotSpec(measures=["value"], roles={}, variant_policy=VariantPolicy.FACET)
+    spec = PlotSpec(measures=["value"], roles={})
 
     summary = variant_summary(spec, table)
 
@@ -729,7 +764,7 @@ def test_summary_axes_survive_being_selected():
 
 def test_unselected_reports_everything_selected():
     table = _two_axis_table()
-    spec = PlotSpec(measures=["value"], roles={}, variant_policy=VariantPolicy.FACET)
+    spec = PlotSpec(measures=["value"], roles={})
 
     summary = variant_summary(spec, table)
 
@@ -789,6 +824,9 @@ def test_row_counts_follow_first_match_wins():
 
 
 def test_an_unnamed_variant_still_reports_a_label():
+    """The variable leads and the selection qualifies it — a row called just
+    "filter v1" says nothing about WHAT it plots, which is how two rows ended
+    up reading "FilteredEMG" and "latest" (scidb.log 2026-09-11 12:26:18)."""
     table = _two_axis_table()
     spec = PlotSpec(
         measures=["value"], variant_sets=[VariantSet(None, {"Code:filter": "v1"})]
@@ -797,7 +835,7 @@ def test_an_unnamed_variant_still_reports_a_label():
     entry = variant_summary(spec, table)["sets"][0]
 
     assert entry["explicit_name"] is None
-    assert entry["name"] == entry["auto_label"] == "filter v1"
+    assert entry["name"] == entry["auto_label"] == "value · filter v1"
 
 
 def test_counts_are_measured_not_multiplied():
@@ -813,7 +851,7 @@ def test_counts_are_measured_not_multiplied():
         ),
         ["Code:load", "Code:filter"],
     )
-    spec = PlotSpec(measures=["value"], roles={}, variant_policy=VariantPolicy.FACET)
+    spec = PlotSpec(measures=["value"], roles={})
 
     assert variant_summary(spec, table)["total_combinations"] == 3
 

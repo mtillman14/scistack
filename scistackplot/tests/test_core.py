@@ -13,7 +13,6 @@ from scistackplot import (
     Role,
     RoleError,
     Shape,
-    VariantPolicy,
     available_plots,
     capabilities,
     classify_column,
@@ -165,13 +164,32 @@ def test_variant_factor_is_fine_once_assigned(variant_table):
     validate(spec, variant_table)  # does not raise
 
 
-def test_explicit_pool_policy_allows_variants(variant_table):
+def test_explicitly_pooling_a_variant_factor_is_allowed(variant_table):
+    """The new spelling of the deleted ``variant_policy='pool'``.
+
+    Pooling variants is legal when ASKED for — five variants of a measure
+    averaged into one line, or left as replicates for a mean ± error band. The
+    rule is only that it must not happen by default (the test below)."""
     spec = PlotSpec(
         measures=["Peak"],
-        roles={"subject": Role.X},
-        variant_policy=VariantPolicy.POOL,
+        roles={"subject": Role.X, "bandpass.low_hz": Role.AGGREGATE},
     )
-    validate(spec, variant_table)
+    validate(spec, variant_table)  # does not raise
+
+    spec = PlotSpec(
+        measures=["Peak"],
+        roles={"subject": Role.X, "bandpass.low_hz": Role.FREE},
+    )
+    validate(spec, variant_table)  # does not raise
+
+
+def test_a_defaulted_variant_factor_is_still_refused(variant_table):
+    """The half that matters: nobody assigned it, so pooling would be silent —
+    two pipelines' results read as replicates of one condition."""
+    spec = PlotSpec(measures=["Peak"], roles={"subject": Role.X})
+
+    with pytest.raises(RoleError, match="would be pooled"):
+        validate(spec, variant_table)
 
 
 def test_a_named_variant_satisfies_the_no_pooling_rule(variant_table):

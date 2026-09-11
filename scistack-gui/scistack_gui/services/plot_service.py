@@ -128,6 +128,19 @@ def describe(
     report — one round trip from "user right-clicked a node" to a rendered
     panel.
     """
+    from scistack_gui.db import db_connection
+
+    # Unlike the spec-driven entry points there is no clean load/compute split
+    # here — `describe` interleaves source queries (catalog, stackable,
+    # groupable, joinable) with cheap in-memory work, and it runs once when the
+    # panel opens rather than on every control change. So the whole body takes
+    # the hold; there is nothing worth narrowing further.
+    with db_connection("plot_describe", needed=not csv_path):
+        return _describe(db, variable, refresh=refresh, csv_path=csv_path)
+
+
+def _describe(db, variable, *, refresh, csv_path) -> dict:
+    """:func:`describe`'s body, run with the database connection held."""
     from scistackplot import capabilities, default_spec
 
     source = get_source(db, refresh=refresh, csv_path=csv_path)
@@ -227,9 +240,9 @@ def capabilities_for(db, spec_payload: dict, *, csv_path: str | None = None) -> 
     """Recompute available plot kinds after the user moves a factor's role."""
     from scistackplot import capabilities
 
-    source = get_source(db, csv_path=csv_path)
-    spec = _spec_from_payload(spec_payload)
-    table = _table_for(source, spec)
+    _, spec, table = _load(
+        db, spec_payload, csv_path=csv_path, label="plot_capabilities"
+    )
     return capabilities(spec, table)
 
 
@@ -251,6 +264,16 @@ def variant_graph(
     A CSV has no provenance and therefore no variants — it returns the empty
     graph rather than an error, so the popup can open and say so.
     """
+    from scistack_gui.db import db_connection
+
+    # The hold spans the whole body: `axis_node_bindings` below builds the
+    # pipeline graph, which is its own set of database reads.
+    with db_connection("plot_variant_graph", needed=not csv_path):
+        return _variant_graph(db, variable, functions=functions, csv_path=csv_path)
+
+
+def _variant_graph(db, variable, *, functions, csv_path) -> dict:
+    """:func:`variant_graph`'s body, run with the database connection held."""
     source = get_source(db, csv_path=csv_path)
     if csv_path or not hasattr(source, "variant_graph"):
         return {
@@ -414,9 +437,7 @@ def resolve_figures(
         resolve_one,
     )
 
-    source = get_source(db, csv_path=csv_path)
-    spec = _spec_from_payload(spec_payload)
-    table = _table_for(source, spec)
+    _, spec, table = _load(db, spec_payload, csv_path=csv_path, label="plot_resolve")
 
     budget = MAX_TRANSPORT_POINTS if max_points is None else max_points
     if figure_index is not None:
@@ -513,9 +534,7 @@ def export_code(
     """Generate the ``plot_`` function and its ``for_each`` call, without writing."""
     from scistackplotdb import generate_endpoint
 
-    source = get_source(db, csv_path=csv_path)
-    spec = _spec_from_payload(spec_payload)
-    table = _table_for(source, spec)
+    _, spec, table = _load(db, spec_payload, csv_path=csv_path, label="plot_export")
 
     code = generate_endpoint(
         spec,
@@ -545,7 +564,9 @@ def save_figure(
     path: str,
     *,
     dpi: int = 200,
+    figure_index: int | None = None,
     csv_path: str | None = None,
+    on_progress=None,
 ) -> dict:
     """
     Render the current spec to an image file.
@@ -558,42 +579,107 @@ def save_figure(
 
     Deliberately NO downsampling (``max_points=None``): the interactive view is
     reduced for transport, a saved figure must not be.
+
+    ``figure_index`` saves ONE figure of an ITERATE fan-out — the one on screen
+    — and is what "Save current figure" sends. ``None`` saves every figure,
+    which is the slow path: it was the default, and it is why saving failed.
+    A save of a two-figure fan-out at full resolution is more work than the
+    interactive resolve beside it, and that resolve was already taking 25-27s
+    against a **30s** client timeout (``api.ts``), so the save crossed it and
+    surfaced as "Request plot_save_figure timed out" with nothing in the log to
+    say why — this function reported nothing at all until it succeeded.
+    See ``.claude/plan-plot-studio-fixes.md`` Stage 3.
+
+    ``on_progress(done, total, path)`` is called after each file is written, for
+    a caller that wants to report progress while it happens.
     """
+    import time
     from pathlib import Path
 
-    from scistackplot import RoleError, render_matplotlib, resolve
+    from scidb.log import Log
+    from scistackplot import RoleError, render_matplotlib, resolve, resolve_one
 
-    source = get_source(db, csv_path=csv_path)
-    spec = _spec_from_payload(spec_payload)
-    table = _table_for(source, spec)
+    with Log.timer(
+        "save_figure",
+        layer="scistack_gui",
+        extra=f"index={'all' if figure_index is None else figure_index}",
+    ) as timing:
+        with timing.phase("load"):
+            _, spec, table = _load(
+                db, spec_payload, csv_path=csv_path, label="plot_save_figure"
+            )
 
-    try:
-        resolved = resolve(spec, table)
-    except RoleError as exc:
-        return {"ok": False, "error": str(exc), "files": []}
+        # Resolving is the dominant cost and the reason a save can outlast the
+        # client's patience, so it is timed as its own phase rather than folded
+        # into the total.
+        with timing.phase("resolve"):
+            try:
+                if figure_index is None:
+                    resolved = list(resolve(spec, table))
+                else:
+                    figure, _labels, _position = resolve_one(
+                        spec, table, figure_index
+                    )
+                    resolved = [figure]
+            except RoleError as exc:
+                # A role conflict is a user-correctable state, not a fault —
+                # same treatment as the resolve path (`_invalid_spec`).
+                logger.info("[plot] save refused an invalid spec: %s", exc)
+                return {"ok": False, "error": str(exc), "files": []}
 
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    suffix = target.suffix or ".png"
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        suffix = target.suffix or ".png"
 
-    written: list[str] = []
-    for item in resolved:
-        # A spec with ITERATE roles is several figures; give each its own file
-        # rather than silently saving only the first.
-        if len(resolved) > 1:
-            slug = _slug(item.figure_label) or f"{len(written) + 1}"
-            out = target.with_name(f"{target.stem}_{slug}{suffix}")
-        else:
-            out = target.with_suffix(suffix)
+        logger.info(
+            "[plot] saving %d figure(s) of %s to %s (dpi=%d)",
+            len(resolved),
+            spec.kind,
+            target,
+            dpi,
+        )
 
-        figure = render_matplotlib(item)
-        try:
-            figure.savefig(out, dpi=dpi, bbox_inches="tight")
-        finally:
-            import matplotlib.pyplot as plt
+        written: list[str] = []
+        with timing.phase("render_and_write"):
+            for item in resolved:
+                # A spec with ITERATE roles is several figures; give each its
+                # own file rather than silently saving only the first. One
+                # explicitly-indexed figure is still one file, named for the
+                # figure it holds — `figure_1.png` for a fan-out the user is
+                # saving one frame of at a time would be a lie.
+                if len(resolved) > 1 or figure_index is not None:
+                    slug = _slug(item.figure_label) or f"{len(written) + 1}"
+                    out = target.with_name(f"{target.stem}_{slug}{suffix}")
+                else:
+                    out = target.with_suffix(suffix)
 
-            plt.close(figure)
-        written.append(str(out))
+                # Rendering and writing are timed apart because we did not know
+                # which dominates, and the answer decides where any further
+                # work goes.
+                started = time.perf_counter()
+                figure = render_matplotlib(item)
+                rendered = time.perf_counter()
+                try:
+                    figure.savefig(out, dpi=dpi, bbox_inches="tight")
+                finally:
+                    import matplotlib.pyplot as plt
+
+                    plt.close(figure)
+                finished = time.perf_counter()
+
+                written.append(str(out))
+                logger.info(
+                    "[plot] saved figure %d/%d: %s — %d row(s), "
+                    "render=%.3fs savefig=%.3fs",
+                    len(written),
+                    len(resolved),
+                    out.name,
+                    item.row_count,
+                    rendered - started,
+                    finished - rendered,
+                )
+                if on_progress is not None:
+                    on_progress(len(written), len(resolved), str(out))
 
     logger.info("[plot] saved %d figure(s): %s", len(written), written)
     return {"ok": True, "error": None, "files": written}
@@ -603,6 +689,112 @@ def _slug(text: str) -> str:
     import re
 
     return re.sub(r"[^0-9A-Za-z]+", "_", text).strip("_")
+
+
+def start_save_job(
+    db,
+    spec_payload: dict,
+    path: str,
+    *,
+    dpi: int = 200,
+    csv_path: str | None = None,
+    job_id: str | None = None,
+) -> dict:
+    """Save every figure of a fan-out on a background thread.
+
+    Returns ``{"job_id": ...}`` at once; the work reports itself through three
+    messages, delivered over whichever transport is active
+    (``ws.push_message`` picks):
+
+    * ``plot_save_progress`` — ``job_id``, ``done``, ``total``, ``path``
+    * ``plot_save_complete`` — ``job_id``, ``files``, ``elapsed``
+    * ``plot_save_failed``   — ``job_id``, ``error``
+
+    **Why a thread rather than a longer timeout.** Saving N figures at full
+    resolution is N times the work of the interactive resolve, and that resolve
+    already ran to 25-27s against a fixed 30s client timeout. No timeout value
+    makes "save 30 subjects" a request/response operation; the only honest
+    shape is a job that reports progress.
+
+    **The database is not held while this runs.** ``save_figure`` takes the
+    connection only to load the frames (Stage 2's ``db_connection``) and
+    releases it before the first figure renders, so a long save leaves the
+    ``.duckdb`` file free for MATLAB — which is the whole reason the user asked
+    for a background job rather than a spinner.
+
+    Modelled on ``server._h_start_run``: a daemon thread, an id returned
+    immediately, and every outcome announced. Deliberately NOT cancellable —
+    a save is bounded and the run service's cancel machinery is heavier than
+    this needs. If that changes, it gets a real cancel rather than a flag.
+    """
+    import threading
+    import time
+    import uuid
+
+    from scistack_gui.api.ws import push_message
+
+    job = job_id or str(uuid.uuid4())[:8]
+
+    def _worker() -> None:
+        started = time.monotonic()
+        try:
+            result = save_figure(
+                db,
+                spec_payload,
+                path,
+                dpi=dpi,
+                csv_path=csv_path,
+                on_progress=lambda done, total, written: push_message(
+                    {
+                        "type": "plot_save_progress",
+                        "job_id": job,
+                        "done": done,
+                        "total": total,
+                        "path": written,
+                    }
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — a thread announces its own death
+            # Without this the thread dies silently and the panel waits for a
+            # completion that can never arrive. Same reasoning as
+            # `_handle_request`'s outer safety net.
+            logger.exception("[plot] save job %s failed", job)
+            push_message(
+                {"type": "plot_save_failed", "job_id": job, "error": str(exc)}
+            )
+            return
+
+        elapsed = time.monotonic() - started
+        if not result.get("ok"):
+            # An invalid spec is a refusal, not a crash, but it still has to
+            # end the job — the panel cannot tell the two apart from silence.
+            push_message(
+                {
+                    "type": "plot_save_failed",
+                    "job_id": job,
+                    "error": result.get("error") or "Could not save.",
+                }
+            )
+            return
+
+        logger.info(
+            "[plot] save job %s complete: %d file(s) in %.1fs",
+            job,
+            len(result["files"]),
+            elapsed,
+        )
+        push_message(
+            {
+                "type": "plot_save_complete",
+                "job_id": job,
+                "files": result["files"],
+                "elapsed": elapsed,
+            }
+        )
+
+    logger.info("[plot] starting save job %s -> %s", job, path)
+    threading.Thread(target=_worker, daemon=True, name=f"plot-save-{job}").start()
+    return {"job_id": job}
 
 
 def add_to_pipeline(
@@ -704,6 +896,30 @@ def _table_for(source, spec):
         x_measure=spec.x_measure,
         factor_variables=list(spec.factor_variables),
     )
+
+
+def _load(db, spec_payload: dict, *, csv_path: str | None, label: str):
+    """``(source, spec, table)``, holding the database only while it loads.
+
+    **This is the whole DuckDB-touching phase of a plot request.** Everything
+    after it — reducing, faceting, downsampling, rendering — runs on the
+    in-memory frame the table already holds and never reaches back to the
+    source, which is what makes the narrow hold correct rather than merely
+    shorter. Keep it that way: a lazy field added to ``LongTable`` that queried
+    on access would fail here with a closed connection, and it would fail in the
+    render path where it is hardest to read.
+
+    The connection is only taken under the ``per_request`` policy, so the
+    standalone process is unaffected (:func:`scistack_gui.db.db_connection`).
+    A CSV spec takes no connection at all — there is no database in that path.
+    """
+    from scistack_gui.db import db_connection
+
+    with db_connection(label, needed=not csv_path):
+        source = get_source(db, csv_path=csv_path)
+        spec = _spec_from_payload(spec_payload)
+        table = _table_for(source, spec)
+    return source, spec, table
 
 
 def _spec_from_payload(payload: dict):

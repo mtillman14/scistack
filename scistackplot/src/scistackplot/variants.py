@@ -58,12 +58,6 @@ VARIABLE_COLUMN = "Variable"
 #: rather than imported because this package must work with no scidb installed.
 LATEST = "latest"
 
-#: Name given to the variant a table opens on — the source's own "these rows are
-#: the current ones" recommendation. Named rather than auto-labelled because
-#: ``CodeIsLatest=True`` is a flag, not a coordinate, and "CodeIsLatest=True" in
-#: a legend tells a reader nothing.
-CURRENT_VARIANT_NAME = "current"
-
 _ORDINAL = re.compile(r"^v(\d+)$")
 
 
@@ -292,27 +286,49 @@ def row_mask(
     return mask
 
 
-def auto_label(selection: dict[str, Any], *, index: int = 0) -> str:
+def auto_label(
+    selection: dict[str, Any],
+    *,
+    index: int = 0,
+    variable: str | None = None,
+    latest_column: str | None = None,
+) -> str:
     """The name a variant gets until the user types over it.
 
-    Built from the selection so it stays true while the row is being edited:
-    ``bandpass v1 · low_hz=20``. The label has to survive being read in a legend
-    a week later, where "Variant 1" would say nothing at all.
+    **The variable comes first, and the selection qualifies it** —
+    ``RawEMG · low_hz=20``. A row's subject is the variable it draws; the
+    selection only narrows it. Naming rows by their selection alone was how two
+    rows reading "current" and "latest" ended up saying nothing about which was
+    EMG and which was force (observed 2026-09-11, scidb.log 12:26:18).
 
-    An empty selection is ``(not set)``, not "all variants": an unfilled row is
-    inert (:func:`defined_sets`), so a label promising every variant would
-    describe a row that contributes nothing.
+    ``variable`` is the row's own, or the primary measure when it names none.
+    Callers pass it; this function never guesses.
+
+    ``latest_column`` spells the source's "these are the current results" flag
+    as **current**. It is a boolean flag rather than a coordinate, and
+    ``CodeIsLatest=True`` in a legend tells a reader nothing.
+
+    An empty selection with no variable is ``(not set)``, not "all variants":
+    an unfilled row is inert (:func:`defined_sets`), so a label promising every
+    variant would describe a row that contributes nothing.
     """
     parts: list[str] = []
     for column, value in selection.items():
         text = _level_text(value)
-        if is_code_axis(column):
+        if latest_column and column == latest_column:
+            # A False flag is "not the current code", which is a real thing to
+            # ask for and must not read as its opposite.
+            parts.append("current" if value is True else f"not {latest_column}")
+        elif is_code_axis(column):
             parts.append(f"{column[len(CODE_FACTOR_PREFIX):]} {text}")
         else:
             # Branch params arrive namespaced (``bandpass.low_hz``); the
             # function is usually obvious from context in a legend, the
             # parameter never is.
             parts.append(f"{column.rsplit('.', 1)[-1]}={text}")
+
+    if variable:
+        return f"{variable} · {' · '.join(parts)}" if parts else variable
     if not parts:
         return "(not set)" if index == 0 else f"(not set {index + 1})"
     return " · ".join(parts)
@@ -324,27 +340,77 @@ def _level_text(value: Any) -> str:
     return str(value)
 
 
-def set_name(variant_set: VariantSet, index: int) -> str:
+def label_variable(
+    variant_set: VariantSet, index: int, primary: str | None
+) -> str | None:
+    """The variable a row is LABELLED by, or None when it is unfilled.
+
+    Three cases, and the third is why this is a function rather than
+    ``variant.variable or primary``:
+
+    * the row names its own variable -> that one;
+    * the row says something (a selection), or it is **row 0** -> the primary
+      measure, because that is what it plots;
+    * otherwise -> None, and the row labels itself ``(not set)``.
+
+    Row 0 is special because it always exists: ``roles.default_spec`` seeds it
+    for every table, and an empty row 0 means "the primary measure, unnarrowed"
+    — a complete statement about the figure, not a blank the user forgot to
+    fill in. A row the user ADDED and left empty is the blank, and has to keep
+    saying so.
+    """
+    if variant_set.variable:
+        return variant_set.variable
+    if variant_set.selection or index == 0:
+        return primary
+    return None
+
+
+def is_stated(variant_set: VariantSet, index: int) -> bool:
+    """Whether this row says anything — what the panel's "not set" tag reads.
+
+    Row 0 always does (see :func:`label_variable`). Beyond it, a row has to
+    name a variable or select something; clicking "+" is not a statement.
+
+    Distinct from :func:`defined_sets`, which decides what the FIGURE does: an
+    empty row 0 states "the primary measure" and needs no ``Variant`` factor to
+    express, so it is stated but not a defined set.
+    """
+    return index == 0 or bool(variant_set.selection) or bool(variant_set.variable)
+
+
+def set_name(
+    variant_set: VariantSet,
+    index: int,
+    *,
+    primary: str | None = None,
+    latest_column: str | None = None,
+) -> str:
+    """What this row is CALLED — in the legend, and in the name box.
+
+    One definition for both, deliberately: a box showing "FilteredEMG" beside a
+    legend reading "current" would be two answers to the same question.
+    """
     if variant_set.name:
         return variant_set.name
-    if not variant_set.selection and variant_set.variable:
-        # A row that only names a variable IS that variable — "RawEMG" beats
-        # "Variant 1" in a legend, and beats restating the same thing twice
-        # when the selection also has something to say.
-        return variant_set.variable
-    return auto_label(variant_set.selection, index=index)
+    return auto_label(
+        variant_set.selection,
+        index=index,
+        variable=label_variable(variant_set, index, primary),
+        latest_column=latest_column,
+    )
 
 
 def defined_sets(sets: list[VariantSet]) -> list[VariantSet]:
-    """The variants that actually select something.
+    """The variants the figure folds into a ``Variant`` factor.
 
-    A row with an empty selection is a row the user has added but not filled in
-    yet, and it is **inert**: it claims no data, contributes no level, and
-    decides nothing about which columns the Variants section answers. Treating
-    it as "all variants" instead — which is what an empty selection means once
-    applied — made adding a row change the figure before the user had said
-    anything about it, and un-answered the code axis for every *other* row,
-    dropping `Code:<fn>` back into Factors with a pooling error attached.
+    A row the user has added but not filled in is **inert**: it claims no data,
+    contributes no level, and decides nothing about which columns the Variants
+    section answers. Treating it as "all variants" instead — which is what an
+    empty selection means once applied — made adding a row change the figure
+    before the user had said anything about it, and un-answered the code axis
+    for every *other* row, dropping `Code:<fn>` back into Factors with a
+    pooling error attached.
 
     Clicking "+" is not a statement about the data. Nothing should happen until
     the row says something.
@@ -352,9 +418,23 @@ def defined_sets(sets: list[VariantSet]) -> list[VariantSet]:
     Naming a **variable** is saying something, even with no selection: "also
     plot FilteredEMG, all of it" is a complete instruction, and the row it
     describes is a series the figure has to draw.
+
+    **Row 0 folds alongside the others once ANY row is concrete**, even while
+    it selects nothing itself. It is seeded for every table
+    (``roles.default_spec``) and means "the primary measure, unnarrowed" — so
+    leaving it out would make adding a second row *replace* the figure with
+    that row alone instead of drawing both. The GUI used to paper over this by
+    quietly filling in row 0's variable when the user clicked "+", which put a
+    rule about what a figure draws in TypeScript; this is that rule, in the one
+    place that decides it.
+
+    With no concrete row anywhere there is nothing to fold: one unnarrowed
+    series needs no ``Variant`` factor to express.
     """
+    if not any(variant.selection or variant.variable for variant in sets):
+        return []
     return [
-        variant for variant in sets if variant.selection or variant.variable
+        variant for index, variant in enumerate(sets) if is_stated(variant, index)
     ]
 
 
@@ -394,11 +474,27 @@ def _answered(table: LongTable, sets: list[VariantSet]) -> set[str]:
         return set()
     frame = table.frame
     answered = {column for column in frame.columns if is_code_axis(column)}
-    if VARIABLE_COLUMN in frame.columns:
-        # Which variable a row came from is what the row's NAME says; leaving
-        # the column as a factor would offer the same question twice, and as an
-        # unassigned multi-level factor `roles.validate` would refuse it.
+    if VARIABLE_COLUMN in frame.columns and (
+        # ONE variable overall: the column is constant, so offering it as a
+        # factor with a single level is noise.
+        frame[VARIABLE_COLUMN].nunique(dropna=False) < 2
+        # ONE ROW PER VARIABLE: `Variant`'s levels already ARE the variables,
+        # so keeping `Variable` too would encode the same distinction twice —
+        # "FilteredEMG vs RawEMG" arriving as both a colour and a facet. This
+        # is the common stacking case and the original reason this column was
+        # always answered: which variable a row came from is what its NAME
+        # says.
+        or len({variant.variable for variant in sets}) == len(sets)
+    ):
         answered.add(VARIABLE_COLUMN)
+    # Otherwise — several rows sharing a variable, e.g. three variants each of
+    # EMG and force — `Variable` STAYS a factor, and that is load-bearing
+    # rather than cosmetic. `Variant` folds all six rows into one flat factor,
+    # and `_collapse_aggregates` builds its groupby key from the ROLES, so a
+    # column with no role is not in it: averaging `Variant` would average EMG
+    # together with force. Keeping `Variable` (defaulted to FACET, and refused
+    # FREE/AGGREGATE by `roles.validate`) is what makes variants collapse
+    # WITHIN a variable and never across.
     per_variant: list[set[str]] = []
     for variant in sets:
         per_variant.append(
@@ -577,7 +673,15 @@ def apply_variant_sets(spec: PlotSpec, table: LongTable) -> LongTable:
         return table
 
     frame = table.frame
-    names = [set_name(s, i) for i, s in enumerate(sets)]
+    names = [
+        set_name(
+            s,
+            i,
+            primary=spec.y_measure,
+            latest_column=table.latest_column,
+        )
+        for i, s in enumerate(sets)
+    ]
     assigned = pd.Series(pd.NA, index=frame.index, dtype="object")
     counts: list[int] = []
 

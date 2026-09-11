@@ -59,8 +59,9 @@ spec = PlotSpec(measures=["Scaled"], roles={"session": Role.X})
 validate(spec, table)
 # RoleError: Variant factor(s) ['scale.factor'] would be pooled: their levels
 # are different pipeline variants, not replicates... Assign them
-# 'color'/'facet'/'iterate', pin one with variant_policy='pin', or opt in
-# with variant_policy='pool'.
+# 'color'/'facet'/'iterate', select the variants you want with
+# PlotSpec.variant_sets, or — to pool them deliberately — set them to
+# 'aggregate' or 'free' yourself.
 ```
 
 **A transport budget.** 1-D data across hundreds of trials is megabytes.

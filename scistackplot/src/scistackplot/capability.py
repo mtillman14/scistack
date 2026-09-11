@@ -13,12 +13,151 @@ here, not in TypeScript (CLAUDE.md NOTE 3).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .shape import Shape
 from .spec import PlotKind, PlotSpec, Role
 from .table import CODE_FACTOR_PREFIX, LongTable
 
 #: Kinds that summarize several rows per x position into one mark.
 DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.BAND)
+
+#: What each role is CALLED, per measure shape.
+#:
+#: The role names are the library's vocabulary; these are the user's. Two of
+#: them read as nonsense on 1-D data under the generic wording — "Average over"
+#: and "Replicates" describe what happens to a table, and what the user is
+#: looking at is a set of traces. Reported by the backend rather than hardcoded
+#: in the panel so the words and the behaviour stay together (CLAUDE.md NOTE 3).
+#:
+#: Only the entries that differ from :data:`_ROLE_LABELS` need listing.
+_ROLE_LABELS_BY_SHAPE: dict[Shape, dict[Role, str]] = {
+    Shape.SERIES_1D: {
+        Role.AGGREGATE: "Average into one line",
+        Role.FREE: "One line each",
+    },
+}
+
+#: The order the dropdown lists roles in — NOT ``Role``'s declaration order,
+#: which is grouped by what each role does to the data and puts "Separate
+#: figures" first. This is the order a user reaches for: the channels that
+#: place data on the page, then the two that reduce it.
+ROLE_ORDER: tuple[Role, ...] = (
+    Role.X,
+    Role.COLOR,
+    Role.FACET,
+    Role.ITERATE,
+    Role.AGGREGATE,
+    Role.FREE,
+)
+
+#: The roles the **Factors** control offers. X is absent on purpose.
+#:
+#: "Which factors group the x axis, and in what order" is one question with two
+#: halves, and it used to be asked in two places that could not see each other:
+#: a per-factor dropdown for membership, and a separate "X grouping" list for
+#: the order — which only appeared once two factors already held X, so it was
+#: unreachable until the user had found the dropdown first. Both halves now live
+#: in the Grouping section, and the x axis is chosen in exactly one place.
+FACTOR_ROLE_ORDER: tuple[Role, ...] = tuple(r for r in ROLE_ORDER if r is not Role.X)
+
+_ROLE_LABELS: dict[Role, str] = {
+    Role.X: "X axis",
+    Role.COLOR: "Color",
+    Role.FACET: "Facet",
+    Role.ITERATE: "Separate figures",
+    Role.AGGREGATE: "Average over",
+    Role.FREE: "Replicates",
+}
+
+_ROLE_HINTS: dict[Role, str] = {
+    Role.X: "Position along the x axis",
+    Role.COLOR: "One coloured series per level",
+    Role.FACET: "One subplot per level — arrange them under Layout",
+    Role.ITERATE: "One whole figure per level",
+    Role.AGGREGATE: "Collapse this factor to its mean",
+    Role.FREE: "Keep as repeated observations",
+}
+
+_ROLE_HINTS_BY_SHAPE: dict[Shape, dict[Role, str]] = {
+    Shape.SERIES_1D: {
+        Role.AGGREGATE: "Average these traces together, sample by sample",
+        Role.FREE: "Draw one trace per level — and what a mean ± error band "
+        "is computed from",
+    },
+}
+
+
+def role_label(role: Role, shape: Shape) -> str:
+    """What to call this role for a measure of this shape."""
+    return _ROLE_LABELS_BY_SHAPE.get(shape, {}).get(role) or _ROLE_LABELS[role]
+
+
+def role_hint(role: Role, shape: Shape) -> str:
+    """The one-line explanation under the label."""
+    return _ROLE_HINTS_BY_SHAPE.get(shape, {}).get(role) or _ROLE_HINTS[role]
+
+
+def _validation_error(spec: PlotSpec, table: LongTable) -> str | None:
+    """``validate``'s complaint about this spec, or None if it has none."""
+    from .roles import RoleError, validate
+
+    try:
+        validate(spec, table)
+    except RoleError as exc:
+        return str(exc)
+    return None
+
+
+def role_options(
+    spec: PlotSpec,
+    table: LongTable,
+    factor: str,
+    *,
+    roles: "tuple[Role, ...] | None" = None,
+) -> list[dict]:
+    """Every role for one factor: its label, whether it is legal, and why not.
+
+    **Derived by asking** :func:`~scistackplot.roles.validate`, one candidate
+    spec per role, rather than by restating its rules. That is the whole design:
+    the panel used to offer all six roles unconditionally while ``validate``
+    refused several of them, so a user could pick an option and be told it was
+    impossible — X on a 1-D measure, a second factor on COLOR, X when an
+    ``x_measure`` already supplies the axis. Any rule expressed here in parallel
+    would be a second copy free to drift from the one that actually decides.
+    Asking cannot drift, and a new rule in ``validate`` reaches the panel for
+    free.
+
+    Cheap enough to do per factor: ``validate`` compares names, shapes and
+    roles and never touches the frame.
+
+    A spec that is ALREADY invalid for an unrelated reason (the panel shows
+    that as its own error) must not make every role look forbidden, so a role
+    counts as unavailable only when it fails for a reason the spec does not
+    already have.
+
+    ``roles`` limits which to report; the default is all of them in
+    :data:`ROLE_ORDER`.
+    """
+    shape = table.shape_of(spec.y_measure)
+    base_error = _validation_error(spec, table)
+
+    options = []
+    for role in roles if roles is not None else ROLE_ORDER:
+        candidate = replace(spec, roles={**spec.roles, factor: role})
+        error = _validation_error(candidate, table)
+        blocked = error is not None and error != base_error
+        options.append(
+            {
+                "role": str(role),
+                "label": role_label(role, shape),
+                "hint": role_hint(role, shape),
+                "available": not blocked,
+                # validate's own message, which always names the one-line fix.
+                "reason": error if blocked else None,
+            }
+        )
+    return options
 
 
 def has_replicates(roles: dict[str, Role]) -> bool:
@@ -153,7 +292,83 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         ],
         "roles": {name: str(role) for name, role in roles.items()},
         "factors": factor_summary(spec, derived),
+        "grouping": grouping_summary(spec, derived),
         "variants": variant_summary(spec, table),
+    }
+
+
+def factors_menu(spec: PlotSpec, table: LongTable, factor: str) -> list[dict]:
+    """What the **Factors** dropdown lists for one factor.
+
+    :func:`role_options` restricted to :data:`FACTOR_ROLE_ORDER`, plus X **only
+    when this factor already holds it**. A ``<select>`` whose value is not among
+    its options renders blank, and a scalar table opens with one factor on X by
+    default (``roles.default_roles``) — so dropping X unconditionally would
+    empty the control for exactly the factor the user is most likely to look at
+    first.
+
+    That X is then reported **unavailable even though it is perfectly legal**,
+    which is the one place this report says something ``validate`` does not.
+    The difference is deliberate and is presentation, not validity: X is listed
+    here so the control can display its own value, while *setting* it belongs
+    to the Grouping section. Keeping it selectable in both places is how the
+    two controls would start disagreeing — the thing merging them was meant to
+    stop.
+    """
+    roles = (
+        (Role.X, *FACTOR_ROLE_ORDER)
+        if spec.roles.get(factor) is Role.X
+        else FACTOR_ROLE_ORDER
+    )
+    options = role_options(spec, table, factor, roles=roles)
+    for option in options:
+        if option["role"] == str(Role.X):
+            option["available"] = False
+            option["reason"] = (
+                "The x axis is grouped in the Grouping section — untick this "
+                "factor there to take it off the axis."
+            )
+    return options
+
+
+def grouping_summary(spec: PlotSpec, table: LongTable) -> dict:
+    """Whether the x axis can be grouped by factors, and how it is grouped now.
+
+    A factor on the x axis IS a categorical grouping: ``xaxis.plan_x_axis``
+    turns the observed level combinations into leaf positions with spacer
+    categories between groups, which is what lets box, violin, bar and strip
+    place themselves exactly as they already do. A continuous x never comes
+    from a factor — it comes from ``x_measure``, or for 1-D data from the
+    within-observation index — which is why this is offered for SCALAR measures
+    and refused, with a reason, for everything else.
+    """
+    from .spec import MAX_X_LAYERS
+
+    shape = table.shape_of(spec.y_measure)
+    reason = None
+    if spec.x_measure is not None:
+        reason = (
+            f"{spec.x_measure!r} already supplies the x axis, so it is a "
+            f"measured value rather than groups of records."
+        )
+    elif shape is Shape.SERIES_1D:
+        reason = (
+            "This measure is 1-D: its x axis is the within-observation index "
+            "(time, or percent of cycle). Separate the groups with colour or "
+            "facets instead."
+        )
+    elif shape is Shape.MATRIX_2D:
+        reason = "This measure is 2-D: a heatmap's axes come from the matrix."
+    elif shape is not Shape.SCALAR:
+        reason = f"Grouping the x axis needs a scalar measure; this one is {shape}."
+
+    return {
+        "available": reason is None,
+        "reason": reason,
+        # Membership and order reconciled the same way the figure does it, so
+        # the control cannot show an order the renderer disagrees with.
+        "layers": spec.ordered_x_layers(),
+        "max_layers": MAX_X_LAYERS,
     }
 
 
@@ -169,10 +384,24 @@ def factor_summary(spec: PlotSpec, derived: LongTable) -> list[dict]:
     A filter that empties a factor is reported honestly as zero selected. It is
     a legitimate state to be in while clicking, and ``resolve`` renders the
     empty figure rather than raising.
+
+    ``roles`` is what the panel's Factors dropdown renders: each role labelled
+    for this measure's shape, flagged available or not, and carrying
+    ``validate``'s own message when not (:func:`role_options`). X is not among
+    them — see :data:`FACTOR_ROLE_ORDER` — so ``x_available``/``x_reason``
+    report separately whether this factor may group the x axis, which is the
+    Grouping section's question.
     """
     from .reduce import apply_filters
 
     factors = derived.describe()["factors"]
+    for entry in factors:
+        name = entry["name"]
+        entry["roles"] = factors_menu(spec, derived, name)
+        on_x = role_options(spec, derived, name, roles=(Role.X,))[0]
+        entry["x_available"] = on_x["available"]
+        entry["x_reason"] = on_x["reason"]
+
     if not spec.filters:
         # Nothing filtered: everything is selected, and no frame scan is needed
         # on the common path.
@@ -232,6 +461,8 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
     from .variants import (
         auto_label,
         defined_sets,
+        is_stated,
+        label_variable,
         resolve_selection,
         row_mask,
         set_name,
@@ -247,7 +478,12 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
     kept_mask = pd.Series(not defined_sets(spec.variant_sets), index=frame.index)
     claimed = pd.Series(False, index=frame.index)
     for index, variant in enumerate(spec.variant_sets):
-        defined = bool(variant.selection) or bool(variant.variable)
+        # "Says something", which row 0 always does — it is the figure's
+        # subject whether or not it narrows anything (`variants.is_stated`).
+        # NOT the same question as `defined_sets`, which decides whether the
+        # figure needs a `Variant` factor at all: a lone empty row 0 is stated
+        # and folds to nothing, because one series needs no factor.
+        defined = is_stated(variant, index)
         if defined:
             mask = row_mask(
                 frame, spec, variant, latest_column=table.latest_column
@@ -264,8 +500,21 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
             fresh = pd.Series(False, index=frame.index)
         sets.append(
             {
-                "name": set_name(variant, index),
-                "auto_label": auto_label(variant.selection, index=index),
+                "name": set_name(
+                    variant,
+                    index,
+                    primary=spec.y_measure,
+                    latest_column=table.latest_column,
+                ),
+                # What the name BOX shows as its placeholder. Built from the
+                # same rule as `name`, minus the user's override — the box has
+                # to keep following the selection while it is being edited.
+                "auto_label": auto_label(
+                    variant.selection,
+                    index=index,
+                    variable=label_variable(variant, index, spec.y_measure),
+                    latest_column=table.latest_column,
+                ),
                 "explicit_name": variant.name,
                 "selection": dict(variant.selection),
                 # None means the primary measure; the GUI shows that as the
@@ -313,7 +562,6 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
             "factors": [],
             "total_combinations": 0,
             "selected_combinations": 0,
-            "policy": str(spec.variant_policy),
         }
 
     kept = frame[kept_mask]
@@ -345,7 +593,6 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
         "factors": factors,
         "total_combinations": total,
         "selected_combinations": selected,
-        "policy": str(spec.variant_policy),
         "latest_column": table.latest_column,
     }
 
