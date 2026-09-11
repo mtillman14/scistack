@@ -284,8 +284,22 @@ async function startPipeline(
     dagPanel.matlabRuns.onAllFinished(flushDeferredDagRefresh);
   }
 
-  // Forward push notifications from Python → Webview
+  // Forward push notifications from Python → Webviews
   pythonProcess.onNotification((method, params) => {
+    // The Plot Studio opens as its own editor tab, so it is NOT reached by
+    // posting to the DAG panel. Its long-running save is a background job that
+    // announces itself only through `plot_save_*` notifications; without this
+    // line the tab that started the save never hears it finish and its Save
+    // button stays on "Saving…" forever.
+    const plotPanels = PlotPanel.broadcast({ method, params });
+    if (method.startsWith('plot_save_')) {
+      // Logged because "backend emitted it, 0 panels received it" is the only
+      // visible symptom of a routing regression here — the Python side always
+      // reports a clean send.
+      outputChannel.appendLine(
+        `[notify] ${method} (job=${params.job_id}) → ${plotPanels} plot panel(s)`,
+      );
+    }
     if (dagPanel) {
       dagPanel.postMessage({ method, params });
       // When a run finishes, auto-detach the debugger if we auto-attached it.

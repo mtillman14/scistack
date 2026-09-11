@@ -19,6 +19,7 @@
 
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { PanelRegistry } from './panelRegistry';
 import { PythonProcess } from './pythonProcess';
 
 export interface PlotTarget {
@@ -31,8 +32,31 @@ export class PlotPanel {
   /** The reused panel, if one is open. */
   private static current: PlotPanel | undefined;
 
+  /**
+   * Every open plot tab, including the `newTab` ones `current` does not track.
+   * Push notifications go here — see `broadcast`.
+   */
+  private static openPanels = new PanelRegistry();
+
   private panel: vscode.WebviewPanel;
   private disposables: vscode.Disposable[] = [];
+  private unregister: () => void = () => {};
+
+  /**
+   * Deliver a push notification from Python to every open plot tab.
+   *
+   * The Plot Studio is a sibling of the DAG webview, not a child of it, so the
+   * extension's `onNotification` forwarding reaches it only through here. The
+   * long-running save is a background job that reports `plot_save_progress` /
+   * `plot_save_complete` / `plot_save_failed`, and the panel disables its save
+   * buttons until one of the last two arrives — a notification that stops at
+   * the DAG panel leaves the tab saying "Saving…" for the rest of the session.
+   *
+   * Returns the number of panels that received it, for the caller's log.
+   */
+  static broadcast(msg: Record<string, unknown>): number {
+    return PlotPanel.openPanels.send(msg);
+  }
 
   static show(
     context: vscode.ExtensionContext,
@@ -81,6 +105,7 @@ export class PlotPanel {
     );
 
     this.panel.webview.html = this.getHtml();
+    this.unregister = PlotPanel.openPanels.add(this);
 
     this.panel.webview.onDidReceiveMessage(
       async (msg: Record<string, unknown>) => {
@@ -168,10 +193,15 @@ export class PlotPanel {
     this.target = target;
     this.panel.title = this.title();
     this.panel.reveal(this.panel.viewColumn, false);
-    this.panel.webview.postMessage({
+    this.postMessage({
       method: 'open_plot_studio',
       params: { variable: target.variable, csv_path: target.csvPath },
     });
+  }
+
+  /** Post a message into this panel's webview (the `MessageSink` contract). */
+  postMessage(msg: Record<string, unknown>): void {
+    this.panel.webview.postMessage(msg);
   }
 
   private title(): string {
@@ -181,6 +211,7 @@ export class PlotPanel {
 
   private dispose(): void {
     if (PlotPanel.current === this) PlotPanel.current = undefined;
+    this.unregister();
     while (this.disposables.length) this.disposables.pop()?.dispose();
   }
 

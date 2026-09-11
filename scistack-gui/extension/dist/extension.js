@@ -1023,6 +1023,49 @@ function getNonce() {
 // src/plotPanel.ts
 var path3 = __toESM(require("path"));
 var vscode4 = __toESM(require("vscode"));
+
+// src/panelRegistry.ts
+var PanelRegistry = class {
+  constructor() {
+    this.sinks = /* @__PURE__ */ new Set();
+  }
+  /** Number of panels currently registered. */
+  get size() {
+    return this.sinks.size;
+  }
+  /**
+   * Register a panel. Returns the function that removes it again — call it
+   * from the panel's dispose, or a closed tab keeps receiving messages.
+   */
+  add(sink) {
+    this.sinks.add(sink);
+    return () => {
+      this.sinks.delete(sink);
+    };
+  }
+  /**
+   * Post to every registered panel. Returns how many received it, which is
+   * what the caller logs — "emitted, 0 panels" is the signature of this bug
+   * and is otherwise indistinguishable from a message that was never sent.
+   *
+   * One panel that throws (a webview disposed between the notification and
+   * this loop) must not swallow delivery to the rest, so failures are counted
+   * out rather than propagated.
+   */
+  send(msg) {
+    let delivered = 0;
+    for (const sink of this.sinks) {
+      try {
+        sink.postMessage(msg);
+        delivered += 1;
+      } catch {
+      }
+    }
+    return delivered;
+  }
+};
+
+// src/plotPanel.ts
 var PlotPanel = class _PlotPanel {
   constructor(context, pythonProcess2, outputChannel2, target, column) {
     this.context = context;
@@ -1030,6 +1073,8 @@ var PlotPanel = class _PlotPanel {
     this.outputChannel = outputChannel2;
     this.target = target;
     this.disposables = [];
+    this.unregister = () => {
+    };
     this.panel = vscode4.window.createWebviewPanel(
       "scistack.plot",
       this.title(),
@@ -1047,6 +1092,7 @@ var PlotPanel = class _PlotPanel {
       }
     );
     this.panel.webview.html = this.getHtml();
+    this.unregister = _PlotPanel.openPanels.add(this);
     this.panel.webview.onDidReceiveMessage(
       async (msg) => {
         const method = msg.method;
@@ -1113,6 +1159,28 @@ var PlotPanel = class _PlotPanel {
     );
     this.panel.onDidDispose(() => this.dispose(), void 0, this.disposables);
   }
+  static {
+    /**
+     * Every open plot tab, including the `newTab` ones `current` does not track.
+     * Push notifications go here — see `broadcast`.
+     */
+    this.openPanels = new PanelRegistry();
+  }
+  /**
+   * Deliver a push notification from Python to every open plot tab.
+   *
+   * The Plot Studio is a sibling of the DAG webview, not a child of it, so the
+   * extension's `onNotification` forwarding reaches it only through here. The
+   * long-running save is a background job that reports `plot_save_progress` /
+   * `plot_save_complete` / `plot_save_failed`, and the panel disables its save
+   * buttons until one of the last two arrives — a notification that stops at
+   * the DAG panel leaves the tab saying "Saving…" for the rest of the session.
+   *
+   * Returns the number of panels that received it, for the caller's log.
+   */
+  static broadcast(msg) {
+    return _PlotPanel.openPanels.send(msg);
+  }
   static show(context, pythonProcess2, outputChannel2, target, options = {}) {
     if (!options.newTab && _PlotPanel.current) {
       _PlotPanel.current.retarget(target);
@@ -1134,10 +1202,14 @@ var PlotPanel = class _PlotPanel {
     this.target = target;
     this.panel.title = this.title();
     this.panel.reveal(this.panel.viewColumn, false);
-    this.panel.webview.postMessage({
+    this.postMessage({
       method: "open_plot_studio",
       params: { variable: target.variable, csv_path: target.csvPath }
     });
+  }
+  /** Post a message into this panel's webview (the `MessageSink` contract). */
+  postMessage(msg) {
+    this.panel.webview.postMessage(msg);
   }
   title() {
     if (this.target.csvPath)
@@ -1147,6 +1219,7 @@ var PlotPanel = class _PlotPanel {
   dispose() {
     if (_PlotPanel.current === this)
       _PlotPanel.current = void 0;
+    this.unregister();
     while (this.disposables.length)
       this.disposables.pop()?.dispose();
   }
@@ -1604,6 +1677,12 @@ async function startPipeline(context, dbPath, schemaKeys) {
     dagPanel.matlabRuns.onAllFinished(flushDeferredDagRefresh);
   }
   pythonProcess.onNotification((method, params) => {
+    const plotPanels = PlotPanel.broadcast({ method, params });
+    if (method.startsWith("plot_save_")) {
+      outputChannel.appendLine(
+        `[notify] ${method} (job=${params.job_id}) \u2192 ${plotPanels} plot panel(s)`
+      );
+    }
     if (dagPanel) {
       dagPanel.postMessage({ method, params });
       if (method === "run_done") {
