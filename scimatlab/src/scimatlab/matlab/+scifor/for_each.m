@@ -2574,12 +2574,23 @@ end
 function [failure_reasons, failure_order] = record_iteration_failure( ...
         failure_reasons, failure_order, err, metadata_str, context)
 %RECORD_ITERATION_FAILURE  Track a per-iteration failure for the summary.
-%   Every failure logs a [skip] line at DEBUG with the MATLAB error report;
-%   the first occurrence of each distinct reason also logs at WARN, so the
-%   default (INFO) log still answers "what failed and why" -- except
-%   scifor:NoData, which is an expected outcome (this combo has no backing
-%   data) rather than a bug, so it never escalates to WARN and carries no
-%   report.
+%   Every failure logs a [skip] line at DEBUG; each distinct reason also logs
+%   one WARN line, so the default (INFO) log still answers "what failed and
+%   why" -- except scifor:NoData, which is an expected outcome (this combo has
+%   no backing data) rather than a bug, so it never escalates to WARN.
+%
+%   The ~20-line MATLAB error report is attached only to the FIRST reason
+%   carrying a given error identifier. The reason key is
+%   'identifier: message', and messages usually embed the offending value --
+%   a file path, say -- so every failing combo is a distinct reason and used to
+%   get its own full report. 533 missing files produced ~11,200 log lines that
+%   way (2026-09-13). The stack is identical across them; only the message
+%   differs, and that is already in the WARN line and the end-of-run summary.
+%
+%   Whether an identifier has been reported is read back off failure_order
+%   rather than kept in new state, so this stays a pure function of the
+%   accumulators and a second for_each in the same MATLAB session still gets
+%   its own first report.
     reason = sprintf('%s: %s', err.identifier, err.message);
     is_no_data = strcmp(err.identifier, 'scifor:NoData');
     if isKey(failure_reasons, reason)
@@ -2588,10 +2599,26 @@ function [failure_reasons, failure_order] = record_iteration_failure( ...
         failure_reasons(reason) = {metadata_str};
         failure_order{end+1} = reason;
         if ~is_no_data
-            scifor.Log.warn(['iteration failed: %s — %s: %s ' ...
-                '(first occurrence; report follows)\n%s'], ...
-                metadata_str, context, err.message, ...
-                getReport(err, 'extended', 'hyperlinks', 'off'));
+            % Has this identifier already carried a report? Scan everything
+            % except the reason just appended. Exits on the first hit, which
+            % is the common case once an identifier repeats.
+            id_prefix = sprintf('%s: ', err.identifier);
+            id_already_reported = false;
+            for fi = 1:(numel(failure_order) - 1)
+                if startsWith(failure_order{fi}, id_prefix)
+                    id_already_reported = true;
+                    break;
+                end
+            end
+            if id_already_reported
+                scifor.Log.warn('iteration failed: %s — %s: %s', ...
+                    metadata_str, context, err.message);
+            else
+                scifor.Log.warn(['iteration failed: %s — %s: %s ' ...
+                    '(first %s; report follows)\n%s'], ...
+                    metadata_str, context, err.message, err.identifier, ...
+                    getReport(err, 'extended', 'hyperlinks', 'off'));
+            end
         end
     end
     scifor.Log.debug('[skip] %s: %s: %s', metadata_str, context, err.message);

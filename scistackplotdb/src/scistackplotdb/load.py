@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 from scistacklog import Log
 from scistackplot import CODE_FACTOR_PREFIX
+from scistackplot.framesize import format_extent, frame_extent
 
 LAYER = "scistackplotdb"
 
@@ -181,9 +182,10 @@ def variable_levels(db, variable: str) -> list[str]:
 
 def load_variable(db, variable: str, *, with_variants: bool = True) -> VariableFrame:
     """Load every non-excluded record of ``variable`` as a long frame."""
-    with Log.timer("load_variable", layer=LAYER, extra=variable):
-        keys = schema_keys(db)
-        columns = data_columns_for(db, variable)
+    with Log.timer("load_variable", layer=LAYER, extra=variable) as timer:
+        with timer.phase("column_metadata"):
+            keys = schema_keys(db)
+            columns = data_columns_for(db, variable)
         if not columns:
             Log.warn("variable %r has no data columns", variable, layer=LAYER)
             return VariableFrame(name=variable, frame=pd.DataFrame())
@@ -198,27 +200,44 @@ def load_variable(db, variable: str, *, with_variants: bool = True) -> VariableF
             f"LEFT JOIN _schema s ON r.schema_id = s.schema_id "
             f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE"
         )
-        rows = db._duck._fetchall(query, [variable])
+        # NOTE: no schema filter, no LIMIT, no column projection — this reads
+        # EVERY non-excluded record of the variable with EVERY data column,
+        # whatever the caller intends to plot. Splitting fetch from frame
+        # construction because they fail differently at scale: the fetch boxes
+        # each DOUBLE[] into a Python list of Python floats, the construction
+        # copies them into pandas.
+        with timer.phase("fetch"):
+            rows = db._duck._fetchall(query, [variable])
 
-        frame = pd.DataFrame(
-            rows, columns=["record_id", *columns, *keys]
-        )
-        for key in keys:
-            frame[key] = frame[key].map(lambda v: None if v is None else str(v))
+        with timer.phase("dataframe"):
+            frame = pd.DataFrame(
+                rows, columns=["record_id", *columns, *keys]
+            )
+        with timer.phase("stringify_keys"):
+            for key in keys:
+                frame[key] = frame[key].map(lambda v: None if v is None else str(v))
 
         levels = [key for key in keys if frame[key].notna().any()]
         variant_columns: list[str] = []
         variant_axes: list[dict] = []
         latest_column: str | None = None
         if with_variants and len(frame):
-            frame, variant_columns, latest_column, variant_axes = attach_variants(
-                db, frame
-            )
+            with timer.phase("attach_variants"):
+                frame, variant_columns, latest_column, variant_axes = attach_variants(
+                    db, frame
+                )
 
+        # Cells and SAMPLES alongside the record count: 419 records is the same
+        # number whether each holds 200 samples or 250,000, and only the second
+        # explains a plot that never returns. Measured over the data columns
+        # only, one O(cells) pass (scistackplot.framesize).
+        with timer.phase("measure_extent"):
+            extent = frame_extent(frame, columns)
         Log.info(
-            "loaded %s: %d record(s), levels=%s, variants=%s",
+            "loaded %s: %d record(s), %s, levels=%s, variants=%s",
             variable,
             len(frame),
+            format_extent(extent),
             levels,
             variant_columns or "none",
             layer=LAYER,

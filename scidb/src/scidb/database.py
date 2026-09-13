@@ -1691,13 +1691,21 @@ class DatabaseManager:
         n = len(data_items)
         n_new = len(new_data_rows)
         n_total_rows = len(_arrow_record_ids) if _use_arrow else len(data_table_rows)
-        Log.info(
-            f"[timing] save_batch({type_name}): {n} items ({n_new} new rows, "
-            f"{n_total_rows} total storage rows), "
-            f"{len(unique_schema_combos)} schemas, {timings['total']:.3f}s"
+        # Phase breakdown at INFO, not DEBUG. This path is measured in tens of
+        # seconds on payload-heavy batches (77.3s for 419 RawEMG records,
+        # 2026-09-13) and a single opaque total gives no way to tell hashing
+        # from inserts from the commit. ~18 phases is far too many for one
+        # readable line, so the INFO line carries the costliest few and every
+        # phase still gets its DEBUG line.
+        Log.timings(
+            f"save_batch({type_name})",
+            timings,
+            extra=(
+                f"{n} items ({n_new} new rows, {n_total_rows} total storage rows), "
+                f"{len(unique_schema_combos)} schemas"
+            ),
+            top=6,
         )
-        for phase, elapsed in timings.items():
-            Log.debug(f"  save_batch {phase:30s} {elapsed:.3f}s")
 
         if profile:
             print(

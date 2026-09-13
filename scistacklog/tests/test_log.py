@@ -324,6 +324,74 @@ def test_timer_phase_table_at_debug_only(tmp_path):
     assert "  load(PSD) find" in at_debug
 
 
+def test_timings_matches_timer_summary_shape(tmp_path):
+    """Log.timings is for callers that collect their own perf_counter deltas.
+
+    save_batch and record_run hand-roll a `timings` dict; restructuring those
+    hot paths into nested context managers would be a large change for no gain,
+    so they call this instead. The output contract must be identical to timer()
+    so one grep finds both.
+    """
+    log_file = tmp_path / "scidb.log"
+    Log.set_path(str(log_file))
+    Log.timings(
+        "save_batch(PSD)",
+        {"canonical_hash": 1.5, "commit": 0.25, "total": 2.0},
+        extra="114 items",
+    )
+    summary = [
+        l for l in log_file.read_text(encoding="utf-8").splitlines() if "[timing]" in l
+    ]
+    assert len(summary) == 1
+    assert "save_batch(PSD): 114 items, TOTAL=2.000s" in summary[0]
+    assert "canonical_hash=1.500s" in summary[0]
+    assert "commit=0.250s" in summary[0]
+    # 'total' is the total, not a phase of its own.
+    assert "total=" not in summary[0]
+
+
+def test_timings_total_defaults_to_sum_when_absent(tmp_path):
+    log_file = tmp_path / "scidb.log"
+    Log.set_path(str(log_file))
+    Log.timings("record_run(fn=f)", {"meta_fetch": 1.0, "commit": 2.0})
+    assert "TOTAL=3.000s" in log_file.read_text(encoding="utf-8")
+
+
+def test_timings_top_keeps_the_info_line_readable(tmp_path):
+    """~18 phases do not fit one line; the costliest few go to INFO."""
+    log_file = tmp_path / "scidb.log"
+    Log.set_path(str(log_file))
+    phases = {f"p{i}": float(i) for i in range(10)}
+    Log.timings("save_batch(X)", phases, top=3)
+    summary = [
+        l for l in log_file.read_text(encoding="utf-8").splitlines() if "[timing]" in l
+    ][0]
+    # Three most expensive present, cheapest absent, remainder counted.
+    assert "p9=9.000s" in summary
+    assert "p8=8.000s" in summary
+    assert "p7=7.000s" in summary
+    assert "p0=" not in summary
+    assert "+7 more" in summary
+
+
+def test_timings_phase_table_at_debug_only(tmp_path):
+    """Every phase still reaches DEBUG even when `top` trims the INFO line."""
+    log_file = tmp_path / "scidb.log"
+    Log.set_path(str(log_file))
+    Log.set_level("DEBUG", sink="file")
+    Log.timings("save_batch(X)", {"cheap": 0.001, "dear": 9.0}, top=1)
+    content = log_file.read_text(encoding="utf-8")
+    assert "  save_batch(X) cheap" in content
+    assert "  save_batch(X) dear" in content
+
+
+def test_timings_accepts_pairs(tmp_path):
+    log_file = tmp_path / "scidb.log"
+    Log.set_path(str(log_file))
+    Log.timings("x", [("a", 1.0), ("b", 2.0)])
+    assert "a=1.000s, b=2.000s" in log_file.read_text(encoding="utf-8")
+
+
 def test_timer_emits_summary_even_when_body_raises(tmp_path):
     log_file = tmp_path / "scidb.log"
     Log.set_path(str(log_file))

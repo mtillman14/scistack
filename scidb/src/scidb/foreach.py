@@ -1549,12 +1549,47 @@ def _for_each_prepare(
         Log.debug("PathInput detected, running filesystem discovery")
         pi = _find_pathinput(inputs)
         if pi is not None:
+            # Keys with provably NO source: the database could not fill them
+            # (Step 2) and this template has no {key} placeholder, so discovery
+            # cannot either. Step 3b drops them from the iteration a few lines
+            # below; tell discovery now so a key on its way out does not force
+            # the Cartesian-product fallback and invent combos with no file
+            # behind them. Computed from Step 2's result plus the template's own
+            # placeholders — no extra disk access.
+            _unsupplyable = {
+                k for k in _unresolved_from_db if k not in set(pi.placeholder_keys())
+            }
+            if _unsupplyable:
+                Log.debug(
+                    f"keys with no possible source (DB empty, not a placeholder of "
+                    f"{pi.path_template!r}): {sorted(_unsupplyable)} — excluded from "
+                    f"the discovery-combos decision"
+                )
             # "Explicit" keys are those the user passed with non-empty
             # values — a value filled from DB (Step 2) or disk is an
             # auto-fill, not intent.
             metadata_iterables, _discovered_combos = _scifor_resolve_pathinput_discovery(
-                pi, metadata_iterables, user_explicit_keys, log=Log.debug
+                pi,
+                metadata_iterables,
+                user_explicit_keys,
+                log=Log.debug,
+                unsupplyable_keys=_unsupplyable,
             )
+            # O(1) per run and it decides what actually executes, so INFO:
+            # 419 disk combos vs a 952-cell Cartesian product is the difference
+            # between a clean run and 533 phantom "file not found" failures.
+            if _discovered_combos is not None:
+                Log.info(
+                    f"PathInput discovery drives iteration directly: "
+                    f"{len(_discovered_combos)} combo(s) found on disk "
+                    f"(no Cartesian product of iterables)"
+                )
+            else:
+                Log.info(
+                    "PathInput discovery did not drive iteration; the Cartesian "
+                    "product of the metadata iterables will — combos with no file "
+                    "behind them will fail at runtime"
+                )
     else:
         Log.debug("no PathInput detected, skipping filesystem discovery")
 

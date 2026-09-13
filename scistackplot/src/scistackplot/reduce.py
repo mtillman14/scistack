@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from .framesize import format_extent, frame_extent
 from .resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW, Z
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import complete_roles, fanout_keys, iterate_ancestors, validate
@@ -318,23 +319,39 @@ def _with_presentation(plan: "_Plan", spec: PlotSpec) -> "_Plan":
 
 
 def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
-    """:func:`_plan` without the cache — always does the full work."""
+    """:func:`_plan` without the cache — always does the full work.
+
+    Phase-timed end to end: on 2026-09-13 a ``plot_resolve`` cleared its whole
+    DuckDB phase in 16 ms and then never reached the render, so every candidate
+    for the missing time was in here — and all of it logged at DEBUG, with the
+    file sink at INFO (.claude/plot-at-scale-plan.md §1).
+    """
+    with Log.timer("build_plan", layer=LAYER, extra=str(spec.kind)) as timer:
+        return _build_plan_timed(spec, table, timer)
+
+
+def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
+    """:func:`_build_plan`'s body, with ``timer`` supplying the phases."""
     # Named variants become a ``Variant`` factor BEFORE anything else looks
     # at the table, so validation, roles, faceting and rendering all see one
     # ordinary factor rather than each needing a variant special case.
     base = table
-    table = apply_variant_sets(spec, table)
+    with timer.phase("variant_sets"):
+        table = apply_variant_sets(spec, table)
     # Derived grouping factors, after the variants have claimed their
     # columns. Both are derived tables built BEFORE validation and role
     # completion, so nothing below this line knows either factor was
     # synthesized (docs/claude/synthetic-factors.md).
-    table = apply_level_groups(spec, table)
-    spec = strip_answered_roles(spec, base, table)
-    validate(spec, table)
-    roles = complete_roles(spec, table)
+    with timer.phase("level_groups"):
+        table = apply_level_groups(spec, table)
+    with timer.phase("roles"):
+        spec = strip_answered_roles(spec, base, table)
+        validate(spec, table)
+        roles = complete_roles(spec, table)
 
     frame = table.frame
-    frame = apply_filters(frame, spec)
+    with timer.phase("apply_filters"):
+        frame = apply_filters(frame, spec)
     _warn_if_pooling_variants(spec, table, roles)
 
     y_measure = spec.y_measure
@@ -347,12 +364,16 @@ def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
     if shape is not Shape.SERIES_1D:
         index_column = None
 
-    Log.debug(
-        "resolve: measure=%s shape=%s kind=%s rows=%d roles=%s",
+    # INFO, not DEBUG: this one line says how much data survived the filter, and
+    # it is the first thing anyone needs when a resolve does not come back. The
+    # extent reports cells and samples, because `rows` alone cannot tell a frame
+    # of short arrays from a frame of quarter-million-sample ones.
+    Log.info(
+        "resolve: measure=%s shape=%s kind=%s post-filter %s roles=%s",
         y_measure,
         shape,
         spec.kind,
-        len(frame),
+        format_extent(frame_extent(frame, [y_measure])),
         {k: str(v) for k, v in roles.items()},
         layer=LAYER,
     )
@@ -361,26 +382,33 @@ def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
     # grouping by it would raise rather than degrade. (An ITERATE factor is
     # never aggregated away — a factor carries one role — so moving the
     # collapse into the figures below does not widen what this can miss.)
-    iterate = [name for name in fanout_keys(spec, table) if name in frame.columns]
-    if iterate:
-        groups = [
-            (dict(zip(iterate, key_values, strict=True)), group)
-            for key_values, group in _ordered_groups(frame, iterate, table)
-        ]
-    else:
-        groups = [({}, frame)]
+    with timer.phase("group_fanout"):
+        iterate = [name for name in fanout_keys(spec, table) if name in frame.columns]
+        if iterate:
+            groups = [
+                (dict(zip(iterate, key_values, strict=True)), group)
+                for key_values, group in _ordered_groups(frame, iterate, table)
+            ]
+        else:
+            groups = [({}, frame)]
 
     # Computed HERE, over the filtered frame, for the whole fan-out at once —
     # a scope of [] means one range across every figure, including the ones
     # `resolve_one` deliberately never builds. Off the table rather than off the
     # figures, so it stays a numpy pass over 48 rows (see `ylimits`).
-    y_scope = eligible_scope(spec.y_axis.scope, roles, table)
-    scoped = replace(table, frame=frame)
-    y_limits = (
-        {}
-        if spec.y_axis.is_manual
-        else limits_by_scope(scoped, spec, y_scope)
-    )
+    #
+    # Timed separately because that "48 rows" assumption is exactly what a
+    # 419-location variable breaks: `_raw_extents` walks every cell of the
+    # measure column in a Python loop, and it is the one step here that
+    # deliberately spans figures `resolve_one` will never build.
+    with timer.phase("y_limits"):
+        y_scope = eligible_scope(spec.y_axis.scope, roles, table)
+        scoped = replace(table, frame=frame)
+        y_limits = (
+            {}
+            if spec.y_axis.is_manual
+            else limits_by_scope(scoped, spec, y_scope)
+        )
 
     return _Plan(
         spec=spec,

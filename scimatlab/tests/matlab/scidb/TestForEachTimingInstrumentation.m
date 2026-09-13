@@ -180,5 +180,70 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
                 sprintf('expected %d DummyOut records, got %d', ...
                         n_records, numel(results)));
         end
+
+        function test_postsave_timing_line_is_emitted(testCase)
+            %TEST_POSTSAVE_TIMING_LINE_IS_EMITTED
+            %   The window between 'for_each_save returned' and 'for_each done'
+            %   used to emit nothing at all. On 2026-09-13 it was ~385s of a
+            %   641s run -- 60% of the runtime, invisible. This pins the named
+            %   breakdown that closed that gap.
+            DummyMixed().save(table(1, 'VariableNames', {'v'}), ...
+                'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
+
+            % Assigned call so the post-save conversion actually runs.
+            result = scidb.for_each(@dummy_return_one, ...
+                struct('x', DummyMixed()), ...
+                {DummyOut()}, ...
+                'as_table', true, ...
+                'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
+            testCase.verifyEqual(height(result), 1);
+
+            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scidb.log')), newline);
+            hits = lines(contains(lines, '[timing] for_each_postsave:'));
+            testCase.verifyNotEmpty(hits, ...
+                'no [timing] for_each_postsave line found in scidb.log');
+
+            summary = hits{end};
+            for label = {'from_python', 'flatten', 'type_restore', ...
+                         'introspect_parse', 'bytes'}
+                testCase.verifyTrue(contains(summary, [label{1} '=']), ...
+                    sprintf('postsave summary is missing %s=', label{1}));
+            end
+
+            % TOTAL must cover the named parts -- a part timed outside the
+            % TOTAL window would make the breakdown lie about where time went.
+            total = str2double(regexp(summary, '(?<=TOTAL=)[\d.]+', 'match', 'once'));
+            parts = str2double(regexp(summary, ...
+                '(?<==)[\d.]+(?=s[,)])', 'match'));
+            testCase.verifyGreaterThanOrEqual(total, sum(parts) - 1e-6, ...
+                'postsave TOTAL is less than the sum of its named phases');
+        end
+
+        function test_postsave_conversion_skipped_when_result_discarded(testCase)
+            %TEST_POSTSAVE_CONVERSION_SKIPPED_WHEN_RESULT_DISCARDED
+            %   A statement call must report from_python=0 -- that zero IS the
+            %   optimization. Records still save (covered in
+            %   TestForEachReturnValue); this pins the instrumentation proving
+            %   the conversion was skipped rather than merely fast.
+            DummyMixed().save(table(1, 'VariableNames', {'v'}), ...
+                'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
+
+            scidb.for_each(@dummy_return_one, ...
+                struct('x', DummyMixed()), ...
+                {DummyOut()}, ...
+                'as_table', true, ...
+                'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
+
+            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scidb.log')), newline);
+            hits = lines(contains(lines, '[timing] for_each_postsave:'));
+            testCase.verifyNotEmpty(hits, ...
+                'no [timing] for_each_postsave line found in scidb.log');
+            testCase.verifyTrue(contains(hits{end}, 'from_python=0.000s'), ...
+                'statement call still spent time in from_python — gate not firing');
+
+            skipped = lines(contains(lines, 'caller requested no output (nargout=0)'));
+            testCase.verifyNotEmpty(skipped, ...
+                'expected the nargout=0 skip to be logged');
+        end
     end
 end

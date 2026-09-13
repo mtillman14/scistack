@@ -1113,7 +1113,7 @@ class TestGenerateMatlabCommand:
         assert "bandpass_filter" in cmd
         assert "/data/experiment.duckdb" in cmd
         assert "scihist.configure_database" in cmd
-        assert "scihist.for_each" in cmd
+        assert "scidb.for_each" in cmd
 
     def test_with_variants(self):
         from scistack_gui.api.matlab_command import generate_matlab_command
@@ -1227,7 +1227,7 @@ class TestGenerateMatlabCommand:
         )
 
         # Should only have one for_each call.
-        assert cmd.count("scihist.for_each") == 1
+        assert cmd.count("scidb.for_each") == 1
 
     def test_escape_single_quotes(self):
         from scistack_gui.api.matlab_command import generate_matlab_command
@@ -2611,7 +2611,23 @@ class TestPreambleTimingInstrumentation:
         cmd = self._variant_cmd()
 
         assert "scidb.Log.info('[timing] matlab_preamble: TOTAL=%.3fs" in cmd
-        assert cmd.index("matlab_preamble") < cmd.index("scihist.for_each")
+        assert cmd.index("matlab_preamble") < cmd.index("scidb.for_each")
+
+    def test_never_emits_the_scihist_for_each_shim(self):
+        """The generator must call scidb.for_each, never the scihist shim.
+
+        +scihist/for_each.m is a wrapper, and a wrapper is an extra call frame
+        between the user's statement and scidb.for_each. scidb.for_each reads
+        `nargout` to decide whether to convert the Python result table back into
+        a MATLAB table (~385s of a 641s run on 2026-09-13 when it does), and
+        going through a wrapper that assigns the result makes that nargout 1
+        even for a bare-statement call. Emitting scidb.for_each directly keeps
+        the arity the user actually wrote.
+        """
+        cmd = self._variant_cmd()
+
+        assert "scihist.for_each" not in cmd
+        assert "scidb.for_each" in cmd
 
     def test_total_is_emitted_after_the_try_block_and_clears_temporaries(self):
         """`run(...)` evaluates in the caller's workspace, so the script's own

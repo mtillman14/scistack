@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from scistacklog import Log
+
+from ..framesize import format_extent, frame_extent
 from ..table import LongTable
+
+LAYER = "scistackplot"
 
 
 @runtime_checkable
@@ -130,12 +135,33 @@ class BaseSource:
             x_measure,
             tuple(factor_variables or ()),
         )
+        label = f"get_table({', '.join(measures)})"
         if key in memo:
+            # Hit/miss at INFO because it changes the cost of a request by orders
+            # of magnitude, and because a hold measured in milliseconds is only
+            # explicable one of two ways — cached, or the data is smaller than it
+            # looks. On 2026-09-13 a 16 ms `plot_resolve` hold could not be
+            # attributed to either (.claude/plot-at-scale-plan.md §1).
+            Log.info("%s: table cache HIT", label, layer=LAYER)
             return memo[key]
 
-        table = self._build_table(
-            measures, x_measure=x_measure, factor_variables=factor_variables
-        )
+        Log.info("%s: table cache MISS — building", label, layer=LAYER)
+        with Log.timer(label, layer=LAYER) as timer:
+            with timer.phase("build_table"):
+                table = self._build_table(
+                    measures, x_measure=x_measure, factor_variables=factor_variables
+                )
+            # Size the result in cells and SAMPLES, not just rows: a row count
+            # cannot tell 4190 short arrays from 4190 quarter-million-sample ones,
+            # and that distinction is the whole question for a plot that will not
+            # return. Scanning only the measure columns keeps this one O(cells)
+            # pass over data the build just touched anyway.
+            with timer.phase("measure_extent"):
+                measured = [m for m in (*measures, x_measure) if m]
+                extent = frame_extent(table.frame, measured)
+        # Plain INFO, not timer.note: note() is silent on a non-live timer, and
+        # this is the one number the diagnosis actually turns on.
+        Log.info("%s: built %s", label, format_extent(extent), layer=LAYER)
         memo[key] = table
         while len(memo) > TABLE_CACHE_ENTRIES:
             # Insertion-ordered dict: the oldest key is the first one.

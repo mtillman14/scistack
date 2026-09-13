@@ -22,6 +22,7 @@ from scistackplot import (
     is_plottable,
     natural_sort_key,
 )
+from scistackplot.framesize import format_extent, frame_extent
 from scistackplot.sources import BaseSource
 from scistackplot.variants import VARIABLE_COLUMN
 
@@ -167,8 +168,16 @@ class ScidbSource(BaseSource):
     # ---- data ------------------------------------------------------------
 
     def _variable_frame(self, variable: str):
+        # Hit/miss at INFO: this cache is the difference between a request that
+        # reads the whole variable and one that reads nothing, and a plot request
+        # that returned in milliseconds is otherwise unattributable
+        # (.claude/plot-at-scale-plan.md §1). The layer below (load_variable)
+        # reports what a miss actually cost.
         if variable not in self._frames:
+            Log.info("variable frame cache MISS: %s — loading", variable, layer=LAYER)
             self._frames[variable] = load_variable(self._db, variable)
+        else:
+            Log.info("variable frame cache HIT: %s", variable, layer=LAYER)
         return self._frames[variable]
 
     def _build_table(
@@ -607,17 +616,27 @@ class ScidbSource(BaseSource):
         while field_factor in id_vars:  # never shadow a schema key
             field_factor += "_"
 
-        melted = frame.melt(
-            id_vars=id_vars,
-            value_vars=usable,
-            var_name=field_factor,
-            value_name=measure,
-        )
+        # Timed because this is where the row count multiplies by the field
+        # count — a 10-field record becomes 10 rows, each still holding a whole
+        # signal — and every one of those cells is carried through the rest of
+        # the pipeline whether or not the plot asks for that field.
+        with Log.timer(
+            f"melt_fields({variable_frame.name})",
+            layer=LAYER,
+            extra=f"{len(usable)} field(s)",
+        ):
+            melted = frame.melt(
+                id_vars=id_vars,
+                value_vars=usable,
+                var_name=field_factor,
+                value_name=measure,
+            )
         Log.info(
-            "melted %r: %d field(s) -> %d row(s), field factor %r",
+            "melted %r: %d field(s) -> %d row(s), %s, field factor %r",
             variable_frame.name,
             len(usable),
             len(melted),
+            format_extent(frame_extent(melted, [measure])),
             field_factor,
             layer=LAYER,
         )

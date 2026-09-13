@@ -631,11 +631,53 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                                       'introspect', logical(opts.introspect)));
     scidb.Log.info('for_each_save returned in %.3fs', toc(save_t0));
 
-    % --- Convert returned DataFrame to MATLAB table ---
-    if isa(py_result_df, 'py.NoneType')
+    % --- Post-save result marshalling ---
+    %
+    % GATED ON nargout. Converting the returned DataFrame is the single most
+    % expensive phase of a payload-heavy MATLAB run: from_python walks the
+    % result element-by-element, and for a 419-row table carrying a RawEMG
+    % struct per row it measured ~385s of a 641s run (2026-09-13,
+    % .claude/matlab-run-timing-and-phantom-combos-plan.md). When the caller
+    % discarded the result — the shape the GUI generates, a bare
+    % `scidb.for_each(...)` statement — every second of that is spent on data
+    % nothing reads. The records are already persisted by for_each_save above;
+    % the result table is a convenience return, not part of saving.
+    %
+    % Everything skipped here is pure conversion (from_python, the nested-table
+    % flatten, the metadata type restore, the introspect JSON parse). No DB
+    % write, no lineage, no side effect depends on this block — which is what
+    % makes skipping it safe.
+    %
+    % NOTE: nargout is the arity of the IMMEDIATE caller. A wrapper that writes
+    % `result_tbl = scidb.for_each(...)` unconditionally reports nargout=1 here
+    % and defeats the gate; +scihist/for_each.m forwards arity for that reason.
+    post_t0 = tic;
+    t_from_python = 0;
+    t_flatten = 0;
+    t_type_restore = 0;
+    t_introspect = 0;
+    result_bytes = 0;
+
+    if nargout == 0
+        % Caller wants nothing back. Assign the declared output explicitly
+        % rather than leaving it unset — do not rely on MATLAB tolerating an
+        % unassigned output on a statement call.
+        result_tbl = table();
+        scidb.Log.info(['for_each(%s): caller requested no output (nargout=0) — ' ...
+            'skipping post-save result conversion (records are already saved)'], ...
+            fn_name);
+    elseif isa(py_result_df, 'py.NoneType')
         result_tbl = table();
     else
+        t0_fp = tic;
         result_tbl = scidb.internal.from_python(py_result_df);
+        t_from_python = toc(t0_fp);
+        try
+            w_info = whos('result_tbl');
+            result_bytes = w_info.bytes;
+        catch
+            result_bytes = 0;  % size reporting is best-effort only
+        end
     end
 
     scidb.Log.debug('post-save result: %dx%d cols=%s', ...
@@ -648,7 +690,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % inner table. Users expect a flat result where each row of an inner
     % table becomes its own row in the result, with metadata replicated.
     if ~isempty(result_tbl) && istable(result_tbl)
+        t0_fl = tic;
         result_tbl = flatten_nested_table_outputs(result_tbl, output_names);
+        t_flatten = toc(t0_fl);
         scidb.Log.debug('post-flatten result: %dx%d cols=%s', ...
             height(result_tbl), width(result_tbl), ...
             strjoin(string(result_tbl.Properties.VariableNames), ', '));
@@ -658,6 +702,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     %     Step 5 stringifies schema-key values so DataFrame-side filtering
     %     is consistent (numeric DB values vs. user-supplied strings); we
     %     reverse that here so numeric inputs round-trip as numeric.
+    t0_tr = tic;
     if ~isempty(result_tbl) && istable(result_tbl)
         meta_keys_tracked = keys(meta_original_classes);
         for mi = 1:numel(meta_keys_tracked)
@@ -688,10 +733,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             end
         end
     end
+    t_type_restore = toc(t0_tr);
 
     % --- Parse introspect dict columns from JSON strings to structs ---
     % Python's for_each_save serializes _branch_params_* as JSON strings for
     % MATLAB compatibility. Convert them back to structs here.
+    t0_in = tic;
     if opts.introspect && ~isempty(result_tbl) && istable(result_tbl)
         col_names = string(result_tbl.Properties.VariableNames);
         bp_cols = col_names(startsWith(col_names, "_branch_params_"));
@@ -727,6 +774,16 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             result_tbl.("_config_keys") = ck_struct;
         end
     end
+    t_introspect = toc(t0_in);
+
+    % Named-operation timing for the phase that used to be a silent gap between
+    % 'for_each_save returned' and 'for_each done'. bytes is the size of the
+    % converted MATLAB table (0 when the conversion was skipped or unmeasurable),
+    % so a slow conversion reports HOW MUCH it converted, not just how long.
+    scidb.Log.info(['[timing] for_each_postsave: TOTAL=%.3fs (from_python=%.3fs, ' ...
+        'flatten=%.3fs, type_restore=%.3fs, introspect_parse=%.3fs, bytes=%d)'], ...
+        toc(post_t0), t_from_python, t_flatten, t_type_restore, t_introspect, ...
+        result_bytes);
 
     scidb.Log.info('===== for_each(%s) done =====', fn_name);
 end

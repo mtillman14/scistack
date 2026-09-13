@@ -2,7 +2,7 @@
 Generate ready-to-paste MATLAB commands for running pipeline functions.
 
 The generated script configures the database, registers variable types,
-and calls ``scihist.for_each`` with the correct inputs, outputs, and
+and calls ``scidb.for_each`` with the correct inputs, outputs, and
 schema arguments — all formatted as MATLAB syntax.
 """
 
@@ -721,7 +721,7 @@ def generate_matlab_command(
         )
         lines.append("try")
         lines.append("    % Run (fill in inputs/outputs)")
-        lines.append(f"    scihist.for_each(@{function_name}, ...")
+        lines.append(f"    scidb.for_each(@{function_name}, ...")
         lines.append(f"        {inputs_str}, ...")
         if template_schema_str:
             lines.append(f"        {outputs_str}, ...")
@@ -773,7 +773,7 @@ def generate_matlab_command(
             schema_filter,
             schema_level,
             path_inputs,
-            matlab_fn="scihist.for_each",
+            matlab_fn="scidb.for_each",
             sweeps=sweeps,
             variable_inputs=variable_inputs,
             glue=glue,
@@ -880,7 +880,7 @@ def _for_each_call_lines(
     schema_filter: dict[str, list] | None,
     schema_level: list[str] | None,
     path_inputs: dict[str, dict] | None,
-    matlab_fn: str = "scihist.for_each",
+    matlab_fn: str = "scidb.for_each",
     indent: str = "    ",
     sweeps: dict[str, list] | None = None,
     variable_inputs: dict[str, "str | list[str]"] | None = None,

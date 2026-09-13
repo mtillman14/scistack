@@ -264,5 +264,91 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
             testCase.verifyEqual(computed, saved.data, 'AbsTol', 1e-10);
         end
 
+        % --- nargout gate on post-save result marshalling -----------------
+        % scidb.for_each skips converting the Python result table when the
+        % caller asked for no output. The records must still be saved, and an
+        % assigned call must still get the full payload back.
+
+        function test_statement_call_still_saves(testCase)
+            % Bare-statement call (nargout == 0): no result conversion, but
+            % every record is saved exactly as an assigned call would save it.
+            for s = [1 2 3]
+                RawSignal().save(s * [1 2 3], 'subject', s, 'session', 'A');
+            end
+
+            scidb.for_each(@double_values, ...
+                struct('x', RawSignal()), ...
+                {ProcessedSignal()}, ...
+                'subject', [1 2 3], ...
+                'session', "A");
+
+            all_saved = ProcessedSignal().load();
+            testCase.verifyEqual(numel(all_saved), 3);
+        end
+
+        function test_statement_and_assigned_save_identical_records(testCase)
+            % The gate must not change record identity: the same call run as a
+            % statement and as an assignment must produce the same record_ids.
+            RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');
+
+            assigned = scidb.for_each(@double_values, ...
+                struct('x', RawSignal()), ...
+                {ProcessedSignal()}, ...
+                'subject', 1, 'session', "A", 'introspect', true);
+            rid_assigned = string(assigned.("_record_id_ProcessedSignal")(1));
+
+            scidb.for_each(@double_values, ...
+                struct('x', RawSignal()), ...
+                {ProcessedSignal()}, ...
+                'subject', 1, 'session', "A");
+
+            % Deterministic content -> same record_id, so the statement call
+            % re-saves the identical record rather than creating a second one.
+            saved = ProcessedSignal().load();
+            testCase.verifyEqual(numel(saved), 1);
+            testCase.verifyNotEmpty(char(rid_assigned));
+        end
+
+        function test_assigned_call_returns_payload(testCase)
+            % The gate must NOT strip payloads from an assigned call -- the
+            % whole point is that nargout>0 keeps today's behaviour intact.
+            RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');
+
+            result = scidb.for_each(@double_values, ...
+                struct('x', RawSignal()), ...
+                {ProcessedSignal()}, ...
+                'subject', 1, ...
+                'session', "A");
+
+            testCase.verifyEqual(height(result), 1);
+            testCase.verifyTrue(ismember('ProcessedSignal', ...
+                result.Properties.VariableNames));
+            testCase.verifyEqual(result.ProcessedSignal{1}, [20 40 60], ...
+                'AbsTol', 1e-10);
+        end
+
+        function test_scihist_shim_forwards_arity(testCase)
+            % +scihist/for_each.m must forward nargout. If it assigns
+            % unconditionally, nargout is 1 inside scidb.for_each for every
+            % shim call and the gate above never fires.
+            RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');
+
+            % Statement call through the shim: must save without error.
+            scihist.for_each(@double_values, ...
+                struct('x', RawSignal()), ...
+                {ProcessedSignal()}, ...
+                'subject', 1, 'session', "A");
+            testCase.verifyEqual(numel(ProcessedSignal().load()), 1);
+
+            % Assigned call through the shim: must still return the payload.
+            result = scihist.for_each(@double_values, ...
+                struct('x', RawSignal()), ...
+                {ProcessedSignal()}, ...
+                'subject', 1, 'session', "A");
+            testCase.verifyEqual(height(result), 1);
+            testCase.verifyEqual(result.ProcessedSignal{1}, [20 40 60], ...
+                'AbsTol', 1e-10);
+        end
+
     end
 end

@@ -418,6 +418,63 @@ class Log:
             for p, s in t.phases:
                 cls.debug(f"  {name} {p:<30s} {s:.3f}s", layer=layer)
 
+    @classmethod
+    def timings(
+        cls,
+        name: str,
+        phases,
+        *,
+        layer: str = "scidb",
+        extra: str | None = None,
+        total: float | None = None,
+        top: int | None = None,
+        total_key: str = "total",
+    ) -> None:
+        """Emit an ALREADY-COLLECTED phase mapping in :meth:`timer`'s format.
+
+        Same output contract as ``timer`` — one INFO
+        ``[timing] name: TOTAL=…s (phase=…s, …)`` line plus one DEBUG line per
+        phase — for callers that accumulate their own ``timings`` dict rather
+        than wrapping sub-phases in context managers. Hot paths that already
+        hand-roll ``time.perf_counter()`` deltas (``save_batch``,
+        ``record_run``) use this instead of being restructured, so there is
+        still exactly ONE definition of the ``[timing]`` line shape.
+
+        Args:
+            phases: Mapping of phase name -> seconds, or an iterable of
+                ``(name, seconds)`` pairs. Order is preserved for the DEBUG
+                table; the INFO line is ordered by cost when ``top`` is set.
+            total: The run total. Defaults to ``phases[total_key]`` if present,
+                else the sum of all phases.
+            top: Include only the ``top`` most expensive phases in the INFO
+                line (every phase still gets its DEBUG line). Use it when a
+                path has more phases than fit one readable line; the omitted
+                ones are summarised as ``+N more``.
+            total_key: Phase name to treat as the total rather than a phase.
+        """
+        items = list(phases.items() if hasattr(phases, "items") else phases)
+        # The total is not itself a phase — pull it out so it is neither summed
+        # into the parts nor printed as one.
+        parts = [(p, s) for p, s in items if p != total_key]
+        if total is None:
+            declared = dict(items).get(total_key)
+            total = declared if declared is not None else sum(s for _p, s in parts)
+
+        shown = parts
+        omitted = 0
+        if top is not None and len(parts) > top:
+            shown = sorted(parts, key=lambda kv: kv[1], reverse=True)[:top]
+            omitted = len(parts) - len(shown)
+
+        detail_parts = ", ".join(f"{p}={s:.3f}s" for p, s in shown)
+        if omitted:
+            detail_parts = f"{detail_parts}, +{omitted} more"
+        detail = f" ({detail_parts})" if detail_parts else ""
+        prefix = f"{extra}, " if extra else ""
+        cls.info(f"[timing] {name}: {prefix}TOTAL={total:.3f}s{detail}", layer=layer)
+        for p, s in parts:
+            cls.debug(f"  {name} {p:<30s} {s:.3f}s", layer=layer)
+
     # -- internals ---------------------------------------------------------
 
     @classmethod

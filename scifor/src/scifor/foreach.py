@@ -1864,6 +1864,7 @@ def resolve_pathinput_discovery(
     user_explicit_keys: "set | None" = None,
     log=None,
     condense_numeric: bool = False,
+    unsupplyable_keys: "set | None" = None,
 ) -> "tuple[dict, list[dict] | None]":
     """Fill empty metadata iterables from PathInput filesystem discovery,
     then drop any key a fully static PathInput (no ``{key}`` placeholders)
@@ -1886,6 +1887,16 @@ def resolve_pathinput_discovery(
             there. Defaults to False so scidb's declared-only
             ``schema_key_types`` contract is unaffected; the standalone
             scifor call site opts in explicitly.
+        unsupplyable_keys: Keys that provably have NO source — neither the
+            caller, nor the DB, nor this template can fill them — and which
+            the caller is therefore going to drop from the iteration anyway.
+            They are excluded from the "every iterated key is a placeholder"
+            test below, so a key that is about to disappear cannot force the
+            Cartesian-product fallback on its way out. Membership must be
+            decidable WITHOUT walking the disk (the caller knows what its own
+            resolution failed to fill; ``pi.placeholder_keys()`` says what this
+            template could ever supply), which is why this is an input rather
+            than something computed here after discovery.
 
     Returns:
         ``(metadata_iterables, discovered_combos | None)``.
@@ -1918,9 +1929,24 @@ def resolve_pathinput_discovery(
     # drop that other dimension's iteration. (metadata_iterables has already
     # been filled per-key above, so the Cartesian-product fallback still
     # picks up the disk-discovered values either way.)
-    if discovered_combos is not None and not set(metadata_iterables.keys()) <= (
-        placeholder_keys
-    ):
+    #
+    # ``unsupplyable_keys`` is subtracted first. A key nothing can fill is not a
+    # real iteration dimension -- the caller drops it moments later -- but while
+    # it is still in the dict it used to fail this subset test and force the
+    # Cartesian product. That is how a 5-key schema whose template supplies 4
+    # turned 419 real files into 952 combos, 533 of which could only fail on a
+    # missing file (2026-09-13; see
+    # .claude/matlab-run-timing-and-phantom-combos-plan.md). The set is decided
+    # before discovery runs, so a key on its way out no longer votes.
+    _iterated_keys = set(metadata_iterables.keys()) - set(unsupplyable_keys or ())
+    if discovered_combos is not None and not _iterated_keys <= placeholder_keys:
+        if log is not None:
+            log(
+                f"discovery combos dropped: iterated keys "
+                f"{sorted(_iterated_keys - placeholder_keys)} are not template "
+                f"placeholders of {pi.path_template!r} — Cartesian product of "
+                f"iterables will drive combos"
+            )
         discovered_combos = None
     return metadata_iterables, discovered_combos
 

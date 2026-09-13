@@ -616,14 +616,21 @@ def record_run(
     timings["3_commit"] = time.perf_counter() - _t_commit
     timings["total"] = time.perf_counter() - _t_start
 
-    Log.info(
-        f"[timing] record_run(fn={function_name}): {len(graph_records)} record(s), "
-        f"{len(invocation_rows)} invocation(s), {constant_row_count} constant(s), "
-        f"{pathinput_row_count} PathInput spec(s), "
-        f"{len(input_edges)} input edge(s), {timings['total']:.3f}s"
+    # Phase breakdown at INFO, not DEBUG. 67.1s for 419 records / 1 invocation
+    # (2026-09-13) is ~100x worse per record than this function's own documented
+    # optimized case (22.9s for 14253 records -> 1 invocation, see the inv_cache
+    # comment above), and a single total cannot say whether that is the meta
+    # fetch, the assemble loop, or the commit.
+    Log.timings(
+        f"record_run(fn={function_name})",
+        timings,
+        extra=(
+            f"{len(graph_records)} record(s), {len(invocation_rows)} invocation(s), "
+            f"{constant_row_count} constant(s), "
+            f"{pathinput_row_count} PathInput spec(s), "
+            f"{len(input_edges)} input edge(s)"
+        ),
     )
-    for phase, elapsed in timings.items():
-        Log.debug(f"  record_run {phase:30s} {elapsed:.3f}s")
     return run_id
 
 

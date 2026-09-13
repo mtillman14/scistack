@@ -183,6 +183,10 @@ def location_states(
     schema_keys = list(db.dataset_schema_keys)
     notes: list[str] = []
     timings: dict[str, float] = {}
+    # Wall clock for the whole function, so the reported TOTAL covers the
+    # untimed work between phases (notably the leaf_states loop) instead of
+    # being the sum of the phases and quietly understating itself.
+    _t_all = time.perf_counter()
 
     t0 = time.perf_counter()
     present = _present_by_location(db, name, variant)
@@ -236,9 +240,16 @@ def location_states(
         f"grey={tree.counts.get('grey', 0)}) basis={basis} "
         f"variant={variant or '(any)'}",
     )
-    Log.debug(
-        "location_states timings (s): "
-        + ", ".join(f"{k}={v:.3f}" for k, v in timings.items()),
+    # Phase breakdown at INFO, not DEBUG. The location tree is one of two
+    # surfaces that timed out on a 419-location variable (2026-09-13,
+    # .claude/plot-at-scale-plan.md) and these six numbers were the only thing
+    # that could have said which phase — invisible, because the file sink runs
+    # at INFO. Same collect-then-hide shape save_batch and record_run had.
+    Log.timings(
+        f"location_states({name})",
+        timings,
+        extra=f"{tree.total} location(s)",
+        total=time.perf_counter() - _t_all,
     )
     return tree
 
