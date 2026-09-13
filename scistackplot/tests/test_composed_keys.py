@@ -89,7 +89,14 @@ def test_a_missing_level_gets_text_instead_of_raising():
     # Precondition for the docstring above, asserted rather than assumed: a
     # missing value is still missing after `astype(str)`, so there was never a
     # string for `" | ".join` to join.
-    assert frame["b"].astype(str).isna().any()
+    #
+    # This is a pandas 3 fact. pandas 2's `astype(str)` writes the text "nan",
+    # so the TypeError cannot arise there and the precondition is simply false —
+    # assert it where it applies rather than everywhere. The composed output
+    # below is the same on both: pandas 3 reaches "nan" via the implementation's
+    # `fillna(MISSING_LEVEL_TEXT)`, pandas 2 was already there.
+    if int(pd.__version__.split(".")[0]) >= 3:
+        assert frame["b"].astype(str).isna().any()
 
     composed = list(_composed_key(frame, ["a", "b"], SERIES_SEPARATOR))
 
