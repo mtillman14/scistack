@@ -37,7 +37,18 @@ jobs:
         run: |
           pip install --upgrade pip
           bash dev-install.sh
-          pip install pytest pytest-cov matplotlib
+          # dev-install.sh wires the local packages together with --no-deps (so
+          # pip can never pull a sibling from PyPI over the editable checkout).
+          # The cost is that NO third-party dependency is installed by it, so
+          # every external requirement has to be named here. Keep in sync with
+          # the `dependencies` blocks of the packages CI tests.
+          #   runtime: pandas/numpy (scidb, scistackplot), duckdb (sciduckdb)
+          #   test:    plotly is required, not optional — the scistackplot
+          #            render tests call render_plotly() unguarded; seaborn and
+          #            tomli-w sit behind importorskip, so leaving them out
+          #            silently skips real coverage instead of failing.
+          pip install pandas numpy duckdb
+          pip install pytest pytest-cov matplotlib seaborn plotly tomli-w
       - name: Run tests
         # Inlined from the former run_tests.sh: pytest per package, collecting
         # pass/fail so every package runs even after one fails.
