@@ -22,7 +22,6 @@ dependencies = [
     # because metadata states intent, not coincidence.
     "pydantic>=2.0",
     "scistack-db",
-    "scihist",
     # Top-level import in config.py and registry.py (scifor.discovery).
     "scifor",
     # matlab_registry.py, config.py, api/pipeline.py.

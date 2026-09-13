@@ -970,29 +970,22 @@ def test_there_is_one_save_method_and_it_is_a_job():
     # a POST to a deleted API route answers 405 rather than 404 and "not 404"
     # would pass just as well against a route that still existed.
     #
-    # Asked of create_app(), not of `client.app`. It read the latter until
-    # 2026-09-13, when it failed in CI on all three Python versions with an
-    # EMPTY set — no POST routes at all — while test_api.py drove POST
-    # endpoints through the same fixture happily. app.py calls include_router()
-    # unconditionally for 13 routers, so the app always has them; `client.app`
-    # on a newer starlette than the one used locally is evidently not that app
-    # but a wrapper whose own `.routes` is empty. TestClient's internals are not
-    # this test's subject, and route registration is a property of create_app().
-    routes = list(create_app().routes)
-    posts = {
-        route.path
-        for route in routes
-        if "POST" in (getattr(route, "methods", None) or ())
-    }
+    # The table comes from the OpenAPI schema, which is public API and already
+    # resolves prefixes and nesting for us. Two earlier versions of this walked
+    # route objects instead and both broke on library upgrades, in CI only
+    # (2026-09-13): `client.app.routes` was not the app's routes on a newer
+    # starlette, and `create_app().routes` stopped being flat when FastAPI
+    # changed include_router() to keep one `_IncludedRouter` per call with the
+    # real routes nested inside, so every /api route vanished from the scan and
+    # the assertion read as "the endpoint is gone" when nothing was gone.
+    # No include_in_schema=False anywhere in scistack_gui/api, so the schema is
+    # the complete set of HTTP routes.
+    paths = create_app().openapi()["paths"]
+    posts = {path for path, operations in paths.items() if "post" in operations}
     # Name what was inspected, so a future mismatch says which routes existed
     # instead of only "not in set()".
-    table = "\n".join(
-        f"    {getattr(r, 'path', '<no path>')} "
-        f"{sorted(getattr(r, 'methods', None) or ())} ({type(r).__name__})"
-        for r in routes
-    )
-    detail = (
-        f"{len(routes)} route(s), {len(posts)} with POST:\n{table or '    <none>'}"
+    detail = f"{len(paths)} path(s), {len(posts)} with POST:\n" + "\n".join(
+        f"    {p} {sorted(ops)}" for p, ops in sorted(paths.items())
     )
     assert "/api/plot/save" in posts, detail
     assert "/api/plot/save-all" not in posts, detail

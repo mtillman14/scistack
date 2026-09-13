@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from scidb.database import DatabaseManager
 
-from scihist import for_each
+from scidb import for_each
 from scistack_gui import registry
 from scistack_gui.api.ws import push_message
 from scistack_gui.db import external_db_access, get_db

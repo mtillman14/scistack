@@ -131,7 +131,7 @@ def _own_state_for_function(
 ) -> str:
     """
     Return the own run state ("green"/"grey"/"red") for a single function
-    by calling scihist.check_node_state.
+    by calling scidb.check_node_state.
 
     When ``call_id`` is provided, restricts the state computation to records
     produced by that specific for_each call site. Used for manual (not yet
@@ -141,8 +141,7 @@ def _own_state_for_function(
     Falls back to "red" for unregistered functions (never executed or not
     importable in this session).
     """
-    from scidb import BaseVariable
-    from scihist import check_node_state
+    from scidb import BaseVariable, check_node_state
 
     # lookup_function also covers library references, which resolve by
     # import — without it a pandas.read_csv node reads as permanently red.
@@ -249,7 +248,7 @@ def _compute_run_states(
     call site.
 
     Pass 1 — own state per function-call-site:
-      Calls scihist.check_multiple_nodes_state() for all nodes in batch.
+      Calls scidb.check_multiple_nodes_state() for all nodes in batch.
 
     Pass 2 — propagate staleness through the DAG (delegated to domain layer).
       ``disconnected_fkeys`` (call sites with a user-hidden required inbound
@@ -264,8 +263,7 @@ def _compute_run_states(
     separate row for the not-yet-existing combo rather than downgrading
     any real call site's own state (see pending_value_group_coverage).
     """
-    from scidb import BaseVariable
-    from scihist import check_multiple_nodes_state
+    from scidb import BaseVariable, check_multiple_nodes_state
     from scistack_gui.domain.run_state import propagate_run_states
 
     t0 = time.monotonic()
@@ -1030,7 +1028,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
                     state_output_types,
                 )
             if state_output_types:
-                # _own_state_for_function checks scihist.check_node_state
+                # _own_state_for_function checks scidb.check_node_state
                 # without a call_id, so it answers "has THIS FUNCTION NAME
                 # ever produced these outputs" — blind to which inputs fed
                 # it. Two manual nodes can share a function name while
