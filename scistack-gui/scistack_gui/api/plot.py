@@ -7,6 +7,7 @@ extension cannot diverge.
 
     POST /api/plot/describe        — catalog + default spec for a variable
     POST /api/plot/capabilities    — available plot kinds for a role assignment
+    POST /api/plot/locations       — per-location status tree for one variable
     POST /api/plot/resolve         — plotly figure dicts for the panel
     POST /api/plot/export          — generated plot_ function + for_each call
     POST /api/plot/add-to-pipeline — write the endpoint into the project
@@ -87,6 +88,34 @@ def plot_variant_graph(
         )
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+class LocationTreeRequest(BaseModel):
+    variable: str
+    # The plotting layer's column-keyed variant selection ({"Code:bandpass":
+    # "v1"}). Omitted on the canvas path, where no spec is open: the service
+    # falls back to the same default a panel opens on.
+    selection: dict | None = None
+    problems_only: bool = False
+    csv_path: str | None = None
+
+
+@router.post("/plot/locations")
+def plot_locations(
+    req: LocationTreeRequest, db: DatabaseManager = Depends(get_db)
+) -> dict:
+    try:
+        return plot_service.location_tree(
+            db,
+            req.variable,
+            selection=req.selection,
+            problems_only=req.problems_only,
+            csv_path=req.csv_path,
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:  # plotting packages not installed
+        raise HTTPException(status_code=501, detail=str(exc))
 
 
 @router.post("/plot/resolve")

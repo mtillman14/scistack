@@ -87,8 +87,24 @@ class RenderStyle:
     missing_more_fmt: str = "    … +{n} more"
     missing_display_cap: int = 25
 
+    # -- schema locations (the location picker's CLI half) -------------------
+    # One mark per state. Amber and grey have no equivalent anywhere else in
+    # this file because node state is binary; a location is not.
+    loc_mark_green: str = "●"
+    loc_mark_amber: str = "◐"
+    loc_mark_red: str = "○"
+    loc_mark_grey: str = "·"
+    loc_counts_fmt: str = "  {green}/{total}"
+    loc_version_fmt: str = "  [{version}]"
+    loc_excluded_label: str = "  (excluded)"
+    loc_header_fmt: str = "{variable}: {green}/{total} locations green"
+    loc_variant_fmt: str = "  variant: {variant}"
+    loc_basis_fmt: str = "  denominator: {basis}"
+    loc_depth_more_fmt: str = "{prefix}… +{n} deeper"
+
     # -- terminal colors (empty = no color; see with_ansi_colors) -----------
     color_green: str = ""
+    color_amber: str = ""
     color_red: str = ""
     color_unknown: str = ""
     color_reset: str = ""
@@ -124,6 +140,11 @@ ASCII_STYLE = RenderStyle(
     id_ellipsis="...",
     run_note_fmt="(run {n}x, last {ts})",
     missing_more_fmt="    ... +{n} more",
+    loc_mark_green="+",
+    loc_mark_amber="~",
+    loc_mark_red="-",
+    loc_mark_grey=".",
+    loc_depth_more_fmt="{prefix}... +{n} deeper",
 )
 
 
@@ -132,6 +153,7 @@ def with_ansi_colors(style: RenderStyle) -> RenderStyle:
     return replace(
         style,
         color_green="\x1b[32m",
+        color_amber="\x1b[33m",
         color_red="\x1b[31m",
         color_unknown="\x1b[90m",
         color_reset="\x1b[0m",
@@ -272,6 +294,102 @@ def render_schema_tree(tree: SchemaTree, style: RenderStyle | None = None) -> st
     for i, root in enumerate(tree.roots):
         walk(root, "", i == len(tree.roots) - 1)
     return "\n".join(lines)
+
+
+def _loc_mark(state: str, s: RenderStyle) -> str:
+    """The coloured dot for one location state."""
+    mark = {
+        "green": s.loc_mark_green,
+        "amber": s.loc_mark_amber,
+        "red": s.loc_mark_red,
+        "grey": s.loc_mark_grey,
+    }.get(state, s.loc_mark_grey)
+    color = {
+        "green": s.color_green,
+        "amber": s.color_amber,
+        "red": s.color_red,
+        "grey": s.color_unknown,
+    }.get(state, s.color_unknown)
+    return f"{color}{mark}{s.color_reset}" if color else mark
+
+
+def render_location_tree(tree, style: RenderStyle | None = None, depth: int = 0) -> str:
+    """The ``scidb locations`` view: a status dot and roll-up per node.
+
+    Counts are shown on interior nodes only. At a leaf they would always read
+    ``1/1`` or ``0/1``, which is what the dot already says — the same reason the
+    GUI pane omits them at the deepest level.
+
+    ``depth`` caps how far down the tree prints (0 = no cap). A trial-level
+    study is thousands of lines otherwise, and the interesting number is almost
+    always the roll-up at the level above.
+    """
+    s = style or DEFAULT_STYLE
+    lines = [
+        _loc_mark(tree.verdict, s)
+        + " "
+        + s.loc_header_fmt.format(
+            variable=tree.variable, green=tree.green, total=tree.total
+        )
+    ]
+    if tree.counts.get("amber") or tree.counts.get("red") or tree.counts.get("grey"):
+        parts = [
+            f"{n} {name}"
+            for name, n in (
+                ("amber", tree.counts.get("amber", 0)),
+                ("red", tree.counts.get("red", 0)),
+                ("excluded", tree.counts.get("grey", 0)),
+            )
+            if n
+        ]
+        lines.append("  " + ", ".join(parts))
+    if tree.variant:
+        lines.append(
+            s.loc_variant_fmt.format(
+                variant=", ".join(f"{k}={v}" for k, v in sorted(tree.variant.items()))
+            )
+        )
+    lines.append(s.loc_basis_fmt.format(basis=tree.basis))
+    # Notes are caveats about what the count is worth, so they belong beside it
+    # rather than at the bottom where a long tree would bury them.
+    lines.extend(f"  ! {note}" for note in tree.notes)
+    lines.append("")
+
+    def walk(node, prefix: str, is_last: bool, level: int):
+        branch = s.branch_last if is_last else s.branch_mid
+        label = f"{prefix}{branch}{_loc_mark(node.state, s)} {node.key}={node.value}"
+        if node.children:
+            label += s.loc_counts_fmt.format(
+                green=node.counts.get("green", 0),
+                total=sum(node.counts.get(k, 0) for k in ("green", "amber", "red")),
+            )
+        if node.state == "grey" and not node.children:
+            label += s.loc_excluded_label
+        if node.code_version:
+            label += s.loc_version_fmt.format(version=node.code_version)
+        lines.append(label)
+
+        child_prefix = prefix + (s.cont_last if is_last else s.cont_mid)
+        if depth and level >= depth:
+            if node.children:
+                lines.append(
+                    s.loc_depth_more_fmt.format(
+                        prefix=child_prefix, n=_descendants(node)
+                    )
+                )
+            return
+        for i, child in enumerate(node.children):
+            walk(child, child_prefix, i == len(node.children) - 1, level + 1)
+
+    if not tree.roots:
+        lines.append("(no schema locations)")
+    for i, root in enumerate(tree.roots):
+        walk(root, "", i == len(tree.roots) - 1, 1)
+    return "\n".join(lines)
+
+
+def _descendants(node) -> int:
+    return len(node.children) + sum(_descendants(c) for c in node.children)
 
 
 def render_variants_table(variants: list[VariantSummary]) -> str:

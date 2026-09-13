@@ -1,0 +1,28 @@
+// Build only the REACT-FREE modules and their tests, so `npm test` can run them
+// under node's built-in test runner (node --test).
+//
+// The same split — and the same reason — as extension/tsconfig.test.json: a
+// rule with no way to execute it in a test is a rule that drifts. The main
+// tsconfig is noEmit with a bundler resolver and JSX, none of which node can
+// run; this one emits plain ESM for the handful of files that are pure logic.
+//
+// Keep the include list explicit. A file added here must have no React, no DOM
+// and no imports that reach either, or `npm test` starts failing for reasons
+// that have nothing to do with the rule under test.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist/test",
+    "noEmit": false,
+    "jsx": "preserve",
+    "lib": ["ES2020"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": false,
+    "types": ["node"]
+  },
+  "include": [
+    "src/components/PlotStudio/locationSelection.ts",
+    "src/components/PlotStudio/locationSelection.test.ts"
+  ]
+}

@@ -992,6 +992,19 @@ def _h_plot_variant_graph(params):
     )
 
 
+def _h_plot_location_tree(params):
+    from scistack_gui.db import get_db
+    from scistack_gui.services.plot_service import location_tree
+
+    return location_tree(
+        get_db(),
+        params["variable"],
+        selection=params.get("selection"),
+        problems_only=bool(params.get("problems_only")),
+        csv_path=params.get("csv_path"),
+    )
+
+
 def _h_plot_resolve(params):
     from scistack_gui.db import get_db
     from scistack_gui.services.plot_service import resolve_figures
@@ -1168,6 +1181,7 @@ METHODS = {
     "plot_describe": _h_plot_describe,
     "plot_capabilities": _h_plot_capabilities,
     "plot_variant_graph": _h_plot_variant_graph,
+    "plot_location_tree": _h_plot_location_tree,
     "plot_resolve": _h_plot_resolve,
     "plot_export": _h_plot_export,
     "plot_add_to_pipeline": _h_plot_add_to_pipeline,
@@ -1207,6 +1221,7 @@ SELF_MANAGED_DB_METHODS = frozenset(
         "plot_describe",
         "plot_capabilities",
         "plot_variant_graph",
+        "plot_location_tree",
         "plot_resolve",
         "plot_export",
         # Spawns a thread and returns; the HANDLER touches nothing. Its worker

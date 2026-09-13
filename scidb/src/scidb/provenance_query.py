@@ -1470,6 +1470,258 @@ def _producing_variant_key(duck, record_id: str):
     return tuple(sorted((k, repr(v)) for k, v in constants.items()))
 
 
+def variant_keys_batch(duck, record_ids) -> dict:
+    """Batched :func:`_producing_variant_key` — ``{record_id: key_or_None}``.
+
+    Three queries regardless of how many records are asked for, against the two
+    the per-record function costs *each* (``producing_invocation`` +
+    ``invocation_inputs``). Anything enumerating a whole variable type's records
+    must use this: the per-record form is the N+1 trap that
+    ``docs/claude/schema-location-status.md`` names.
+
+    The key is byte-identical to the per-record function's — same
+    ``_safe_literal`` decode, same ``repr``, same sort — so the two can be mixed
+    in one comparison without a conversion.
+    """
+    ids = list(dict.fromkeys(record_ids))
+    if not ids:
+        return {}
+    inv_map = producing_invocation_batch(duck, ids)
+    inv_ids = list(dict.fromkeys(inv[0] for inv in inv_map.values()))
+
+    consts: dict = {inv_id: {} for inv_id in inv_ids}
+    if inv_ids:
+        rows = _chunked_in(
+            duck,
+            "SELECT ii.invocation_id, ii.param_name, c.value_repr "
+            "FROM _invocation_input ii "
+            "JOIN _record r ON r.record_id = ii.input_record_id "
+            "JOIN _constant c ON c.record_id = ii.input_record_id "
+            "WHERE ii.invocation_id IN ({ph}) AND r.type = ?",
+            inv_ids,
+            tail_params=[CONSTANT_TYPE],
+        )
+        for inv_id, param_name, value_repr in rows:
+            consts[inv_id][param_name] = _safe_literal(value_repr)
+
+    out: dict = {}
+    for rid in ids:
+        inv = inv_map.get(rid)
+        if inv is None:
+            out[rid] = None  # raw/manual record — no producing variant
+            continue
+        out[rid] = tuple(sorted((k, repr(v)) for k, v in consts[inv[0]].items()))
+    return out
+
+
+def current_records_by_schema_batch(duck, variable_name: str) -> dict:
+    """Batched :func:`_current_records_by_schema`, which delegates here.
+
+    Same contract — ``{schema_id: [record_id, ...]}``, latest per ``(schema
+    location, producing variant)`` — computed with a fixed number of queries
+    instead of two per candidate record. This is the "optimization later" the
+    per-record docstring anticipated; it arrived when the location picker made
+    the cost visible on every popup open.
+    """
+    rows = duck._fetchall(
+        "SELECT rm.record_id, r.schema_id, rm.timestamp FROM _record_save rm "
+        "JOIN _record r ON r.record_id = rm.record_id "
+        "WHERE r.type = ? AND COALESCE(r.excluded, FALSE) = FALSE",
+        [variable_name],
+    )
+    if not rows:
+        return {}
+    vkeys = variant_keys_batch(duck, [rid for rid, _sid, _ts in rows])
+
+    best: dict = {}  # (schema_id, variant_key) -> (timestamp, record_id)
+    for rid, sid, ts in rows:
+        key = (sid, vkeys.get(rid))
+        prev = best.get(key)
+        if prev is None or ts > prev[0]:
+            best[key] = (ts, rid)
+    out: dict = {}
+    for (sid, _vkey), (_ts, rid) in best.items():
+        out.setdefault(sid, []).append(rid)
+    return out
+
+
+def latest_at_location_batch(duck, record_ids) -> dict:
+    """For each record, what is now newest at its own ``(type, schema_id)``.
+
+    ``{record_id: {"latest_variant", "latest_any", "type", "schema_id"}}`` where
+
+    * ``latest_variant`` mirrors ``DatabaseManager.get_latest_record_id_for_variant``
+      — newest non-excluded record at the same ``(type, schema_id)`` **sharing the
+      producing variant**, NULL-safe on ``schema_id``;
+    * ``latest_any`` mirrors ``state._get_latest_record_at_location`` — newest
+      non-excluded record at the same ``(type, schema_id)`` regardless of
+      variant, and ``None`` when ``schema_id`` is NULL (that helper compares with
+      ``=``, which never matches NULL, so it finds nothing there).
+
+    Both are what :func:`superseded_batch` tests against, kept here as one query
+    pair because the two per-record originals differ in exactly one NULL rule and
+    that difference is load-bearing.
+
+    Ties on ``timestamp`` break on ``record_id`` descending. The per-record SQL
+    leaves ties to DuckDB's row order; making it deterministic is the only
+    intentional divergence, and it removes a source of flapping results rather
+    than changing which record is "current" in any non-tied case.
+    """
+    ids = list(dict.fromkeys(record_ids))
+    if not ids:
+        return {}
+    meta_rows = _chunked_in(
+        duck,
+        "SELECT record_id, type, schema_id FROM _record WHERE record_id IN ({ph})",
+        ids,
+    )
+    meta = {rid: (rtype, sid) for rid, rtype, sid in meta_rows}
+    # No early return on an empty `meta`: a record that has vanished from
+    # `_record` must still get an entry below, because both per-record helpers
+    # return None for it and None != rid is what makes it read as superseded.
+    types = list({rtype for rtype, _sid in meta.values()})
+
+    # Every candidate at every location of interest, in one sweep per type.
+    cand_rows = _chunked_in(
+        duck,
+        "SELECT r.type, r.schema_id, rm.record_id, MAX(rm.timestamp) "
+        "FROM _record_save rm JOIN _record r ON r.record_id = rm.record_id "
+        "WHERE r.type IN ({ph}) AND COALESCE(r.excluded, FALSE) = FALSE "
+        "GROUP BY r.type, r.schema_id, rm.record_id",
+        types,
+    )
+    wanted = {(rtype, sid) for rtype, sid in meta.values()}
+    by_loc: dict = {}
+    for rtype, sid, rid, ts in cand_rows:
+        if (rtype, sid) in wanted:
+            by_loc.setdefault((rtype, sid), []).append((ts, rid))
+    for pairs in by_loc.values():
+        pairs.sort(key=lambda p: (p[0], p[1]), reverse=True)
+
+    cand_ids = [rid for pairs in by_loc.values() for _ts, rid in pairs]
+    vkeys = variant_keys_batch(duck, cand_ids + ids)
+
+    out: dict = {}
+    for rid in ids:
+        if rid not in meta:
+            # The record no longer exists; both per-record helpers return None.
+            out[rid] = {
+                "latest_variant": None,
+                "latest_any": None,
+                "type": None,
+                "schema_id": None,
+            }
+            continue
+        rtype, sid = meta[rid]
+        pairs = by_loc.get((rtype, sid), [])
+        want = vkeys.get(rid)
+        latest_variant = next(
+            (c for _ts, c in pairs if vkeys.get(c) == want),
+            None,
+        )
+        latest_any = None if sid is None else (pairs[0][1] if pairs else None)
+        out[rid] = {
+            "latest_variant": latest_variant,
+            "latest_any": latest_any,
+            "type": rtype,
+            "schema_id": sid,
+        }
+    return out
+
+
+def superseded_batch(duck, record_ids, max_depth: int = 50) -> dict:
+    """Batched :func:`~scidb.state._has_superseded_ancestor` —
+    ``{record_id: bool}``: has anything this record was computed from been
+    re-saved since?
+
+    The per-record original BFSes the graph with two DB round-trips per ancestor
+    edge, which is fine for one combo and unusable across a study. This builds
+    the upstream closure **once** for every seed
+    (:func:`_build_upstream_closure`), resolves "is this input still the newest
+    at its location" for every referenced record in one batch
+    (:func:`latest_at_location_batch`), marks each invocation dirty if any of its
+    variable inputs is not, and then answers each seed by memoised reachability.
+
+    The three rules that must not drift from the original:
+
+    * **Glue records are walked through, never tested.** A virtual ``__glue__``
+      record has no ``_record_save`` row, so both latest-lookups return None and
+      it would read as superseded. Its supersession is its source's.
+    * **A raw/manual ancestor terminates the walk** — nothing produced it, so
+      nothing about it can be stale.
+    * **A self-referential input (input rid == output rid) is stable**, which
+      falls out of the in-progress marking below rather than needing its own
+      case.
+
+    ``max_depth`` matches the per-record default (50) rather than the closure
+    builder's 20; a deeper chain than that is truncated identically to the
+    original, i.e. it stops looking rather than guessing.
+    """
+    seeds = list(dict.fromkeys(record_ids))
+    if not seeds:
+        return {}
+    rec_to_inv, _consts, inv_var_inputs, _fn_hash = _build_upstream_closure(
+        duck, seeds, max_depth
+    )
+
+    referenced = list(
+        dict.fromkeys(rid for rids in inv_var_inputs.values() for rid in rids)
+    )
+    if not referenced:
+        return dict.fromkeys(seeds, False)
+
+    types = dict(
+        _chunked_in(
+            duck,
+            "SELECT record_id, type FROM _record WHERE record_id IN ({ph})",
+            referenced,
+        )
+    )
+    testable = [rid for rid in referenced if types.get(rid) != GLUE_TYPE]
+    latest = latest_at_location_batch(duck, testable)
+
+    def _is_superseded_input(rid: str) -> bool:
+        info = latest.get(rid)
+        if info is None:
+            return False
+        if info["latest_variant"] != rid:
+            return True
+        return info["latest_any"] is not None and info["latest_any"] != rid
+
+    dirty_inputs = {rid for rid in testable if _is_superseded_input(rid)}
+    if dirty_inputs:
+        logger.debug(
+            "superseded_batch: %d of %d referenced input record(s) are no longer "
+            "the newest at their location",
+            len(dirty_inputs),
+            len(referenced),
+        )
+
+    memo: dict = {}
+
+    def _walk(rid: str, stack: set) -> bool:
+        if rid in memo:
+            return memo[rid]
+        if rid in stack:
+            # Cycle / self-referential input==output: contributes nothing, the
+            # same as the original's `visited` guard.
+            return False
+        inv = rec_to_inv.get(rid)
+        if inv is None:
+            memo[rid] = False  # raw/manual terminus
+            return False
+        stack.add(rid)
+        inputs = inv_var_inputs.get(inv[0], ())
+        result = any(r in dirty_inputs for r in inputs) or any(
+            _walk(r, stack) for r in inputs
+        )
+        stack.discard(rid)
+        memo[rid] = result
+        return result
+
+    return {seed: _walk(seed, set()) for seed in seeds}
+
+
 def _current_records_by_schema(duck, variable_name: str) -> dict:
     """``{schema_id: [record_id, ...]}`` for the *current* records of a variable
     type — the latest non-excluded record per ``(schema location, producing
@@ -1482,27 +1734,11 @@ def _current_records_by_schema(duck, variable_name: str) -> dict:
     "missing" → false red). Distinct variants at one schema are kept separately —
     they are concurrently valid.
 
-    Note: resolves each record's producing variant via the graph (two extra
-    queries per record). Fine at current scale; a candidate for a single-query
-    optimization later.
+    Kept as the name node-state already calls; the work is
+    :func:`current_records_by_schema_batch`, which resolves every candidate's
+    producing variant in a fixed number of queries rather than two per record.
     """
-    rows = duck._fetchall(
-        "SELECT rm.record_id, r.schema_id, rm.timestamp FROM _record_save rm "
-        "JOIN _record r ON r.record_id = rm.record_id "
-        "WHERE r.type = ? AND COALESCE(r.excluded, FALSE) = FALSE",
-        [variable_name],
-    )
-    # Latest record per (schema_id, producing-variant key).
-    best: dict = {}  # (schema_id, variant_key) -> (timestamp, record_id)
-    for rid, sid, ts in rows:
-        key = (sid, _producing_variant_key(duck, rid))
-        prev = best.get(key)
-        if prev is None or ts > prev[0]:
-            best[key] = (ts, rid)
-    out: dict = {}
-    for (sid, _vkey), (_ts, rid) in best.items():
-        out.setdefault(sid, []).append(rid)
-    return out
+    return current_records_by_schema_batch(duck, variable_name)
 
 
 def _glue_virtualize(

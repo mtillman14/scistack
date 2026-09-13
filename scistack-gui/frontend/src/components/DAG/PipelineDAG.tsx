@@ -39,6 +39,7 @@ import PipelineNode, { type PipelineNodeData } from './PipelineNode'
 import RunsDock from '../RunsDock'
 import GlueNode from './GlueNode'
 import PlotStudio from '../PlotStudio/PlotStudio'
+import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/useSourceEdit'
@@ -129,7 +130,13 @@ export default function PipelineDAG() {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   // Browser-mode fallback only: in the extension the studio is its own tab.
-  const [plotTarget, setPlotTarget] = useState<{ variable: string; csvPath?: string } | null>(null)
+  const [plotTarget, setPlotTarget] = useState<
+    { variable: string; csvPath?: string; location?: PathStep[] } | null
+  >(null)
+  // Which variable's schema locations are being inspected, or null. Separate
+  // from plotTarget: looking at integrity is not the same act as opening a
+  // figure, and one leads to the other rather than replacing it.
+  const [locationTarget, setLocationTarget] = useState<string | null>(null)
   const [sourceLoc, setSourceLoc] = useState<SourceLocation | null>(null)
   const [runFinalized, setRunFinalized] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -231,13 +238,17 @@ export default function PipelineDAG() {
 
   // In VS Code the studio is its own editor tab, so the canvas stays visible
   // beside it; a plain browser has no tabs, so it falls back to the modal.
-  const openPlot = useCallback((variable: string) => {
+  // `location` is one schema location to open on — what the location picker
+  // hands over when a row is clicked. It rides the same single funnel as every
+  // other way of opening a plot, so "click a location, see that location" needs
+  // no second path through the extension.
+  const openPlot = useCallback((variable: string, location?: PathStep[]) => {
     if (isVSCodeMode) {
-      callBackend('open_plot_panel', { variable }).catch(() =>
-        setPlotTarget({ variable })
+      callBackend('open_plot_panel', { variable, location }).catch(() =>
+        setPlotTarget({ variable, location })
       )
     } else {
-      setPlotTarget({ variable })
+      setPlotTarget({ variable, location })
     }
   }, [])
 
@@ -879,6 +890,13 @@ export default function PipelineDAG() {
             >
               📈 Plot
             </button>
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => { setLocationTarget(varType); setContextMenu(null) }}
+              type="button"
+            >
+              🗂 View Schema Locations
+            </button>
             {direction && (
               <button style={styles.contextMenuItem} onClick={() => handleTogglePort(direction)} type="button">
                 {hiddenPorts[direction].includes(varType)
@@ -893,7 +911,22 @@ export default function PipelineDAG() {
         <PlotStudio
           variable={plotTarget.variable}
           csvPath={plotTarget.csvPath}
+          initialLocation={plotTarget.location}
           onClose={() => setPlotTarget(null)}
+        />
+      )}
+
+      {/* Integrity first, plot second. The canvas has no spec open, so the
+          picker arrives WITHOUT `onChange` — no checkboxes, because there is no
+          figure yet to add a location to — and describes the variant a panel
+          would open on (`default_selection`, resolved server-side, so the two
+          entry points cannot disagree). Clicking a row opens the Plot panel
+          already showing that location. */}
+      {locationTarget && (
+        <SchemaLocationPicker
+          variable={locationTarget}
+          onPick={path => { openPlot(locationTarget, path); setLocationTarget(null) }}
+          onClose={() => setLocationTarget(null)}
         />
       )}
       {contextMenu && contextMenu.nodeType === 'parameterNode' && contextMenu.paramSourceFile && (

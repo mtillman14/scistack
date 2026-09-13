@@ -26,6 +26,14 @@ export interface PlotTarget {
   variable?: string;
   /** Set to plot a CSV file instead of the project database. */
   csvPath?: string;
+  /**
+   * One schema location to open on, as `[key, value]` steps — what the canvas's
+   * location picker hands over when a row is clicked. Carried as opaque data:
+   * the extension never interprets it, it only has to survive the trip to the
+   * webview so "click a location, see that location" holds from the canvas as
+   * well as from inside the panel.
+   */
+  location?: [string, string][];
 }
 
 export class PlotPanel {
@@ -195,7 +203,11 @@ export class PlotPanel {
     this.panel.reveal(this.panel.viewColumn, false);
     this.postMessage({
       method: 'open_plot_studio',
-      params: { variable: target.variable, csv_path: target.csvPath },
+      params: {
+        variable: target.variable,
+        csv_path: target.csvPath,
+        location: target.location,
+      },
     });
   }
 
@@ -231,6 +243,7 @@ export class PlotPanel {
       view: 'plot',
       variable: this.target.variable ?? null,
       csvPath: this.target.csvPath ?? null,
+      location: this.target.location ?? null,
     });
 
     return `<!DOCTYPE html>

@@ -10,32 +10,42 @@
 
 import { useEffect, useState } from 'react'
 import PlotStudio from './components/PlotStudio/PlotStudio'
+import type { PathStep } from './components/PlotStudio/SchemaLocationPicker'
 import { addNotificationHandler } from './api'
 
 export interface PlotViewConfig {
   view: 'plot'
   variable: string | null
   csvPath: string | null
+  /** One schema location to open on — the canvas picker's row click. */
+  location: PathStep[] | null
 }
 
 interface Target {
   variable: string
   csvPath?: string
+  location?: PathStep[]
 }
 
 export default function PlotRoot({ initial }: { initial: PlotViewConfig }) {
   const [target, setTarget] = useState<Target>({
     variable: initial.variable ?? '',
     csvPath: initial.csvPath ?? undefined,
+    location: initial.location ?? undefined,
   })
 
   useEffect(() => {
     return addNotificationHandler(msg => {
       if (msg.method !== 'open_plot_studio') return
-      const params = (msg.params ?? {}) as { variable?: string; csv_path?: string }
+      const params = (msg.params ?? {}) as {
+        variable?: string
+        csv_path?: string
+        location?: PathStep[]
+      }
       setTarget({
         variable: params.variable ?? '',
         csvPath: params.csv_path ?? undefined,
+        location: params.location ?? undefined,
       })
     })
   }, [])
@@ -48,6 +58,7 @@ export default function PlotRoot({ initial }: { initial: PlotViewConfig }) {
       key={`${target.csvPath ?? ''}:${target.variable}`}
       variable={target.variable}
       csvPath={target.csvPath}
+      initialLocation={target.location}
       embedded
       onClose={() => undefined}
     />

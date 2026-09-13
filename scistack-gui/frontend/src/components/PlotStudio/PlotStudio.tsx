@@ -21,6 +21,8 @@ import Plotly from 'plotly.js-cartesian-dist-min'
 import { callBackend, isVSCodeMode } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import VariantDagPopup from './VariantDagPopup'
+import SchemaLocationPicker, { type PathStep } from './SchemaLocationPicker'
+import { describeSelection, rolesAfterPick } from './locationSelection'
 
 const Plot = createPlotlyComponent(Plotly)
 
@@ -328,15 +330,48 @@ interface Spec {
   factor_variables?: string[]
   /* Factors derived by bucketing another factor's levels (session -> Phase). */
   level_groups?: LevelGroup[]
-  /* Row filters: the schema-key picker and the Filters section both write
-     these. A cleared picker removes its entry entirely rather than storing
-     every level. */
+  /* Row filters. The Filters section writes these. Schema keys no longer do:
+     they are the location picker's, which needs a shape `Filter` cannot hold
+     (see `location_filter`). A cleared filter removes its entry entirely rather
+     than storing every level. */
   filters?: Filter[]
+  /* Which schema locations to draw, as hierarchy prefixes — the location
+     picker's storage. Separate from `filters` because a tree of checkboxes
+     means something RAGGED (all of subject 01, plus trials 1-3 of subject 02)
+     and per-column include-lists can only express a Cartesian product.
+     Empty `include` is inert: everything is drawn. */
+  location_filter?: { keys: string[]; include: PathStep[][] }
   /* One entry per row of the Variants section. One row is a pin (the figure
      shows that variant); several are a comparison, and a `Variant` factor
      appears in Factors carrying whichever role the user gives it. */
   variant_sets?: VariantSet[]
   style?: Record<string, unknown>
+}
+
+/**
+ * Show one schema location and nothing else.
+ *
+ * Module-level and pure because two callers need it and must not drift: the
+ * picker inside this panel, and a location handed over from the canvas, which
+ * is applied to the opening spec before the first resolve.
+ *
+ * Two things happen together, and the second is the one worth explaining.
+ * Picking `subject=01` leaves `trial` unanswered, and a trial factor sitting on
+ * AGGREGATE would collapse the very thing the user opened the picker to look at
+ * — every trial's own values. So any schema key the selection does NOT name is
+ * moved off AGGREGATE onto FREE (replicates), and one with no role at all gets
+ * FREE too.
+ *
+ * Deliberately NOT a blanket reassignment: a key already on X, COLOR or FACET
+ * is drawing its levels individually, which is what was asked for, and stamping
+ * over a chosen x axis because a location was clicked would be astonishing.
+ */
+function applyPickedLocation(spec: Spec, path: PathStep[], schemaKeys: string[]): Spec {
+  return {
+    ...spec,
+    roles: rolesAfterPick(spec.roles, path, schemaKeys),
+    location_filter: { keys: schemaKeys, include: [path] },
+  }
 }
 
 interface DescribeResponse {
@@ -403,10 +438,23 @@ interface Props {
    * tab's own chrome does that.
    */
   embedded?: boolean
+  /**
+   * One schema location to open on — the canvas picker's row click, arriving
+   * through the extension. Applied once, to the spec `describe` returns, so
+   * "click a location, see that location" holds from the canvas exactly as it
+   * does from the picker inside this panel.
+   */
+  initialLocation?: PathStep[]
   onClose: () => void
 }
 
-export default function PlotStudio({ variable, csvPath, embedded = false, onClose }: Props) {
+export default function PlotStudio({
+  variable,
+  csvPath,
+  embedded = false,
+  initialLocation,
+  onClose,
+}: Props) {
   // Threaded into every call: the backend picks CsvSource or ScidbSource from
   // it, and nothing else about the panel changes (one DataSource protocol).
   const sourceParams = useMemo(
@@ -437,6 +485,8 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
   // "+ Add variant" is a two-step pick, not an immediate append — see
   // addVariantFromPicker for why the row is created on apply instead.
   const [addingVariant, setAddingVariant] = useState(false)
+  // The schema location picker — the whole of the "Schema keys" section.
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const [canvasHeight, setCanvasHeight] = useState(0)
   const observerRef = useRef<ResizeObserver | null>(null)
@@ -476,11 +526,30 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
         if (cancelled) return
         const response = raw as DescribeResponse
         setDescribe(response)
-        if (response.spec) setSpec(response.spec)
+        // A location handed over from the canvas is applied to the OPENING
+        // spec, not as a later edit: seeding it here means the first resolve
+        // already draws that location, rather than drawing everything once and
+        // then narrowing — which reads as a flicker and costs a full resolve of
+        // the whole dataset on the way past.
+        if (response.spec) {
+          const keys = (response.table?.factors ?? [])
+            .filter(f => f.is_schema_key)
+            .map(f => f.name)
+          setSpec(
+            initialLocation?.length
+              ? applyPickedLocation(response.spec, initialLocation, keys)
+              : response.spec
+          )
+        }
         if (response.capabilities) setCapabilities(response.capabilities)
       })
       .catch(err => !cancelled && setLoadError((err as Error).message))
     return () => { cancelled = true }
+    // `initialLocation` is deliberately NOT a dependency: it is what the panel
+    // OPENED on, and re-running describe because it changed would throw away
+    // every edit made since. PlotRoot remounts on retarget, which is how a
+    // second location from the canvas arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variable, sourceParams])
 
   // Which factors fan the figure set out. Changing THAT is what invalidates a
@@ -739,6 +808,42 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     []
   )
 
+  /**
+   * Which schema locations to draw — the location picker's checkbox edits.
+   *
+   * `include: []` is inert (everything drawn), so an untouched picker and a
+   * "select all" click store the same thing. `keys` travels with it as display
+   * order; matching reads the keys named inside each prefix.
+   */
+  const setLocationInclude = useCallback(
+    (include: PathStep[][], keys: string[]) => {
+      setSpec(prev => (prev ? { ...prev, location_filter: { keys, include } } : prev))
+    },
+    []
+  )
+
+  /**
+   * A row was clicked: show that location and nothing else.
+   *
+   * Two things happen together, and the second is the one worth explaining.
+   * Picking `subject=01` leaves `trial` unanswered, and a trial factor sitting
+   * on AGGREGATE would collapse the very thing the user opened the picker to
+   * look at — every trial's own values. So any schema key the selection does
+   * NOT name is moved off AGGREGATE onto FREE (replicates), and one with no
+   * role at all gets FREE too.
+   *
+   * Deliberately NOT a blanket reassignment: a key already on X, COLOR or FACET
+   * is drawing its levels individually, which is what was asked for, and
+   * stamping over a chosen x axis because a location was clicked would be
+   * astonishing.
+   */
+  const pickLocation = useCallback(
+    (path: PathStep[], keys: string[]) => {
+      setSpec(prev => (prev ? applyPickedLocation(prev, path, keys) : prev))
+    },
+    []
+  )
+
   /** Numeric bounds on a measure. Either end may be null (open). */
   const setRangeFilter = useCallback(
     (column: string, minimum: number | null, maximum: number | null) => {
@@ -915,6 +1020,21 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
     () => factors.filter(f => !f.is_schema_key && !f.is_variant),
     [factors]
   )
+  const schemaKeyNames = useMemo(() => schemaKeys.map(f => f.name), [schemaKeys])
+
+  const locationSummary = useMemo(
+    () => describeSelection(spec?.location_filter?.include ?? []),
+    [spec?.location_filter]
+  )
+
+  // Which variant the picker is describing. One row is a pin (the panel opens
+  // on exactly one), so its selection IS the variant in view; with several rows
+  // the figure is a comparison and no single variant is "the" one, so the
+  // picker falls back to the source's default the same way the canvas does.
+  const pickerSelection = useMemo(() => {
+    const sets = spec?.variant_sets ?? []
+    return sets.length === 1 ? (sets[0].selection ?? null) : null
+  }, [spec?.variant_sets])
   // Membership from roles, order from x_layers — the same reconciliation the
   // backend does, so the control shows what the figure will draw.
   //
@@ -1290,17 +1410,23 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
 
           {schemaKeys.length > 0 && (
             <Section title="Schema keys">
+              {/* One button, and nothing else. The flat per-key LevelPickers
+                  that used to live here are gone, not hidden: they could only
+                  express a Cartesian product, they said nothing about whether
+                  the data at a location was any good, and keeping them beside
+                  the picker would be two controls answering one question — the
+                  way the Variants/Factors duplication went wrong. */}
               <div style={styles.hint}>
-                Which records to plot. Everything is included until you say
-                otherwise.
+                Which records to plot, and whether each location's data is
+                sound. Everything is included until you say otherwise.
               </div>
-              {schemaKeys.map(factor => (
-                <LevelPicker
-                  key={factor.name}
-                  factor={factor}
-                  onChange={levels => setLevelFilter(factor.name, levels)}
-                />
-              ))}
+              <button
+                type="button"
+                style={styles.locationButton}
+                onClick={() => setLocationPickerOpen(true)}
+              >
+                {locationSummary}
+              </button>
             </Section>
           )}
 
@@ -1805,6 +1931,21 @@ export default function PlotStudio({ variable, csvPath, embedded = false, onClos
           name=""
           onCancel={() => setAddingVariant(false)}
           onApply={addVariantFromPicker}
+        />
+      )}
+
+      {locationPickerOpen && (
+        <SchemaLocationPicker
+          variable={describe?.variable ?? variable}
+          selection={pickerSelection}
+          value={spec?.location_filter?.include ?? []}
+          onChange={include => setLocationInclude(include, schemaKeyNames)}
+          onPick={path => {
+            pickLocation(path, schemaKeyNames)
+            setLocationPickerOpen(false)
+          }}
+          onClose={() => setLocationPickerOpen(false)}
+          csvPath={csvPath}
         />
       )}
     </Shell>
@@ -2644,6 +2785,17 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#7b68ee', marginBottom: 6, fontWeight: 700,
   },
   hint: { fontSize: 10, color: '#777', marginBottom: 6, fontStyle: 'italic' },
+  locationButton: {
+    width: '100%',
+    textAlign: 'left',
+    background: '#12121f',
+    border: '1px solid #2a2a4a',
+    color: '#ddd',
+    borderRadius: 4,
+    padding: '5px 8px',
+    fontSize: 12,
+    cursor: 'pointer',
+  },
   pinNote: {
     fontSize: 10, lineHeight: 1.45, color: '#d9c48f', marginBottom: 6,
     padding: '5px 7px', background: '#221c0c', borderLeft: '2px solid #d9b45f',

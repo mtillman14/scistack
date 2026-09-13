@@ -318,3 +318,84 @@ def test_a_named_variant_selects_the_same_rows_the_figure_will_show(
 
     assert len(derived.frame) == 3 * 2 * 2
     assert set(derived.frame["Code:scale_signal"]) == {"v1"}
+
+
+# --- the inverse: asking scidb about a selection the plotting layer holds ----
+
+
+class TestBranchParamsFor:
+    """``selection_for`` run backwards, for the schema location picker.
+
+    The picker holds a column-keyed selection and has to ask
+    ``scidb.locations.location_states`` — which takes a ``branch_params_filter``
+    — which locations have that variant. Round-tripping is the guarantee that
+    the dots and a ``Variant(...).load()`` name the same records.
+    """
+
+    def test_code_columns_become_the_code_namespace(self):
+        from scistackplotdb import branch_params_for
+
+        assert branch_params_for({"Code:bandpass": "v1"}) == {"__code__.bandpass": "v1"}
+
+    def test_branch_params_pass_through_untouched(self):
+        """They are already scidb's own namespacing."""
+        from scistackplotdb import branch_params_for
+
+        assert branch_params_for({"bandpass.low_hz": 20}) == {"bandpass.low_hz": 20}
+
+    def test_a_list_survives_as_a_list(self):
+        """scidb reads a list-valued branch param as membership, so the
+        picker's multi-checkbox needs no new scidb work."""
+        from scistackplotdb import branch_params_for
+
+        assert branch_params_for({"bandpass.low_hz": [20, 50]}) == {
+            "bandpass.low_hz": [20, 50]
+        }
+
+    def test_the_latest_flag_becomes_the_per_location_code_pin(self):
+        """Both spell the same rule: each location contributes its own newest
+        record, NOT the global highest ordinal."""
+        from scidb.variant import CODE_PIN_PREFIX, LATEST_VERSION
+        from scistackplotdb import branch_params_for
+        from scistackplotdb.load import LATEST_COLUMN
+
+        assert branch_params_for({LATEST_COLUMN: True}) == {
+            CODE_PIN_PREFIX: LATEST_VERSION
+        }
+
+    def test_latest_false_is_dropped_rather_than_inverted(self):
+        """scidb has no 'not the latest' pin, and guessing one would be worse."""
+        from scistackplotdb import branch_params_for
+        from scistackplotdb.load import LATEST_COLUMN
+
+        assert branch_params_for({LATEST_COLUMN: False, "f.p": 1}) == {"f.p": 1}
+
+    def test_the_round_trip_resolves_abbreviations_rather_than_echoing_them(
+        self, upstream_code_versions
+    ):
+        """A bare ``code_version=`` comes back **qualified**, and that is right.
+
+        scidb lets you write ``Variant(X, code_version="v1")`` and resolves
+        "which function?" against the data at load time. ``selection_for``
+        resolves it once, against the table; coming back the other way there is
+        nothing left to abbreviate, so the filter names the function outright.
+        Echoing the bare form would hand scidb an ambiguity it has already
+        settled.
+        """
+        from scidb import Variant
+
+        from scistackplotdb import branch_params_for, variant_set
+
+        table = ScidbSource(upstream_code_versions).get_table(["Summarized"])
+        variant = Variant(Summarized, code_version="v1")
+        selection = variant_set("baseline", variant, table).selection
+
+        assert variant.branch_params == {"__code__": "v1"}  # the bare form in
+        assert selection == {"Code:scale_signal": "v1"}  # resolved once
+        assert branch_params_for(selection) == {"__code__.scale_signal": "v1"}
+
+    def test_an_empty_selection_is_an_empty_filter(self):
+        from scistackplotdb import branch_params_for
+
+        assert branch_params_for({}) == {}
+        assert branch_params_for(None) == {}

@@ -188,6 +188,90 @@ class Filter:
 
 
 @dataclass(frozen=True)
+class LocationFilter:
+    """Which schema locations to draw, as a set of hierarchy **prefixes**.
+
+    The difference from :class:`Filter` is the whole reason this exists.
+    ``Filter`` holds one include-list per column, so a set of them can only ever
+    express a **Cartesian product**: ``subject ∈ {01,02} × trial ∈ {3,7}``. That
+    is the right shape for "narrow this factor", and the wrong shape for a
+    hierarchical location picker, where the user ticks boxes on a tree and means
+    something ragged — *all* of subject 01, plus only trials 1–3 of subject 02.
+    Real datasets are ragged (subject 01 ran eight trials, subject 02 ran five),
+    so the Cartesian form is not merely less expressive, it names combinations
+    that never existed.
+
+    Worse, in a tree UI the per-column form is actively misleading: unticking
+    ``S01 / trial 3`` would silently drop trial 3 from *every* subject, because
+    there is only one ``trial`` include-list to edit.
+
+    ``include`` is a list of prefixes, each a list of ``[key, value]`` pairs
+    outermost first: ``[["subject", "01"]]`` is all of subject 01,
+    ``[["subject", "02"], ["trial", "3"]]`` is one trial. Storing the **minimal
+    covering set** (collapse a fully-ticked parent to its own short prefix) is
+    what keeps a later-added trial inside an already-selected subject instead of
+    silently outside it.
+
+    **A prefix names its keys rather than relying on position**, and that is not
+    verbosity. A dataset schema is a linear hierarchy but a *saved location* need
+    not fill it: a cross-cutting result saved at ``subject`` + ``speed`` with
+    ``timepoint`` NULL is a supported, documented shape
+    (docs/claude/schema-hierarchy-contiguity.md), and its location is
+    ``[["subject","01"], ["speed","SSV"]]``. Read positionally against the
+    schema, that second value would be matched against ``timepoint`` — selecting
+    nothing, in silence. Naming the key makes the hole impossible to
+    misinterpret, and it means the picker sends a node's own path back verbatim
+    with no translation step to get wrong.
+
+    An empty ``include`` is **inert**: it constrains nothing, matching the rule
+    an unfilled variant row follows (docs/claude/plot-variant-rows.md §3).
+    Clicking into a picker is not a statement about the data.
+
+    Values are compared as text, like every other selection that crosses JSON.
+    """
+
+    #: Schema keys, outermost first. Display order only — matching reads the
+    #: keys named inside each prefix, never this list's positions.
+    keys: list[str] = field(default_factory=list)
+    #: Prefixes to keep. Lists rather than tuples so JSON and TOML round-trip
+    #: with no conversion; :meth:`prefixes` is the tuple view for matching.
+    include: list[list[list[str]]] = field(default_factory=list)
+
+    def prefixes(self) -> list[tuple[tuple[str, str], ...]]:
+        """``include`` as tuples of ``(key, value)`` text pairs, empties dropped."""
+        out = []
+        for entry in self.include:
+            prefix = tuple(
+                (str(pair[0]), str(pair[1])) for pair in entry if len(pair) == 2
+            )
+            if prefix:
+                out.append(prefix)
+        return out
+
+    def is_empty(self) -> bool:
+        return not self.prefixes()
+
+    def to_dict(self) -> dict:
+        return {
+            "keys": list(self.keys),
+            "include": [
+                [[str(pair[0]), str(pair[1])] for pair in entry if len(pair) == 2]
+                for entry in self.include
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "LocationFilter":
+        return cls(
+            keys=list(raw.get("keys") or []),
+            include=[
+                [[str(pair[0]), str(pair[1])] for pair in entry if len(pair) == 2]
+                for entry in (raw.get("include") or [])
+            ],
+        )
+
+
+@dataclass(frozen=True)
 class LevelGroup:
     """A factor derived by bucketing another factor's levels.
 
@@ -468,6 +552,10 @@ class PlotSpec:
     y_axis: YAxis = field(default_factory=YAxis)
     style: StyleOptions = field(default_factory=StyleOptions)
     filters: list[Filter] = field(default_factory=list)
+    #: Which schema locations to draw. Written by the schema location picker,
+    #: which REPLACED the flat per-key pickers — see :class:`LocationFilter` for
+    #: why a set of ``Filter``s cannot express the same selection.
+    location_filter: LocationFilter = field(default_factory=LocationFilter)
     #: Variables joined in as FACTORS rather than plotted — a subject-level
     #: ``Condition`` holding stim/sham, say. They classify as CATEGORICAL and so
     #: are rightly refused as measures; as factors they take a role like any
@@ -569,6 +657,7 @@ class PlotSpec:
             "cols": [_matcher_to_dict(m) for m in self.facet.cols],
         }
         raw["y_axis"] = self.y_axis.to_dict()
+        raw["location_filter"] = self.location_filter.to_dict()
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
         raw["level_groups"] = [g.to_dict() for g in self.level_groups]
         raw["x_layers"] = list(self.x_layers)
@@ -593,6 +682,7 @@ class PlotSpec:
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions(**(raw.get("style") or {})),
             filters=[Filter(**f) for f in (raw.get("filters") or [])],
+            location_filter=LocationFilter.from_dict(raw.get("location_filter") or {}),
             factor_variables=list(raw.get("factor_variables") or []),
             level_groups=[
                 LevelGroup.from_dict(g) for g in (raw.get("level_groups") or [])

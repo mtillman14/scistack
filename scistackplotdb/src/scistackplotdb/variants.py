@@ -95,6 +95,55 @@ def selection_for(
     return selection
 
 
+def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
+    """The inverse of :func:`selection_for`: a column-keyed selection →
+    ``Variant.branch_params``.
+
+    Needed because the schema location picker asks **scidb** a question about a
+    variant the plotting layer is holding: "which locations have this one?"
+    ``scidb.locations.location_states`` takes a ``branch_params_filter``, the
+    same dict ``Variant`` builds and ``find_record_id`` matches on, so the
+    picker's dots and a ``Variant(...).load()`` cannot disagree about which
+    records a selection names.
+
+    Three mappings, and the third is the one worth reading twice:
+
+    * ``Code:<fn>`` → ``__code__.<fn>``;
+    * anything else is already ``fn.param``, scidb's own namespacing, and
+      passes through — including a **list** value, which scidb already reads as
+      membership (``database.py``'s list-valued branch params), so the picker's
+      multi-checkbox needs no new scidb work;
+    * the :data:`~scistackplotdb.load.LATEST_COLUMN` flag → ``__code__ =
+      "latest"``. Both spell the same **per-location** rule (each schema
+      location contributes its own newest record, rather than the global highest
+      ordinal), which is exactly the meaning this picker needs: a location never
+      re-run under the newest code must show up as the record it actually has,
+      not as red.
+
+    ``CodeIsLatest: False`` has no scidb spelling — "not the latest" is not a
+    pin — so it is dropped with a warning rather than silently inverted.
+    """
+    from scidb.variant import CODE_PIN_PREFIX, LATEST_VERSION
+
+    out: dict[str, Any] = {}
+    for key, value in (selection or {}).items():
+        if key == LATEST_COLUMN:
+            if value is False:
+                Log.warn(
+                    "selection pins %s=False, which scidb cannot express "
+                    "(there is no 'not the latest' pin) — ignoring it",
+                    LATEST_COLUMN,
+                    layer=LAYER,
+                )
+                continue
+            out[CODE_PIN_PREFIX] = LATEST_VERSION
+        elif key.startswith(CODE_FACTOR_PREFIX):
+            out[f"{CODE_PIN_PREFIX}.{key[len(CODE_FACTOR_PREFIX):]}"] = value
+        else:
+            out[key] = value
+    return out
+
+
 def _axes_of(table: LongTable | None) -> list[dict]:
     if table is None:
         return []

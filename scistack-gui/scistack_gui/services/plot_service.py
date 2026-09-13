@@ -314,6 +314,102 @@ def _variant_graph(db, variable, *, functions, csv_path) -> dict:
     return graph
 
 
+def location_tree(
+    db,
+    variable: str,
+    *,
+    selection: dict | None = None,
+    problems_only: bool = False,
+    csv_path: str | None = None,
+) -> dict:
+    """Per-location status for one variable under one variant — the picker's data.
+
+    ``selection`` is the plotting layer's **column-keyed** variant selection
+    (``{"Code:bandpass": "v1"}``), exactly as a ``VariantSet`` holds it, because
+    that is what both callers already have: Plot Studio has the open row, and
+    the canvas popup has ``default_selection``. It is translated to scidb's
+    ``branch_params_filter`` by ``scistackplotdb.branch_params_for`` — the layer
+    that knows both vocabularies — so the dots and a ``Variant(...).load()``
+    cannot disagree about which records a selection names.
+
+    ``selection=None`` on the **canvas** path means "no spec is open": the
+    default is the same ``default_selection`` a panel opens on, so the two entry
+    points cannot show different variants of the same variable.
+
+    A CSV has no provenance, so it has no locations to verify: the empty tree is
+    returned with a note, rather than an error, so the popup can open and say so.
+    """
+    from scistack_gui.db import db_connection
+
+    with db_connection("plot_location_tree", needed=not csv_path):
+        return _location_tree(
+            db,
+            variable,
+            selection=selection,
+            problems_only=problems_only,
+            csv_path=csv_path,
+        )
+
+
+def _location_tree(db, variable, *, selection, problems_only, csv_path) -> dict:
+    """:func:`location_tree`'s body, run with the database connection held."""
+    _require_scistackplot()
+    if csv_path:
+        return {
+            "variable": variable,
+            "schema_keys": [],
+            "variant": {},
+            "counts": {"green": 0, "amber": 0, "red": 0, "grey": 0},
+            "total": 0,
+            "green": 0,
+            "verdict": "grey",
+            "basis": "present_only",
+            "notes": [
+                "A CSV carries no provenance, so there is nothing to verify "
+                "here — schema locations and their status come from the "
+                "project database."
+            ],
+            "roots": [],
+            "selection": {},
+        }
+
+    from scidb.locations import location_states, prune_to_problems
+    from scistackplotdb import branch_params_for
+
+    source = get_source(db)
+    if selection is None:
+        from scistackplot import default_selection
+
+        selection = default_selection(source.get_table([variable]))
+
+    tree = location_states(
+        variable, variant=branch_params_for(selection) or None, db=db
+    )
+    if problems_only:
+        tree = prune_to_problems(tree)
+
+    payload = tree.to_dict()
+    # Echoed back so the picker can label itself with the variant it is
+    # describing without having to re-derive the default it did not send.
+    payload["selection"] = dict(selection)
+    logger.info(
+        "[plot] location_tree(%s): %d/%d green (amber=%d, red=%d, excluded=%d) "
+        "basis=%s selection=%s%s",
+        variable,
+        payload["green"],
+        payload["total"],
+        payload["counts"].get("amber", 0),
+        payload["counts"].get("red", 0),
+        payload["counts"].get("grey", 0),
+        payload["basis"],
+        selection or "none",
+        " [problems only]" if problems_only else "",
+    )
+    for note in payload["notes"]:
+        logger.warning("[plot] location_tree(%s): %s", variable, note)
+    return payload
+
+
 #: Prefix ``graph_builder`` puts on a function's input-port handle. The suffix is
 #: the function's own ARGUMENT name.
 PARAM_HANDLE_PREFIX = "param__"

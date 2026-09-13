@@ -786,6 +786,57 @@ class Inspector:
         return out
 
     @_timed
+    def locations(
+        self,
+        variable,
+        *,
+        variant: dict | None = None,
+        problems_only: bool = False,
+        fn_registry: dict | None = None,
+        **grid,
+    ):
+        """Per-location status for one variable under one variant (a
+        :class:`~scidb.locations.LocationTree`).
+
+        The granularity ``node_state`` (per function, binary) and
+        ``schema_tree`` (per location, all variables, counts only) leave
+        between them: *is my variable good at subject 03 trial 7, and if not,
+        which locations are the problem?* Four states — green / amber (an input
+        was re-saved since) / red (expected, absent) / grey (excluded, and so
+        counted in neither the numerator nor the denominator). See
+        ``docs/claude/schema-location-status.md``.
+
+        Nothing is computed here: ``scidb.locations.location_states`` owns the
+        rule, so this facade, the ``scidb locations`` command and the GUI's
+        picker cannot disagree about what a colour means.
+
+        variant: a branch-params filter in scidb's vocabulary
+        (``{"bandpass.low_hz": 20}``, ``{"__code__": "latest"}``).
+        problems_only: prune to the branches holding an amber or red leaf;
+        counts are left intact, so a pruned node still reports ``1/8``.
+        grid: iteration grid for PathInput discovery (lists per schema key).
+        Only consulted for loader-produced variables, where discovery is the
+        only live source for what *should* exist — which is what lets this
+        surface see a file that was never loaded.
+        """
+        from ..locations import location_states, prune_to_problems
+
+        name = getattr(variable, "__name__", variable)
+        known = self._scalar(
+            "SELECT 1 FROM _record WHERE type = ?", [name], default=None
+        )
+        if known is None:
+            raise NotFoundError(f"No records of type {name!r}")
+        tree = location_states(
+            name,
+            variant=variant,
+            db=self._db,
+            fn_registry=fn_registry,
+            **grid,
+        )
+        return prune_to_problems(tree) if problems_only else tree
+
+    @_timed
     def pathinput_state(self, fn_name: str, **grid) -> list[NodeStateSummary]:
         """On-demand discovery check for a PathInput loader (§10 in the
         design doc): should-run = PathInput.discover() ∩ grid − exclusions vs
@@ -796,11 +847,9 @@ class Inspector:
         so run it where the data folders are reachable. grid values are lists
         (e.g. subject=["S01","S02"]); omitted keys are wildcards.
         """
-        from scifor import PathInput
-
-        from .. import provenance_query
+        from ..locations import pathinput_configs
         from ..state import check_pathinput_node_state
-        from .graph import _value_str, parse_path_input
+        from .graph import _value_str
 
         fn_name = getattr(fn_name, "__name__", fn_name)
         duck = self._duck
@@ -810,17 +859,10 @@ class Inspector:
         if not inv_rows:
             raise NotFoundError(f"Function {fn_name!r} has no recorded invocations")
 
-        configs: dict[tuple, tuple[dict, dict]] = {}
-        for (inv_id,) in inv_rows:
-            specs = provenance_query.invocation_path_inputs(duck, inv_id)
-            if not specs:
-                continue
-            _, constants = provenance_query.invocation_inputs(duck, inv_id)
-            key = (
-                tuple(sorted(specs.items())),
-                tuple(sorted((k, repr(v)) for k, v in constants.items())),
-            )
-            configs.setdefault(key, (specs, constants))
+        # One reconstruction, shared with scidb.locations — which needs exactly
+        # the same specs-to-live-PathInput step to derive the discovery-based
+        # denominator for a loader-produced variable.
+        configs = pathinput_configs(duck, fn_name)
         if not configs:
             raise NotFoundError(
                 f"Function {fn_name!r} has no PathInput inputs recorded — "
@@ -833,20 +875,7 @@ class Inspector:
         _stub.__name__ = fn_name
 
         results = []
-        for specs, constants in configs.values():
-            inputs: dict = dict(constants)
-            for param, spec in specs.items():
-                info = parse_path_input(spec)
-                if info is None:
-                    raise ValueError(
-                        f"Unparseable PathInput spec for {fn_name}.{param}: {spec!r}"
-                    )
-                if info.get("root_folder"):
-                    inputs[param] = PathInput(
-                        info["template"], root_folder=info["root_folder"]
-                    )
-                else:
-                    inputs[param] = PathInput(info["template"])
+        for inputs, constants in configs:
             res = check_pathinput_node_state(_stub, [], inputs, db=self._db, **grid)
             results.append(
                 NodeStateSummary(

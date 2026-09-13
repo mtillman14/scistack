@@ -50,13 +50,19 @@ from .load import (
     schema_keys,
 )
 from .source import ScidbSource
-from .variants import selection_for, variant_graph, variant_set
+from .variants import (
+    branch_params_for,
+    selection_for,
+    variant_graph,
+    variant_set,
+)
 
 __all__ = [
     "ScidbSource",
     "variant_set",
     "variant_graph",
     "selection_for",
+    "branch_params_for",
     "VariableFrame",
     "VERSION_FACTOR_PREFIX",
     "MISSING_VERSION_LEVEL",

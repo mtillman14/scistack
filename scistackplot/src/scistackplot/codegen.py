@@ -352,6 +352,14 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             ]
         )
 
+    # Schema locations. Emitted as one vectorised comparison per (prefix, key),
+    # which is the SAME rule reduce._location_mask applies — a ragged selection
+    # cannot be expressed as `for_each(subject=[...], trial=[...])`, whose keys
+    # cross-product, so it has to be a mask inside the function body. The
+    # `if _k in df.columns` guard is not defensive clutter: it is how a key the
+    # frame lacks goes unconstrained, matching the interactive path exactly.
+    lines.extend(_location_lines(spec))
+
     filter_lines: list[str] = []
     for flt in spec.filters:
         if flt.include is not None:
@@ -465,6 +473,32 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             )
 
     return lines
+
+
+def _location_lines(spec: PlotSpec) -> list[str]:
+    """Generated pandas for ``spec.location_filter`` — empty when it is inert.
+
+    Kept beside the other preamble emitters rather than inlined so the one test
+    that matters can compare its output against
+    :func:`scistackplot.reduce._location_mask` on the same frame.
+    """
+    prefixes = spec.location_filter.prefixes()
+    if not prefixes:
+        return []
+    plural = "" if len(prefixes) == 1 else "s"
+    return [
+        f"# schema locations: {len(prefixes)} selection{plural}",
+        f"_loc_prefixes = {[[list(pair) for pair in p] for p in prefixes]!r}",
+        "_loc_mask = pd.Series(False, index=df.index)",
+        "for _p in _loc_prefixes:",
+        "    _m = pd.Series(True, index=df.index)",
+        "    for _k, _v in _p:",
+        "        if _k in df.columns:",
+        "            _m &= df[_k].astype(str) == _v",
+        "    _loc_mask |= _m",
+        "df = df[_loc_mask]",
+        "",
+    ]
 
 
 def _facet_layout_args(spec, table: LongTable, facets: list[str]) -> list[str]:
@@ -754,6 +788,7 @@ def _color_level_count(spec: PlotSpec, table: LongTable, color: str) -> int:
         levels = [str(level) for level in table.factor(color).levels]
     except KeyError:
         return 2
+    levels = _levels_after_location(spec, color, levels)
     for flt in spec.filters:
         if flt.column != color:
             continue
@@ -764,6 +799,28 @@ def _color_level_count(spec: PlotSpec, table: LongTable, color: str) -> int:
             drop = {str(value) for value in flt.exclude}
             levels = [level for level in levels if level not in drop]
     return len(levels)
+
+
+def _levels_after_location(spec: PlotSpec, column: str, levels: list[str]) -> list[str]:
+    """``levels`` narrowed by ``spec.location_filter``, for one schema key.
+
+    The rule follows from prefixes constraining only the keys they name: a
+    prefix that never mentions this column says nothing about it, so if any
+    such prefix is selected the column keeps every level. Only when *every*
+    prefix names it do the values they give become the surviving set.
+
+    Concretely, selecting all of subject 01 plus subject 02's trial 3 leaves
+    ``trial`` with all its levels — because "all of subject 01" did not name a
+    trial — which is what the figure will actually draw.
+    """
+    prefixes = spec.location_filter.prefixes()
+    if not prefixes:
+        return levels
+    named = [dict(prefix) for prefix in prefixes]
+    if any(column not in prefix for prefix in named):
+        return levels
+    keep = {prefix[column] for prefix in named}
+    return [level for level in levels if level in keep]
 
 
 #: Column the generated code builds for a nested x axis.

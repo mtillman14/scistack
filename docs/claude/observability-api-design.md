@@ -35,6 +35,7 @@ command → the primitive(s) that answer it. (CLI entry point is `scidb …`;
 | 11 | Show me the records (and their superseded versions) at a location | `records(X, latest=, **metadata)` | `show <Type> key=val … [--versions]` | `_find_record` machinery: `_record_save` ⋈ `_record` ⋈ `_schema`, latest collapse by `(variable, schema_id, variant)` ordered on `_record_save.timestamp`; `latest=False` skips the collapse to expose the re-save trail |
 | 12 | Anything else (ad-hoc) | — | `sql "SELECT …"` | Raw read-only DuckDB; the per-type `<Type>` views already exist for human-readable rows |
 | 13 | Which record_id is *this specific* variable output (so another tool can open its plot)? | `records(X, **metadata)` + `variants(X)` shaped as a candidate table | `pick <Type> [key=val …] [--interactive]` | Same primitives as #5/#11 — no new query logic. Metadata is only ambiguous when variants coexist; the table disambiguates by showing branch params per candidate. Picker *selects*, never displays data (that's the GUI's job) |
+| 14b | Is my variable good at *every* schema location, and if not, which ones? | `locations(X, variant=, problems_only=)` | `locations <Type> [--variant …] [--problems] [--depth N]` | `scidb.locations.location_states` — the fourth granularity, between #9 (per function, binary) and #3 (per location, all variables, counts only). Four states: green / **amber** (an input was re-saved since) / red (expected, absent) / grey (excluded, so in neither numerator nor denominator). Denominator is #9's own `expected_invocations_for_function`, so the pane and the canvas cannot disagree — except for a **PathInput-only loader**, where it is `check_pathinput_node_state`'s discovery set, which is what lets this surface see a file that was never loaded. Batched throughout (`variant_keys_batch`, `current_records_by_schema_batch`, `latest_at_location_batch`, `superseded_batch`); a loop over #10 would be the N+1 this whole row exists to avoid. Full rationale: `schema-location-status.md` |
 | 14 | Give me all my finalized figures + stats as one shareable page | `report(fn=, variable=)` / `write_report(dir, …)` | `report [--fn] [--var] [-o dir] [--all-versions] [--no-copy] [--no-embed] [--json]` | `inspect/report.py`: endpoint records = producing `_invocation.function_name LIKE 'plot\_%'/'stat\_%'` (no extra bookkeeping); `LEFT JOIN _schema` (root-level grand-aggregation outputs have NULL schema_id); latest collapse via `_find_record` intersect; `branch_params_batch` (N+1 rule); artifact stamps verified via `read_artifact_stamp` (mismatch ⇒ STALE warning). Output: self-contained `index.html` (inline CSS, embedded/copied artifacts) + `manifest.json` + `stats.csv` (per-test-family columns, D5's no-universal-schema). Drafts never appear (no records) |
 
 ## Write-side mapping (Phase 5 — declarative flags only)
@@ -88,6 +89,16 @@ Recorded so future work targets the model, not the shell:
 - **"Which downstream results depend on X?" (forward/impact query).** The graph
   stores the edges, but there is no `downstream_provenance` mirror of
   `upstream_provenance`. Cheap to add in `provenance_query` when needed.
+- **Downstream variables inherit a loader's blind spot.** #14b fixes the
+  denominator where the missing data is (the loader), but expected sets are
+  derived one function at a time: if eight subjects were never loaded,
+  `FilteredEMG`'s expected set — predicted from the `RawEMG` that exists —
+  never mentions them, and its pane reads `12/12`. Propagating a loader's
+  discovery set down the chain needs combo mapping across schema levels.
+- **The canvas badge still reads green for a partially-run loader.** #14b did
+  not change `check_node_state`, deliberately: discovery globs the filesystem
+  and node state runs on every canvas refresh. `.claude/plan-pathinput-loader-staleness-gap.md`
+  holds the risks; a test pins the boundary so the two halves stay distinct.
 - **Old-hash latest-record selection** — `find_record_id` can return lineage
   rows from a superseded function hash (see memory
   `latest-record-selection-future-issue`); `trace` output should surface the

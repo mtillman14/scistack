@@ -1,7 +1,7 @@
 """``scidb`` CLI — thin rendering shell over scidb.inspect.
 
 Read commands (status, vars, schema, pipeline, variants, trace, runs,
-state, show, sql, exclusions) open the database strictly read-only via
+state, locations, show, sql, exclusions) open the database strictly read-only via
 ``Inspector``. Write commands (exclude, include — and future declarative
 writes) are registered with ``_write_handler`` instead of ``_handler``,
 which routes them through ``mutate.Mutator`` (a per-invocation read-write
@@ -160,11 +160,24 @@ def _want_color(no_color: bool, isatty: bool) -> bool:
     return isatty and not no_color
 
 
+def _as_payload(result):
+    """A result's JSON shape.
+
+    ``dataclasses.asdict`` silently drops ``@property`` values, so a dataclass
+    whose headline numbers are derived (``LocationTree.total`` / ``green`` /
+    ``verdict``) would serialize without them. Its own ``to_dict`` wins when it
+    has one — which keeps those numbers defined once, on the tree, instead of
+    recomputed at every edge that serializes it.
+    """
+    to_dict = getattr(result, "to_dict", None)
+    return to_dict() if callable(to_dict) else dataclasses.asdict(result)
+
+
 def _emit_json(result) -> None:
     if isinstance(result, list):
-        payload = [dataclasses.asdict(r) for r in result]
+        payload = [_as_payload(r) for r in result]
     else:
-        payload = dataclasses.asdict(result)
+        payload = _as_payload(result)
     print(json.dumps(payload, indent=2, default=str))
 
 
@@ -388,6 +401,25 @@ def _cmd_state(insp: Inspector, args) -> None:
         print(
             render.render_node_states(
                 states, show_missing=args.missing, style=_resolve_style(args)
+            )
+        )
+
+
+def _cmd_locations(insp: Inspector, args) -> None:
+    # Branch-param values are literal-eval'd (low_hz=20 must match the stored
+    # int), and no key here is ever a schema key — a location filter is the
+    # positional grid, a variant is `fn.param`.
+    variant = _coerce_non_schema(_parse_kv(args.variant or []), [])
+    grid = _parse_kv_lists(args.metadata)
+    tree = insp.locations(
+        args.type, variant=variant or None, problems_only=args.problems, **grid
+    )
+    if args.json:
+        _emit_json(tree)
+    else:
+        print(
+            render.render_location_tree(
+                tree, style=_resolve_style(args), depth=args.depth
             )
         )
 
@@ -635,6 +667,40 @@ def _add_commands(
         "files on disk ∩ grid − exclusions vs realized.",
     )
     p.set_defaults(_handler=_cmd_state)
+
+    p = sub.add_parser(
+        "locations",
+        parents=[parent],
+        help="Per-location status for one variable: green/amber/red/grey.",
+    )
+    p.add_argument("type", help="Variable type name.")
+    p.add_argument(
+        "metadata",
+        nargs="*",
+        help="Iteration grid for PathInput discovery (repeat keys for lists: "
+        "subject=S01 subject=S02). Only consulted for loader-produced variables.",
+    )
+    p.add_argument(
+        "--variant",
+        action="append",
+        metavar="fn.param=value",
+        help="Pin a branch param or code version (repeatable): "
+        "bandpass.low_hz=20, __code__=latest.",
+    )
+    p.add_argument(
+        "--problems",
+        action="store_true",
+        help="Only the branches holding an amber or red location "
+        "(counts stay intact).",
+    )
+    p.add_argument(
+        "--depth",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stop printing below depth N (0 = whole tree).",
+    )
+    p.set_defaults(_handler=_cmd_locations)
 
     p = sub.add_parser(
         "show", parents=[parent], help="Records at a location (latest per variant)."

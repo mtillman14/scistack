@@ -1656,3 +1656,181 @@ def test_an_unknown_policy_is_refused():
 
     with pytest.raises(ValueError, match="Unknown connection policy"):
         db_mod.set_connection_policy("whenever")
+
+
+# --- location tree (the schema location picker's data) ----------------------
+
+
+def test_location_tree_reports_every_location(populated_db):
+    """The picker's payload: four states, counts, and a verdict."""
+    tree = plot_service.location_tree(populated_db, "FilteredSignal")
+
+    assert tree["variable"] == "FilteredSignal"
+    assert (tree["green"], tree["total"]) == (4, 4)  # 2 subjects x 2 sessions
+    assert tree["verdict"] == "green"
+    assert tree["basis"] == "expected"
+    assert [r["value"] for r in tree["roots"]] == ["1", "2"]
+    assert [c["key"] for c in tree["roots"][0]["children"]] == ["session", "session"]
+
+
+def test_location_tree_defaults_to_the_variant_a_panel_opens_on(populated_db):
+    """No spec is open on the canvas path, so the default must be the SAME rule
+    the panel opens on — or the two entry points show different variants."""
+    from scistackplot import default_selection
+
+    tree = plot_service.location_tree(populated_db, "FilteredSignal")
+    source = plot_service.get_source(populated_db)
+    expected = default_selection(source.get_table(["FilteredSignal"]))
+
+    assert tree["selection"] == expected
+
+
+def test_location_tree_accepts_a_column_keyed_selection(populated_db):
+    """Callers hold the plotting layer's vocabulary, not scidb's.
+
+    ``bandpass_filter.low_hz`` is already scidb's namespacing and passes
+    through; the translation that matters is tested in scistackplotdb.
+    """
+    tree = plot_service.location_tree(
+        populated_db, "FilteredSignal", selection={"bandpass_filter.low_hz": 20}
+    )
+
+    assert tree["variant"] == {"bandpass_filter.low_hz": 20}
+    assert tree["green"] == 4
+
+
+def test_location_tree_problems_only_prunes(populated_db):
+    tree = plot_service.location_tree(
+        populated_db, "FilteredSignal", problems_only=True
+    )
+
+    assert tree["roots"] == []
+    assert tree["total"] == 4  # counts still describe the whole tree
+
+
+def test_location_tree_is_json_serializable(populated_db):
+    """It crosses the webview boundary, and `asdict` would drop the header
+    numbers — see LocationTree.to_dict."""
+    payload = plot_service.location_tree(populated_db, "FilteredSignal")
+
+    restored = json.loads(json.dumps(payload))
+    assert restored["total"] == 4
+    assert restored["roots"][0]["path"] == [["subject", "1"]]
+
+
+def test_location_tree_on_a_csv_says_so_rather_than_failing(populated_db, tmp_path):
+    """A CSV carries no provenance: the popup must open and explain, not error."""
+    csv = tmp_path / "flat.csv"
+    csv.write_text("subject,value\n1,2.0\n")
+
+    tree = plot_service.location_tree(populated_db, "value", csv_path=str(csv))
+
+    assert tree["roots"] == []
+    assert tree["total"] == 0
+    assert any("no provenance" in note for note in tree["notes"])
+
+
+def test_both_transports_reach_the_same_function(populated_db):
+    """The JSON-RPC handler and the HTTP route must not diverge."""
+    from scistack_gui.server import _h_plot_location_tree
+
+    rpc = _h_plot_location_tree({"variable": "FilteredSignal"})
+    direct = plot_service.location_tree(populated_db, "FilteredSignal")
+
+    assert rpc == direct
+
+
+# --- the location picker REPLACED the per-key pickers (D5) -------------------
+
+
+def _frontend_source(path: str) -> str:
+    from pathlib import Path
+
+    return (Path(__file__).parent.parent / path).read_text()
+
+
+def test_schema_keys_no_longer_write_row_filters():
+    """D5: the picker REPLACED the flat per-key LevelPickers, not joined them.
+
+    Two controls answering one question is how the Variants/Factors duplication
+    went wrong (docs/claude/plot-variant-rows.md §3), and here it would be worse
+    than duplication: a `Filter` per column can only express a Cartesian
+    product, so a spec carrying both would have a schema-key selection that
+    silently disagreed with the location filter it sits beside.
+
+    Asserted on the source because the alternative is a browser: the section
+    renders one button, and `setLevelFilter` must be reachable only from the
+    Filters section below it.
+    """
+    source = _frontend_source("frontend/src/components/PlotStudio/PlotStudio.tsx")
+
+    section = source.split('<Section title="Schema keys">', 1)
+    assert len(section) == 2, "the Schema keys section is gone entirely"
+    body = section[1].split("</Section>", 1)[0]
+
+    assert "setLevelFilter" not in body, (
+        "the Schema keys section still writes a per-column Filter — D5 makes it "
+        "one button opening the location picker, which writes location_filter"
+    )
+    # The ELEMENT, not the word: the section's comment explains why the pickers
+    # were removed, and that explanation should not trip its own assertion.
+    assert "<LevelPicker" not in body, (
+        "the per-key LevelPickers are supposed to be removed, not hidden"
+    )
+    assert "setLocationPickerOpen" in body, "the section should open the picker"
+
+    # `setLevelFilter` itself survives — the Filters section (non-schema
+    # factors: a struct's fields, a joined group variable) still needs it.
+    assert "const setLevelFilter" in source
+
+
+def test_the_picker_only_ever_reads():
+    """Looking at data integrity must not be able to change anything.
+
+    The same trap the variant popup is built around, one control further on:
+    the picker draws a tree of checkboxes, and the canvas has checkboxes that
+    mean EXECUTION state (unticking a constant value excludes it from future
+    for_each fan-outs). These select what a figure DRAWS. If this component
+    ever reached a second backend method, inspecting a study could quietly
+    rewrite the run configuration or the database.
+
+    One call, one method — everything else it does is arithmetic on the reply.
+    """
+    import re
+
+    source = _frontend_source(
+        "frontend/src/components/PlotStudio/SchemaLocationPicker.tsx"
+    )
+
+    called = set(re.findall(r"callBackend\(\s*'([^']+)'", source))
+    assert called == {"plot_location_tree"}, (
+        f"the location picker calls {sorted(called)}; it is a read-only view and "
+        f"must reach exactly one read method"
+    )
+
+
+def test_the_pickers_state_colours_come_from_python():
+    """The four states are scidb's, drawn here — never recomputed in the webview.
+
+    A second definition of "amber" in TSX would be a rule with no test and no
+    log, and it is the one a user would actually see. The component may map a
+    state to a glyph and a colour; it may not decide which state a location is
+    in, so the only place a state name may appear is in those lookup tables.
+    """
+    source = _frontend_source(
+        "frontend/src/components/PlotStudio/SchemaLocationPicker.tsx"
+    )
+
+    import re
+
+    assert "node.state" in source, "a leaf's state is read off the payload"
+    assert "tree.verdict" in source, "the header verdict is read off the payload"
+    # ASSIGNING a state name is the tell. Comparing against one is not — the
+    # lookbehind keeps `node.state === 'grey'` (which is how the excluded label
+    # is drawn) from reading as a derivation.
+    for state in ("green", "amber", "red", "grey"):
+        assigned = re.search(rf"(?<![=!<>])=\s*'{state}'", source)
+        assert assigned is None, (
+            f"assigning {state!r} looks like the picker deciding a state for "
+            f"itself; states come from scidb.locations.location_states"
+        )

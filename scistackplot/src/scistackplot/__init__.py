@@ -68,6 +68,7 @@ from .spec import (
     FacetOptions,
     Filter,
     LevelGroup,
+    LocationFilter,
     MatchOp,
     Matcher,
     PlotKind,
@@ -122,6 +123,7 @@ __all__ = [
     "StyleOptions",
     "Filter",
     "LevelGroup",
+    "LocationFilter",
     "VariantSet",
     # data
     "LongTable",

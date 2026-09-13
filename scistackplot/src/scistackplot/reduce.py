@@ -504,8 +504,53 @@ def _fanout_notes(spec: PlotSpec, table: LongTable) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _location_mask(frame: pd.DataFrame, spec: PlotSpec) -> "pd.Series | None":
+    """Rows matching any prefix in ``spec.location_filter``, or None if inert.
+
+    One prefix constrains only the keys it names **that the frame actually
+    has**. A key the frame lacks is simply not constrained — the graceful answer
+    for a shallower variable (a subject-level Mass has one value for "subject 02
+    trial 3", and that is the value that contributes).
+
+    Each prefix carries its own keys, so a non-contiguous location
+    (``subject`` + ``speed``, ``timepoint`` NULL) matches the keys it names
+    rather than whatever sits at that position in the schema — see
+    :class:`~scistackplot.spec.LocationFilter`.
+
+    Written as one vectorised comparison per (prefix, key) rather than a row-wise
+    tuple match, because :func:`scistackplot.codegen` has to emit the *same*
+    rule as readable pandas and the two must not be able to disagree. That makes
+    the cost O(prefixes x depth) column comparisons; a single-select is one
+    prefix, and a ticked subtree collapses to its own short prefix, so the
+    common cases are small by construction.
+    """
+    prefixes = spec.location_filter.prefixes()
+    if not prefixes:
+        return None  # inert: clicking into a picker is not a statement
+
+    named = {key for prefix in prefixes for key, _value in prefix}
+    known = [key for key in named if key in frame.columns]
+    if not known:
+        Log.warn(
+            "location filter names none of this table's columns (%s) — ignored",
+            ", ".join(sorted(named)),
+            layer=LAYER,
+        )
+        return None
+
+    as_text = {key: frame[key].astype(str) for key in known}
+    mask = pd.Series(False, index=frame.index)
+    for prefix in prefixes:
+        matched = pd.Series(True, index=frame.index)
+        for key, value in prefix:
+            if key in as_text:
+                matched &= as_text[key] == str(value)
+        mask |= matched
+    return mask
+
+
 def apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
-    """Rows surviving ``spec.filters``.
+    """Rows surviving ``spec.filters`` and ``spec.location_filter``.
 
     Public because the GUI's pickers report "3 of 12 selected" and that readout
     has to be measured with exactly the rule the figure uses — the same reason
@@ -517,9 +562,19 @@ def apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
     or ``1`` (int) depending on the source, and a silently empty figure is the
     worst possible answer to a picker the user just clicked.
     """
-    if not spec.filters:
+    location = _location_mask(frame, spec)
+    if not spec.filters and location is None:
         return frame
     mask = pd.Series(True, index=frame.index)
+    if location is not None:
+        mask &= location
+        Log.debug(
+            "location filter: %d -> %d row(s) over %d prefix(es)",
+            len(frame),
+            int(mask.sum()),
+            len(spec.location_filter.prefixes()),
+            layer=LAYER,
+        )
     for flt in spec.filters:
         if flt.column not in frame.columns:
             # A spec outlives the table it was written against — a filter naming

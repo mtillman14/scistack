@@ -1204,7 +1204,11 @@ var PlotPanel = class _PlotPanel {
     this.panel.reveal(this.panel.viewColumn, false);
     this.postMessage({
       method: "open_plot_studio",
-      params: { variable: target.variable, csv_path: target.csvPath }
+      params: {
+        variable: target.variable,
+        csv_path: target.csvPath,
+        location: target.location
+      }
     });
   }
   /** Post a message into this panel's webview (the `MessageSink` contract). */
@@ -1236,7 +1240,8 @@ var PlotPanel = class _PlotPanel {
     const target = JSON.stringify({
       view: "plot",
       variable: this.target.variable ?? null,
-      csvPath: this.target.csvPath ?? null
+      csvPath: this.target.csvPath ?? null,
+      location: this.target.location ?? null
     });
     return `<!DOCTYPE html>
 <html lang="en">

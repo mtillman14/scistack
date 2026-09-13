@@ -3,8 +3,14 @@
 `Inspector` is the one read API the CLI, GUI, and MATLAB bridge consume; it
 computes nothing new — it only shapes what provenance_query, state, and the
 core tables already encode (see docs/claude/observability-api-design.md).
+
+``LocationTree`` and friends are re-exported rather than defined here, for that
+same reason: ``Inspector.locations`` returns them, so naming its return type
+should not need a second import, but the rule stays in ``scidb.locations``
+where the CLI, the GUI's picker and any library caller reach one definition.
 """
 
+from ..locations import LocationNode, LocationState, LocationTree
 from .api import (
     DbOverview,
     ExclusionRecord,
@@ -40,6 +46,9 @@ __all__ = [
     "VariableDetail",
     "SchemaNode",
     "SchemaTree",
+    "LocationTree",
+    "LocationNode",
+    "LocationState",
     "RecordSummary",
     "PipelineGraph",
     "FunctionNode",

@@ -402,9 +402,12 @@ def factor_summary(spec: PlotSpec, derived: LongTable) -> list[dict]:
         entry["x_available"] = on_x["available"]
         entry["x_reason"] = on_x["reason"]
 
-    if not spec.filters:
+    if not spec.filters and spec.location_filter.is_empty():
         # Nothing filtered: everything is selected, and no frame scan is needed
-        # on the common path.
+        # on the common path. The location filter has to be checked here too —
+        # it narrows rows exactly as a Filter does, and a fast path that only
+        # knew about one of them would report "all 12 selected" beside a figure
+        # drawing 3, which is the precise failure this readout exists to avoid.
         for entry in factors:
             entry["selected"] = list(entry["levels"])
         return factors
