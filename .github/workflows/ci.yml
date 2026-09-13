@@ -49,6 +49,15 @@ jobs:
           #            silently skips real coverage instead of failing.
           pip install pandas numpy duckdb
           pip install pytest pytest-cov matplotlib seaborn plotly tomli-w
+          # scistack-gui: fastapi/uvicorn are runtime deps; httpx is what
+          # fastapi.testclient.TestClient runs on, and conftest.py builds one
+          # for nearly every test in that suite. pydantic arrives with fastapi.
+          pip install fastapi "uvicorn[standard]" httpx
+          # tomli is a real runtime dependency of scidb/scifor/scistack/
+          # scistack-gui on the 3.10 leg (they fall back to it when tomllib is
+          # missing). It has been reaching CI only as a transitive dep of
+          # coverage; name it so the 3.10 job does not depend on that accident.
+          pip install "tomli ; python_version < '3.11'"
       - name: Run tests
         # Inlined from the former run_tests.sh: pytest per package, collecting
         # pass/fail so every package runs even after one fails.
@@ -68,6 +77,8 @@ jobs:
               scihist
               scistackplot
               scistackplotdb
+              scistack
+              scistack-gui
           )
 
           if command -v matlab &>/dev/null; then
@@ -144,7 +155,8 @@ jobs:
           rm -rf dist_ci && mkdir dist_ci
           for pkg in scicanonicalhash path-gen scistacklog scifor sciduckdb \
                      scilineage scistackplot scidb \
-                     scimatlab scihist scistackplotdb scidb-net scistack; do
+                     scimatlab scihist scistackplotdb scidb-net scistack \
+                     scistack-gui; do
             echo "== build $pkg =="
             python -m build --outdir dist_ci "$pkg"
           done

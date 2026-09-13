@@ -54,12 +54,16 @@ jobs:
           rm -rf dist && mkdir dist
           # Dependency order is irrelevant for building (each uses only its
           # build backend), but listed by layer for readability.
-          # scistack-gui is intentionally excluded — it needs a JS frontend
-          # build before it can ship a correct wheel. scidb-net is excluded —
-          # outdated, slated for removal, not shipped to PyPI.
+          # scistack-gui ships its frontend as the pre-built bundle committed
+          # under scistack_gui/static/ (vite's "standalone" target). Nothing
+          # here rebuilds it, so a stale commit ships a stale UI — rebuild and
+          # commit the bundle before tagging. The "webview" vite target and the
+          # VS Code extension itself ship separately via vsce, not PyPI.
+          # scidb-net is excluded — outdated, slated for removal.
           for pkg in scicanonicalhash path-gen scistacklog sciduckdb \
                      scifor scilineage scistackplot scidb \
-                     scimatlab scihist scistackplotdb scistack; do
+                     scimatlab scihist scistackplotdb scistack \
+                     scistack-gui; do
             echo "== build $pkg =="
             python -m build --outdir dist "$pkg"
           done

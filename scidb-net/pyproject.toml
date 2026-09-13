@@ -12,7 +12,7 @@ dynamic = ["version"]
 description = "Network client-server layer for SciStack"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "scistack-db>=0.1.0",
     "fastapi>=0.100.0",

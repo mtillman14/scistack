@@ -12,7 +12,7 @@ dynamic = ["version"]
 description = "Standalone for_each batch execution utilities for data pipelines"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "SciStack Contributors" }
 ]
@@ -33,11 +33,15 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
     "Typing :: Typed",
 ]
 dependencies = [
     "scistacklog>=0.1.0",
+    # discovery.py reads TOML at module import. Python 3.11+ has tomllib built
+    # in; 3.10 needs the tomli backport it falls back to.
+    "tomli>=2.0 ; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

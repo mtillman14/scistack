@@ -103,7 +103,9 @@
       "Bash(ruff --version)",
       "Bash(echo \"exit:$?\")",
       "Bash(xargs -I{} echo {})",
-      "Bash(xargs -n1 basename)"
+      "Bash(xargs -n1 basename)",
+      "Bash(perl -0pi -e 's/,\\\\n\\(\\\\s*\\)layer=LAYER,\\\\n\\(\\\\s*\\)\\\\\\)/,\\\\n$2\\)/g' scidb/src/scidb/locations.py)",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

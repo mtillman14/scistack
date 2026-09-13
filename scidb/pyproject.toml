@@ -12,7 +12,7 @@ dynamic = ["version"]
 description = "A lightweight database framework for scientific computing with versioning and provenance tracking"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -34,6 +34,9 @@ dependencies = [
     "sciduckdb>=0.1.0",
     "scifor>=0.1.0",
     "scistacklog>=0.1.0",
+    # discover.py and entities.py read TOML at module import. Python 3.11+ has
+    # tomllib built in; 3.10 needs the tomli backport it falls back to.
+    "tomli>=2.0 ; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

@@ -2,7 +2,7 @@
 Shared database connection for the GUI backend.
 
 The DatabaseManager instance is created once at startup (in __main__.py)
-and shared by all API endpoints and the Jupyter kernel.
+and shared by all API endpoints.
 """
 
 import logging

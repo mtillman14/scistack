@@ -11,7 +11,7 @@ name = "scimatlab"
 dynamic = ["version"]
 description = "MATLAB bridge for the sci* scientific data processing framework"
 license = {text = "MIT"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "scistack-db>=0.1.0",
 ]

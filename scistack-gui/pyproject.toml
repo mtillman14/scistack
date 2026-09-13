@@ -10,18 +10,33 @@ raw-options = { search_parent_directories = true, local_scheme = "no-local-versi
 name = "scistack-gui"
 dynamic = ["version"]
 description = "GUI for SciStack pipelines"
-requires-python = ">=3.9"
+license = {text = "MIT"}
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.100.0",
     # [standard] pulls in a WebSocket protocol library — bare uvicorn
     # rejects /ws upgrades ("Unsupported upgrade request") and the GUI
     # silently never receives run_output/run_done/dag_updated pushes.
     "uvicorn[standard]>=0.20.0",
+    # Top-level import in 9 × api/*.py. Arrives via fastapi today; declared
+    # because metadata states intent, not coincidence.
+    "pydantic>=2.0",
     "scistack-db",
     "scihist",
-    "jupyter_client>=8.0.0",
-    "ipykernel>=6.0.0",
+    # Top-level import in config.py and registry.py (scifor.discovery).
+    "scifor",
+    # matlab_registry.py, config.py, api/pipeline.py.
+    "scimatlab",
+    # Plot Studio. [mpl] is required, not optional: the save/export path
+    # calls render_matplotlib(). Both packages first shipped in v0.1.23.
+    "scistackplot[mpl]>=0.1.23",
+    "scistackplotdb>=0.1.23",
+    # plot_service.py imports matplotlib directly for PNG export, on top of
+    # whatever scistackplot[mpl] pulls in.
+    "matplotlib>=3.8",
     "duckdb>=0.9.0",
+    # config.py falls back to tomli when tomllib is unavailable (<3.11).
+    "tomli>=2.0 ; python_version < '3.11'",
 ]
 
 [project.scripts]
@@ -29,3 +44,10 @@ scistack-gui = "scistack_gui.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["scistack_gui"]
+
+# Without this, hatchling's default file selection sweeps the whole directory
+# into the sdist — frontend/ and extension/ TypeScript sources plus committed
+# sourcemaps, ~11MB. The wheel only ever needs the Python package and the
+# built standalone bundle under scistack_gui/static/.
+[tool.hatch.build.targets.sdist]
+include = ["/scistack_gui"]

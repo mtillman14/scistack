@@ -12,16 +12,24 @@ dynamic = ["version"]
 description = "Project & environment tooling for the SciStack scientific pipeline framework"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "scistack-db>=0.1.0",
     "scimatlab>=0.1.0",
+    # `pip install scistack` is the one-stop-shop command: it installs the GUI
+    # too. Deliberately unversioned — under lockstep the correct floor is "this
+    # release", which isn't known until the tag is cut. The dependency runs one
+    # way only; scistack-gui must never declare scistack, or the graph cycles.
+    "scistack-gui",
+    # user_config.py and uv_wrapper.py read TOML at module import. Python 3.11+
+    # has tomllib built in; 3.10 needs the tomli backport they fall back to.
+    # This was previously in the dev extra, which never installed it for users.
+    "tomli>=2.0 ; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
-    "tomli>=2.0.0 ; python_version < '3.11'",
 ]
 
 [project.scripts]
