@@ -1,0 +1,138 @@
+"""A metadata-only table: same variant structure, none of the payload.
+
+`ScidbSource.variant_table` exists because `scistackplot.default_selection` reads
+`default_pin`, `latest_column` and the variant factors' levels — and nothing else.
+Answering that through `get_table` loaded every record's every field's every
+sample: measured 2026-09-13 as 174 million samples / ~5.2 GB for one variable,
+which is why the schema-location picker timed out while `location_states` itself
+took 9.5 s (.claude/plot-at-scale-plan.md §7).
+
+The contract worth pinning is not "it is faster" — it is that the ANSWER is the
+same one the expensive path gives, and that no data column is read to get it.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+from scistackplot import default_selection
+
+from scistackplotdb import ScidbSource
+
+
+@pytest.fixture
+def source(seeded):
+    return ScidbSource(seeded)
+
+
+class TestVariantTableCarriesNoPayload:
+    def test_no_measures(self, source):
+        table = source.variant_table("Emg")
+        assert table.measures == []
+
+    def test_no_data_column_is_present(self, source):
+        """The muscle columns of a dict variable must not be in the frame."""
+        table = source.variant_table("Emg")
+        for muscle in ("RHAM", "RTA", "LMG"):
+            assert muscle not in table.frame.columns
+
+    def test_no_data_column_is_even_queried(self, source, monkeypatch):
+        """Assert on the SQL, not on wall time.
+
+        A timing assertion would pass on a small fixture whatever the query did;
+        the whole point is that the payload columns never enter the SELECT.
+        """
+        seen: list[str] = []
+        original = source._db._duck._fetchall
+
+        def spy(sql, params=None):
+            seen.append(sql)
+            return original(sql, params)
+
+        monkeypatch.setattr(source._db._duck, "_fetchall", spy)
+        source.variant_table("Emg")
+
+        selects = [s for s in seen if "SELECT t.record_id" in s]
+        assert selects, "the variable load query never ran"
+        for sql in selects:
+            for muscle in ("RHAM", "RTA", "LMG"):
+                assert f'"{muscle}"' not in sql, f"payload column in SQL: {sql}"
+
+    def test_schema_keys_and_record_id_survive(self, source):
+        table = source.variant_table("Emg")
+        assert "record_id" in table.frame.columns
+        for key in ("subject", "session", "trial"):
+            assert key in table.frame.columns
+        assert len(table.frame) > 0
+
+
+class TestAnswersMatchTheExpensivePath:
+    def test_default_selection_agrees_with_the_full_table(self, source):
+        """The reason this is safe to substitute."""
+        cheap = default_selection(source.variant_table("Emg"))
+        expensive = default_selection(source.get_table(["Emg"]))
+        assert cheap == expensive
+
+    def test_agrees_for_a_scalar_variable_too(self, source):
+        cheap = default_selection(source.variant_table("StepLength"))
+        expensive = default_selection(source.get_table(["StepLength"]))
+        assert cheap == expensive
+
+    def test_variant_columns_and_levels_match(self, source):
+        cheap = source.variant_table("Emg")
+        expensive = source.get_table(["Emg"])
+        cheap_variants = {f.name: f.levels for f in cheap.factors if f.is_variant}
+        dear_variants = {f.name: f.levels for f in expensive.factors if f.is_variant}
+        assert cheap_variants == dear_variants
+
+    def test_latest_column_and_pin_match(self, source):
+        cheap = source.variant_table("Emg")
+        expensive = source.get_table(["Emg"])
+        assert cheap.latest_column == expensive.latest_column
+        assert cheap.default_pin == expensive.default_pin
+
+
+class TestCaching:
+    def test_second_call_is_a_cache_hit(self, source, monkeypatch):
+        source.variant_table("Emg")
+
+        calls: list[int] = []
+        import scistackplotdb.source as source_mod
+
+        original = source_mod.load_variable
+
+        def spy(*args, **kwargs):
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(source_mod, "load_variable", spy)
+        source.variant_table("Emg")
+        assert calls == [], "variant_table reloaded instead of using its cache"
+
+    def test_does_not_collide_with_the_plottable_table(self, source):
+        """Distinct cache keys: one must not be served for the other."""
+        metadata = source.variant_table("Emg")
+        plottable = source.get_table(["Emg"])
+        assert metadata.measures == []
+        assert plottable.measures != []
+        # And re-fetching the metadata one still gets the metadata one.
+        assert source.variant_table("Emg").measures == []
+
+
+class TestMetadataLoadIsOptIn:
+    def test_load_variable_still_includes_data_by_default(self, seeded):
+        from scistackplotdb.load import load_variable
+
+        frame = load_variable(seeded, "Emg")
+        assert frame.data_columns
+        assert isinstance(frame.frame, pd.DataFrame)
+        assert "RHAM" in frame.frame.columns
+
+    def test_include_data_false_reports_no_data_columns(self, seeded):
+        from scistackplotdb.load import load_variable
+
+        frame = load_variable(seeded, "Emg", include_data=False)
+        assert frame.data_columns == []
+        assert "RHAM" not in frame.frame.columns
+        # Still a real frame of records — this is a narrower load, not an empty one.
+        assert len(frame.frame) > 0

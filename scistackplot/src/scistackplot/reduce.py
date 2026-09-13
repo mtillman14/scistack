@@ -43,7 +43,8 @@ from .spec import (
 )
 from .table import LongTable, natural_sort_key
 from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
-from .ylimits import eligible_scope, limits_by_scope, limits_for
+from .reducer import reducer_for
+from .ylimits import eligible_scope, limits_for
 from .groups import apply_level_groups
 from .variants import apply_variant_sets, strip_answered_roles
 
@@ -403,11 +404,10 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
     # deliberately spans figures `resolve_one` will never build.
     with timer.phase("y_limits"):
         y_scope = eligible_scope(spec.y_axis.scope, roles, table)
-        scoped = replace(table, frame=frame)
         y_limits = (
             {}
             if spec.y_axis.is_manual
-            else limits_by_scope(scoped, spec, y_scope)
+            else reducer_for(table).y_extents(frame, spec, table, y_scope)
         )
 
     return _Plan(
@@ -805,7 +805,9 @@ def _build_figure(
         # column has to exist before the collapse groups on it.
         if explode:
             with timing.phase("explode", extra=f"{len(frame)} row(s)"):
-                frame, index_column = _explode_1d(frame, spec.y_measure, index_column)
+                frame, index_column = reducer_for(table).explode_series(
+                    frame, spec.y_measure, index_column, table
+                )
         with timing.phase("collapse_aggregates"):
             frame = _collapse_aggregates(frame, spec, roles, index_column)
 
@@ -830,7 +832,7 @@ def _build_figure(
         original_rows = len(frame)
         if max_points is not None and original_rows > max_points:
             with timing.phase("downsample"):
-                frame = _downsample(frame, max_points, index_column)
+                frame = reducer_for(table).downsample(frame, max_points, index_column)
 
         panels: list[Panel] = []
 
@@ -934,7 +936,7 @@ def _panel_frame(
     x_factor = x_layers[0] if x_layers else None
 
     if shape is Shape.MATRIX_2D:
-        return _matrix_frame(group, y_measure)
+        return reducer_for(table).matrix_mean(group, y_measure)
 
     out = pd.DataFrame(index=group.index)
 

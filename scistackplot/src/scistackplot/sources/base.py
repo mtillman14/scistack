@@ -10,14 +10,36 @@ full scidb project. Everything above this line is pure long-table logic.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+import threading
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from scistacklog import Log
 
+from ..dedup import SingleFlight
 from ..framesize import format_extent, frame_extent
 from ..table import LongTable
 
 LAYER = "scistackplot"
+
+#: Guards the lazy per-source attributes below. A plain ``getattr``-or-create is
+#: not safe here: the server runs a thread per request and several arrive together
+#: (see :mod:`scistackplot.dedup`), so two threads could each build their own
+#: ``SingleFlight`` and then let the builds race — defeating the deduplication
+#: entirely, silently, and only under load.
+_LAZY_LOCK = threading.Lock()
+
+
+def _lazy_attr(obj: Any, name: str, factory: Callable[[], Any]) -> Any:
+    """``obj.<name>``, created once by ``factory`` even under concurrency."""
+    existing = getattr(obj, name, None)
+    if existing is not None:
+        return existing
+    with _LAZY_LOCK:
+        existing = getattr(obj, name, None)
+        if existing is None:
+            existing = factory()
+            setattr(obj, name, existing)
+        return existing
 
 
 @runtime_checkable
@@ -145,28 +167,51 @@ class BaseSource:
             Log.info("%s: table cache HIT", label, layer=LAYER)
             return memo[key]
 
-        Log.info("%s: table cache MISS — building", label, layer=LAYER)
-        with Log.timer(label, layer=LAYER) as timer:
-            with timer.phase("build_table"):
-                table = self._build_table(
-                    measures, x_measure=x_measure, factor_variables=factor_variables
-                )
-            # Size the result in cells and SAMPLES, not just rows: a row count
-            # cannot tell 4190 short arrays from 4190 quarter-million-sample ones,
-            # and that distinction is the whole question for a plot that will not
-            # return. Scanning only the measure columns keeps this one O(cells)
-            # pass over data the build just touched anyway.
-            with timer.phase("measure_extent"):
-                measured = [m for m in (*measures, x_measure) if m]
-                extent = frame_extent(table.frame, measured)
-        # Plain INFO, not timer.note: note() is silent on a non-live timer, and
-        # this is the one number the diagnosis actually turns on.
-        Log.info("%s: built %s", label, format_extent(extent), layer=LAYER)
-        memo[key] = table
-        while len(memo) > TABLE_CACHE_ENTRIES:
-            # Insertion-ordered dict: the oldest key is the first one.
-            memo.pop(next(iter(memo)))
-        return table
+        def _build():
+            # Re-checked inside the single-flight slot: another thread may have
+            # finished this exact build while we were claiming it, in which case
+            # there is nothing to do. Without this the owner of a slot claimed a
+            # moment after a build completed would rebuild anyway.
+            if key in memo:
+                Log.info("%s: table cache HIT (filled while waiting)", label, layer=LAYER)
+                return memo[key]
+
+            Log.info("%s: table cache MISS — building", label, layer=LAYER)
+            with Log.timer(label, layer=LAYER) as timer:
+                with timer.phase("build_table"):
+                    table = self._build_table(
+                        measures, x_measure=x_measure, factor_variables=factor_variables
+                    )
+                # Size the result in cells and SAMPLES, not just rows: a row count
+                # cannot tell 4190 short arrays from 4190 quarter-million-sample
+                # ones, and that distinction is the whole question for a plot that
+                # will not return. Scanning only the measure columns keeps this one
+                # O(cells) pass over data the build just touched anyway.
+                with timer.phase("measure_extent"):
+                    measured = [m for m in (*measures, x_measure) if m]
+                    extent = frame_extent(table.frame, measured)
+            # Plain INFO, not timer.note: note() is silent on a non-live timer,
+            # and this is the one number the diagnosis actually turns on.
+            Log.info("%s: built %s", label, format_extent(extent), layer=LAYER)
+            # Published BEFORE the single-flight slot is released, so a caller
+            # arriving after the release finds the memo rather than a free slot.
+            memo[key] = table
+            while len(memo) > TABLE_CACHE_ENTRIES:
+                # Insertion-ordered dict: the oldest key is the first one.
+                memo.pop(next(iter(memo)))
+            return table
+
+        # Concurrent callers for the same key WAIT for one build rather than each
+        # doing it. The panel fires several requests at once and they all want
+        # this table; before this, two of them built the same 5.2 GB frame side by
+        # side (.claude/plot-at-scale-plan.md §7.1).
+        return self._table_single_flight().run(
+            key,
+            _build,
+            on_wait=lambda: Log.info(
+                "%s: build already in flight — waiting for it", label, layer=LAYER
+            ),
+        )
 
     def _table_cache(self) -> dict:
         """The memo, created on first use.
@@ -175,11 +220,16 @@ class BaseSource:
         without having to remember to call up — including the ones that define
         no ``__init__`` at all.
         """
-        memo = getattr(self, "_built_tables", None)
-        if memo is None:
-            memo = {}
-            self._built_tables = memo
-        return memo
+        return _lazy_attr(self, "_built_tables", dict)
+
+    def _table_single_flight(self) -> SingleFlight:
+        """The in-flight map for :meth:`get_table`, created on first use.
+
+        MUST be one instance per source — two would each dedupe their own
+        callers and let the builds race, which is the bug this exists to fix —
+        hence the locked lazy init rather than ``getattr``-or-create.
+        """
+        return _lazy_attr(self, "_table_inflight", SingleFlight)
 
     def invalidate_tables(self) -> None:
         """Drop built tables. Call when the rows underneath may have changed."""

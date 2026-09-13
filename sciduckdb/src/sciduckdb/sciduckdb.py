@@ -929,6 +929,96 @@ class SciDuck:
         """Public alias for _fetchall — accessible from MATLAB (underscore methods are not)."""
         return self._fetchall(sql, params)
 
+    def _fetchall_with_frame(
+        self, sql: str, frame, *, view: str = "_query_frame", params=None
+    ) -> list:
+        """``_fetchall`` with a pandas DataFrame visible to the query as ``view``.
+
+        The read-side twin of ``_bulk_insert``'s register/unregister idiom: the
+        frame is registered under the lock, the query runs against it, and it is
+        unregistered in ``finally`` so a failing query cannot leak a view into
+        the next caller's namespace.
+
+        Exists so a caller can hand DuckDB a small mapping it holds in memory —
+        which rows belong to which group, say — and have DuckDB do the heavy
+        reduction against the stored columns by joining to it. The alternative,
+        pulling the stored columns OUT to reduce them next to the mapping, is
+        exactly the pattern that boxed 174 million floats into Python on
+        2026-09-13 (scistackplot's ``.claude/plan-duckdb-native-reduction.md``).
+
+        ``view`` is a plain identifier; callers that could run concurrently
+        against one connection should pick distinct names, though the lock
+        already serialises them.
+        """
+        thread = threading.get_ident()
+        wait_start = time.monotonic()
+        with self._lock:
+            waited = time.monotonic() - wait_start
+            foreign_tx = self._tx_owner is not None and self._tx_owner != thread
+            logger.debug(
+                "_fetchall_with_frame thread=%d waited=%.4fs tx_owner=%s "
+                "foreign_tx=%s view=%s rows=%d sql=%s",
+                thread, waited, self._tx_owner, foreign_tx, view, len(frame),
+                _truncate_sql(sql),
+            )
+            self.con.register(view, frame)
+            try:
+                if params:
+                    return self.con.execute(sql, params).fetchall()
+                return self.con.execute(sql).fetchall()
+            except Exception:
+                logger.exception(
+                    "_fetchall_with_frame FAILED thread=%d tx_owner=%s foreign_tx=%s "
+                    "view=%s sql=%s",
+                    thread, self._tx_owner, foreign_tx, view, _truncate_sql(sql),
+                )
+                self._recover_from_autocommit_failure()
+                raise
+            finally:
+                self.con.unregister(view)
+
+    def _fetchdf_with_frame(
+        self, sql: str, frame, *, view: str = "_query_frame", params=None
+    ) -> "pd.DataFrame":
+        """``_fetchall_with_frame``, returning a DataFrame instead of rows.
+
+        **The difference is the whole point, not a convenience.** ``fetchall()``
+        materialises one Python object per value — a boxed float per sample —
+        which is the cost this exists to avoid: on 2026-09-13, exploding 174
+        million samples into Python took 153 s
+        (``.claude/plan-duckdb-native-reduction.md`` §2). ``.df()`` goes through
+        Arrow into numpy, so a numeric column arrives as one contiguous buffer
+        and never passes through a Python float at all. Use this for any query
+        whose result has many ROWS; ``_fetchall`` remains right for results with
+        few rows (metadata, aggregates).
+        """
+        thread = threading.get_ident()
+        wait_start = time.monotonic()
+        with self._lock:
+            waited = time.monotonic() - wait_start
+            foreign_tx = self._tx_owner is not None and self._tx_owner != thread
+            logger.debug(
+                "_fetchdf_with_frame thread=%d waited=%.4fs tx_owner=%s "
+                "foreign_tx=%s view=%s rows=%d sql=%s",
+                thread, waited, self._tx_owner, foreign_tx, view, len(frame),
+                _truncate_sql(sql),
+            )
+            self.con.register(view, frame)
+            try:
+                if params:
+                    return self.con.execute(sql, params).df()
+                return self.con.execute(sql).df()
+            except Exception:
+                logger.exception(
+                    "_fetchdf_with_frame FAILED thread=%d tx_owner=%s foreign_tx=%s "
+                    "view=%s sql=%s",
+                    thread, self._tx_owner, foreign_tx, view, _truncate_sql(sql),
+                )
+                self._recover_from_autocommit_failure()
+                raise
+            finally:
+                self.con.unregister(view)
+
     def _fetchone(self, sql: str, params=None):
         """First result row, or ``None`` — the locked counterpart to
         ``_fetchall`` for single-row lookups.

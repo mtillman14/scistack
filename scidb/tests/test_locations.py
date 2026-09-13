@@ -774,3 +774,95 @@ class TestDiscoveryCache:
             assert calls["n"] > first, "clearing the cache walks again"
         finally:
             type(path_input).discover = original
+
+
+# ---------------------------------------------------------------------------
+# location_states shares the discovery cache with the canvas badge
+# ---------------------------------------------------------------------------
+
+
+from scidb import state as state_mod  # noqa: E402
+
+
+class TestLocationStatesReusesTheDiscoveryWalk:
+    """A re-open of Schema Key Locations must not re-walk an unchanged share.
+
+    On 2026-09-13 the second open, ~70 s after a 2 s success, re-walked the
+    same UNC share and blocked for minutes with the log simply stopping between
+    two database queries (.claude/plot-at-scale-plan.md §9). The walk's result
+    now lives in the SAME TTL cache the canvas badge uses, so the two surfaces
+    cannot drift on when a walk is fresh.
+    """
+
+    @staticmethod
+    def _count_walks(path_input):
+        calls = {"n": 0}
+        original = type(path_input).discover
+
+        def counting(self):
+            calls["n"] += 1
+            return original(self)
+
+        type(path_input).discover = counting
+        return calls, original
+
+    def test_second_call_within_ttl_does_not_walk(self, loader_db):
+        db, path_input = loader_db
+        calls, original = self._count_walks(path_input)
+        try:
+            first_tree = location_states(LocLoaded, db=db)
+            assert first_tree.basis == "discovery"
+            walked = calls["n"]
+            assert walked >= 1, "the first call must actually walk"
+
+            second_tree = location_states(LocLoaded, db=db)
+            assert calls["n"] == walked, "the second call re-walked the filesystem"
+            # Same answer from the cache as from the walk.
+            assert second_tree.total == first_tree.total
+            assert second_tree.green == first_tree.green
+        finally:
+            type(path_input).discover = original
+
+    def test_clearing_the_shared_cache_walks_again(self, loader_db):
+        """One cache, one clear: the canvas badge's clear also clears this."""
+        db, path_input = loader_db
+        calls, original = self._count_walks(path_input)
+        try:
+            location_states(LocLoaded, db=db)
+            walked = calls["n"]
+            state_mod.clear_discovery_cache()
+            location_states(LocLoaded, db=db)
+            assert calls["n"] > walked
+        finally:
+            type(path_input).discover = original
+
+    def test_cache_hit_is_logged_as_such(self, loader_db, caplog):
+        """A served-from-cache open must say so, or it reads as a fast walk."""
+        import logging
+
+        db, _ = loader_db
+        location_states(LocLoaded, db=db)
+        with caplog.at_level(logging.INFO, logger="scidb"):
+            location_states(LocLoaded, db=db)
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "discovery served from cache" in text
+        assert "no filesystem walk" in text
+
+    def test_ttl_expiry_walks_again(self, loader_db, monkeypatch):
+        """The cache is a TTL, not an event: after it lapses, the walk runs."""
+        import time as _time
+
+        db, path_input = loader_db
+        calls, original = self._count_walks(path_input)
+        try:
+            location_states(LocLoaded, db=db)
+            walked = calls["n"]
+            # Jump the clock past the TTL rather than sleeping through it.
+            real = _time.monotonic
+            monkeypatch.setattr(
+                _time, "monotonic", lambda: real() + state_mod.DISCOVERY_CACHE_SECONDS + 1
+            )
+            location_states(LocLoaded, db=db)
+            assert calls["n"] > walked
+        finally:
+            type(path_input).discover = original

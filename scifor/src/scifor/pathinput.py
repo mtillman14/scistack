@@ -185,6 +185,10 @@ class PathInput:
         # placeholder key, and per-directory listings validated by mtime.
         self._pad_width: dict[str, int] = {}
         self._dir_cache: dict[str, tuple[int, list[str]]] = {}
+        # Listing-cache counters, reported by discover(): how many directories
+        # a walk actually read from disk vs. served from a still-valid listing.
+        self._dir_cache_reads = 0
+        self._dir_cache_hits = 0
         self.aliases = aliases or {}
         self._alias_reverse = self._build_alias_reverse(self.aliases)
         self.key_regex = self._validate_key_regex(key_regex or {})
@@ -538,7 +542,15 @@ class PathInput:
         return regex, checks, has_fallback
 
     def _list_dir(self, directory: Path) -> list[str]:
-        """Directory listing memoized per instance, invalidated by mtime."""
+        """Directory listing memoized per instance, invalidated by mtime.
+
+        Note the mtime check is itself one ``stat`` round-trip per directory,
+        so on a network share a warm cache is cheaper than a cold one but not
+        free — a re-walk of an unchanged share still touches every directory
+        once. Skipping that entirely needs a memo ABOVE the walk (of the
+        discovered combos), which is the caller's business; this cache's job is
+        to never re-read a listing whose directory has not changed.
+        """
         key = str(directory)
         try:
             mtime = directory.stat().st_mtime_ns
@@ -546,12 +558,14 @@ class PathInput:
             return []
         cached = self._dir_cache.get(key)
         if cached is not None and cached[0] == mtime:
+            self._dir_cache_hits += 1
             return cached[1]
         try:
             entries = sorted(os.listdir(directory))
         except OSError:
             return []
         self._dir_cache[key] = (mtime, entries)
+        self._dir_cache_reads += 1
         return entries
 
     def _fallback_scan(
@@ -804,10 +818,33 @@ class PathInput:
         if not segments:
             return []
 
-        results: list[dict[str, str]] = []
-        self._walk(root, segments, 0, {}, results, enforce_kind=True)
-        if not results:
-            self._walk(root, segments, 0, {}, results, enforce_kind=False)
+        # Timed, and the root named, because this is a filesystem walk with no
+        # timeout in it: on a network share a cold `listdir` can block for
+        # minutes and raise nothing. Before this line existed that showed up in
+        # the log as a request that simply stopped between two database
+        # queries — indistinguishable from a DuckDB hang, and looked for in the
+        # wrong layer for an hour (2026-09-13,
+        # .claude/plot-at-scale-plan.md §9). The directory count says how many
+        # round-trips the walk cost; `cached` says how many the listing cache
+        # absorbed, which is the number that should climb on a re-open.
+        reads_before, hits_before = self._dir_cache_reads, self._dir_cache_hits
+        with Log.timer(
+            "pathinput_discover", layer="scifor", extra=str(root)
+        ) as timer:
+            results: list[dict[str, str]] = []
+            with timer.phase("walk"):
+                self._walk(root, segments, 0, {}, results, enforce_kind=True)
+            if not results:
+                with timer.phase("walk_unfiltered"):
+                    self._walk(root, segments, 0, {}, results, enforce_kind=False)
+        Log.info(
+            "pathinput_discover: %d combo(s); %d director(ies) read from disk, "
+            "%d served from the listing cache",
+            len(results),
+            self._dir_cache_reads - reads_before,
+            self._dir_cache_hits - hits_before,
+            layer="scifor",
+        )
         return results
 
     # ------------------------------------------------------------------
@@ -851,12 +888,18 @@ class PathInput:
         # Segment has placeholder(s) — build a regex
         pattern = self._segment_to_regex(segment)
 
-        try:
-            entries = os.listdir(current_dir)
-        except OSError:
+        # Through the mtime-validated listing cache rather than a bare
+        # os.listdir. This walk runs on every discovery, and every discovery on
+        # a UNC share pays one network round-trip per directory; on 2026-09-13 a
+        # second Schema Key Locations open re-walked the same unchanged share
+        # and blocked for minutes with nothing logged (the listing had gone cold
+        # in the SMB client). `_list_dir` already existed for the numeric
+        # fallback path; this was the one caller still going around it.
+        entries = self._list_dir(current_dir)
+        if not entries:
             return
 
-        for entry in sorted(entries):
+        for entry in entries:
             m = re.fullmatch(pattern, entry)
             if m is None:
                 continue

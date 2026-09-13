@@ -22,6 +22,7 @@ from scistackplot import (
     is_plottable,
     natural_sort_key,
 )
+from scistackplot.dedup import SingleFlight
 from scistackplot.framesize import format_extent, frame_extent
 from scistackplot.sources import BaseSource
 from scistackplot.variants import VARIABLE_COLUMN
@@ -57,7 +58,9 @@ class ScidbSource(BaseSource):
     run-ownership work resolved).
     """
 
-    def __init__(self, db, *, name: str | None = None) -> None:
+    def __init__(
+        self, db, *, name: str | None = None, pushdown: bool = True
+    ) -> None:
         self._db = db
         # `dataset_db_path`, not `db_path` — DatabaseManager has never had the
         # latter, so this silently fell through to "scidb" for every project.
@@ -65,6 +68,24 @@ class ScidbSource(BaseSource):
         self._frames: dict[str, Any] = {}
         self._shapes: dict[str, Shape] = {}
         self._levels: dict[str, list[str]] = {}
+        # Whether tables from this source hand their per-sample reductions to
+        # DuckDB (``.reducer``) or keep the pandas reference. On by default —
+        # the pandas path is the one that spent 350 s on 174 M samples — and
+        # switchable so the two can be run side by side on the same database,
+        # which is how the parity suite works and how a suspected disagreement
+        # gets bisected in the field.
+        self._pushdown = pushdown
+        self._reducer_instance = None
+
+    def _reducer(self):
+        """The reducer every table from this source carries (one per source)."""
+        if not self._pushdown:
+            return None  # -> reducer_for() supplies the pandas reference
+        if self._reducer_instance is None:
+            from .reducer import DuckDBReducer
+
+            self._reducer_instance = DuckDBReducer(self._db)
+        return self._reducer_instance
 
     # ---- description -----------------------------------------------------
 
@@ -165,6 +186,81 @@ class ScidbSource(BaseSource):
             return sorted(unique, key=numeric_key)
         return sorted(unique, key=natural_sort_key)
 
+    # ---- metadata --------------------------------------------------------
+
+    def variant_table(self, variable: str) -> LongTable:
+        """A table carrying this variable's VARIANT structure and no payload.
+
+        Same variant columns, levels, ``default_pin`` and latest-flag a full
+        ``get_table`` would produce, built from a query that selects no data
+        columns at all. ``measures`` is empty, so this is not plottable and must
+        not be handed to ``resolve`` — it answers metadata questions only.
+
+        Why it exists: :func:`scistackplot.default_selection` reads
+        ``default_pin``, ``latest_column`` and the variant factors' levels, and
+        nothing else — it never touches a measure column. Answering it through
+        ``get_table`` meant loading 174 million samples / ~5.2 GB to read a
+        handful of variant levels, which is why the schema-location picker timed
+        out on a 419-location variable (.claude/plot-at-scale-plan.md §7).
+
+        Cached and deduplicated like any other table, under its own key, so the
+        picker opening twice costs one query.
+        """
+        key = ("__variants__", variable)
+        memo = self._table_cache()
+        label = f"variant_table({variable})"
+        if key in memo:
+            Log.info("%s: table cache HIT", label, layer=LAYER)
+            return memo[key]
+
+        def _build():
+            if key in memo:
+                Log.info("%s: table cache HIT (filled while waiting)", label, layer=LAYER)
+                return memo[key]
+            Log.info("%s: table cache MISS — building (no data columns)", label, layer=LAYER)
+            variable_frame = load_variable(self._db, variable, include_data=False)
+            frame = variable_frame.frame
+            latest = variable_frame.latest_column
+            # Variant columns first, then schema keys — the same order and the
+            # same `_ordered` level sorting `_build_table` uses, so a selection
+            # derived here and one derived from the full table cannot disagree
+            # about which level is "first".
+            variant_columns = [
+                c for c in variable_frame.variant_columns if c in frame.columns
+            ]
+            factors = list(variant_columns)
+            factors.extend(key for key in variable_frame.levels if key in frame.columns)
+            level_order = {
+                name: self._ordered(
+                    name, [str(v) for v in frame[name].dropna().unique()]
+                )
+                for name in factors
+            }
+            table = LongTable.from_frame(
+                frame,
+                factors=factors,
+                measures=[],
+                level_order=level_order,
+                variant_factors=variant_columns,
+                name=variable,
+                default_pin={latest: True} if latest else None,
+                latest_column=latest,
+                factor_origins={
+                    axis["column"]: axis for axis in variable_frame.variant_axes
+                },
+                schema_levels=variable_frame.levels,
+            )
+            memo[key] = table
+            return table
+
+        return self._table_single_flight().run(
+            key,
+            _build,
+            on_wait=lambda: Log.info(
+                "%s: build already in flight — waiting for it", label, layer=LAYER
+            ),
+        )
+
     # ---- data ------------------------------------------------------------
 
     def _variable_frame(self, variable: str):
@@ -173,12 +269,41 @@ class ScidbSource(BaseSource):
         # that returned in milliseconds is otherwise unattributable
         # (.claude/plot-at-scale-plan.md §1). The layer below (load_variable)
         # reports what a miss actually cost.
-        if variable not in self._frames:
-            Log.info("variable frame cache MISS: %s — loading", variable, layer=LAYER)
-            self._frames[variable] = load_variable(self._db, variable)
-        else:
+        if variable in self._frames:
             Log.info("variable frame cache HIT: %s", variable, layer=LAYER)
-        return self._frames[variable]
+            return self._frames[variable]
+
+        def _load():
+            if variable in self._frames:
+                Log.info(
+                    "variable frame cache HIT: %s (filled while waiting)",
+                    variable,
+                    layer=LAYER,
+                )
+                return self._frames[variable]
+            Log.info("variable frame cache MISS: %s — loading", variable, layer=LAYER)
+            frame = load_variable(self._db, variable)
+            self._frames[variable] = frame
+            return frame
+
+        # Deduped for the same reason get_table is, one layer down: two DIFFERENT
+        # table keys over the same variable (a plot's measure and a factor join,
+        # say) both land here, and each would otherwise read the whole variable.
+        return self._frame_single_flight().run(
+            variable,
+            _load,
+            on_wait=lambda: Log.info(
+                "variable frame load already in flight: %s — waiting for it",
+                variable,
+                layer=LAYER,
+            ),
+        )
+
+    def _frame_single_flight(self):
+        """The in-flight map for :meth:`_variable_frame`, created on first use."""
+        from scistackplot.sources.base import _lazy_attr
+
+        return _lazy_attr(self, "_frame_inflight", SingleFlight)
 
     def _build_table(
         self,
@@ -339,6 +464,7 @@ class ScidbSource(BaseSource):
             factors,
             layer=LAYER,
         )
+        table.reducer = self._reducer()
         return table
 
     def _attach_factor_variables(
@@ -555,6 +681,7 @@ class ScidbSource(BaseSource):
             levels,
             layer=LAYER,
         )
+        table.reducer = self._reducer()
         return table
 
     def variant_graph(self, variable: str, functions: list[str] | None = None) -> dict:

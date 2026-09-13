@@ -557,8 +557,45 @@ def _discovery_expected(db, fn_name: str, grid: dict) -> tuple[set | None, str |
     ``None`` (plus a note) when the loader records no PathInput at all — a
     constant-only function over no grid has nothing to enumerate, and guessing
     would be worse than saying so.
+
+    **Cached, briefly.** The walk behind this is the one step of
+    ``location_states`` with no timeout and no log line inside it, and on a
+    network share it is the slowest by far: on 2026-09-13 a second "Schema Key
+    Locations" open, ~70 s after a 2 s success, re-walked the same unchanged UNC
+    share and blocked for minutes with the log simply stopping between two
+    database queries (.claude/plot-at-scale-plan.md §9).
+
+    The cache is :data:`scidb.state._discovery_cache` — the SAME dict, TTL and
+    ``clear_discovery_cache`` the canvas badge already uses for this walk,
+    under its own key shape, rather than a second cache of the same filesystem.
+    That inherits its staleness decision deliberately: a short TTL, not event
+    invalidation, because the filesystem changes behind our back and a hook
+    would only guess when (see ``DISCOVERY_CACHE_SECONDS``). Five seconds is
+    enough to make the re-open the user actually does — close, reopen — free.
     """
-    from .state import check_pathinput_node_state
+    import time as _time
+
+    from .state import (
+        DISCOVERY_CACHE_SECONDS,
+        _discovery_cache,
+        check_pathinput_node_state,
+    )
+
+    cache_key = (
+        "expected",  # distinguishes from the canvas badge's (fn, spec) entries
+        str(db.dataset_db_path),
+        fn_name,
+        tuple(sorted((k, tuple(v)) for k, v in grid.items())),
+    )
+    cached = _discovery_cache.get(cache_key)
+    now = _time.monotonic()
+    if cached is not None and cached[0] > now:
+        Log.info(
+            f"location_states: {fn_name} discovery served from cache "
+            f"({len(cached[1])} location(s), {cached[0] - now:.1f}s left); "
+            f"no filesystem walk"
+        )
+        return set(cached[1]), None
 
     duck = db._duck
     try:
@@ -586,6 +623,7 @@ def _discovery_expected(db, fn_name: str, grid: dict) -> tuple[set | None, str |
         f"location(s) enumerated by discovery rather than by what it has already "
         f"produced (closes the partial-loader gap for this view)",
     )
+    _discovery_cache[cache_key] = (now + DISCOVERY_CACHE_SECONDS, frozenset(combos))
     return combos, None
 
 

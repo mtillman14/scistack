@@ -30,3 +30,4 @@ scistack-gui/frontend/dist/
 # per-run files, not source.
 /exports/
 *.log
+output.txt

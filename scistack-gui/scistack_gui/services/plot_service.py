@@ -105,6 +105,10 @@ def invalidate(db=None) -> dict:
         "all" if db is None else _database_path(db),
         dropped,
     )
+    # Deliberately NOT clearing scidb's discovery cache here. It is TTL-based
+    # (a few seconds) by a documented decision — the filesystem changes behind
+    # our back, so an event hook would only guess when — and that TTL already
+    # expires well inside any run. See ``scidb.state.DISCOVERY_CACHE_SECONDS``.
     return {"ok": True}
 
 
@@ -380,7 +384,20 @@ def _location_tree(db, variable, *, selection, problems_only, csv_path) -> dict:
     if selection is None:
         from scistackplot import default_selection
 
-        selection = default_selection(source.get_table([variable]))
+        # The default selection is a question about VARIANTS — `default_selection`
+        # reads `default_pin`, `latest_column` and the variant factors' levels and
+        # never touches a measure column. Asking `get_table` for it loaded the
+        # whole variable: 174 million samples / ~5.2 GB on 2026-09-13, which is
+        # why this view timed out while `location_states` itself took 9.5s
+        # (.claude/plot-at-scale-plan.md §7). `variant_table` answers it from a
+        # query that selects no data columns.
+        #
+        # Falls back for a source that has no such method — the DataFrame and CSV
+        # sources are in-memory anyway, so there is nothing to save there.
+        if hasattr(source, "variant_table"):
+            selection = default_selection(source.variant_table(variable))
+        else:
+            selection = default_selection(source.get_table([variable]))
 
     tree = location_states(
         variable, variant=branch_params_for(selection) or None, db=db

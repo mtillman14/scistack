@@ -180,15 +180,34 @@ def variable_levels(db, variable: str) -> list[str]:
     return [key for key, count in zip(keys, row, strict=True) if count]
 
 
-def load_variable(db, variable: str, *, with_variants: bool = True) -> VariableFrame:
-    """Load every non-excluded record of ``variable`` as a long frame."""
-    with Log.timer("load_variable", layer=LAYER, extra=variable) as timer:
+def load_variable(
+    db, variable: str, *, with_variants: bool = True, include_data: bool = True
+) -> VariableFrame:
+    """Load every non-excluded record of ``variable`` as a long frame.
+
+    ``include_data=False`` selects the record ids, schema keys and variant
+    columns but **no data columns** — everything needed to answer a question
+    about a variable's identity and variants, and none of the payload. It exists
+    because the payload is where all the cost is: on 2026-09-13 the data columns
+    of one variable were 174 million samples / ~5.2 GB, and the surfaces that
+    loaded them to read variant metadata simply never returned
+    (.claude/plot-at-scale-plan.md §7). The returned frame reports
+    ``data_columns=[]``, so it is NOT a plottable table and ``_build_table`` will
+    (correctly) refuse it.
+    """
+    with Log.timer(
+        "load_variable",
+        layer=LAYER,
+        extra=variable if include_data else f"{variable} (metadata only)",
+    ) as timer:
         with timer.phase("column_metadata"):
             keys = schema_keys(db)
             columns = data_columns_for(db, variable)
         if not columns:
             Log.warn("variable %r has no data columns", variable, layer=LAYER)
             return VariableFrame(name=variable, frame=pd.DataFrame())
+        if not include_data:
+            columns = []
 
         table = table_name_for(db, variable)
         schema_select = "".join(f', s."{key}"' for key in keys)

@@ -144,6 +144,17 @@ class LongTable:
     #: under the newest code still contributes its own newest record instead of
     #: silently leaving the figure.
     latest_column: str | None = None
+    #: How the per-sample reductions a plot needs should be performed — y
+    #: extents, exploding a 1-D measure, striding for transport, averaging
+    #: matrices. None means the pandas reference (``reducer.PandasReducer``).
+    #:
+    #: Set by the source that built the table, like ``default_pin`` and
+    #: ``latest_column`` above: it is a fact about where the data lives, not
+    #: about the data. A scidb-backed table can hand these operations to DuckDB,
+    #: which performs them in one columnar pass; an in-memory table cannot, and
+    #: says so by leaving this None. Typed loosely to keep ``table`` below
+    #: ``reducer`` in the import graph; see ``reducer.Reducer`` for the contract.
+    reducer: Any = None
 
     # ---- lookups ---------------------------------------------------------
 
