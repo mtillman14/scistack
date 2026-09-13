@@ -347,7 +347,12 @@ class TestIsLockfileStale:
     def test_content_hash_match_not_stale(self, minimal_project):
         import time
 
-        import tomllib
+        # Same fallback the code under test uses: tomllib is 3.11+, and this
+        # project's floor is 3.10, where the tomli backport stands in.
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib
 
         # Build the relevant subset just like the checker does, hash it,
         # and embed that hash in the lockfile.

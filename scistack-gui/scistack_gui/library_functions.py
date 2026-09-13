@@ -38,7 +38,7 @@ import functools
 import importlib
 import importlib.util
 import logging
-import sysconfig
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -268,6 +268,44 @@ def validate(reference: str) -> tuple[dict | None, str | None, object]:
     return None, canonical, with_qualified_name(fn, canonical)
 
 
+def _in_site_packages(path: str) -> bool:
+    """True if *path* lives in an installed-packages directory."""
+    parts = Path(path).resolve().parts
+    return "site-packages" in parts or "dist-packages" in parts
+
+
+def _is_stdlib_root(root: str, origin: str | None) -> bool:
+    """True if *root* names a standard-library module.
+
+    ``sys.stdlib_module_names`` is the authoritative answer and is checked
+    first. *origin* (a spec origin or a module ``__file__``) only guards the
+    one case the name list cannot see: a third-party distribution installed
+    under a stdlib name, which must not inherit stdlib's trust.
+
+    This replaced a "is the file under ``sysconfig.get_paths()['stdlib']``?"
+    test that was wrong outside a virtualenv. In a venv, site-packages sits
+    beside the base interpreter's stdlib, so the test held. Run against a
+    plain interpreter — CI's ``setup-python``, a system or conda Python —
+    site-packages is a *subdirectory* of the stdlib path, so every installed
+    third-party package answered "stdlib" and became resolvable. That is the
+    arbitrary-import backdoor this module's docstring says it is not, and it
+    opened based on nothing but how the interpreter was laid out.
+    """
+    if root not in sys.stdlib_module_names:
+        return False
+    # No file at all: a built-in or frozen module (sys, itertools).
+    if origin is None or origin in ("built-in", "frozen"):
+        return True
+    if _in_site_packages(origin):
+        logger.debug(
+            "[library_functions] %r shadows a stdlib name from %s — not treated as stdlib",
+            root,
+            origin,
+        )
+        return False
+    return True
+
+
 def _root_allowed(module_path: str) -> bool:
     """True if *module_path*'s root is numpy/pandas or a stdlib module.
 
@@ -285,40 +323,24 @@ def _root_allowed(module_path: str) -> bool:
     root = module_path.split(".")[0]
     if root in ALLOWED_PACKAGE_ROOTS:
         return True
+    if root not in sys.stdlib_module_names:
+        # Not a stdlib name, so no spec lookup is needed to reject it.
+        logger.debug("[library_functions] root %r is not allowed", root)
+        return False
     try:
         spec = importlib.util.find_spec(root)
     except (ImportError, ValueError):
         return False
     if spec is None:
         return False
-    if spec.origin in ("built-in", "frozen"):
-        return True
-    if spec.origin is None:
-        # A namespace package — never stdlib.
-        return False
-    stdlib_dir = Path(sysconfig.get_paths()["stdlib"]).resolve()
-    try:
-        Path(spec.origin).resolve().relative_to(stdlib_dir)
-        return True
-    except ValueError:
-        return False
+    return _is_stdlib_root(root, spec.origin)
 
 
 def _is_stdlib_module(mod) -> bool:
     """True if *mod* lives in the standard library.
 
-    Deliberately avoids ``sys.stdlib_module_names`` (Python 3.10+ only —
-    this project's floor is 3.9): a module with no ``__file__`` is a
-    built-in/frozen module (``sys``, ``itertools`` — definitely stdlib);
-    otherwise check whether its file lives under the interpreter's stdlib
-    directory.
+    :func:`validate`'s counterpart to :func:`_root_allowed` — same rule,
+    applied to an already-imported module.
     """
-    file = getattr(mod, "__file__", None)
-    if file is None:
-        return True
-    stdlib_dir = Path(sysconfig.get_paths()["stdlib"]).resolve()
-    try:
-        Path(file).resolve().relative_to(stdlib_dir)
-        return True
-    except ValueError:
-        return False
+    root = mod.__name__.split(".")[0]
+    return _is_stdlib_root(root, getattr(mod, "__file__", None))

@@ -102,6 +102,59 @@ class TestResolve:
         bypasses the validated creation path."""
         assert lf.resolve("duckdb.connect") is None
 
+
+class TestStdlibClassification:
+    """Direct tests for the stdlib rule behind both resolve() and validate().
+
+    These exist because the environment-dependent version of this bug was
+    invisible to every test that went through ``resolve``/``validate``. The
+    old rule asked "is the module's file under sysconfig's stdlib path?",
+    which is true for site-packages on any interpreter where site-packages
+    is a *subdirectory* of the stdlib dir — a plain (non-venv) interpreter,
+    as in CI. Locally, inside a venv, site-packages sits elsewhere and the
+    same code answered correctly. So the suite passed on a developer machine
+    and every installed third-party package was resolvable in CI.
+
+    Passing the origin in explicitly removes the interpreter layout from the
+    question, so these fail on the old logic wherever they run.
+    """
+
+    def test_site_packages_path_is_not_stdlib(self):
+        assert (
+            lf._is_stdlib_root("json", "/usr/lib/python3.12/site-packages/json/__init__.py")
+            is False
+        )
+
+    def test_dist_packages_path_is_not_stdlib(self):
+        assert (
+            lf._is_stdlib_root("json", "/usr/lib/python3/dist-packages/json/__init__.py")
+            is False
+        )
+
+    def test_real_stdlib_path_is_stdlib(self):
+        assert lf._is_stdlib_root("json", "/usr/lib/python3.12/json/__init__.py") is True
+
+    def test_builtin_and_frozen_are_stdlib(self):
+        assert lf._is_stdlib_root("sys", "built-in") is True
+        assert lf._is_stdlib_root("itertools", None) is True
+
+    def test_non_stdlib_name_is_never_stdlib(self):
+        """The name check comes first, so a third-party package cannot pass
+        by sitting at a stdlib-looking path."""
+        assert lf._is_stdlib_root("duckdb", "/usr/lib/python3.12/duckdb/__init__.py") is False
+
+    def test_stdlib_classification_does_not_depend_on_venv_layout(self):
+        """The regression, stated as the invariant it broke: an installed
+        package's verdict must be identical whether or not site-packages
+        happens to live under the stdlib directory."""
+        import duckdb
+
+        in_venv = "/usr/lib/python3.12/site-packages/duckdb/__init__.py"
+        under_stdlib = "/usr/lib/python3.12/duckdb/__init__.py"
+        assert lf._is_stdlib_root("duckdb", in_venv) is False
+        assert lf._is_stdlib_root("duckdb", under_stdlib) is False
+        assert lf._is_stdlib_module(duckdb) is False
+
     def test_uninstalled_package(self):
         assert lf.resolve("totally_not_a_real_package_xyz.foo") is None
 

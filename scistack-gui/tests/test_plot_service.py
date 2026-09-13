@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("scistackplot")
 pytest.importorskip("scistackplotdb")
 
+from scistack_gui.app import create_app
 from scistack_gui.services import plot_service
 
 
@@ -952,7 +953,7 @@ def test_save_reaches_both_transports(
     _drain(captured_pushes, "plot_save_complete")
 
 
-def test_there_is_one_save_method_and_it_is_a_job(client):
+def test_there_is_one_save_method_and_it_is_a_job():
     """The synchronous save is GONE, not deprecated — beta, clean break.
 
     It existed on the theory that one figure fits a round trip. One
@@ -968,13 +969,33 @@ def test_there_is_one_save_method_and_it_is_a_job(client):
     # (`@app.get("/{full_path:path}")` in app.py) matches every path for GET, so
     # a POST to a deleted API route answers 405 rather than 404 and "not 404"
     # would pass just as well against a route that still existed.
+    #
+    # Asked of create_app(), not of `client.app`. It read the latter until
+    # 2026-09-13, when it failed in CI on all three Python versions with an
+    # EMPTY set — no POST routes at all — while test_api.py drove POST
+    # endpoints through the same fixture happily. app.py calls include_router()
+    # unconditionally for 13 routers, so the app always has them; `client.app`
+    # on a newer starlette than the one used locally is evidently not that app
+    # but a wrapper whose own `.routes` is empty. TestClient's internals are not
+    # this test's subject, and route registration is a property of create_app().
+    routes = list(create_app().routes)
     posts = {
         route.path
-        for route in client.app.routes
+        for route in routes
         if "POST" in (getattr(route, "methods", None) or ())
     }
-    assert "/api/plot/save" in posts
-    assert "/api/plot/save-all" not in posts
+    # Name what was inspected, so a future mismatch says which routes existed
+    # instead of only "not in set()".
+    table = "\n".join(
+        f"    {getattr(r, 'path', '<no path>')} "
+        f"{sorted(getattr(r, 'methods', None) or ())} ({type(r).__name__})"
+        for r in routes
+    )
+    detail = (
+        f"{len(routes)} route(s), {len(posts)} with POST:\n{table or '    <none>'}"
+    )
+    assert "/api/plot/save" in posts, detail
+    assert "/api/plot/save-all" not in posts, detail
 
 
 def test_saving_one_figure_is_a_job_too(
