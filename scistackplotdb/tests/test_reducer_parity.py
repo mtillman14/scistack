@@ -744,3 +744,72 @@ class TestDuckDBExplodeThroughResolve:
                         check_dtype=False,
                         check_like=True,
                     )
+
+
+# ---------------------------------------------------------------------------
+# A database the reducer cannot reach is a fault, not a fallback
+# ---------------------------------------------------------------------------
+
+
+class TestAnUnreachableDatabaseRaises:
+    """Found 2026-09-13 (scidb.log 18:02:26): the GUI released its per-request
+    DuckDB hold before ``resolve`` ran, the reducer's first lookup raised
+    ``Connection already closed!``, and ``_address_rows``' bare
+    ``except Exception`` reported the rows as "not addressable" — so every
+    reduction silently ran in pandas (375 s of y_limits) while the log said the
+    reducer was on. A fallback is for rows that are structurally not in DuckDB;
+    a connection error must propagate.
+    """
+
+    def _series_spec(self):
+        return _spec(
+            PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None
+        )
+
+    def test_y_extents_on_a_closed_connection_raises(self, duckdb_source, parity_db, caplog):
+        import logging
+
+        import duckdb
+
+        table = duckdb_source.get_table(["Series"])
+        spec = self._series_spec()
+        parity_db._duck.close()
+        try:
+            with caplog.at_level(logging.INFO, logger="scistackplotdb"):
+                with pytest.raises(duckdb.ConnectionException):
+                    reducer_for(table).y_extents(table.frame, spec, table, [])
+            assert "pandas fallback" not in "\n".join(
+                r.getMessage() for r in caplog.records
+            )
+        finally:
+            parity_db._duck.reopen()
+
+    def test_explode_series_on_a_closed_connection_raises(self, duckdb_source, parity_db):
+        import duckdb
+
+        table = duckdb_source.get_table(["Series"])
+        parity_db._duck.close()
+        try:
+            with pytest.raises(duckdb.ConnectionException):
+                reducer_for(table).explode_series(table.frame, "Series", "index", table)
+        finally:
+            parity_db._duck.reopen()
+
+    def test_a_variable_without_a_data_table_still_falls_back_and_says_so(
+        self, duckdb_source, caplog
+    ):
+        """The structural case keeps its fallback — now at WARN, naming the
+        variable, so it can never again be mistaken for a healthy pushdown."""
+        import logging
+
+        from dataclasses import replace
+
+        table = duckdb_source.get_table(["Scalar"])
+        ghost = replace(table, name="NoSuchVariable")
+        spec = _spec(PlotKind.SCATTER, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None)
+        with caplog.at_level(logging.INFO, logger="scistackplotdb"):
+            got = reducer_for(ghost).y_extents(ghost.frame, spec, ghost, [])
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("NoSuchVariable" in r.getMessage() for r in warnings)
+        expected = PandasReducer().y_extents(ghost.frame, spec, ghost, [])
+        _assert_extents_equal(got, expected, "no-table-fallback")

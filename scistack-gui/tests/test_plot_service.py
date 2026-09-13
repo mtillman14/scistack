@@ -1584,13 +1584,20 @@ def test_every_self_managed_method_exists(populated_db):
     assert SELF_MANAGED_DB_METHODS <= set(METHODS)
 
 
-def test_resolve_drops_the_connection_before_reducing(
+def test_resolve_reduces_under_the_connection_hold(
     populated_db, per_request_policy, monkeypatch
 ):
-    """The property the whole stage exists for.
+    """The lock model, as it is now — and the reverse of what this test used
+    to assert.
 
-    `resolve_one` runs after the frames are loaded, and by then nobody should
-    be holding the database — that is the window MATLAB gets back.
+    Until 2026-09-13 this pinned "nobody holds the database while `resolve_one`
+    runs": the reduction was pandas over an in-memory frame, and releasing
+    first was the window MATLAB got back. Then the DuckDB reducer arrived and
+    `resolve` started querying the database from inside — and under this policy
+    it found the connection closed, swallowed the error and fell back to pandas
+    for 375 s (scidb.log 18:02:26). The reduction is now DuckDB work and runs
+    under the hold; the window MATLAB gets back is the render, see
+    `test_save_reduces_under_the_hold_and_renders_outside_it`.
     """
     import scistackplot
 
@@ -1609,8 +1616,11 @@ def test_resolve_drops_the_connection_before_reducing(
     result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
 
     assert result["ok"] is True
-    assert seen["refcount"] == 0, "the reduce phase still holds the DuckDB lock"
-    assert seen["open"] is False, "the DuckDB file lock is still held while reducing"
+    assert seen["refcount"] == 1, "the reduce phase ran outside the DuckDB hold"
+    assert seen["open"] is True, "the reducer would find the connection closed"
+    # And released once the figure is reduced — the hold is not leaked.
+    assert db_mod._db_refcount == 0
+    assert db_mod._db_open is False
 
 
 def test_the_load_phase_does_hold_the_connection(
@@ -1848,3 +1858,98 @@ def test_the_pickers_state_colours_come_from_python():
             f"assigning {state!r} looks like the picker deciding a state for "
             f"itself; states come from scidb.locations.location_states"
         )
+
+
+# --- the DuckDB hold spans the reduction ------------------------------------
+#
+# Found 2026-09-13 (scidb.log 18:02:26): under the per-request policy the hold
+# ended when the table was built, `resolve` then ran the DuckDB reducer against
+# a closed connection, and the reducer fell back to pandas — 375 s of y_limits
+# for a plot whose SQL would have taken seconds. The test suite runs under the
+# persistent policy, where `db_connection` is a no-op, which is why nothing
+# here caught it. These tests switch to per-request for one call.
+
+
+def _reducer_ran_in_duckdb(caplog) -> None:
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Connection already closed" not in text
+    assert "pandas fallback" not in text, text
+
+
+def test_resolve_reduces_while_the_connection_is_held(
+    populated_db, per_request_policy, monkeypatch, caplog
+):
+    import logging
+
+    import scistackplot
+
+    # describe() acquires and releases, so the connection is CLOSED here — the
+    # exact state resolve_figures used to inherit.
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    assert per_request_policy._db_open is False
+
+    seen: dict = {}
+    original = scistackplot.resolve
+
+    def spy(*args, **kwargs):
+        seen["open_during_resolve"] = per_request_policy._db_open
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scistackplot, "resolve", spy)
+
+    with caplog.at_level(logging.INFO):
+        result = plot_service.resolve_figures(populated_db, spec)
+
+    assert result["ok"] is True
+    assert seen["open_during_resolve"] is True
+    _reducer_ran_in_duckdb(caplog)
+    # And the hold is not leaked: the reduction ends inside it, rendering after.
+    assert per_request_policy._db_open is False
+    assert per_request_policy._db_refcount == 0
+
+
+def test_save_reduces_under_the_hold_and_renders_outside_it(
+    populated_db, per_request_policy, monkeypatch, caplog, tmp_path
+):
+    """The save's promise to MATLAB is that the file is free while matplotlib
+    draws — not while DuckDB reduces, which is now seconds."""
+    import logging
+
+    import scistackplot
+
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+
+    seen: dict = {}
+    original_resolve = scistackplot.resolve
+    original_render = scistackplot.render_matplotlib
+
+    def spy_resolve(*args, **kwargs):
+        seen["open_during_resolve"] = per_request_policy._db_open
+        return original_resolve(*args, **kwargs)
+
+    def spy_render(*args, **kwargs):
+        seen["open_during_render"] = per_request_policy._db_open
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(scistackplot, "resolve", spy_resolve)
+    monkeypatch.setattr(scistackplot, "render_matplotlib", spy_render)
+
+    with caplog.at_level(logging.INFO):
+        result = plot_service.save_figure(populated_db, spec, str(tmp_path / "f.png"))
+
+    assert result["ok"] is True, result
+    assert seen["open_during_resolve"] is True
+    assert seen["open_during_render"] is False
+    _reducer_ran_in_duckdb(caplog)
+
+
+def test_an_invalid_spec_releases_the_hold(populated_db, per_request_policy):
+    """The early return inside the hold must still release it."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
+
+    result = plot_service.resolve_figures(populated_db, spec)
+
+    assert result["ok"] is False
+    assert per_request_policy._db_open is False
+    assert per_request_policy._db_refcount == 0

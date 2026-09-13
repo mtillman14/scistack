@@ -362,8 +362,9 @@ def db_connection(label: str = "", *, needed: bool = True):
     figure spent 25-27s in pandas and matplotlib while
     :func:`~scistack_gui.server._handle_request` held the file lock across the
     *whole* RPC, so MATLAB could not open the database for the full 27 seconds
-    (2026-09-11 log, 12:27:39 acquire -> 12:28:10 release). The database is only
-    needed while the variable frames load; everything after that is in memory.
+    (2026-09-11 log, 12:27:39 acquire -> 12:28:10 release). The database is
+    needed while the variable frames load and, since the DuckDB reducer, while
+    they are reduced (``plot_service._loaded``); rendering is in memory.
 
     Under the ``persistent`` policy this is a no-op — see
     :data:`_connection_policy` for why acquiring there would close the very

@@ -220,7 +220,20 @@ class DuckDBReducer(PandasReducer):
     ) -> "pd.DataFrame | None":
         """One row per frame row: ``__table``, ``__column``, ``record_id``.
 
-        ``None`` when any row cannot be located — the caller falls back.
+        ``None`` when the rows are STRUCTURALLY not in DuckDB — no
+        ``record_id`` column, an already-exploded table, a variable with no
+        data table — and the caller falls back to pandas, which is then the
+        honest reducer for that shape.
+
+        Anything else raises. This used to wrap ``table_name_for`` in
+        ``except Exception: return None``, and on 2026-09-13 that turned a
+        closed connection (``ConnectionException: Connection already closed!``
+        — the GUI had released its per-request hold before ``resolve`` ran)
+        into "rows not addressable … pandas fallback": a correct plot, 375 s
+        of ``y_limits`` and 110 s of ``explode`` later, with the reducer
+        believed to be working. A fault in reaching the database is not a
+        property of the rows; it must surface as the fault it is
+        (scidb.log 18:02:26, .claude/plan-plot-minimal-load-examples.md §0).
         """
         if "record_id" not in frame.columns:
             return None
@@ -242,12 +255,19 @@ class DuckDBReducer(PandasReducer):
         tables: dict[str, str] = {}
         single_column: dict[str, str] = {}
         for variable in variables.unique():
-            try:
-                tables[variable] = table_name_for(self._db, variable)
-            except Exception:
-                return None
+            # Neither lookup raises for an unknown variable: `table_name_for`
+            # falls back to "<name>_data" and `data_columns_for` returns []
+            # for a table that does not exist. So an exception here is the
+            # database itself being unreachable, and it propagates.
+            tables[variable] = table_name_for(self._db, variable)
             columns = data_columns_for(self._db, variable)
             if not columns:
+                Log.warn(
+                    "reducer: variable %r has no data table in DuckDB — its rows "
+                    "are not addressable, pandas will reduce them",
+                    variable,
+                    layer=LAYER,
+                )
                 return None
             single_column[variable] = columns[0]
 
