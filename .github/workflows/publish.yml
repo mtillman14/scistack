@@ -58,8 +58,8 @@ jobs:
           # build before it can ship a correct wheel. scidb-net is excluded —
           # outdated, slated for removal, not shipped to PyPI.
           for pkg in scicanonicalhash path-gen scistacklog sciduckdb \
-                     scifor scilineage scidb \
-                     scimatlab scihist scistack; do
+                     scifor scilineage scistackplot scidb \
+                     scimatlab scihist scistackplotdb scistack; do
             echo "== build $pkg =="
             python -m build --outdir dist "$pkg"
           done

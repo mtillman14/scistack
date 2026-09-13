@@ -55,6 +55,8 @@ jobs:
               scilineage
               scidb
               scihist
+              scistackplot
+              scistackplotdb
           )
 
           if command -v matlab &>/dev/null; then
@@ -129,9 +131,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf dist_ci && mkdir dist_ci
-          for pkg in scicanonicalhash path-gen scifor sciduckdb \
-                     scilineage scidb \
-                     scimatlab scihist scidb-net scistack; do
+          for pkg in scicanonicalhash path-gen scistacklog scifor sciduckdb \
+                     scilineage scistackplot scidb \
+                     scimatlab scihist scistackplotdb scidb-net scistack; do
             echo "== build $pkg =="
             python -m build --outdir dist_ci "$pkg"
           done
