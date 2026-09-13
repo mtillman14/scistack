@@ -47,10 +47,14 @@ Consequences that surprise people:
   as one that never ran. This is the deliberate trade that makes node state
   cheap and unambiguous, and it is exactly the resolution the picker exists to
   restore — *which* subject, and why.
-- A **PathInput-only loader reads green when partially run**. With no DB input
-  to enumerate, un-run combos leave no trace, so expected == realized by
-  construction. Accepted limitation, recorded in `bipartite-provenance.md` and
-  deferred in `.claude/plan-pathinput-loader-staleness-gap.md`.
+- A **PathInput-only loader's expected set cannot come from the graph**. With no
+  DB input to enumerate, un-run combos leave no trace, so expected == realized
+  by construction and the graph alone can never report one partially run. Since
+  Stage 1c, `check_node_state` asks the **filesystem** as well
+  (`state._discovery_gate`), so the badge a user sees does go red when files on
+  disk have never been loaded. The graph's own answer is unchanged and still
+  reads green there — the two are deliberately separate, and
+  `test_the_graph_alone_still_cannot_see_the_shortfall` pins that.
 
 ### 2. Combo state is the per-location answer, and it costs
 
@@ -126,20 +130,29 @@ the canvas:
 - **inputless / PathInput-only functions → `check_pathinput_node_state`'s
   should-run set** (`PathInput.discover()` ∩ grid − exclusions).
 
-The second line is the interesting one. It closes the partial-loader hole for
-*this* surface: the node badge on the canvas still reads green (nothing here
-changes `check_node_state`), but the picker counts the subjects that exist on
-disk and were never loaded, and shows them red. The discovery call is the reason
-it can — it is the only live source for "what should exist" that a zero-input
-function has.
+The second line is the interesting one: it is the only live source for "what
+should exist" that a zero-input function has, and consulting it is what lets
+either surface count the subjects that sit on disk and were never loaded.
 
-Why only this surface: discovery walks the filesystem, and the popup opens on
-demand while `check_node_state` runs on **every canvas refresh**. That cost — the
-first risk listed in `.claude/plan-pathinput-loader-staleness-gap.md`, alongside
-MATLAB-side discovery and Windows separators — is what makes the canvas half a
-separate change (Stage 1c) rather than a line in this one.
-`test_canvas_node_state_is_deliberately_unchanged` pins the boundary, so a later
-reader cannot mistake the half that is done for the whole.
+**Both surfaces now use it.** The picker had it first (it opens on demand, so
+the filesystem walk was cheap to justify); `state._discovery_gate` then brought
+the same rule to `check_node_state`, which runs on **every canvas refresh** and
+so needed three things the picker did not:
+
+- a short TTL cache (`state.DISCOVERY_CACHE_SECONDS`) so a burst of refreshes
+  collapses into one walk;
+- a **credibility guard** — discovery finding nothing while the function has
+  realized outputs means the walk is broken here (Windows separators read on
+  POSIX, an unmounted drive, a moved data root), so the gate stands down rather
+  than reporting an entire study missing;
+- the discipline that it may only ever ADD red. Nothing in the gate can turn a
+  red node green.
+
+The escape hatch for a file you never intend to load is an **exclusion**, and
+deliberately only that: there is no recorded grid to consult
+(`_run.where_clause` is display-only by design), and an exclusion makes the user
+write down why. It is the same mechanism the picker subtracts from its
+denominator, so the badge and the pane agree by construction.
 
 **The hole this does not close**: expected sets are derived one function at a
 time, so a *downstream* variable inherits its loader's blind spot. If eight
@@ -160,7 +173,7 @@ which is where the missing data actually is.
 A parent's dot is green iff no descendant is amber or red; its counts are
 `green / (green + amber + red)` over all leaves beneath it, grey excluded. A
 parent with **zero** non-grey descendants is grey itself, not green — green with
-an empty denominator is the same lie as the partially-run loader, and it is the
+an empty denominator says "all of nothing is fine", which is not an answer. It is the
 one arithmetic mistake that would make the header verdict meaningless.
 
 Non-contiguous saves (`schema_tree`'s NULL-key path handling) put a

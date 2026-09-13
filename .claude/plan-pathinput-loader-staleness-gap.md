@@ -1,9 +1,18 @@
 # Finding: a partially re-run PathInput loader reads green
 
-> Status: **diagnosed 2026-09-11, deferred by the user. Not implemented.**
-> Found while building the variant-span banner
-> (`.claude/plan-default-variant-selection.md`). Lives in `scidb.state` /
-> `scidb.provenance_query`, not in the plotting layer.
+> Status: **CLOSED 2026-09-13.** Diagnosed 2026-09-11, deferred, then fixed in
+> two halves by the schema location picker work
+> (`.claude/plan-schema-location-picker.md`):
+>
+> - **(A) the picker's denominator** — Stage 1a. `scidb.locations` derives an
+>   inputless function's expected set from `check_pathinput_node_state`'s
+>   discovery set, so a never-loaded file reads red in the pane.
+> - **(B) the canvas badge** — Stage 1c. `state._discovery_gate` brings the same
+>   rule to `check_node_state`. How each risk below was answered is recorded at
+>   the end of this document.
+>
+> Everything below is the original diagnosis, kept because the scenario and the
+> risk list are what the fix was built against.
 
 ## The gap
 
@@ -106,3 +115,33 @@ zero-input function, the expected-set size, the realized-under-current-hash
 count, and what `PathInput` discovery *would* enumerate — without acting on the
 difference. That measures the gap on a real project before anyone changes what
 turns a node red.
+
+---
+
+## How it was actually fixed (2026-09-13)
+
+`state._discovery_gate`, called from `check_node_state` after the
+invocation-membership answer. It **only ever adds** missing combos: nothing in
+it can turn a red node green.
+
+Each risk above, answered:
+
+| risk | answer |
+|---|---|
+| **Discovery cost on every graph build** | A TTL cache (`state.DISCOVERY_CACHE_SECONDS`, 5s) keyed on the PathInput spec set. A canvas refresh arrives in bursts — a scope switch redraws every node — and the TTL collapses a burst into one walk while keeping "drop a file in, refresh, see red" responsive. Deliberately not event-invalidated: the filesystem changes behind our back by definition, so any hook would be a guess about when, and a stale green is the bug being fixed. `clear_discovery_cache()` is exposed for tests and post-run use. |
+| **Windows separators / unreachable root** | The **credibility guard**, and the most important line in the change: if discovery finds *zero* combos while the function has realized outputs, the walk is broken here — not "every location vanished". The gate stands down, logs a warning naming the likely cause, and the node keeps its previous answer. Turning a whole study red because a path failed to resolve would be far worse than the stale green. Tested by deleting the data root under a working fixture. |
+| **MATLAB-side discovery** | Subsumed by the guard. Discovery is a filesystem walk over the stored `PathInput.to_key()` template, which is language-agnostic; where the Python walk genuinely cannot see what MATLAB would, it sees *nothing*, and the guard treats that as "cannot tell". |
+| **A file that legitimately produces nothing** | `exclusions.exclude_schema(reason, …)`, which `check_pathinput_node_state` already subtracts — and which forces the user to write down why. Deliberately the ONLY escape hatch: pure discovery is used because there is no recorded grid to consult (`_run.where_clause` is display-only by design), and the same exclusion already drops the location from the picker's denominator, so the badge and the pane agree by construction. Tested. |
+
+**The suggested first step (diagnostics before behaviour) was folded in rather
+than staged separately**: the gate logs the on-disk count, the never-run count
+and the cache timing every time it runs, so the measurement the original plan
+asked for is available on any real project — but it is emitted *by* the working
+fix rather than ahead of it. The credibility guard is what made that safe to do
+in one step; without it, measuring first would have been mandatory.
+
+**What this did NOT fix.** Staggered processing — subjects 1-3 loaded, the body
+improved, subjects 4-6 loaded — leaves no file unloaded, so the gate has nothing
+to report while records genuinely span two versions. The variant-span banner
+(`plot-variant-rows.md` §3) remains the only signal for that, which is what the
+comparison table above always said.

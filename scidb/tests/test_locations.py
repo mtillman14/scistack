@@ -329,14 +329,28 @@ class TestPathInputLoaderDenominator:
         assert tree.counts == {"green": 2, "amber": 0, "red": 1, "grey": 0}
         assert tree.verdict == "red"
 
-    def test_canvas_node_state_is_deliberately_unchanged(self, loader_db):
+    def test_the_graph_alone_still_cannot_see_the_shortfall(self, loader_db):
+        """The gap is in the GRAPH, and that has not changed — nor could it.
+
+        Expected == realized for an inputless function, so the invocation-
+        membership answer says green no matter how many files went unloaded.
+        Stage 1c did not fix that; it asked the filesystem a second question
+        beside it (``state._discovery_gate``). Pinning the graph's own answer
+        keeps the two distinguishable: if this ever goes red, the expected set
+        grew a live source and the gate may no longer be needed.
+        """
+        from scidb import provenance_query as pq
+        from scidb.foreach_config import function_hash_for
+
         db, _path_input = loader_db
-        # The hole itself: expected == realized for an inputless function, so the
-        # node badge stays green. Closing that is a separate change with its own
-        # cost profile (discovery on every canvas refresh) — this test pins the
-        # boundary so the fix here cannot be mistaken for the fix there.
-        node = check_node_state(loc_import, [LocLoaded], db=db)
-        assert node["state"] == "green"
+        fn_hash = function_hash_for(loc_import)
+        expected = pq.expected_invocations_for_function(db, "loc_import", fn_hash)
+        present = pq.present_invocation_schema_pairs(
+            db._duck, {inv for inv, _sid in expected}
+        )
+
+        assert expected, "the loader has run, so it has realized invocations"
+        assert not (expected - present), "the graph cannot see the unloaded file"
 
     def test_matches_the_discovery_check_it_is_built_on(self, loader_db):
         db, path_input = loader_db
@@ -591,3 +605,172 @@ def run_locations_json(capsys, db_path, argv):
     out = capsys.readouterr().out
     assert rc == 0, out
     return _json.loads(out)
+
+
+# ---------------------------------------------------------------------------
+# Stage 1c: the canvas badge now consults discovery too
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_discovery_cache():
+    """The gate caches filesystem walks for a few seconds; tests must not
+    inherit one another's."""
+    from scidb.state import clear_discovery_cache
+
+    clear_discovery_cache()
+    yield
+    clear_discovery_cache()
+
+
+class TestDiscoveryGate:
+    """`.claude/plan-pathinput-loader-staleness-gap.md`, closed.
+
+    The scenario the gap doc describes: a loader runs over some files, more
+    files exist, and the node reads green because expected == realized by
+    construction. It now reads red.
+    """
+
+    def test_an_unloaded_file_now_reds_the_node(self, loader_db):
+        db, _path_input = loader_db
+
+        node = check_node_state(loc_import, [LocLoaded], db=db)
+
+        assert node["state"] == "red"
+        assert node["counts"]["missing"] == 1
+        missing = [c["schema_combo"] for c in node["combos"] if c["state"] == "missing"]
+        assert missing == [{"subject": "S02", "trial": "t1"}]
+
+    def test_the_canvas_and_the_picker_now_agree(self, loader_db):
+        """The whole point of using one rule: a red badge and a red row are the
+        same fact, not two estimates of it."""
+        db, _path_input = loader_db
+
+        node = check_node_state(loc_import, [LocLoaded], db=db)
+        tree = location_states(LocLoaded, db=db)
+
+        assert node["state"] == "red"
+        assert tree.verdict == "red"
+        assert node["counts"]["missing"] == tree.counts["red"]
+
+    def test_a_fully_loaded_loader_stays_green(self, tmp_path):
+        from scifor import PathInput
+
+        root = tmp_path / "data"
+        (root / "subS01").mkdir(parents=True)
+        (root / "subS01" / "t1.txt").write_text("1.0")
+
+        db = configure_database(tmp_path / "full.duckdb", SCHEMA_KEYS)
+        try:
+            path_input = PathInput("sub{subject}/{trial}.txt", root_folder=str(root))
+            for_each(
+                loc_import,
+                {"filepath": path_input},
+                [LocLoaded],
+                subject=["S01"],
+                trial=["t1"],
+            )
+            assert check_node_state(loc_import, [LocLoaded], db=db)["state"] == "green"
+        finally:
+            db.close()
+
+    def test_excluding_the_unwanted_file_returns_the_node_to_green(self, loader_db):
+        """The escape hatch, and the only one.
+
+        Pure discovery means a file you never intend to load would read red
+        forever. There is no recorded grid to consult, so the answer is an
+        exclusion — which forces the user to write down WHY, and which the
+        picker already subtracts from its denominator.
+        """
+        from scidb.exclusions import exclude_schema
+        from scidb.state import clear_discovery_cache
+
+        db, _path_input = loader_db
+        assert check_node_state(loc_import, [LocLoaded], db=db)["state"] == "red"
+
+        exclude_schema("pilot subject, not part of the study", subject="S02", trial="t1")
+        clear_discovery_cache()
+
+        assert check_node_state(loc_import, [LocLoaded], db=db)["state"] == "green"
+
+    def test_a_variable_input_function_is_untouched(self, states_db):
+        """The gate is for inputless functions only. A normal node's state must
+        not change because this landed."""
+        node = check_node_state(loc_bandpass, [LocFilt], db=states_db)
+
+        assert node["state"] == "red"  # (S01,t3) has input data, never run
+        assert all(
+            "subject" in c["schema_combo"] for c in node["combos"]
+        ), "the gate must not have injected anything here"
+
+
+class TestDiscoveryCredibilityGuard:
+    """The guard that keeps a broken path from reddening a whole study.
+
+    A `root_folder` written with Windows separators and read on POSIX
+    (project_windows_config_paths), an unmounted drive, a moved data root: the
+    walk finds nothing. Reporting "every location is missing" would be far
+    worse than the stale green this stage fixes, so the gate stands down.
+    """
+
+    def test_an_unreachable_data_root_does_not_red_the_node(self, loader_db, tmp_path):
+        import shutil
+
+        from scidb.state import clear_discovery_cache
+
+        db, path_input = loader_db
+        # The loader has realized locations; now the data disappears.
+        shutil.rmtree(path_input.root_folder)
+        clear_discovery_cache()
+
+        node = check_node_state(loc_import, [LocLoaded], db=db)
+
+        assert node["state"] == "green", (
+            "discovery finding nothing means it could not run, not that every "
+            "location vanished"
+        )
+
+    def test_a_genuinely_never_run_loader_is_still_red(self, tmp_path):
+        """The guard must not swallow the real never-run case: there, the node
+        is red from the graph alone and the gate is irrelevant."""
+        from scifor import PathInput
+
+        db = configure_database(tmp_path / "neverrun.duckdb", SCHEMA_KEYS)
+        try:
+            LocRaw.save(np.array([1.0]), subject="S01", trial="t1")
+            path_input = PathInput("nothing/{subject}.txt", root_folder=str(tmp_path))
+            node = check_node_state(
+                loc_import, [LocLoaded], {"filepath": path_input}, db=db
+            )
+            assert node["state"] == "red"
+        finally:
+            db.close()
+
+
+class TestDiscoveryCache:
+    def test_a_second_call_does_not_walk_the_filesystem_again(self, loader_db):
+        """`check_node_state` runs on every canvas refresh, and a refresh comes
+        in bursts. The walk is the one thing here that is not a DB query."""
+        from scidb import state as state_mod
+
+        db, path_input = loader_db
+        calls = {"n": 0}
+        original = type(path_input).discover
+
+        def counting(self):
+            calls["n"] += 1
+            return original(self)
+
+        type(path_input).discover = counting
+        try:
+            check_node_state(loc_import, [LocLoaded], db=db)
+            first = calls["n"]
+            assert first >= 1
+            check_node_state(loc_import, [LocLoaded], db=db)
+            assert calls["n"] == first, "the second refresh reused the cached walk"
+
+            state_mod.clear_discovery_cache()
+            check_node_state(loc_import, [LocLoaded], db=db)
+            assert calls["n"] > first, "clearing the cache walks again"
+        finally:
+            type(path_input).discover = original

@@ -27,6 +27,7 @@ Typical usage::
         print(combo["schema_combo"], combo["state"])
 """
 
+import time
 import logging
 from typing import Literal
 
@@ -415,9 +416,10 @@ def check_node_state(
     # function has run with (plus the declared-inputs fallback); "present" =
     # those in _invocation. There is no persisted snapshot — `_for_each_expected`
     # was removed because the predicted-vs-realized id pair was a drift hazard.
-    # Consequence: a zero-input function (PathInput-only loader) has no live
-    # source for its expected set, so a partially-run loader still reads green
-    # (the un-run combos leave no trace); it is red only when never run.
+    # A zero-input function (PathInput-only loader) has no DB input to predict
+    # from, so this step alone can never report it partially run — its expected
+    # set IS what it has produced. `_discovery_gate` below closes that, using
+    # the filesystem as the live source it does have.
     # "stale" collapses into "missing": a changed input or edited function shifts
     # the EXPECTED id, so the old one drops out of the expected set and the new
     # (absent) one shows as needs-run (see §9c / §10.4). ``call_id`` scopes the
@@ -462,6 +464,18 @@ def check_node_state(
             }
         )
 
+    # --- The PathInput-only loader gate ---
+    # For a function with no database inputs the expected set above is derived
+    # from what it has ALREADY produced, so `missing` can never exceed zero and
+    # a partially-run loader reads green. Discovery is the one live source for
+    # what should exist; `_discovery_gate` consults it, guards against a walk
+    # that cannot resolve, and only ever adds. See its docstring.
+    for combo in _discovery_gate(fn_name, db, realized_count=len(combo_results)):
+        counts["missing"] += 1
+        combo_results.append(
+            {"schema_combo": combo, "branch_params": {}, "state": "missing"}
+        )
+
     # --- Aggregate to node state (binary: green | red) ---
     # green iff the node has expected work AND all of it is present; red otherwise
     # (never run / no input data, partially run, input re-saved but not re-run, or
@@ -501,6 +515,165 @@ def check_node_state(
     }
 
 
+# ---------------------------------------------------------------------------
+# Discovery gate for PathInput-only loaders (the canvas half of the loader gap)
+# ---------------------------------------------------------------------------
+
+#: How long a loader's filesystem walk is reused.
+#:
+#: ``check_node_state`` runs on every canvas refresh, and a refresh arrives in
+#: bursts (a scope switch redraws every node at once). ``PathInput.discover()``
+#: is an uncached recursive directory walk — a very different cost profile from
+#: the DuckDB queries around it, and the first risk
+#: ``.claude/plan-pathinput-loader-staleness-gap.md`` lists.
+#:
+#: A few seconds collapses a burst into one walk while keeping the thing a user
+#: actually does — drop a file in, refresh, see red — responsive. It is
+#: deliberately short rather than event-invalidated: the filesystem changes
+#: behind our back by definition, so any invalidation hook would be a guess
+#: about when, and a stale green is exactly the bug being fixed.
+DISCOVERY_CACHE_SECONDS = 5.0
+
+#: ``{(fn_name, spec_key): (monotonic_deadline, combos)}``
+_discovery_cache: dict = {}
+
+
+def clear_discovery_cache() -> None:
+    """Forget every cached filesystem walk. For tests, and after a run."""
+    _discovery_cache.clear()
+
+
+def _discovered_combos(fn_name: str, db) -> tuple[int, list[dict]] | None:
+    """``(on_disk_count, never_run_combos)`` for a PathInput-only loader, cached.
+
+    ``None`` means "do not act on this": the function records no PathInput, so
+    there is nothing to enumerate and the caller must fall back to the
+    invocation-membership answer.
+
+    The diff is :func:`check_pathinput_node_state`'s, not a second one written
+    here. It already computes should-run ∩ grid − exclusions against realized
+    locations, and its realized-matching is subset-based (a combo is covered if
+    some realized location agrees on all the keys it names), which an exact-key
+    comparison here would get subtly wrong for a loader that saves deeper than
+    it discovers.
+    """
+    from .locations import pathinput_configs
+
+    try:
+        configs = pathinput_configs(db._duck, fn_name)
+    except ValueError as exc:  # an unparseable stored spec
+        logger.warning("discovery skipped for %s: %s", fn_name, exc)
+        return None
+    if not configs:
+        return None
+
+    key = (
+        fn_name,
+        tuple(sorted(str(v) for inputs, _c in configs for v in inputs.values())),
+    )
+    cached = _discovery_cache.get(key)
+    now = time.monotonic()
+    if cached is not None and cached[0] > now:
+        logger.debug("discovery cache hit for %s", fn_name)
+        return cached[1]
+
+    def _stub():  # check_pathinput_node_state only reads fn.__name__
+        pass
+
+    _stub.__name__ = fn_name
+
+    started = time.perf_counter()
+    on_disk = 0
+    missing: list[dict] = []
+    for inputs, _constants in configs:
+        # No grid: the canvas has no for_each call in hand, so this is pure
+        # discovery — every file the template matches, minus exclusions. See
+        # the docstring of `_discovery_gate` for why exclusions are the escape
+        # hatch rather than a remembered grid.
+        result = check_pathinput_node_state(_stub, [], inputs, db=db)
+        on_disk += len(result["combos"])
+        missing.extend(c["schema_combo"] for c in result["combos"] if c["state"] == "missing")
+    elapsed = time.perf_counter() - started
+
+    _discovery_cache[key] = (now + DISCOVERY_CACHE_SECONDS, (on_disk, missing))
+    logger.debug(
+        "discovery for %s: %d location(s) on disk, %d never run, in %.3fs "
+        "(cached %.0fs)",
+        fn_name,
+        on_disk,
+        len(missing),
+        elapsed,
+        DISCOVERY_CACHE_SECONDS,
+    )
+    return on_disk, missing
+
+
+def _discovery_gate(fn_name: str, db, realized_count: int) -> list[dict]:
+    """Locations a loader's files imply but that it has never produced.
+
+    **This is the canvas half of the PathInput loader gap.** Without it a
+    zero-input function reports green the moment *one* combo exists under the
+    current hash: its expected set is derived from what it has already produced
+    (``realized_inputless_invocations``), so un-run combos leave no trace and
+    ``counts["missing"]`` can never exceed zero. Three real states read green —
+    a run that covered only some files, a run that died partway, and new files
+    nobody has loaded yet.
+
+    Discovery is the one live source for "what should exist" that a function
+    with no database inputs has, so this consults it and reports the shortfall.
+
+    **The credibility guard is the important part.** If discovery finds *nothing*
+    while the function has realized outputs, the walk is broken here — a
+    ``root_folder`` written with Windows separators and read on POSIX
+    (``project_windows_config_paths``), an unmounted drive, a moved data root —
+    and the honest answer is "cannot tell", not "every location is missing".
+    Turning a whole study red because a path failed to resolve would be far
+    worse than the stale green this fixes, so that case falls back to the
+    previous behaviour and says so loudly.
+
+    **Only ever adds red.** A shortfall can turn a green node red; nothing here
+    can turn a red node green.
+
+    **The escape hatch is exclusions, deliberately.** Pure discovery means a
+    file you never intend to load reads red forever. There is no recorded grid
+    to consult — ``_run.where_clause`` is display-only by design — so the answer
+    is ``exclusions.exclude_schema(reason, ...)``, which
+    ``check_pathinput_node_state`` already subtracts and which forces the user
+    to write down *why*. That is the same mechanism the location picker uses,
+    so the canvas badge and the picker's denominator agree by construction.
+    """
+    from . import provenance_query
+
+    if not provenance_query.is_inputless_function(db._duck, fn_name):
+        return []
+    found = _discovered_combos(fn_name, db)
+    if found is None:
+        return []
+    on_disk, shortfall = found
+
+    if on_disk == 0 and realized_count:
+        logger.warning(
+            "node %s: PathInput discovery found no files at all, but the "
+            "function has %d realized location(s) — treating discovery as "
+            "unavailable rather than reporting everything missing. Check the "
+            "data root is reachable and that scistack.toml's paths resolve on "
+            "this OS.",
+            fn_name,
+            realized_count,
+        )
+        return []
+
+    if shortfall:
+        logger.info(
+            "node %s: %d of %d location(s) on disk have never been run "
+            "(exclude them with a reason if that is deliberate)",
+            fn_name,
+            len(shortfall),
+            on_disk,
+        )
+    return shortfall
+
+
 def check_pathinput_node_state(
     fn,
     outputs: list[type],
@@ -513,9 +686,14 @@ def check_pathinput_node_state(
     A loader whose only inputs are a ``PathInput`` (+ optional constants) has no
     DB-variable input to predict an expected set from, so the generic
     :func:`check_node_state` can only report green-when-run / red-when-never-run
-    (a partially-run loader reads green — un-run combos leave no trace). This check
-    closes that gap by reconstructing the combos a run *would* produce **now** and
-    diffing them against what the loader has actually produced.
+    on its own. This check closes that gap by reconstructing the combos a run
+    *would* produce **now** and diffing them against what the loader has
+    actually produced.
+
+    Since the discovery gate landed, :func:`check_node_state` calls this for
+    every inputless function, so the canvas badge already reflects it. This
+    remains the explicit, grid-aware entry point: pass ``**iteration`` to ask
+    the question for one declared grid rather than for every file on disk.
 
     The should-run set is exactly the combos a run would *produce output for* now —
     the **intersection** of the files on disk and the declared grid::

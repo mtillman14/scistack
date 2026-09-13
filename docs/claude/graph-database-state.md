@@ -237,8 +237,12 @@ re-saved-not-rerun, or function edited — any missing expected invocation reds 
 - Expected set (`expected_invocations_for_function`): realized inputless invocations
   (PathInput loaders) ∪ live prediction over current inputs per known variant config
   ∪ declared-inputs fallback. No persisted snapshot.
-- PathInput-only loaders read **green when run (even partially), red when never run**
-  via the generic `check_node_state` — un-run combos leave no trace to count as missing.
+- PathInput-only loaders get **no expected set from the graph** — un-run combos leave
+  no trace, so `expected_invocations_for_function` alone reads green when run (even
+  partially). `check_node_state` therefore asks the filesystem as well
+  (`state._discovery_gate`: `PathInput.discover()` − exclusions, TTL-cached, and
+  stood down when the walk finds nothing while outputs exist), so the node a user
+  sees is red when files on disk have never been loaded.
 - Edited function → new `function_hash` → expected ids shift → red.
 - `check_combo_state` (per-combo: `up_to_date` / `stale` / `missing`) is a separate,
   unchanged API; staleness uses the graph + a deep ancestry walk.

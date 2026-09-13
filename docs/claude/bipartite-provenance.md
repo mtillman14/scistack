@@ -142,8 +142,12 @@ schema_id)}` set live (`provenance_query.py`):
 1. `realized_inputless_invocations` — invocations with no variable-input edges
    (PathInput-only loaders) → their realized output schema locations. By
    construction expected == present, so a run loader is green and a never-run
-   loader red. A **partially-run loader reads green** — with no DB input to
-   enumerate, the un-run combos leave no trace (accepted limitation).
+   loader red. A **partially-run loader reads green from the graph** — with no
+   DB input to enumerate, the un-run combos leave no trace. No longer the
+   accepted limitation it was when this was written: `check_node_state` also
+   asks the filesystem (`state._discovery_gate`, 2026-09-13), so the node a user
+   sees is red when files on disk have never been loaded. The clause described
+   here is unchanged — the gate is a second question asked beside it.
 2. live prediction over current input data for each variant config the function
    has run with (`_predict_config_invocations`), plus a declared-inputs fallback.
    Safe because it shares the one hash fn — `_compute_fn_hash` ==

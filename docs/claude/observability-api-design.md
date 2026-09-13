@@ -95,10 +95,12 @@ Recorded so future work targets the model, not the shell:
   `FilteredEMG`'s expected set — predicted from the `RawEMG` that exists —
   never mentions them, and its pane reads `12/12`. Propagating a loader's
   discovery set down the chain needs combo mapping across schema levels.
-- **The canvas badge still reads green for a partially-run loader.** #14b did
-  not change `check_node_state`, deliberately: discovery globs the filesystem
-  and node state runs on every canvas refresh. `.claude/plan-pathinput-loader-staleness-gap.md`
-  holds the risks; a test pins the boundary so the two halves stay distinct.
+- ~~The canvas badge still reads green for a partially-run loader.~~ **Closed**
+  by `state._discovery_gate`: `check_node_state` now consults discovery for
+  inputless functions too, behind a short TTL cache and a guard that stands the
+  gate down when the walk finds nothing while the function has realized outputs
+  (a path that cannot resolve must not red a whole study). The badge and #14b's
+  denominator now use one rule.
 - **Old-hash latest-record selection** — `find_record_id` can return lineage
   rows from a superseded function hash (see memory
   `latest-record-selection-future-issue`); `trace` output should surface the

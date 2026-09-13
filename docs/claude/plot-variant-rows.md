@@ -452,9 +452,14 @@ beats one that guesses.
 ## 7. Known limits
 
 - **The popup is root-scope only** (§5).
-- **A partially re-run `PathInput`-only loader reads green on the canvas** while
-  its records span two versions, so the §3 banner is the only signal there.
-  Diagnosed and deferred: `.claude/plan-pathinput-loader-staleness-gap.md`.
+- ~~**A partially re-run `PathInput`-only loader reads green on the canvas**~~ —
+  fixed by `state._discovery_gate`, so the canvas is no longer silent here and
+  the §3 banner is no longer the only signal. The banner still earns its place:
+  it answers a different question (is the data in THIS figure heterogeneous,
+  and which location holds which version), and the *staggered processing* case
+  — subjects 1-3 loaded, body improved, subjects 4-6 loaded — leaves no files
+  unloaded at all, so the gate sees nothing to report while the figure really
+  does span two versions.
 - **Nothing caches the exploded frame.** A 1-D struct measure re-explodes on
   every resolve (measured: 24 rows → 8.5 M samples, ×356 650). Cancellation and
   building only the visible figure (`reduce.resolve_one`) removed the pile-up

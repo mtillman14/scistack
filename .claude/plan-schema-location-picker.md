@@ -102,8 +102,9 @@ path:
 (which now calls it) rather than copied — it is the PathInput reconstruction the
 loader denominator needs.
 
-**Deliberately NOT changed: `check_node_state`.** The canvas badge for a
-partially-run loader still reads green. See "The loader gap, split in two".
+**`check_node_state` was left alone at this stage, deliberately** — the canvas
+badge for a partially-run loader still read green until Stage 1c brought the
+same rule there. See "The loader gap, split in two".
 
 **Stage 1b — `LocationFilter` in `scistackplot`. DONE (unrun).**
 
@@ -263,13 +264,24 @@ with **no** role gets `FREE` — but `X`, `COLOR` and `FACET` are left alone,
 because they already draw their levels individually, which is what "as granular
 as possible" asked for.
 
-**Stage 1c — the canvas half of the loader gap.** NOT started; see below.
+**Stage 1c — the canvas half of the loader gap. DONE.** `state._discovery_gate`,
+called from `check_node_state` after the invocation-membership answer. The four
+risks and how each was answered are recorded at the end of
+`.claude/plan-pathinput-loader-staleness-gap.md`, which is now CLOSED. The
+short version: a TTL cache for the cost, a **credibility guard** for paths that
+cannot resolve (discovery finding nothing while outputs exist means the walk is
+broken, not that the study vanished), exclusions as the single escape hatch, and
+the discipline that the gate may only ever ADD red.
 
-## The loader gap, split in two
+The badge and the picker's denominator now use one rule, which is the outcome
+worth having: a red node and a red row are the same fact rather than two
+estimates of it.
 
-`.claude/plan-pathinput-loader-staleness-gap.md` is one symptom with two fixes
-of very different cost, and conflating them is how the cheap half gets blocked
-by the expensive one's risks.
+## The loader gap, split in two — BOTH HALVES NOW DONE
+
+`.claude/plan-pathinput-loader-staleness-gap.md` was one symptom with two fixes
+of very different cost. Splitting them is what let the cheap half ship first
+rather than being blocked by the expensive one's risks.
 
 **(A) The denominator in this view — done in Stage 1a.** When the variable is
 produced by a PathInput-only loader, `location_states` derives its expected set
@@ -280,20 +292,24 @@ because discovery runs **when the popup opens**, not on every canvas refresh —
 which is the whole reason the gap doc listed "discovery cost on every graph
 build" as the top risk.
 
-**(B) The canvas badge — Stage 1c, not started.** Making `check_node_state`
-itself consult discovery is the change the gap doc is actually about, and every
-risk it lists still applies: filesystem globbing on each canvas refresh, MATLAB
-loaders whose discovery is MATLAB-side, a file that legitimately produces
-nothing, and Windows separators in `scistack.toml`
-(`project_windows_config_paths`). Its own "suggested first step" is diagnostics
-before behaviour, and that is still right: log, per zero-input function, the
-expected-set size, the realized-under-current-hash count, and what discovery
-*would* enumerate — measured on a real project — before anything changes colour.
+**(B) The canvas badge — done in Stage 1c.** `state._discovery_gate` asks the
+same question inside `check_node_state`, behind the three things the popup did
+not need: a TTL cache for the per-refresh cost, a credibility guard for paths
+that cannot resolve, and the discipline that it may only ever ADD red. Full
+risk-by-risk accounting at the end of the gap doc.
 
-Stage 1a makes that measurement free: the discovery set it already computes is
-the missing number, so the diagnostic is a log line, not a new mechanism. A test
-(`test_canvas_node_state_is_deliberately_unchanged`) pins the boundary so the
-two halves cannot be confused later.
+**The one deviation from the gap doc's own advice.** It asked for diagnostics
+before behaviour — measure the delta on a real project, then decide. That was
+folded into the fix instead: the gate logs the on-disk count, the never-run
+count and the walk timing every time it runs, so the measurement is available,
+but it is emitted *by* the working change rather than ahead of it. The
+credibility guard is what made that safe in one step; without a guaranteed floor
+on the failure mode (a broken path reddening an entire study), measuring first
+would have been mandatory.
+
+`test_the_graph_alone_still_cannot_see_the_shortfall` replaced the old boundary
+test: the gap is in the graph, that has not changed, and the gate is a second
+question asked beside it rather than a repair of the first.
 
 **Stage 6 — tests.** `scidb/tests/test_locations.py` covers the Stage 1a half
 (written, unrun): per-location status vs `check_combo_state` location for

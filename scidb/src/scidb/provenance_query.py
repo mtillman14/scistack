@@ -1900,9 +1900,14 @@ def realized_inputless_invocations(
 
     These have no DB input data to predict an expected set from, so their
     *realized* output locations ARE their expected set: present == expected →
-    the node reports green when run, red when never run (a partially-run loader
-    still reads green — there is no live source for the combos that *should*
-    exist but were never produced).
+    the node reports green when run, red when never run.
+
+    That alone cannot see a partial run — un-run combos leave no trace in the
+    graph. The live source those functions DO have is the filesystem, and
+    ``state._discovery_gate`` consults it on top of this, so the node a user
+    sees is red when files on disk have never been loaded. Nothing here
+    changed: this is still the graph's honest answer, and the gate is a second
+    question asked beside it.
 
     ``fn_hash`` restricts the result to invocations produced by that version of
     the function's source. **This is what makes an inputless loader notice a
@@ -1950,6 +1955,29 @@ def realized_inputless_invocations(
         ):
             out.add((inv_id, sid))
     return out
+
+
+def is_inputless_function(duck, fn_name: str) -> bool:
+    """True when no invocation of ``fn_name`` has a *variable* input.
+
+    A PathInput / constant-only loader — the shape whose expected set cannot be
+    predicted from upstream data, because there is no upstream data. Both
+    callers that care (``scidb.locations`` for the picker's denominator, and
+    ``state.check_node_state`` for the canvas badge) need the same answer, so it
+    lives here with the rest of the graph queries rather than in either of them.
+
+    A function with **no recorded invocations at all** also returns True — it
+    has no variable inputs in the trivial sense. Callers that act on this must
+    check for invocations separately; "never run" is not "inputless".
+    """
+    rows = duck._fetchall(
+        "SELECT 1 FROM _invocation inv "
+        "JOIN _invocation_input ii ON ii.invocation_id = inv.invocation_id "
+        "JOIN _record r ON r.record_id = ii.input_record_id "
+        "WHERE inv.function_name = ? AND r.type NOT IN (?, ?, ?) LIMIT 1",
+        [fn_name, CONSTANT_TYPE, PATHINPUT_TYPE, GLUE_TYPE],
+    )
+    return not rows
 
 
 def function_versions_recorded(duck, fn_name: str) -> set:
@@ -2029,11 +2057,15 @@ def expected_invocations_for_function(
 
     Note: a zero-input function (e.g. a PathInput-only loader) has no input data
     to enumerate, so it contributes only the invocations it has already realized
-    **under the current ``fn_hash``**. Such a node therefore reports **green**
-    (run, even partially, with the code as it stands) or **red** (never run, or
-    run only by a since-edited version) — there is still no live source for the
-    set of combos it *should* produce, so un-run combos cannot be detected, but
-    an edited body now correctly reads as needs-run.
+    **under the current ``fn_hash``**. From this function alone such a node
+    reports **green** (run, even partially, with the code as it stands) or
+    **red** (never run, or run only by a since-edited version).
+
+    "Even partially" is the limit of what the graph can say, and it is not the
+    answer a user gets: ``state.check_node_state`` asks the filesystem too
+    (``_discovery_gate``), so a loader with files it has never loaded reads red.
+    Callers reading this function directly get the graph's answer and should
+    not present it as node state.
     """
     duck = db._duck
     expected: set = set()

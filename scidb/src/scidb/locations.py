@@ -32,7 +32,7 @@ from typing import Literal
 
 from . import provenance_query
 from .log import Log
-from .provenance import CONSTANT_TYPE, GLUE_TYPE, PATHINPUT_TYPE, SAVE_FUNCTION_NAME
+from .provenance import SAVE_FUNCTION_NAME
 
 LocationState = Literal["green", "amber", "red", "grey"]
 
@@ -367,7 +367,7 @@ def _expected_locations(
     bases: set = set()
 
     for fn_name in sorted(fns):
-        if _is_inputless(duck, fn_name):
+        if provenance_query.is_inputless_function(duck, fn_name):
             combos, note = _discovery_expected(db, fn_name, grid)
             if note:
                 notes.append(note)
@@ -489,20 +489,6 @@ def _producing_functions(duck, variable_name: str) -> set:
         [variable_name, SAVE_FUNCTION_NAME],
     )
     return {row[0] for row in rows}
-
-
-def _is_inputless(duck, fn_name: str) -> bool:
-    """True when no invocation of ``fn_name`` has a *variable* input — i.e. a
-    PathInput / constant-only loader, the shape ``check_node_state`` cannot
-    predict an expected set for."""
-    rows = duck._fetchall(
-        "SELECT 1 FROM _invocation inv "
-        "JOIN _invocation_input ii ON ii.invocation_id = inv.invocation_id "
-        "JOIN _record r ON r.record_id = ii.input_record_id "
-        "WHERE inv.function_name = ? AND r.type NOT IN (?, ?, ?) LIMIT 1",
-        [fn_name, CONSTANT_TYPE, PATHINPUT_TYPE, GLUE_TYPE],
-    )
-    return not rows
 
 
 def pathinput_configs(duck, fn_name: str) -> list[tuple[dict, dict]]:
@@ -660,7 +646,7 @@ def _build_tree(
     * its state is the **worst** state present beneath it, with grey ignored
       unless it is all there is;
     * a parent with no non-grey descendants is itself grey — green over an empty
-      denominator is the same lie as a partially-run loader reading green.
+      denominator says "all of nothing is fine", which is not an answer.
     """
     nodes: dict[tuple, LocationNode] = {}
     roots: list[LocationNode] = []
