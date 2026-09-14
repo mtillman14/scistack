@@ -176,3 +176,30 @@ def test_a_source_with_no_hierarchy_claims_no_schema_keys(scalar_frame):
     assert all(
         f["is_schema_key"] is False for f in table.describe()["factors"]
     )
+
+
+def test_a_filter_that_keeps_nothing_under_a_fanout_still_yields_one_empty_figure(
+    scalar_table,
+):
+    """Same state as above, but with an ITERATE factor. The groupby over an
+    empty frame produced NO groups, and ``resolve_one`` indexed
+    ``plan.groups[-1]`` — the "list index out of range" the Plot Studio popup
+    showed on "Deselect all" (2026-09-14). One empty figure, like the
+    non-iterating case, so the panel can say "nothing selected" itself."""
+    from scistackplot import resolve_one
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"session": Role.X, "subject": Role.ITERATE, "trial": Role.FREE},
+        kind=PlotKind.BOX,
+        filters=[Filter("trial", include=[])],
+    )
+
+    figures = resolve(spec, scalar_table)
+    assert len(figures) == 1
+    assert _rows(figures[0]) == 0
+
+    figure, labels, index = resolve_one(spec, scalar_table, 3)
+    assert _rows(figure) == 0
+    assert index == 0
+    assert labels == [""]

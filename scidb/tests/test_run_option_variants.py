@@ -375,3 +375,62 @@ class TestListValuedPin:
     def test_a_list_of_only_unknown_labels_still_errors(self, both_runs):
         with pytest.raises(ValueError, match="matches nothing"):
             self._load(both_runs, ["distribute=maybe"])
+
+
+class TestCurrencyIsPerFunctionNotPerLocation:
+    """The 2026-09-14 follow-up. Discovery said four trials; the whole-file run
+    wrote trials 1–4; the distributed re-run produced three slices because the
+    file held three trials. Per-LOCATION "latest" — right for code versions,
+    where a subject never re-run keeps its own newest record — called the
+    whole-file record at trial 4 current (nothing newer THERE), and the figure
+    mixed the two runs. Run options are judged per function, globally: the
+    option set the function was most recently run under wins everywhere."""
+
+    @pytest.fixture
+    def stale_trial(self, db):
+        for_each(make_rows, {}, [Loaded], subject=["SS01"], trial=[1, 2, 3, 4])
+        for_each(make_rows, {}, [Loaded], distribute=True, subject=["SS01"])
+        return db
+
+    def _ident(self, db):
+        rids = [
+            r[0]
+            for r in db._duck._fetchall(
+                "SELECT record_id FROM _record WHERE type = 'Loaded'"
+            )
+        ]
+        return variant_identity_batch(db._duck, rids)
+
+    def test_current_run_options_is_the_newest_set(self, stale_trial):
+        from scidb.provenance_query import current_run_options
+
+        assert current_run_options(stale_trial._duck, ["make_rows"]) == {
+            "make_rows": "distribute=true"
+        }
+
+    def test_the_orphaned_old_record_is_not_latest(self, stale_trial):
+        """Seven records: four whole-file, three slices. Only the slices are
+        current — the trial-4 whole-file record has no newer neighbour at its
+        location and must still be stale."""
+        ident = self._ident(stale_trial)
+        assert len(ident) == 7
+        latest = {rid for rid, info in ident.items() if info["is_latest"]}
+        assert len(latest) == 3
+        assert all(
+            ident[rid]["run_chain"] == {"make_rows": "distribute=true"} for rid in latest
+        )
+
+    def test_load_path_drops_the_orphaned_record_too(self, stale_trial):
+        frame = stale_trial.load_all_as_df(Loaded)
+        assert len(frame) == 3, (
+            "load() should see only the distributed slices; the trial-4 "
+            "whole-file record is a location the current run never produced"
+        )
+
+    def test_the_older_run_is_still_reachable_by_pin(self, stale_trial):
+        frame = stale_trial.load_all_as_df(
+            Loaded,
+            version_id="all",
+            branch_params_filter={"__run__.make_rows": "distribute=false"},
+        )
+        assert len(frame) == 4

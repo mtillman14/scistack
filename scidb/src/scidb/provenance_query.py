@@ -363,6 +363,49 @@ def run_option_axes(duck, fn_names) -> dict:
     return out
 
 
+def current_run_options(duck, fn_names) -> dict:
+    """``{fn_name: label}`` — the run-option set each function was **most
+    recently run under**, judged by the newest ``_record_save`` among the
+    outputs of its invocations.
+
+    This is what "current" means for run options, and it is deliberately
+    **per function, not per schema location** — the opposite scope from code
+    versions. A code edit is re-run incrementally, subject by subject, and a
+    subject never re-run under the newest body should keep contributing its
+    own newest record. A run-option flip is different in kind: it changes what
+    a record MEANS (a ``distribute=true`` slice vs. the whole file dumped at
+    every trial), so an older option set is stale everywhere — including at
+    locations the newer run never produced. Observed 2026-09-14: a loader run
+    non-distributed over trials 1–4 (discovery said four), then distributed
+    (the file held three); per-location "latest" kept the whole-file record
+    at every trial 4 as "current" and the figure mixed the two.
+
+    Only functions in ``fn_names`` that have any saved output appear.
+    """
+    names = sorted({n for n in fn_names if n and n != SAVE_FUNCTION_NAME})
+    if not names:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT inv.function_name, inv.distribute, inv.as_table, MAX(rs.timestamp) "
+        "FROM _invocation inv "
+        "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
+        "JOIN _record_save rs ON rs.record_id = io.output_record_id "
+        "WHERE inv.function_name IN ({ph}) "
+        "GROUP BY inv.function_name, inv.distribute, inv.as_table",
+        names,
+    )
+    newest: dict = {}  # fn -> (timestamp, label)
+    for fn_name, dist, at, ts in rows:
+        label = run_options_label(dist, at)
+        # Label breaks a timestamp tie deterministically, as `_order_versions`
+        # does with the hash.
+        candidate = (ts or "", label)
+        if fn_name not in newest or candidate > newest[fn_name]:
+            newest[fn_name] = candidate
+    return {fn: label for fn, (_ts, label) in newest.items()}
+
+
 def chain_batch(duck, record_ids, max_depth: int = 20) -> dict:
     """``{record_id: {"code": {fn_name: fn_hash}, "run": {fn_name: label}}}`` —
     every function in a record's upstream chain, including the one that
@@ -740,6 +783,12 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
         code, same constants. Without the options in the signature both records
         were "latest" and a ``distribute=false`` loader run overplotted its
         ``distribute=true`` re-run trial for trial.
+
+        Run options are judged **per function, globally**, on top of the
+        per-location chain rule: a record whose chain used an option set that
+        is not the one its function was most recently run under is NOT latest,
+        even where it is the only record (:func:`current_run_options` says
+        why the scope differs from code's).
     ``code_chain``
         ``{fn_name: "vN"}`` over the record's upstream functions, restricted to
         those holding more than one version (:func:`code_version_ordinals`).
@@ -881,6 +930,34 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
         for chain_sig, rids in by_hash.items():
             for rid in rids:
                 is_latest_of[rid] = chain_sig == latest_hash
+
+    # --- run options: current per FUNCTION, over the whole database ---
+    # The per-location rule above cannot see a location the newer run never
+    # produced (a trial that only ever existed under the old option set), and
+    # there the stale record is the newest thing present. So a second, global
+    # test: any hop that ran under an option set other than the one its
+    # function was most recently run under makes the record not-latest.
+    current_run = current_run_options(duck, run_axes) if run_axes else {}
+    stale_by_run = 0
+    if current_run:
+        for rid, is_latest in list(is_latest_of.items()):
+            if not is_latest:
+                continue
+            hops = run_chains.get(rid, {})
+            if any(
+                hops.get(fn) is not None and hops.get(fn) != label
+                for fn, label in current_run.items()
+            ):
+                is_latest_of[rid] = False
+                stale_by_run += 1
+        if stale_by_run:
+            logger.info(
+                "variant_identity: %d record(s) are the newest at their location "
+                "but were built under a superseded run-option set (current: %s) "
+                "— marked not-latest",
+                stale_by_run,
+                current_run,
+            )
 
     # One summary line per call, not one per type: this runs on every
     # variable-panel open. The detail that matters is which types became

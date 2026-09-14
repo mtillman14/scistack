@@ -2171,6 +2171,36 @@ class DatabaseManager:
                     f"keeping {newest_run!r}, superseding {dropped} "
                     f"record(s) from the other option set(s)"
                 )
+            # Second, GLOBAL rule (same as variant_identity_batch.is_latest):
+            # a record whose producing invocation ran under an option set other
+            # than the one its function was most recently run under is stale
+            # even where it is the only record — the family rule above cannot
+            # see a location the newer run never produced (a trial that only
+            # existed under the old option set). Cheap gate first: only
+            # functions that ever ran more than one way are consulted.
+            multi_way = provenance_query.run_option_axes(
+                self._duck, {inv[1] for inv in inv_map.values()}
+            )
+            if multi_way:
+                current_run = provenance_query.current_run_options(
+                    self._duck, multi_way
+                )
+                stale_global = 0
+                for row in df.itertuples(index=True):
+                    inv = inv_map.get(row.record_id)
+                    if inv is None or row.Index in superseded_idx:
+                        continue
+                    label = run_map.get(inv[0])
+                    wanted = current_run.get(inv[1])
+                    if label is not None and wanted is not None and label != wanted:
+                        superseded_idx.add(row.Index)
+                        stale_global += 1
+                if stale_global:
+                    Log.info(
+                        f"_find_record({type_name}, latest): {stale_global} record(s) "
+                        f"built under a superseded run-option set dropped "
+                        f"(current: {current_run})"
+                    )
             if superseded_idx:
                 Log.info(
                     f"_find_record({type_name}, latest): run-option supersession "

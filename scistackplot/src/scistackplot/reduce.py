@@ -474,6 +474,23 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
                 (dict(zip(iterate, key_values, strict=True)), group)
                 for key_values, group in _ordered_groups(frame, iterate, table)
             ]
+            if not groups:
+                # Filtered to nothing UNDER a fan-out. Without a fan-out this
+                # case already yields one empty figure (the branch below), and
+                # the panel relies on that: "Deselect all" is a legitimate
+                # state to pass through while clicking, and an empty figure
+                # explains itself (row_count == 0). With ITERATE factors the
+                # groupby produced NO groups, `resolve_one` indexed
+                # `plan.groups[-1]` and the panel showed "list index out of
+                # range" instead (2026-09-14). One empty figure, same as the
+                # non-iterating case.
+                Log.info(
+                    "fan-out over %s has no groups after filtering — one empty "
+                    "figure instead of none",
+                    iterate,
+                    layer=LAYER,
+                )
+                groups = [({}, frame)]
         else:
             groups = [({}, frame)]
 

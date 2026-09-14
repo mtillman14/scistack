@@ -109,6 +109,14 @@ as the `is_latest` signature component, as the `Run:<fn>` level, and as the
   INFO) — the axis exists.
 - `_find_record(T, latest): run-option supersession dropped N record(s) across
   M location(s)` (scidb, INFO) — the load path is collapsing the older run.
+- `_find_record(T, latest): N record(s) built under a superseded run-option set
+  dropped (current: {...})` / `variant_identity: N record(s) are the newest at
+  their location but were built under a superseded run-option set` — the
+  global per-function rule fired; these are locations only the old run ever
+  produced.
+- `fan-out over [...] has no groups after filtering — one empty figure instead
+  of none` (scistackplot) — "Deselect all" under an ITERATE factor; previously
+  `resolve_one` raised `list index out of range` here.
 - `attached N code column(s) [...] and M run-option column(s) ['Run:fn'] over R
   record(s) (K row(s) current)` (scistackplotdb, INFO) — the plot table has the
   column and the flag; `K` should be one per location.
@@ -126,6 +134,18 @@ as the `is_latest` signature component, as the `Run:<fn>` level, and as the
 - **Supersession key is the family, not `output_num`.** `output_num` is the
   slice index under `distribute`, so it cannot be part of "is this the same
   thing re-run"; it only separates outputs *within* one invocation.
+- **Run-option currency is per FUNCTION, globally; code currency stays per
+  location.** (Follow-up, same day.) Per-location `is_latest` called the
+  whole-file `distribute=false` record at trial 4 "current" because the
+  distributed re-run produced only three slices and nothing newer existed *at
+  that location* — the figure mixed the two runs and the span banner fired on
+  the default row. A code edit is re-run incrementally and a subject not yet
+  re-run should keep its record; a run-option flip changes what a record
+  *means*, so an older option set is stale everywhere, including at locations
+  the newer run never produced. `provenance_query.current_run_options(fn)` =
+  the option set of the function's most recently saved invocation; both
+  `variant_identity_batch.is_latest` and `_find_record`'s collapse apply it
+  after their per-location rules. The older run remains reachable by pin.
 
 ## Tests
 
