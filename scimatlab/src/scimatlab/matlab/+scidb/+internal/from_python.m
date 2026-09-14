@@ -33,8 +33,6 @@ function data = from_python(py_obj)
         data = [];
 
     elseif isa(py_obj, 'py.numpy.ndarray')
-        % Bypass MATLAB-numpy bridge (libmwbuffer issues) by converting
-        % to Python list first, then to MATLAB
         py_c = py.numpy.ascontiguousarray(py_obj);
         dtype_kind = string(py_c.dtype.kind);
         arr_shape = int64(py_c.shape);
@@ -42,58 +40,72 @@ function data = from_python(py_obj)
         scidb.Log.debug('from_python: numpy array dtype=%s, shape=[%s], ndim=%d', ...
             string(char(py.str(py_c.dtype))), strjoin(string(arr_shape), ' '), arr_ndim);
 
-        % Convert to Python list to avoid libmwbuffer errors.
-        try
-            py_list = py_c.tolist();
-            scidb.Log.debug('from_python: tolist() succeeded, converting to MATLAB...');
-        catch list_err
-            scidb.Log.err('from_python: tolist() failed: %s', list_err.message);
-            rethrow(list_err);
-        end
+        % --- Bulk path: ONE bridge crossing for the whole array. ---
+        % Everything below it costs one Python->MATLAB crossing per ELEMENT,
+        % which is the entire cost at scale (see ndarray_via_buffer).  This
+        % is the only branch that has to be fast: the py.list fast paths,
+        % convert_dataframe's object and default branches, and
+        % bridge.flatten_sequences all funnel their bulk data through here.
+        [data, buf_ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape);
 
-        if dtype_kind == "b"
-            % bool array -> logical
-            c = cell(py_list);
-            if isempty(c)
-                data = logical([]);
-            else
-                % Convert list of bools to MATLAB logical array
-                % Explicitly handle py.bool objects
-                if ~isempty(c) && isa(c{1}, 'py.bool')
-                    data = cellfun(@logical, c);
+        if ~buf_ok
+            % Bypass MATLAB-numpy bridge (libmwbuffer issues) by converting
+            % to Python list first, then to MATLAB
+            warn_if_large_slow_conversion(arr_shape, py_c);
+
+            % Convert to Python list to avoid libmwbuffer errors.
+            try
+                py_list = py_c.tolist();
+                scidb.Log.debug('from_python: tolist() succeeded, converting to MATLAB...');
+            catch list_err
+                scidb.Log.err('from_python: tolist() failed: %s', list_err.message);
+                rethrow(list_err);
+            end
+
+            if dtype_kind == "b"
+                % bool array -> logical
+                c = cell(py_list);
+                if isempty(c)
+                    data = logical([]);
                 else
-                    data = cellfun(@logical, c);
-                end
-            end
-        elseif dtype_kind == "O"
-            % Object array -> cell array, convert each element
-            c = cell(py_list);
-            data = cell(1, numel(c));
-            for i = 1:numel(c)
-                data{i} = scidb.internal.from_python(c{i});
-            end
-        else
-            % Numeric array -> MATLAB numeric array
-            c = cell(py_list);
-            if isempty(c)
-                data = [];
-            else
-                % Convert list of numbers to MATLAB array
-                % Handle case where c contains py.int/py.float objects
-                if ~isempty(c) && (isa(c{1}, 'py.int') || isa(c{1}, 'py.float'))
-                    % Explicitly convert Python numeric types to MATLAB doubles
-                    data = cellfun(@double, c);
-                elseif ~isempty(c) && is_python_object(c{1})
-                    % 2-D+ array: inner elements are Python row-lists.
-                    % Recursively convert each row, then stack into a matrix.
-                    scidb.Log.debug('from_python: numeric array contains Python row-lists, converting recursively');
-                    data = cell(1, numel(c));
-                    for idx_inner = 1:numel(c)
-                        data{idx_inner} = scidb.internal.from_python(c{idx_inner});
+                    % Convert list of bools to MATLAB logical array
+                    % Explicitly handle py.bool objects
+                    if ~isempty(c) && isa(c{1}, 'py.bool')
+                        data = cellfun(@logical, c);
+                    else
+                        data = cellfun(@logical, c);
                     end
-                    data = try_stack_numeric(data);
+                end
+            elseif dtype_kind == "O"
+                % Object array -> cell array, convert each element
+                c = cell(py_list);
+                data = cell(1, numel(c));
+                for i = 1:numel(c)
+                    data{i} = scidb.internal.from_python(c{i});
+                end
+            else
+                % Numeric array -> MATLAB numeric array
+                c = cell(py_list);
+                if isempty(c)
+                    data = [];
                 else
-                    data = cell2mat(c);
+                    % Convert list of numbers to MATLAB array
+                    % Handle case where c contains py.int/py.float objects
+                    if ~isempty(c) && (isa(c{1}, 'py.int') || isa(c{1}, 'py.float'))
+                        % Explicitly convert Python numeric types to MATLAB doubles
+                        data = cellfun(@double, c);
+                    elseif ~isempty(c) && is_python_object(c{1})
+                        % 2-D+ array: inner elements are Python row-lists.
+                        % Recursively convert each row, then stack into a matrix.
+                        scidb.Log.debug('from_python: numeric array contains Python row-lists, converting recursively');
+                        data = cell(1, numel(c));
+                        for idx_inner = 1:numel(c)
+                            data{idx_inner} = scidb.internal.from_python(c{idx_inner});
+                        end
+                        data = try_stack_numeric(data);
+                    else
+                        data = cell2mat(c);
+                    end
                 end
             end
         end
@@ -329,7 +341,15 @@ function data = convert_dataframe(py_obj)
         scidb.Log.err('convert_dataframe: initialization failed: %s', init_err.message);
         rethrow(init_err);
     end
+
+    % Per-column timing. Every other message in this function is DEBUG, so
+    % at INFO a slow DataFrame conversion is a silent gap. Keep quiet when
+    % the conversion is quick (this runs for every result table too) and
+    % name the expensive columns when it is not.
+    col_secs = zeros(1, numel(col_names));
+    df_t0 = tic;
     for i = 1:numel(col_names)
+        col_t0 = tic;
         try
             col_key = col_names{i};
             scidb.Log.debug('convert_dataframe: column %d - getting column "%s"', i, string(col_key));
@@ -400,6 +420,7 @@ function data = convert_dataframe(py_obj)
 
                     scidb.Log.debug('convert_dataframe: column %d - DataFrame concat succeeded', i);
                     args{i} = col_data;
+                    col_secs(i) = toc(col_t0);
                     continue;  % Skip to next column
                 catch concat_err
                     scidb.Log.debug('convert_dataframe: column %d - DataFrame concat failed, falling back: %s', ...
@@ -426,6 +447,7 @@ function data = convert_dataframe(py_obj)
                         col_data = col_data(:);
                     end
                     args{i} = col_data;
+                    col_secs(i) = toc(col_t0);
                     continue;
                 end
                 if ~iscell(col_data)
@@ -487,6 +509,17 @@ function data = convert_dataframe(py_obj)
         if isvector(args{i}) && numel(args{i}) == n_rows
             args{i} = args{i}(:);
         end
+        col_secs(i) = toc(col_t0);
+    end
+
+    % Report only when the conversion actually cost something. The named
+    % columns are what turns "the run hung" into "the RawEMG data column
+    % took 11 minutes", which is the whole point of the instrumentation.
+    df_secs = toc(df_t0);
+    if df_secs >= 1.0
+        scidb.Log.info('[timing] convert_dataframe: %dx%d, TOTAL=%.3fs (%s)', ...
+            n_rows, numel(col_names), df_secs, ...
+            format_slowest_columns(col_names, col_secs));
     end
     col_name_strs = cellfun(@string, col_names, 'UniformOutput', false);
     data = table;
@@ -681,4 +714,163 @@ function [can_concat, concat_df] = try_concat_homogeneous_dataframes(c)
         can_concat = false;
         concat_df = py.None;
     end
+end
+
+
+function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape)
+%NDARRAY_VIA_BUFFER  Convert a numpy array in ONE Python->MATLAB crossing.
+%
+%   The element-by-element route (``tolist()`` + ``cell()``) costs one
+%   boundary crossing per element.  At the scale scidb loads -- a 419-record
+%   EMG variable spread over 10 array columns is 1.74e8 samples -- that is
+%   1.74e8 crossings plus a multi-GB transient MATLAB cell array, which
+%   presents as a hung MATLAB rather than a slow one.
+%
+%   ``py.scimatlab.bridge.ndarray_to_buffer`` hands over the array's raw
+%   bytes in Fortran (column-major) order instead.  MATLAB turns py.bytes
+%   into uint8 in a single memcpy, typecasts back to the original class and
+%   reshapes -- all independent of element count.
+%
+%   ok=false means "not applicable, use the element-by-element path":
+%   object/string/datetime dtypes, a scimatlab without the bridge helper, or
+%   a byte count the description disagrees with.  It is never an error --
+%   the fallback produces the same values, just slowly.
+
+    data = [];
+    ok = false;
+
+    % Only fixed-width numeric/bool dtypes have bytes worth reinterpreting.
+    % Checked here as well as Python-side so the common decline (object
+    % columns) costs no bridge crossing at all.
+    if ~any(dtype_kind == ["f", "i", "u", "b"])
+        return;
+    end
+
+    try
+        desc = py.scimatlab.bridge.ndarray_to_buffer(py_c);
+    catch err
+        % A scimatlab without the helper, or a Python-side failure.
+        scidb.Log.debug('from_python: buffer path unavailable (%s)', err.message);
+        return;
+    end
+
+    try
+        if ~logical(desc{'ok'})
+            scidb.Log.debug('from_python: buffer path declined: %s', ...
+                char(desc{'reason'}));
+            return;
+        end
+
+        ml_class = char(desc{'matlab_class'});
+        n_expected = double(desc{'count'});
+
+        if n_expected == 0
+            % Match the element-by-element path's empty results exactly:
+            % it returns logical([]) for bool arrays and [] otherwise.
+            if strcmp(ml_class, 'logical')
+                data = logical([]);
+            else
+                data = [];
+            end
+            ok = true;
+            return;
+        end
+
+        raw = desc{'buffer'};
+        if ~isa(raw, 'uint8')
+            raw = uint8(raw);   % py.bytes -> uint8, one memcpy
+        end
+        raw = reshape(raw, 1, []);   % typecast requires a vector
+
+        if strcmp(ml_class, 'logical')
+            vec = logical(raw);
+        else
+            vec = typecast(raw, ml_class);
+            % The element-by-element path returns DOUBLE for every numeric
+            % dtype -- single and int*/uint* included. TestDataRoundTrip
+            % pins that (test_int32_array, test_single_precision) with
+            % verifyEqual, which is strict about class. Match it: this is a
+            % transport optimization, not a type-contract change. For the
+            % float64 data this exists for, the cast is a no-op.
+            if ~isa(vec, 'double')
+                vec = double(vec);
+            end
+        end
+
+        % A size disagreement means the description and the buffer are out
+        % of step (a mis-mapped dtype, a truncated read).  Refuse rather
+        % than hand back silently wrong data -- the fallback is correct.
+        if numel(vec) ~= n_expected
+            scidb.Log.warn(['from_python: buffer path produced %d element(s) ' ...
+                'but the array holds %d -- falling back to element-by-element'], ...
+                numel(vec), n_expected);
+            data = [];
+            return;
+        end
+
+        if numel(arr_shape) <= 1
+            % 0-D and 1-D both land as a column vector, matching the
+            % trailing ndim==1 normalization the caller applies.
+            data = vec(:);
+        else
+            % The bytes were written in Fortran order precisely so this
+            % reshape needs no permute: MATLAB is column-major, numpy is not.
+            data = reshape(vec, double(arr_shape));
+        end
+        ok = true;
+    catch conv_err
+        scidb.Log.debug(['from_python: buffer conversion failed (%s) -- ' ...
+            'falling back to element-by-element'], conv_err.message);
+        data = [];
+        ok = false;
+    end
+end
+
+
+function warn_if_large_slow_conversion(arr_shape, py_c)
+%WARN_IF_LARGE_SLOW_CONVERSION  Say that a big element-wise conversion started.
+%   The element-by-element path costs one Python->MATLAB crossing per
+%   element.  Past roughly a million elements that is minutes, and every
+%   other message on that path is DEBUG -- so at the INFO level the run
+%   normally goes silent for the whole conversion and reads as a hang.
+%   State it at WARN instead, with the element count, so a slow run is
+%   diagnosable from an ordinary log.
+    if isempty(arr_shape)
+        n_elems = 1;
+    else
+        n_elems = prod(double(arr_shape));
+    end
+    if n_elems < 1e6
+        return;
+    end
+    try
+        dtype_str = string(char(py.str(py_c.dtype)));
+    catch
+        dtype_str = "unknown";
+    end
+    scidb.Log.warn(['from_python: converting a %d-element %s array ' ...
+        'element-by-element (the bulk buffer path declined) -- this crosses ' ...
+        'the Python bridge once per element and can take minutes'], ...
+        n_elems, dtype_str);
+end
+
+
+function s = format_slowest_columns(col_names, col_secs)
+%FORMAT_SLOWEST_COLUMNS  Name the columns that dominated a slow conversion.
+%   Lists at most the three most expensive columns, each over 0.1s, so the
+%   timing line stays one line regardless of how wide the DataFrame is.
+    keep = col_secs > 0.1;
+    if ~any(keep)
+        s = 'no single column over 0.1s';
+        return;
+    end
+    idx = find(keep);
+    [~, order] = sort(col_secs(idx), 'descend');
+    idx = idx(order);
+    idx = idx(1:min(3, numel(idx)));
+    parts = cell(1, numel(idx));
+    for k = 1:numel(idx)
+        parts{k} = sprintf('%s=%.3fs', string(col_names{idx(k)}), col_secs(idx(k)));
+    end
+    s = ['slowest: ' strjoin(parts, ', ')];
 end

@@ -1576,6 +1576,112 @@ def split_df_to_dataframes(df, row_counts):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Bulk array transfer
+# ---------------------------------------------------------------------------
+
+# numpy (dtype.kind, itemsize) -> MATLAB class accepted by typecast().
+# Deliberately partial: every dtype NOT listed here has no fixed-width raw
+# buffer MATLAB can reinterpret (object, str, bytes, datetime, timedelta,
+# complex) or no typecast target (float16, float128), and must keep the
+# element-by-element path in +scidb/+internal/from_python.m.
+_BUFFER_DTYPES = {
+    ("f", 4): "single",
+    ("f", 8): "double",
+    ("i", 1): "int8",
+    ("i", 2): "int16",
+    ("i", 4): "int32",
+    ("i", 8): "int64",
+    ("u", 1): "uint8",
+    ("u", 2): "uint16",
+    ("u", 4): "uint32",
+    ("u", 8): "uint64",
+    ("b", 1): "logical",
+}
+
+
+def ndarray_to_buffer(arr):
+    """Describe a numpy array as ONE raw byte buffer for MATLAB.
+
+    MATLAB's ``from_python`` used to convert every numpy array via
+    ``ndarray.tolist()`` + ``cell(py_list)``, which crosses the Python/MATLAB
+    boundary once *per element*. At scale that is the whole cost: a 419-record
+    EMG variable spread over 10 array columns is 1.74e8 samples, i.e. 1.74e8
+    crossings, which reads as a hang rather than as slowness.
+
+    A raw buffer crosses once. MATLAB converts ``py.bytes`` to ``uint8`` in a
+    single memcpy and ``typecast``s it back to the original class, so the
+    element count stops mattering.
+
+    The buffer is written in **Fortran (column-major) order** so MATLAB can
+    ``reshape(vec, shape)`` directly — MATLAB is column-major, numpy is not.
+    For the 1-D case (the common one here) the two orders coincide.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Array to describe. Anything ``numpy.asarray`` accepts also works.
+
+    Returns
+    -------
+    dict
+        ``ok`` (bool), and when ok:
+        ``buffer`` (bytes, Fortran order), ``matlab_class`` (str, a typecast
+        target or ``"logical"``), ``count`` (int, element count),
+        ``itemsize`` (int, bytes per element), ``reason`` (str, empty).
+        When not ok, ``reason`` says why and the caller falls back to the
+        element-by-element path. Declining is never an error — every dtype
+        this refuses still converts correctly, just slowly.
+
+        ``matlab_class`` names the dtype's *typecast* target, not the class
+        the user finally sees: MATLAB casts every numeric result to double
+        afterwards, because that is what the element-by-element path
+        returned and what TestDataRoundTrip pins. Only ``logical`` survives
+        as itself.
+
+    Notes
+    -----
+    ``tobytes`` copies, so this transiently doubles the array's memory in
+    Python. That is the price of a single crossing and is still far cheaper
+    than the MATLAB-side cell array the old path built (one ~112-byte mxArray
+    per element).
+    """
+    import numpy as np
+
+    empty = {
+        "ok": False,
+        "buffer": b"",
+        "matlab_class": "",
+        "count": 0,
+        "itemsize": 0,
+        "reason": "",
+    }
+
+    try:
+        a = np.asarray(arr)
+    except Exception as exc:  # not array-like at all
+        return {**empty, "reason": f"not array-like: {type(exc).__name__}"}
+
+    key = (a.dtype.kind, int(a.dtype.itemsize))
+    matlab_class = _BUFFER_DTYPES.get(key)
+    if matlab_class is None:
+        return {**empty, "reason": f"dtype {a.dtype!s} has no raw-buffer form"}
+
+    try:
+        buf = a.tobytes(order="F")
+    except Exception as exc:  # e.g. MemoryError on a very large array
+        return {**empty, "reason": f"tobytes failed: {type(exc).__name__}"}
+
+    return {
+        "ok": True,
+        "buffer": buf,
+        "matlab_class": matlab_class,
+        "count": int(a.size),
+        "itemsize": int(a.dtype.itemsize),
+        "reason": "",
+    }
+
+
 def flatten_sequences(py_list):
     """Flatten a list of numeric/boolean sequences into a single array with lengths.
 

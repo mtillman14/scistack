@@ -1,5 +1,12 @@
 # Array Column Loading Optimization
 
+> **Historical.** This describes an earlier round of bridge-transfer work and
+> its file paths predate the `sci-matlab/sci_matlab` -> `scimatlab/scimatlab`
+> rename. The "Future Improvements" below have since been done: flattening
+> landed as `bridge.flatten_sequences`, and the remaining per-element cost was
+> removed by the raw-buffer path. For the current picture see
+> **`matlab-bridge-transfer-paths.md`**.
+
 ## Problem
 
 When loading DuckDB tables with array columns (e.g., `DOUBLE[]`, `BOOLEAN[]`) into MATLAB, the conversion was extremely slow:

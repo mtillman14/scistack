@@ -384,9 +384,20 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             strjoin(mi_parts, ', ')));
     end
 
+    % Everything from here to the scifor loop is pure Python->MATLAB
+    % conversion, and it used to be silent: the last INFO before it is
+    % 'struct-valued input(s) rebuilt per combo' and the next one comes from
+    % +scifor/for_each.m once the loop is already running.  A slow
+    % conversion -- a GB-scale array input crossing the bridge -- therefore
+    % looked exactly like a hang, with no way to tell which phase owned the
+    % time.  Time every phase, and report each converted input's SIZE next
+    % to its duration so a slow conversion says how much it converted.
+    convert_t0 = tic;
+
     % Pre-resolved PathOutput paths, aligned with full_combos (Python
     % resolves branch_param placeholders whose dotted names cannot cross
     % as MATLAB struct fields; {ColName} stays for the for_columns loop).
+    t0_rpo = tic;
     resolved_paths = struct();
     try
         py_rpo = prep{'resolved_path_outputs'};
@@ -404,6 +415,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         scidb.Log.warn('for_each: could not convert resolved_path_outputs: %s', ...
             rpo_err.message);
     end
+    t_resolved_paths = toc(t0_rpo);
 
     % --- Convert prepared inputs to a MATLAB struct for scifor.
     %     Each loaded value may be a DataFrame, a Python scifor.Fixed /
@@ -411,11 +423,13 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     %     The bridge describes it as a kind-tagged dict; MATLAB rebuilds
     %     the matching MATLAB classdef wrapper so MATLAB's scifor inner
     %     loop sees the same types a pure-MATLAB call would.
+    t0_inputs = tic;
     py_loaded_inputs = prep{'loaded_inputs'};
     scifor_inputs = struct();
     loaded_keys = cell(py.list(py_loaded_inputs.keys()));
     for ki = 1:numel(loaded_keys)
         k = char(loaded_keys{ki});
+        t0_one = tic;
         desc = py.scimatlab.bridge.for_each_describe_loaded_input(py_loaded_inputs{k});
         scifor_inputs.(k) = build_scifor_input_from_desc(desc);
         % Python's Step 5 stringifies schema-key columns in loaded
@@ -426,7 +440,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         % MATLAB classes tracked in meta_original_classes.
         scifor_inputs.(k) = coerce_meta_columns( ...
             scifor_inputs.(k), meta_original_classes);
+        % One line per input: this is the phase that hung on a 1.7e8-sample
+        % EMG variable, and per-input granularity is what names the culprit.
+        scidb.Log.info('for_each: converted input ''%s'' in %.3fs (%s)', ...
+            k, toc(t0_one), describe_converted_input(scifor_inputs.(k)));
     end
+    t_inputs = toc(t0_inputs);
 
     % --- Glue fusion (MATLAB side). Python already routed the consumer's
     %     provenance through virtual glue records during prepare; what is
@@ -437,10 +456,13 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     %     Same contract as scidb.glue: __-prefixed bookkeeping columns are
     %     hidden and re-attached, the row set must not change, and
     %     schema-key columns must come back value-identical. ---
+    t0_glue = tic;
     scifor_inputs = apply_matlab_glue( ...
         scifor_inputs, prep{'glue_chains'}, glue_handles);
+    t_glue = toc(t0_glue);
 
     % --- Convert extended_metadata_iterables to scifor name-value pairs ---
+    t0_meta = tic;
     py_meta_iters = prep{'extended_metadata_iterables'};
     scifor_meta_nv = {};
     meta_iter_keys = cell(py.list(py_meta_iters.keys()));
@@ -450,8 +472,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         scifor_meta_nv{end+1} = k; %#ok<AGROW>
         scifor_meta_nv{end+1} = scidb.internal.from_python(v_py); %#ok<AGROW>
     end
+    t_meta = toc(t0_meta);
 
     % --- Convert full_combos (py.list of dicts) to MATLAB cell of structs ---
+    t0_combos = tic;
     py_full_combos = prep{'full_combos'};
     n_combos = int64(py.len(py_full_combos));
     all_combos = cell(1, n_combos);
@@ -469,6 +493,13 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         end
         all_combos{ci} = s;
     end
+    t_combos = toc(t0_combos);
+
+    scidb.Log.info(['[timing] for_each_convert_inputs: %d input(s), ' ...
+        '%d combo(s), TOTAL=%.3fs (resolved_paths=%.3fs, loaded_inputs=%.3fs, ' ...
+        'glue=%.3fs, metadata_iterables=%.3fs, full_combos=%.3fs)'], ...
+        numel(loaded_keys), n_combos, toc(convert_t0), t_resolved_paths, ...
+        t_inputs, t_glue, t_meta, t_combos);
 
     % --- Output names returned by Python prepare ---
     py_output_names = prep{'output_names'};
@@ -1874,4 +1905,43 @@ function result_tbl = vertcat_each_of_results(branch_results, fn_name)
         end
     end
     result_tbl = vertcat(branch_results{:});
+end
+
+
+function s = describe_converted_input(val)
+%DESCRIBE_CONVERTED_INPUT  One-line size summary of a converted input.
+%   Reported next to the conversion's duration so a slow conversion in the
+%   log is attributable to data volume rather than guessed at: '6.4s' alone
+%   says nothing, '6.4s (table 419x17, 1.30GB)' names the cause.
+%   Size reporting is best-effort — never fail a run over a log line.
+    try
+        w = whos('val');
+        bytes_str = format_input_bytes(w.bytes);
+    catch
+        bytes_str = 'size unknown';
+    end
+    try
+        if istable(val)
+            s = sprintf('table %dx%d, %s', height(val), width(val), bytes_str);
+        elseif isobject(val)
+            s = sprintf('%s, %s', class(val), bytes_str);
+        else
+            s = sprintf('%s [%s], %s', class(val), ...
+                strjoin(string(size(val)), 'x'), bytes_str);
+        end
+    catch
+        s = bytes_str;
+    end
+end
+
+
+function s = format_input_bytes(n)
+%FORMAT_INPUT_BYTES  Human-readable byte count for conversion log lines.
+    if n >= 1024^3
+        s = sprintf('%.2fGB', n / 1024^3);
+    elseif n >= 1024^2
+        s = sprintf('%.1fMB', n / 1024^2);
+    else
+        s = sprintf('%.1fKB', n / 1024);
+    end
 end

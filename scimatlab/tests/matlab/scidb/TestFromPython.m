@@ -147,5 +147,91 @@ classdef TestFromPython < matlab.unittest.TestCase
                 'cycle column must carry one entry per row');
         end
 
+        % --- Bulk buffer path (ndarray_via_buffer) ---
+        % These arrays all cross the bridge as one byte buffer instead of
+        % one crossing per element. The values, shapes and CLASSES must be
+        % indistinguishable from the element-by-element path they replaced —
+        % the transfer got faster, the contract did not move.
+
+        function test_numpy_large_1d_roundtrip(testCase)
+            % Big enough that the element-by-element path would be visibly
+            % slow; small enough to stay a unit test.
+            n = 100000;
+            py_arr = py.numpy.arange(n, pyargs('dtype', 'float64'));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyClass(result, 'double');
+            testCase.verifyEqual(size(result), [n 1], ...
+                '1-D arrays must come back as column vectors');
+            testCase.verifyEqual(result(1), 0);
+            testCase.verifyEqual(result(end), n - 1);
+            testCase.verifyEqual(sum(result), n * (n - 1) / 2, 'AbsTol', 1e-3);
+        end
+
+        function test_numpy_2d_orientation_is_not_transposed(testCase)
+            % The buffer is written Fortran-order precisely so MATLAB can
+            % reshape without a permute. A C/Fortran mix-up here would
+            % silently transpose every matrix-valued record, so pin the
+            % exact element positions rather than just the size.
+            py_arr = py.numpy.reshape( ...
+                py.numpy.arange(6, pyargs('dtype', 'float64')), ...
+                py.tuple({int32(2), int32(3)}));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyEqual(size(result), [2 3]);
+            testCase.verifyEqual(result, [0 1 2; 3 4 5], 'AbsTol', 1e-12);
+        end
+
+        function test_numpy_int_array_still_returns_double(testCase)
+            % The element-by-element path returned double for every numeric
+            % dtype; TestDataRoundTrip.test_int32_array depends on it.
+            py_arr = py.numpy.array(py.list({py.int(1), py.int(2), py.int(3)}));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyClass(result, 'double', ...
+                'integer numpy arrays must still arrive as double');
+            testCase.verifyEqual(result, [1; 2; 3], 'AbsTol', 1e-12);
+        end
+
+        function test_numpy_single_array_still_returns_double(testCase)
+            py_arr = py.numpy.array(py.list({1.5, 2.5}), pyargs('dtype', 'float32'));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyClass(result, 'double', ...
+                'single-precision numpy arrays must still arrive as double');
+            testCase.verifyEqual(result, [1.5; 2.5], 'AbsTol', 1e-6);
+        end
+
+        function test_numpy_empty_array_returns_empty(testCase)
+            py_arr = py.numpy.array(py.list({}), pyargs('dtype', 'float64'));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyEmpty(result);
+        end
+
+        function test_numpy_nan_and_inf_survive_the_buffer(testCase)
+            py_np = py.importlib.import_module('numpy');
+            py_arr = py_np.array(py.list({py_np.nan, py_np.inf, -1.5}));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyTrue(isnan(result(1)));
+            testCase.verifyEqual(result(2), Inf);
+            testCase.verifyEqual(result(3), -1.5, 'AbsTol', 1e-12);
+        end
+
+        function test_numpy_object_array_falls_back(testCase)
+            % Object dtype has no raw buffer: the buffer path must decline
+            % and the element-by-element path must still produce a cell.
+            py_arr = py.numpy.array(py.list({'alpha', 'beta'}), ...
+                pyargs('dtype', 'object'));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyEqual(numel(result), 2, ...
+                'object arrays must still convert element-by-element');
+        end
+
+        function test_numpy_bool_2d_roundtrip(testCase)
+            % bool crosses as one byte per element and comes back logical.
+            py_arr = py.numpy.reshape( ...
+                py.numpy.array(py.list({true, false, true, true})), ...
+                py.tuple({int32(2), int32(2)}));
+            result = scidb.internal.from_python(py_arr);
+            testCase.verifyClass(result, 'logical');
+            testCase.verifyEqual(result, [true false; true true]);
+        end
+
     end
 end
