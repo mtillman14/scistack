@@ -275,3 +275,38 @@ def test_has_lineage_true_for_computed_false_for_raw(db):
 
     assert db.has_lineage(f.record_id) is True
     assert db.has_lineage(raw.record_id) is False
+
+
+# ---------------------------------------------------------------------------
+# identical_content_groups
+# ---------------------------------------------------------------------------
+# The fingerprint of a step that ran with distribute=False when it should have
+# distributed: every location of the un-iterated key received the WHOLE result
+# instead of its own slice, so the records are byte-identical and a plot
+# colored by that key draws N overlapping traces that read as one line.
+def test_identical_content_groups_finds_duplicates(db):
+    from scidb import provenance_query
+
+    same = np.array([1.0, 2.0, 3.0])
+    RawSignal.save(same, subject="S01", session="1")
+    RawSignal.save(same, subject="S01", session="2")
+
+    groups = provenance_query.identical_content_groups(db._duck, "RawSignal")
+    assert len(groups) == 1
+    _content_hash, record_ids = groups[0]
+    assert len(record_ids) == 2
+
+
+def test_identical_content_groups_empty_when_all_differ(db):
+    from scidb import provenance_query
+
+    RawSignal.save(np.array([1.0, 2.0]), subject="S01", session="1")
+    RawSignal.save(np.array([3.0, 4.0]), subject="S01", session="2")
+
+    assert provenance_query.identical_content_groups(db._duck, "RawSignal") == []
+
+
+def test_identical_content_groups_unknown_variable(db):
+    from scidb import provenance_query
+
+    assert provenance_query.identical_content_groups(db._duck, "NoSuchVar") == []

@@ -850,14 +850,28 @@ def _group_variants(variants: list[dict]) -> list[dict]:
     the DB as one variant row per output_type, all sharing the same inputs
     and constants. They must collapse into a single for_each call whose
     outputs cell lists every output_type.
+
+    The grouping key runs the constants through
+    :func:`scidb.provenance.constants_identity_key` rather than
+    ``tuple(sorted(constants.items()))``. A constant is not necessarily a
+    scalar: an inline table under ``[parameters]`` in
+    ``scistack_entities.toml`` *is* the value, so a project with e.g.
+    ``delsys_config = {...}`` puts a ``dict`` in that map and the bare tuple
+    is then unhashable — ``TypeError: unhashable type: 'dict'``, raised from
+    ``setdefault`` below, which took down every "Run in MATLAB" for the
+    function. The rest of this module already handles dict constants
+    (``_format_matlab_value`` renders them as MATLAB structs); this key was
+    the one place that did not.
     """
+    from scidb.provenance import constants_identity_key
+
     grouped: dict[tuple, dict] = {}
     for v in variants:
         input_types = v.get("input_types", {}) or {}
         constants = v.get("constants", {}) or {}
         key = (
             tuple(sorted(input_types.items())) if isinstance(input_types, dict) else (),
-            tuple(sorted(constants.items())) if isinstance(constants, dict) else (),
+            constants_identity_key(constants),
         )
         entry = grouped.setdefault(
             key,
@@ -870,6 +884,22 @@ def _group_variants(variants: list[dict]) -> list[dict]:
         output_type = v.get("output_type", "")
         if output_type and output_type not in entry["output_types"]:
             entry["output_types"].append(output_type)
+    logger.info(
+        "_group_variants: %d variant row(s) -> %d for_each call(s); "
+        "non-scalar constants: %s",
+        len(variants),
+        len(grouped),
+        sorted(
+            {
+                k
+                for v in variants
+                if isinstance(v.get("constants"), dict)
+                for k, val in v["constants"].items()
+                if isinstance(val, (dict, list, tuple, set))
+            }
+        )
+        or "none",
+    )
     return list(grouped.values())
 
 

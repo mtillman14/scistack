@@ -28,6 +28,12 @@ from scidb import BaseVariable
 from scistackplotdb.load import load_variable
 
 
+class Duped(BaseVariable):
+    """Same payload saved at several trials — the distribute=False fingerprint."""
+
+    schema_version = 1
+
+
 class Matrix(BaseVariable):
     """A 2-D cell, saved by this module so the seeded fixture stays as it is."""
 
@@ -258,3 +264,39 @@ class TestNormalizeCell:
         assert frame[column].dtype == object
         for cell in frame[column]:
             assert isinstance(cell, np.ndarray) and cell.shape == (8,)
+
+
+class TestIdenticalContentWarning:
+    """A ``distribute=False`` run that should have distributed leaves records
+    whose payloads are byte-identical across the key it failed to split on.
+    A plot cannot show that: N identical traces draw exactly on top of each
+    other and read as a single line in whichever colour was drawn last, and
+    filtering to any one value of that factor shows the same curve again.
+
+    So ``load_variable`` says it out loud. The check is diagnostic only — it
+    must never change the frame, and must never be able to break a load.
+    """
+
+    def test_warns_when_records_share_content(self, db, caplog):
+        same = np.array([1.0, 2.0, 3.0])
+        for trial in ("1", "2", "3"):
+            Duped.save(same, subject="01", session="pre", trial=trial)
+
+        with caplog.at_level(logging.WARNING, logger="scistackplotdb"):
+            frame = load_variable(db, "Duped")
+
+        assert len(frame.frame) == 3  # the frame is untouched
+        warnings = [
+            r.getMessage()
+            for r in caplog.records
+            if "IDENTICAL data" in r.getMessage()
+        ]
+        assert warnings, "expected an identical-content warning"
+        assert "trial" in warnings[0]
+
+    def test_silent_when_every_record_differs(self, seeded, caplog):
+        with caplog.at_level(logging.WARNING, logger="scistackplotdb"):
+            load_variable(seeded, "Signal")
+        assert not [
+            r for r in caplog.records if "IDENTICAL data" in r.getMessage()
+        ]

@@ -298,6 +298,33 @@ def constant_value_type(value: Any) -> str:
     return type(value).__name__
 
 
+def constants_identity_key(constants: Any) -> tuple:
+    """A hashable, order-independent key for a ``{param: value}`` constants map.
+
+    Every consumer that groups or de-duplicates variants needs the *same*
+    notion of "these two calls used the same constants", and the value side of
+    that map is **not** restricted to scalars: an inline table under
+    ``[parameters]`` in ``scistack_entities.toml`` *is* the value, so a
+    constant can legitimately be a ``dict`` (or a ``list``) — see
+    docs/claude/entities-toml-format.md rule 2 and ``_format_matlab_value``,
+    which renders exactly those into MATLAB structs/arrays.
+
+    A plain ``tuple(sorted(constants.items()))`` is therefore a trap: it is
+    hashable only while every value happens to be a scalar, and raises
+    ``TypeError: unhashable type: 'dict'`` the first time a real project
+    declares a config-table parameter. ``repr`` is deterministic for a given
+    content and order, so identical maps collapse and different ones don't —
+    the same recipe ``provenance_save.record_run`` already uses for its
+    invocation cache key.
+
+    Returns ``()`` for anything that is not a dict, so callers can pass a
+    possibly-missing field straight through.
+    """
+    if not isinstance(constants, dict):
+        return ()
+    return tuple(sorted((str(k), constant_value_repr(v)) for k, v in constants.items()))
+
+
 # ---------------------------------------------------------------------------
 # Record entity writes
 # ---------------------------------------------------------------------------

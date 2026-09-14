@@ -4182,6 +4182,8 @@ class DatabaseManager:
                 constant_overrides={"threshold": 0.75},  # Override with 0.75
             )
         """
+        from .provenance import constants_identity_key
+
         # Get all variants for this function and call_id
         all_variants = self.list_pipeline_variants()
         fn_variants = [
@@ -4215,11 +4217,15 @@ class DatabaseManager:
                 "constants": constants,
             }
 
-            # Deduplicate by converting to a hashable key
+            # Deduplicate by converting to a hashable key. Constants are
+            # canonicalized through scidb.provenance.constants_identity_key:
+            # a constant may be a dict (a config table declared in
+            # scistack_entities.toml), and a bare tuple(sorted(...)) of those
+            # items is unhashable.
             key = (
                 output_type,
                 tuple(sorted(input_types.items())),
-                tuple(sorted(constants.items())),
+                constants_identity_key(constants),
             )
 
             if key not in seen:

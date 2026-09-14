@@ -32,7 +32,7 @@ from typing import Literal
 
 from . import provenance_query
 from .log import Log
-from .provenance import SAVE_FUNCTION_NAME
+from .provenance import SAVE_FUNCTION_NAME, constants_identity_key
 
 LocationState = Literal["green", "amber", "red", "grey"]
 
@@ -529,7 +529,7 @@ def pathinput_configs(duck, fn_name: str) -> list[tuple[dict, dict]]:
         _var_inputs, constants = provenance_query.invocation_inputs(duck, inv_id)
         key = (
             tuple(sorted(specs.items())),
-            tuple(sorted((k, repr(v)) for k, v in constants.items())),
+            constants_identity_key(constants),
         )
         configs.setdefault(key, (specs, constants))
 

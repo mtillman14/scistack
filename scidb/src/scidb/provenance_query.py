@@ -21,6 +21,7 @@ from .provenance import (
     GLUE_TYPE,
     PATHINPUT_TYPE,
     SAVE_FUNCTION_NAME,
+    constants_identity_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -1301,7 +1302,7 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
         key = (
             tuple(sorted(input_types.items())),
             tuple(sorted(selectors.items())),
-            tuple(sorted((k, repr(v)) for k, v in constants.items())),
+            constants_identity_key(constants),
             tuple(sorted(path_inputs.items())),
             tuple(sorted(glue_chains.items())),
             tuple(at),
@@ -1414,7 +1415,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                 out_type,
                 fn_name,
                 tuple(sorted(input_types.items())),
-                tuple(sorted((k, repr(v)) for k, v in constants.items())),
+                constants_identity_key(constants),
                 tuple(sorted((k, tuple(v)) for k, v in glue_names.items())),
                 output_num,
                 tuple(at),
@@ -1467,7 +1468,7 @@ def _producing_variant_key(duck, record_id: str):
         return None
     inv_id = inv[0]
     _var_inputs, constants = invocation_inputs(duck, inv_id)
-    return tuple(sorted((k, repr(v)) for k, v in constants.items()))
+    return constants_identity_key(constants)
 
 
 def variant_keys_batch(duck, record_ids) -> dict:
@@ -1510,8 +1511,38 @@ def variant_keys_batch(duck, record_ids) -> dict:
         if inv is None:
             out[rid] = None  # raw/manual record — no producing variant
             continue
-        out[rid] = tuple(sorted((k, repr(v)) for k, v in consts[inv[0]].items()))
+        out[rid] = constants_identity_key(consts[inv[0]])
     return out
+
+
+def identical_content_groups(duck, variable_name: str) -> list[tuple[str, list[str]]]:
+    """``[(content_hash, [record_id, ...]), ...]`` for every group of two or
+    more non-excluded records of ``variable_name`` holding **byte-identical**
+    payloads.
+
+    Duplicate content across schema locations is legal and often correct (a
+    constant re-saved per subject, say), so this is an observation, not an
+    error. It is worth observing because it is the exact fingerprint of a
+    ``distribute=False`` run that should have been ``distribute=True``: the
+    function was handed the same input at every location of the iterated key
+    and returned the whole thing each time, so every location got the same
+    payload instead of its own piece. Downstream that is invisible — a plot
+    colored by that key draws N identical overlapping traces and shows what
+    looks like a single line in whichever colour was drawn last.
+
+    One query. Read-only; callers decide whether to warn.
+    """
+    rows = duck._fetchall(
+        "SELECT content_hash, record_id FROM _record "
+        "WHERE type = ? AND COALESCE(excluded, FALSE) = FALSE "
+        "AND content_hash IS NOT NULL "
+        "ORDER BY content_hash, record_id",
+        [variable_name],
+    )
+    groups: dict = {}
+    for content_hash, record_id in rows:
+        groups.setdefault(content_hash, []).append(record_id)
+    return [(h, rids) for h, rids in groups.items() if len(rids) > 1]
 
 
 def current_records_by_schema_batch(duck, variable_name: str) -> dict:

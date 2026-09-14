@@ -1947,6 +1947,83 @@ class TestSortInferredByParamsOrder:
         assert result == ["Force_Right", "Time"]
 
 
+class TestGroupVariantsNonScalarConstants:
+    """A constant is not always a scalar. An inline table under [parameters]
+    in scistack_entities.toml *is* the value (docs/claude/entities-toml-format.md
+    rule 2), so a project declaring e.g. ``delsys_config = {fs = 2000, ...}``
+    hands _group_variants a dict-valued constant.
+
+    Regression: the grouping key was ``tuple(sorted(constants.items()))``,
+    hashable only while every value was a scalar. With a dict constant,
+    ``grouped.setdefault(key, ...)`` raised ``TypeError: unhashable type:
+    'dict'`` and every "Run in MATLAB" for that function failed at
+    generate_matlab_command — including the re-run needed to fix a node that
+    had been run with the wrong distribute flag.
+    """
+
+    def test_dict_constant_groups_without_raising(self):
+        from scistack_gui.api.matlab_command import _group_variants
+
+        variants = [
+            {
+                "input_types": {"raw": "RawEMG"},
+                "constants": {"delsys_config": {"fs": 2000, "chans": ["a", "b"]}},
+                "output_type": "Filtered",
+            }
+        ]
+        grouped = _group_variants(variants)
+        assert len(grouped) == 1
+        assert grouped[0]["constants"] == {
+            "delsys_config": {"fs": 2000, "chans": ["a", "b"]}
+        }
+        assert grouped[0]["output_types"] == ["Filtered"]
+
+    def test_multi_output_with_dict_constant_collapses_to_one_call(self):
+        """The whole point of the grouping: one for_each call listing every
+        output, not one call per output row."""
+        from scistack_gui.api.matlab_command import _group_variants
+
+        consts = {"gaitrite_config": {"units": "m"}}
+        variants = [
+            {"input_types": {"p": "Raw"}, "constants": consts, "output_type": "A"},
+            {"input_types": {"p": "Raw"}, "constants": consts, "output_type": "B"},
+        ]
+        grouped = _group_variants(variants)
+        assert len(grouped) == 1
+        assert grouped[0]["output_types"] == ["A", "B"]
+
+    def test_differing_dict_constants_stay_separate(self):
+        from scistack_gui.api.matlab_command import _group_variants
+
+        variants = [
+            {
+                "input_types": {"p": "Raw"},
+                "constants": {"cfg": {"fs": 2000}},
+                "output_type": "A",
+            },
+            {
+                "input_types": {"p": "Raw"},
+                "constants": {"cfg": {"fs": 1000}},
+                "output_type": "A",
+            },
+        ]
+        assert len(_group_variants(variants)) == 2
+
+    def test_list_constant_groups_without_raising(self):
+        from scistack_gui.api.matlab_command import _group_variants
+
+        variants = [
+            {
+                "input_types": {"p": "Raw"},
+                "constants": {"bands": [20, 450]},
+                "output_type": "A",
+            }
+        ]
+        grouped = _group_variants(variants)
+        assert len(grouped) == 1
+        assert grouped[0]["constants"] == {"bands": [20, 450]}
+
+
 class TestNormalizeInputTypes:
     """derive_target_for_node's never-run fallback (resolve_function_edges)
     returns each input param as a LIST of candidate types — even a single

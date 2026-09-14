@@ -365,6 +365,9 @@ def load_variable(
             variant_columns or "none",
             layer=LAYER,
         )
+        if len(frame) > 1:
+            with timer.phase("identical_content"):
+                _log_identical_content(db, variable, frame, keys)
         return VariableFrame(
             name=variable,
             frame=frame,
@@ -373,6 +376,56 @@ def load_variable(
             variant_columns=variant_columns,
             variant_axes=variant_axes,
             latest_column=latest_column,
+        )
+
+
+def _log_identical_content(db, variable: str, frame: pd.DataFrame, keys) -> None:
+    """Warn when records of ``variable`` hold byte-identical payloads, naming
+    the schema keys that vary across each duplicate group.
+
+    This is the one thing a plot cannot show you. N records with the same data
+    render as N traces drawn exactly on top of each other: the figure looks
+    like a single line in whatever colour was drawn last, and filtering to any
+    one value of the colour factor shows the same curve again. That is the
+    signature of a step that ran with ``distribute=False`` when it should have
+    distributed — every location of the key got the whole result instead of
+    its own slice — so it belongs in the log at load time rather than being
+    re-derived from a confusing figure.
+
+    Never raises: duplicate content is legal, and a diagnostic must not be able
+    to break a load.
+    """
+    try:
+        from scidb.provenance_query import identical_content_groups
+
+        groups = identical_content_groups(db._duck, variable)
+        if not groups:
+            return
+        varying: set = set()
+        indexed = frame.set_index("record_id")
+        for _hash, record_ids in groups:
+            present = [rid for rid in record_ids if rid in indexed.index]
+            if len(present) < 2:
+                continue
+            for key in keys:
+                values = {indexed.at[rid, key] for rid in present}
+                if len(values) > 1:
+                    varying.add(key)
+        Log.warn(
+            "%s: %d group(s) of records hold IDENTICAL data "
+            "(%d record(s) total); they differ only by %s. Plots colored or "
+            "faceted by those keys will draw overlapping identical traces. "
+            "This is what a step that should have run with distribute=True "
+            "looks like.",
+            variable,
+            len(groups),
+            sum(len(rids) for _h, rids in groups),
+            sorted(varying) or "no schema key",
+            layer=LAYER,
+        )
+    except Exception as e:  # diagnostics must never break a load
+        Log.debug(
+            "identical-content check skipped for %s: %s", variable, e, layer=LAYER
         )
 
 

@@ -36,6 +36,53 @@ def test_constant_value_rendering():
 
 
 # ---------------------------------------------------------------------------
+# Constants identity key (variant grouping / de-duplication)
+# ---------------------------------------------------------------------------
+# A constant is NOT always a scalar: an inline table under [parameters] in
+# scistack_entities.toml *is* the value, so dict- and list-valued constants
+# reach every consumer that groups variants. Those consumers put the key in a
+# set or use it as a dict key, so a non-hashable key is an immediate crash
+# ("unhashable type: 'dict'" out of generate_matlab_command).
+def test_constants_key_is_hashable_for_dict_values():
+    key = prov.constants_identity_key({"delsys_config": {"fs": 2000, "chans": ["a"]}})
+    assert hash(key) is not None
+    assert {key}  # usable as a set member / dict key
+
+
+def test_constants_key_is_hashable_for_list_values():
+    key = prov.constants_identity_key({"bands": [20, 450]})
+    assert hash(key) is not None
+
+
+def test_constants_key_order_insensitive():
+    a = prov.constants_identity_key({"x": 1, "y": {"b": 2}})
+    b = prov.constants_identity_key({"y": {"b": 2}, "x": 1})
+    assert a == b
+
+
+def test_constants_key_distinguishes_dict_values():
+    a = prov.constants_identity_key({"cfg": {"fs": 2000}})
+    b = prov.constants_identity_key({"cfg": {"fs": 1000}})
+    assert a != b
+
+
+def test_constants_key_empty_and_non_dict():
+    assert prov.constants_identity_key({}) == ()
+    assert prov.constants_identity_key(None) == ()
+
+
+def test_constants_key_matches_repr_recipe():
+    """The key must stay byte-identical to the inline
+    ``sorted((k, repr(v)))`` recipe it replaced in provenance_query, so keys
+    built by the per-record and batched variant-key paths still compare equal.
+    """
+    constants = {"low_hz": 20, "name": "x"}
+    assert prov.constants_identity_key(constants) == tuple(
+        sorted((k, repr(v)) for k, v in constants.items())
+    )
+
+
+# ---------------------------------------------------------------------------
 # Invocation ids
 # ---------------------------------------------------------------------------
 def test_invocation_id_deterministic():
