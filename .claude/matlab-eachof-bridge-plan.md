@@ -130,7 +130,7 @@ records under one identity.
 MATLAB isn't runnable on my end, so once the code above is written, run:
 
 ```matlab
-runtests('scimatlab/tests/matlab/scifor/TestEachOf.m')
+runtests('scimatlab/tests/matlab/scifor/TestSciforEachOf.m')
 runtests('scimatlab/tests/matlab/scidb/TestEachOf.m')
 runtests('scimatlab/tests/matlab/scidb/TestForEach.m')   % regression check, unrelated paths
 ```

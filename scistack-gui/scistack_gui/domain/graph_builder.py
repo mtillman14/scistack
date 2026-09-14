@@ -1431,6 +1431,7 @@ def build_function_nodes(
     saved_configs: dict[str, dict | None],
     matlab_output_order: dict[str, list[str]] | None = None,
     matlab_param_to_class: dict[str, dict[str, str]] | None = None,
+    node_configs: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Build React Flow function nodes — one per aggregate key.
 
@@ -1452,7 +1453,13 @@ def build_function_nodes(
         run_states: {node_id: state} keyed by composite ``fn__{fn}__{cid}`` IDs.
         matlab_functions: Set of MATLAB function names.
         saved_configs: {fn_name: config_dict or None} from manual nodes.  Same
-            saved config applies to every call site of fn_name.
+            saved config applies to every call site of fn_name.  The FALLBACK
+            source -- see node_configs.
+        node_configs: {node_id: config_dict} from the _node_config table, the
+            authoritative per-node source.  Keyed by the composite node id, so
+            unlike saved_configs it can hold a setting for a node that has
+            already run, and it distinguishes two call sites of one function.
+            Checked first; saved_configs answers when it has no entry.
         matlab_output_order: {fn_name: [output_names in signature order]}.
         matlab_param_to_class: {fn_name: {param_name: class_name}} — explicit
             mapping from MATLAB signature param names to connected Variable class
@@ -1553,16 +1560,14 @@ def build_function_nodes(
         if fn in matlab_functions:
             fn_data["language"] = "matlab"
 
-        # Apply saved config (schemaFilter, runOptions) if present.  Saved
-        # configs are keyed by fn_name and apply to all call sites of that fn.
-        saved = saved_configs.get(fn)
-        if saved:
-            if "schemaFilter" in saved:
-                fn_data["schemaFilter"] = saved["schemaFilter"]
-            if "schemaLevel" in saved:
-                fn_data["schemaLevel"] = saved["schemaLevel"]
-            if "runOptions" in saved:
-                fn_data["runOptions"] = saved["runOptions"]
+        # Apply saved config (schemaFilter, schemaLevel, whereFilters,
+        # runOptions). This node's own config wins; the fn_name-keyed manual
+        # config is the fallback for a node that has never been saved under
+        # its composite id. Without the node_id lookup, a function that has
+        # run has no reachable config at all and every toggle silently resets
+        # on rebuild -- see docs/claude/gui-run-options-flow.md.
+        saved = (node_configs or {}).get(node_id) or saved_configs.get(fn)
+        _apply_saved_config(fn_data, saved)
 
         nodes.append(
             {
@@ -2126,16 +2131,19 @@ def find_cycle(
     return None
 
 
+#: Every key FunctionSettingsPanel.updateNodeData persists. Rehydration has to
+#: cover the same set the panel writes, or a setting saves successfully and
+#: comes back missing -- which reads to the user as "it didn't save".
+_SAVED_CONFIG_KEYS = ("schemaFilter", "schemaLevel", "whereFilters", "runOptions")
+
+
 def _apply_saved_config(node_data: dict, config: dict | None) -> None:
-    """Apply saved config (schemaFilter, runOptions) to a function node."""
+    """Copy a node's saved settings onto its React Flow ``data``."""
     if not config:
         return
-    if "schemaFilter" in config:
-        node_data["schemaFilter"] = config["schemaFilter"]
-    if "schemaLevel" in config:
-        node_data["schemaLevel"] = config["schemaLevel"]
-    if "runOptions" in config:
-        node_data["runOptions"] = config["runOptions"]
+    for key in _SAVED_CONFIG_KEYS:
+        if key in config:
+            node_data[key] = config[key]
 
 
 def build_manual_node(
@@ -2146,6 +2154,7 @@ def build_manual_node(
     resolved_input_params: dict[str, str] | None,
     resolved_output_types: list[str] | None,
     matlab_functions: set[str],
+    node_config: dict | None = None,
 ) -> dict:
     """Build a single manual node dict.
 
@@ -2157,6 +2166,8 @@ def build_manual_node(
         resolved_input_params: Pre-resolved {param: var_type} for function nodes.
         resolved_output_types: Pre-resolved output types for function nodes.
         matlab_functions: Set of MATLAB function names.
+        node_config: This node's entry from the _node_config table, if any.
+            Takes precedence over the legacy ``meta["config"]`` column.
     """
     fn_label = meta["label"]
     extra: dict = {}
@@ -2194,9 +2205,11 @@ def build_manual_node(
             extra["language"] = "matlab"
 
     node_data: dict = {"label": fn_label, **extra}
-    _apply_saved_config(
-        node_data, meta.get("config") if meta["type"] == "functionNode" else None
-    )
+    if meta["type"] == "functionNode":
+        # _node_config is where the panel writes now; meta["config"] is the
+        # legacy _pipeline_nodes column, kept as the fallback so settings saved
+        # before the split survive. See docs/claude/gui-run-options-flow.md.
+        _apply_saved_config(node_data, node_config or meta.get("config"))
 
     return {
         "id": node_id,

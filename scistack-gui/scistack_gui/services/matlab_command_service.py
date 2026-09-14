@@ -450,10 +450,18 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
 
     _drop_project_root_folder(path_input_params, _root)
 
+    # Run options travel with the run request and are rendered into the
+    # generated script's for_each call. They are logged here because this is
+    # the last point at which "what the GUI asked for" and "what the script
+    # will do" are still the same object -- a missing option downstream is
+    # invisible, since the script stays well-formed and the run still
+    # succeeds. See docs/claude/gui-run-options-flow.md.
+    run_options = params.get("run_options") or None
+
     logger.info(
         "generate_matlab_command: fn=%s, total_variants=%d, fn_variants=%d, "
         "path_input_params=%d, sweep_params=%s, variable_inputs=%s, "
-        "output_types=%s, project_root=%s",
+        "output_types=%s, project_root=%s, run_options=%s",
         function_name,
         len(all_variants),
         len(fn_variants),
@@ -462,6 +470,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         variable_inputs,
         output_types,
         project_root,
+        run_options,
     )
 
     cmd = _fmt(
@@ -481,6 +490,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         entities_file=_entities_file(),
         variable_inputs=variable_inputs if variable_inputs else None,
         glue=glue_chains if glue_chains else None,
+        run_options=run_options,
     )
     logger.info(
         "generate_matlab_command: fn=%s, command_length=%d", function_name, len(cmd)
@@ -637,16 +647,28 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
             excluded_python.add(fn_label)
             continue
 
+        # This node's saved run options. A pipeline run has no live canvas
+        # state to read -- it runs nodes the user never selected -- so the
+        # stored config is the only source (docs/claude/gui-run-options-flow.md).
+        step_run_options = pipeline_store.get_node_config(db, node_id).get(
+            "runOptions"
+        ) or {}
+
         targets = apply_pending_overrides(
             derive_target_for_node(db, node_id), pending_consts
         )
+        # distribute/as_table are identity-bearing: they are folded into the
+        # call_id that hidden-combo filtering matches on. Hardcoding them here
+        # computed the call_id of a call this script will never make, so a
+        # combo hidden on a distribute=true node stayed visible (and vice
+        # versa). Pass what the step will actually run with.
         targets = filter_hidden_targets(
             targets,
             fn_label,
             hidden_call_ids_for_fn(hidden_ids, fn_label),
             pending_consts,
-            distribute=False,
-            as_table=None,
+            distribute=bool(step_run_options.get("distribute", False)),
+            as_table=step_run_options.get("as_table") or None,
         )
         seen_target_keys: set = set()
         unique_targets: list[dict] = []
@@ -700,6 +722,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                 "variable_inputs": (
                     step_variable_inputs if step_variable_inputs else None
                 ),
+                "run_options": step_run_options or None,
             }
         )
 

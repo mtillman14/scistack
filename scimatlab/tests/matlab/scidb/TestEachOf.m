@@ -1,7 +1,7 @@
 classdef TestEachOf < matlab.unittest.TestCase
 %TESTEACHOF  Integration tests for scifor.EachOf bridged through
 %   scidb.for_each — added alongside the standalone scifor.for_each
-%   coverage in scimatlab/tests/matlab/scifor/TestEachOf.m (previously
+%   coverage in scimatlab/tests/matlab/scifor/TestSciforEachOf.m (previously
 %   EachOf was Python-only; see docs/claude/each-of-variant-expansion.md).
 %   The motivating use case: a scifor.PathInput input spanning two on-disk
 %   locations (assessment-day vs. training-day GAITRite folders) while the
@@ -90,6 +90,7 @@ classdef TestEachOf < matlab.unittest.TestCase
             all_results = ProcessedSignal().load();
             testCase.verifyEqual(numel(all_results), 4);
             contents = sort(arrayfun(@(r) string(r.data), all_results));
+            contents = contents(:);   % load() shape varies; compare as a column
             testCase.verifyEqual(contents, ...
                 sort(["assess-1A"; "assess-2A"; "train-1T1"; "train-2T1"]));
         end

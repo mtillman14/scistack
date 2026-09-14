@@ -107,7 +107,7 @@ classdef TestPipelineRegistry < matlab.unittest.TestCase
             testCase.verifyEqual(PIPELINE_TEST_CALLS_DOUBLE, 2);
             testCase.verifyEqual(PIPELINE_TEST_CALLS_MEAN, 2);
             rec = ProcessedSignal().load('subject', "S01", 'session', "1");
-            testCase.verifyEqual(double(rec), 4, 'AbsTol', 1e-9); % mean([2 4 6])
+            testCase.verifyEqual(rec.data, 4, 'AbsTol', 1e-9); % mean([2 4 6])
         end
 
         function testSecondRunSkipsCurrentSteps(testCase)
@@ -212,7 +212,7 @@ classdef TestPipelineRegistry < matlab.unittest.TestCase
 
             testCase.verifyTrue(isfile(fullfile(plots_dir, 'S01_1.png')));
             rec = ProcessedSignal().load('subject', "S01", 'session', "1");
-            testCase.verifyTrue(contains(char(string(rec)), '.png'), ...
+            testCase.verifyTrue(contains(char(string(rec.data)), '.png'), ...
                 'finalized endpoint must store the figure path record');
         end
     end

@@ -1814,3 +1814,98 @@ def test_mapping_input_falls_back_when_no_declared_column_survives():
     )
 
     assert not isinstance(received[0], dict)
+
+
+def test_distribute_target_is_reported_at_info(caplog):
+    """The resolved distribute target must be observable at INFO.
+
+    This one line is the only difference in the log between "distribute ran"
+    and "distribute was silently dropped upstream" — and the drop is invisible
+    otherwise, because the run still succeeds and still saves, just at the
+    wrong granularity. At DEBUG the two were indistinguishable, which is how a
+    MATLAB run requested with distribute=true went undiagnosed until the saved
+    columns were read by hand (2026-09-14).
+    """
+    set_schema(["subject", "trial"])
+
+    def fn():
+        return np.array([10.0, 20.0])
+
+    with caplog.at_level(logging.INFO):
+        for_each(fn, inputs={}, distribute=True, subject=[1])
+
+    assert "resolve_distribute_target" in caplog.text
+    assert "trial" in caplog.text
+
+
+def test_distribute_targets_the_unpopulated_key_below_the_deepest_iterated(caplog):
+    """The exact shape the 2026-09-14 GAITRite run had: schema
+    [subject, session, speed, trial, cycle], 'cycle' with no values so it is
+    dropped from the iteration, leaving 'cycle' as the distribute target.
+
+    The run that exposed the bug saved 560 rows with columns
+    [subject, session, speed, trial, GAITRiteLoaded] — no 'cycle'. That absence
+    is the ground truth this asserts against.
+    """
+    set_schema(["subject", "session", "speed", "trial", "cycle"])
+
+    def fn():
+        return np.array([1.0, 2.0, 3.0])
+
+    with caplog.at_level(logging.INFO):
+        result = for_each(
+            fn,
+            inputs={},
+            distribute=True,
+            subject=["SS01"],
+            session=["BL"],
+            speed=["FV"],
+            trial=[1],
+        )
+
+    assert "cycle" in result.columns
+    assert sorted(result["cycle"]) == [1, 2, 3]
+    assert len(result) == 3
+    assert "resolve_distribute_target" in caplog.text
+
+
+def test_case_a_adopts_template_keys_in_placeholder_order(tmp_path):
+    """Case A adopts discovered keys in TEMPLATE PLACEHOLDER order.
+
+    With no schema set and no ``key=[]`` kwargs, ``PathInput.apply_discovery``
+    takes Case A and adopts every discovered key. The order it adopts them in
+    is ``combos[0].keys()`` — the order the walk bound them, i.e. the order the
+    placeholders appear in the template.
+
+    Pinned here because the MATLAB port reproduces this order deliberately
+    (``+scifor/for_each.m``, Case A block, which orders by
+    ``pi.placeholder_keys()``). If Python's order ever changes, a MATLAB run and
+    a Python run of the same pipeline would put the same columns in different
+    places, and only this test would say so.
+    """
+    set_schema([])
+    for subject, session, speed in [
+        ("1", "A", "fast"),
+        ("1", "A", "slow"),
+        ("1", "B", "fast"),
+        ("2", "A", "fast"),
+    ]:
+        d = tmp_path / subject / "XSENS" / session
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{subject}_XSENS_{session}_{speed}-001.xlsx").write_text("")
+
+    path_input = scifor.PathInput(
+        "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx",
+        root_folder=str(tmp_path),
+    )
+
+    result = for_each(lambda p: str(p), inputs={"xlsx_file_path": path_input})
+
+    # One row per real file, not the 2x2x2 Cartesian product: Case A returns
+    # the disk combos so they drive iteration directly.
+    assert len(result) == 4
+
+    # Repeated placeholders ({subject} and {session} each appear twice) are
+    # adopted once, at first appearance.
+    key_cols = [c for c in result.columns if c in {"subject", "session", "speed"}]
+    assert key_cols == ["subject", "session", "speed"]

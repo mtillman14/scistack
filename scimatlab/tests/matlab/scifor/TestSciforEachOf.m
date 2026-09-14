@@ -1,5 +1,5 @@
-classdef TestEachOf < matlab.unittest.TestCase
-%TESTEACHOF  Integration tests for scifor.EachOf's standalone expansion in
+classdef TestSciforEachOf < matlab.unittest.TestCase
+%TESTSCIFOREACHOF  Integration tests for scifor.EachOf's standalone expansion in
 %   scifor.for_each — added when scifor.EachOf/scidb.for_each's EachOf
 %   recursion were bridged to MATLAB for the first time (previously
 %   Python-only; see docs/claude/each-of-variant-expansion.md). The
@@ -20,6 +20,14 @@ classdef TestEachOf < matlab.unittest.TestCase
 
     methods (TestMethodSetup)
         function createTempDir(testCase)
+            % scifor's schema is global process state, and these tests depend
+            % on it being EMPTY: with no declared schema, PathInput discovery
+            % adopts the keys it finds ({subject}/{session}) and drives
+            % iteration directly. Pin it rather than inherit whatever the
+            % previously-run class left behind — several scifor test classes
+            % set a schema and do not reset it, so an ambient schema makes
+            % these tests depend on alphabetical class order.
+            scifor.set_schema(string.empty(1, 0));
             testCase.tmp_dir = string(tempname);
             mkdir(testCase.tmp_dir);
         end
@@ -27,6 +35,7 @@ classdef TestEachOf < matlab.unittest.TestCase
 
     methods (TestMethodTeardown)
         function removeTempDir(testCase)
+            scifor.set_schema(string.empty(1, 0));
             if isfolder(testCase.tmp_dir)
                 rmdir(testCase.tmp_dir, 's');
             end

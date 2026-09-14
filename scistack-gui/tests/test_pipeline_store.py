@@ -409,3 +409,77 @@ class TestScopedHiding:
         pipeline_store.hide_combo(db, node_id, "bandpass_filter", {"low_hz": "20"})
         assert node_id in pipeline_store.get_hidden_node_ids(db, "pipe_a")
         assert node_id in pipeline_store.get_hidden_node_ids(db, "main")
+
+
+class TestNodeConfig:
+    """Node config must persist for EVERY node id, not just placed ones.
+
+    update_node_config used to be a bare
+    ``UPDATE _pipeline_nodes ... WHERE node_id = ?``. A node that had already
+    run has no row in that table -- its id is the composite
+    ``fn__{fn}__{call_id}`` -- so the UPDATE matched nothing, affected zero
+    rows, and reported success. The frontend cleared its dirty flag and the
+    setting was gone on the next rebuild, which is what "the distribute
+    checkbox doesn't stay checked" actually was (2026-09-14).
+
+    See docs/claude/gui-run-options-flow.md.
+    """
+
+    DERIVED_ID = "fn__loadGaitRiteOneFile__a1b2c3d4"
+
+    def test_config_round_trips_for_a_node_with_no_pipeline_nodes_row(
+        self, populated_db
+    ):
+        db = populated_db
+        assert self.DERIVED_ID not in pipeline_store.get_manual_nodes(db)
+
+        pipeline_store.update_node_config(
+            db, self.DERIVED_ID, {"runOptions": {"distribute": True}}
+        )
+
+        cfg = pipeline_store.get_node_config(db, self.DERIVED_ID)
+        assert cfg["runOptions"]["distribute"] is True
+
+    def test_config_survives_rewrite(self, populated_db):
+        db = populated_db
+        pipeline_store.update_node_config(
+            db, self.DERIVED_ID, {"runOptions": {"distribute": True}}
+        )
+        pipeline_store.update_node_config(
+            db, self.DERIVED_ID, {"runOptions": {"distribute": False, "save": False}}
+        )
+        cfg = pipeline_store.get_node_config(db, self.DERIVED_ID)
+        assert cfg["runOptions"] == {"distribute": False, "save": False}
+
+    def test_missing_config_is_empty_not_an_error(self, populated_db):
+        assert pipeline_store.get_node_config(populated_db, "fn__nope__0000") == {}
+
+    def test_get_node_configs_collects_every_node(self, populated_db):
+        db = populated_db
+        pipeline_store.update_node_config(db, self.DERIVED_ID, {"schemaLevel": ["subject"]})
+        pipeline_store.update_node_config(db, "fn__other__ffff", {"whereFilters": []})
+        configs = pipeline_store.get_node_configs(db)
+        assert configs[self.DERIVED_ID] == {"schemaLevel": ["subject"]}
+        assert "fn__other__ffff" in configs
+
+    def test_manual_node_config_is_overlaid_onto_get_manual_nodes(self, populated_db):
+        """Export, copy/paste and the graph build all read node config through
+        get_manual_nodes. The overlay is what keeps them from each needing to
+        learn about the _node_config split (and one of them being missed)."""
+        db = populated_db
+        node_id = "fn__placed_fn__manual1"
+        pipeline_store.write_manual_node(db, node_id, "functionNode", "placed_fn", "main")
+        pipeline_store.update_node_config(
+            db, node_id, {"runOptions": {"distribute": True}}
+        )
+        nodes = pipeline_store.get_manual_nodes(db)
+        assert nodes[node_id]["config"]["runOptions"]["distribute"] is True
+
+    def test_write_is_logged_with_its_node_id(self, populated_db, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            pipeline_store.update_node_config(
+                populated_db, self.DERIVED_ID, {"runOptions": {"distribute": True}}
+            )
+        assert self.DERIVED_ID in caplog.text

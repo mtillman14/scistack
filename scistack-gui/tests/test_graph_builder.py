@@ -2799,3 +2799,78 @@ class TestMatlabOutputHandleInvariant:
         nodes, edges = self._nodes_and_edges({})
         assert nodes[0]["data"]["output_types"] == ["loaded_data"]
         assert edges[0]["sourceHandle"] == "out__RawEMG"
+
+
+class TestSavedConfigRehydration:
+    """A saved setting has to come BACK on the next graph build.
+
+    Config is keyed by node_id in _node_config. The fn_name-keyed
+    ``saved_configs`` map is built from manual nodes only, so it can never
+    answer for a node that has already run -- and a function that has run is
+    exactly the case where the user has settings worth keeping. Without the
+    node_id lookup every toggle silently reset on rebuild, which is how the
+    distribute checkbox appeared not to save (2026-09-14).
+
+    See docs/claude/gui-run-options-flow.md.
+    """
+
+    CID = _cid("rehydrate")
+    KEY = ("bandpass", CID)
+    NODE = f"fn__bandpass__{CID}"
+
+    def _make(self, **overrides):
+        from scistack_gui.domain.graph_builder import build_function_nodes
+
+        defaults = {
+            "fn_input_params": {self.KEY: {"signal": "Raw"}},
+            "fn_outputs": {self.KEY: {"Filtered"}},
+            "fn_constants": {self.KEY: {"hz"}},
+            "fn_variants_map": {self.KEY: []},
+            "fn_params_map": {"bandpass": ["signal", "hz"]},
+            "run_states": {},
+            "matlab_functions": set(),
+            "saved_configs": {"bandpass": None},
+        }
+        defaults.update(overrides)
+        return build_function_nodes(**defaults)
+
+    def test_node_id_config_rehydrates_run_options(self):
+        nodes = self._make(
+            node_configs={self.NODE: {"runOptions": {"distribute": True}}}
+        )
+        assert nodes[0]["data"]["runOptions"] == {"distribute": True}
+
+    def test_node_id_config_beats_the_fn_name_fallback(self):
+        """Two call sites of one function can hold different settings; the
+        fn_name map cannot express that, so node_id has to win."""
+        nodes = self._make(
+            saved_configs={"bandpass": {"runOptions": {"distribute": False}}},
+            node_configs={self.NODE: {"runOptions": {"distribute": True}}},
+        )
+        assert nodes[0]["data"]["runOptions"] == {"distribute": True}
+
+    def test_fn_name_fallback_still_applies_when_no_node_config(self):
+        nodes = self._make(
+            saved_configs={"bandpass": {"runOptions": {"distribute": True}}},
+            node_configs={},
+        )
+        assert nodes[0]["data"]["runOptions"] == {"distribute": True}
+
+    def test_every_key_the_panel_writes_is_rehydrated(self):
+        """Rehydration must cover the same set FunctionSettingsPanel persists,
+        or a setting saves and comes back missing -- indistinguishable, to the
+        user, from not saving at all."""
+        cfg = {
+            "schemaFilter": {"subject": ["SS01"]},
+            "schemaLevel": ["subject", "session"],
+            "whereFilters": [{"variable": "x", "op": "==", "value": "1"}],
+            "runOptions": {"distribute": True, "save": False},
+        }
+        data = self._make(node_configs={self.NODE: cfg})[0]["data"]
+        for key, value in cfg.items():
+            assert data[key] == value
+
+    def test_absent_config_leaves_no_keys_behind(self):
+        data = self._make(node_configs={})[0]["data"]
+        assert "runOptions" not in data
+        assert "schemaFilter" not in data

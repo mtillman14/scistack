@@ -289,14 +289,27 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
         function test_statement_and_assigned_save_identical_records(testCase)
             % The gate must not change record identity: the same call run as a
             % statement and as an assignment must produce the same record_ids.
+            %
+            % Identity is read off the SAVED record (list_versions), not off an
+            % introspect column of the returned table. introspect adds
+            % _record_id_<input> columns -- one per DB-backed INPUT, see
+            % scidb/foreach.py:841 -- so there is no _record_id_ProcessedSignal
+            % to read, and the statement call has no returned table at all.
+            % list_versions is the only place both call forms can be compared.
             RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');
 
+            % Assigned call (nargout == 1): full post-save conversion runs.
             assigned = scidb.for_each(@double_values, ...
                 struct('x', RawSignal()), ...
                 {ProcessedSignal()}, ...
-                'subject', 1, 'session', "A", 'introspect', true);
-            rid_assigned = string(assigned.("_record_id_ProcessedSignal")(1));
+                'subject', 1, 'session', "A");
+            testCase.verifyEqual(height(assigned), 1);
+            v_assigned = ProcessedSignal().list_versions('subject', 1, 'session', 'A');
+            testCase.verifyEqual(numel(v_assigned), 1);
+            rid_assigned = string(v_assigned(1).record_id);
+            testCase.verifyNotEqual(strlength(rid_assigned), 0);
 
+            % Bare-statement call (nargout == 0): conversion is skipped.
             scidb.for_each(@double_values, ...
                 struct('x', RawSignal()), ...
                 {ProcessedSignal()}, ...
@@ -304,9 +317,13 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
 
             % Deterministic content -> same record_id, so the statement call
             % re-saves the identical record rather than creating a second one.
+            v_statement = ProcessedSignal().list_versions('subject', 1, 'session', 'A');
+            testCase.verifyEqual(numel(v_statement), 1);
+            testCase.verifyEqual(string(v_statement(1).record_id), rid_assigned, ...
+                'the nargout gate must not change the saved record identity');
+
             saved = ProcessedSignal().load();
             testCase.verifyEqual(numel(saved), 1);
-            testCase.verifyNotEmpty(char(rid_assigned));
         end
 
         function test_assigned_call_returns_payload(testCase)
@@ -323,7 +340,7 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
             testCase.verifyEqual(height(result), 1);
             testCase.verifyTrue(ismember('ProcessedSignal', ...
                 result.Properties.VariableNames));
-            testCase.verifyEqual(result.ProcessedSignal{1}, [20 40 60], ...
+            testCase.verifyEqual(result.ProcessedSignal{1}, [20 40 60]', ...
                 'AbsTol', 1e-10);
         end
 
@@ -346,7 +363,7 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
                 {ProcessedSignal()}, ...
                 'subject', 1, 'session', "A");
             testCase.verifyEqual(height(result), 1);
-            testCase.verifyEqual(result.ProcessedSignal{1}, [20 40 60], ...
+            testCase.verifyEqual(result.ProcessedSignal{1}, [20 40 60]', ...
                 'AbsTol', 1e-10);
         end
 

@@ -81,7 +81,7 @@ classdef TestForEachSchemaKeys < matlab.unittest.TestCase
 
             result = sortrows(result, 'subject');
             % Each subject aggregates 2 sessions x 2 trials = 4 rows.
-            testCase.verifyEqual(result.output, [4; 4]);
+            testCase.verifyEqual(result.ProcessedSignal, [4; 4]);
         end
 
         function test_schema_filter_on_non_iterated_key_constrains_loaded_data(testCase)
@@ -104,7 +104,7 @@ classdef TestForEachSchemaKeys < matlab.unittest.TestCase
 
             result = sortrows(result, 'subject');
             % Constrained to session="A": 1 session x 2 trials = 2 rows.
-            testCase.verifyEqual(result.output, [2; 2]);
+            testCase.verifyEqual(result.ProcessedSignal, [2; 2]);
         end
 
         function test_schema_keys_conflicts_with_metadata(testCase)

@@ -46,7 +46,7 @@ function data = from_python(py_obj)
         % is the only branch that has to be fast: the py.list fast paths,
         % convert_dataframe's object and default branches, and
         % bridge.flatten_sequences all funnel their bulk data through here.
-        [data, buf_ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape);
+        [data, buf_ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape, arr_ndim);
 
         if ~buf_ok
             % Bypass MATLAB-numpy bridge (libmwbuffer issues) by converting
@@ -717,7 +717,7 @@ function [can_concat, concat_df] = try_concat_homogeneous_dataframes(c)
 end
 
 
-function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape)
+function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape, arr_ndim)
 %NDARRAY_VIA_BUFFER  Convert a numpy array in ONE Python->MATLAB crossing.
 %
 %   The element-by-element route (``tolist()`` + ``cell()``) costs one
@@ -743,6 +743,28 @@ function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape)
     % Checked here as well as Python-side so the common decline (object
     % columns) costs no bridge crossing at all.
     if ~any(dtype_kind == ["f", "i", "u", "b"])
+        return;
+    end
+
+    % The shape must be trustworthy before it can drive a reshape.
+    %
+    % arr_shape comes from int64(py_c.shape) in the caller, where it used to
+    % feed nothing but a debug line -- an inaccurate value cost nothing. The
+    % buffer path made it load-bearing, and a shape that does not describe the
+    % array no longer fails loudly: it falls into the numel(arr_shape) <= 1
+    % branch below and returns every element as ONE COLUMN, so a 4x3 matrix
+    % silently becomes 12x1 with no error anywhere
+    % (TestEndToEnd/test_matrix_through_pipeline, 2026-09-14).
+    %
+    % numpy's own ndim is the authority on how many dimensions the shape must
+    % have. If the converted shape disagrees, decline: the element-by-element
+    % fallback reconstructs the shape by stacking and does not depend on this
+    % conversion at all.
+    if numel(arr_shape) ~= double(arr_ndim)
+        scidb.Log.warn(['from_python: shape [%s] has %d dimension(s) but the ' ...
+            'array reports ndim=%d -- declining the buffer path so the shape ' ...
+            'is rebuilt element-by-element rather than silently flattened'], ...
+            strjoin(string(arr_shape), ' '), numel(arr_shape), double(arr_ndim));
         return;
     end
 

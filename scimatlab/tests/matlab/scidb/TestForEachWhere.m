@@ -953,19 +953,34 @@ classdef TestForEachWhere < matlab.unittest.TestCase
             testCase.verifyTrue(has_L, 'Expected a run with where_clause Side L');
             testCase.verifyTrue(has_R, 'Expected a run with where_clause Side R');
 
-            % Check that I can use where= to filter for different versions of ProcessedSignal
-            % subject=1 where=L: loads RawSignal(1,A)=[1,2,3] (Side(1,A)=L), sum=6
-            result = ProcessedSignal().load(subject=1, where=Side() == "L");
-            testCase.verifyEqual(result.data, 6);
-            % subject=1 where=R: loads RawSignal(1,B)=[4,5,6] (Side(1,B)=R), sum=15
-            result = ProcessedSignal().load(subject=1, where=Side() == "R");
-            testCase.verifyEqual(result.data, 15);
-            % subject=2 where=L: loads RawSignal(2,A)=[7,8,9] (Side(2,A)=L), sum=24
-            result = ProcessedSignal().load(subject=2, where=Side() == "L");
-            testCase.verifyEqual(result.data, 24);
-            % subject=2 where=R: loads RawSignal(2,B)=[10,11,12] (Side(2,B)=R), sum=33
-            result = ProcessedSignal().load(subject=2, where=Side() == "R");
-            testCase.verifyEqual(result.data, 33);
+            % Check that I can use where= to filter for different versions of
+            % ProcessedSignal.
+            %
+            % Each load MUST resolve to exactly one record, and that is checked
+            % FIRST. Both variants live at the same output schema location
+            % (subject=N, session unset) and differ only by which input location
+            % the producing run consumed, so a where= that fails to narrow
+            % returns both. Asserting the value straight off a multi-record
+            % result does not report that: `result.data` on a struct array
+            % expands to a comma-separated list, so `verifyEqual(result.data, 6)`
+            % becomes verifyEqual(d1, d2, 6), 6 lands in the DIAGNOSTIC slot,
+            % and the framework throws MATLAB:invalidType — burying "where=
+            % matched 2 records" under an argument-validation error.
+            expected = struct( ...
+                'subject', {1, 1, 2, 2}, ...
+                'side',    {"L", "R", "L", "R"}, ...
+                'value',   {6, 15, 24, 33});
+            for e = 1:numel(expected)
+                exp = expected(e);
+                result = ProcessedSignal().load( ...
+                    subject=exp.subject, where=Side() == exp.side);
+                testCase.verifyEqual(numel(result), 1, sprintf( ...
+                    ['load(subject=%d, where=Side=="%s") must resolve to one ' ...
+                     'record; %d matched, so where= did not select a variant'], ...
+                    exp.subject, exp.side, numel(result)));
+                testCase.verifyEqual(result(1).data, exp.value, sprintf( ...
+                    'subject=%d where=%s', exp.subject, exp.side));
+            end
         end
 
     end

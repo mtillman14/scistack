@@ -774,9 +774,12 @@ def resolve_combo_call_ids(
     targets = apply_pending_overrides(targets, pending_consts)
     matches = [t for t in targets if constants_match(t["constants"], variant_key)]
 
-    node_config: dict = {}
-    if node_id:
-        node_config = pipeline_store.get_manual_nodes(db).get(node_id, {}).get("config") or {}
+    # get_node_config reads _node_config (and falls back to the legacy
+    # _pipeline_nodes column). The manual-nodes lookup this replaced returned
+    # {} for every node that had ever run, so distribute/as_table -- both
+    # identity-bearing -- silently defaulted here and the call_id computed
+    # below was the one for a call the user had not asked for.
+    node_config = pipeline_store.get_node_config(db, node_id) if node_id else {}
     run_opts = node_config.get("runOptions") or {}
     pending_names = set(pending_consts)
 

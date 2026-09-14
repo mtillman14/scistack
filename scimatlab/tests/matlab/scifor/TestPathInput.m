@@ -583,6 +583,39 @@ classdef TestPathInput < matlab.unittest.TestCase
                 string(result.Properties.VariableNames))));
         end
 
+        function test_foreach_standalone_case_a_adopts_template_keys(testCase)
+            % Case A: NO schema declared and NO key=[] kwargs. Discovery must
+            % still run and adopt the template's placeholders as the iteration.
+            %
+            % This is the case the gate at +scifor/for_each.m:242 used to miss:
+            % with no keys at all, `any(cellfun(@isempty, meta_values))` is
+            % `any([])` = false, so discovery never ran and for_each returned an
+            % empty table (0 rows, no columns) without logging anything. The
+            % EachOf tests in TestSciforEachOf.m exercise the same path, but
+            % only through EachOf -- this pins it directly so a regression is
+            % attributed to discovery rather than to EachOf expansion.
+            root = testCase.makeGaitTree(testCase.tmp_dir);
+            scifor.set_schema(string.empty(1, 0));
+            cleanup = onCleanup(@() scifor.set_schema(string.empty(1,0))); %#ok<NASGU>
+            pathTemplate = "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx";
+            gaitPath = scifor.PathInput(pathTemplate, 'root_folder', root);
+
+            fn = @(p) string(p);
+            result = scifor.for_each(fn, struct('xlsx_file_path', gaitPath));
+
+            % One row per real file (4), not the 8-combo Cartesian product --
+            % Case A returns the disk combos to drive iteration directly.
+            testCase.verifyEqual(height(result), 4);
+
+            % Adopted in TEMPLATE PLACEHOLDER order, matching Python's
+            % combos[0].keys(). Repeated placeholders ({subject} and {session}
+            % each appear twice) are adopted once, at first appearance.
+            cols = string(result.Properties.VariableNames);
+            key_cols = cols(ismember(cols, ["subject" "session" "speed"]));
+            testCase.verifyEqual(key_cols, ["subject" "session" "speed"], ...
+                'Case A must adopt keys in template-placeholder order');
+        end
+
         % --------------------------------------------------------------
         % condense_numeric: MATLAB parity with Python's standalone-only
         % zero-padded discovery condensation (docs/claude/schema-key-types.md)

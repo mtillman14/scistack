@@ -3681,3 +3681,141 @@ class TestMatlabInputsBindPositionally:
         )
 
         assert "scifor.EachOf(RawEMG(), RawEMG2())" in cmd
+
+
+class TestRunOptionsInGeneratedCommand:
+    """Run options must be RENDERED INTO the generated MATLAB script.
+
+    A MATLAB run never receives ``distribute``/``as_table``/``dry_run``/``save``
+    as arguments -- it receives text. An option the generator does not emit is
+    an option MATLAB never hears about, and the failure is silent: the script
+    is still well-formed, the run still succeeds, and it simply does the wrong
+    thing. That is precisely what happened on 2026-09-14, when a run requested
+    with ``distribute: True`` saved 560 undistributed records.
+
+    See docs/claude/gui-run-options-flow.md.
+    """
+
+    VARIANTS = [
+        {
+            "input_types": {"signal": "RawSignal"},
+            "output_type": "FilteredSignal",
+            "constants": {"low_hz": 20},
+            "record_count": 4,
+        }
+    ]
+
+    def _cmd(self, run_options, **kwargs):
+        from scistack_gui.api.matlab_command import generate_matlab_command
+
+        return generate_matlab_command(
+            function_name="bandpass_filter",
+            db_path="/data/experiment.duckdb",
+            schema_keys=["subject", "session", "trial"],
+            run_options=run_options,
+            **kwargs,
+        )
+
+    def test_distribute_true_is_emitted(self):
+        cmd = self._cmd({"distribute": True}, variants=self.VARIANTS)
+        assert "'distribute', true" in cmd
+
+    def test_distribute_false_is_not_emitted(self):
+        """MATLAB's default is false, so silence and an explicit false are the
+        same run. Omitting keeps generated scripts diffable."""
+        cmd = self._cmd({"distribute": False}, variants=self.VARIANTS)
+        assert "distribute" not in cmd
+
+    def test_no_run_options_emits_nothing(self):
+        cmd = self._cmd(None, variants=self.VARIANTS)
+        assert "distribute" not in cmd
+        assert "as_table" not in cmd
+        assert "dry_run" not in cmd
+
+    def test_distribute_emitted_on_first_run_template_branch(self):
+        """The no-variants branch builds its own for_each call. distribute
+        shapes the invocation_id, so the FIRST run is exactly when it must be
+        right -- that run establishes the identity every later one matches."""
+        cmd = self._cmd({"distribute": True}, variants=None)
+        assert "scidb.for_each" in cmd
+        assert "'distribute', true" in cmd
+
+    def test_dry_run_and_save_use_their_own_defaults(self):
+        """save defaults TRUE, so only ``save=False`` is worth emitting;
+        dry_run defaults false, so only true is."""
+        cmd = self._cmd(
+            {"dry_run": True, "save": False}, variants=self.VARIANTS
+        )
+        assert "'dry_run', true" in cmd
+        assert "'save', false" in cmd
+
+        cmd = self._cmd({"dry_run": False, "save": True}, variants=self.VARIANTS)
+        assert "dry_run" not in cmd
+        assert "'save'" not in cmd
+
+    def test_as_table_bool(self):
+        cmd = self._cmd({"as_table": True}, variants=self.VARIANTS)
+        assert "'as_table', true" in cmd
+
+    def test_as_table_name_list_becomes_string_array(self):
+        """for_each.m:217-223 accepts a logical scalar OR a string array of
+        parameter names; both shapes have to round-trip."""
+        cmd = self._cmd({"as_table": ["signal", "other"]}, variants=self.VARIANTS)
+        assert '\'as_table\', ["signal", "other"]' in cmd
+
+    def test_as_table_empty_list_is_not_emitted(self):
+        cmd = self._cmd({"as_table": []}, variants=self.VARIANTS)
+        assert "as_table" not in cmd
+
+    def test_options_survive_a_dict_valued_constant(self):
+        """Regression pair for the two defects that hit the same run: a dict
+        constant used to crash _group_variants outright (unhashable type:
+        'dict'), which masked the fact that distribute was being dropped."""
+        variants = [
+            {
+                "input_types": {"gaitRitePath": "PathInput"},
+                "output_type": "GAITRiteLoaded",
+                "constants": {"config": {"FOLDER": "Gaitrite", "HEADER": 3}},
+                "record_count": 1,
+            }
+        ]
+        cmd = self._cmd({"distribute": True}, variants=variants)
+        assert "'distribute', true" in cmd
+
+    def test_unknown_option_warns_rather_than_silently_dropping(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            self._cmd({"parallel": True}, variants=self.VARIANTS)
+        assert "parallel" in caplog.text
+        assert "will NOT reach MATLAB" in caplog.text
+
+    def test_emitted_options_are_logged(self, caplog):
+        with caplog.at_level(logging.INFO):
+            self._cmd({"distribute": True}, variants=self.VARIANTS)
+        assert "non-default run option" in caplog.text
+
+    def test_pipeline_step_carries_its_own_options(self):
+        """A whole-pipeline script registers one for_each per node, and each
+        node has its OWN saved options -- they are not a property of the run."""
+        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+
+        cmd = generate_matlab_pipeline_command(
+            pipeline_id="main",
+            steps=[
+                {
+                    "function_name": "step_one",
+                    "variants": self.VARIANTS,
+                    "run_options": {"distribute": True},
+                },
+                {
+                    "function_name": "step_two",
+                    "variants": self.VARIANTS,
+                    "run_options": {"distribute": False},
+                },
+            ],
+            db_path="/data/experiment.duckdb",
+            schema_keys=["subject", "session", "trial"],
+        )
+        one = cmd.index("@step_one")
+        two = cmd.index("@step_two")
+        assert "'distribute', true" in cmd[one:two]
+        assert "'distribute', true" not in cmd[two:]

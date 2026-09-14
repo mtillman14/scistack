@@ -589,13 +589,22 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
 
     manual_nodes = _ps.get_manual_nodes(db)
     logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
+
+    # Config keyed by node_id -- the authoritative store, and the only one that
+    # can hold a setting for a node that has already run (a DB-derived node has
+    # no _pipeline_nodes row at all). Passed alongside the fn_name-keyed map
+    # below, which stays as the fallback for manual nodes.
+    node_configs = _ps.get_node_configs(db)
+
     saved_configs: dict[str, dict | None] = {}
     for fn in fn_names:
         # Manual nodes can use either the legacy `fn__{fn}` ID or the
         # composite `fn__{fn}__{call_id}` ID.  Look up the legacy form
         # first (matches the pre-call-id node), then any composite manual
         # node for this fn_name as a fallback.
-        cfg = manual_nodes.get(f"fn__{fn}", {}).get("config")
+        cfg = node_configs.get(f"fn__{fn}") or manual_nodes.get(f"fn__{fn}", {}).get(
+            "config"
+        )
         if cfg is None:
             for _nid, meta in manual_nodes.items():
                 if (
@@ -716,6 +725,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         saved_configs,
         matlab_output_order=matlab_output_order,
         matlab_param_to_class=matlab_param_to_class,
+        node_configs=node_configs,
     )
     fn_node_count = (
         len(nodes)
@@ -1083,6 +1093,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
             resolved_input_params,
             resolved_output_types,
             matlab_functions,
+            node_config=node_configs.get(node_id),
         )
         nodes.append(node)
         logger.debug(

@@ -556,6 +556,7 @@ def generate_matlab_command(
     entities_file: str | None = None,
     variable_inputs: dict[str, "str | list[str]"] | None = None,
     glue: dict[str, list[dict]] | None = None,
+    run_options: dict | None = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -719,6 +720,12 @@ def generate_matlab_command(
         template_tail = (
             f", ...\n        'glue', {template_glue_str}" if template_glue_str else ""
         )
+        # The first-run branch needs the run options as much as the variant
+        # branch does -- more, arguably, since distribute/as_table shape the
+        # invocation_id this very first run establishes.
+        template_opts_str = _format_run_option_pairs(run_options, function_name)
+        if template_opts_str:
+            template_tail += f", ...\n        {template_opts_str}"
         lines.append("try")
         lines.append("    % Run (fill in inputs/outputs)")
         lines.append(f"    scidb.for_each(@{function_name}, ...")
@@ -777,6 +784,7 @@ def generate_matlab_command(
             sweeps=sweeps,
             variable_inputs=variable_inputs,
             glue=glue,
+            run_options=run_options,
         )
     )
 
@@ -915,6 +923,7 @@ def _for_each_call_lines(
     sweeps: dict[str, list] | None = None,
     variable_inputs: dict[str, "str | list[str]"] | None = None,
     glue: dict[str, list[dict]] | None = None,
+    run_options: dict | None = None,
 ) -> list[str]:
     """One (indented) ``<matlab_fn>(@function_name, ...)`` block per grouped
     (inputs, constants) entry — the call body shared between a single
@@ -977,10 +986,19 @@ def _for_each_call_lines(
         # the inputs struct and never gets a for_each call of its own.
         glue_str = _format_glue_struct(glue)
 
+        # Run options ride on the same trailing name/value tail as glue. They
+        # are NOT part of the inputs struct: for_each reads them as options,
+        # and distribute/as_table are identity-bearing (they change the
+        # invocation_id), so a dropped pair silently produces a different run
+        # than the one requested -- see docs/claude/gui-run-options-flow.md.
+        opts_str = _format_run_option_pairs(run_options, function_name)
+
         lines.append(f"{indent}% Run")
         lines.append(f"{indent}{matlab_fn}(@{function_name}, ...")
         lines.append(f"{indent}    {inputs_str}, ...")
         tail = f", ...\n{indent}    'glue', {glue_str}" if glue_str else ""
+        if opts_str:
+            tail += f", ...\n{indent}    {opts_str}"
         if schema_str:
             lines.append(f"{indent}    {outputs_str}, ...")
             lines.append(f"{indent}    {schema_str}{tail});")
@@ -1067,7 +1085,11 @@ def generate_matlab_pipeline_command(
         ``{"function_name": str, "variants": list[dict] | None,
         "schema_filter": dict | None, "schema_level": list[str] | None,
         "path_inputs": dict | None, "sweeps": dict | None,
-        "variable_inputs": dict | None}``. A step with no resolvable variants
+        "variable_inputs": dict | None, "run_options": dict | None}``.
+        ``run_options`` comes from that node's SAVED config, not from canvas
+        node data -- a pipeline run touches nodes the user never selected, so
+        there is no live React state to read (see
+        docs/claude/gui-run-options-flow.md). A step with no resolvable variants
         (nothing derivable — never run and no output wiring) is skipped
         with a comment, mirroring the disconnected-wiring skip convention
         in ``code_export_service`` — not an error, since the rest of the
@@ -1207,6 +1229,7 @@ def generate_matlab_pipeline_command(
                 matlab_fn="scidb.for_each",
                 sweeps=step.get("sweeps"),
                 variable_inputs=step.get("variable_inputs"),
+                run_options=step.get("run_options"),
             )
         )
     for comment in skip_comments:
@@ -1558,6 +1581,84 @@ def _format_matlab_string_array(items: list[str]) -> str:
         return "[]"
     escaped = [f'"{_escape_matlab_string(s)}"' for s in items]
     return "[" + ", ".join(escaped) + "]"
+
+
+#: MATLAB's own defaults for the four run options, from ``+scidb/for_each.m``
+#: (``opts.as_table = string.empty``, ``opts.distribute = false`` at :1723).
+#: A value equal to its default is NOT emitted: the generated call then says
+#: nothing about it and MATLAB applies the same value, which keeps scripts
+#: diffable against the ones generated before run options were plumbed.
+_RUN_OPTION_DEFAULTS = {
+    "dry_run": False,
+    "save": True,
+    "distribute": False,
+    "as_table": False,
+}
+
+
+def _format_run_option_pairs(
+    run_options: dict | None, function_name: str = ""
+) -> str:
+    """MATLAB ``'name', value`` pairs for the non-default run options, or ``""``.
+
+    These are the GUI's four ``for_each`` toggles (``dry_run``, ``save``,
+    ``distribute``, ``as_table``). They reach a Python run as keyword arguments
+    (``execution_service``) but reach a MATLAB run only as text in a generated
+    script, so an option this function does not render is an option MATLAB never
+    hears about -- and it fails **silently**, because the script is still
+    well-formed and the run still succeeds. That is exactly how ``distribute``
+    went missing until 2026-09-14: the request logged ``distribute: True``, the
+    generator never read the key, and the run saved 560 undistributed records.
+    See docs/claude/gui-run-options-flow.md.
+
+    ``as_table`` is the one with two shapes: ``for_each.m`` (:217-223) accepts a
+    logical scalar or a string array of parameter names, so a list round-trips
+    as ``["a", "b"]`` and a bool as ``true``.
+    """
+    if not run_options:
+        return ""
+
+    parts: list[str] = []
+    emitted: dict[str, object] = {}
+    for name, default in _RUN_OPTION_DEFAULTS.items():
+        if name not in run_options:
+            continue
+        value = run_options[name]
+        if name == "as_table" and isinstance(value, (list, tuple)):
+            names = [str(v) for v in value if v]
+            if not names:
+                continue
+            parts.append(f"'as_table', {_format_matlab_string_array(names)}")
+            emitted[name] = names
+            continue
+        value = bool(value)
+        if value == default:
+            continue
+        parts.append(f"'{name}', {'true' if value else 'false'}")
+        emitted[name] = value
+
+    if emitted:
+        logger.info(
+            "generate_matlab_command: %s: emitting non-default run option(s) %s "
+            "into the for_each call",
+            function_name or "<fn>",
+            emitted,
+        )
+
+    # A key the caller asked about that produced no pair is either a default
+    # (fine, and the common case) or a value this renderer does not understand
+    # (not fine -- it would be dropped exactly the way distribute was).
+    unknown = sorted(set(run_options) - set(_RUN_OPTION_DEFAULTS))
+    if unknown:
+        logger.warning(
+            "generate_matlab_command: %s: run option(s) %s are not recognised "
+            "and will NOT reach MATLAB -- the run will use for_each's defaults "
+            "for them",
+            function_name or "<fn>",
+            unknown,
+        )
+
+    return ", ".join(parts)
 
 
 def _format_schema_kwargs(

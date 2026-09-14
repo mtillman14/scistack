@@ -93,7 +93,7 @@ The MATLAB bridge mirrors the Python dual-implementation shape above:
   instead of a raw MATLAB failure. Practical consequence: every `EachOf`
   alternative for one input must resolve to the same placeholder/schema-key
   names, even when the literal folders/`root_folder` differ.
-- **Tests** — `scimatlab/tests/matlab/scifor/TestEachOf.m` and
+- **Tests** — `scimatlab/tests/matlab/scifor/TestSciforEachOf.m` and
   `scimatlab/tests/matlab/scidb/TestEachOf.m`, mirroring the Python
   coverage in `scifor/tests/test_each_of.py` / `scidb/tests/test_each_of.py`.
 

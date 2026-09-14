@@ -2646,12 +2646,15 @@ class DatabaseManager:
                 self._duck, records_all["record_id"].tolist()
             )
 
+            fell_back: list[str] = []
+
             def _variant_match(row, _s=s_var, _sn=s_var_native, _c=consumed_map):
                 consumed = _c.get(row["record_id"])
                 if consumed is not None:
                     return (
                         consumed <= _sn
                     )  # subset: every consumed loc ∈ S_var (native level)
+                fell_back.append(row["record_id"])
                 return row["schema_id"] in _s  # raw/direct-save fallback (target level)
 
             records = records_all[records_all.apply(_variant_match, axis=1)]
@@ -2659,6 +2662,28 @@ class DatabaseManager:
                 f"[_load_with_where] {type_name}: variant match kept {len(records)} "
                 f"of {len(records_all)} records (|S_var|={len(s_var)})"
             )
+            # The raw/direct-save fallback is correct for a record nothing
+            # produced, but it CANNOT narrow a cross-level where=: there
+            # ``resolve`` short-circuits a finer filter to "all target ids", so
+            # ``schema_id in S_var`` is true for every candidate and the filter
+            # silently selects nothing at all. Two variants at one output
+            # location then both come back and the caller gets an ambiguous
+            # result instead of the one it asked for.
+            #
+            # Reaching it for a record that HAS a producing invocation means the
+            # invocation recorded no variable input edges — which is the only
+            # thing that makes this variant identity work. Say so: without this
+            # line the symptom is "load returned 2 records" with nothing
+            # anywhere connecting it to missing provenance edges.
+            if fell_back and s_var_native != s_var:
+                Log.warn(
+                    f"[_load_with_where] {type_name}: {len(fell_back)} record(s) "
+                    f"had no recorded consumed-input locations, so a CROSS-LEVEL "
+                    f"where= fell back to matching on the record's own schema_id "
+                    f"— which cannot narrow (the filter resolves to every target "
+                    f"location). Expect an over-broad result. Record(s): "
+                    f"{fell_back[:5]}"
+                )
 
         # --- Row restriction (SchemaKey portion / pre-resolved Merge ids) ---
         if row_ids is not None:

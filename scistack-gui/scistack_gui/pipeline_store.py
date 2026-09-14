@@ -97,6 +97,26 @@ def _ensure_tables(db) -> None:
             pipeline_id VARCHAR NOT NULL DEFAULT 'main'
         )
     """)
+    # Node config (schemaFilter / schemaLevel / whereFilters / runOptions)
+    # keyed by node_id, deliberately NOT a column on _pipeline_nodes.
+    #
+    # _pipeline_nodes holds MANUALLY PLACED nodes, and merge_manual_nodes
+    # graduates those rows into DB-derived nodes as functions acquire history.
+    # Config stored there is therefore reachable only while a node has never
+    # run; writing config for a graduated node (id `fn__{fn}__{call_id}`)
+    # either updates nothing or manufactures a manual-node row that
+    # merge_manual_nodes then renders as a duplicate. Before 2026-09-14 it was
+    # the former: a bare UPDATE matching zero rows, reported as success, which
+    # is why a distribute checkbox never survived a refresh.
+    #
+    # A table with no lifecycle coupling to node placement has neither
+    # problem. See docs/claude/gui-run-options-flow.md.
+    _duck(db)._execute("""
+        CREATE TABLE IF NOT EXISTS _node_config (
+            node_id VARCHAR PRIMARY KEY,
+            config  VARCHAR NOT NULL DEFAULT '{}'
+        )
+    """)
     _duck(db)._execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_edges (
             edge_id       VARCHAR PRIMARY KEY,
@@ -380,6 +400,12 @@ def get_manual_nodes(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
             "FROM _pipeline_nodes WHERE pipeline_id = ?",
             [pipeline_id],
         )
+    # _node_config is the live store; the row's own `config` column is the
+    # legacy one. Overlaying here rather than at each call site keeps every
+    # existing consumer (export, copy/paste, graph build) reading one
+    # "config" key that means the same thing everywhere -- otherwise each
+    # would have to learn about the split and one of them would be missed.
+    overrides = get_node_configs(db)
     result = {}
     for row in rows:
         entry: dict = {
@@ -392,6 +418,9 @@ def get_manual_nodes(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
                 entry["config"] = json.loads(row[3])
             except (json.JSONDecodeError, TypeError):
                 pass
+        override = overrides.get(row[0])
+        if override:
+            entry["config"] = override
         result[row[0]] = entry
     return result
 
@@ -440,12 +469,82 @@ def write_manual_node(
 
 
 def update_node_config(db, node_id: str, config: dict) -> None:
-    """Update just the config JSON for an existing node."""
+    """Write a node's saved config (schemaFilter, schemaLevel, whereFilters,
+    runOptions), keyed by ``node_id``.
+
+    An **upsert** into ``_node_config``, for any node id -- manual
+    (``fn__{fn}``) or DB-derived (``fn__{fn}__{call_id}``) alike. It used to be
+    a bare ``UPDATE _pipeline_nodes ... WHERE node_id = ?``, which matched zero
+    rows for every node that had ever run and reported success anyway; the
+    frontend cleared its dirty flag and the setting was gone on the next
+    rebuild. See docs/claude/gui-run-options-flow.md.
+    """
     _ensure_tables(db)
-    _duck(db)._execute(
-        "UPDATE _pipeline_nodes SET config = ? WHERE node_id = ?",
-        [json.dumps(config), node_id],
+    logger.info(
+        "[pipeline_store] update_node_config (node_id=%r, keys=%s)",
+        node_id,
+        sorted(config),
     )
+    _duck(db)._execute(
+        """
+        INSERT INTO _node_config (node_id, config) VALUES (?, ?)
+        ON CONFLICT (node_id) DO UPDATE SET config = excluded.config
+        """,
+        [node_id, json.dumps(config)],
+    )
+
+
+def get_node_config(db, node_id: str) -> dict:
+    """One node's saved config, or ``{}``.
+
+    Falls back to the legacy ``_pipeline_nodes.config`` column so configs saved
+    before the ``_node_config`` split are not orphaned. Nothing writes that
+    column any more.
+    """
+    _ensure_tables(db)
+    row = _duck(db)._fetchone(
+        "SELECT config FROM _node_config WHERE node_id = ?", [node_id]
+    )
+    if row is None:
+        row = _duck(db)._fetchone(
+            "SELECT config FROM _pipeline_nodes WHERE node_id = ?", [node_id]
+        )
+    if row is None or not row[0]:
+        return {}
+    try:
+        return json.loads(row[0]) or {}
+    except (ValueError, TypeError):
+        logger.warning(
+            "[pipeline_store] node %r has unparseable config JSON — ignoring it",
+            node_id,
+        )
+        return {}
+
+
+def get_node_configs(db) -> dict[str, dict]:
+    """``{node_id: config}`` for every node that has one, legacy column
+    included (``_node_config`` wins where both exist)."""
+    _ensure_tables(db)
+    configs: dict[str, dict] = {}
+    for table in ("_pipeline_nodes", "_node_config"):
+        for node_id, raw in _duck(db)._fetchall(
+            f"SELECT node_id, config FROM {table}"  # noqa: S608 - fixed literals
+        ):
+            if not raw:
+                continue
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "[pipeline_store] node %r has unparseable config JSON — "
+                    "ignoring it",
+                    node_id,
+                )
+                continue
+            if parsed:
+                configs[node_id] = parsed
+    logger.debug("[pipeline_store] loaded config for %d node(s)", len(configs))
+    return configs
 
 
 def delete_node(db, node_id: str) -> None:

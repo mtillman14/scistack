@@ -355,6 +355,14 @@ def for_each(
     # must be invisible to distribute resolution, or an aggregation over a
     # variant-tracked input would see the discriminator as the deepest key
     # and refuse to distribute.
+    #
+    # The resolved target is reported at INFO, not DEBUG. This line is the one
+    # observable difference between "distribute ran" and "distribute was
+    # silently dropped somewhere upstream", and the latter fails invisibly:
+    # the run still succeeds and still saves, just at the wrong granularity.
+    # At DEBUG the two were indistinguishable in scidb.log, which is how a
+    # MATLAB run with distribute=true went undiagnosed until the saved columns
+    # were inspected by hand (2026-09-14).
     distribute_key = None
     if distribute:
         real_schema_keys = [
@@ -374,7 +382,7 @@ def for_each(
             # metadata_iterables at all) — distribute to the top of the
             # schema rather than erroring.
             distribute_key = real_schema_keys[0]
-            Log.debug(
+            Log.info(
                 "resolve_distribute_target: '%s' (top of schema; nothing iterated)",
                 distribute_key,
                 layer="scifor",
@@ -390,7 +398,7 @@ def for_each(
                     f"Schema order: {real_schema_keys}"
                 )
             distribute_key = real_schema_keys[deepest_idx + 1]
-            Log.debug(
+            Log.info(
                 "resolve_distribute_target: '%s' (one level below '%s')",
                 distribute_key,
                 deepest_iterated,

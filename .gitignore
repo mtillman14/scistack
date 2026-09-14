@@ -31,3 +31,4 @@ scistack-gui/frontend/dist/
 /exports/
 *.log
 output.txt
+scimatlab/tests/matlab/test-failures.txt

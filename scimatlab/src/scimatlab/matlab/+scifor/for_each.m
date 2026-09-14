@@ -239,7 +239,16 @@ function varargout = for_each(fn, inputs, varargin)
         % whether discovered combos drive iteration directly) is owned by
         % PathInput so the scidb and scifor layers share one implementation.
         pi = find_pathinput(inputs);
-        if ~isempty(pi) && any(cellfun(@isempty, meta_values))
+        % Case A -- NO keys declared at all -- is as much a discovery trigger
+        % as Case B. It has to be tested separately because `any([])` is
+        % false: gating only on `any(cellfun(@isempty, meta_values))` meant a
+        % bare `for_each(fn, struct('p', pathinput))` never ran discovery at
+        % all, produced zero combos, and returned an empty table without
+        % logging a word (2026-09-14). Python has always handled it --
+        % pathinput.apply_discovery's "Case A: no metadata keys passed at all
+        % -> adopt every discovered key" -- so this was a MATLAB-only gap.
+        case_a = isempty(meta_keys);
+        if ~isempty(pi) && (case_a || any(cellfun(@isempty, meta_values)))
             iter_struct = struct();
             for i = 1:numel(meta_keys)
                 iter_struct.(char(meta_keys(i))) = meta_values{i};
@@ -255,10 +264,65 @@ function varargout = for_each(fn, inputs, varargin)
                     meta_values{i} = filled.(char(meta_keys(i)));
                 end
             end
+
+            placeholder_keys = string(pi.placeholder_keys());
+
+            % Case A: the caller declared nothing, so the keys discovery found
+            % ARE the iteration. Adopt them in TEMPLATE PLACEHOLDER order --
+            % the order {subject}/{session}/data.txt names them -- because that
+            % is the order Python adopts (combos[0].keys(), bound by the walk
+            % in segment order) and the two layers must put the same columns in
+            % the same places. The fill loop above cannot do this: it only
+            % writes back keys already in meta_keys, and in Case A there are
+            % none.
+            if case_a
+                for i = 1:numel(placeholder_keys)
+                    k = char(placeholder_keys(i));
+                    if isfield(filled, k)
+                        meta_keys(end+1) = placeholder_keys(i); %#ok<AGROW>
+                        meta_values{end+1} = filled.(k); %#ok<AGROW>
+                    end
+                end
+                % Anything discovery returned that is not a template
+                % placeholder. Not reachable today -- the walk only binds named
+                % groups built from placeholders -- but dropping a discovered
+                % key silently would be worse than the extra loop, and the
+                % coverage test below turns any such key into a Cartesian
+                % product rather than a wrong answer.
+                extra = setdiff(string(fieldnames(filled))', meta_keys, 'stable');
+                for i = 1:numel(extra)
+                    meta_keys(end+1) = extra(i); %#ok<AGROW>
+                    meta_values{end+1} = filled.(char(extra(i))); %#ok<AGROW>
+                end
+                if isempty(meta_keys)
+                    % A PathInput was present, nothing was declared, and
+                    % discovery found nothing to adopt: this for_each is about
+                    % to iterate zero times and return an empty table. Say so
+                    % -- silence here is exactly what made this look like a
+                    % successful run with no matching data.
+                    %
+                    % root_folder is optional, so it can be an empty string;
+                    % name the fallback rather than formatting a blank into
+                    % the message.
+                    root_desc = "<project root>";
+                    if ~isempty(pi.root_folder) && strlength(pi.root_folder) > 0
+                        root_desc = pi.root_folder;
+                    end
+                    scifor.Log.warn(['pathinput_discovery: no keys declared and ' ...
+                        'nothing discovered under template ''%s'' (root_folder ' ...
+                        '''%s'') -- 0 iterations'], ...
+                        pi.path_template, root_desc);
+                else
+                    scifor.Log.info(['pathinput_discovery: adopted %d key(s) from ' ...
+                        'the template (%s); %d combo(s) found on disk'], ...
+                        numel(meta_keys), strjoin(meta_keys, ', '), ...
+                        numel(discovered_combos));
+                end
+            end
+
             % Use discovered combos directly only when every iterated key is a
             % template placeholder (otherwise a Cartesian product with the
             % table-derived keys is still required).
-            placeholder_keys = string(pi.placeholder_keys());
             if ~isempty(discovered_combos) && all(ismember(meta_keys, placeholder_keys))
                 opts.all_combos = project_combos(discovered_combos, meta_keys);
                 scifor.Log.debug('pathinput_discovery: using %d disk combos', ...
