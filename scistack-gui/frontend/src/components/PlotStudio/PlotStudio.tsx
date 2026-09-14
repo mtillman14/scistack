@@ -128,6 +128,15 @@ interface KindInfo {
   kind: string
   available: boolean
   reason: string | null
+  /** Whether picking this kind reduces a 1-D measure to one value per record
+   *  first. The kind IS the request to collapse; there is no separate toggle. */
+  collapses?: boolean
+  /** The roles this kind should open with, when selecting it should re-default
+   *  them (untouched defaults only — `roles.roles_for_kind`). Carried on the
+   *  option so `setKind` can apply it SYNCHRONOUSLY with the click: an RPC
+   *  would race the resolve queue and could land after the user had set a role,
+   *  overwriting the one thing the rule promises not to touch. */
+  roles?: Record<string, Role> | null
 }
 
 /** One variant factor as the picker renders it. Built entirely by
@@ -215,8 +224,27 @@ interface VariantSummary {
   selected_combinations: number
 }
 
+/** What the title badge says about the measure.
+ *
+ *  While a collapse is in effect it names BOTH — `1d → scalar (mean)` — because
+ *  a violin of trial means and a violin of raw samples look identical, and a
+ *  figure must never claim to be drawing the samples it summarized. */
+function shapeBadge(capabilities?: Capabilities | null): string | undefined {
+  if (!capabilities) return undefined
+  const collapse = capabilities.collapse
+  if (!collapse?.active) return capabilities.shape
+  return `${capabilities.raw_shape ?? '1d'} → ${capabilities.shape} (${collapse.statistic})`
+}
+
 interface Capabilities {
+  /** What the FIGURE is: `scalar` while a 1-D measure is being collapsed. The
+   *  scalar-only controls key off this, and they apply to the collapsed value. */
   shape: string
+  /** What the DATA is. Differs from `shape` only during a collapse. */
+  raw_shape?: string
+  /** Whether this measure can be collapsed at all, whether it is being, and by
+   *  which statistic. */
+  collapse?: { applies: boolean; active: boolean; statistic: string }
   has_replicates: boolean
   default: string
   available: string[]
@@ -327,6 +355,10 @@ interface Spec {
   roles: Record<string, Role>
   kind: string
   aggregate?: { statistic: string; error: string }
+  /* How a 1-D measure's vectors are reduced to one value each when a scalar
+     kind is selected for it. Only meaningful while that is true — there is no
+     "collapse on/off", the kind decides. */
+  collapse_statistic?: string
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
@@ -748,7 +780,28 @@ export default function PlotStudio({
   }, [])
 
   const setKind = useCallback((kind: string) => {
-    setSpec(prev => (prev ? { ...prev, kind } : prev))
+    // A kind change can also change what the measure IS: a scalar kind on a
+    // 1-D variable collapses it, and the roles a 1-D variable opens with (every
+    // key on "separate figures") leave no replicates, so box and violin would
+    // stay greyed out and this click would appear to do nothing. The backend
+    // decides whether to re-default and what to (`roles.roles_for_kind`); this
+    // applies the answer it already sent.
+    //
+    // Only when that answer describes the spec on screen. The report is a
+    // debounced echo, and a suggestion computed against an older spec could
+    // overwrite a role the user has set since — the one thing the rule promises
+    // never to do.
+    const reportIsForThisSpec = capsSpecRef.current === specKey
+    const suggested = reportIsForThisSpec
+      ? (capabilities?.kinds ?? []).find(info => info.kind === kind)?.roles ?? null
+      : null
+    setSpec(prev =>
+      prev ? { ...prev, kind, ...(suggested ? { roles: suggested } : {}) } : prev
+    )
+  }, [capabilities, specKey])
+
+  const setCollapseStatistic = useCallback((statistic: string) => {
+    setSpec(prev => (prev ? { ...prev, collapse_statistic: statistic } : prev))
   }, [])
 
   const setAggregate = useCallback((patch: { statistic?: string; error?: string }) => {
@@ -1356,14 +1409,14 @@ export default function PlotStudio({
   // --- render -------------------------------------------------------------
   if (loadError) {
     return (
-      <Shell variable={title} shape={capabilities?.shape} onClose={onClose} embedded={embedded}>
+      <Shell variable={title} shape={shapeBadge(capabilities)} onClose={onClose} embedded={embedded}>
         <div style={styles.error}>Could not open the plot panel: {loadError}</div>
       </Shell>
     )
   }
   if (!describe) {
     return (
-      <Shell variable={title} shape={capabilities?.shape} onClose={onClose} embedded={embedded}>
+      <Shell variable={title} shape={shapeBadge(capabilities)} onClose={onClose} embedded={embedded}>
         <div style={styles.note}>Loading…</div>
       </Shell>
     )
@@ -1371,7 +1424,7 @@ export default function PlotStudio({
   if (describe.eligible === false) {
     // The empty state the design doc insists on: say why, never draw blank axes.
     return (
-      <Shell variable={title} shape={capabilities?.shape} onClose={onClose} embedded={embedded}>
+      <Shell variable={title} shape={shapeBadge(capabilities)} onClose={onClose} embedded={embedded}>
         <div style={styles.note}>{describe.reason}</div>
       </Shell>
     )
@@ -1393,7 +1446,7 @@ export default function PlotStudio({
       variable={title}
       // The measure's shape used to head its own sidebar section, which spent a
       // whole block restating the title. It belongs to the title.
-      shape={capabilities?.shape}
+      shape={shapeBadge(capabilities)}
       onClose={onClose}
       embedded={embedded}
       panelRef={panelRef}
@@ -1585,6 +1638,33 @@ export default function PlotStudio({
                 {KIND_LABELS[info.kind] ?? info.kind}
               </label>
             ))}
+            {/* Shown only for a 1-D measure, because only there is there
+                anything to reduce. No on/off switch beside it: the KIND says
+                whether the vectors are drawn or summarized, so "collapse on,
+                kind = line" is a state that cannot be expressed rather than one
+                the panel has to adjudicate. */}
+            {capabilities?.collapse?.applies && (
+              <>
+                <label style={styles.factorRow}>
+                  <span style={styles.factorName}>Collapse 1-D</span>
+                  <select
+                    value={spec?.collapse_statistic ?? 'mean'}
+                    onChange={e => setCollapseStatistic(e.target.value)}
+                    style={styles.select}
+                  >
+                    <option value="mean">Mean</option>
+                    <option value="median">Median</option>
+                  </select>
+                </label>
+                <div style={styles.hint}>
+                  {capabilities.collapse.active
+                    ? `Each vector is reduced to its ${
+                        spec?.collapse_statistic ?? 'mean'
+                      } — one value per record — and plotted like any scalar.`
+                    : 'Applies to scatter, strip, box, violin and bar: each vector becomes one value per record.'}
+                </div>
+              </>
+            )}
           </Section>
 
           {faceted && (

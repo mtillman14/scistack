@@ -43,6 +43,7 @@ from .capability import (
     variant_summary,
     why_unavailable,
 )
+from .collapse import apply_collapse, collapse_note, collapses, effective_shape
 from .codegen import (
     default_function_name,
     extract_spec,
@@ -58,6 +59,7 @@ from .roles import (
     default_roles,
     default_spec,
     fanout_keys,
+    roles_for_kind,
     validate,
 )
 from .shape import Shape, classify_column, classify_value, is_plottable
@@ -74,6 +76,7 @@ from .spec import (
     PlotKind,
     PlotSpec,
     Role,
+    SCALAR_KINDS,
     Statistic,
     StyleOptions,
     VariantSet,
@@ -126,6 +129,12 @@ __all__ = [
     "LevelGroup",
     "LocationFilter",
     "VariantSet",
+    "SCALAR_KINDS",
+    # 1-D -> scalar collapse
+    "collapses",
+    "effective_shape",
+    "apply_collapse",
+    "collapse_note",
     # data
     "LongTable",
     "FactorInfo",
@@ -169,6 +178,7 @@ __all__ = [
     "default_spec",
     "complete_roles",
     "fanout_keys",
+    "roles_for_kind",
     "validate",
     "RoleError",
     # resolution + rendering

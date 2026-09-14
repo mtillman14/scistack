@@ -202,3 +202,31 @@ def position_stats(
                 low[start:stop] = c - spread
                 high[start:stop] = c + spread
     return centre, low, high, count
+
+
+def collapse_cells(arrays: list[np.ndarray], statistic: Statistic) -> np.ndarray:
+    """One value per CELL: the centre of each cell's own samples.
+
+    The reduction behind "plot this 1-D variable as a violin" — a per-trial
+    vector of step lengths becomes one step length per trial, after which the
+    measure is an ordinary scalar (``collapse.apply_collapse``,
+    ``docs/claude/measure-shape-and-collapse.md``).
+
+    Unlike everything else in this module this reduces ALONG each cell rather
+    than across cells at a position, so there is nothing to pad and no block
+    budget to respect: each cell is one ``nanmean``/``nanmedian`` over its own
+    buffer. An empty or all-NaN cell yields NaN — the caller keeps that row and
+    counts it rather than dropping it, so "this trial recorded nothing" cannot
+    read as "this trial does not exist".
+
+    Semantics are pandas' (``Series.mean()``/``.median()``): NaN samples are
+    skipped, not propagated.
+    """
+    out = np.full(len(arrays), np.nan)
+    reduce_fn = np.nanmedian if statistic is Statistic.MEDIAN else np.nanmean
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN cells
+        for i, cell in enumerate(arrays):
+            if cell.size:
+                out[i] = reduce_fn(cell)
+    return out

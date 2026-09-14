@@ -189,8 +189,28 @@ duplicating scidb's rule here would hide the regression instead of surfacing it.
 8. Warn on levels that matched nothing; report per-level row counts in
    `capabilities` so the GUI can show them.
 
+## A derived table that is not a factor
+
+Everything above is about reshaping something into a **factor**. The same
+derived-table mechanism has since grown a member that reshapes the **measure**:
+`collapse.apply_collapse` rewrites a 1-D measure's cells to one value each and
+flips its shape to `SCALAR`, which is what lets scatter/box/violin/bar be offered
+for a vector-valued variable (added 2026-09-14).
+
+It passes the same "does the spec decide?" test — the plot kind decides — and it
+obeys invariants 2 and 4 here unchanged (it must exist before `validate` and
+`complete_roles`; the reshape is mirrored in `codegen` and parity-tested).
+Invariants 1, 3, 5 and 6 are about factors and do not apply to it.
+
+The one thing it adds to this note's model: a derived table may now change what
+`table.shape_of(measure)` answers, so **the capability report has to hold two
+tables at once** — the kind list is computed from the raw shape and everything
+else from the derived one. See `docs/claude/measure-shape-and-collapse.md`.
+
 ## See also
 
+- `docs/claude/measure-shape-and-collapse.md` — shape as the second axis of the
+  control surface, and the derived table that changes the measure
 - `docs/claude/plotting-library-design.md` — the `PlotSpec`-is-the-product idea
 - `docs/claude/plot-variant-rows.md` — the `Variant` factor in detail
 - `docs/claude/variant-axis-node-binding.md` — which canvas node supplies an

@@ -78,6 +78,21 @@ class PlotKind(str, Enum):
         return self.value
 
 
+#: Kinds whose y position is ONE value per row.
+#:
+#: Membership is what makes a kind imply a collapse: selected on a 1-D measure,
+#: any of these means "reduce each vector to one value first"
+#: (:mod:`scistackplot.collapse`). LINE and BAND are the kinds that read the
+#: samples, and HEATMAP wants a matrix, so none of the three appear here.
+SCALAR_KINDS = (
+    PlotKind.SCATTER,
+    PlotKind.STRIP,
+    PlotKind.BOX,
+    PlotKind.VIOLIN,
+    PlotKind.BAR,
+)
+
+
 class Statistic(str, Enum):
     MEAN = "mean"
     MEDIAN = "median"
@@ -546,6 +561,19 @@ class PlotSpec:
     x_layers: list[str] = field(default_factory=list)
     kind: PlotKind = PlotKind.SCATTER
     aggregate: Aggregation = field(default_factory=Aggregation)
+    #: How a 1-D measure's cells are reduced to one value each when a scalar
+    #: kind is selected for it — the "measure of centre" a violin of per-trial
+    #: vectors is drawn from. See :mod:`scistackplot.collapse`.
+    #:
+    #: There is deliberately no "collapse on/off" field: the KIND decides
+    #: (:data:`SCALAR_KINDS`), so ``collapse_statistic=median`` with
+    #: ``kind=line`` — a state a checkbox would allow and then have to
+    #: adjudicate — simply means nothing and does nothing.
+    #:
+    #: Separate from ``aggregate.statistic``, which is the centre across
+    #: REPLICATES. Same two words, different question: median within each trial,
+    #: mean across trials is a perfectly ordinary thing to ask for.
+    collapse_statistic: Statistic = Statistic.MEAN
     index_column: str | None = None
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
@@ -645,6 +673,7 @@ class PlotSpec:
         raw = asdict(self)
         raw["roles"] = {k: str(v) for k, v in self.roles.items()}
         raw["kind"] = str(self.kind)
+        raw["collapse_statistic"] = str(self.collapse_statistic)
         raw["aggregate"] = {
             "statistic": str(self.aggregate.statistic),
             "error": str(self.aggregate.error),
@@ -673,6 +702,9 @@ class PlotSpec:
             roles={k: Role(v) for k, v in (raw.get("roles") or {}).items()},
             x_layers=list(raw.get("x_layers") or []),
             kind=PlotKind(raw.get("kind", PlotKind.SCATTER)),
+            collapse_statistic=Statistic(
+                raw.get("collapse_statistic", Statistic.MEAN)
+            ),
             aggregate=Aggregation(
                 statistic=Statistic(agg.get("statistic", Statistic.MEAN)),
                 error=ErrorBand(agg.get("error", ErrorBand.SD)),

@@ -29,6 +29,7 @@ LAYER = "scistackplot"
 PLAN_PHASES = [
     "variant_sets",
     "level_groups",
+    "collapse_1d",
     "roles",
     "apply_filters",
     "group_fanout",

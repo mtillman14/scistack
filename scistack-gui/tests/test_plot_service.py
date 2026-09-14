@@ -1991,3 +1991,95 @@ def test_an_invalid_spec_releases_the_hold(populated_db, per_request_policy):
     assert result["ok"] is False
     assert per_request_policy._db_open is False
     assert per_request_policy._db_refcount == 0
+
+
+# --- a 1-D measure drawn by a scalar kind ------------------------------------
+
+
+def test_capabilities_offer_the_scalar_kinds_for_a_1d_variable(populated_db):
+    """RawSignal holds a 10-sample vector per record. Collapsing each vector to
+    its centre makes the scalar kinds meaningful for it, and the panel learns
+    that from the report alone."""
+    spec = _pooled_spec(populated_db)
+
+    report = plot_service.capabilities_for(populated_db, spec)
+
+    assert report["collapse"]["applies"] is True
+    assert report["collapse"]["active"] is False, "a band draws the samples"
+    assert "violin" in report["available"]
+    assert "band" in report["available"], "and the 1-D kinds stay available"
+
+
+def test_selecting_a_scalar_kind_reports_a_scalar_figure(populated_db):
+    spec = _pooled_spec(populated_db)
+    spec["kind"] = "violin"
+
+    report = plot_service.capabilities_for(populated_db, spec)
+
+    assert report["shape"] == "scalar", "what the figure is"
+    assert report["raw_shape"] == "1d", "what the data is"
+    assert report["collapse"]["active"] is True
+    # The panel must still be able to go back.
+    assert "line" in report["available"]
+
+
+def test_a_collapsed_1d_variable_resolves_to_one_point_per_record(populated_db):
+    spec = _pooled_spec(populated_db)
+    spec["kind"] = "violin"
+    spec["collapse_statistic"] = "median"
+
+    result = plot_service.resolve_figures(populated_db, spec)
+
+    assert result["ok"] is True
+    rows = sum(
+        len(trace.get("y") or [])
+        for figure in result["figures"]
+        for trace in figure["figure"]["data"]
+    )
+    assert 0 < rows <= 4, "four records, not forty samples"
+
+
+def test_the_kind_list_carries_the_roles_a_scalar_kind_would_open_with(populated_db):
+    """The opening spec iterates every schema key, which leaves no replicates.
+    The panel applies these synchronously when the user picks a violin, so the
+    first click draws a distribution instead of doing nothing visible.
+
+    This fixture has exactly TWO factors, which is the case that caught the
+    first version: the plain scalar default is ``subject=x, session=color`` —
+    one point per combination, nothing to distribute — so a distribution kind
+    also frees the innermost key.
+    """
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+
+    report = plot_service.capabilities_for(populated_db, spec)
+    kinds = {info["kind"]: info for info in report["kinds"]}
+
+    assert kinds["violin"]["collapses"] is True
+    assert kinds["violin"]["roles"], "a shape change, so a suggestion"
+    assert kinds["violin"]["roles"]["session"] == "free"
+    assert kinds["band"]["roles"] is None, "no shape change, no suggestion"
+
+
+def test_a_violin_is_clickable_from_the_opening_state(populated_db):
+    """And the loop closes: the opening roles leave no replicates, so the kind
+    that would supply them has to be selectable anyway — it is judged against
+    the roles it brings with it, not against the ones on screen."""
+    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+
+    report = plot_service.capabilities_for(populated_db, spec)
+
+    assert report["has_replicates"] is False
+    assert "violin" in report["available"]
+    assert "band" not in report["available"], "BAND brings no roles of its own"
+
+
+def test_the_export_of_a_collapsed_1d_variable_runs(populated_db):
+    pytest.importorskip("seaborn")
+    spec = _pooled_spec(populated_db)
+    spec["kind"] = "violin"
+
+    result = plot_service.export_code(populated_db, spec)
+
+    assert "np.asarray" in result["function_source"]
+    assert ".explode(" not in result["function_source"]
+    compile(result["source"], "<generated>", "exec")

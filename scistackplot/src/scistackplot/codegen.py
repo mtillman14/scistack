@@ -19,6 +19,7 @@ import keyword
 import re
 from typing import NamedTuple
 
+from .collapse import apply_collapse, collapses, effective_shape
 from .groups import apply_level_groups
 from .reduce import plan_layout
 from .roles import complete_roles, fanout_keys
@@ -79,8 +80,16 @@ def generate_plot_function(
     """
     name = function_name or default_function_name(spec)
     table = apply_level_groups(spec, apply_variant_sets(spec, table))
+    # The collapse is NOT applied to `table` — the endpoint receives the frame
+    # as the data holds it, so the reduction has to be EMITTED (`_preamble`),
+    # exactly as the melt and the variant concat are. What the rest of codegen
+    # needs is the shape the figure is drawn from, which is scalar once a
+    # scalar kind has been chosen for a 1-D measure: the x expression, the
+    # nested-x layers and the plot call are then the scalar ones, and the
+    # exported figure is the previewed figure.
     roles = complete_roles(spec, table)
-    shape = table.shape_of(spec.y_measure)
+    shape = effective_shape(spec, table)
+    collapsing = collapses(spec, table)
 
     body: list[str] = []
     body.extend(_variant_preamble(spec, table))
@@ -91,6 +100,7 @@ def generate_plot_function(
         f"def {name}({', '.join(function_params(spec))}):",
         f'    """{_docstring(spec, table, roles)}"""',
         "    import matplotlib.pyplot as plt",
+        *(["    import numpy as np"] if collapsing else []),
         "    import pandas as pd",
         "    import seaborn as sns",
         "",
@@ -166,6 +176,17 @@ def single_variant_variable(spec: PlotSpec) -> str | None:
         return None
     variable = sets[0].variable
     return variable if variable and variable != spec.y_measure else None
+
+
+def _slug(name: str) -> str:
+    """A variable name as a Python identifier fragment.
+
+    Generated helpers are named after the variable they act on — a reader of an
+    exported endpoint should see ``_collapse_rawemg`` rather than ``_collapse``
+    and know which measure it belongs to without scrolling.
+    """
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_").lower() or "value"
+    return f"v_{slug}" if slug[0].isdigit() or keyword.iskeyword(slug) else slug
 
 
 def group_param(variable: str) -> str:
@@ -287,7 +308,17 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict) -> str:
             f"\n\n    One figure per {', '.join(iterate)} — these are the "
             f"for_each iteration keys, so they are NOT columns here."
         )
-    shape_of_y = table.shape_of(spec.y_measure)
+    # The shape the FIGURE is drawn from: a 1-D measure under a scalar kind has
+    # been collapsed by the time any of these decisions apply, and asking the
+    # table would describe the data instead of the plot — nested-x groups would
+    # go unmentioned and the y-limit plan would be computed for a line.
+    shape_of_y = effective_shape(spec, table)
+    if collapses(spec, table):
+        note += (
+            f"\n\n    Each {spec.y_measure} vector is reduced to its "
+            f"{spec.collapse_statistic} first, one value per record — so every "
+            f"point\n    below is a summary of a whole observation, not a sample."
+        )
     if _nested_x_layers(spec, table, roles, shape_of_y):
         note += (
             "\n\n    The x axis nests "
@@ -348,6 +379,38 @@ def _preamble(spec, table, roles, shape) -> list[str]:
                 f"    var_name={field.name!r},",
                 f"    value_name={spec.y_measure!r},",
                 ")",
+                "",
+            ]
+        )
+
+    # A 1-D measure drawn by a scalar kind is collapsed to one value per record
+    # BEFORE anything is filtered — the same order `reduce._build_plan_timed`
+    # uses, and the reason is the same: a range filter on the measure filters
+    # the collapsed value, which is the only thing it could mean.
+    #
+    # Written as a named helper rather than `df[y].map(np.nanmean)` for two
+    # reasons: `np.nanmean` warns on an all-NaN cell (the interactive path
+    # silences it, and a generated endpoint printing RuntimeWarnings per record
+    # is noise nobody can act on), and the export is meant to READ as what it
+    # does. The semantics are pandas' `Series.mean()` — NaN samples skipped —
+    # which is what `series_stats.collapse_cells` computes.
+    if collapses(spec, table):
+        y = spec.y_measure
+        reduction = (
+            "np.median(_samples)"
+            if spec.collapse_statistic is Statistic.MEDIAN
+            else "_samples.mean()"
+        )
+        lines.extend(
+            [
+                f"# {y}: one value per record, the {spec.collapse_statistic} of "
+                f"each vector",
+                f"def _collapse_{_slug(y)}(_cell):",
+                '    _samples = np.asarray(_cell, dtype="float64").ravel()',
+                "    _samples = _samples[~np.isnan(_samples)]",
+                f'    return float({reduction}) if _samples.size else float("nan")',
+                "",
+                f"df[{y!r}] = df[{y!r}].map(_collapse_{_slug(y)})",
                 "",
             ]
         )
@@ -738,6 +801,13 @@ def _y_limit_plan(spec: PlotSpec, table: LongTable, roles: dict) -> tuple:
     y_axis = spec.y_axis
     if y_axis.is_manual:
         return True, (float(y_axis.minimum), float(y_axis.maximum)), ""
+
+    # Baked-in limits must be the limits of what is DRAWN. For a collapsed 1-D
+    # measure that is the range of the per-record means, not of every sample —
+    # off by the whole within-record spread, which is the bulk of it. The
+    # collapse is recomputed here rather than passed in because this is the only
+    # step of generation that touches values at all.
+    table = apply_collapse(spec, table)
 
     scope = eligible_scope(y_axis.scope, roles, table)
     iterate = fanout_keys(spec, table)

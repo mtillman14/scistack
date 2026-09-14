@@ -333,3 +333,102 @@ def test_a_layout_with_holes_says_seaborn_cannot_express_it(struct_table):
     source = generate_plot_function(spec, struct_table)
     assert "seaborn cannot express" in source
     assert "col_order=" not in source
+
+
+# --- 1-D collapsed to a scalar ----------------------------------------------
+#
+# The reshape exists twice — once interactively, once in generated code — so
+# these tests run BOTH and compare the numbers, not the text. Asserting only on
+# the source would pass while the exported figure differed from the preview,
+# which is the failure this whole family of tests exists to catch.
+
+
+def _collapsed_spec(**kwargs) -> PlotSpec:
+    return PlotSpec(
+        measures=["Signal"],
+        kind=PlotKind.VIOLIN,
+        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        **kwargs,
+    )
+
+
+def test_generated_violin_of_a_1d_measure_runs(series_table, series_frame):
+    source = generate_plot_function(_collapsed_spec(), series_table)
+
+    assert "import numpy as np" in source
+    assert "def _collapse_signal(_cell):" in source
+    assert ".explode(" not in source, "the samples are summarized, not exploded"
+    assert "sns.catplot" in source
+
+    figure = _run(source, series_frame, "plot_signal")
+    assert figure.axes
+    matplotlib.pyplot.close(figure)
+
+
+def test_the_generated_collapse_matches_the_preview(series_table, series_frame):
+    """The numbers the ENDPOINT plots must be the numbers the panel showed.
+
+    Read off the rendered figure rather than off the source, because the
+    failure this guards against — the export summarizing differently from the
+    preview — produces perfectly valid-looking code.
+    """
+    from scistackplot import resolve
+    from scistackplot.resolved import Y
+
+    # A scatter of a 1-D measure: a scalar kind, so it collapses, and seaborn's
+    # strip marks carry the plotted values where a violin's outline does not.
+    spec = PlotSpec(
+        measures=["Signal"],
+        kind=PlotKind.SCATTER,
+        roles={"subject": Role.X, "session": Role.FREE, "trial": Role.FREE},
+    )
+
+    figure = _run(generate_plot_function(spec, series_table), series_frame, "plot_signal")
+    exported = sorted(
+        float(y)
+        for axis in figure.axes
+        for collection in axis.collections
+        for _x, y in collection.get_offsets()
+    )
+    matplotlib.pyplot.close(figure)
+
+    (preview,) = resolve(spec, series_table)
+    drawn = sorted(
+        value for panel in preview.panels for value in panel.frame[Y].tolist()
+    )
+
+    assert exported == pytest.approx(drawn)
+    assert len(drawn) == len(series_frame), "one point per record, not per sample"
+
+
+def test_the_generated_median_collapse_uses_the_median(series_table, series_frame):
+    source = generate_plot_function(
+        _collapsed_spec(collapse_statistic=Statistic.MEDIAN), series_table
+    )
+    assert "np.median(_samples)" in source
+    figure = _run(source, series_frame, "plot_signal")
+    matplotlib.pyplot.close(figure)
+
+
+def test_the_docstring_says_the_points_are_summaries(series_table):
+    source = generate_plot_function(_collapsed_spec(), series_table)
+    assert "reduced to its mean" in source
+
+
+def test_the_embedded_spec_round_trips_with_the_statistic(series_table):
+    spec = _collapsed_spec(collapse_statistic=Statistic.MEDIAN)
+    recovered = extract_spec(generate_plot_function(spec, series_table))
+    assert recovered.collapse_statistic is Statistic.MEDIAN
+    assert recovered.kind is PlotKind.VIOLIN
+
+
+def test_a_line_of_the_same_measure_still_explodes(series_table, series_frame):
+    """The collapse is implied by the KIND: a 1-D kind must be untouched."""
+    spec = PlotSpec(
+        measures=["Signal"],
+        kind=PlotKind.LINE,
+        roles={"subject": Role.COLOR, "session": Role.FREE, "trial": Role.FREE},
+    )
+    source = generate_plot_function(spec, series_table)
+    assert ".explode(" in source
+    assert "_collapse_signal" not in source

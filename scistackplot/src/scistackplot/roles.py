@@ -10,9 +10,10 @@ invariant in TypeScript.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 from .shape import Shape
-from .spec import MAX_X_LAYERS, SINGLE_ASSIGNMENT_ROLES, PlotSpec, Role
+from .spec import MAX_X_LAYERS, SINGLE_ASSIGNMENT_ROLES, PlotKind, PlotSpec, Role
 from .table import LongTable
 from .variants import VARIABLE_COLUMN, VARIANT_FACTOR
 
@@ -21,7 +22,9 @@ class RoleError(ValueError):
     """An invalid role assignment. Message names the one-line fix."""
 
 
-def default_roles(table: LongTable, measure: str | None = None) -> dict[str, Role]:
+def default_roles(
+    table: LongTable, measure: str | None = None, *, shape: Shape | None = None
+) -> dict[str, Role]:
     """
     A reasonable starting assignment for a freshly opened table.
 
@@ -40,9 +43,15 @@ def default_roles(table: LongTable, measure: str | None = None) -> dict[str, Rol
     Either way a variant factor defaults to COLOR so that two pipeline
     variants are visibly separated on first render rather than silently
     overplotted, and a struct's fields become one subplot each.
+
+    ``shape`` overrides what the table says the measure holds. That is for the
+    one caller who knows better: a 1-D measure drawn by a scalar kind is
+    collapsed before it is plotted, so it should open the way a SCALAR measure
+    does (:func:`roles_for_kind`).
     """
     measure = measure or (table.measure_names[0] if table.measures else None)
-    shape = table.shape_of(measure) if measure else Shape.UNKNOWN
+    if shape is None:
+        shape = table.shape_of(measure) if measure else Shape.UNKNOWN
 
     roles: dict[str, Role] = {}
     variants = [f for f in table.factors if f.is_variant and len(f.levels) > 1]
@@ -342,6 +351,81 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
                 f"index_column {spec.index_column!r} is neither a column of the "
                 f"table nor its declared index column ({table.index_column!r})."
             )
+
+
+def roles_for_kind(
+    spec: PlotSpec, table: LongTable, kind: "PlotKind"
+) -> dict[str, Role] | None:
+    """The roles ``kind`` should open with, or None to keep the current ones.
+
+    A 1-D measure opens with every schema key on ITERATE (one record per
+    figure, decided 2026-09-13 for the opening cost); a scalar measure opens
+    with the leading factor on X, the next on COLOR, the rest FREE. Selecting a
+    scalar kind for a 1-D measure moves it from the first world to the second —
+    and with everything iterated there are no replicates, so box and violin
+    would stay greyed out with "needs replicates" and the first click on Violin
+    would appear to do nothing.
+
+    So the roles are re-defaulted, but **only when they are still the untouched
+    defaults for the shape they were built for**. A user who has assigned roles
+    by hand keeps every one of them; this never overwrites a decision, which is
+    why the test is equality against ``default_roles`` rather than a heuristic
+    about which roles "look default".
+
+    ``table`` is the derived table BEFORE any collapse — this has to see the
+    measure as the data holds it to know that a shape change is happening.
+    """
+    from .collapse import effective_shape
+
+    if not spec.measures or spec.y_measure not in table.measure_names:
+        return None
+
+    current = effective_shape(spec, table)
+    proposed = effective_shape(replace(spec, kind=kind), table)
+    if current is proposed:
+        return None
+
+    measure = spec.y_measure
+    if spec.roles != default_roles(table, measure, shape=current):
+        return None
+    return _with_replicates_for(default_roles(table, measure, shape=proposed), table, kind)
+
+
+def _with_replicates_for(
+    roles: dict[str, Role], table: LongTable, kind: "PlotKind"
+) -> dict[str, Role]:
+    """Guarantee a FREE factor when ``kind`` needs one to draw anything.
+
+    A distribution kind summarizes several rows per x position, so it needs
+    replicates — and the plain defaults do not always leave any. With two
+    factors the scalar default is ``subject=X, session=COLOR``: one point per
+    combination, nothing to distribute. With one it is ``subject=X``: one point
+    per violin. Both are the "the click does nothing visible" failure this
+    function's caller exists to prevent, arriving by a different route than the
+    all-ITERATE case it was written for.
+
+    So the LAST plain factor is freed. Last because the defaults assign in
+    declaration order — outermost schema key first — and the innermost key is
+    the one whose levels are replicates of each other: trials within a session,
+    not sessions within a study. Freeing ``subject`` and keeping ``trial`` on
+    the axis would pool across people, which is a different (and usually wrong)
+    figure.
+
+    Only a PLAIN factor is eligible. A variant factor left FREE pools two
+    pipelines' results as replicates of one condition, which ``validate``
+    refuses outright — freeing one here would answer a greyed-out kind with an
+    error message, which is worse.
+    """
+    from .capability import DISTRIBUTION_KINDS
+
+    if kind not in DISTRIBUTION_KINDS:
+        return roles
+    plain = [f.name for f in table.factors if not f.is_variant and not f.is_field]
+    if any(roles.get(name) is Role.FREE for name in plain):
+        return roles
+    if not plain:
+        return roles
+    return {**roles, plain[-1]: Role.FREE}
 
 
 def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:

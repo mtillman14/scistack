@@ -46,6 +46,7 @@ from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
 from .reducer import reducer_for
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
+from .collapse import apply_collapse, collapse_note, collapses
 from .variants import apply_variant_sets, strip_answered_roles
 
 LAYER = "scistackplot"
@@ -116,7 +117,22 @@ def _plan_cache_key(spec: PlotSpec, table: LongTable) -> "tuple | None":
         raw = spec.to_dict()
         for field_name in _PLAN_IRRELEVANT_FIELDS:
             raw.pop(field_name, None)
-        return (id(table), json.dumps(raw, sort_keys=True, default=str))
+        # `kind` is dropped above as presentation — and for a 1-D measure it is
+        # NOT, because the kind decides whether the measure is collapsed to a
+        # scalar first (`collapse.collapses`). So the DECISION goes in the key,
+        # rather than the kind: box and violin still share one plan, and a line
+        # and a violin of the same 1-D measure — different frames, different
+        # roles, different y limits — can never share one.
+        collapsing = collapses(spec, table)
+        if not collapsing:
+            # Only meaningful while collapsing; in the key unconditionally it
+            # would invalidate a line's plan when the statistic dropdown moved.
+            raw.pop("collapse_statistic", None)
+        return (
+            id(table),
+            json.dumps(raw, sort_keys=True, default=str),
+            collapsing,
+        )
     except Exception:  # pragma: no cover - a spec that will fail louder later
         return None
 
@@ -161,7 +177,7 @@ def _plan_cache_miss_reason(key: tuple, table: LongTable) -> str:
     if not entries:
         return "cache empty (first resolve of this table)"
 
-    table_id, wanted = key
+    table_id, wanted, collapsing = key
     same_table = [k for k in entries if k[0] == table_id]
     if not same_table:
         return (
@@ -177,6 +193,16 @@ def _plan_cache_miss_reason(key: tuple, table: LongTable) -> str:
         return f"{len(same_table)} entry(ies) for this table, none comparable"
     closest = min(comparable, key=lambda k: len(_differing_fields(wanted, k[1]) or []))
     differences = _describe_differences(wanted, closest[1])
+    if not differences and closest[2] != collapsing:
+        # The spec JSON matches and the plans still differ: the plot KIND moved
+        # a 1-D measure into or out of its collapsed form, which is a different
+        # frame rather than a different drawing (`_plan_cache_key`). Said plainly
+        # because "identical spec, cache miss" otherwise reads as a cache bug.
+        return (
+            "same spec, different collapse: the kind "
+            f"{'now collapses' if collapsing else 'no longer collapses'} this "
+            "1-D measure to a scalar"
+        )
     if not differences:
         # Same table id AND same spec, yet the lookup missed. Either CPython
         # recycled the id onto a different object (the trap `_plan_cache`'s
@@ -491,6 +517,23 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
     # synthesized (docs/claude/synthetic-factors.md).
     with timer.phase("level_groups"):
         table = apply_level_groups(spec, table)
+    # The third derived table, and the only one that rewrites the MEASURE: a
+    # scalar kind selected for a 1-D measure reduces every cell to one value
+    # here, and everything below this line sees an ordinary scalar measure.
+    #
+    # Its position is load-bearing. Before `validate`, so the rules that refuse
+    # a factor on X for a 1-D measure (whose x axis is its own index) permit one
+    # once the measure genuinely is scalar. Before `apply_filters`, so a range
+    # filter on the measure filters the collapsed value — the only thing it
+    # could mean. Before `y_limits`, so extents are taken over one float per
+    # record rather than every sample.
+    with timer.phase("collapse_1d"):
+        # Taken BEFORE the collapse — afterwards the measure is scalar and the
+        # table can no longer say it was ever anything else. The figure has to
+        # carry it: a violin of trial means and a violin of raw samples look
+        # identical and mean entirely different things.
+        collapsed_note = collapse_note(spec, table)
+        table = apply_collapse(spec, table)
     with timer.phase("roles"):
         spec = strip_answered_roles(spec, base, table)
         validate(spec, table)
@@ -576,7 +619,7 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         index_column=index_column,
         explode=explode,
         iterate=iterate,
-        notes=_fanout_notes(spec, table),
+        notes=[*([collapsed_note] if collapsed_note else []), *_fanout_notes(spec, table)],
         groups=groups,
         frame=frame,
         y_scope=eligible_scope(spec.y_axis.scope, roles, table),

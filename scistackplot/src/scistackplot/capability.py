@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .shape import Shape
-from .spec import PlotKind, PlotSpec, Role
+from .spec import SCALAR_KINDS, PlotKind, PlotSpec, Role
 from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, LongTable
 
 #: Kinds that summarize several rows per x position into one mark.
@@ -203,8 +203,18 @@ def available_plots(
     roles: dict[str, Role],
     *,
     has_x_measure: bool = False,
+    collapsible: bool = False,
 ) -> list[PlotKind]:
-    """Plot kinds that can be rendered for this shape and role assignment."""
+    """Plot kinds that can be rendered for this shape and role assignment.
+
+    ``collapsible`` says a 1-D measure may be reduced to one value per record
+    first (:mod:`scistackplot.collapse`), which makes the scalar kinds
+    selectable for it — picking one IS the request to collapse.
+
+    ``shape`` must then be the **raw** shape, not the effective one. Computing
+    this from a table whose measure has already been collapsed would drop LINE
+    and BAND the moment a violin was selected, leaving no way back to a line.
+    """
     if shape is Shape.MATRIX_2D:
         return [PlotKind.HEATMAP]
 
@@ -215,17 +225,25 @@ def available_plots(
 
     replicates = has_replicates(roles)
 
-    if shape is Shape.SERIES_1D:
-        kinds = [PlotKind.LINE]
-        if replicates:
-            kinds.append(PlotKind.BAND)
-        return kinds
-
-    if shape is Shape.SCALAR:
+    def scalar_kinds() -> list[PlotKind]:
         kinds = [PlotKind.SCATTER, PlotKind.STRIP]
         if replicates:
             kinds.extend([PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR])
         return kinds
+
+    if shape is Shape.SERIES_1D:
+        kinds = [PlotKind.LINE]
+        if replicates:
+            kinds.append(PlotKind.BAND)
+        # The union, not a switch: the 1-D kinds draw the samples and the
+        # scalar ones draw a summary of them, and both are legitimate views of
+        # the same variable at the same time.
+        if collapsible:
+            kinds.extend(scalar_kinds())
+        return kinds
+
+    if shape is Shape.SCALAR:
+        return scalar_kinds()
 
     return []
 
@@ -257,13 +275,21 @@ def default_plot(
     return kinds[0]
 
 
-def why_unavailable(kind: PlotKind, shape: Shape, roles: dict[str, Role]) -> str | None:
+def why_unavailable(
+    kind: PlotKind,
+    shape: Shape,
+    roles: dict[str, Role],
+    *,
+    collapsible: bool = False,
+) -> str | None:
     """
     Explain a kind's absence, for GUI tooltips on disabled options.
 
-    Returns None when the kind IS available.
+    Returns None when the kind IS available. ``collapsible`` carries the same
+    meaning as in :func:`available_plots` and must be passed the same way, or a
+    kind the panel offers would come with a reason it is refused.
     """
-    if kind in available_plots(shape, roles):
+    if kind in available_plots(shape, roles, collapsible=collapsible):
         return None
     if shape is Shape.MATRIX_2D:
         return "2-D measures render as a heatmap."
@@ -287,6 +313,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     which kinds are selectable, why the others are not, and what the default
     would be for the current role assignment.
     """
+    from .collapse import apply_collapse, collapses
     from .groups import apply_level_groups
     from .roles import complete_roles
     from .variants import apply_variant_sets, strip_answered_roles
@@ -298,29 +325,99 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     # factor the render is about to reject.
     derived = apply_level_groups(spec, apply_variant_sets(spec, table))
     spec = strip_answered_roles(spec, table, derived)
-    roles = complete_roles(spec, derived)
-    shape = derived.shape_of(spec.y_measure)
+
+    # TWO tables, deliberately. ``derived`` still holds the measure as the data
+    # holds it; ``collapsed`` holds it as the figure draws it. Everything about
+    # the CURRENT figure — roles, factors, grouping, the reported shape — is
+    # computed from ``collapsed``, and only the KIND LIST is computed from the
+    # raw shape. Computing the kind list from ``collapsed`` would drop LINE and
+    # BAND as soon as a violin was selected, stranding the user on the scalar
+    # kinds with no way back (docs/claude/measure-shape-and-collapse.md).
+    collapsed = apply_collapse(spec, derived)
+    roles = complete_roles(spec, collapsed)
+    raw_shape = derived.shape_of(spec.y_measure)
+    shape = collapsed.shape_of(spec.y_measure)
+    collapsing = collapses(spec, derived)
+    collapsible = raw_shape is Shape.SERIES_1D and spec.x_measure is None
     has_x_measure = spec.x_measure is not None
-    allowed = available_plots(shape, roles, has_x_measure=has_x_measure)
+
+    # Each kind is judged against THE ROLES IT WOULD BE APPLIED WITH, which is
+    # its own suggestion when it has one and the current roles otherwise.
+    #
+    # Without this the re-roll is unreachable from the state it was written for.
+    # A 1-D measure opens with every key iterated, so there are no replicates,
+    # so box/violin/bar are refused — and the user cannot click the kind whose
+    # selection would have supplied the replicates. Judging a kind by the roles
+    # it brings with it closes that loop: clicking Violin both frees a factor
+    # and draws the distribution, in one click.
+    entries = []
+    for kind in PlotKind:
+        suggested = _suggested_role_map(spec, derived, kind)
+        kind_roles = suggested or roles
+        allowed_here = available_plots(
+            raw_shape, kind_roles, has_x_measure=has_x_measure, collapsible=collapsible
+        )
+        entries.append(
+            {
+                "kind": str(kind),
+                "available": kind in allowed_here,
+                "reason": why_unavailable(
+                    kind, raw_shape, kind_roles, collapsible=collapsible
+                ),
+                # Whether picking this kind collapses the measure, so the panel
+                # can say so on the option rather than only after the click.
+                "collapses": collapsible and kind in SCALAR_KINDS,
+                # The roles this kind would open with, when selecting it should
+                # re-default them (``roles_for_kind``). Carried on the option so
+                # the GUI applies it SYNCHRONOUSLY with the click: an RPC would
+                # race the panel's resolve queue and could land after the user
+                # had set a role, overwriting the one decision the rule
+                # promises never to touch.
+                "roles": None
+                if suggested is None
+                else {name: str(role) for name, role in suggested.items()},
+            }
+        )
+    # Derived from the entries rather than computed a second time: two lists
+    # that could disagree about one kind is the bug, not the saving.
+    allowed = [PlotKind(entry["kind"]) for entry in entries if entry["available"]]
 
     return {
+        # What the FIGURE is — scalar while a collapse is in effect. The panel
+        # keys its scalar-only controls (the measure range filter) off this,
+        # and they apply to the collapsed value, which is the only thing they
+        # could mean.
         "shape": str(shape),
+        # What the DATA is. The two differ only during a collapse, and the badge
+        # shows both so a figure never silently claims to be drawing samples.
+        "raw_shape": str(raw_shape),
+        "collapse": {
+            # Whether this variable can be collapsed at all — i.e. whether the
+            # statistic dropdown has anything to control.
+            "applies": collapsible,
+            "active": collapsing,
+            "statistic": str(spec.collapse_statistic),
+        },
         "has_replicates": has_replicates(roles),
         "default": str(default_plot(shape, roles, has_x_measure=has_x_measure) or ""),
         "available": [str(k) for k in allowed],
-        "kinds": [
-            {
-                "kind": str(kind),
-                "available": kind in allowed,
-                "reason": why_unavailable(kind, shape, roles),
-            }
-            for kind in PlotKind
-        ],
+        "kinds": entries,
         "roles": {name: str(role) for name, role in roles.items()},
-        "factors": factor_summary(spec, derived),
-        "grouping": grouping_summary(spec, derived),
+        "factors": factor_summary(spec, collapsed),
+        "grouping": grouping_summary(spec, collapsed),
         "variants": variant_summary(spec, table),
     }
+
+
+def _suggested_role_map(spec, table, kind) -> "dict[str, Role] | None":
+    """The role assignment selecting ``kind`` should apply.
+
+    None means "keep the current roles", which is the common answer — see
+    :func:`~scistackplot.roles.roles_for_kind` for when it is not.
+    """
+    from .roles import roles_for_kind
+
+    return roles_for_kind(spec, table, kind)
 
 
 def factors_menu(spec: PlotSpec, table: LongTable, factor: str) -> list[dict]:
