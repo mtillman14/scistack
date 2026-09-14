@@ -57,7 +57,11 @@ as the `is_latest` signature component, as the `Run:<fn>` level, and as the
   `run-option supersession dropped N record(s) across M location(s)`.
 - `Variant(X, run_options="distribute=true")` / `fn=` → reserved key
   `__run__` / `__run__.<fn>` (`variant.RUN_PIN_PREFIX`), filtered by
-  `_filter_records_by_run_options`. `"latest"` shares `is_latest` with
+  `_filter_records_by_run_options`. A list value is membership ("any of
+  these"), matching branch params — the location picker sends the row's
+  selection with list values, and a `str()` of that matched nothing
+  (2026-09-14). The rule lives in `database._pin_values` and the code-version
+  filter uses it too. `"latest"` shares `is_latest` with
   `code_version="latest"` — one notion of "current". Bare pins resolve like bare
   code pins (one candidate, several → `AmbiguousParamError`, none → no-op).
   `foreach._load_var_type_as_spread` loads **uncollapsed** for a run pin, as it

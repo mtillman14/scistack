@@ -301,3 +301,27 @@ class TestAmbiguity:
                 outputs=[Scaled],
                 subject=[],
             )
+
+
+class TestListValuedPin:
+    """A list value is membership — the rule branch params always had, and the
+    form the Plot Studio location picker sends (``{"__code__.fn": ["v1"]}``).
+    The run-options pin hit this first (``run_options="['distribute=true']"
+    matches nothing``, 2026-09-14); the code pin shared the same ``str(value)``
+    and is closed here pre-emptively through the shared ``_pin_values``."""
+
+    def _load(self, db, pin):
+        return db.load_all_as_df(
+            Scaled, version_id="all", branch_params_filter={f"{CODE_PIN_PREFIX}.scale_signal": pin}
+        )
+
+    def test_single_element_list_selects_that_version(self, two_code_versions):
+        assert len(self._load(two_code_versions, ["v1"])) == len(SUBJECTS)
+        assert len(self._load(two_code_versions, "v1")) == len(SUBJECTS)
+
+    def test_list_is_membership(self, two_code_versions):
+        assert len(self._load(two_code_versions, ["v1", "v2"])) == 2 * len(SUBJECTS)
+
+    def test_a_list_of_only_unknown_versions_still_errors(self, two_code_versions):
+        with pytest.raises(ValueError, match="matches nothing"):
+            self._load(two_code_versions, ["v9"])

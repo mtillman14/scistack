@@ -232,6 +232,25 @@ def _filter_records_by_branch_params(df, branch_params_filter: dict | None, duck
     return df
 
 
+def _pin_values(value) -> tuple[set, object]:
+    """``(wanted_set, wanted)`` for a code/run pin value.
+
+    A list/tuple/set means "any of these" — the membership rule branch params
+    have always had (`_match_branch_param`), and the form the Plot Studio
+    location picker sends: it hands scidb the row's selection as it holds it,
+    with list values (``{"__run__.fn": ["distribute=true"]}``). ``str()`` of
+    that is the literal text ``"['distribute=true']"``, which matched nothing
+    (2026-09-14). ``wanted`` is the scalar when there is exactly one, else the
+    sorted list — for messages only.
+    """
+    if isinstance(value, (list, tuple, set, frozenset)):
+        wanted_set = {str(v) for v in value}
+    else:
+        wanted_set = {str(value)}
+    wanted = sorted(wanted_set)[0] if len(wanted_set) == 1 else sorted(wanted_set)
+    return wanted_set, wanted
+
+
 def _filter_records_by_code_version(df, code_filter: dict, duck):
     """Keep only records whose producing *code* matches ``code_filter``.
 
@@ -258,9 +277,9 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
     chain_wide = False
 
     for key, value in code_filter.items():
-        wanted = str(value)
+        wanted_set, wanted = _pin_values(value)
 
-        if wanted == LATEST_VERSION:
+        if wanted_set == {LATEST_VERSION}:
             # Chain-wide: pins every versioned dimension at once, so it is never
             # a partial pin and needs no per-function resolution.
             chain_wide = True
@@ -319,7 +338,7 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
             # Single-version function: `code_version_ordinals` omits it, but its
             # one version IS v1. Treat that as a satisfied pin rather than
             # matching nothing — the qualified path used to empty the run here.
-            if wanted != "v1":
+            if "v1" not in wanted_set:
                 raise ValueError(
                     f"{fn_name!r} has only one recorded version, so "
                     f"code_version={wanted!r} matches nothing. Use 'v1', or "
@@ -329,7 +348,7 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
             continue
 
         available = sorted(set(by_hash.values()))
-        if wanted not in available:
+        if not wanted_set & set(available):
             raise ValueError(
                 f"{fn_name!r} has versions {available}; code_version="
                 f"{wanted!r} matches nothing."
@@ -339,7 +358,7 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
         keep = {
             rid
             for rid in record_ids
-            if by_hash.get(chains.get(rid, {}).get(fn_name)) == wanted
+            if by_hash.get(chains.get(rid, {}).get(fn_name)) in wanted_set
         }
         df = df[df["record_id"].isin(keep)]
         record_ids = df["record_id"].tolist()
@@ -396,16 +415,7 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
     record_ids = df["record_id"].tolist()
 
     for key, value in run_filter.items():
-        # A list/tuple/set means "any of these" — the same membership rule
-        # branch params already have (`_match_branch_param`), and the form the
-        # Plot Studio location picker sends: its selection values are lists
-        # (`Run:fn = ['distribute=true']`), which `str()` turned into the
-        # literal text "['distribute=true']" and matched nothing (2026-09-14).
-        if isinstance(value, (list, tuple, set, frozenset)):
-            wanted_set = {str(v) for v in value}
-        else:
-            wanted_set = {str(value)}
-        wanted = sorted(wanted_set)[0] if len(wanted_set) == 1 else sorted(wanted_set)
+        wanted_set, wanted = _pin_values(value)  # list = membership, see there
 
         if wanted_set == {LATEST_VERSION}:
             ident = provenance_query.variant_identity_batch(duck, record_ids)
