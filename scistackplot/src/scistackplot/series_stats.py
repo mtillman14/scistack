@@ -20,9 +20,14 @@ the cells the source already loaded, and DuckDB is left to SELECT rows.
 interpolate linearly, pandas' default. A position no replicate reaches (ragged
 cells) has count 0 and is dropped — the pandas group never existed.
 
-Cells are padded to the group's longest cell before reducing along axis 0. That
-is the simple, exact form; a ``bincount`` form would avoid the pad for very
-ragged groups (8 k–326 k samples was measured) and is the noted follow-up.
+Cells are padded and reduced along axis 0 — but in **position blocks**, and only
+the cells that reach a block take part in it. The first real run (2026-09-13
+19:31) padded all 4,190 cells of one group to the longest cell, 325,855
+samples against a mean of 41,565: a 10.2 GiB allocation, 87 % of it NaN, and
+``MemoryError``. Blocking bounds the working set to ``PAD_BUDGET`` elements
+whatever the group, and a ragged group costs what its samples cost. The
+numbers are identical to the one-shot pad: the same nan-reductions over the
+same values, position by position.
 """
 
 from __future__ import annotations
@@ -56,13 +61,56 @@ def cell_arrays(values) -> list[np.ndarray]:
     return [cell_array(v) for v in np.asarray(values, dtype=object)]
 
 
+#: Elements per padded block — 32 M float64 is 256 MB. The block WIDTH follows
+#: from it and the number of cells that reach the block, so a group of 4,190
+#: cells is reduced ~7,600 positions at a time and a group of 20 cells in one go.
+PAD_BUDGET = 32_000_000
+
+
 def pad(arrays: list[np.ndarray]) -> np.ndarray:
-    """``(len(arrays), longest)`` float64, NaN beyond each cell's own length."""
+    """``(len(arrays), longest)`` float64, NaN beyond each cell's own length.
+
+    The one-shot form, for tests and small groups; the reductions below never
+    call it on a whole group (see :func:`blocks`).
+    """
     width = max((a.size for a in arrays), default=0)
     out = np.full((len(arrays), width), np.nan)
     for i, a in enumerate(arrays):
         out[i, : a.size] = a
     return out
+
+
+def blocks(arrays: list[np.ndarray], budget: int | None = None):
+    """Yield ``(start, padded)`` over position blocks: ``padded`` holds the
+    samples at positions ``start .. start + padded.shape[1]`` of every cell
+    that reaches ``start`` (shorter cells are simply absent from the block,
+    which is exactly what NaN padding would have contributed: nothing).
+
+    Cells are visited in ascending length so the members of a block are a
+    suffix of the sorted list — one ``searchsorted``, no per-cell test.
+    """
+    budget = PAD_BUDGET if budget is None else budget  # read at call time: tests shrink it
+    lengths = np.fromiter((a.size for a in arrays), dtype=np.int64, count=len(arrays))
+    width = int(lengths.max()) if lengths.size else 0
+    if not width:
+        return
+    order = np.argsort(lengths, kind="stable")
+    sorted_arrays = [arrays[i] for i in order]
+    sorted_lengths = lengths[order]
+    start = 0
+    while start < width:
+        first = int(np.searchsorted(sorted_lengths, start, side="right"))
+        members = sorted_arrays[first:]
+        if not members:
+            break
+        block = max(256, budget // len(members))
+        stop = min(start + block, width)
+        padded = np.full((len(members), stop - start), np.nan)
+        for i, a in enumerate(members):
+            segment = a[start:stop]
+            padded[i, : segment.size] = segment
+        yield start, padded
+        start = stop
 
 
 def explode(
@@ -93,13 +141,21 @@ def explode(
     return row[keep], pos[keep], flat[keep], total, stride
 
 
+def _width(arrays: list[np.ndarray]) -> int:
+    return max((a.size for a in arrays), default=0)
+
+
 def position_mean(arrays: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     """``(mean, count)`` per position across ``arrays`` — the AGGREGATE collapse."""
-    padded = pad(arrays)
-    count = np.sum(~np.isnan(padded), axis=0)
+    width = _width(arrays)
+    mean = np.full(width, np.nan)
+    count = np.zeros(width, dtype=np.int64)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN positions
-        mean = np.nanmean(padded, axis=0) if padded.size else np.empty(0)
+        for start, padded in blocks(arrays):
+            stop = start + padded.shape[1]
+            count[start:stop] = np.sum(~np.isnan(padded), axis=0)
+            mean[start:stop] = np.nanmean(padded, axis=0)
     return mean, count
 
 
@@ -111,33 +167,38 @@ def position_stats(
     pandas twin: ``reduce._summarize`` / ``ylimits._spread``, statistic by
     statistic (the reduction plan's §4 table).
     """
-    padded = pad(arrays)
-    if not padded.size:
-        empty = np.empty(0)
-        return empty, empty, empty, np.empty(0, dtype=np.int64)
-    count = np.sum(~np.isnan(padded), axis=0)
+    width = _width(arrays)
+    centre = np.full(width, np.nan)
+    low = np.full(width, np.nan)
+    high = np.full(width, np.nan)
+    count = np.zeros(width, dtype=np.int64)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        if statistic is Statistic.MEDIAN:
-            centre = np.nanmedian(padded, axis=0)
-        else:
-            centre = np.nanmean(padded, axis=0)
-        if error is ErrorBand.NONE:
-            low = centre
-            high = centre
-        elif error is ErrorBand.IQR:
-            low = np.nanpercentile(padded, 25, axis=0)
-            high = np.nanpercentile(padded, 75, axis=0)
-        else:
-            sd = np.nanstd(padded, axis=0, ddof=1)
-            sd = np.where(count >= 2, sd, 0.0)  # std(ddof=1).fillna(0.0)
-            n = np.where(count > 0, count, 1)  # count.where(count > 0, 1)
-            if error is ErrorBand.SD:
-                spread = sd
-            elif error is ErrorBand.SEM:
-                spread = sd / np.sqrt(n)
-            else:  # CI95
-                spread = 1.96 * sd / np.sqrt(n)
-            low = centre - spread
-            high = centre + spread
+        for start, padded in blocks(arrays):
+            stop = start + padded.shape[1]
+            n = np.sum(~np.isnan(padded), axis=0)
+            count[start:stop] = n
+            if statistic is Statistic.MEDIAN:
+                c = np.nanmedian(padded, axis=0)
+            else:
+                c = np.nanmean(padded, axis=0)
+            centre[start:stop] = c
+            if error is ErrorBand.NONE:
+                low[start:stop] = c
+                high[start:stop] = c
+            elif error is ErrorBand.IQR:
+                low[start:stop] = np.nanpercentile(padded, 25, axis=0)
+                high[start:stop] = np.nanpercentile(padded, 75, axis=0)
+            else:
+                sd = np.nanstd(padded, axis=0, ddof=1)
+                sd = np.where(n >= 2, sd, 0.0)  # std(ddof=1).fillna(0.0)
+                denominator = np.where(n > 0, n, 1)  # count.where(count > 0, 1)
+                if error is ErrorBand.SD:
+                    spread = sd
+                elif error is ErrorBand.SEM:
+                    spread = sd / np.sqrt(denominator)
+                else:  # CI95
+                    spread = 1.96 * sd / np.sqrt(denominator)
+                low[start:stop] = c - spread
+                high[start:stop] = c + spread
     return centre, low, high, count

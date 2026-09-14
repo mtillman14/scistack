@@ -27,6 +27,49 @@ def _clear_source_cache():
     plot_service.invalidate()
 
 
+def _pooled_spec(db, variable: str = "RawSignal") -> dict:
+    """`describe()`'s spec with the schema keys POOLED — subject on colour,
+    session free, a band over the replicates, one range of y limits — which is
+    how the panel opened before 2026-09-13 and the shape most tests here were
+    written against (one figure, two colours). The opening default is now one
+    figure per record with per-panel limits (`default_roles`), and has its own
+    tests (`TestTheOpeningDefault`)."""
+    spec = plot_service.describe(db, variable)["spec"]
+    spec["roles"] = {**spec["roles"], "subject": "color", "session": "free"}
+    spec["kind"] = "band"
+    spec["y_axis"] = {**(spec.get("y_axis") or {}), "scope": []}
+    return spec
+
+
+class TestTheOpeningDefault:
+    """What the panel shows first, and why it is cheap: one record."""
+
+    def test_every_schema_key_separates_figures(self, populated_db):
+        spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+        assert spec["roles"]["subject"] == "iterate"
+        assert spec["roles"]["session"] == "iterate"
+
+    def test_the_first_figure_is_one_record(self, populated_db):
+        spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+        result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
+        assert result["figure_count"] == 4  # 2 subjects x 2 sessions
+        assert result["figures"][0]["row_count"] == 10  # one 10-sample record
+        assert result["figures"][0]["label"].startswith("subject=1, session=")
+
+    def test_y_limits_are_scoped_to_every_panel_factor(self, populated_db):
+        spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+        assert spec["y_axis"]["scope"] == ["subject", "session"]
+
+    def test_the_opening_figure_resolves_without_a_role_change(self, populated_db):
+        """The default must be a figure, not an error — for a produced variable
+        with a pinned variant as well as a raw one."""
+        for variable in ("RawSignal", "FilteredSignal"):
+            spec = plot_service.describe(populated_db, variable)["spec"]
+            result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
+            assert result["ok"] is True, (variable, result.get("error"))
+            assert result["figures"][0]["row_count"] > 0
+
+
 # --- describe --------------------------------------------------------------
 
 
@@ -42,7 +85,8 @@ def test_describe_opens_a_variable_with_a_usable_default_spec(populated_db):
 
     assert result["eligible"] is True
     assert result["spec"]["measures"] == ["RawSignal"]
-    # 1-D data with replicates defaults to a mean line + error band.
+    # 1-D data opens on one record, so there are no replicates to summarise
+    # yet and the kind is a plain line (see TestTheOpeningDefault).
     assert result["capabilities"]["shape"] == "1d"
     assert result["spec"]["kind"] in result["capabilities"]["available"]
 
@@ -66,7 +110,7 @@ def test_unknown_variable_raises_a_key_error(populated_db):
 
 
 def test_resolve_returns_plotly_payloads(populated_db):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     result = plot_service.resolve_figures(populated_db, spec)
 
     assert result["ok"] is True
@@ -77,7 +121,7 @@ def test_resolve_returns_plotly_payloads(populated_db):
 
 
 def test_iterate_role_produces_one_payload_per_level(populated_db):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -92,7 +136,7 @@ def test_invalid_spec_returns_a_message_not_an_exception(populated_db):
     grouping landed, and colour is where single-assignment still means
     something.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -104,7 +148,7 @@ def test_invalid_spec_returns_a_message_not_an_exception(populated_db):
 def test_nesting_a_1d_measures_x_axis_is_refused_with_a_message(populated_db):
     """RawSignal is 1-D: its x axis is the sample index, so it has no
     categorical axis to nest groups on. Still a message, not an exception."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -174,7 +218,7 @@ def test_variant_graph_carries_the_default_selection_for_a_new_row(populated_db)
 def test_two_series_over_two_variables_resolve_together(populated_db):
     """Raw vs Filtered: the whole point of todo #1, end to end through the
     service the panel actually calls."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["variant_sets"] = [
         {"name": "Raw", "selection": {}, "variable": "RawSignal"},
         {"name": "Filtered", "selection": {}, "variable": "FilteredSignal"},
@@ -207,7 +251,7 @@ def test_resolve_describes_the_whole_fanout_it_did_not_send(populated_db):
     cheap next to the payloads — a 1-D measure across thirty subjects is
     megabytes per figure, crossing the webview boundary on every interaction.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
     result = plot_service.resolve_figures(populated_db, spec, figure_index=1)
 
@@ -221,7 +265,7 @@ def test_resolve_describes_the_whole_fanout_it_did_not_send(populated_db):
 
 def test_resolve_without_an_index_still_returns_every_figure(populated_db):
     """None is the library/test caller's answer, and stays the default."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -234,7 +278,7 @@ def test_an_out_of_range_index_clamps(populated_db):
     Narrowing a filter shrinks the figure set while the panel's index is still
     a moment behind, so this is a normal transient — not a bad request.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     assert plot_service.resolve_figures(populated_db, spec, figure_index=99)[
@@ -251,10 +295,9 @@ def test_iterating_a_nested_key_iterates_its_ancestors(populated_db):
     And the panel is told, because a user who asked for two figures and
     received four would think something was broken.
     """
-    # `subject` must be FREE for promotion to apply: RawSignal is 1-D, so the
-    # default spec puts subject on COLOUR, and an ancestor the user assigned a
-    # channel is deliberately left alone.
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    # `subject` must be FREE for promotion to apply: an ancestor the user
+    # assigned a channel (or a fan-out) is deliberately left alone.
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "session": "iterate", "subject": "free"}
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -266,10 +309,10 @@ def test_iterating_a_nested_key_iterates_its_ancestors(populated_db):
 def test_an_ancestor_on_a_channel_is_not_promoted(populated_db):
     """`subject=colour, session=separate figures` is a legitimate figure.
 
-    This is the default state for a 1-D measure, so it is also the common one:
-    promotion must not quietly turn two figures into four.
+    It was the opening state for a 1-D measure until 2026-09-13 and is still
+    one click from it: promotion must not quietly turn two figures into four.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     assert spec["roles"]["subject"] == "color"
     spec["roles"] = {**spec["roles"], "session": "iterate"}
     result = plot_service.resolve_figures(populated_db, spec)
@@ -280,7 +323,7 @@ def test_an_ancestor_on_a_channel_is_not_promoted(populated_db):
 
 def test_the_fanout_rolls_over_at_a_subject_boundary(populated_db):
     """Subject-major order: after subject 1's last session comes subject 2's first."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "session": "iterate", "subject": "free"}
     labels = plot_service.resolve_figures(populated_db, spec)["figure_labels"]
 
@@ -294,7 +337,7 @@ def test_the_fanout_rolls_over_at_a_subject_boundary(populated_db):
 
 def test_a_failed_resolve_still_answers_the_navigator(populated_db):
     """The panel reads these keys unconditionally; a role error must not KeyError it."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
     result = plot_service.resolve_figures(populated_db, spec, figure_index=3)
 
@@ -304,7 +347,7 @@ def test_a_failed_resolve_still_answers_the_navigator(populated_db):
 
 
 def test_max_points_downsamples_for_transport(populated_db):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["kind"] = "line"
     result = plot_service.resolve_figures(populated_db, spec, max_points=5)
 
@@ -315,7 +358,7 @@ def test_max_points_downsamples_for_transport(populated_db):
 
 
 def test_capabilities_track_role_changes(populated_db):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
 
     with_replicates = plot_service.capabilities_for(populated_db, spec)
     assert with_replicates["has_replicates"] is True
@@ -333,7 +376,7 @@ def test_capabilities_track_role_changes(populated_db):
 
 def test_export_generates_a_plot_function_and_call(populated_db):
     pytest.importorskip("seaborn")
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     result = plot_service.export_code(populated_db, spec)
 
     assert result["function_name"].startswith("plot_")
@@ -352,7 +395,7 @@ def test_export_never_calls_back_into_this_package(populated_db):
     exported pipeline depend on this package at runtime.
     """
     pytest.importorskip("seaborn")
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     source = plot_service.export_code(populated_db, spec)["function_source"]
 
     assert "import scistackplot" not in source
@@ -364,7 +407,7 @@ def test_add_to_pipeline_writes_the_function_and_declares_the_output(
     client_with_variable_file, populated_db, tmp_path
 ):
     pytest.importorskip("seaborn")
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     result = plot_service.add_to_pipeline(populated_db, spec)
 
     assert result.get("error") is None, result.get("error")
@@ -377,7 +420,7 @@ def test_add_to_pipeline_refuses_to_clobber_an_existing_function(
     client_with_variable_file, populated_db
 ):
     pytest.importorskip("seaborn")
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     plot_service.add_to_pipeline(populated_db, spec)
     second = plot_service.add_to_pipeline(populated_db, spec)
 
@@ -389,7 +432,7 @@ def test_add_to_pipeline_refuses_to_clobber_an_existing_function(
 
 
 def test_save_figure_writes_a_png(populated_db, tmp_path):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     target = tmp_path / "figure.png"
 
     result = plot_service.save_figure(populated_db, spec, str(target))
@@ -413,7 +456,7 @@ def test_save_figure_uses_full_resolution(populated_db, tmp_path):
 
 
 def test_save_figure_honours_the_suffix(populated_db, tmp_path):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     target = tmp_path / "figure.svg"
 
     result = plot_service.save_figure(populated_db, spec, str(target))
@@ -423,7 +466,7 @@ def test_save_figure_honours_the_suffix(populated_db, tmp_path):
 
 def test_save_figure_writes_one_file_per_iterated_figure(populated_db, tmp_path):
     """A fanned-out spec must not silently save only the first figure."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     result = plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
@@ -441,7 +484,7 @@ def test_save_figure_saves_only_the_requested_figure(populated_db, tmp_path):
     Saving every figure at full resolution is what crossed the 30s client
     timeout — a save is more work than the interactive resolve beside it, and
     that was already taking 25-27s on the user's data."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     result = plot_service.save_figure(
@@ -460,7 +503,7 @@ def test_saving_one_figure_builds_only_that_figure(populated_db, tmp_path, monke
     saving one would cost exactly what this exists to avoid."""
     import scistackplot
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     calls = []
@@ -482,7 +525,7 @@ def test_saving_one_figure_builds_only_that_figure(populated_db, tmp_path, monke
 def test_an_out_of_range_figure_index_clamps(populated_db, tmp_path):
     """The panel's cursor can be a moment behind a fan-out that just shrank;
     `resolve_one` clamps rather than rejecting, and saving inherits that."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     result = plot_service.save_figure(
@@ -494,7 +537,7 @@ def test_an_out_of_range_figure_index_clamps(populated_db, tmp_path):
 
 
 def test_save_reports_progress_per_file(populated_db, tmp_path):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     seen = []
@@ -520,7 +563,7 @@ def test_save_reports_the_resolve_before_any_file_exists(populated_db, tmp_path)
     (scidb.log 2026-09-11 12:28 -> 12:54) and reported nothing until the first
     PNG existed. The panel was indistinguishable from a hung one.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     seen = []
@@ -543,7 +586,7 @@ def test_save_reports_the_resolve_before_any_file_exists(populated_db, tmp_path)
 
 
 def test_an_indexed_save_reports_its_one_figure_too(populated_db, tmp_path):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     seen = []
@@ -562,7 +605,7 @@ def test_an_indexed_save_reports_its_one_figure_too(populated_db, tmp_path):
 
 def test_a_bad_spec_is_a_message_on_the_indexed_save_too(populated_db, tmp_path):
     """Both save paths share the refusal, like both resolve paths do."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
 
     result = plot_service.save_figure(
@@ -574,7 +617,7 @@ def test_a_bad_spec_is_a_message_on_the_indexed_save_too(populated_db, tmp_path)
 
 
 def test_save_figure_reports_a_bad_spec_instead_of_raising(populated_db, tmp_path):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
 
     result = plot_service.save_figure(populated_db, spec, str(tmp_path / "x.png"))
@@ -592,7 +635,7 @@ def test_saving_into_a_folder_names_the_files_after_the_figures(
     that?". The stem falls back to the measure, so the names match exactly what
     the filename-plus-suffix scheme produced.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
     folder = tmp_path / "figures"
     folder.mkdir()
@@ -612,7 +655,7 @@ def test_a_suffixless_path_is_a_folder_even_before_it_exists(
 ):
     """The folder picker returns existing directories, but the browser prompt
     does not — a path the user typed has to work the first time."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     folder = tmp_path / "not" / "yet"
 
     result = plot_service.save_figure(populated_db, spec, str(folder))
@@ -631,7 +674,7 @@ def test_an_existing_folder_with_a_dot_is_not_read_as_a_format(
     guess — without it this writes `analysis.png` beside the folder instead of
     a figure inside it.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     folder = tmp_path / "analysis.v2"
     folder.mkdir()
 
@@ -644,7 +687,7 @@ def test_an_existing_folder_with_a_dot_is_not_read_as_a_format(
 def test_a_filename_still_means_a_file(populated_db, tmp_path):
     """The rule is additive: every caller that passed a filename before keeps
     the behaviour it had."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     target = tmp_path / "chosen.png"
 
     result = plot_service.save_figure(populated_db, spec, str(target))
@@ -657,7 +700,7 @@ def test_a_filename_still_means_a_file(populated_db, tmp_path):
 
 @pytest.mark.parametrize("fmt", ["png", "svg", "pdf", "eps"])
 def test_every_offered_format_is_written(populated_db, tmp_path, fmt):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
 
     result = plot_service.save_figure(
         populated_db, spec, str(tmp_path / "fig"), image_format=fmt
@@ -676,7 +719,7 @@ def test_the_format_wins_over_the_paths_suffix(populated_db, tmp_path):
     dialog is filtered to it), so this only decides a conflict that the UI does
     not produce — but it has to decide it the same way every time.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
 
     result = plot_service.save_figure(
         populated_db, spec, str(tmp_path / "fig.png"), image_format="svg"
@@ -700,7 +743,7 @@ def test_an_unwritable_format_is_refused_before_anything_is_done(
     """
     import scistackplot
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     touched: list[str] = []
     monkeypatch.setattr(
         scistackplot, "resolve", lambda *a, **k: touched.append("resolve")
@@ -740,7 +783,7 @@ def test_the_offered_formats_are_what_matplotlib_can_write(populated_db):
 
 
 def test_save_figure_creates_missing_parent_directories(populated_db, tmp_path):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     target = tmp_path / "new" / "nested" / "figure.png"
 
     assert plot_service.save_figure(populated_db, spec, str(target))["ok"] is True
@@ -819,7 +862,7 @@ def captured_pushes(monkeypatch):
 def test_a_save_job_writes_every_figure_and_reports_each(
     populated_db, tmp_path, captured_pushes
 ):
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
 
     started = plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
@@ -863,7 +906,7 @@ def test_a_save_job_does_not_hold_the_database_while_rendering(
 
     monkeypatch.setattr(scistackplot, "render_matplotlib", spy)
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
 
     plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
@@ -888,7 +931,7 @@ def test_a_failing_save_job_announces_itself(
 
     monkeypatch.setattr(scistackplot, "render_matplotlib", boom)
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
 
     messages = _drain(captured_pushes, "plot_save_failed")
@@ -910,7 +953,7 @@ def test_a_failed_save_job_releases_the_database(
         lambda item: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
     _drain(captured_pushes, "plot_save_failed")
 
@@ -922,7 +965,7 @@ def test_an_invalid_spec_ends_the_job_rather_than_hanging(
 ):
     """A refusal is not a crash, but it still has to END the job — the panel
     cannot tell a refusal from silence."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec = {**spec, "roles": {**spec["roles"], "subject": "x", "session": "x"}}
 
     plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
@@ -940,7 +983,7 @@ def test_save_reaches_both_transports(
 
     assert "plot_save_start" in METHODS
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     response = client.post(
         "/api/plot/save",
         json={"spec": spec, "path": str(tmp_path / "http.png")},
@@ -1000,7 +1043,7 @@ def test_saving_one_figure_is_a_job_too(
     timeout, and the work behind it is minutes. It now returns a job id like
     every other save, and reports one file when that figure is on disk.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
 
     started = plot_service.start_save_job(
@@ -1028,7 +1071,7 @@ def test_a_save_job_reports_the_folder_it_filled(
     Thirty full paths sharing one directory is not a message anyone reads, and
     printing them pushed the one fact that matters — it finished — off the end.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
     folder = tmp_path / "out"
     folder.mkdir()
@@ -1053,7 +1096,7 @@ def test_a_client_supplied_job_id_is_honoured(
     that learned the id from the response would drop the completion and sit on
     "Saving…" forever with the file already written.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
 
     started = plot_service.start_save_job(
         populated_db, spec, str(tmp_path / "emg.png"), job_id="ps-abc123"
@@ -1087,7 +1130,7 @@ def test_figure_index_reaches_the_service_over_both_transports(
     avoid."""
     from scistack_gui.server import METHODS
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
 
     client.post(
@@ -1490,7 +1533,7 @@ def test_figure_index_builds_one_figure_and_labels_them_all(populated_db):
     The labels the navigator needs come from the group keys, which never
     required the figures.
     """
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     result = plot_service.resolve_figures(populated_db, spec, figure_index=1)
@@ -1508,7 +1551,7 @@ def test_figure_index_builds_one_figure_and_labels_them_all(populated_db):
 def test_an_out_of_range_figure_index_is_clamped_not_rejected(populated_db):
     """The fan-out shrinks whenever a filter narrows the data, and the panel's
     cursor is a moment behind the spec it is already re-resolving."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     result = plot_service.resolve_figures(populated_db, spec, figure_index=99)
@@ -1521,7 +1564,7 @@ def test_an_out_of_range_figure_index_is_clamped_not_rejected(populated_db):
 def test_one_figure_matches_what_resolving_all_of_them_gives(populated_db):
     """The deferred path must not be a second implementation. Same spec, same
     figure — otherwise the panel and an export disagree about what it drew."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "iterate"}
 
     one = plot_service.resolve_figures(populated_db, spec, figure_index=1)
@@ -1535,7 +1578,7 @@ def test_one_figure_matches_what_resolving_all_of_them_gives(populated_db):
 def test_an_invalid_spec_is_a_message_on_the_deferred_path_too(populated_db):
     """Both resolve paths share `_invalid_spec`, so a role conflict cannot come
     back as a message on one and an exception on the other."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
 
     result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
@@ -1611,7 +1654,7 @@ def test_resolve_drops_the_connection_before_reducing(
 
     monkeypatch.setattr(scistackplot, "resolve_one", spy)
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
 
     assert result["ok"] is True
@@ -1634,7 +1677,7 @@ def test_the_load_phase_does_hold_the_connection(
 
     monkeypatch.setattr(plot_service, "_table_for", spy)
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     plot_service.resolve_figures(populated_db, spec, figure_index=0)
 
     assert seen["refcount"] == 1
@@ -1881,7 +1924,7 @@ def test_resolve_reduces_with_the_connection_released(
 
     import scistackplot
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     assert per_request_policy._db_open is False
 
     seen: dict = {}
@@ -1912,7 +1955,7 @@ def test_save_reduces_and_renders_with_the_connection_released(
 
     import scistackplot
 
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
 
     seen: dict = {}
     original_resolve = scistackplot.resolve
@@ -1940,7 +1983,7 @@ def test_save_reduces_and_renders_with_the_connection_released(
 
 def test_an_invalid_spec_releases_the_hold(populated_db, per_request_policy):
     """The early return inside the hold must still release it."""
-    spec = plot_service.describe(populated_db, "RawSignal")["spec"]
+    spec = _pooled_spec(populated_db)
     spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
 
     result = plot_service.resolve_figures(populated_db, spec)

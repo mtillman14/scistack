@@ -25,11 +25,21 @@ def default_roles(table: LongTable, measure: str | None = None) -> dict[str, Rol
     """
     A reasonable starting assignment for a freshly opened table.
 
-    Mirrors the proof of concept's opening state (it preselected a factor for
-    the x axis and left the rest available) but adds one thing it had no
-    concept of: a variant factor defaults to COLOR so that two pipeline
+    Two rules, by shape:
+
+    * **A 1-D or 2-D measure opens on ONE record**: every schema key is
+      ITERATE ("separate figures"). Decided 2026-09-13 for the opening cost —
+      a variable of 419 records x 10 fields x 41 k samples opened as a band
+      over all 174 M samples (15 s once the reductions were in numpy, minutes
+      before), where one record's figure resolves in 0.4 s. The fan-out
+      navigator steps through the rest, and pooling is one role change away.
+    * **A scalar measure** keeps the proof of concept's opening state: the
+      leading factor on X, the next on COLOR, the rest FREE. Scalars are cheap
+      at any size, and one point per figure would be a useless first plot.
+
+    Either way a variant factor defaults to COLOR so that two pipeline
     variants are visibly separated on first render rather than silently
-    overplotted.
+    overplotted, and a struct's fields become one subplot each.
     """
     measure = measure or (table.measure_names[0] if table.measures else None)
     shape = table.shape_of(measure) if measure else Shape.UNKNOWN
@@ -55,14 +65,12 @@ def default_roles(table: LongTable, measure: str | None = None) -> dict[str, Rol
         for extra in variants[1:]:
             roles[extra.name] = Role.FACET
 
-    # For 1-D measures the x axis is the within-observation index, so no factor
-    # takes X; the leading factor becomes the colour channel instead.
-    if shape is Shape.SERIES_1D:
+    # A 1-D measure's x axis is the within-observation index, so no factor
+    # takes X — and the opening figure is one record, so every schema key
+    # separates figures. Same for 2-D: one matrix per figure.
+    if shape in (Shape.SERIES_1D, Shape.MATRIX_2D):
         for factor in plain:
-            if Role.COLOR not in roles.values():
-                roles[factor.name] = Role.COLOR
-            else:
-                roles[factor.name] = Role.FREE
+            roles[factor.name] = Role.ITERATE
     else:
         for position, factor in enumerate(plain):
             if position == 0:
@@ -345,7 +353,7 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
     the same figure (CLAUDE.md NOTE 3).
     """
     from .capability import default_plot
-    from .spec import FacetOptions, PlotKind, VariantSet, grid_shape_for
+    from .spec import FacetOptions, PlotKind, VariantSet, YAxis, grid_shape_for
 
     from .variants import apply_variant_sets, default_selection
 
@@ -404,10 +412,20 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
     )
     _, n_cols = grid_shape_for(facet_panels) if facet_panels > 1 else (1, None)
 
+    # Y limits per PANEL from the start: every factor that separates figures or
+    # subplots is in the scope, so each panel autoscales to its own data and
+    # the limits are computed over one panel's samples at a time — not one
+    # range over the whole dataset, which on a large variable was most of the
+    # opening cost (`build_plan y_limits`). The user unchecks factors to share.
+    y_scope = [
+        f.name for f in resolved.factors if roles.get(f.name) in (Role.ITERATE, Role.FACET)
+    ]
+
     return PlotSpec(
         measures=[measure],
         roles=roles,
         kind=kind,
         facet=FacetOptions(n_cols=n_cols),
         variant_sets=variant_sets,
+        y_axis=YAxis(scope=y_scope),
     )

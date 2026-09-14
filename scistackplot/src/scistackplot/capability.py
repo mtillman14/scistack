@@ -24,17 +24,18 @@ DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.BAND
 
 #: What each role is CALLED, per measure shape.
 #:
-#: The role names are the library's vocabulary; these are the user's. Two of
-#: them read as nonsense on 1-D data under the generic wording — "Average over"
-#: and "Replicates" describe what happens to a table, and what the user is
-#: looking at is a set of traces. Reported by the backend rather than hardcoded
-#: in the panel so the words and the behaviour stay together (CLAUDE.md NOTE 3).
+#: The role names are the library's vocabulary; these are the user's — and the
+#: two are kept the SAME wherever a user has to search for one (see the FREE
+#: entry in _ROLE_LABELS). What varies by shape is what a role DOES: "Average
+#: over" describes a table, and a user looking at 1-D data is looking at
+#: traces, so AGGREGATE is renamed for them. Reported by the backend rather
+#: than hardcoded in the panel so the words and the behaviour stay together
+#: (CLAUDE.md NOTE 3); the per-shape explanation is _ROLE_HINTS_BY_SHAPE.
 #:
 #: Only the entries that differ from :data:`_ROLE_LABELS` need listing.
 _ROLE_LABELS_BY_SHAPE: dict[Shape, dict[Role, str]] = {
     Shape.SERIES_1D: {
         Role.AGGREGATE: "Average into one line",
-        Role.FREE: "One line each",
     },
 }
 
@@ -67,7 +68,14 @@ _ROLE_LABELS: dict[Role, str] = {
     Role.FACET: "Facet",
     Role.ITERATE: "Separate figures",
     Role.AGGREGATE: "Average over",
-    Role.FREE: "Replicates",
+    # "Free", not "Replicates" / "One line each". The role's own name, kept the
+    # same for every shape, because a user hunting for it in the dropdown has
+    # read it in the docs, in a saved spec's TOML and in an exported `roles=`
+    # argument — and found nothing matching (user, 2026-09-13). It is also the
+    # role whose meaning a noun cannot carry on its own: what a FREE factor
+    # does depends on the plot kind (one line each, a bar's error bars, a box's
+    # distribution), which is what the HINT is for, per shape.
+    Role.FREE: "Free",
 }
 
 _ROLE_HINTS: dict[Role, str] = {
@@ -75,15 +83,33 @@ _ROLE_HINTS: dict[Role, str] = {
     Role.COLOR: "One coloured series per level",
     Role.FACET: "One subplot per level — arrange them under Layout",
     Role.ITERATE: "One whole figure per level",
-    Role.AGGREGATE: "Collapse this factor to its mean",
-    Role.FREE: "Keep as repeated observations",
+    Role.AGGREGATE: "Collapse to the mean first, so this factor does NOT "
+    "widen the error bars",
+    Role.FREE: "Keep each level as its own observation, so this factor DOES "
+    "widen the error bars",
 }
 
+#: Stated as a CONTRAST, and deliberately in the same terms on both sides.
+#:
+#: These are the two roles a user cannot tell apart from the labels alone —
+#: "Average over" and "Free" both sound like "not on an axis", and the earlier
+#: hints described each one on its own, both using the word "average" (user,
+#: 2026-09-13). The thing that actually distinguishes them is what they do to
+#: the ERROR BARS: with schema [subject, trial] and a band, trial=AGGREGATE
+#: averages each subject's trials into one trace and the band is then the
+#: spread across SUBJECTS; trial=FREE pools every subject-trial trace, so the
+#: band mixes within- and between-subject variability and a subject with more
+#: trials weighs more. Same plot kind, same data, different published numbers —
+#: which is why the plot-kind control cannot express this and both roles exist
+#: (`reduce._collapse_aggregates` runs before `_summarize`; `has_replicates`
+#: is true only when something is FREE, which is the part the kind list DOES
+#: express — collapse everything and the summary kinds disappear).
 _ROLE_HINTS_BY_SHAPE: dict[Shape, dict[Role, str]] = {
     Shape.SERIES_1D: {
-        Role.AGGREGATE: "Average these traces together, sample by sample",
-        Role.FREE: "Draw one trace per level — and what a mean ± error band "
-        "is computed from",
+        Role.AGGREGATE: "Average these traces together sample by sample "
+        "first, so this factor does NOT widen the error band",
+        Role.FREE: "One trace per level, each its own observation — so this "
+        "factor DOES widen the error band",
     },
 }
 

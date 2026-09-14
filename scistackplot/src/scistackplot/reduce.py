@@ -122,6 +122,75 @@ def _plan_cache_key(spec: PlotSpec, table: LongTable) -> "tuple | None":
         return None
 
 
+def _short(value: Any, limit: int = 60) -> str:
+    """One spec field, short enough to sit in a log line."""
+    text = json.dumps(value, sort_keys=True, default=str)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _differing_fields(wanted: str, cached: str) -> "list[str] | None":
+    """Top-level spec field names that differ, or None if either key is not
+    a spec JSON (nothing but ``_plan_cache_key`` should ever put one there)."""
+    try:
+        a, b = json.loads(wanted), json.loads(cached)
+        return [n for n in sorted(set(a) | set(b)) if a.get(n) != b.get(n)]
+    except Exception:
+        return None
+
+
+def _describe_differences(wanted: str, cached: str, limit: int = 3) -> list[str]:
+    """``field: cached -> wanted``, capped so one miss is one log line."""
+    names = _differing_fields(wanted, cached) or []
+    a, b = json.loads(wanted), json.loads(cached)
+    shown = [f"{n}: {_short(b.get(n))} -> {_short(a.get(n))}" for n in names[:limit]]
+    if len(names) > limit:
+        shown.append(f"(+{len(names) - limit} more)")
+    return shown
+
+
+def _plan_cache_miss_reason(key: tuple, table: LongTable) -> str:
+    """Why this lookup missed — the one thing a ``build_plan`` line cannot say.
+
+    On 2026-09-13 the log showed four consecutive resolves of the SAME figure,
+    each rebuilding the plan: identical roles, identical output, four misses.
+    A hit logged at DEBUG and a miss logged nothing at all, so there was no way
+    to tell a GUI firing four times from a spec field churning between four
+    otherwise-identical requests — two very different bugs. This names which.
+    """
+    with _plan_cache_lock:
+        entries = list(_plan_cache)
+    if not entries:
+        return "cache empty (first resolve of this table)"
+
+    table_id, wanted = key
+    same_table = [k for k in entries if k[0] == table_id]
+    if not same_table:
+        return (
+            f"no entry for this table ({len(entries)} cached for other table(s)) "
+            f"— the table object changed: a rebuilt source, an invalidate(), or "
+            f"a plan evicted by another variable (cache holds "
+            f"{_PLAN_CACHE_ENTRIES})"
+        )
+    # Same table, so the SPEC is what differs. Report the CLOSEST cached spec:
+    # the fields it disagrees on are exactly what is churning between requests.
+    comparable = [k for k in same_table if _differing_fields(wanted, k[1]) is not None]
+    if not comparable:
+        return f"{len(same_table)} entry(ies) for this table, none comparable"
+    closest = min(comparable, key=lambda k: len(_differing_fields(wanted, k[1]) or []))
+    differences = _describe_differences(wanted, closest[1])
+    if not differences:
+        # Same table id AND same spec, yet the lookup missed. Either CPython
+        # recycled the id onto a different object (the trap `_plan_cache`'s
+        # value-side reference exists to make impossible — worth shouting about
+        # if it ever appears), or another thread evicted the entry in between.
+        with _plan_cache_lock:
+            stored = _plan_cache.get(closest)
+        if stored is not None and stored[0] is not table:
+            return "same key, different table object — an id was reused"
+        return "key matched but the entry was evicted concurrently"
+    return f"spec differs in {len(differences)} field(s): " + "; ".join(differences)
+
+
 def clear_plan_cache() -> None:
     """Drop every cached plan.
 
@@ -285,8 +354,22 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
         # Identity re-checked under the assumption that ids can be recycled;
         # the strong reference held below should make this impossible.
         if hit is not None and hit[0] is table:
-            Log.debug("plan cache: hit (%d entries)", len(_plan_cache), layer=LAYER)
+            # INFO, not DEBUG. This cache is the difference between a control
+            # change costing nothing and costing a full plan, and the only
+            # visible trace of a miss was a `build_plan` timing line that never
+            # said it WAS a miss. One line per resolve, either way.
+            Log.info(
+                "plan cache: HIT (%d entries) — no plan rebuilt",
+                len(_plan_cache),
+                layer=LAYER,
+            )
             return _with_presentation(hit[1], spec)
+        Log.info("plan cache: MISS — %s", _plan_cache_miss_reason(key, table), layer=LAYER)
+    else:
+        Log.info(
+            "plan cache: DISABLED for this call — the spec did not serialize",
+            layer=LAYER,
+        )
 
     plan = _build_plan(spec, table)
 

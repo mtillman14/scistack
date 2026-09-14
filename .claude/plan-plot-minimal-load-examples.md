@@ -533,3 +533,87 @@ absorbs summation-order differences between `nanmean` and pandas' mean.
   for a band; a memo keyed on the plan would halve it.
 - `DEFAULT_REDUCER` stays the pandas reference; `CsvSource`/`DataFrameSource` could
   carry `NumpyReducer` once their cells are known to be arrays.
+
+## 11. First real run of stages 2+3 (2026-09-13 19:22–19:31) and the fix it forced
+
+| request | before | now |
+|---|---|---|
+| `plot_describe` (panel opens) | 91 s → timeout | **8.6 s** (fetch 4.7 s, `attach_variants` 2.0 s) |
+| LINE, one subject/session, 10 panels | — | **0.40 s** (explode 0.08 s, 4.35 M samples → 20 k rows) |
+| BAND, subject=color, all 419 | ~580 s | **15.3 s** (`y_extents` 6.6 s + 10 × 0.85 s `summarize_series`) |
+| BAND, all factors iterate/free, no color | — | **MemoryError: 10.2 GiB for (4190, 325855)** |
+
+The failure is `series_stats.pad` on a group of every cell (no scope, no colour):
+padded to the longest cell, 325,855 samples against a mean of 41,565 — 87 % NaN. The
+request before it (19:30:18, same shape) never logged a result; it was the same
+allocation succeeding into swap.
+
+**Fix:** `series_stats.blocks` — reduce in position blocks sized to `PAD_BUDGET`
+(32 M elements, 256 MB), and only the cells that REACH a block take part in it (cells
+sorted by length once, one `searchsorted` per block). Same nan-reductions over the same
+values, so the numbers are identical; the working set is bounded whatever the group,
+and a ragged group costs its samples, not its longest cell. `position_stats` and
+`position_mean` both go through it. Tests: `scistackplot/tests/test_series_stats.py`
+(blocked == one-shot pad for every statistic at three budgets; block membership; the
+10 GiB case in miniature).
+
+Still on the table after this run:
+- `y_extents` (6.6 s) and the panels' `summarize_series` compute related statistics
+  over different groupings (limits pool across facets, per the reference); together
+  they are the whole band request. Block-reduction should cut both; a shared memo
+  would need the groupings to coincide.
+- The GUI sends every factor as the y-limit scope, so `eligible_scope` WARNs
+  "ignores ['trial', 'speed']" on every resolve. Harmless, noisy; the GUI should send
+  only iterate/facet factors.
+- `attach_variants` 2.0 s is now the second-largest cost of opening the panel.
+
+## 12. Opening defaults (2026-09-13, user decision) — one record, per-panel limits
+
+`scistackplot.roles.default_roles`: for a 1-D or 2-D measure every schema key is
+ITERATE, so the first figure is ONE record (0.4 s measured for RawEMG) and the fan-out
+navigator steps through the rest. Scalars keep X + COLOR + FREE — cheap at any size, and
+one point per figure would be no plot. `default_spec` seeds `y_axis.scope` with every
+ITERATE/FACET factor: per-panel autoscale, and `y_extents` groups per record (0.049 s
+measured with all keys iterated, vs 6.6 s pooled per subject).
+
+Tests: `test_core.py` (1-D keys iterate, scalars unchanged, scope = panel factors,
+struct fields still FACET); `test_plot_service.py::TestTheOpeningDefault` (4 figures of
+10 rows, scope `["subject", "session"]`, the default resolves for a raw and a produced
+variable). The 56 GUI tests written against the old opening shape (subject on colour,
+session free, band) now build it explicitly via `_pooled_spec`, so they test what they
+tested before.
+
+## 13. Plan-cache instrumentation (2026-09-13)
+
+The 19:25:51–54 log shows FOUR consecutive `plot_resolve` calls, 0.65 s apart, with
+identical roles, each rebuilding the plan and each rendering "figure 1 of 419, 20029
+rows". A plan cache exists (`_plan_cache`, keyed on the spec minus kind/facet/style)
+and missed every time — but a hit logged at DEBUG and a miss logged nothing at all, so
+the log cannot distinguish a GUI firing four times from a spec field churning between
+four otherwise-identical requests. Two different bugs, two different fixes.
+
+`reduce._plan` now logs the outcome at INFO, once per resolve:
+
+```
+plan cache: HIT (2 entries) — no plan rebuilt
+plan cache: MISS — cache empty (first resolve of this table)
+plan cache: MISS — spec differs in 1 field(s): filters: [] -> [{"column": "subject"…
+plan cache: MISS — no entry for this table (2 cached for other table(s)) — the table
+                   object changed: a rebuilt source, an invalidate(), or a plan
+                   evicted by another variable (cache holds 2)
+plan cache: MISS — same key, different table object — an id was reused
+plan cache: DISABLED for this call — the spec did not serialize
+```
+
+The spec-diff names the closest cached spec's differing top-level fields, values
+truncated to 60 chars and capped at 3 fields + a count, so one miss is one line.
+
+Tests: `test_resolve_caching.py` — a hit says HIT; the first resolve says "cache empty";
+a changed filter names `filters`; a wholly different spec stays under 400 chars; a
+rebuilt table reports the table changing (not a spec change); a non-spec key in the
+cache does not break the resolve.
+
+**What the next run answers:** if the four repeats say "MISS — spec differs in …", the
+GUI is churning that field and the fix is there; if they say "HIT", the resolves are
+cheap and something else fires them; if they say "no entry for this table", the source
+cache is handing out a new table per request.

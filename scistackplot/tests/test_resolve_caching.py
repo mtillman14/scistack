@@ -15,6 +15,8 @@ climbing 3.3s -> 27.7s as they piled up.
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 import pytest
 
@@ -424,3 +426,110 @@ def test_a_scalar_measure_is_never_exploded(scalar_table, monkeypatch):
     )
 
     assert called == []
+
+
+# --- why a plan cache lookup missed ----------------------------------------
+#
+# Added 2026-09-13. The log showed four consecutive resolves of the SAME figure
+# each rebuilding the plan — identical roles, identical output, four misses —
+# and there was no way to tell a GUI firing four times from a spec field
+# churning between four otherwise-identical requests. A hit logged at DEBUG; a
+# miss logged nothing but a `build_plan` timing line that never said it was a
+# miss. These pin the line that answers it.
+
+
+def _cache_lines(caplog) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("plan cache:")
+    ]
+
+
+def test_a_hit_says_so_at_info(series_table, caplog):
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        resolve_one(_spec(), series_table, 0)
+        # `caplog` collects for the whole test, so the warm-up resolve's own
+        # MISS is in there too until this clears it. Every one of these tests
+        # asks about ONE lookup.
+        caplog.clear()
+        resolve_one(_spec(), series_table, 0)
+
+    (line,) = _cache_lines(caplog)
+    assert "HIT" in line, line
+
+
+def test_the_first_resolve_reports_an_empty_cache(series_table, caplog):
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        resolve_one(_spec(), series_table, 0)
+
+    (line,) = _cache_lines(caplog)
+    assert "MISS" in line and "cache empty" in line
+
+
+def test_a_miss_names_the_spec_field_that_changed(series_table, caplog):
+    """The diagnosis the 19:25 log could not give: WHICH field churned."""
+    from scistackplot.spec import Filter
+
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        resolve_one(_spec(), series_table, 0)
+        caplog.clear()
+        resolve_one(
+            _spec(filters=[Filter(column="subject", include=["01"])]), series_table, 0
+        )
+
+    (line,) = _cache_lines(caplog)
+    assert "MISS" in line
+    assert "spec differs in 1 field(s)" in line, line
+    assert "filters:" in line, line
+
+
+def test_a_miss_names_every_differing_field_up_to_a_cap(series_table, caplog):
+    """Bounded: a wholly different spec must not print the whole spec."""
+    from scistackplot.spec import Aggregation, ErrorBand, Filter, Statistic, YAxis
+
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        resolve_one(_spec(), series_table, 0)
+        caplog.clear()
+        resolve_one(
+            _spec(
+                roles={"subject": Role.FREE},
+                filters=[Filter(column="subject", include=["01"])],
+                aggregate=Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.SEM),
+                y_axis=YAxis(minimum=0.0),
+            ),
+            series_table,
+            0,
+        )
+
+    (line,) = _cache_lines(caplog)
+    assert "MISS" in line
+    assert "more)" in line, f"the field list must be capped: {line}"
+    assert len(line) < 400, f"one log line, not a spec dump: {len(line)} chars"
+
+
+def test_a_rebuilt_table_is_reported_as_the_table_changing(series_frame, caplog):
+    """Same spec, new table object — a different diagnosis from a spec change,
+    and the one that points at the source cache rather than at the panel."""
+    from scistackplot import LongTable
+
+    first = LongTable.from_frame(series_frame, measures=["Signal"])
+    second = LongTable.from_frame(series_frame, measures=["Signal"])
+
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        resolve_one(_spec(), first, 0)
+        caplog.clear()
+        resolve_one(_spec(), second, 0)
+
+    (line,) = _cache_lines(caplog)
+    assert "MISS" in line and "table object changed" in line, line
+
+
+def test_the_reason_survives_an_unparseable_neighbour(series_table, caplog):
+    """The helper must never be the thing that breaks a resolve."""
+    reduce_mod._plan_cache[(id(series_table), "not json")] = (series_table, None)
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        figure, _labels, _index = resolve_one(_spec(), series_table, 0)
+
+    assert figure.panels
+    assert _cache_lines(caplog)

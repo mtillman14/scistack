@@ -193,14 +193,78 @@ def test_aggregate_and_free_stay_available_on_1d(series_table):
 # --- labels ----------------------------------------------------------------
 
 
-def test_1d_roles_are_named_for_traces_not_for_rows():
+def test_1d_aggregate_is_named_for_traces_not_for_rows():
     assert role_label(Role.AGGREGATE, Shape.SERIES_1D) == "Average into one line"
-    assert role_label(Role.FREE, Shape.SERIES_1D) == "One line each"
 
 
-def test_scalar_roles_keep_the_statistical_wording():
+def test_scalar_aggregate_keeps_the_statistical_wording():
     assert role_label(Role.AGGREGATE, Shape.SCALAR) == "Average over"
-    assert role_label(Role.FREE, Shape.SCALAR) == "Replicates"
+
+
+def test_free_is_called_free_for_every_shape():
+    """The dropdown said "Replicates" (scalars) and "One line each" (1-D), so
+    the role a user has read about as FREE — in the docs, in a saved spec, in
+    an exported `roles=` — appeared nowhere by that name (user, 2026-09-13).
+    What a FREE factor DOES varies by shape, and that is the hint's job."""
+    for shape in Shape:
+        assert role_label(Role.FREE, shape) == "Free"
+    assert role_hint(Role.FREE, Shape.SCALAR) != role_hint(Role.FREE, Shape.SERIES_1D)
+
+
+def test_aggregate_and_free_hints_are_stated_as_a_contrast():
+    """The two roles a user cannot tell apart from the labels alone.
+
+    "Average over" and "Free" both read as "not on an axis", and hints that
+    described each one on its own — both using the word "average" — did not
+    separate them (user, 2026-09-13). What separates them is the error bars:
+    AGGREGATE collapses first and does NOT widen them, FREE keeps each level
+    and DOES. Both sides must say so, in the same terms, for every shape.
+    """
+    for shape in (Shape.SCALAR, Shape.SERIES_1D):
+        collapse = role_hint(Role.AGGREGATE, shape)
+        keep = role_hint(Role.FREE, shape)
+        assert "does NOT widen the error" in collapse, (shape, collapse)
+        assert "DOES widen the error" in keep, (shape, keep)
+
+
+def test_the_contrast_is_the_statistic_the_plot_kind_cannot_express():
+    """Not a wording preference — the two roles produce different numbers.
+
+    With [subject, trial] and a band: trial=AGGREGATE averages each subject's
+    trials first, so the band is the spread across SUBJECTS; trial=FREE pools
+    every subject-trial trace. Same kind, same data, different error bars —
+    which is why both roles exist. Pinned as behaviour so the hints cannot
+    become a claim the reduction stops making.
+    """
+    import numpy as np
+    import pandas as pd
+    from scistackplot import LongTable, PlotKind, PlotSpec, resolve
+    from scistackplot.resolved import Y_HIGH, Y_LOW
+    from scistackplot.spec import Aggregation, ErrorBand, Statistic
+
+    # s1 has 4 nearly identical trials, s2 has 1 — so pooling weights s1 four
+    # times and shrinks the spread relative to averaging within subject first.
+    rows = []
+    for trial, offset in enumerate([0.0, 0.01, -0.01, 0.02]):
+        rows.append({"subject": "s1", "trial": str(trial), "v": np.array([1.0 + offset])})
+    rows.append({"subject": "s2", "trial": "0", "v": np.array([5.0])})
+    frame = pd.DataFrame(rows)
+    table = LongTable.from_frame(frame, factors=["subject", "trial"], measures=["v"])
+    band = Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)
+
+    def spread(trial_role: Role) -> float:
+        spec = PlotSpec(
+            measures=["v"],
+            roles={"subject": Role.FREE, "trial": trial_role},
+            kind=PlotKind.BAND,
+            aggregate=band,
+        )
+        panel = resolve(spec, table)[0].panels[0].frame
+        return float(panel[Y_HIGH].iloc[0] - panel[Y_LOW].iloc[0])
+
+    pooled = spread(Role.FREE)
+    within_first = spread(Role.AGGREGATE)
+    assert within_first > pooled, (within_first, pooled)
 
 
 def test_every_role_has_a_label_and_a_hint_for_every_shape():

@@ -219,6 +219,46 @@ def test_default_roles_for_1d_leave_x_unassigned(series_table):
     assert Role.X not in roles.values()
 
 
+def test_default_roles_for_1d_open_on_one_record(series_table):
+    """Every schema key separates figures: the first figure is one record's
+    data, which is what makes opening a large variable cheap (2026-09-13)."""
+    roles = default_roles(series_table, "Signal")
+    plain = [f.name for f in series_table.factors if not f.is_variant and not f.is_field]
+    assert plain, "the fixture has schema keys"
+    assert all(roles[name] is Role.ITERATE for name in plain), roles
+    assert Role.FREE not in roles.values()
+
+
+def test_default_roles_for_scalars_keep_x_and_colour(scalar_table):
+    """Scalars are cheap at any size, and one point per figure is no plot."""
+    roles = default_roles(scalar_table, "StepLength")
+    assert Role.X in roles.values()
+    assert Role.ITERATE not in roles.values()
+
+
+def test_default_spec_scopes_y_limits_to_every_panel_factor(struct_table):
+    """Per-panel autoscale from the start — and the cheapest limits to compute."""
+    spec = default_spec(struct_table, "RawEMG")
+    panel_factors = {n for n, r in spec.roles.items() if r in (Role.ITERATE, Role.FACET)}
+    assert panel_factors
+    assert set(spec.y_axis.scope) == panel_factors
+
+
+def test_the_default_y_scope_follows_the_tables_factor_order(struct_table):
+    """The TABLE's order, not the roles dict's.
+
+    `default_roles` assigns the struct's fields before the schema keys, so the
+    roles dict leads with `ColName` while the table leads with the schema keys.
+    Scope order does not change which limits are computed, but it does decide
+    the order they are reported and compared in, and dict-insertion order is
+    whichever role happened to be assigned first.
+    """
+    spec = default_spec(struct_table, "RawEMG")
+    order = struct_table.factor_names
+    assert list(spec.y_axis.scope) == sorted(spec.y_axis.scope, key=order.index)
+    assert spec.y_axis.scope[-1] == "ColName", "fields come after the schema keys"
+
+
 # --- capability ------------------------------------------------------------
 
 
@@ -285,11 +325,11 @@ def test_field_factor_defaults_to_one_subplot_each(struct_table):
     assert roles["ColName"] is Role.FACET
 
 
-def test_field_factor_does_not_steal_the_colour_channel(struct_table):
+def test_field_factor_does_not_steal_a_schema_keys_channel(struct_table):
     roles = default_roles(struct_table, "RawEMG")
     assert roles["ColName"] is not Role.COLOR
-    # The remaining conditions still get their usual channels.
-    assert Role.COLOR in roles.values()
+    # The schema keys still get their own (per-record) figures.
+    assert all(r is Role.ITERATE for n, r in roles.items() if n != "ColName")
 
 
 def test_default_spec_wraps_many_fields_into_a_grid(struct_table):
