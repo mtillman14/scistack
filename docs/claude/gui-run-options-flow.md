@@ -78,10 +78,17 @@ and no lifecycle coupling at all.
 `_pipeline_nodes.config` is still **read** as a fallback, so configs saved
 before the split are not orphaned. Nothing writes it any more.
 
-Node ids come in two shapes and both must work as keys:
+Node ids come in **three** shapes and all must work as keys:
 
 - `fn__{fn_name}` — the legacy/manual form, a node placed but never run.
-- `fn__{fn_name}__{call_id}` — the composite form for a node with history.
+- `fn__{fn_name}__{call_id}` — the composite (bare canonical) form for a node
+  with history.
+- `fn__{fn_name}__{call_id}::{scope}` — the **placement-qualified** form, which
+  is what the canvas actually shows (and therefore what the panel saves under)
+  whenever the node has a qualified placement in `layout.json`. Rehydration of
+  this shape happens in a second pass, `graph_builder.apply_placement_configs`,
+  AFTER `scope_filter.resolve_scope_view` — `build_function_nodes` only ever
+  sees the bare id. See `docs/claude/placement-qualified-ids.md`.
 
 ## Where run options are consumed
 
@@ -143,7 +150,24 @@ bare `UPDATE ... WHERE node_id = ?`. A node id with no matching row updated zero
 rows and reported success, so the checkbox reset on every rebuild. Hence the
 upsert, and hence the WARN when a config write matches nothing.
 
-Both bugs were invisible in the same way, and each hid the other: the checkbox
+**Silent drop in rehydration (2026-09-14, later the same day).** With the
+upsert in place the write landed — under
+`fn__loadGaitRiteOneFile__cccfc8d46e3ddc62::main`. `build_function_nodes`
+looked the config up by the bare id, before scope resolution, and missed. The
+VS Code extension's DuckDB file watcher (`extension.ts` `setupDbWatcher`, 2 s
+debounce) turned every config write into a `dag_updated`, the refetched node
+came back configless, and the checkbox snapped back ~7 s after each click
+(2 s debounce + a ~5 s `get_pipeline`). Fixed by `apply_placement_configs`;
+that pass also WARNs about *orphan* configs (a saved id no node in the resolved
+graph carries) so the next id-shape mismatch names itself in `scidb.log`.
+
+A secondary effect worth knowing: `updateNodeData` builds the payload from
+`node.data`, so once a refetch has stripped the keys, the *next* toggle saves
+only the key just changed (`update_node_config ... keys=[]` appeared in the
+log) — wiping the earlier settings from the DB too. Rehydration working is what
+keeps the payload complete.
+
+All three bugs were invisible in the same way, and each hid the next: the checkbox
 not sticking looked like the cause of distribute not working, when in fact the
 request log showed `distribute: True` on the wire for every attempted run.
 

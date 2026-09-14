@@ -1727,6 +1727,16 @@ def flatten_sequences(py_list):
             # Reject if not typed (object dtype = heterogeneous or non-numeric/bool)
             if arr.dtype.kind == "O":
                 return None, None
+            # Reject anything that is not a flat sequence. The contract here is
+            # "list of variable-length numeric SEQUENCES", and the caller splits
+            # the concatenated result back apart with `lengths` — which only
+            # describes a 1-D element. For a 2-D element `len(arr)` is its ROW
+            # count, so a single 4x3 matrix reports length 4 and MATLAB slices
+            # the first 4 elements of a 12-element buffer: a 4x1 column where a
+            # 4x3 matrix belongs, silently. Decline and let the element-by-
+            # element path convert each array with its own shape intact.
+            if arr.ndim != 1:
+                return None, None
             arrays.append(arr)
 
         # Record lengths and concatenate

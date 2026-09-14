@@ -233,5 +233,41 @@ classdef TestFromPython < matlab.unittest.TestCase
             testCase.verifyEqual(result, [true false; true true]);
         end
 
+        function test_list_of_one_matrix_keeps_matrix_shape(testCase)
+            % A DataFrame object column holding ONE matrix arrives here as a
+            % py.list of one (4,3) ndarray. It must come back as a cell holding
+            % a 4x3 matrix -- one cell per row, each its own shape.
+            %
+            % Regression: py.numpy.asarray() stacks that list into a (1,4,3)
+            % block, and the bulk buffer path reshapes it faithfully to 1x4x3.
+            % The old element-wise path collapsed the leading singleton back to
+            % 4x3 via try_stack_numeric, so the change was invisible until a
+            % matrix-valued for_each input arrived reshaped -- and the reshaped
+            % result was saved (TestEndToEnd/test_matrix_through_pipeline).
+            py_arr = py.numpy.reshape( ...
+                py.numpy.arange(int64(12)), py.tuple({int64(4), int64(3)}));
+            result = scidb.internal.from_python(py.list({py_arr}));
+
+            testCase.verifyTrue(iscell(result), ...
+                'a list of matrices must convert to one cell per element');
+            testCase.verifyEqual(numel(result), 1);
+            testCase.verifyEqual(size(result{1}), [4 3], ...
+                'the matrix must keep its own shape, not gain a leading dim');
+            % Fortran order is preserved through the per-element buffer path.
+            testCase.verifyEqual(result{1}, ...
+                reshape(0:11, [3 4])', 'AbsTol', 1e-12);
+        end
+
+        function test_list_of_vectors_still_takes_bulk_path(testCase)
+            % The ndim<=2 guard must not cost the case the bulk path exists
+            % for: a list of equal-length 1-D arrays is (N,L) and still
+            % converts as one block.
+            py_a = py.numpy.array(py.list({1.0, 2.0, 3.0}));
+            py_b = py.numpy.array(py.list({4.0, 5.0, 6.0}));
+            result = scidb.internal.from_python(py.list({py_a, py_b}));
+            testCase.verifyEqual(size(result), [2 3]);
+            testCase.verifyEqual(result, [1 2 3; 4 5 6], 'AbsTol', 1e-12);
+        end
+
     end
 end

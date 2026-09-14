@@ -2146,6 +2146,71 @@ def _apply_saved_config(node_data: dict, config: dict | None) -> None:
             node_data[key] = config[key]
 
 
+def apply_placement_configs(
+    nodes: list[dict], node_configs: dict[str, dict] | None
+) -> int:
+    """Rehydrate config saved under a node's FINAL (scope-resolved) id.
+
+    ``build_function_nodes`` runs before ``scope_filter.resolve_scope_view``
+    and so can only look a config up by the bare canonical id
+    (``fn__{fn}__{cid}``). But the id the frontend saves under -- and the id
+    ``execution_service._scope_function_node_ids`` runs under -- is the
+    placement-qualified one (``fn__{fn}__{cid}::{scope}``) whenever the node
+    has a qualified placement. Without this pass, a setting saved for such a
+    node is written fine and simply never read back: every ``dag_updated``
+    refetch hands the canvas a node with no ``schemaLevel``/``runOptions``
+    and the checkbox visibly snaps back (2026-09-14, loadGaitRiteOneFile).
+
+    Call it AFTER scope resolution, on the resolved node list. The
+    per-placement config overrides whatever the bare-id pass already put on
+    ``data``; a node without a qualified config keeps the bare-id result.
+    Returns the number of nodes a qualified config was applied to.
+
+    Also warns about ORPHAN configs -- rows whose node id matches no node in
+    the resolved graph -- because that is exactly the signature of a fourth
+    id shape nobody thought of, and in the 2026-09-14 case a single WARN
+    here would have named the mismatch directly in scidb.log instead of it
+    hiding behind a "checkbox flickers" report.
+    See docs/claude/placement-qualified-ids.md.
+    """
+    if not node_configs:
+        return 0
+    graph_ids = {n["id"] for n in nodes}
+    bare_ids = {strip_placement(nid) for nid in graph_ids}
+    applied = 0
+    for n in nodes:
+        if n.get("type") != "functionNode":
+            continue
+        if parse_placement_id(n["id"]) is None:
+            continue  # bare id: build_function_nodes already looked it up
+        cfg = node_configs.get(n["id"])
+        if cfg:
+            _apply_saved_config(n["data"], cfg)
+            applied += 1
+            logger.debug(
+                "[graph_builder] applied placement-qualified config for %s: keys=%s",
+                n["id"],
+                sorted(cfg),
+            )
+    orphans = sorted(
+        nid
+        for nid in node_configs
+        if nid not in graph_ids and strip_placement(nid) not in bare_ids
+    )
+    if orphans:
+        # Not necessarily wrong: a config may belong to a node in another
+        # scope, or to a wiring that has since been hidden. But if the node
+        # the user is toggling is in this list, the toggle can never stick.
+        logger.warning(
+            "[graph_builder] %d saved node config(s) match no node in the "
+            "resolved graph (by exact or bare id): %s -- a setting saved "
+            "under one of these ids will not rehydrate",
+            len(orphans),
+            orphans,
+        )
+    return applied
+
+
 def build_manual_node(
     node_id: str,
     meta: dict,

@@ -147,7 +147,25 @@ function data = from_python(py_obj)
         try
             py_arr = py.numpy.asarray(py_obj);
             dtype_kind = string(py_arr.dtype.kind);
-            if dtype_kind ~= "O" && dtype_kind ~= "U"
+            % ndim >= 3 means the list held MATRICES, not scalars or vectors:
+            % asarray stacks N arrays of shape (R,C) into one (N,R,C) block.
+            % Converting that in bulk hands the caller a 3-D MATLAB array, but
+            % what a DataFrame object column wants is one cell PER ROW holding
+            % that row's own matrix. The element-by-element path below produces
+            % exactly that (and still converts each matrix through the fast
+            % buffer path individually, so nothing slow happens).
+            %
+            % Before 2026-09-14 this was hidden: the old ndarray branch walked
+            % (1,4,3) through tolist() and try_stack_numeric, which collapsed
+            % the leading singleton back to 4x3. reshape() preserves it, so a
+            % single matrix-valued record started arriving with the wrong shape
+            % and the wrong shape was then SAVED
+            % (TestEndToEnd/test_matrix_through_pipeline).
+            %
+            % ndim <= 2 is unaffected: a list of scalars is 1-D and a list of
+            % equal-length vectors is (N,L), both of which the bulk path has
+            % always rendered the same way the element-wise path did.
+            if dtype_kind ~= "O" && dtype_kind ~= "U" && int64(py_arr.ndim) <= 2
                 % Successfully converted to a typed numpy array — use the
                 % ndarray path which handles bool/numeric in bulk.
                 data = scidb.internal.from_python(py_arr);

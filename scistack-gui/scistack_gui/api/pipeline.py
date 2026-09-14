@@ -1181,6 +1181,14 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     nodes, edges = resolve_scope_view(
         nodes, edges, pipeline_id, manual_nodes, positions_by_scope
     )
+    # Config saved under a placement-qualified id (``...::scope``) is only
+    # findable once the ids have been resolved -- build_function_nodes above
+    # ran on bare ids. See gb.apply_placement_configs.
+    applied = gb.apply_placement_configs(nodes, node_configs)
+    if applied:
+        logger.info(
+            "[pipeline] rehydrated placement-qualified config on %d node(s)", applied
+        )
     nodes += build_pipeline_nodes(db, pipeline_id)
 
     # --- Endpoint classification (plot_/stat_ prefixes) ---

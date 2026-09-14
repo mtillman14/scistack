@@ -266,3 +266,43 @@ def test_large_column_is_one_buffer_not_per_element():
     assert desc["ok"]
     assert len(desc["buffer"]) == 8 * 200_000
     np.testing.assert_array_equal(_roundtrip(desc), arr)
+
+
+# ---------------------------------------------------------------------------
+# flatten_sequences must decline anything that is not a flat sequence
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_sequences_declines_2d_elements():
+    """A list holding a MATRIX is not a list of sequences, and must decline.
+
+    ``lengths`` is what MATLAB splits the concatenated buffer back apart with,
+    and it only describes a 1-D element: for a 4x3 matrix ``len(arr)`` is 4, its
+    ROW count, so MATLAB would slice the first 4 values out of a 12-value buffer
+    and hand back a 4x1 column where a 4x3 matrix belongs — silently, and then
+    save it (TestEndToEnd/test_matrix_through_pipeline, 2026-09-14).
+    """
+    flat, lengths = flatten_sequences([np.arange(12, dtype=np.float64).reshape(4, 3)])
+    assert flat is None and lengths is None
+
+
+def test_flatten_sequences_declines_mixed_1d_and_2d():
+    """One non-flat element is enough to disqualify the whole list — the split
+    is positional, so a single wrong length corrupts every element after it."""
+    flat, lengths = flatten_sequences(
+        [
+            np.array([1.0, 2.0, 3.0]),
+            np.arange(6, dtype=np.float64).reshape(2, 3),
+        ]
+    )
+    assert flat is None and lengths is None
+
+
+def test_flatten_sequences_still_accepts_ragged_1d():
+    """The path this exists for is unaffected: ragged 1-D numeric columns (the
+    DuckDB ``DOUBLE[]`` shape) still take the one-crossing route."""
+    signals = [np.array([1.0, 2.0, 3.0]), np.array([4.0, 5.0]), np.array([6.0])]
+    flat, lengths = flatten_sequences(signals)
+    assert flat is not None
+    np.testing.assert_array_equal(lengths, [3, 2, 1])
+    np.testing.assert_array_equal(flat, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])

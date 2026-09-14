@@ -2685,6 +2685,32 @@ class DatabaseManager:
                     f"{fell_back[:5]}"
                 )
 
+            # A where= that selects a variant is supposed to land on ONE of
+            # them. More than one surviving means the subset test admitted
+            # records it should have excluded, and the only way to see WHY is
+            # the two sets it compared — the filter's own resolved locations
+            # against each record's consumed locations. Both are small here (a
+            # handful of schema_ids), this fires only on the ambiguous case, and
+            # without it the symptom is a bare "load returned 2 records" with
+            # nothing to attribute it to.
+            if len(records) > 1:
+                Log.info(
+                    f"[_load_with_where] {type_name}: where= left "
+                    f"{len(records)} records AMBIGUOUS (expected one variant). "
+                    f"filter={var_filter!r} resolved natively to "
+                    f"{sorted(s_var_native)}; target-level S_var="
+                    f"{sorted(s_var)}; per-record consumed inputs: "
+                    + ", ".join(
+                        f"{rid}(schema={sid}) consumed="
+                        f"{sorted(consumed_map[rid]) if rid in consumed_map else 'NONE'}"
+                        for rid, sid in zip(
+                            records["record_id"].tolist(),
+                            records["schema_id"].tolist(),
+                            strict=False,
+                        )
+                    )
+                )
+
         # --- Row restriction (SchemaKey portion / pre-resolved Merge ids) ---
         if row_ids is not None:
             _before = len(records)

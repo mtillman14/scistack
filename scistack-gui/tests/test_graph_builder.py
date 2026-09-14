@@ -2874,3 +2874,148 @@ class TestSavedConfigRehydration:
         data = self._make(node_configs={})[0]["data"]
         assert "runOptions" not in data
         assert "schemaFilter" not in data
+
+
+class TestPlacementQualifiedConfigRehydration:
+    """The id the frontend saves config under is the FINAL id it sees --
+    ``fn__{fn}__{cid}::{scope}`` for a node with a placement-qualified
+    position -- but build_function_nodes runs before scope resolution and
+    looks configs up by the bare id. apply_placement_configs is the second
+    pass that closes that gap on the resolved node list.
+
+    Symptom without it (2026-09-14, loadGaitRiteOneFile): every toggle
+    writes fine (``update_node_config ... keys=['schemaLevel']`` in
+    scidb.log), the DuckDB file watcher fires dag_updated ~2 s later, the
+    refetched node carries no config, and the checkbox snaps back.
+
+    See docs/claude/placement-qualified-ids.md.
+    """
+
+    CID = _cid("placed")
+    KEY = ("loadGaitRiteOneFile", CID)
+    BARE = f"fn__loadGaitRiteOneFile__{CID}"
+    QUALIFIED = f"{BARE}::main"
+
+    def _built(self, node_configs):
+        from scistack_gui.domain.graph_builder import build_function_nodes
+
+        return build_function_nodes(
+            fn_input_params={self.KEY: {"path": "GaitRitePath"}},
+            fn_outputs={self.KEY: {"GAITRiteLoaded"}},
+            fn_constants={self.KEY: set()},
+            fn_variants_map={self.KEY: []},
+            fn_params_map={"loadGaitRiteOneFile": ["path"]},
+            run_states={},
+            matlab_functions={"loadGaitRiteOneFile"},
+            saved_configs={"loadGaitRiteOneFile": None},
+            node_configs=node_configs,
+        )
+
+    def _resolved(self, node_configs, scope="main"):
+        """Build, then scope-resolve exactly as api/pipeline._build_graph
+        does, with a placement-qualified position for the node."""
+        from scistack_gui.domain.scope_filter import resolve_scope_view
+
+        nodes = self._built(node_configs)
+        positions_by_scope = {scope: {self.QUALIFIED: {"x": 0, "y": 0}}}
+        nodes, _edges = resolve_scope_view(
+            nodes, [], scope, manual_nodes={}, positions_by_scope=positions_by_scope
+        )
+        return nodes
+
+    def test_resolved_id_is_placement_qualified(self):
+        """Precondition for everything below: the canvas really does see the
+        qualified id, so that is what it saves under."""
+        nodes = self._resolved({})
+        assert [n["id"] for n in nodes] == [self.QUALIFIED]
+
+    def test_bare_lookup_alone_misses_a_qualified_config(self):
+        """Documents the gap the second pass exists for: the config the
+        frontend wrote is invisible to build_function_nodes."""
+        nodes = self._resolved(
+            {self.QUALIFIED: {"schemaLevel": ["subject", "session", "speed"]}}
+        )
+        assert "schemaLevel" not in nodes[0]["data"]
+
+    def test_apply_placement_configs_rehydrates_qualified_config(self):
+        from scistack_gui.domain.graph_builder import apply_placement_configs
+
+        cfg = {
+            "schemaLevel": ["subject", "session", "speed"],
+            "runOptions": {"distribute": True, "save": True},
+        }
+        node_configs = {self.QUALIFIED: cfg}
+        nodes = self._resolved(node_configs)
+        applied = apply_placement_configs(nodes, node_configs)
+        assert applied == 1
+        assert nodes[0]["data"]["schemaLevel"] == cfg["schemaLevel"]
+        assert nodes[0]["data"]["runOptions"] == cfg["runOptions"]
+
+    def test_qualified_config_beats_bare_config(self):
+        """Independent placements of one wiring may hold different settings;
+        the id the user actually toggled under has to win."""
+        from scistack_gui.domain.graph_builder import apply_placement_configs
+
+        node_configs = {
+            self.BARE: {"runOptions": {"distribute": False}},
+            self.QUALIFIED: {"runOptions": {"distribute": True}},
+        }
+        nodes = self._resolved(node_configs)
+        assert nodes[0]["data"]["runOptions"] == {"distribute": False}  # bare pass
+        apply_placement_configs(nodes, node_configs)
+        assert nodes[0]["data"]["runOptions"] == {"distribute": True}
+
+    def test_bare_config_survives_when_no_qualified_config(self):
+        """A node placed bare-then-graduated keeps its pre-graduation config
+        until the user saves again under the new id."""
+        from scistack_gui.domain.graph_builder import apply_placement_configs
+
+        node_configs = {self.BARE: {"runOptions": {"distribute": True}}}
+        nodes = self._resolved(node_configs)
+        assert apply_placement_configs(nodes, node_configs) == 0
+        assert nodes[0]["data"]["runOptions"] == {"distribute": True}
+
+    def test_other_scopes_config_is_not_applied_here(self):
+        from scistack_gui.domain.graph_builder import apply_placement_configs
+
+        node_configs = {f"{self.BARE}::hyp1": {"runOptions": {"distribute": True}}}
+        nodes = self._resolved(node_configs, scope="main")
+        # Viewing main: the node is bare-placed nowhere and qualified only in
+        # hyp1's config, so its main view has no config at all.
+        assert apply_placement_configs(nodes, node_configs) == 0
+        assert "runOptions" not in nodes[0]["data"]
+
+    def test_orphan_config_is_warned_not_silently_ignored(self, caplog):
+        """A config keyed by an id no node in the graph carries -- by exact
+        OR bare id -- is the signature of an id-shape mismatch. It has to be
+        visible in scidb.log; this class of bug is otherwise silent."""
+        import logging
+
+        from scistack_gui.domain.graph_builder import apply_placement_configs
+
+        node_configs = {"fn__someOtherFn__deadbeef::main": {"runOptions": {}}}
+        nodes = self._resolved(node_configs)
+        with caplog.at_level(logging.WARNING, logger="scistack_gui.domain.graph_builder"):
+            apply_placement_configs(nodes, node_configs)
+        assert any(
+            "match no node in the resolved graph" in r.getMessage()
+            and "fn__someOtherFn__deadbeef::main" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_config_for_a_graph_node_is_not_an_orphan(self, caplog):
+        """Neither a qualified nor a bare key for a present node may trip the
+        orphan WARN, or the log fills with noise and the real one is missed."""
+        import logging
+
+        from scistack_gui.domain.graph_builder import apply_placement_configs
+
+        node_configs = {
+            self.QUALIFIED: {"runOptions": {}},
+            self.BARE: {"runOptions": {}},
+            f"{self.BARE}::hyp1": {"runOptions": {}},
+        }
+        nodes = self._resolved(node_configs)
+        with caplog.at_level(logging.WARNING, logger="scistack_gui.domain.graph_builder"):
+            apply_placement_configs(nodes, node_configs)
+        assert not [r for r in caplog.records if "match no node" in r.getMessage()]
