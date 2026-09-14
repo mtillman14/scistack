@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scistacklog import Log
-from scistackplot import CODE_FACTOR_PREFIX
+from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX
 from scistackplot.framesize import format_extent, frame_extent
 
 LAYER = "scistackplotdb"
@@ -463,7 +463,17 @@ def attach_variants(
 
     Code columns come **first**: they are the axis a reader most often wants
     pinned, and a stable leading position beats having them appear wherever the
-    branch-param iteration order happened to put them.
+    branch-param iteration order happened to put them. Run-option columns
+    (``Run:<fn>``) follow them, for the same reason.
+
+    Run options are the third discriminator, added 2026-09-14 for the same
+    failure one axis over: ``distribute``/``as_table`` are part of
+    ``invocation_id``, so a loader re-run with ``distribute=true`` wrote a
+    second record beside every ``distribute=false`` one — same code, same
+    constants — and the two were drawn on top of each other trial for trial.
+    ``run_chain`` (scidb) names, per upstream function that has run more than
+    one way, the options it ran under for this record; one ``Run:<fn>`` column
+    each, and the latest flag is attached for these exactly as for code.
 
     **Only columns that actually distinguish something are attached.** A branch
     param holding the same value on every record is dropped: it cannot separate
@@ -504,6 +514,41 @@ def attach_variants(
         code_keys.append(column)
         axes.append(
             {"column": column, "kind": "code", "function": fn_name, "param": None}
+        )
+
+    # --- run options: one column per upstream function that ran >1 way ---
+    # scidb already omits functions with a single option set (`run_option_axes`),
+    # but a function may have run both ways producing OTHER types; the
+    # branch-param rule below (drop a column with one level over THESE records)
+    # applies here too so a single-level column never demands a role.
+    run_fn_names = sorted(
+        {name for info in ident.values() for name in info.get("run_chain", {})}
+    )
+    run_keys: list[str] = []
+    for fn_name in run_fn_names:
+        column = f"{RUN_FACTOR_PREFIX}{fn_name}"
+        while column in frame.columns:  # never shadow a schema key
+            column += "_"
+        values = [
+            (ident.get(rid) or {}).get("run_chain", {}).get(
+                fn_name, MISSING_VERSION_LEVEL
+            )
+            for rid in record_ids
+        ]
+        if len(set(values)) <= 1:
+            Log.info(
+                "%s ran under >1 run-option set overall but only %r over these "
+                "%d record(s) — not an axis here",
+                fn_name,
+                values[0] if values else None,
+                len(record_ids),
+                layer=LAYER,
+            )
+            continue
+        frame[column] = values
+        run_keys.append(column)
+        axes.append(
+            {"column": column, "kind": "run", "function": fn_name, "param": None}
         )
 
     # --- branch params ---
@@ -567,7 +612,7 @@ def attach_variants(
             }
         )
 
-    keys = code_keys + param_keys
+    keys = code_keys + run_keys + param_keys
 
     if constants:
         # Never silent. These values are real provenance — they are simply not a
@@ -611,7 +656,10 @@ def attach_variants(
         )
 
     latest_column = None
-    if code_keys:
+    if code_keys or run_keys:
+        # `is_latest` is one chain-wide, per-location flag over code AND run
+        # options, so it answers a run-option axis exactly as it answers a code
+        # axis — and the default pin needs it for either.
         latest_column = LATEST_COLUMN
         while latest_column in frame.columns:
             latest_column += "_"
@@ -622,10 +670,13 @@ def attach_variants(
         ]
 
         Log.info(
-            "attached %d code column(s) %s over %d record(s) (%d row(s) current) "
-            "— these would otherwise plot as replicates of each other",
+            "attached %d code column(s) %s and %d run-option column(s) %s over "
+            "%d record(s) (%d row(s) current) — these would otherwise plot as "
+            "replicates of each other",
             len(code_keys),
             code_keys,
+            len(run_keys),
+            run_keys,
             len(record_ids),
             int(frame[latest_column].sum()),
             layer=LAYER,

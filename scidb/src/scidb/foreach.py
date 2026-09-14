@@ -4472,16 +4472,24 @@ def _load_var_type_as_spread(
         #
         # Scoped to exactly this case, so an unpinned load keeps today's
         # behaviour byte for byte.
-        from .variant import CODE_PIN_PREFIX
+        from .variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
 
+        # A RUN-OPTIONS pin needs the same: since 2026-09-14 the collapse also
+        # supersedes an older distribute/as_table run of the same code and
+        # constants (database._find_record, run-option supersession), so the
+        # older option set only exists in the uncollapsed load.
         has_code_pin = any(
-            key == CODE_PIN_PREFIX or key.startswith(f"{CODE_PIN_PREFIX}.")
+            key == CODE_PIN_PREFIX
+            or key.startswith(f"{CODE_PIN_PREFIX}.")
+            or key == RUN_PIN_PREFIX
+            or key.startswith(f"{RUN_PIN_PREFIX}.")
             for key in (branch_params_filter or {})
         )
         if has_code_pin:
             Log.info(
-                f"[Variant] {_vt_name}: code pin present — loading uncollapsed "
-                f"(version_id='all') so superseded versions remain selectable"
+                f"[Variant] {_vt_name}: code/run-options pin present — loading "
+                f"uncollapsed (version_id='all') so superseded versions remain "
+                f"selectable"
             )
         result = resolved_db.load_all_as_df(
             var_type,

@@ -345,6 +345,8 @@ export default function VariantDagPopup({
         (column && byColumn.get(column)) || null,
       axisForFunction: (label: string) =>
         axes.find(a => a.kind === 'code' && a.function === label) ?? null,
+      runAxisForFunction: (label: string) =>
+        axes.find(a => a.kind === 'run' && a.function === label) ?? null,
       versionsFor: (label: string) => graph?.versions?.[label] ?? [],
       isLevelSelected: (column, level) => {
         const current = selection[column]
@@ -436,7 +438,7 @@ export default function VariantDagPopup({
         .map(n => (n.data as { label?: string }).label ?? '')
     )
     return axes.filter(axis =>
-      axis.kind === 'code'
+      axis.kind === 'code' || axis.kind === 'run'
         ? !functions.has(axis.function ?? '')
         : !placed.has(axis.column)
     )

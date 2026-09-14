@@ -19,6 +19,17 @@ from typing import Any
 #: in this same dict.)
 CODE_PIN_PREFIX = "__code__"
 
+#: Reserved ``branch_params`` key for a **run-options** pin — the third variant
+#: dimension after constants and code. ``__run__`` (bare) or ``__run__.<fn>``
+#: (disambiguated), valued with a :func:`~scidb.provenance_query.run_options_label`
+#: string such as ``"distribute=true"``, or ``"latest"``.
+#:
+#: Exists because ``distribute``/``as_table`` are folded into ``invocation_id``:
+#: re-running unchanged code under a different flag writes a SECOND record at
+#: every location, and nothing in constants or code tells the two apart.
+#: Same non-collision argument as ``__code__``.
+RUN_PIN_PREFIX = "__run__"
+
 #: ``code_version="latest"`` — keep each schema location's own newest code
 #: chain, rather than a named ordinal.
 #:
@@ -125,6 +136,7 @@ class Variant:
         *,
         fn: str | None = None,
         code_version: str | None = None,
+        run_options: str | None = None,
         **branch_params: Any,
     ):
         """
@@ -146,6 +158,16 @@ class Variant:
                       explicitly. Note the asymmetry: a named ordinal drops
                       schema locations that never ran it, while ``"latest"`` is
                       resolved per location and drops none.
+            run_options: Optional **run-options** pin — a
+                      ``provenance_query.run_options_label`` string such as
+                      ``"distribute=true"`` or ``"distribute=false, as_table=[df]"``,
+                      or ``"latest"``. Selects records whose upstream function
+                      ran under exactly those ``for_each`` flags. Bare, it
+                      resolves against whichever upstream function has run more
+                      than one way (``AmbiguousParamError`` when several have);
+                      ``fn=`` names one. ``"latest"`` is the same per-location
+                      rule as ``code_version="latest"`` (one ``is_latest``, run
+                      options included).
             **branch_params: branch_param key/value pairs to pin. Bare names are
                       suffix-matched against namespaced branch_params at load time
                       (unless ``fn=`` is given, which namespaces them).
@@ -170,6 +192,9 @@ class Variant:
         if code_version is not None:
             key = f"{CODE_PIN_PREFIX}.{fn}" if fn else CODE_PIN_PREFIX
             branch_params = {**branch_params, key: str(code_version)}
+        if run_options is not None:
+            key = f"{RUN_PIN_PREFIX}.{fn}" if fn else RUN_PIN_PREFIX
+            branch_params = {**branch_params, key: str(run_options)}
 
         if isinstance(var_type, Merge):
             raise TypeError(
@@ -186,9 +211,10 @@ class Variant:
             )
         if not branch_params:
             raise ValueError(
-                "Variant requires at least one branch_param or code_version to "
-                "pin, e.g. Variant(FilteredEMG, low_hz=20) or "
-                'Variant(FilteredEMG, code_version="v1").'
+                "Variant requires at least one branch_param, code_version or "
+                "run_options to pin, e.g. Variant(FilteredEMG, low_hz=20), "
+                'Variant(FilteredEMG, code_version="v1") or '
+                'Variant(Loaded, run_options="distribute=true").'
             )
 
         # Nested Variant: merge the dicts; raise on conflicting key values.

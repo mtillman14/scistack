@@ -139,6 +139,9 @@ interface VariantFactorInfo {
   selected: string[]
   /** A code-version axis (`Code:bandpass`) rather than an experimental one. */
   is_code: boolean
+  /** A run-options axis (`Run:loader`): which distribute/as_table the function
+   *  ran under. Presented like a code axis; levels are flag labels. */
+  is_run?: boolean
 }
 
 /** One row of the Variants section, as the backend reports it back. */
@@ -1791,7 +1794,8 @@ export default function PlotStudio({
           <div key={`span-${index}`} style={styles.spanBanner}>
             <strong>{set.name}</strong> mixes{' '}
             {Object.values(set.spans).map(describeSpan).join(' | ')}. Pin a
-            version on the row, or split it into one variant per version.
+            version (or run options) on the row, or split it into one variant per
+            version.
           </div>
         ))}
         {busy && <div style={styles.note}>Resolving…</div>}
@@ -2287,7 +2291,8 @@ function VariantRows({
               style={styles.variantEmptyTag}
               title={
                 `This variant's rows were built by more than one version of the ` +
-                `code: ${Object.values(row.spans)
+                `code, or more than one set of run options (distribute/as_table): ` +
+                `${Object.values(row.spans)
                   .map(describeSpan)
                   .join(' | ')}. Pin a version on it, or split it into one ` +
                 `variant per version.`
@@ -2440,11 +2445,22 @@ function LevelPicker({
               {String(level)}
             </label>
           ))}
-          {!all && (
-            <button type="button" style={styles.levelReset} onClick={() => onChange(null)}>
-              Select all
-            </button>
-          )}
+          {/* Both bulk actions, so a 51-column ColName list can be cleared
+              and then one or two columns ticked, instead of unticking 49.
+              Deselect passes [] (an explicit empty filter), never null --
+              null means "no filter" and would re-select everything. */}
+          <div style={styles.levelBulkRow}>
+            {!all && (
+              <button type="button" style={styles.levelReset} onClick={() => onChange(null)}>
+                Select all
+              </button>
+            )}
+            {chosen.size > 0 && (
+              <button type="button" style={styles.levelReset} onClick={() => onChange([])}>
+                Deselect all
+              </button>
+            )}
+          </div>
           {chosen.size === 0 && (
             <div style={styles.levelEmpty}>
               Nothing selected — the figure will be empty.
@@ -2945,6 +2961,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent', border: 'none', color: '#7aa2f7',
     cursor: 'pointer', fontSize: 10, padding: '2px 0',
   },
+  levelBulkRow: { display: 'flex', gap: 10 },
   levelEmpty: { fontSize: 10, color: '#fbbf24', paddingTop: 2 },
   xLayerRow: { display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0' },
   xLayerDepth: {

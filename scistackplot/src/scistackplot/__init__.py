@@ -85,6 +85,7 @@ from .ylimits import describe as describe_y_limits
 from .ylimits import eligible_scope, limits_by_scope
 from .table import (
     CODE_FACTOR_PREFIX,
+    RUN_FACTOR_PREFIX,
     FactorInfo,
     LongTable,
     MeasureInfo,
@@ -143,6 +144,7 @@ __all__ = [
     "available_plots",
     "variant_summary",
     "CODE_FACTOR_PREFIX",
+    "RUN_FACTOR_PREFIX",
     # named variants
     "VARIANT_FACTOR",
     "LATEST",

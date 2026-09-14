@@ -146,13 +146,17 @@ def variant_expression(input_variable: str, variant_set) -> str:
     ``**{"__code__.loadEMG": "v1"}`` would leak a reserved namespace into code a
     user is meant to edit.
     """
-    from scistackplot import CODE_FACTOR_PREFIX, LATEST
+    from scistackplot import CODE_FACTOR_PREFIX, LATEST, RUN_FACTOR_PREFIX
 
     by_function: dict[str, dict[str, object]] = {}
     for column, value in (variant_set.selection or {}).items():
         if column.startswith(CODE_FACTOR_PREFIX):
             fn_name = column[len(CODE_FACTOR_PREFIX) :]
             by_function.setdefault(fn_name, {})["code_version"] = value
+        elif column.startswith(RUN_FACTOR_PREFIX):
+            # A run-options pin: Variant(X, fn="loader", run_options="distribute=true").
+            fn_name = column[len(RUN_FACTOR_PREFIX) :]
+            by_function.setdefault(fn_name, {})["run_options"] = value
         elif column == LATEST_COLUMN:
             # The source's "these are the current records" recommendation. scidb
             # spells the same thing `code_version="latest"`, resolved per schema

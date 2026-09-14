@@ -17,7 +17,7 @@ from dataclasses import replace
 
 from .shape import Shape
 from .spec import PlotKind, PlotSpec, Role
-from .table import CODE_FACTOR_PREFIX, LongTable
+from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, LongTable
 
 #: Kinds that summarize several rows per x position into one mark.
 DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.BAND)
@@ -613,6 +613,9 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
                 # one is usually pinned, the other usually faceted — so the GUI
                 # needs to tell them apart without parsing the name itself.
                 "is_code": factor.name.startswith(CODE_FACTOR_PREFIX),
+                # Run-option axes present like code axes (pinned, function-owned)
+                # but carry flag labels, not ordinals.
+                "is_run": factor.name.startswith(RUN_FACTOR_PREFIX),
                 "origin": factor.origin,
             }
         )

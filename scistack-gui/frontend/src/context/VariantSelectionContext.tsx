@@ -26,7 +26,10 @@ import { createContext, useContext } from 'react'
 /** One variant axis, as `plot_variant_graph` describes it. */
 export interface VariantAxis {
   column: string
-  kind: 'code' | 'param'
+  /** `code`: which body version of `function`; `run`: which for_each run
+   *  options (`distribute`/`as_table`) `function` ran under — both bind to a
+   *  function node by NAME; `param`: a branch param, bound by port. */
+  kind: 'code' | 'param' | 'run'
   function: string | null
   param: string | null
   levels: string[]
@@ -65,11 +68,16 @@ export interface VariantSelectionValue {
   /** Code axes bind by function NAME, which is what a function node is labelled
    *  with — one namespace, no port involved. */
   axisForFunction: (functionLabel: string) => VariantAxis | null
+  /** The run-options axis (`Run:<fn>`) a function node supplies, if its records
+   *  were produced under more than one `distribute`/`as_table` setting. Bound
+   *  by function NAME like the code axis; a separate dropdown on the node. */
+  runAxisForFunction: (functionLabel: string) => VariantAxis | null
   /** Every recorded version of a function, newest last. Empty = never run. */
   versionsFor: (functionLabel: string) => FunctionVersion[]
   /** Check/uncheck one level of a parameter axis. */
   toggleLevel: (column: string, level: string) => void
-  /** Pick a version (or 'latest') for a function axis. */
+  /** Pick a version (or 'latest') for a function axis — code or run options:
+   *  both are one scalar choice per column. */
   setVersion: (column: string, version: string) => void
   /** True when a level is currently selected. An axis with nothing chosen means
    *  "every level" — an unedited axis must not filter anything away. */

@@ -178,23 +178,34 @@ def _filter_records_by_branch_params(df, branch_params_filter: dict | None, duck
     if not branch_params_filter or len(df) == 0:
         return df
     from . import provenance_query
-    from .variant import CODE_PIN_PREFIX
+    from .variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
 
-    # Split the two variant dimensions. They travel in one dict on purpose (see
-    # CODE_PIN_PREFIX) but they resolve against different graph reads: constants
-    # accumulate through `branch_params_batch`, code versions through
-    # `code_versions_batch`.
+    # Split the three variant dimensions. They travel in one dict on purpose (see
+    # CODE_PIN_PREFIX / RUN_PIN_PREFIX) but they resolve against different graph
+    # reads: constants accumulate through `branch_params_batch`, code versions
+    # and run options through `chain_batch`.
     code_filter = {
         k: v
         for k, v in branch_params_filter.items()
         if k == CODE_PIN_PREFIX or k.startswith(f"{CODE_PIN_PREFIX}.")
     }
+    run_filter = {
+        k: v
+        for k, v in branch_params_filter.items()
+        if k == RUN_PIN_PREFIX or k.startswith(f"{RUN_PIN_PREFIX}.")
+    }
     param_filter = {
-        k: v for k, v in branch_params_filter.items() if k not in code_filter
+        k: v
+        for k, v in branch_params_filter.items()
+        if k not in code_filter and k not in run_filter
     }
 
     if code_filter and duck is not None:
         df = _filter_records_by_code_version(df, code_filter, duck)
+        if len(df) == 0:
+            return df
+    if run_filter and duck is not None:
+        df = _filter_records_by_run_options(df, run_filter, duck)
         if len(df) == 0:
             return df
 
@@ -354,6 +365,99 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
                 f"Pin them too, or use code_version='latest' to pin the whole "
                 f"chain."
             )
+
+    return df
+
+
+def _filter_records_by_run_options(df, run_filter: dict, duck):
+    """Keep only records whose upstream *run options* match ``run_filter``.
+
+    The run-options third of :func:`_filter_records_by_branch_params`. Keys are
+    ``__run__`` (resolve the function automatically) or ``__run__.<fn_name>``
+    (explicit). Values are a :func:`~scidb.provenance_query.run_options_label`
+    string (``"distribute=true"``) or ``"latest"``.
+
+    ``"latest"`` is the same chain-wide, per-location ``is_latest`` that
+    ``code_version="latest"`` uses — there is ONE notion of "current at this
+    location", and since 2026-09-14 it already accounts for run options, so
+    the two spellings deliberately share a resolution rather than growing a
+    second one.
+
+    A label pin compares exactly, per named function, against
+    :func:`~scidb.provenance_query.run_options_batch`. Bare pins resolve against
+    :func:`~scidb.provenance_query.run_option_axes` the way bare code pins
+    resolve against ``code_version_ordinals``: exactly one function that ran
+    more than one way is unambiguous, several raise, none is a no-op.
+    """
+    from . import provenance_query
+    from .exceptions import AmbiguousParamError
+    from .variant import LATEST_VERSION, RUN_PIN_PREFIX
+
+    record_ids = df["record_id"].tolist()
+
+    for key, value in run_filter.items():
+        wanted = str(value)
+
+        if wanted == LATEST_VERSION:
+            ident = provenance_query.variant_identity_batch(duck, record_ids)
+            keep = {
+                rid
+                for rid in record_ids
+                if (ident.get(rid) or {}).get("is_latest") is not False
+            }
+            df = df[df["record_id"].isin(keep)]
+            record_ids = df["record_id"].tolist()
+            continue
+
+        runs = provenance_query.run_options_batch(duck, record_ids)
+        present_fns = {name for chain in runs.values() for name in chain}
+        axes = provenance_query.run_option_axes(duck, present_fns)
+
+        fn_name = key[len(RUN_PIN_PREFIX) + 1 :] if "." in key else None
+        if fn_name is None:
+            candidates = sorted(axes)
+            if len(candidates) > 1:
+                raise AmbiguousParamError(
+                    f"run_options={wanted!r} is ambiguous: more than one "
+                    f"upstream function has run under several option sets "
+                    f"({candidates}). Name one with fn=, e.g. "
+                    f'Variant(X, fn="{candidates[0]}", run_options={wanted!r}).'
+                )
+            if not candidates:
+                Log.debug(
+                    f"run_options={wanted!r}: no upstream function ran under >1 "
+                    f"run-option set; pin is a no-op"
+                )
+                continue
+            fn_name = candidates[0]
+
+        if fn_name not in present_fns:
+            raise ValueError(
+                f"run_options pin names {fn_name!r}, which is not upstream of "
+                f"these records. Available: {sorted(present_fns) or 'none'}."
+            )
+        available = sorted(
+            {chain.get(fn_name) for chain in runs.values() if fn_name in chain}
+            - {None}
+        )
+        if wanted not in available:
+            raise ValueError(
+                f"{fn_name!r} ran under {available}; run_options={wanted!r} "
+                f"matches nothing."
+            )
+        keep = {
+            rid for rid in record_ids if runs.get(rid, {}).get(fn_name) == wanted
+        }
+        n_before = len(record_ids)
+        df = df[df["record_id"].isin(keep)]
+        record_ids = df["record_id"].tolist()
+        # INFO, not DEBUG: an empty result here is indistinguishable downstream
+        # from "no records at all" (for_each just runs zero combos), so the
+        # count and the labels it chose between have to be in the log.
+        Log.info(
+            f"run_options pin {fn_name}={wanted!r}: kept {len(record_ids)}/{n_before} "
+            f"record(s); labels present for {fn_name}: {available}"
+        )
 
     return df
 
@@ -1975,7 +2079,15 @@ class DatabaseManager:
             inv_map = provenance_query.producing_invocation_batch(self._duck, all_rids)
             bp_map = provenance_query.branch_params_batch(self._duck, all_rids)
             onum_map = provenance_query.output_num_batch(self._duck, all_rids)
+            run_map = provenance_query.invocation_run_options_batch(
+                self._duck, [inv[0] for inv in inv_map.values()]
+            )
             groups = defaultdict(list)
+            # Supersession FAMILIES: same (variable, schema_id, fn, constants,
+            # consumed inputs), i.e. everything in the variant key EXCEPT
+            # output_num, bucketed by the producing invocation's run options.
+            # Rationale below, at the family collapse.
+            families: dict = defaultdict(lambda: defaultdict(list))
             for row in df.itertuples(index=True):
                 inv = inv_map.get(row.record_id)
                 if inv is not None:
@@ -1986,11 +2098,16 @@ class DatabaseManager:
                     # and collapse to the newest.
                     onum = onum_map.get(row.record_id)
                     consumed = tuple(sorted(consumed_map.get(row.record_id, ())))
+                    bp_json = json.dumps(bp, sort_keys=True)
                     variant_key = (
                         inv[1],
-                        json.dumps(bp, sort_keys=True),
+                        bp_json,
                         onum,
                         consumed,
+                    )
+                    family_key = (row.variable_name, row.schema_id, inv[1], bp_json, consumed)
+                    families[family_key][run_map.get(inv[0])].append(
+                        (row.timestamp, row.Index)
                     )
                 else:
                     # No producing invocation → a plain raw save. (Any non-schema
@@ -2000,6 +2117,51 @@ class DatabaseManager:
                     variant_key = ("__raw__", None)
                 group_key = (row.variable_name, row.schema_id, variant_key)
                 groups[group_key].append((row.timestamp, row.Index))
+
+            # --- Run-option supersession (2026-09-14) ---
+            # distribute/as_table are folded into invocation_id, so re-running
+            # unchanged code at unchanged constants under a different flag is a
+            # DIFFERENT invocation that writes a second record to the same
+            # location. Those two records never shared a variant key, because a
+            # distributed run's output_num is the slice index: at most one trial
+            # could coincide with the non-distributed record's output_num, and
+            # every other trial kept both (`scidb show GAITRiteLoaded ...` listed
+            # two "latest" records per trial). So within a family holding
+            # records from more than one run-option set, only the set holding
+            # the most recently saved record survives; the per-output_num rule
+            # below then applies within it. A family with ONE option set — the
+            # ordinary case, and every genuine multi-output invocation — is
+            # untouched. Raw saves have no family.
+            superseded_idx: set = set()
+            superseded_families = 0
+            for family_key, by_run in families.items():
+                if len(by_run) < 2:
+                    continue
+                newest_run = max(by_run, key=lambda run: max(by_run[run]))
+                superseded_families += 1
+                dropped = 0
+                for run, members in by_run.items():
+                    if run != newest_run:
+                        superseded_idx.update(idx for _ts, idx in members)
+                        dropped += len(members)
+                Log.debug(
+                    f"_find_record({type_name}, latest): {family_key[0]} at "
+                    f"schema_id={family_key[1]} was run under {sorted(by_run, key=str)} — "
+                    f"keeping {newest_run!r}, superseding {dropped} "
+                    f"record(s) from the other option set(s)"
+                )
+            if superseded_idx:
+                Log.info(
+                    f"_find_record({type_name}, latest): run-option supersession "
+                    f"dropped {len(superseded_idx)} record(s) across "
+                    f"{superseded_families} location(s) — an older "
+                    f"distribute/as_table run of the same code and constants"
+                )
+                groups = {
+                    key: [m for m in members if m[1] not in superseded_idx]
+                    for key, members in groups.items()
+                }
+                groups = {key: members for key, members in groups.items() if members}
 
             # Keep only the latest record per variant group
             keep_indices = [max(group)[1] for group in groups.values()]
@@ -2022,9 +2184,15 @@ class DatabaseManager:
                 _dupmask = df.duplicated(subset=_sk, keep=False)
                 if _dupmask.any():
                     _dup = df[_dupmask]
-                    _n_locs = _dup.groupby(_sk, sort=False).ngroups
+                    # dropna=False: a record saved above the deepest schema key
+                    # has NULL there (a trial-level record in a schema that ends
+                    # in cycle), and pandas drops NULL-keyed groups by default —
+                    # which made this WARN say "0 location(s) ... Examples:"
+                    # with nothing after it, for exactly the rows it exists to
+                    # describe (2026-09-14, GAITRiteLoaded).
+                    _n_locs = _dup.groupby(_sk, sort=False, dropna=False).ngroups
                     _samples = []
-                    for _vals, _g in _dup.groupby(_sk, sort=False):
+                    for _vals, _g in _dup.groupby(_sk, sort=False, dropna=False):
                         if len(_samples) >= 3:
                             break
                         _sids = sorted(set(_g["schema_id"].tolist()))

@@ -24,7 +24,13 @@ from __future__ import annotations
 from typing import Any
 
 from scistacklog import Log
-from scistackplot import CODE_FACTOR_PREFIX, LongTable, VariantSet, natural_sort_key
+from scistackplot import (
+    CODE_FACTOR_PREFIX,
+    RUN_FACTOR_PREFIX,
+    LongTable,
+    VariantSet,
+    natural_sort_key,
+)
 
 from .load import LATEST_COLUMN
 
@@ -76,13 +82,15 @@ def selection_for(
 ) -> dict[str, Any]:
     """``Variant.branch_params`` → a column-keyed selection.
 
-    ``__code__``/``__code__.fn`` become ``Code:fn``; branch params keep their
-    namespaced name, which is already the column name.
+    ``__code__``/``__code__.fn`` become ``Code:fn``; ``__run__``/``__run__.fn``
+    become ``Run:fn``; branch params keep their namespaced name, which is
+    already the column name.
     """
-    from scidb.variant import CODE_PIN_PREFIX
+    from scidb.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
 
     axes = _axes_of(table)
     code_axes = [a for a in axes if a["kind"] == "code"]
+    run_axes = [a for a in axes if a["kind"] == "run"]
 
     selection: dict[str, Any] = {}
     for key, value in branch_params.items():
@@ -90,6 +98,10 @@ def selection_for(
             selection[_bare_code_column(code_axes)] = value
         elif key.startswith(f"{CODE_PIN_PREFIX}."):
             selection[f"{CODE_FACTOR_PREFIX}{key.split('.', 1)[1]}"] = value
+        elif key == RUN_PIN_PREFIX:
+            selection[_bare_run_column(run_axes)] = value
+        elif key.startswith(f"{RUN_PIN_PREFIX}."):
+            selection[f"{RUN_FACTOR_PREFIX}{key.split('.', 1)[1]}"] = value
         else:
             selection[_param_column(key, axes)] = value
     return selection
@@ -108,7 +120,8 @@ def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
 
     Three mappings, and the third is the one worth reading twice:
 
-    * ``Code:<fn>`` → ``__code__.<fn>``;
+    * ``Code:<fn>`` → ``__code__.<fn>``, and ``Run:<fn>`` → ``__run__.<fn>``
+      (a run-options pin, matched by ``database._filter_records_by_run_options``);
     * anything else is already ``fn.param``, scidb's own namespacing, and
       passes through — including a **list** value, which scidb already reads as
       membership (``database.py``'s list-valued branch params), so the picker's
@@ -123,7 +136,7 @@ def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
     ``CodeIsLatest: False`` has no scidb spelling — "not the latest" is not a
     pin — so it is dropped with a warning rather than silently inverted.
     """
-    from scidb.variant import CODE_PIN_PREFIX, LATEST_VERSION
+    from scidb.variant import CODE_PIN_PREFIX, LATEST_VERSION, RUN_PIN_PREFIX
 
     out: dict[str, Any] = {}
     for key, value in (selection or {}).items():
@@ -139,6 +152,8 @@ def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
             out[CODE_PIN_PREFIX] = LATEST_VERSION
         elif key.startswith(CODE_FACTOR_PREFIX):
             out[f"{CODE_PIN_PREFIX}.{key[len(CODE_FACTOR_PREFIX):]}"] = value
+        elif key.startswith(RUN_FACTOR_PREFIX):
+            out[f"{RUN_PIN_PREFIX}.{key[len(RUN_FACTOR_PREFIX):]}"] = value
         else:
             out[key] = value
     return out
@@ -168,6 +183,25 @@ def _bare_code_column(code_axes: list[dict]) -> str:
     raise ValueError(
         f"code_version= is ambiguous: {len(names)} functions in this table hold "
         f"more than one version ({names}). Name one with "
+        f'fn="{names[0]}", or add a variant per function.'
+    )
+
+
+def _bare_run_column(run_axes: list[dict]) -> str:
+    """The column a bare ``run_options=`` means — same rule as the code pin."""
+    if len(run_axes) == 1:
+        return run_axes[0]["column"]
+    if not run_axes:
+        raise ValueError(
+            "run_options= needs a table to resolve against (pass one), and that "
+            "table must hold at least one function that ran under more than one "
+            "run-option set. If you know the function, name it: "
+            'Variant(X, fn="loader", run_options="distribute=true").'
+        )
+    names = sorted(a["function"] for a in run_axes)
+    raise ValueError(
+        f"run_options= is ambiguous: {len(names)} functions in this table ran "
+        f"under more than one option set ({names}). Name one with "
         f'fn="{names[0]}", or add a variant per function.'
     )
 

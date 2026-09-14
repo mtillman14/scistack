@@ -26,6 +26,12 @@
 > Prerequisite reading: `function-version-variants.md` (what a variant *is*),
 > `plotting-library-design.md` (roles, `VariantPolicy`), `each-of-variant-expansion.md`.
 
+> **2026-09-14 addendum — a fourth referent.** Run options (`distribute`/
+> `as_table`) are identity-bearing too and had the same one-axis-over gap:
+> same code, same constants, two records per location, overplotted. They are
+> now a `Run:<fn>` axis and part of `is_latest`, AND (unlike code) part of the
+> load-path supersession. See `run-option-variants.md`.
+
 ## 1. Three things are called "variant"
 
 The word is overloaded, and the three referents behave differently. Untangling

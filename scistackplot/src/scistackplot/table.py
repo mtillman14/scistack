@@ -39,6 +39,15 @@ _NUM_CHUNK = re.compile(r"(\d+)")
 #: (``scistackplotdb.VERSION_FACTOR_PREFIX`` is this constant).
 CODE_FACTOR_PREFIX = "Code:"
 
+#: Prefix marking a factor as a **run-options** axis (``Run:loadGaitRiteOneFile``)
+#: — which ``for_each`` flags (``distribute``/``as_table``) the named function
+#: ran under to produce these rows. The third kind of variant axis after branch
+#: params and code versions, and presented like a code axis: it belongs to the
+#: function, it is usually pinned to current, and it is answered by the
+#: source's latest flag. Levels are scidb's ``run_options_label`` strings
+#: (``distribute=true``); no ordinal, because the options have no version order.
+RUN_FACTOR_PREFIX = "Run:"
+
 
 def natural_sort_key(value: Any) -> tuple:
     """

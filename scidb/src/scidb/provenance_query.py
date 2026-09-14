@@ -151,7 +151,8 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
     """Load the full upstream subgraph reachable from ``seed_record_ids`` into
     in-memory adjacency maps using O(max_depth) batched queries.
 
-    Returns ``(rec_to_inv, inv_constants, inv_var_inputs, inv_fn_hash)`` where:
+    Returns ``(rec_to_inv, inv_constants, inv_var_inputs, inv_fn_hash,
+    inv_run_options)`` where:
 
     * ``rec_to_inv``: ``{record_id: (inv_id, fn_name)}`` for produced records
     * ``inv_constants``: ``{inv_id: {f"{fn_name}.{param}": value}}``
@@ -161,6 +162,11 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
     * ``inv_fn_hash``: ``{inv_id: function_hash}`` — what :func:`code_versions_batch`
       needs, carried here so the two walks share one closure build rather than
       querying the same subgraph twice.
+    * ``inv_run_options``: ``{inv_id: label}`` — the invocation's identity-bearing
+      run options (``distribute``/``as_table``) as :func:`run_options_label`
+      spells them. Same reasoning as ``inv_fn_hash``: a re-run under different
+      options is a different invocation writing to the same location, and the
+      chain walk is where that becomes visible (:func:`run_options_batch`).
 
     Together these let a caller reproduce :func:`derived_branch_params` for every
     seed with a pure-Python walk and zero further DB round-trips.
@@ -170,6 +176,7 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
     inv_var_inputs: dict = {}
     inv_fn_name: dict = {}  # invocation_id -> function_name (for constant namespacing)
     inv_fn_hash: dict = {}  # invocation_id -> function_hash (for code versions)
+    inv_run_options: dict = {}  # invocation_id -> run-options label
 
     seen_records: set = set()
     frontier = list(dict.fromkeys(seed_record_ids))
@@ -184,18 +191,19 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
         inv_rows = _chunked_in(
             duck,
             "SELECT io.output_record_id, io.invocation_id, inv.function_name, "
-            "inv.function_hash "
+            "inv.function_hash, inv.distribute, inv.as_table "
             "FROM _invocation_output io "
             "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
             "WHERE io.output_record_id IN ({ph})",
             new_records,
         )
-        for out_rid, inv_id, fn_name, fn_hash in inv_rows:
+        for out_rid, inv_id, fn_name, fn_hash, distribute, as_table in inv_rows:
             prev = rec_to_inv.get(out_rid)
             if prev is None or inv_id < prev[0]:
                 rec_to_inv[out_rid] = (inv_id, fn_name)
             inv_fn_name[inv_id] = fn_name
             inv_fn_hash[inv_id] = fn_hash
+            inv_run_options[inv_id] = run_options_label(distribute, as_table)
 
         # 2) inputs for the newly discovered invocations (skip ones already loaded).
         inv_ids = list(
@@ -244,7 +252,7 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
         depth += 1
         frontier = next_frontier
 
-    return rec_to_inv, inv_constants, inv_var_inputs, inv_fn_hash
+    return rec_to_inv, inv_constants, inv_var_inputs, inv_fn_hash, inv_run_options
 
 
 def branch_params_batch(duck, record_ids, max_depth: int = 20) -> dict:
@@ -258,7 +266,7 @@ def branch_params_batch(duck, record_ids, max_depth: int = 20) -> dict:
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
-    rec_to_inv, inv_constants, inv_var_inputs, _fn_hash = _build_upstream_closure(
+    rec_to_inv, inv_constants, inv_var_inputs, _fn_hash, _run = _build_upstream_closure(
         duck, seeds, max_depth
     )
     out: dict = {}
@@ -283,16 +291,93 @@ def branch_params_batch(duck, record_ids, max_depth: int = 20) -> dict:
     return out
 
 
-def code_versions_batch(duck, record_ids, max_depth: int = 20) -> dict:
-    """``{record_id: {fn_name: fn_hash}}`` — every function in a record's upstream
-    chain, including the one that produced it directly.
+def run_options_label(distribute, as_table) -> str:
+    """One string for an invocation's identity-bearing run options.
 
-    The code-version counterpart to :func:`branch_params_batch`, and deliberately
-    the same shape of walk over the same closure. Constants have accumulated
+    ``distribute`` and ``as_table`` are the two ``for_each`` flags folded into
+    ``invocation_id`` (``provenance.compute_invocation_id``): flipping either
+    names a *different* run, and a re-run under different options writes a
+    second record to the same schema location. This is the label those records
+    are told apart by — in ``is_latest``, in the ``Run:<fn>`` plot axis, and in
+    ``Variant(..., run_options=...)`` — so it is spelled exactly once, here.
+
+    ``distribute=false`` / ``distribute=true``, with ``, as_table=[a, b]``
+    appended only when something is aggregated — the common no-options case
+    reads as ``distribute=false`` rather than as an empty string, because it is
+    a level a user will see in a dropdown next to its alternative.
+    """
+    names = sorted(str(x) for x in (as_table or ()))
+    label = f"distribute={'true' if distribute else 'false'}"
+    if names:
+        label += f", as_table=[{', '.join(names)}]"
+    return label
+
+
+def invocation_run_options_batch(duck, invocation_ids) -> dict:
+    """``{invocation_id: run_options_label}`` for the given invocations."""
+    ids = list(dict.fromkeys(invocation_ids))
+    if not ids:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT invocation_id, distribute, as_table FROM _invocation "
+        "WHERE invocation_id IN ({ph})",
+        ids,
+    )
+    return {inv_id: run_options_label(dist, at) for inv_id, dist, at in rows}
+
+
+def run_option_axes(duck, fn_names) -> dict:
+    """``{fn_name: [label, ...]}`` for functions that have been invoked under
+    **more than one** run-option set — the run-options counterpart of
+    :func:`code_version_ordinals`, with the same omission rule: a function
+    that only ever ran one way is not an axis and is absent, so a caller can
+    treat presence as "this is a real choice".
+
+    Labels are sorted for stable presentation; there is no ordinal here because
+    run options have no version order — ``distribute=true`` is not "newer"
+    than ``distribute=false``, it is different. Which one is *current* at a
+    location is answered by ``is_latest``, not by the label.
+    """
+    names = sorted({n for n in fn_names if n and n != SAVE_FUNCTION_NAME})
+    if not names:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT DISTINCT function_name, distribute, as_table FROM _invocation "
+        "WHERE function_name IN ({ph})",
+        names,
+    )
+    labels: dict = {}
+    for fn_name, dist, at in rows:
+        labels.setdefault(fn_name, set()).add(run_options_label(dist, at))
+    out = {fn: sorted(levels) for fn, levels in labels.items() if len(levels) > 1}
+    if out:
+        logger.info(
+            "run_option_axes: %d function(s) ran under >1 run-option set — "
+            "records differing only by distribute/as_table are distinguishable "
+            "through them: %s",
+            len(out),
+            "; ".join(f"{fn} {levels}" for fn, levels in sorted(out.items())),
+        )
+    return out
+
+
+def chain_batch(duck, record_ids, max_depth: int = 20) -> dict:
+    """``{record_id: {"code": {fn_name: fn_hash}, "run": {fn_name: label}}}`` —
+    every function in a record's upstream chain, including the one that
+    produced it directly, with the code it ran and the run options it ran under.
+
+    The chain counterpart to :func:`branch_params_batch`, and deliberately the
+    same shape of walk over the same closure. Constants have accumulated
     upstream since the beginning; code versions did not, and that asymmetry is a
     correctness bug rather than a gap in polish: two records that differ *only*
     by the version of some upstream function arrive at the display layer
-    indistinguishable and overplot as replicates.
+    indistinguishable and overplot as replicates. Run options had the same gap
+    one axis over (2026-09-14: a ``distribute=false`` run and a
+    ``distribute=true`` re-run of one loader, same code, same constants, two
+    records per trial, drawn on top of each other) — hence both are collected
+    from one walk rather than two.
 
     :func:`producing_function_versions_batch` answers the one-hop question
     ("which code made this record?") and is still the right read for labelling a
@@ -312,12 +397,13 @@ def code_versions_batch(duck, record_ids, max_depth: int = 20) -> dict:
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
-    rec_to_inv, _consts, inv_var_inputs, inv_fn_hash = _build_upstream_closure(
-        duck, seeds, max_depth
+    rec_to_inv, _consts, inv_var_inputs, inv_fn_hash, inv_run = (
+        _build_upstream_closure(duck, seeds, max_depth)
     )
     out: dict = {}
     for seed in seeds:
-        chain: dict = {}
+        code: dict = {}
+        run: dict = {}
         visited: set = set()
         # Depth-ordered so a shallower occurrence of a function overwrites a
         # deeper one rather than the reverse (BFS, unlike branch_params' DFS —
@@ -337,12 +423,31 @@ def code_versions_batch(duck, record_ids, max_depth: int = 20) -> dict:
                 inv_id, fn_name = inv
                 fn_hash = inv_fn_hash.get(inv_id)
                 if fn_name != SAVE_FUNCTION_NAME and fn_hash:
-                    chain.setdefault(fn_name, fn_hash)
+                    code.setdefault(fn_name, fn_hash)
+                    run.setdefault(fn_name, inv_run.get(inv_id))
                 next_frontier.extend(inv_var_inputs.get(inv_id, ()))
             frontier = next_frontier
             depth += 1
-        out[seed] = chain
+        out[seed] = {"code": code, "run": run}
     return out
+
+
+def code_versions_batch(duck, record_ids, max_depth: int = 20) -> dict:
+    """``{record_id: {fn_name: fn_hash}}`` — the code half of :func:`chain_batch`.
+
+    Kept as the name every existing caller uses; see :func:`chain_batch` for the
+    walk and its rules.
+    """
+    chains = chain_batch(duck, record_ids, max_depth)
+    return {rid: chain["code"] for rid, chain in chains.items()}
+
+
+def run_options_batch(duck, record_ids, max_depth: int = 20) -> dict:
+    """``{record_id: {fn_name: label}}`` — the run-options half of
+    :func:`chain_batch`: for every upstream function, the
+    :func:`run_options_label` it ran under on the way to this record."""
+    chains = chain_batch(duck, record_ids, max_depth)
+    return {rid: chain["run"] for rid, chain in chains.items()}
 
 
 def function_source(duck, function_hash: str) -> dict:
@@ -525,15 +630,25 @@ def producing_function_versions_batch(duck, record_ids) -> dict:
     return out
 
 
-def _chain_signature(chain: dict) -> str:
-    """A deterministic scalar standing for a whole ``{fn_name: fn_hash}`` chain.
+def _chain_signature(chain: dict, run_chain: dict | None = None) -> str:
+    """A deterministic scalar standing for a whole ``{fn_name: fn_hash}`` chain,
+    optionally with each hop's run-options label folded in.
 
     Lets :func:`_order_versions` treat "this record's entire upstream code
     story" exactly as it already treats a single producing hash — grouping and
     recency logic stay in one place instead of gaining a chain-shaped twin.
     Never stored or shown; two chains are equal iff their signatures are.
+
+    With ``run_chain`` the same hash under ``distribute=true`` and under
+    ``distribute=false`` are two signatures — the whole reason the run options
+    are in here (see ``is_latest`` in :func:`variant_identity_batch`).
     """
-    return "|".join(f"{name}={chain[name]}" for name in sorted(chain))
+    run_chain = run_chain or {}
+    return "|".join(
+        f"{name}={chain[name]}"
+        + (f"@{run_chain[name]}" if run_chain.get(name) is not None else "")
+        for name in sorted(chain)
+    )
 
 
 def _order_versions(records, versions) -> tuple[dict, list, str | None]:
@@ -607,16 +722,24 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
         version appends ``v3`` rather than renumbering ``v1``/``v2`` under the
         user.
     ``is_latest``
-        Whether this record's **whole upstream code chain** is the most recently
-        written one **at its own schema location**. A property of the chain, not
-        the record: two records of the same chain (a plain re-save) are both
-        latest, which is what pinning wants — pin a version, keep all of its
-        rows. ``None`` for raw records.
+        Whether this record's **whole upstream chain** — the code of every
+        function in it AND the run options each ran under — is the most
+        recently written one **at its own schema location**. A property of the
+        chain, not the record: two records of the same chain (a plain re-save)
+        are both latest, which is what pinning wants — pin a version, keep all
+        of its rows. ``None`` for raw records.
 
         Chain-wide rather than one-hop since 2026-09-08. A record whose own
         producing function never changed is still stale when something upstream
         of it did; the one-hop test called both such records current and let
         them overplot (``docs/claude/variant-selection.md`` §2).
+
+        Run-option-aware since 2026-09-14. ``distribute``/``as_table`` are
+        folded into ``invocation_id``, so a re-run under different options is a
+        different invocation writing a SECOND record to the same location — same
+        code, same constants. Without the options in the signature both records
+        were "latest" and a ``distribute=false`` loader run overplotted its
+        ``distribute=true`` re-run trial for trial.
     ``code_chain``
         ``{fn_name: "vN"}`` over the record's upstream functions, restricted to
         those holding more than one version (:func:`code_version_ordinals`).
@@ -624,6 +747,12 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
         ordinary case nothing. Ordinals here are scoped **per function**, unlike
         ``fn_version`` above — see that function's docstring for why the two
         scopes differ.
+    ``run_chain``
+        ``{fn_name: label}`` over the record's upstream functions, restricted to
+        those that have been invoked under more than one run-option set
+        (:func:`run_option_axes`) — the same presence-means-axis rule as
+        ``code_chain``, so the ordinary project sees an empty dict. Labels are
+        :func:`run_options_label` strings (``distribute=true``).
     ``saved_at``
         The record's newest ``_record_save`` timestamp.
 
@@ -713,10 +842,12 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
     chain_rids = list(
         dict.fromkeys([rid for bucket in peers.values() for rid in bucket])
     )
-    chains = code_versions_batch(duck, chain_rids, max_depth)
-    ordinals = code_version_ordinals(
-        duck, {name for chain in chains.values() for name in chain}
-    )
+    full_chains = chain_batch(duck, chain_rids, max_depth)
+    chains = {rid: c["code"] for rid, c in full_chains.items()}
+    run_chains = {rid: c["run"] for rid, c in full_chains.items()}
+    chain_fn_names = {name for chain in chains.values() for name in chain}
+    ordinals = code_version_ordinals(duck, chain_fn_names)
+    run_axes = run_option_axes(duck, chain_fn_names)
     saved = saved_at_batch(duck, all_rids)
 
     # --- is_latest: resolved per LOCATION, over the WHOLE chain ---
@@ -730,8 +861,17 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
     # and let them overplot. Reuses `_order_versions` by handing it a synthetic
     # per-record "hash" that stands for the entire chain, so latest-ness keeps
     # meaning "newest thing here" and nothing about the ordering rules changes.
+    #
+    # Each hop's run options ride along in the signature (`_chain_signature`),
+    # so a re-run of unchanged code under different distribute/as_table is a
+    # different chain here and the older one stops being "latest" — which is
+    # what makes the plot default drop it and `code_version="latest"` loads skip
+    # it. Two records of identical code AND options remain both-latest.
     chain_versions = {
-        rid: {"fn_hash": _chain_signature(chain), "saved_at": saved.get(rid)}
+        rid: {
+            "fn_hash": _chain_signature(chain, run_chains.get(rid)),
+            "saved_at": saved.get(rid),
+        }
         for rid, chain in chains.items()
         if chain
     }
@@ -785,6 +925,13 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
                 fn_name: ordinals[fn_name][fn_hash]
                 for fn_name, fn_hash in chain.items()
                 if fn_name in ordinals and fn_hash in ordinals[fn_name]
+            },
+            # Same presence rule as code_chain: only functions that actually
+            # ran more than one way appear, so a key here IS a real axis.
+            "run_chain": {
+                fn_name: label
+                for fn_name, label in run_chains.get(rid, {}).items()
+                if fn_name in run_axes and label is not None
             },
         }
     return out
@@ -1691,7 +1838,7 @@ def superseded_batch(duck, record_ids, max_depth: int = 50) -> dict:
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
-    rec_to_inv, _consts, inv_var_inputs, _fn_hash = _build_upstream_closure(
+    rec_to_inv, _consts, inv_var_inputs, _fn_hash, _run = _build_upstream_closure(
         duck, seeds, max_depth
     )
 

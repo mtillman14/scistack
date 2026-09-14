@@ -35,7 +35,7 @@ import pandas as pd
 from scistacklog import Log
 
 from .spec import PlotSpec, VariantSet
-from .table import CODE_FACTOR_PREFIX, FactorInfo, LongTable
+from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, FactorInfo, LongTable
 
 LAYER = "scistackplot"
 
@@ -63,6 +63,31 @@ _ORDINAL = re.compile(r"^v(\d+)$")
 
 def is_code_axis(column: str) -> bool:
     return column.startswith(CODE_FACTOR_PREFIX)
+
+
+def is_run_axis(column: str) -> bool:
+    return column.startswith(RUN_FACTOR_PREFIX)
+
+
+def is_function_axis(column: str) -> bool:
+    """A code OR run-options axis — the two kinds that belong to a FUNCTION
+    rather than to a parameter, and that the source's latest flag answers.
+
+    Every rule below that reads "code axes ..." and means "the axes the
+    Variants section owns" tests this rather than :func:`is_code_axis`, so the
+    run-options kind inherits the same treatment (answered by the flag, never
+    offered again as a factor, reported when spanned) without a second copy of
+    each rule. Rules that genuinely concern *ordinals* (``vN``) stay code-only.
+    """
+    return is_code_axis(column) or is_run_axis(column)
+
+
+def function_of_axis(column: str) -> str:
+    """The function a code/run axis column names (the column itself otherwise)."""
+    for prefix in (CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX):
+        if column.startswith(prefix):
+            return column[len(prefix):]
+    return column
 
 
 def resolve_selection(
@@ -205,9 +230,15 @@ def default_selection(table: LongTable) -> dict[str, Any]:
     for factor in table.variant_factors:
         if factor.name in selection or factor.name not in frame.columns:
             continue
-        if is_code_axis(factor.name):
+        if is_function_axis(factor.name):
             if latest:
                 continue  # already answered, per-location, by the flag
+            if is_run_axis(factor.name):
+                # No ordinal to prefer: run-option labels have no version order.
+                # First level for stability, same as a branch param.
+                if factor.levels:
+                    selection[factor.name] = _level_text(factor.levels[0])
+                continue
             highest = _highest_ordinal(frame[factor.name])
             if highest is not None:
                 selection[factor.name] = highest
@@ -319,8 +350,8 @@ def auto_label(
             # A False flag is "not the current code", which is a real thing to
             # ask for and must not read as its opposite.
             parts.append("current" if value is True else f"not {latest_column}")
-        elif is_code_axis(column):
-            parts.append(f"{column[len(CODE_FACTOR_PREFIX):]} {text}")
+        elif is_function_axis(column):
+            parts.append(f"{function_of_axis(column)} {text}")
         else:
             # Branch params arrive namespaced (``bandpass.low_hz``); the
             # function is usually obvious from context in a legend, the
@@ -449,8 +480,9 @@ def _answered(table: LongTable, sets: list[VariantSet]) -> set[str]:
 
     Two rules, and they differ by axis kind on purpose.
 
-    **Code axes belong to the Variants section, entirely.** Once any variant is
-    defined, every ``Code:<fn>`` column is answered — whether that variant named
+    **Code axes — and run-option axes, which are function axes too — belong to
+    the Variants section, entirely.** Once any variant is defined, every
+    ``Code:<fn>`` and ``Run:<fn>`` column is answered — whether that variant named
     a version, asked for ``latest``, or selected on the chain-wide
     ``CodeIsLatest`` flag. "Which version of the code" is the question the
     variant rows exist to answer, so offering the same question again as a
@@ -473,7 +505,7 @@ def _answered(table: LongTable, sets: list[VariantSet]) -> set[str]:
     if not sets:
         return set()
     frame = table.frame
-    answered = {column for column in frame.columns if is_code_axis(column)}
+    answered = {column for column in frame.columns if is_function_axis(column)}
     if VARIABLE_COLUMN in frame.columns and (
         # ONE variable overall: the column is constant, so offering it as a
         # factor with a single level is noise.
@@ -558,7 +590,7 @@ def spanned_code_axes(
     spans: dict[str, dict] = {}
 
     for column in rows.columns:
-        if not is_code_axis(column) or column in resolved:
+        if not is_function_axis(column) or column in resolved:
             continue
         present = rows[column].dropna().astype(str)
         if present.nunique() <= 1:
@@ -586,9 +618,7 @@ def spanned_code_axes(
             truncated = truncated or len(labels) > SPAN_LOCATION_LIMIT
 
         spans[column] = {
-            "function": column[len(CODE_FACTOR_PREFIX):]
-            if column.startswith(CODE_FACTOR_PREFIX)
-            else column,
+            "function": function_of_axis(column),
             "versions": versions,
             "locations": locations,
             # What a location string means, outermost first, so a reader knows

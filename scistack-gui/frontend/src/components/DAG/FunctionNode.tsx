@@ -518,6 +518,13 @@ function PipelineFunctionNode({ id, data }: Props) {
  * it is a legitimate (if uninteresting) choice, and hiding the control would
  * make the common case look broken. A function with NO recorded runs renders
  * inert: there is nothing to select.
+ *
+ * A SECOND dropdown appears only when the function has run under more than one
+ * `distribute`/`as_table` setting for the plotted measure (a `Run:<fn>` axis).
+ * Those flags are part of scidb's invocation identity, so such re-runs are
+ * distinct records at the same locations — a choice of the same shape as a
+ * body version, made on the same node. It is absent rather than disabled in
+ * the common case because "distribute=false" alone is not a choice.
  */
 function VariantFunctionNode({
   data,
@@ -547,20 +554,23 @@ function VariantFunctionNode({
   })
 
   const axis = selection.axisForFunction(label)
+  const runAxis = selection.runAxisForFunction(label)
   const versions = selection.versionsFor(label)
   const inert = versions.length === 0
   // No axis means this function's versions do not distinguish the plotted
   // measure's records — either it is not upstream of it, or it only ever ran
   // one version. Selecting is then meaningless, so say so instead of pretending.
   const effective = axis ? selection.versionFor(axis.column) : 'latest'
+  const effectiveRun = runAxis ? selection.versionFor(runAxis.column) : 'latest'
+  const hasAxis = !!axis || !!runAxis
 
   return (
     <div
-      style={{ ...styles.container, ...(inert || !axis ? styles.variantInert : null) }}
+      style={{ ...styles.container, ...(inert || !hasAxis ? styles.variantInert : null) }}
       title={
         inert
           ? `${label} has no recorded runs.`
-          : !axis
+          : !hasAxis
             ? `${label}'s version does not distinguish this measure's records.`
             : undefined
       }
@@ -603,6 +613,22 @@ function VariantFunctionNode({
             <option key={v.version} value={v.version}>
               {v.version}
               {v.first_saved ? ` — ${v.first_saved.slice(0, 10)}` : ''}
+            </option>
+          ))}
+        </select>
+      )}
+      {!inert && runAxis && (
+        <select
+          value={effectiveRun}
+          onChange={e => selection.setVersion(runAxis.column, e.target.value)}
+          className="nodrag nopan"
+          style={{ ...styles.versionSelect, marginTop: 4 }}
+          title="Which for_each run options (distribute / as_table) produced the records to plot"
+        >
+          <option value="latest">latest run options</option>
+          {runAxis.levels.map(level => (
+            <option key={level} value={level}>
+              {level}
             </option>
           ))}
         </select>
