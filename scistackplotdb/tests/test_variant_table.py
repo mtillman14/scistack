@@ -43,13 +43,17 @@ class TestVariantTableCarriesNoPayload:
         the whole point is that the payload columns never enter the SELECT.
         """
         seen: list[str] = []
-        original = source._db._duck._fetchall
+        # Both fetch doors: the load query goes through `_fetchdf` since the
+        # payload fetch stopped boxing (test_load_fetch.py), and a payload
+        # column reaching either one is the regression this guards.
+        for name in ("_fetchall", "_fetchdf"):
+            original = getattr(source._db._duck, name)
 
-        def spy(sql, params=None):
-            seen.append(sql)
-            return original(sql, params)
+            def spy(sql, params=None, _original=original):
+                seen.append(sql)
+                return _original(sql, params)
 
-        monkeypatch.setattr(source._db._duck, "_fetchall", spy)
+            monkeypatch.setattr(source._db._duck, name, spy)
         source.variant_table("Emg")
 
         selects = [s for s in seen if "SELECT t.record_id" in s]

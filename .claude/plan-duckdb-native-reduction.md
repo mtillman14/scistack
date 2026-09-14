@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-09-13** by `.claude/plan-plot-minimal-load-examples.md` §8: the DuckDB-SQL reducer this plan built was measured 12–40× slower than numpy over the loaded cells and removed. Kept for the parity fixture design (§4) and the measurements.
+
 # DuckDB-native reduction for plotting (design A)
 
 **Date:** 2026-09-13

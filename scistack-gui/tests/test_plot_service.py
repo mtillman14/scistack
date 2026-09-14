@@ -1584,20 +1584,19 @@ def test_every_self_managed_method_exists(populated_db):
     assert SELF_MANAGED_DB_METHODS <= set(METHODS)
 
 
-def test_resolve_reduces_under_the_connection_hold(
+def test_resolve_drops_the_connection_before_reducing(
     populated_db, per_request_policy, monkeypatch
 ):
-    """The lock model, as it is now — and the reverse of what this test used
-    to assert.
+    """The property the narrow hold exists for: nobody holds the database
+    while `resolve_one` runs — that is the window MATLAB gets back.
 
-    Until 2026-09-13 this pinned "nobody holds the database while `resolve_one`
-    runs": the reduction was pandas over an in-memory frame, and releasing
-    first was the window MATLAB got back. Then the DuckDB reducer arrived and
-    `resolve` started querying the database from inside — and under this policy
-    it found the connection closed, swallowed the error and fell back to pandas
-    for 375 s (scidb.log 18:02:26). The reduction is now DuckDB work and runs
-    under the hold; the window MATLAB gets back is the render, see
-    `test_save_reduces_under_the_hold_and_renders_outside_it`.
+    This flipped twice on 2026-09-13. A DuckDB-SQL reducer briefly queried the
+    database from inside `resolve`; released first, it found the connection
+    closed and silently fell back to pandas for 375 s, so the hold was widened
+    to cover the reduction. Then the SQL reducer lost every measurement to
+    numpy over the loaded cells and was removed — the reduction is pure memory
+    again (`scistackplot.NumpyReducer`), and the hold is back to the load. See
+    `_load`'s docstring and .claude/plan-plot-minimal-load-examples.md §8.
     """
     import scistackplot
 
@@ -1616,11 +1615,8 @@ def test_resolve_reduces_under_the_connection_hold(
     result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
 
     assert result["ok"] is True
-    assert seen["refcount"] == 1, "the reduce phase ran outside the DuckDB hold"
-    assert seen["open"] is True, "the reducer would find the connection closed"
-    # And released once the figure is reduced — the hold is not leaked.
-    assert db_mod._db_refcount == 0
-    assert db_mod._db_open is False
+    assert seen["refcount"] == 0, "the reduce phase still holds the DuckDB lock"
+    assert seen["open"] is False, "the DuckDB file lock is still held while reducing"
 
 
 def test_the_load_phase_does_hold_the_connection(
@@ -1860,31 +1856,31 @@ def test_the_pickers_state_colours_come_from_python():
         )
 
 
-# --- the DuckDB hold spans the reduction ------------------------------------
+# --- the reduction never reaches the database ---------------------------------
 #
-# Found 2026-09-13 (scidb.log 18:02:26): under the per-request policy the hold
-# ended when the table was built, `resolve` then ran the DuckDB reducer against
-# a closed connection, and the reducer fell back to pandas — 375 s of y_limits
-# for a plot whose SQL would have taken seconds. The test suite runs under the
-# persistent policy, where `db_connection` is a no-op, which is why nothing
-# here caught it. These tests switch to per-request for one call.
+# 2026-09-13: a DuckDB-SQL reducer briefly ran queries from inside `resolve`;
+# under the per-request policy it found the connection closed and silently fell
+# back to pandas (375 s of y_limits). The suite runs under the persistent policy,
+# where `db_connection` is a no-op, which is why nothing caught it. The SQL
+# reducer is gone (numpy won every measurement) — these pin that a resolve and
+# a save do their reduction with the connection released and touch nothing that
+# would fail on a closed one.
 
 
-def _reducer_ran_in_duckdb(caplog) -> None:
+def _nothing_touched_a_closed_connection(caplog) -> None:
     text = "\n".join(record.getMessage() for record in caplog.records)
     assert "Connection already closed" not in text
     assert "pandas fallback" not in text, text
+    assert "FAILED" not in text, text
 
 
-def test_resolve_reduces_while_the_connection_is_held(
+def test_resolve_reduces_with_the_connection_released(
     populated_db, per_request_policy, monkeypatch, caplog
 ):
     import logging
 
     import scistackplot
 
-    # describe() acquires and releases, so the connection is CLOSED here — the
-    # exact state resolve_figures used to inherit.
     spec = plot_service.describe(populated_db, "RawSignal")["spec"]
     assert per_request_policy._db_open is False
 
@@ -1901,18 +1897,17 @@ def test_resolve_reduces_while_the_connection_is_held(
         result = plot_service.resolve_figures(populated_db, spec)
 
     assert result["ok"] is True
-    assert seen["open_during_resolve"] is True
-    _reducer_ran_in_duckdb(caplog)
-    # And the hold is not leaked: the reduction ends inside it, rendering after.
+    assert seen["open_during_resolve"] is False
+    _nothing_touched_a_closed_connection(caplog)
     assert per_request_policy._db_open is False
     assert per_request_policy._db_refcount == 0
 
 
-def test_save_reduces_under_the_hold_and_renders_outside_it(
+def test_save_reduces_and_renders_with_the_connection_released(
     populated_db, per_request_policy, monkeypatch, caplog, tmp_path
 ):
-    """The save's promise to MATLAB is that the file is free while matplotlib
-    draws — not while DuckDB reduces, which is now seconds."""
+    """The save's promise to MATLAB: the file is free for everything after the
+    load — the reduction and the minutes matplotlib spends drawing."""
     import logging
 
     import scistackplot
@@ -1938,9 +1933,9 @@ def test_save_reduces_under_the_hold_and_renders_outside_it(
         result = plot_service.save_figure(populated_db, spec, str(tmp_path / "f.png"))
 
     assert result["ok"] is True, result
-    assert seen["open_during_resolve"] is True
+    assert seen["open_during_resolve"] is False
     assert seen["open_during_render"] is False
-    _reducer_ran_in_duckdb(caplog)
+    _nothing_touched_a_closed_connection(caplog)
 
 
 def test_an_invalid_spec_releases_the_hold(populated_db, per_request_policy):

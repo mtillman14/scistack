@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from .numeric import coerce_numeric
 from .shape import Shape
 from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic
 from .table import LongTable
@@ -244,7 +245,7 @@ def _raw_extents(
 
 def _cell_extents(values: pd.Series) -> tuple[np.ndarray, np.ndarray]:
     """Per-row (min, max) of a measure column that may hold scalars or arrays."""
-    numeric = pd.to_numeric(values, errors="coerce")
+    numeric = coerce_numeric(values)
     if not numeric.isna().all():
         # A plain scalar column: its own values are the extents, and this is one
         # vectorized cast rather than a Python loop.
@@ -314,7 +315,7 @@ def _aggregated_extents(
         )
         if name in working.columns
     ]
-    values = pd.to_numeric(working[measure], errors="coerce")
+    values = coerce_numeric(working[measure])
     working = working.assign(**{measure: values}).dropna(subset=[measure])
     if working.empty:
         return {}

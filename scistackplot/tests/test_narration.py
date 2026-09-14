@@ -28,9 +28,14 @@ LAYER = "scistackplot"
 #: fan-out, inside the `plan` phase, because a scope of `[]` means one range
 #: across figures this function never sees (`scistackplot.ylimits`). What is
 #: left per figure is reading the panels' own limits back, which is not work.
+#:
+#: No `collapse_aggregates` for this spec: a nested 1-D measure takes ONE of
+#: three per-sample routes (`explode`, `collapse_series` when a factor is
+#: AGGREGATE, `summarize_series` inside `panel_frames` for BAND/BAR), and the
+#: pandas collapse phase only runs for measures that were never nested.
+#: `test_a_collapsed_line_narrates_the_collapse` pins the second route.
 BUILD_PHASES = [
     "explode",
-    "collapse_aggregates",
     "facet_groups",
     "panel_frames",
     "grid_layout",
@@ -61,6 +66,23 @@ def test_narrated_resolve_names_every_phase_of_every_figure(
     for phase in BUILD_PHASES:
         assert f"{phase} started" in text, f"phase {phase!r} never announced itself"
         assert f"{phase} done in" in text
+
+
+def test_a_collapsed_line_narrates_the_collapse(series_table, caplog):
+    """An AGGREGATE role sends a 1-D line through `collapse_series` instead of
+    `explode` — that phase must announce itself the same way."""
+    spec = PlotSpec(
+        measures=["Signal"],
+        roles={"subject": Role.ITERATE, "session": Role.COLOR, "trial": Role.AGGREGATE},
+        kind=PlotKind.LINE,
+    )
+    with caplog.at_level(logging.INFO, logger=LAYER):
+        resolve(spec, series_table, narrate=True)
+
+    text = "\n".join(_lines(caplog))
+    assert "collapse_series started" in text
+    assert "collapse_series done in" in text
+    assert "explode started" not in text
 
 
 def test_narration_says_which_figure_before_building_it(

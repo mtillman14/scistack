@@ -7,8 +7,10 @@ columns once a variable is joined to ``_schema``, which is the same shape
 part a flat CSV never needed: attaching branch params as columns, and knowing
 which schema keys a given variable actually occupies.
 
-Queries go through ``_fetchall``/``_fetchone`` (never ``_execute(...).fetchall()``
-— see docs/claude on DuckDB fetch locking) and batch the branch-params walk
+Queries go through ``_fetchall``/``_fetchone``/``_fetchdf`` (never
+``_execute(...).fetchall()`` — see docs/claude on DuckDB fetch locking); the
+payload itself only ever through ``_fetchdf``, which is what keeps a sample from
+becoming a Python float (see ``load_variable``) and batch the branch-params walk
 rather than asking per record (the N+1 trap).
 """
 
@@ -17,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from scistacklog import Log
 from scistackplot import CODE_FACTOR_PREFIX
@@ -180,6 +183,89 @@ def variable_levels(db, variable: str) -> list[str]:
     return [key for key, count in zip(keys, row, strict=True) if count]
 
 
+def _normalize_cell(value: Any) -> Any:
+    """One data cell as the shape downstream expects, converted PER CELL only.
+
+    A DataFrame fetch already delivers a ``DOUBLE[]`` cell as an ndarray; this
+    leaves it alone. What it handles:
+
+    * a ``DOUBLE[][]`` cell, which DuckDB hands over as an object ndarray of
+      row ndarrays — stacked into one 2-D float array when the rows are
+      rectangular, so ``np.asarray(cell).shape`` is ``(rows, cols)`` as the
+      heatmap path expects; ragged rows become a list of row arrays;
+    * a Python ``list`` cell, from a DuckDB build that still boxes LIST columns
+      on the pandas path — converted once, so the rest of the stack sees one
+      contract. The boxing has already been paid by then; the "loaded" log line
+      says so (``boxed``), which is the signal to look at the DuckDB version.
+
+    A NULL cell, which the DataFrame fetch spells ``pd.NA``, becomes None — the
+    spelling every downstream check (``value is None``) already knows. Scalars,
+    None and NaN pass through.
+    """
+    if value is pd.NA:
+        return None
+    if isinstance(value, np.ndarray):
+        if (
+            value.dtype == object
+            and value.size
+            and isinstance(value.flat[0], (np.ndarray, list))
+        ):
+            try:
+                return np.stack([_float_row(row) for row in value])
+            except ValueError:
+                # Ragged rows: a Python list OF row arrays (one object per row,
+                # not per sample), which `shape.classify_value` still reads
+                # as MATRIX_2D — an object ndarray of ndim 1 would read as a
+                # 1-D series and the heatmap would silently become a line.
+                return list(value)
+        if isinstance(value, np.ma.MaskedArray):
+            # A NULL ELEMENT inside a list — which is what scidb's single-record
+            # INSERT binding stores a NaN as — comes back masked, and the first
+            # `np.asarray` downstream silently drops the mask and exposes the
+            # fill value: a NaN sample became a number, and every "NaN rows are
+            # dropped" comparison in the parity suite failed (2026-09-13).
+            # Filled here, once, with the NaN every consumer already handles.
+            return _float_row(value)
+        return value
+    if isinstance(value, list):
+        try:
+            return np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
+            return np.asarray(value, dtype=object)
+    return value
+
+
+def _float_row(row: Any) -> np.ndarray:
+    """One 1-D float64 array from a row/cell, a masked element becoming NaN."""
+    masked = np.ma.asarray(row, dtype="float64")
+    return np.ma.filled(masked, np.nan)
+
+
+def _object_column(cells: list, index) -> pd.Series:
+    """A Series of exactly these cells, dtype object, no inference.
+
+    Not ``Series.map`` and not ``pd.Series(cells)``: both run dtype inference
+    over the values, and a column of same-length float arrays is precisely the
+    input that inference reinterprets (a 2-D block, a scalar per cell, a string
+    dtype for the keys). Filling a preallocated object array one cell at a time
+    is the one construction every pandas version leaves alone.
+    """
+    out = np.empty(len(cells), dtype=object)
+    for i, cell in enumerate(cells):
+        out[i] = cell
+    return pd.Series(out, index=index, dtype=object)
+
+
+def _key_text(value: Any) -> "str | None":
+    """A schema key as text, or None for a NULL — whether pandas spelled that
+    NULL as None or as NaN."""
+    if value is None:
+        return None
+    if isinstance(value, float) and value != value:
+        return None
+    return str(value)
+
+
 def load_variable(
     db, variable: str, *, with_variants: bool = True, include_data: bool = True
 ) -> VariableFrame:
@@ -210,7 +296,12 @@ def load_variable(
             columns = []
 
         table = table_name_for(db, variable)
-        schema_select = "".join(f', s."{key}"' for key in keys)
+        # Schema keys as VARCHAR in the query, not stringified after: a
+        # DataFrame fetch types each column, and an integer key with one NULL
+        # among its rows would arrive as float64 and stringify as "1.0".
+        schema_select = "".join(
+            f', CAST(s."{key}" AS VARCHAR) AS "{key}"' for key in keys
+        )
         data_select = "".join(f', t."{column}"' for column in columns)
         query = (
             f"SELECT t.record_id{data_select}{schema_select} "
@@ -221,20 +312,33 @@ def load_variable(
         )
         # NOTE: no schema filter, no LIMIT, no column projection — this reads
         # EVERY non-excluded record of the variable with EVERY data column,
-        # whatever the caller intends to plot. Splitting fetch from frame
-        # construction because they fail differently at scale: the fetch boxes
-        # each DOUBLE[] into a Python list of Python floats, the construction
-        # copies them into pandas.
+        # whatever the caller intends to plot (pushdown is a later stage of
+        # .claude/plan-plot-minimal-load-examples.md).
+        #
+        # `_fetchdf`, never `_fetchall`, for the data columns. Measured on the
+        # real database 2026-09-13 (plan §7): one DOUBLE[] column of 17.4 M
+        # samples took 4.7 s through `fetchall` — a Python float per sample —
+        # and 0.26 s through `.df()`, which hands each cell over as one numpy
+        # buffer. That 18x was 86 of the 91 s `plot_describe` spent before it
+        # timed out. The "loaded" line below says `ndarray` or `boxed` so a
+        # regression to per-sample boxing is visible in the log, not inferred.
         with timer.phase("fetch"):
-            rows = db._duck._fetchall(query, [variable])
+            frame = db._duck._fetchdf(query, [variable])
 
         with timer.phase("dataframe"):
-            frame = pd.DataFrame(
-                rows, columns=["record_id", *columns, *keys]
-            )
+            frame = frame[["record_id", *columns, *keys]].copy()
+            for column in columns:
+                if pd.api.types.is_numeric_dtype(frame[column]):
+                    continue  # a scalar column: already one float64 buffer
+                frame[column] = _object_column(
+                    [_normalize_cell(v) for v in frame[column].to_numpy()],
+                    frame.index,
+                )
         with timer.phase("stringify_keys"):
             for key in keys:
-                frame[key] = frame[key].map(lambda v: None if v is None else str(v))
+                frame[key] = _object_column(
+                    [_key_text(v) for v in frame[key].to_numpy()], frame.index
+                )
 
         levels = [key for key in keys if frame[key].notna().any()]
         variant_columns: list[str] = []

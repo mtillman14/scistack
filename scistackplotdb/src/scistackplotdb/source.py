@@ -59,7 +59,7 @@ class ScidbSource(BaseSource):
     """
 
     def __init__(
-        self, db, *, name: str | None = None, pushdown: bool = True
+        self, db, *, name: str | None = None, fast: bool = True
     ) -> None:
         self._db = db
         # `dataset_db_path`, not `db_path` — DatabaseManager has never had the
@@ -68,23 +68,29 @@ class ScidbSource(BaseSource):
         self._frames: dict[str, Any] = {}
         self._shapes: dict[str, Shape] = {}
         self._levels: dict[str, list[str]] = {}
-        # Whether tables from this source hand their per-sample reductions to
-        # DuckDB (``.reducer``) or keep the pandas reference. On by default —
-        # the pandas path is the one that spent 350 s on 174 M samples — and
-        # switchable so the two can be run side by side on the same database,
-        # which is how the parity suite works and how a suspected disagreement
-        # gets bisected in the field.
-        self._pushdown = pushdown
+        # Whether tables from this source carry the numpy reducer
+        # (``scistackplot.NumpyReducer``, over the ndarray cells `load_variable`
+        # delivers) or the pandas reference. On by default — the reference is
+        # the path that spent 500 s on 174 M samples — and switchable so the
+        # two can be run side by side on one database, which is how the parity
+        # suite works and how a suspected disagreement gets bisected.
+        #
+        # A DuckDB-SQL reducer sat here for one day (2026-09-13) and lost every
+        # measurement to numpy once the fetch stopped boxing samples
+        # (.claude/plan-plot-minimal-load-examples.md §8). DuckDB selects rows;
+        # numpy reduces them — so `resolve` no longer touches the database and
+        # the GUI's connection hold ends when the frames are loaded.
+        self._fast = fast
         self._reducer_instance = None
 
     def _reducer(self):
         """The reducer every table from this source carries (one per source)."""
-        if not self._pushdown:
+        if not self._fast:
             return None  # -> reducer_for() supplies the pandas reference
         if self._reducer_instance is None:
-            from .reducer import DuckDBReducer
+            from scistackplot.reducer import NumpyReducer
 
-            self._reducer_instance = DuckDBReducer(self._db)
+            self._reducer_instance = NumpyReducer()
         return self._reducer_instance
 
     # ---- description -----------------------------------------------------

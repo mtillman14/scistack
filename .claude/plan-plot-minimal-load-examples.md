@@ -356,3 +356,180 @@ plot_resolve: held the DuckDB connection for <N>s      <- N now INCLUDES the red
 `get_table` will still be ~92 s (payload load) and `explode` will still materialise 174 M
 rows in pandas via `.df()` — those are stages 2 and 4 of §5. This stage exists to get the
 first real number for the y-extents SQL over 174 M samples, which sizes both.
+
+## 7. MEASURED on the real database (2026-09-13, `.claude/measure_plot_queries.py` part 1)
+
+RawEMG_data, column RHAM, 419 records, 17.4 M samples per column (first record 79,534
+samples — cells are ragged, 41.5 k is the mean). GUI closed, read-only connection.
+
+| query | one column | ×10 columns |
+|---|---|---|
+| metadata only (record_id + schema keys) | 0.006 s | — |
+| `len()` per record | 0.163 s | — |
+| **`fetchall` (today's `load_variable`)** | **4.83 s** | 48 s (86 s in-GUI, one query for all 10) |
+| **`.arrow()`** | **0.19 s** | ~2 s |
+| `.df()` | 0.31 s | ~3 s |
+| `.fetchnumpy()` | 0.27 s | ~3 s |
+| one record by record_id | 0.11 s | — |
+| one record, UNNEST → `.df()` (79 k rows) | 0.12 s | — |
+| y extents `MIN(list_min(list_filter…))` | 0.70 s | 7 s |
+| UNNEST all → `.df()` (committed `explode_series`) | 4.9 s | 49 s |
+| `GROUP BY pos` avg/stddev/count → `.df()` | 2.2 s | 22 s |
+| `GROUP BY subject, pos` (proposed `summarize_series`) | 4.3 s | **43 s** |
+| same with `pos % 200 = 0` | 0.8 s | 8 s |
+
+### What this changes
+
+1. **`fetch` is 95 % Python boxing, not DuckDB.** `.arrow()` reads the same lists 25×
+   faster. Switching `load_variable` from `_fetchall` to `.df()`/`.arrow()` takes
+   `plot_describe` from 91 s to ~6 s (3 s fetch + 3 s `attach_variants`) with NO change
+   to `get_table`'s shape. **This is the first fix, not the last** — it is what makes the
+   panel open on this data at all (the 18:29 run: describe timed out in the fetch).
+2. **§1's "returns ONLY what is drawn via SQL" is the wrong tool for per-sample
+   reductions on this data.** D.3 was estimated at 5–10 s and measures 43 s; the committed
+   SQL `y_extents` is 7 s where `np.nanmin` over the same 1.4 GB is a fraction of a
+   second. DuckDB is the right place for SELECTING (rows, columns — both measured free)
+   and the wrong place for REDUCING 1-D series. The reducer seam stays; the DuckDB
+   implementation of `y_extents`/`explode_series` should give way to numpy over
+   Arrow-fetched cells, and `summarize_series` should never be written in SQL.
+3. **`pandas.explode` (110 s) goes regardless**; band/bar need a padded 2-D array per
+   group and per-position `nanmean`/`nanstd`, never a 174 M-row long frame.
+
+Part 2 of the script (numpy over the Arrow cells: split, extents, explode, summarize
+all, summarize per subject) is the measurement that decides (2). Pending.
+
+### Revised order
+
+1. ~~Lock model~~ — done (§6), still needed so nothing silently falls back.
+2. **Arrow/`.df()` fetch in `load_variable`** (cells become `np.ndarray`). Fixes describe.
+3. Metadata-only `get_table` for describe/variant_graph/location_tree (0.006 s — for
+   the 3 s of `attach_variants` and the memory, not the fetch any more).
+4. numpy reductions in the reducer: extents, explode-by-concatenate, padded summarize
+   for band/bar. Sized by part 2.
+5. Location + field pushdown (stage 3 as before) — measured free, keeps plots of one
+   location at one record.
+
+## 8. MEASURED part 2 (2026-09-13) — numpy over Arrow cells, one column, all 419
+
+`.arrow()` on this DuckDB returns a lazy `RecordBatchReader`; part 1's 0.18 s was the
+reader's construction. Materialized (`fetch_arrow_table`, deprecated in favour of
+`to_arrow_table`): **0.33 s**. `.df()` **0.26 s** is the honest number for the stack.
+
+| reduction | pandas (18:02 run ÷ 10) | DuckDB SQL | numpy on Arrow cells |
+|---|---|---|---|
+| fetch | 4.7 s boxed | — | **0.26–0.33 s** |
+| split ListArray into per-record views | — | — | 0.001 s (zero copy) |
+| y extents | ~37 s | 0.63 s | **0.015 s** |
+| explode → LINE frame (row, pos, val) | ~11 s | 4.6 s | **0.39 s** |
+| summarize per position, ALL records, padded | ~37 s | 2.1 s | 2.4 s (pad is 419 × 325,855) |
+| summarize per position PER SUBJECT (band) | ~37 s | 4.2 s | **0.75 s** |
+
+Cells are ragged from **8,316 to 325,855** samples (mean 41.5 k). Padding to the
+group's max is what costs the all-records case; `np.bincount(pos, weights=val)` /
+`bincount(pos)` / `bincount(pos, weights=val²)` is O(N) with no pad and should bring
+summarize to ~0.2 s per column. Implementation choice, to be measured in the parity
+suite, not here.
+
+**Decision: DuckDB selects, numpy reduces.** The committed `DuckDBReducer.y_extents`
+(40× slower than numpy) and `explode_series` (12×) are replaced, not extended.
+`summarize_series` is never written in SQL. The `Reducer` seam and the parity suite
+stay — the pandas reference is still the oracle; only the fast implementation changes
+from SQL to numpy.
+
+Projected band plot over the whole variable (×10 columns): fetch 3 s + `attach_variants`
+3 s + summarize 2–7.5 s ≈ **8–13 s** from ~580 s; a re-resolve on the cached frame
+2–8 s. A one-location LINE: ~1 s.
+
+### Final stage order
+
+| # | stage | fixes | size |
+|---|---|---|---|
+| 1 | lock model | reducer runs at all | done §6 |
+| 2 | `load_variable` fetch via `.df()`; cells are `np.ndarray` | **`plot_describe` 91 s → ~6 s** — the panel opens | small; parity suite must pass |
+| 3 | numpy reducer: extents (nanmin/nanmax), explode by concatenate, band/bar summarize by bincount | resolve 500 s → seconds | medium; replaces SQL in `DuckDBReducer` |
+| 4 | metadata-only `get_table` for describe/variant_graph/location_tree | the 3 s `attach_variants` + 1.4 GB on open | medium |
+| 5 | location + field pushdown | one-location plot reads one record | small |
+
+## 9. Stage 2 implemented (2026-09-13) — DataFrame fetch, uncommitted, unrun
+
+| File | Change |
+|---|---|
+| `scistackplotdb/load.py` | `load_variable` fetches through `_fetchdf` (already the sanctioned idiom in sciduckdb), never `_fetchall`. Schema keys are `CAST(... AS VARCHAR)` in the query so a numeric key with a NULL cannot arrive as float64 and stringify as `"1.0"`; `_key_text` maps None/NaN → None. `_normalize_cell` runs PER CELL (4190 calls, not 174 M): leaves 1-D ndarrays alone, stacks a 2-D cell's object-array-of-rows into one `(rows, cols)` float array (so `classify_value` sees ndim 2), turns ragged rows into a list of row arrays (still classifies MATRIX_2D), and converts a Python-list cell once if a DuckDB build still boxes on the pandas path — the "loaded" line then says `boxed`, which is the tell |
+| `scistackplotdb/tests/test_load_fetch.py` | NEW: 1-D cell is float64 ndarray; dict fields each ndarray; 2-D cell is `(3, 4)` ndarray; scalar column numeric; "loaded" line says `ndarray` not `boxed`; no payload column through `_fetchall`; the load query goes through `_fetchdf` exactly once; zero-padded keys survive as str; subject-level `Mass` has None (not "nan") for session/trial and `levels == ["subject"]`; the VARCHAR cast is in the SQL; `_normalize_cell` unit cases |
+| `scistackplotdb/tests/test_variant_table.py` | the "no data column is even queried" spy now watches `_fetchdf` as well as `_fetchall` |
+
+### Not verified
+
+Nothing run. The one thing only a real DuckDB can answer is what `.df()` hands over for
+a `DOUBLE[]` cell on the installed version — `test_a_1d_cell_is_a_float_ndarray` is
+the question, and `_normalize_cell` is the fallback if the answer is "a list". The
+measured 0.26 s says it is not boxing on the user's build.
+
+Expected on the next real run: `[timing] load_variable: RawEMG … fetch=~3s` and
+`loaded RawEMG: … ~1.4GB ndarray`; `plot_describe` held for ~6 s; the panel opens.
+`plot_resolve` will still be slow (stage 3: the SQL reducer's UNNEST at 49 s and the
+pandas explode fallback are still the paths) — that is the next stage, not a regression.
+
+### Stage 2 follow-ups found by the parity suite (2026-09-13)
+
+1. **`Series.map` / dtype inference** — building the cell column through `map` let
+   pandas reinterpret a column of same-length arrays. Cells and keys are now built via
+   `_object_column` (preallocated object array, one assignment per cell).
+2. **`np.float64` objects after `explode`** — pandas' `to_numeric` calls `len()` on numpy
+   scalars (`len() of unsized object`). New `scistackplot/numeric.py::coerce_numeric`
+   replaces `pd.to_numeric` at every site downstream of an explode or over a cell
+   column (`reduce._explode_1d`, `_panel_frame`, both `ylimits` sites). Tested in
+   `scistackplot/tests/test_numeric.py`.
+3. **NaN is stored TWO ways in the same column.** `probe_list_cells.py` on duckdb 1.5.5:
+   the bulk Arrow write keeps NaN as a real NaN double; scidb's single-record
+   `INSERT … VALUES (?, ?)` parameter binding stores it as a **NULL element**
+   (`v[2] IS NULL`). `fetchall` spelled both as `nan`/`None` and nobody noticed. `.df()`
+   spells the NULL-element cell as a `np.ma.MaskedArray`, and `np.asarray()` on that
+   drops the mask and exposes `0.0` — a NaN sample silently became a number. Fixed on
+   the read side (`_normalize_cell` → `_float_row` fills masks with NaN; tests in
+   `test_load_fetch.py::TestNaNSamplesSurviveTheFetch`). The reducer SQL already guards
+   both spellings (`IS NOT NULL AND NOT isnan`). **Open, scidb-level:** whether the
+   single-record path should bind NaN as NaN so the column has one representation —
+   a storage decision, and existing databases hold NULLs either way, so the reader
+   keeps handling both.
+4. `TestAggregateOnA2DMeasure`'s strict xfail XPASSed — ndarray cells make
+   `groupby.mean()` average matrices elementwise. Now a real assertion on the mean.
+
+**Status 2026-09-13:** stages 1 and 2 built; scistackplot, scistackplotdb and
+scistack-gui plot tests all pass (user-run). Uncommitted. Not yet run against the real
+database since stage 2 — the `plot_describe` ~6 s expectation in §9 is still a prediction.
+
+## 10. Stage 3 implemented (2026-09-13) — numpy reducer, uncommitted, unrun
+
+| File | Change |
+|---|---|
+| `scistackplot/series_stats.py` | NEW. `cell_arrays`, `pad`, `explode(arrays, max_points)` (record-major, NaN gap preserved, stride folded in so only kept rows' labels are gathered), `position_mean`, `position_stats(statistic, error)` with pandas' semantics (nanmean/nanmedian, `nanstd(ddof=1)` → 0.0 for n=1, linear percentiles, count = non-NaN) |
+| `scistackplot/reducer.py` | Protocol grows `collapse_series` and `summarize_series`; `explode_series` takes `max_points` and returns `(frame, index, total)`. `PandasReducer` implements the new methods by delegation (`_explode_1d` + `_collapse_aggregates` + new `reduce._summarize_exploded`). NEW `NumpyReducer(PandasReducer)`: aggregated `y_extents` (raw already was per-cell numpy in the reference — deferred), `explode_series`, `collapse_series`, `summarize_series`; scalars/2-D/pre-exploded defer to the reference |
+| `scistackplot/reduce.py` | `_build_figure`: a nested 1-D measure takes ONE of three routes — BAND/BAR → `summarize_series` per panel from the cells, stride applied to the SUMMARY afterwards; AGGREGATE role → `collapse_series` (exploded, small) then the usual stride; else → `explode_series(max_points=…)`. `_summarize_exploded` added (the reference's band tail) |
+| `scistackplotdb/source.py` | `ScidbSource(fast=True)` attaches `NumpyReducer`; `pushdown` is gone |
+| `scistackplotdb/reducer.py` | DELETED (the DuckDB-SQL reducer; lost every measurement in §8) |
+| `scistack-gui/plot_service.py` | the hold returns to the LOAD only (`_load`; `_loaded`/`ExitStack` gone): `resolve` is pure memory again. Docstring carries the two flips of 2026-09-13 |
+| tests | parity suite's fast side re-pointed to numpy (`numpy_source`); new `TestNumpyCollapseEqualsPandas`, `TestNumpySummarizeEqualsPandas` (8 spec shapes), `TestNumpySummarizeEdges` (n=1 → zero spread, all-NaN cell not a replicate), `TestBandThroughResolveIsSummarisedBeforeStriding`, `TestReductionNeedsNoDatabase` (every kind resolves with the connection CLOSED — the reason the GUI hold can end at the load); `TestAnUnreachableDatabaseRaises` removed with the SQL reducer; GUI lock tests flipped back to release-before-reduce; `test_narration` phase list updated |
+
+### Behaviour change, deliberate: BAND/BAR are summarised before striding
+
+The old figure order was explode → stride → summarise, so at scale a band was the
+mean ± SD of one sample in 8,707 (§D.1). Now every sample contributes and the transport
+stride thins the summary rows. Both reducers follow the new order (it lives in
+`_build_figure`), so parity holds; the drawn band at a budget is *different from before*
+and *correct*. Only BAND/BAR: LINE/box/violin keep explode → stride.
+
+### Not verified
+
+Nothing run. The parity suite is the check; `assert_frame_equal`'s default tolerance
+absorbs summation-order differences between `nanmean` and pandas' mean.
+
+### Follow-ups noted, not done
+
+- `position_stats` pads to the group's longest cell; a `bincount` form avoids the pad
+  for very ragged groups (measured 2.4 s vs 0.75 s for the whole-variable band).
+- Box/violin on 1-D still stride before computing quantiles (pre-existing).
+- `y_extents` (plan) and `summarize_series` (panels) compute the same statistics twice
+  for a band; a memo keyed on the plan would halve it.
+- `DEFAULT_REDUCER` stays the pandas reference; `CsvSource`/`DataFrameSource` could
+  carry `NumpyReducer` once their cells are known to be arrays.

@@ -28,6 +28,7 @@ import pandas as pd
 from scistacklog import Log
 
 from .framesize import format_extent, frame_extent
+from .numeric import coerce_numeric
 from .resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW, Z
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import complete_roles, fanout_keys, iterate_ancestors, validate
@@ -692,8 +693,8 @@ def _explode_1d(
     )
     exploded = working.explode([measure, index_column], ignore_index=True)
     exploded = exploded.dropna(subset=[measure])
-    exploded[measure] = pd.to_numeric(exploded[measure], errors="coerce")
-    exploded[index_column] = pd.to_numeric(exploded[index_column], errors="coerce")
+    exploded[measure] = coerce_numeric(exploded[measure])
+    exploded[index_column] = coerce_numeric(exploded[index_column])
 
     # INFO, not DEBUG: this is the dominant cost of a resolve and the one number
     # that explains a slow panel. A 12-field struct of 1-D arrays goes from a
@@ -800,16 +801,40 @@ def _build_figure(
         live=narrate,
     ) as timing:
         # This figure's own rows, expanded and collapsed here rather than once
-        # over the whole fan-out (see `_Plan.explode`). The order is fixed:
-        # aggregating a 1-D measure averages sample-by-sample, so the index
-        # column has to exist before the collapse groups on it.
-        if explode:
-            with timing.phase("explode", extra=f"{len(frame)} row(s)"):
-                frame, index_column = reducer_for(table).explode_series(
-                    frame, spec.y_measure, index_column, table
-                )
-        with timing.phase("collapse_aggregates"):
-            frame = _collapse_aggregates(frame, spec, roles, index_column)
+        # over the whole fan-out (see `_Plan.explode`). Three routes for a
+        # 1-D measure that is still nested one cell per row:
+        #
+        # * BAND / BAR: never exploded. Each panel is summarised straight from
+        #   its cells (`reducer.summarize_series`) — centre ± spread at every
+        #   position over ALL samples — and the transport stride is applied to
+        #   the SUMMARY afterwards. The old order (explode, stride, summarise)
+        #   drew a band over 1/8707th of the samples at scale, and built 174 M
+        #   rows to do it.
+        # * AGGREGATE roles, any other kind: `reducer.collapse_series` gives the
+        #   per-position mean over the aggregated factors, already exploded and
+        #   small (kept factor combinations x positions).
+        # * otherwise: `reducer.explode_series`, which may apply the transport
+        #   stride itself so only the kept rows' labels are ever gathered.
+        reducer = reducer_for(table)
+        aggregated = any(role is Role.AGGREGATE for role in roles.values())
+        summarize_nested = explode and spec.kind in (PlotKind.BAND, PlotKind.BAR)
+        pre_strided_from: int | None = None
+        if explode and not summarize_nested:
+            if aggregated:
+                with timing.phase("collapse_series", extra=f"{len(frame)} row(s)"):
+                    frame, index_column = reducer.collapse_series(
+                        frame, spec, roles, index_column, table
+                    )
+            else:
+                with timing.phase("explode", extra=f"{len(frame)} row(s)"):
+                    frame, index_column, total = reducer.explode_series(
+                        frame, spec.y_measure, index_column, table, max_points=max_points
+                    )
+                    if len(frame) < total:
+                        pre_strided_from = total  # the reducer logged the stride
+        elif not explode:
+            with timing.phase("collapse_aggregates"):
+                frame = _collapse_aggregates(frame, spec, roles, index_column)
 
         color = _role_holder(roles, Role.COLOR)
         # Several factors may share the x axis, nested. `x_layers` is only the
@@ -829,10 +854,15 @@ def _build_figure(
             if role is Role.FACET and name in frame.columns
         ]
 
-        original_rows = len(frame)
-        if max_points is not None and original_rows > max_points:
+        original_rows = pre_strided_from or len(frame)
+        if (
+            max_points is not None
+            and pre_strided_from is None
+            and not summarize_nested
+            and original_rows > max_points
+        ):
             with timing.phase("downsample"):
-                frame = reducer_for(table).downsample(frame, max_points, index_column)
+                frame = reducer.downsample(frame, max_points, index_column)
 
         panels: list[Panel] = []
 
@@ -854,9 +884,14 @@ def _build_figure(
                     ", ".join(str(v) for v in key.values()) or "unfaceted",
                     len(group),
                 )
-                panel_frame = _panel_frame(
-                    group, spec, table, shape, x_layers, color, index_column
-                )
+                if summarize_nested:
+                    panel_frame = reducer.summarize_series(
+                        group, spec, roles, index_column, table
+                    )
+                else:
+                    panel_frame = _panel_frame(
+                        group, spec, table, shape, x_layers, color, index_column
+                    )
                 panels.append(
                     Panel(
                         frame=panel_frame,
@@ -872,6 +907,24 @@ def _build_figure(
                         ),
                     )
                 )
+
+        if summarize_nested:
+            # The transport stride, over the SUMMARY rows of the whole figure —
+            # the same figure-level stride `_downsample` applies, now after the
+            # statistics rather than before them.
+            original_rows = sum(len(panel.frame) for panel in panels)
+            if max_points is not None and original_rows > max_points:
+                with timing.phase("downsample", extra=f"{original_rows} summary row(s)"):
+                    stride = max(1, original_rows // max_points)
+                    for panel in panels:
+                        panel.frame = panel.frame.iloc[::stride].reset_index(drop=True)
+                    Log.warn(
+                        "downsampled %d summary row(s) to %d for transport (stride=%d)",
+                        original_rows,
+                        sum(len(panel.frame) for panel in panels),
+                        stride,
+                        layer=LAYER,
+                    )
 
         with timing.phase("grid_layout"):
             n_rows, n_cols, row_labels, col_labels, layout_notes = _assign_grid(
@@ -942,9 +995,9 @@ def _panel_frame(
 
     # --- x --------------------------------------------------------------
     if spec.x_measure is not None:
-        out[X] = pd.to_numeric(group[spec.x_measure], errors="coerce")
+        out[X] = coerce_numeric(group[spec.x_measure])
     elif shape is Shape.SERIES_1D and index_column and index_column in group.columns:
-        out[X] = pd.to_numeric(group[index_column], errors="coerce")
+        out[X] = coerce_numeric(group[index_column])
     elif len(x_layers) > 1:
         # Nested axis: one position per COMBINATION of the layers, identified
         # by a composed key. The layer values stay as their own columns too, so
@@ -959,7 +1012,7 @@ def _panel_frame(
         # concept's "Observation" fallback when no tick factor was chosen.
         out[X] = ""
 
-    out[Y] = pd.to_numeric(group[y_measure], errors="coerce")
+    out[Y] = coerce_numeric(group[y_measure])
 
     if color:
         out[COLOR] = group[color].values
@@ -1110,6 +1163,26 @@ def _summarize(frame: pd.DataFrame, spec: PlotSpec, color: str | None) -> pd.Dat
         {Y: centre, Y_LOW: low, Y_HIGH: high}, axis=1
     ).reset_index()
     return out
+
+
+def _summarize_exploded(
+    frame: pd.DataFrame, spec: PlotSpec, color: str | None, index_column: str
+) -> pd.DataFrame:
+    """A BAND/BAR panel frame from an exploded, collapsed 1-D frame — the
+    summary tail of ``_panel_frame`` at full resolution. The pandas reference
+    for ``Reducer.summarize_series``."""
+    if color is not None and color not in frame.columns:
+        color = None
+    out = pd.DataFrame(index=frame.index)
+    out[X] = coerce_numeric(frame[index_column])
+    out[Y] = coerce_numeric(frame[spec.y_measure])
+    if color:
+        out[COLOR] = frame[color].values
+    out = out.dropna(subset=[Y])
+    out = _summarize(out, spec, color)
+    if spec.kind is PlotKind.BAND:
+        out = out.sort_values(X, kind="stable")
+    return out.reset_index(drop=True)
 
 
 def _downsample(

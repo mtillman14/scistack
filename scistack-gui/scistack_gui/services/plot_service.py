@@ -18,7 +18,6 @@ run-ownership work resolved — see docs/claude/matlab-run-database-ownership.md
 from __future__ import annotations
 
 import logging
-from contextlib import ExitStack, contextmanager
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -556,21 +555,18 @@ def resolve_figures(
 
     budget = MAX_TRANSPORT_POINTS if max_points is None else max_points
 
-    # Load AND reduce under one hold: the reducer queries DuckDB from inside
-    # `resolve` (see `_loaded`). Rendering to plotly JSON is pure memory and
-    # stays outside it.
-    with _loaded(
-        db, spec_payload, csv_path=csv_path, label="plot_resolve"
-    ) as (_, spec, table):
-        try:
-            if figure_index is not None:
-                figure, labels, index = resolve_one(
-                    spec, table, figure_index, max_points=budget
-                )
-            else:
-                resolved = resolve(spec, table, max_points=budget)
-        except RoleError as exc:
-            return _invalid_spec(exc)
+    # The hold ends with the load (see `_load`); reducing and rendering are
+    # pure memory.
+    _, spec, table = _load(db, spec_payload, csv_path=csv_path, label="plot_resolve")
+    try:
+        if figure_index is not None:
+            figure, labels, index = resolve_one(
+                spec, table, figure_index, max_points=budget
+            )
+        else:
+            resolved = resolve(spec, table, max_points=budget)
+    except RoleError as exc:
+        return _invalid_spec(exc)
 
     if figure_index is not None:
         rendered = [
@@ -763,43 +759,38 @@ def save_figure(
         extra=f"index={'all' if figure_index is None else figure_index}",
         live=True,
     ) as timing:
-        # Load and resolve under ONE database hold (see `_loaded`): the
-        # reducer reaches DuckDB from inside `resolve`. The hold ends here,
-        # before the first figure is rendered or written, which is the part of
-        # a save that is minutes — so the file is still free for MATLAB while
-        # matplotlib draws. Resolving is timed as its own phase because it is
-        # what can outlast a client, and narrated figure by figure inside it.
-        with ExitStack() as hold:
-            with timing.phase("load"):
-                _, spec, table = hold.enter_context(
-                    _loaded(
-                        db, spec_payload, csv_path=csv_path, label="plot_save_resolve"
+        # The database is held for the load only (see `_load`); resolving and
+        # rendering — the minutes of a save — leave the file free for MATLAB.
+        # Resolving is timed as its own phase because it is what can outlast a
+        # client, and narrated figure by figure inside it.
+        with timing.phase("load"):
+            _, spec, table = _load(
+                db, spec_payload, csv_path=csv_path, label="plot_save_start"
+            )
+        with timing.phase("resolve"):
+            try:
+                if figure_index is None:
+                    resolved = list(
+                        resolve(
+                            spec,
+                            table,
+                            narrate=True,
+                            on_figure=lambda position, total, label: report(
+                                "resolving", position, total, label
+                            ),
+                        )
                     )
-                )
-            with timing.phase("resolve"):
-                try:
-                    if figure_index is None:
-                        resolved = list(
-                            resolve(
-                                spec,
-                                table,
-                                narrate=True,
-                                on_figure=lambda position, total, label: report(
-                                    "resolving", position, total, label
-                                ),
-                            )
-                        )
-                    else:
-                        report("resolving", 1, 1, None)
-                        figure, _labels, _position = resolve_one(
-                            spec, table, figure_index, narrate=True
-                        )
-                        resolved = [figure]
-                except RoleError as exc:
-                    # A role conflict is a user-correctable state, not a fault —
-                    # same treatment as the resolve path (`_invalid_spec`).
-                    logger.info("[plot] save refused an invalid spec: %s", exc)
-                    return {"ok": False, "error": str(exc), "files": []}
+                else:
+                    report("resolving", 1, 1, None)
+                    figure, _labels, _position = resolve_one(
+                        spec, table, figure_index, narrate=True
+                    )
+                    resolved = [figure]
+            except RoleError as exc:
+                # A role conflict is a user-correctable state, not a fault —
+                # same treatment as the resolve path (`_invalid_spec`).
+                logger.info("[plot] save refused an invalid spec: %s", exc)
+                return {"ok": False, "error": str(exc), "files": []}
 
         # The stem is the only part that needed the spec, which is why it is
         # here and the format check is at the top.
@@ -995,12 +986,11 @@ def start_save_job(
     turns out, "save this one" — a request/response operation; the only honest
     shape is a job that reports progress.
 
-    **The database is not held while the figures render.** ``save_figure``
-    takes the connection to load the frames AND to resolve them — the reducer
-    does its per-sample work in DuckDB, see ``_loaded`` — and releases it
-    before the first figure renders, so the minutes matplotlib spends drawing
-    leave the ``.duckdb`` file free for MATLAB — which is the whole reason the
-    user asked for a background job rather than a spinner.
+    **The database is not held while this runs.** ``save_figure`` takes the
+    connection only to load the frames (``_load``) and releases it before
+    anything is reduced or rendered, so a long save leaves the ``.duckdb``
+    file free for MATLAB — which is the whole reason the user asked for a
+    background job rather than a spinner.
 
     Modelled on ``server._h_start_run``: a daemon thread, an id returned
     immediately, and every outcome announced. Deliberately NOT cancellable —
@@ -1189,27 +1179,27 @@ def _table_for(source, spec):
     )
 
 
-@contextmanager
-def _loaded(db, spec_payload: dict, *, csv_path: str | None, label: str):
-    """``(source, spec, table)``, holding the database for the whole block.
+def _load(db, spec_payload: dict, *, csv_path: str | None, label: str):
+    """``(source, spec, table)``, holding the database only while it loads.
 
-    **The DuckDB hold now spans the reduction, not only the load.** It used to
-    end when the table was built — "everything after it runs on the in-memory
-    frame and never reaches back to the source" — and that was true until the
-    reducer arrived: a scidb-backed ``LongTable`` hands its per-sample work
-    (y extents, exploding a 1-D measure, …) to DuckDB *during* ``resolve``. On
-    2026-09-13 the hold was released first, the reducer's first query hit
-    ``Connection already closed!``, and it fell back to pandas for 375 s of
-    ``y_limits`` and 110 s of ``explode`` (scidb.log 18:02:26,
-    .claude/plan-plot-minimal-load-examples.md §0). So a caller that resolves
-    puts the resolve INSIDE this block; rendering and writing stay outside,
-    where they always were.
+    **This is the whole DuckDB-touching phase of a plot request.** Everything
+    after it — reducing, faceting, downsampling, rendering — runs on the
+    in-memory frame the table holds (its cells are ndarrays; the reducer is
+    ``scistackplot.NumpyReducer``) and never reaches back to the source. That
+    is what makes the narrow hold correct rather than merely shorter, and it is
+    the window MATLAB gets back under the per-request policy.
 
-    What the hold costs is still logged as ``<label>: held the DuckDB
-    connection for …`` — and that line is the proof that moving the reduction
-    under it kept it short. Under the per-request policy a long hold blocks
-    MATLAB; with the reduction in DuckDB it is seconds, where the pandas path
-    it replaces was minutes and held nothing.
+    History, because this went back and forth in one day (2026-09-13): a
+    DuckDB-SQL reducer briefly ran queries from inside ``resolve``; released
+    first, it found the connection closed and silently fell back to pandas for
+    375 s, so the hold was widened to cover the reduction. The SQL reducer then
+    lost every measurement to numpy over the loaded cells and was removed
+    (.claude/plan-plot-minimal-load-examples.md §8), which returns the hold to
+    the load only. Keep it that way: a lazy field added to ``LongTable`` that
+    queried on access would fail here with a closed connection, and it would
+    fail in the render path where it is hardest to read.
+    ``test_plot_service.py::test_resolve_drops_the_connection_before_reducing``
+    pins it.
 
     The connection is only taken under the ``per_request`` policy, so the
     standalone process is unaffected (:func:`scistack_gui.db.db_connection`).
@@ -1221,15 +1211,7 @@ def _loaded(db, spec_payload: dict, *, csv_path: str | None, label: str):
         source = get_source(db, csv_path=csv_path)
         spec = _spec_from_payload(spec_payload)
         table = _table_for(source, spec)
-        yield source, spec, table
-
-
-def _load(db, spec_payload: dict, *, csv_path: str | None, label: str):
-    """:func:`_loaded` for a caller that only needs the table — capabilities,
-    code export — and does no reduction after it. Nothing in ``scistackplot``
-    outside ``reduce`` touches the reducer, so releasing here is right."""
-    with _loaded(db, spec_payload, csv_path=csv_path, label=label) as loaded:
-        return loaded
+    return source, spec, table
 
 
 def _spec_from_payload(payload: dict):

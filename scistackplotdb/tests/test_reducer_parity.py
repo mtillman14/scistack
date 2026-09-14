@@ -119,13 +119,11 @@ class TestContract:
     def test_a_table_with_no_reducer_gets_the_pandas_reference(self, parity_db):
         """`reducer=None` on a table means the pandas reference.
 
-        Written in Stage 1 against the default `source`, which then carried no
-        reducer. Stage 2 made `ScidbSource` attach a `DuckDBReducer` by default
-        (its own tests pin that), so the "no reducer" case now has to be asked
-        for explicitly — `pushdown=False` is the in-tree way a table ends up
-        with none.
+        `ScidbSource` attaches the numpy reducer by default (its own tests pin
+        that), so the "no reducer" case has to be asked for explicitly —
+        `fast=False` is the in-tree way a table ends up with none.
         """
-        table = ScidbSource(parity_db, pushdown=False).get_table(["Scalar"])
+        table = ScidbSource(parity_db, fast=False).get_table(["Scalar"])
         assert table.reducer is None
         assert reducer_for(table) is DEFAULT_REDUCER
 
@@ -200,6 +198,14 @@ class _Spy:
         self.calls.append("explode_series")
         return self._ref.explode_series(*a, **k)
 
+    def collapse_series(self, *a, **k):
+        self.calls.append("collapse_series")
+        return self._ref.collapse_series(*a, **k)
+
+    def summarize_series(self, *a, **k):
+        self.calls.append("summarize_series")
+        return self._ref.summarize_series(*a, **k)
+
     def downsample(self, *a, **k):
         self.calls.append("downsample")
         return self._ref.downsample(*a, **k)
@@ -219,14 +225,26 @@ class TestEveryKindRoutesThroughTheReducer:
         assert figures, f"{label}: no figure"
         assert "y_extents" in spy.calls, f"{label}: y limits bypassed the reducer"
 
-    def test_1d_kinds_explode_through_the_reducer(self, source, label, kind, measure, roles, aggregate):
+    def test_1d_kinds_reduce_through_the_reducer(self, source, label, kind, measure, roles, aggregate):
+        """Which per-sample operation a 1-D kind takes is part of the contract:
+        BAND/BAR summarise from the cells, an AGGREGATE role collapses, and
+        everything else explodes."""
         if measure != "Series":
-            pytest.skip("only 1-D measures explode")
+            pytest.skip("only 1-D measures have per-sample work")
         table = source.get_table([measure])
         spy = _Spy()
         table.reducer = spy
         resolve(_spec(kind, measure, roles, aggregate), table)
-        assert "explode_series" in spy.calls, f"{label}: explode bypassed the reducer"
+        if kind in (PlotKind.BAND, PlotKind.BAR):
+            expected = "summarize_series"
+        elif Role.AGGREGATE in roles.values():
+            expected = "collapse_series"
+        else:
+            expected = "explode_series"
+        assert expected in spy.calls, f"{label}: {expected} bypassed the reducer ({spy.calls})"
+        assert "explode_series" not in spy.calls or expected == "explode_series", (
+            f"{label}: a 1-D {kind} should never explode ({spy.calls})"
+        )
 
     def test_2d_kinds_average_through_the_reducer(self, source, label, kind, measure, roles, aggregate):
         if measure != "Matrix":
@@ -239,14 +257,27 @@ class TestEveryKindRoutesThroughTheReducer:
 
 
 class TestDownsampleRoutesThroughTheReducer:
-    def test_transport_budget_calls_downsample(self, source):
-        """Only when the figure exceeds the budget — exactly as before."""
+    def test_transport_budget_strides_inside_the_explode(self, source):
+        """A LINE's stride is applied by `explode_series` itself (so only the
+        kept rows' labels are ever gathered); the figure reports the total."""
         table = source.get_table(["Series"])
         spy = _Spy()
         table.reducer = spy
         spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None)
+        figures = resolve(spec, table, max_points=10)
+        assert "explode_series" in spy.calls
+        assert "downsample" not in spy.calls
+        assert figures[0].downsampled_from and figures[0].row_count <= 10 + 1
+
+    def test_a_collapsed_line_downsamples_after_collapsing(self, source):
+        """With an AGGREGATE role the exploded frame is the collapsed one, and
+        the transport stride runs over THAT — after the mean, never before."""
+        table = source.get_table(["Series"])
+        spy = _Spy()
+        table.reducer = spy
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None)
         resolve(spec, table, max_points=10)
-        assert "downsample" in spy.calls
+        assert spy.calls.index("collapse_series") < spy.calls.index("downsample")
 
     def test_full_resolution_never_downsamples(self, source):
         table = source.get_table(["Series"])
@@ -308,8 +339,9 @@ class TestReferenceEqualsTheOriginals:
         table = source.get_table(["Series"])
         frame = table.frame
         a, ia = _explode_1d(frame, "Series", "index")
-        b, ib = PandasReducer().explode_series(frame, "Series", "index", table)
+        b, ib, total = PandasReducer().explode_series(frame, "Series", "index", table)
         assert ia == ib
+        assert total == len(a)
         pd.testing.assert_frame_equal(a, b)
 
     def test_downsample(self, source):
@@ -368,54 +400,64 @@ class TestFixtureHitsTheEdges:
 
 
 # ---------------------------------------------------------------------------
-# A pre-existing gap the fixture surfaced — pinned red, for Stage 4
+# AGGREGATE over a 2-D measure — a gap the fixture surfaced, closed by ndarray cells
 # ---------------------------------------------------------------------------
 
 
 class TestAggregateOnA2DMeasure:
-    """``AGGREGATE`` over a DOUBLE[][] measure has never worked.
+    """``AGGREGATE`` over a DOUBLE[][] measure.
 
-    Averaging matrices lives in ``_matrix_frame`` (elementwise mean), reached
-    from ``_panel_frame`` — but only when no factor holds AGGREGATE. Give one
-    the AGGREGATE role and the 2-D cells go through ``_collapse_aggregates``
-    first, whose pandas ``groupby(...).mean()`` cannot average object cells:
-    ``TypeError: agg function failed [how->mean, dtype->object]``.
-
-    Found by this fixture on 2026-09-13; no earlier heatmap test used
-    AGGREGATE. It is NOT fixed in Stage 1 (behaviour-preserving by definition).
-    Stage 4 rebuilds the 2-D reduction and should turn this green — at which
-    point the ``xfail`` must be REMOVED, not left to pass silently
-    (``strict=True`` makes an unexpected pass a failure).
+    Pinned RED on 2026-09-13 (strict xfail): with list cells, the AGGREGATE
+    role sent the matrices through ``_collapse_aggregates``' pandas
+    ``groupby(...).mean()``, which cannot average object cells holding lists
+    (``TypeError: agg function failed``). The same day the fetch started
+    handing cells over as ndarrays (``test_load_fetch.py``) and the xfail
+    XPASSed: the object-column mean sums ndarrays elementwise. So the test
+    now asserts the answer, not the absence of an error — one figure per
+    subject, and the averaged matrix is the elementwise mean of that subject's
+    matrices.
     """
 
-    @pytest.mark.xfail(
-        raises=TypeError,
-        strict=True,
-        reason="AGGREGATE routes DOUBLE[][] into _collapse_aggregates' scalar mean; Stage 4",
-    )
     def test_aggregate_over_trials_averages_matrices(self, source):
+        from scistackplot.resolved import Z
+
         table = source.get_table(["Matrix"])
         spec = _spec(
             PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.AGGREGATE}, None
         )
-        resolve(spec, table)
+        figures = resolve(spec, table)
+        assert [f.figure_key["subject"] for f in figures] == ["s1", "s2"]
+
+        frame = table.frame
+        s1 = [np.asarray(v, dtype=float) for v in frame.loc[frame["subject"] == "s1", "Matrix"]]
+        assert len(s1) == 2
+        expected = np.mean(np.stack(s1), axis=0)
+        got = np.asarray(figures[0].panels[0].frame[Z].iloc[0], dtype=float)
+        np.testing.assert_allclose(got, expected)
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: DuckDBReducer.y_extents == the pandas reference
+# NumpyReducer == the pandas reference
 # ---------------------------------------------------------------------------
+#
+# The side under test changed on 2026-09-13: a DuckDB-SQL reducer was measured
+# against numpy over the loaded cells and lost every reduction by 12-40x
+# (.claude/plan-plot-minimal-load-examples.md §8), so the fast reducer is now
+# `scistackplot.NumpyReducer` and touches no database at all. The oracle and
+# the fixture are unchanged; every test below asks the same question of the new
+# implementation.
 
 
 @pytest.fixture
 def pandas_source(parity_db) -> ScidbSource:
     """The same database, reductions kept in pandas — the oracle side."""
-    return ScidbSource(parity_db, pushdown=False)
+    return ScidbSource(parity_db, fast=False)
 
 
 @pytest.fixture
-def duckdb_source(parity_db) -> ScidbSource:
-    """The same database, reductions pushed to DuckDB — the side under test."""
-    return ScidbSource(parity_db, pushdown=True)
+def numpy_source(parity_db) -> ScidbSource:
+    """The same database, reductions in numpy — the side under test."""
+    return ScidbSource(parity_db, fast=True)
 
 
 def _extents(source, kind, measure, roles, aggregate, scope):
@@ -439,20 +481,37 @@ def _assert_extents_equal(got: dict, expected: dict, label: str) -> None:
         )
 
 
-class TestDuckDBSourceAttachesTheReducer:
-    def test_pushdown_source_tables_carry_a_duckdb_reducer(self, duckdb_source):
-        from scistackplotdb.reducer import DuckDBReducer
+def _sorted_panel(frame: pd.DataFrame) -> pd.DataFrame:
+    """A panel frame in a canonical row order for comparison.
 
-        assert isinstance(duckdb_source.get_table(["Scalar"]).reducer, DuckDBReducer)
+    BAR panels are not sorted by either reducer (only BAND sorts by X), and the
+    reference's groupby(sort=False) order depends on record order in a way the
+    numpy path does not reproduce; the VALUES are the contract."""
+    from scistackplot.resolved import COLOR, X
 
-    def test_pushdown_off_leaves_the_pandas_reference(self, pandas_source):
+    keys = [c for c in (X, COLOR) if c in frame.columns]
+    return frame.sort_values(keys, kind="stable").reset_index(drop=True) if keys else frame
+
+
+class TestScidbSourceAttachesTheReducer:
+    def test_fast_source_tables_carry_the_numpy_reducer(self, numpy_source):
+        from scistackplot.reducer import NumpyReducer
+
+        assert isinstance(numpy_source.get_table(["Scalar"]).reducer, NumpyReducer)
+
+    def test_fast_off_leaves_the_pandas_reference(self, pandas_source):
         assert pandas_source.get_table(["Scalar"]).reducer is None
         assert reducer_for(pandas_source.get_table(["Scalar"])) is DEFAULT_REDUCER
 
-    def test_one_reducer_per_source(self, duckdb_source):
-        a = duckdb_source.get_table(["Scalar"]).reducer
-        b = duckdb_source.get_table(["Series"]).reducer
+    def test_one_reducer_per_source(self, numpy_source):
+        a = numpy_source.get_table(["Scalar"]).reducer
+        b = numpy_source.get_table(["Series"]).reducer
         assert a is b
+
+    def test_the_numpy_reducer_satisfies_the_protocol(self):
+        from scistackplot.reducer import NumpyReducer
+
+        assert isinstance(NumpyReducer(), Reducer)
 
 
 #: (label, kind, measure, roles, aggregate, scope). Raw AND aggregated modes,
@@ -481,6 +540,11 @@ EXTENT_CASES = [
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), []),
     ("agg-1d-iqr-median-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.AGGREGATE},
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), ["subject"]),
+    # ---- aggregated, 1-D, replicates FREE (a band across trials) ----------
+    ("agg-1d-free-sd", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
+    ("agg-1d-free-iqr-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), ["subject"]),
     # ---- aggregated, scalar (bar), incl. the n=1 subject ------------------
     ("agg-scalar-sd", PlotKind.BAR, "Scalar", {"subject": Role.X, "trial": Role.AGGREGATE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
@@ -494,102 +558,70 @@ EXTENT_CASES = [
 @pytest.mark.parametrize(
     "label,kind,measure,roles,aggregate,scope", EXTENT_CASES, ids=[c[0] for c in EXTENT_CASES]
 )
-def test_duckdb_y_extents_equal_pandas(
-    pandas_source, duckdb_source, label, kind, measure, roles, aggregate, scope
+def test_numpy_y_extents_equal_pandas(
+    pandas_source, numpy_source, label, kind, measure, roles, aggregate, scope
 ):
     """The §4 parity table, one row at a time, over the edge-case fixture."""
     expected = _extents(pandas_source, kind, measure, roles, aggregate, scope)
-    got = _extents(duckdb_source, kind, measure, roles, aggregate, scope)
+    got = _extents(numpy_source, kind, measure, roles, aggregate, scope)
     _assert_extents_equal(got, expected, label)
 
 
-class TestDuckDBExtentsActuallyRanInDuckDB:
-    """Parity would also pass if the pushdown silently fell back to pandas."""
+class TestNumpyExtentsActuallyRanInNumpy:
+    """Parity would also pass if the fast path silently deferred to pandas."""
 
-    def test_raw_path_logs_the_duckdb_timer(self, duckdb_source, caplog):
+    def test_aggregated_path_logs_the_numpy_timer_and_never_explodes(self, numpy_source, caplog):
         import logging
 
-        with caplog.at_level(logging.INFO, logger="scistackplotdb"):
-            _extents(duckdb_source, PlotKind.LINE, "Series",
-                     {"subject": Role.COLOR, "trial": Role.FREE}, None, [])
-        text = "\n".join(r.getMessage() for r in caplog.records)
-        assert "[timing] y_extents(duckdb)" in text
-        assert "raw=" in text
-        assert "pandas fallback" not in text
-
-    def test_aggregated_path_logs_the_duckdb_timer(self, duckdb_source, caplog):
-        import logging
-
-        with caplog.at_level(logging.INFO, logger="scistackplotdb"):
-            _extents(duckdb_source, PlotKind.BAND, "Series",
+        with caplog.at_level(logging.INFO, logger="scistackplot"):
+            _extents(numpy_source, PlotKind.BAND, "Series",
                      {"subject": Role.COLOR, "trial": Role.AGGREGATE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), [])
         text = "\n".join(r.getMessage() for r in caplog.records)
-        assert "[timing] y_extents(duckdb)" in text
-        assert "aggregated=" in text
-        assert "pandas fallback" not in text
+        assert "[timing] y_extents(numpy)" in text
+        assert "stats=" in text
+        assert "exploded 1-D measure" not in text
 
-    def test_no_payload_column_is_fetched_into_python(self, duckdb_source, monkeypatch):
-        """The whole point: the reduction must not pull the arrays out.
-
-        Spied on `_fetchall` (the boxing path). The reducer's own queries go
-        through `_fetchall_with_frame`; anything selecting the Series column
-        through plain `_fetchall` during y_extents is the old behaviour leaking.
-        """
-        table = duckdb_source.get_table(["Series"])  # the load itself is allowed
-        seen: list[str] = []
-        original = duckdb_source._db._duck._fetchall
-
-        def spy(sql, params=None):
-            seen.append(sql)
-            return original(sql, params)
-
-        monkeypatch.setattr(duckdb_source._db._duck, "_fetchall", spy)
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None)
-        reducer_for(table).y_extents(table.frame, spec, table, [])
-        payload_selects = [s for s in seen if "SELECT t.record_id" in s and '"Series"' in s]
-        assert payload_selects == [], f"y_extents re-fetched the payload: {payload_selects}"
-
-
-class TestDuckDBExtentsFallBackHonestly:
-    def test_exploded_table_falls_back_to_pandas(self, duckdb_source, caplog):
-        """A pre-exploded frame's values ARE the frame; DuckDB holds them nested."""
+    def test_raw_path_is_the_reference_cell_by_cell(self, numpy_source, caplog):
+        """Raw extents were already per-cell numpy in the reference; the fast
+        reducer defers rather than duplicating them."""
         import logging
 
+        with caplog.at_level(logging.INFO, logger="scistackplot"):
+            _extents(numpy_source, PlotKind.LINE, "Series",
+                     {"subject": Role.COLOR, "trial": Role.FREE}, None, [])
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "y_extents(numpy)" not in text
+        assert "exploded 1-D measure" not in text
+
+
+class TestNumpyExtentsDeferHonestly:
+    def test_exploded_table_gets_the_reference_answer(self, numpy_source):
+        """A pre-exploded frame's values ARE the frame; the reference reduces it."""
         from dataclasses import replace
 
         from scistackplot.reduce import _explode_1d
 
-        table = duckdb_source.get_table(["Series"])
+        table = numpy_source.get_table(["Series"])
         frame, idx = _explode_1d(table.frame, "Series", "index")
         exploded = replace(table, frame=frame, index_column=idx)
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None)
-        with caplog.at_level(logging.INFO, logger="scistackplotdb"):
-            got = reducer_for(exploded).y_extents(frame, spec, exploded, [])
-        assert "pandas fallback" in "\n".join(r.getMessage() for r in caplog.records)
-        # And the fallback is still the right answer.
+        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+                     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
+        got = reducer_for(exploded).y_extents(frame, spec, exploded, [])
         expected = PandasReducer().y_extents(frame, spec, exploded, [])
-        _assert_extents_equal(got, expected, "exploded-fallback")
-
-    def test_frame_without_record_id_falls_back(self, duckdb_source):
-        table = duckdb_source.get_table(["Scalar"])
-        frame = table.frame.drop(columns=["record_id"])
-        spec = _spec(PlotKind.SCATTER, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None)
-        got = reducer_for(table).y_extents(frame, spec, table, [])
-        expected = PandasReducer().y_extents(frame, spec, table, [])
-        _assert_extents_equal(got, expected, "no-record-id-fallback")
+        _assert_extents_equal(got, expected, "exploded-defer")
 
 
-class TestDuckDBExtentsThroughResolve:
-    """End to end: the figure a pushdown source produces has the same y limits."""
+class TestNumpyExtentsThroughResolve:
+    """End to end: the figure a fast source produces has the same y limits."""
 
     @pytest.mark.parametrize("label,kind,measure,roles,aggregate", KIND_CASES, ids=[c[0] for c in KIND_CASES])
     def test_resolved_panel_limits_match(
-        self, pandas_source, duckdb_source, label, kind, measure, roles, aggregate
+        self, pandas_source, numpy_source, label, kind, measure, roles, aggregate
     ):
         spec = _spec(kind, measure, roles, aggregate)
         a = resolve(spec, pandas_source.get_table([measure]))
-        b = resolve(spec, duckdb_source.get_table([measure]))
+        b = resolve(spec, numpy_source.get_table([measure]))
         assert len(a) == len(b), label
         for fa, fb in zip(a, b, strict=True):
             for pa, pb in zip(fa.panels, fb.panels, strict=True):
@@ -600,12 +632,12 @@ class TestDuckDBExtentsThroughResolve:
 
 
 # ---------------------------------------------------------------------------
-# Stage 3: DuckDBReducer.explode_series == the pandas reference, frame for frame
+# NumpyReducer.explode_series == the pandas reference, frame for frame
 # ---------------------------------------------------------------------------
 
 
-class TestDuckDBExplodeEqualsPandas:
-    """The explode is reproduced EXACTLY — same rows, same order, same dtypes.
+class TestNumpyExplodeEqualsPandas:
+    """The explode is reproduced EXACTLY — same rows, same order.
 
     Not "same figure": `_collapse_aggregates` and `_downsample` run on this
     frame afterwards and both are order-sensitive (`_downsample` strides by row,
@@ -613,114 +645,242 @@ class TestDuckDBExplodeEqualsPandas:
     row order would draw a different line. `assert_frame_equal` is the contract.
     """
 
-    def _both(self, pandas_source, duckdb_source, measure="Series"):
-        from scistackplot.reducer import reducer_for
-
+    def _both(self, pandas_source, numpy_source, measure="Series", max_points=None):
         p = pandas_source.get_table([measure])
-        d = duckdb_source.get_table([measure])
-        a, ia = reducer_for(p).explode_series(p.frame, measure, "index", p)
-        b, ib = reducer_for(d).explode_series(d.frame, measure, "index", d)
-        return (a, ia), (b, ib)
+        n = numpy_source.get_table([measure])
+        a = reducer_for(p).explode_series(p.frame, measure, "index", p, max_points=max_points)
+        b = reducer_for(n).explode_series(n.frame, measure, "index", n, max_points=max_points)
+        return a, b
 
-    def test_frames_are_identical(self, pandas_source, duckdb_source):
-        (a, ia), (b, ib) = self._both(pandas_source, duckdb_source)
+    def test_frames_are_identical(self, pandas_source, numpy_source):
+        (a, ia, ta), (b, ib, tb) = self._both(pandas_source, numpy_source)
         assert ia == ib == "index"
+        assert ta == tb == len(a)
         pd.testing.assert_frame_equal(
             a.reset_index(drop=True), b.reset_index(drop=True), check_dtype=False
         )
 
-    def test_nan_samples_leave_a_gap_not_a_renumbering(self, duckdb_source):
+    def test_a_transport_budget_strides_exactly_as_downsample_would(self, pandas_source, numpy_source):
+        """The reference explodes then `_downsample`s; numpy strides the kept
+        indices before gathering any label. Same rows, or a line plot moves."""
+        (a, _, ta), (b, _, tb) = self._both(pandas_source, numpy_source, max_points=25)
+        assert ta == tb
+        assert len(a) == len(b) < ta
+        pd.testing.assert_frame_equal(
+            a.reset_index(drop=True), b.reset_index(drop=True), check_dtype=False
+        )
+
+    def test_nan_samples_leave_a_gap_not_a_renumbering(self, numpy_source):
         """s1/t1 has NaN at position 4: positions must run 0,1,2,3,5,... ."""
-        from scistackplot.reducer import reducer_for
+        n = numpy_source.get_table(["Series"])
+        b, _, _ = reducer_for(n).explode_series(n.frame, "Series", "index", n)
+        s1t1 = b[(b["subject"] == "s1") & (b["trial"] == "1")]["index"].tolist()
+        assert s1t1 == [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11]
 
-        d = duckdb_source.get_table(["Series"])
-        b, _ = reducer_for(d).explode_series(d.frame, "Series", "index", d)
-        row = b[(b["subject"] == "s1") & (b["trial"] == "1")]
-        positions = row["index"].tolist()
-        assert 4 not in positions
-        assert positions == sorted(positions)
-        assert positions[:4] == [0, 1, 2, 3]
-        assert positions[4] == 5
-
-    def test_all_nan_cell_contributes_no_rows(self, duckdb_source):
-        """s2/t3 is all NaN: the record vanishes from the exploded frame."""
-        from scistackplot.reducer import reducer_for
-
-        d = duckdb_source.get_table(["Series"])
-        b, _ = reducer_for(d).explode_series(d.frame, "Series", "index", d)
+    def test_an_all_nan_cell_contributes_no_rows(self, numpy_source):
+        n = numpy_source.get_table(["Series"])
+        b, _, _ = reducer_for(n).explode_series(n.frame, "Series", "index", n)
         assert b[(b["subject"] == "s2") & (b["trial"] == "3")].empty
 
-    def test_ragged_lengths_are_preserved_per_record(self, pandas_source, duckdb_source):
-        (a, _), (b, _) = self._both(pandas_source, duckdb_source)
+    def test_ragged_lengths_are_preserved_per_record(self, pandas_source, numpy_source):
+        (a, _, _), (b, _, _) = self._both(pandas_source, numpy_source)
         pa_ = a.groupby(["subject", "trial"]).size()
         pb_ = b.groupby(["subject", "trial"]).size()
         pd.testing.assert_series_equal(pa_, pb_)
 
-    def test_order_is_record_major_then_position(self, duckdb_source):
+    def test_order_is_record_major_then_position(self, numpy_source):
         """What `_downsample`'s `iloc[::stride]` depends on."""
-        from scistackplot.reducer import reducer_for
-
-        d = duckdb_source.get_table(["Series"])
-        b, _ = reducer_for(d).explode_series(d.frame, "Series", "index", d)
-        # Within each record the index must be strictly increasing, and the
-        # records must appear in the original frame's row order.
+        n = numpy_source.get_table(["Series"])
+        b, _, _ = reducer_for(n).explode_series(n.frame, "Series", "index", n)
         rec_order = list(dict.fromkeys(zip(b["subject"], b["trial"])))
-        frame_order = list(zip(d.frame["subject"], d.frame["trial"]))
+        frame_order = list(zip(n.frame["subject"], n.frame["trial"]))
         frame_order = [k for k in frame_order if k in set(rec_order)]
         assert rec_order == frame_order
         for _, part in b.groupby(["subject", "trial"], sort=False):
             assert part["index"].is_monotonic_increasing
 
-    def test_explode_actually_ran_in_duckdb(self, duckdb_source, caplog):
+    def test_explode_actually_ran_in_numpy(self, numpy_source, caplog):
         import logging
 
-        from scistackplot.reducer import reducer_for
-
-        d = duckdb_source.get_table(["Series"])
-        with caplog.at_level(logging.INFO, logger="scistackplotdb"):
-            reducer_for(d).explode_series(d.frame, "Series", "index", d)
+        n = numpy_source.get_table(["Series"])
+        with caplog.at_level(logging.INFO, logger="scistackplot"):
+            reducer_for(n).explode_series(n.frame, "Series", "index", n)
         text = "\n".join(r.getMessage() for r in caplog.records)
-        assert "[timing] explode_series(duckdb)" in text
-        assert "unnest=" in text
-        assert "[duckdb]" in text
-        assert "pandas fallback" not in text
+        assert "[timing] explode_series(numpy)" in text
+        assert "[numpy]" in text
 
-    def test_samples_never_pass_through_fetchall(self, duckdb_source, monkeypatch):
-        """The columnar path is the point: `.df()`, never `fetchall()`.
-
-        `fetchall` boxes a Python float per sample — the exact cost this stage
-        removes. Any UNNEST reaching it during the explode is the old behaviour
-        leaking back in through a different door.
-        """
-        from scistackplot.reducer import reducer_for
-
-        d = duckdb_source.get_table(["Series"])
-        seen: list[str] = []
-        original = duckdb_source._db._duck._fetchall
-
-        def spy(sql, params=None):
-            seen.append(sql)
-            return original(sql, params)
-
-        monkeypatch.setattr(duckdb_source._db._duck, "_fetchall", spy)
-        reducer_for(d).explode_series(d.frame, "Series", "index", d)
-        assert not [s for s in seen if "UNNEST" in s], seen
-
-    def test_existing_index_column_raises_like_the_reference(self, duckdb_source):
-        from scistackplot.reducer import reducer_for
-
-        d = duckdb_source.get_table(["Series"])
-        frame = d.frame.assign(index=0)
+    def test_existing_index_column_raises_like_the_reference(self, numpy_source):
+        n = numpy_source.get_table(["Series"])
+        frame = n.frame.assign(index=0)
         with pytest.raises(ValueError, match="already exists"):
-            reducer_for(d).explode_series(frame, "Series", "index", d)
+            reducer_for(n).explode_series(frame, "Series", "index", n)
 
 
-class TestDuckDBExplodeThroughResolve:
-    """End to end: the drawn frames agree for every 1-D kind.
+# ---------------------------------------------------------------------------
+# collapse_series and summarize_series == the pandas reference
+# ---------------------------------------------------------------------------
 
-    This is what makes the record-major order argument above matter — the
-    downsampled, collapsed panel frames must match, not just the explode.
+
+class TestNumpyCollapseEqualsPandas:
+    """The AGGREGATE collapse of a 1-D measure: mean per position over the
+    aggregated factors, one exploded row per kept combination per position."""
+
+    def test_collapsed_frames_agree(self, pandas_source, numpy_source):
+        from scistackplot.roles import complete_roles
+
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None)
+        p = pandas_source.get_table(["Series"])
+        n = numpy_source.get_table(["Series"])
+        roles = complete_roles(spec, p)
+        a, ia = reducer_for(p).collapse_series(p.frame, spec, roles, "index", p)
+        b, ib = reducer_for(n).collapse_series(n.frame, spec, roles, "index", n)
+        assert ia == ib
+        key = ["subject", "index"]
+        pd.testing.assert_frame_equal(
+            a.sort_values(key).reset_index(drop=True)[[*key, "Series"]],
+            b.sort_values(key).reset_index(drop=True)[[*key, "Series"]],
+            check_dtype=False,
+        )
+
+    def test_a_position_only_some_trials_reach_is_the_mean_of_those(self, numpy_source):
+        """s1's trials are 12, 9 and 15 samples long: position 13 is the mean
+        of ONE trial, position 10 of two — never NaN-poisoned, never padded."""
+        from scistackplot.roles import complete_roles
+
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None)
+        n = numpy_source.get_table(["Series"])
+        roles = complete_roles(spec, n)
+        b, _ = reducer_for(n).collapse_series(n.frame, spec, roles, "index", n)
+        s1 = b[b["subject"] == "s1"].set_index("index")["Series"]
+        assert s1.index.max() == 14
+        cells = {row.trial: np.asarray(row.Series) for row in n.frame[n.frame["subject"] == "s1"].itertuples()}
+        assert s1.loc[13] == pytest.approx(cells["3"][13])
+        assert s1.loc[10] == pytest.approx(np.mean([cells["1"][10], cells["3"][10]]))
+
+
+SUMMARY_CASES = [
+    ("band-sd-agg", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
+    ("band-sd-free", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
+    ("band-sem-free-nocolor", PlotKind.BAND, {"subject": Role.FREE, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SEM)),
+    ("band-ci95-agg", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.CI95)),
+    ("band-iqr-median-free", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR)),
+    ("band-none-free", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.NONE)),
+    ("bar-sd-free", PlotKind.BAR, {"subject": Role.COLOR, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
+    ("band-facet-agg", PlotKind.BAND, {"subject": Role.FACET, "trial": Role.AGGREGATE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
+]
+
+
+@pytest.mark.parametrize("label,kind,roles,aggregate", SUMMARY_CASES, ids=[c[0] for c in SUMMARY_CASES])
+class TestNumpySummarizeEqualsPandas:
+    """centre ± spread per position, from the cells, equals explode + groupby."""
+
+    def test_panel_frames_agree(self, pandas_source, numpy_source, label, kind, roles, aggregate):
+        from scistackplot.roles import complete_roles
+
+        spec = _spec(kind, "Series", roles, aggregate)
+        p = pandas_source.get_table(["Series"])
+        n = numpy_source.get_table(["Series"])
+        completed = complete_roles(spec, p)
+        a = reducer_for(p).summarize_series(p.frame, spec, completed, "index", p)
+        b = reducer_for(n).summarize_series(n.frame, spec, completed, "index", n)
+        assert list(a.columns) == list(b.columns), label
+        pd.testing.assert_frame_equal(_sorted_panel(a), _sorted_panel(b), check_dtype=False)
+
+    def test_summarize_never_explodes(self, numpy_source, caplog, label, kind, roles, aggregate):
+        import logging
+
+        from scistackplot.roles import complete_roles
+
+        spec = _spec(kind, "Series", roles, aggregate)
+        n = numpy_source.get_table(["Series"])
+        with caplog.at_level(logging.INFO, logger="scistackplot"):
+            reducer_for(n).summarize_series(n.frame, spec, complete_roles(spec, n), "index", n)
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "[timing] summarize_series(numpy)" in text
+        assert "exploded 1-D measure" not in text
+
+
+class TestNumpySummarizeEdges:
+    def test_one_replicate_has_zero_spread(self, numpy_source):
+        """s3 has ONE trial: std(ddof=1) is NaN there and pandas filled 0.0."""
+        from scistackplot.resolved import COLOR, Y, Y_HIGH, Y_LOW
+        from scistackplot.roles import complete_roles
+
+        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+                     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
+        n = numpy_source.get_table(["Series"])
+        out = reducer_for(n).summarize_series(n.frame, spec, complete_roles(spec, n), "index", n)
+        s3 = out[out[COLOR] == "s3"]
+        assert len(s3) == 8
+        np.testing.assert_allclose(s3[Y_LOW], s3[Y])
+        np.testing.assert_allclose(s3[Y_HIGH], s3[Y])
+
+    def test_the_all_nan_cell_is_not_a_replicate(self, numpy_source):
+        """s2/t3 is all NaN: at every position s2's count is 2, not 3."""
+        from scistackplot.resolved import COLOR, X, Y
+        from scistackplot.roles import complete_roles
+
+        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+                     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
+        n = numpy_source.get_table(["Series"])
+        out = reducer_for(n).summarize_series(n.frame, spec, complete_roles(spec, n), "index", n)
+        s2 = out[out[COLOR] == "s2"].set_index(X)[Y]
+        frame = n.frame
+        t1 = np.asarray(frame[(frame["subject"] == "s2") & (frame["trial"] == "1")]["Series"].iloc[0])
+        t2 = np.asarray(frame[(frame["subject"] == "s2") & (frame["trial"] == "2")]["Series"].iloc[0])
+        assert s2.loc[0] == pytest.approx((t1[0] + t2[0]) / 2)
+        assert len(s2) == 10
+
+
+class TestBandThroughResolveIsSummarisedBeforeStriding:
+    """The fidelity fix that came with the numpy path, for BOTH reducers.
+
+    The old figure order was explode -> stride -> summarise: at scale a band was
+    the mean ± SD of one sample in 8,707. Now BAND/BAR panels are summarised
+    over every sample and the transport stride is applied to the SUMMARY.
     """
+
+    @pytest.fixture
+    def band(self):
+        return _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+                     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
+
+    def test_a_budget_thins_the_summary_not_the_samples(self, numpy_source, band):
+        full = resolve(band, numpy_source.get_table(["Series"]))[0].panels[0].frame
+        thin = resolve(band, numpy_source.get_table(["Series"]), max_points=10)[0]
+        thinned = thin.panels[0].frame
+        assert 0 < len(thinned) < len(full)
+        assert thin.downsampled_from == len(full)
+        # Every kept row is a row of the full summary, values untouched.
+        merged = thinned.merge(full, on=list(thinned.columns), how="inner")
+        assert len(merged) == len(thinned)
+
+    def test_both_reducers_agree_at_a_budget(self, pandas_source, numpy_source, band):
+        a = resolve(band, pandas_source.get_table(["Series"]), max_points=10)[0].panels[0].frame
+        b = resolve(band, numpy_source.get_table(["Series"]), max_points=10)[0].panels[0].frame
+        pd.testing.assert_frame_equal(_sorted_panel(a), _sorted_panel(b), check_dtype=False)
+
+    def test_the_figure_never_explodes(self, numpy_source, band, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="scistackplot"):
+            resolve(band, numpy_source.get_table(["Series"]), max_points=10)
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "exploded 1-D measure" not in text
+        assert "summarize_series(numpy)" in text
+
+
+class TestNumpyThroughResolve:
+    """End to end: the drawn frames agree for every 1-D kind, at full
+    resolution and at a transport budget."""
 
     @pytest.mark.parametrize(
         "label,kind,measure,roles,aggregate",
@@ -728,88 +888,43 @@ class TestDuckDBExplodeThroughResolve:
         ids=[c[0] for c in KIND_CASES if c[2] == "Series"],
     )
     def test_panel_frames_match(
-        self, pandas_source, duckdb_source, label, kind, measure, roles, aggregate
+        self, pandas_source, numpy_source, label, kind, measure, roles, aggregate
     ):
         spec = _spec(kind, measure, roles, aggregate)
         for max_points in (None, 25):
             a = resolve(spec, pandas_source.get_table([measure]), max_points=max_points)
-            b = resolve(spec, duckdb_source.get_table([measure]), max_points=max_points)
+            b = resolve(spec, numpy_source.get_table([measure]), max_points=max_points)
             assert len(a) == len(b), label
             for fa, fb in zip(a, b, strict=True):
                 assert len(fa.panels) == len(fb.panels), label
+                assert fa.downsampled_from == fb.downsampled_from, label
                 for pa_, pb_ in zip(fa.panels, fb.panels, strict=True):
                     pd.testing.assert_frame_equal(
-                        pa_.frame.reset_index(drop=True),
-                        pb_.frame.reset_index(drop=True),
+                        _sorted_panel(pa_.frame),
+                        _sorted_panel(pb_.frame),
                         check_dtype=False,
                         check_like=True,
                     )
 
 
 # ---------------------------------------------------------------------------
-# A database the reducer cannot reach is a fault, not a fallback
+# The reduction never touches the database
 # ---------------------------------------------------------------------------
 
 
-class TestAnUnreachableDatabaseRaises:
-    """Found 2026-09-13 (scidb.log 18:02:26): the GUI released its per-request
-    DuckDB hold before ``resolve`` ran, the reducer's first lookup raised
-    ``Connection already closed!``, and ``_address_rows``' bare
-    ``except Exception`` reported the rows as "not addressable" — so every
-    reduction silently ran in pandas (375 s of y_limits) while the log said the
-    reducer was on. A fallback is for rows that are structurally not in DuckDB;
-    a connection error must propagate.
-    """
+class TestReductionNeedsNoDatabase:
+    """Why the GUI can release its DuckDB hold before `resolve` (plot_service
+    `_load`): every reduction runs over the loaded cells. Close the connection
+    after the load and the whole figure still resolves."""
 
-    def _series_spec(self):
-        return _spec(
-            PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None
-        )
-
-    def test_y_extents_on_a_closed_connection_raises(self, duckdb_source, parity_db, caplog):
-        import logging
-
-        import duckdb
-
-        table = duckdb_source.get_table(["Series"])
-        spec = self._series_spec()
-        parity_db._duck.close()
-        try:
-            with caplog.at_level(logging.INFO, logger="scistackplotdb"):
-                with pytest.raises(duckdb.ConnectionException):
-                    reducer_for(table).y_extents(table.frame, spec, table, [])
-            assert "pandas fallback" not in "\n".join(
-                r.getMessage() for r in caplog.records
-            )
-        finally:
-            parity_db._duck.reopen()
-
-    def test_explode_series_on_a_closed_connection_raises(self, duckdb_source, parity_db):
-        import duckdb
-
-        table = duckdb_source.get_table(["Series"])
-        parity_db._duck.close()
-        try:
-            with pytest.raises(duckdb.ConnectionException):
-                reducer_for(table).explode_series(table.frame, "Series", "index", table)
-        finally:
-            parity_db._duck.reopen()
-
-    def test_a_variable_without_a_data_table_still_falls_back_and_says_so(
-        self, duckdb_source, caplog
+    @pytest.mark.parametrize("label,kind,measure,roles,aggregate", KIND_CASES, ids=[c[0] for c in KIND_CASES])
+    def test_resolves_with_the_connection_closed(
+        self, numpy_source, parity_db, label, kind, measure, roles, aggregate
     ):
-        """The structural case keeps its fallback — now at WARN, naming the
-        variable, so it can never again be mistaken for a healthy pushdown."""
-        import logging
-
-        from dataclasses import replace
-
-        table = duckdb_source.get_table(["Scalar"])
-        ghost = replace(table, name="NoSuchVariable")
-        spec = _spec(PlotKind.SCATTER, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None)
-        with caplog.at_level(logging.INFO, logger="scistackplotdb"):
-            got = reducer_for(ghost).y_extents(ghost.frame, spec, ghost, [])
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("NoSuchVariable" in r.getMessage() for r in warnings)
-        expected = PandasReducer().y_extents(ghost.frame, spec, ghost, [])
-        _assert_extents_equal(got, expected, "no-table-fallback")
+        table = numpy_source.get_table([measure])
+        parity_db._duck.close()
+        try:
+            figures = resolve(_spec(kind, measure, roles, aggregate), table, max_points=25)
+            assert figures and all(len(f.panels) for f in figures), label
+        finally:
+            parity_db._duck.reopen()
