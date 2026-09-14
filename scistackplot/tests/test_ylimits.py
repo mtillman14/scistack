@@ -705,3 +705,38 @@ def test_a_plotly_violin_spans_its_data_not_two_bandwidths_past_it(three_level_t
     violins = [t for t in render_plotly(figure)["data"] if t["type"] == "violin"]
     assert violins
     assert all(t["spanmode"] == "hard" for t in violins)
+
+
+def test_a_column_mixing_scalar_and_array_cells_scales_every_panel(caplog):
+    """A melted struct variable is ONE column holding every field, and fields
+    differ: `GAITRiteLoaded` keeps 9 per-trial scalars next to 42 per-step
+    arrays. Deciding scalar-vs-array once per column cast every array cell to
+    NaN, 42 of 51 panels fell back to the global range, agreed, and were drawn
+    linked on the 9 scalar fields' scale (2026-09-14)."""
+    rows = []
+    for subject in ("01", "02"):
+        # Arrays first: `shape.classify_column` reads the shape off the first
+        # cell, as it does for the real table (its first cells are arrays).
+        rows.append({"subject": subject, "ColName": "StepLength", "GR": [0.5, 0.6, 0.7]})
+        rows.append({"subject": subject, "ColName": "StanceTime", "GR": [1.0, 1.1, 1.2]})
+        rows.append({"subject": subject, "ColName": "Velocity", "GR": 30.0 + float(subject)})
+    table = LongTable.from_frame(
+        pd.DataFrame(rows), factors=["subject", "ColName"], measures=["GR"], name="GR"
+    )
+    spec = PlotSpec(
+        measures=["GR"],
+        roles={"subject": Role.ITERATE, "ColName": Role.FACET},
+        kind=PlotKind.LINE,
+        y_axis=YAxis(scope=["subject", "ColName"]),
+    )
+    with caplog.at_level(logging.INFO, logger=LAYER):
+        figure = resolve(spec, table)[0]
+
+    by_name = {panel.key["ColName"]: panel for panel in figure.panels}
+    step, stance = by_name["StepLength"], by_name["StanceTime"]
+    assert step.y_limits != stance.y_limits, "array panels fell back to one shared range"
+    assert step.y_limits[0] <= 0.5 and step.y_limits[1] >= 0.7
+    assert step.y_limits[1] < 1.0, "the scalar field's 31 leaked into an array panel's range"
+    assert figure.y_limits is None, "panels differ, so the axes must not be linked"
+    # No cell was dropped: the scalar cells were extents of their own.
+    assert not [r for r in caplog.records if "hold nothing numeric" in r.getMessage()]

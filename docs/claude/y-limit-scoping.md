@@ -219,6 +219,15 @@ reproducible one.
 - **plotly violins span their data** (`spanmode: "hard"`). The default
   ("soft") runs the KDE two bandwidths past the extremes, into the part of the
   axis the limits cut off; matplotlib's `violinplot` spans exactly [min, max].
+- **Scalar-vs-array is decided per CELL** (`ylimits._cell_extents`). A melted
+  struct variable is one column holding every field, and fields differ:
+  `GAITRiteLoaded` keeps 9 per-trial scalars beside 42 per-step arrays.
+  Deciding once per column cast every array cell to NaN; 42 of 51 panels fell
+  back to the global range, agreed, and were drawn LINKED on the scalar
+  fields' scale. The `y limits: N of M cell(s) … set no limit` INFO line is
+  how that shows up now. (The scalar cells themselves are still not DRAWN on a
+  1-D measure — both explodes skip non-sequences — which is a separate,
+  open question about mixed fields.)
 - **A NaN level is a level.** pandas hands it back as `nan`, and `nan != nan`,
   so the entry the extents wrote could never be found by `limits_for` and the
   panel silently fell back to the global range. Both sides key it through

@@ -392,6 +392,18 @@ def _raw_extents(
     lows, highs = _cell_extents(values, mode)
 
     usable = ~(np.isnan(lows) | np.isnan(highs))
+    dropped = int((~usable).sum())
+    if dropped:
+        # INFO, not WARN: an empty trial is legitimate. But 17,640 of 21,420
+        # cells setting no limit is the whole story of a figure drawn on the
+        # wrong scale, and it was invisible until this line existed.
+        Log.info(
+            "y limits: %d of %d cell(s) of %r hold nothing numeric and set no limit",
+            dropped,
+            len(lows),
+            measure,
+            layer=LAYER,
+        )
     if not usable.any():
         return {}
 
@@ -407,20 +419,29 @@ def _raw_extents(
 
 
 def _cell_extents(values: pd.Series, mode: ExtentMode) -> tuple[np.ndarray, np.ndarray]:
-    """Per-row (min, max) of a measure column that may hold scalars or arrays."""
-    numeric = coerce_numeric(values)
-    if not numeric.isna().all():
-        # A plain scalar column: its own values are the extents, and this is one
-        # vectorized cast rather than a Python loop.
-        column = numeric.to_numpy(dtype=float, na_value=np.nan)
-        if mode.log:
-            column = np.where(column > 0, column, np.nan)
-        return column, column
+    """Per-row (min, max) of a measure column that may hold scalars or arrays.
 
-    lows = np.full(len(values), np.nan)
-    highs = np.full(len(values), np.nan)
-    for position, value in enumerate(values.to_numpy()):
-        array = _as_array(value)
+    Decided per CELL, not per column. A melted struct variable is one column
+    holding every field, and fields differ: `GAITRiteLoaded` keeps 9 per-trial
+    scalars next to 42 per-step arrays (2026-09-14). Deciding once for the
+    column — "some cell is a scalar, so cast the column" — turned every array
+    cell into NaN, so 42 of 51 panels had no extent of their own, fell back to
+    the global range, agreed with each other, and were drawn LINKED on the 9
+    scalar fields' scale.
+
+    The scalar cells still go through one vectorised cast; only the cells that
+    cast produced NaN for are visited in Python.
+    """
+    numeric = coerce_numeric(values)
+    column = numeric.to_numpy(dtype=float, na_value=np.nan)
+    if mode.log:
+        column = np.where(column > 0, column, np.nan)
+    lows = column.copy()
+    highs = column.copy()
+
+    raw = values.to_numpy()
+    for position in np.flatnonzero(np.isnan(numeric.to_numpy(dtype=float, na_value=np.nan))):
+        array = _as_array(raw[position])
         if array is None or not array.size:
             continue
         if mode.log:
