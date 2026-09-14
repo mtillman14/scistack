@@ -349,3 +349,29 @@ class TestVariantPin:
                 subject=[],
                 trial=[],
             )
+
+
+class TestListValuedPin:
+    """The Plot Studio location picker hands scidb the row's selection as it
+    holds it — list values, ``{"__run__.fn": ["distribute=true"]}`` — through
+    ``branch_params_for`` -> ``location_states``. Branch params already read a
+    list as membership; the run pin stringified it and matched nothing
+    (``run_options="['distribute=true']" matches nothing``, 2026-09-14)."""
+
+    def _load(self, db, pin):
+        return db.load_all_as_df(
+            Loaded, version_id="all", branch_params_filter={"__run__.make_rows": pin}
+        )
+
+    def test_single_element_list_selects_that_run(self, both_runs):
+        frame = self._load(both_runs, ["distribute=true"])
+        assert len(frame) == len(TRIALS)
+        assert len(self._load(both_runs, "distribute=true")) == len(TRIALS)
+
+    def test_list_is_membership(self, both_runs):
+        frame = self._load(both_runs, ["distribute=false", "distribute=true"])
+        assert len(frame) == 2 * len(TRIALS)
+
+    def test_a_list_of_only_unknown_labels_still_errors(self, both_runs):
+        with pytest.raises(ValueError, match="matches nothing"):
+            self._load(both_runs, ["distribute=maybe"])

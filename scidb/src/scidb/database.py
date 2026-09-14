@@ -396,9 +396,18 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
     record_ids = df["record_id"].tolist()
 
     for key, value in run_filter.items():
-        wanted = str(value)
+        # A list/tuple/set means "any of these" — the same membership rule
+        # branch params already have (`_match_branch_param`), and the form the
+        # Plot Studio location picker sends: its selection values are lists
+        # (`Run:fn = ['distribute=true']`), which `str()` turned into the
+        # literal text "['distribute=true']" and matched nothing (2026-09-14).
+        if isinstance(value, (list, tuple, set, frozenset)):
+            wanted_set = {str(v) for v in value}
+        else:
+            wanted_set = {str(value)}
+        wanted = sorted(wanted_set)[0] if len(wanted_set) == 1 else sorted(wanted_set)
 
-        if wanted == LATEST_VERSION:
+        if wanted_set == {LATEST_VERSION}:
             ident = provenance_query.variant_identity_batch(duck, record_ids)
             keep = {
                 rid
@@ -440,13 +449,15 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
             {chain.get(fn_name) for chain in runs.values() if fn_name in chain}
             - {None}
         )
-        if wanted not in available:
+        if not wanted_set & set(available):
             raise ValueError(
                 f"{fn_name!r} ran under {available}; run_options={wanted!r} "
                 f"matches nothing."
             )
         keep = {
-            rid for rid in record_ids if runs.get(rid, {}).get(fn_name) == wanted
+            rid
+            for rid in record_ids
+            if runs.get(rid, {}).get(fn_name) in wanted_set
         }
         n_before = len(record_ids)
         df = df[df["record_id"].isin(keep)]
