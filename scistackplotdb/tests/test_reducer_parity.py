@@ -302,15 +302,18 @@ class TestReferenceEqualsTheOriginals:
     """
 
     def test_y_extents_raw(self, source):
+        from scistackplot.roles import complete_roles
         from scistackplot.ylimits import limits_by_scope
 
         table = source.get_table(["Series"])
         spec = _spec(PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.FREE}, None)
-        expected = limits_by_scope(table, spec, ["subject"])
-        assert PandasReducer().y_extents(table.frame, spec, table, ["subject"]) == expected
+        roles = complete_roles(spec, table)
+        expected = limits_by_scope(table, spec, ["subject"], roles)
+        assert PandasReducer().y_extents(table.frame, spec, table, ["subject"], roles) == expected
 
     @pytest.mark.parametrize("error", [ErrorBand.SD, ErrorBand.SEM, ErrorBand.CI95, ErrorBand.IQR])
     def test_y_extents_aggregated(self, source, error):
+        from scistackplot.roles import complete_roles
         from scistackplot.ylimits import limits_by_scope
 
         table = source.get_table(["Series"])
@@ -319,19 +322,22 @@ class TestReferenceEqualsTheOriginals:
             PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.AGGREGATE},
             Aggregation(statistic=stat, error=error),
         )
-        expected = limits_by_scope(table, spec, ["subject"])
-        got = PandasReducer().y_extents(table.frame, spec, table, ["subject"])
+        roles = complete_roles(spec, table)
+        expected = limits_by_scope(table, spec, ["subject"], roles)
+        got = PandasReducer().y_extents(table.frame, spec, table, ["subject"], roles)
         assert got.keys() == expected.keys()
         for key in expected:
             assert got[key] == pytest.approx(expected[key], nan_ok=True)
 
     def test_y_extents_scalar(self, source):
+        from scistackplot.roles import complete_roles
         from scistackplot.ylimits import limits_by_scope
 
         table = source.get_table(["Scalar"])
         spec = _spec(PlotKind.SCATTER, "Scalar", {"subject": Role.FACET, "trial": Role.FREE}, None)
-        expected = limits_by_scope(table, spec, ["subject"])
-        assert PandasReducer().y_extents(table.frame, spec, table, ["subject"]) == expected
+        roles = complete_roles(spec, table)
+        expected = limits_by_scope(table, spec, ["subject"], roles)
+        assert PandasReducer().y_extents(table.frame, spec, table, ["subject"], roles) == expected
 
     def test_explode_series(self, source):
         from scistackplot.reduce import _explode_1d
@@ -470,7 +476,7 @@ def _extents(source, kind, measure, roles, aggregate, scope):
     spec = _spec(kind, measure, roles, aggregate)
     completed = complete_roles(spec, table)
     present = eligible_scope(scope, completed, table)
-    return reducer_for(table).y_extents(table.frame, spec, table, present)
+    return reducer_for(table).y_extents(table.frame, spec, table, present, completed)
 
 
 def _assert_extents_equal(got: dict, expected: dict, label: str) -> None:
@@ -545,6 +551,12 @@ EXTENT_CASES = [
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
     ("agg-1d-free-iqr-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.FREE},
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), ["subject"]),
+    # ---- collapsed, 1-D, non-summary kind (means drawn as they are) --------
+    ("collapsed-1d-line", PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None, []),
+    ("collapsed-1d-line-by-subject", PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.AGGREGATE}, None, ["subject"]),
+    # ---- panel factor NOT in the scope: computed per panel, folded globally --
+    ("agg-1d-sem-facet-unscoped", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.FREE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SEM), []),
     # ---- aggregated, scalar (bar), incl. the n=1 subject ------------------
     ("agg-scalar-sd", PlotKind.BAR, "Scalar", {"subject": Role.X, "trial": Role.AGGREGATE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
@@ -607,8 +619,11 @@ class TestNumpyExtentsDeferHonestly:
         exploded = replace(table, frame=frame, index_column=idx)
         spec = _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
-        got = reducer_for(exploded).y_extents(frame, spec, exploded, [])
-        expected = PandasReducer().y_extents(frame, spec, exploded, [])
+        from scistackplot.roles import complete_roles
+
+        roles = complete_roles(spec, exploded)
+        got = reducer_for(exploded).y_extents(frame, spec, exploded, [], roles)
+        expected = PandasReducer().y_extents(frame, spec, exploded, [], roles)
         _assert_extents_equal(got, expected, "exploded-defer")
 
 
