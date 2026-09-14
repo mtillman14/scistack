@@ -413,12 +413,16 @@ def test_plotly_ships_its_grid_shape(struct_table, wrapped_grid):
     payload = render_plotly(resolve(wrapped_grid, struct_table)[0])
     # 3 panels 2 wide -> 2 rows, 2 columns. The panel reads `rows`/`cols` back
     # as the EFFECTIVE grid, which is how setting one dimension fills the other.
-    assert payload["layout"]["meta"] == {
+    meta = payload["layout"]["meta"]
+    assert {k: meta[k] for k in ("rows", "cols", "panels", "layout_notes")} == {
         "rows": 2,
         "cols": 2,
         "panels": 3,
         "layout_notes": [],
     }
+    # The y-limit control's checkbox list travels here too, AS RESOLVED.
+    assert meta["panel_factors"] == ["ColName"]
+    assert meta["y_scope"] == []
 
 
 def test_plotly_ticklabels_only_where_nothing_is_below(struct_table, wrapped_grid):

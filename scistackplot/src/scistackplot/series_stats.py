@@ -164,7 +164,7 @@ def position_stats(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """``(centre, low, high, count)`` per position — what a BAND/BAR draws.
 
-    pandas twin: ``reduce._summarize`` / ``ylimits._spread``, statistic by
+    pandas twin: ``ylimits.spread_bounds`` (also what ``reduce._summarize`` draws), statistic by
     statistic (the reduction plan's §4 table).
     """
     width = _width(arrays)

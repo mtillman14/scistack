@@ -24,6 +24,7 @@ from .base import (
     legend_levels,
     palette_for,
     panel_position,
+    drawable_limits,
     panel_y_limits,
     panel_y_title,
     shares_y_axis,
@@ -320,7 +321,11 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
                 ax.set_yscale("log")
             limits = panel_y_limits(resolved, panel) if panel else resolved.y_limits
             if limits and resolved.kind is not PlotKind.HEATMAP:
-                ax.set_ylim(*limits)
+                # Data units, but never a non-positive end on a log axis
+                # (base.drawable_limits) — matplotlib would ignore it, silently.
+                limits = drawable_limits(limits, log=style.log_y)
+                if limits:
+                    ax.set_ylim(*limits)
             if resolved.x_plan:
                 # A nested axis is keyed by composed leaf keys the user must
                 # never see: ticks show the innermost layer, and the layers

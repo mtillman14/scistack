@@ -34,7 +34,6 @@ from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import complete_roles, fanout_keys, iterate_ancestors, validate
 from .shape import Shape
 from .spec import (
-    ErrorBand,
     Matcher,
     PlotKind,
     PlotSpec,
@@ -45,7 +44,7 @@ from .spec import (
 from .table import LongTable, natural_sort_key
 from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
 from .reducer import reducer_for
-from .ylimits import eligible_scope, limits_for
+from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
 from .variants import apply_variant_sets, strip_answered_roles
 
@@ -317,6 +316,10 @@ class _Plan:
     #: still nested: the expensive per-figure work (exploding, aggregating,
     #: panels, downsampling) has not happened yet.
     groups: list[tuple[dict, "pd.DataFrame"]]
+    #: The post-filter frame the groups were cut from — what the y limits are
+    #: computed over, kept so a second extent mode can be answered later
+    #: without re-running the filters.
+    frame: "pd.DataFrame" = field(default_factory=pd.DataFrame)
     #: The y-limit scope, after ineligible factors were dropped.
     y_scope: list[str] = field(default_factory=list)
     #: ``{scope values: (low, high)}`` for the WHOLE fan-out, computed here
@@ -324,7 +327,22 @@ class _Plan:
     #: figure, including the ones ``resolve_one`` never builds. Computed off the
     #: table (see :mod:`scistackplot.ylimits`), so knowing it costs a numpy pass
     #: over 48 rows rather than a reduction of 17 million.
+    #:
+    #: This is the entry for the CALLER's extent mode, attached by
+    #: `_with_y_limits`; `y_limits_by_mode` is the memo behind it.
     y_limits: dict = field(default_factory=dict)
+    #: ``{ExtentMode: y_limits}``. The plan is keyed by the data question and
+    #: deliberately not by the plot kind — but a band draws ``centre ± spread``
+    #: and a line draws the observations, so the same rows give different
+    #: limits per kind. Until 2026-09-14 a LINE -> BAND switch was a cache HIT
+    #: that drew the band inside the line's limits. Memoised per mode rather
+    #: than added to the key, so a kind switch still costs only the limits
+    #: (25 ms in scidb.log) and never the variants, filters and fan-out.
+    #:
+    #: The one field of a cached plan that is written after construction —
+    #: under `_plan_cache_lock`, and only ever ADDED to; `replace()` copies
+    #: share the dict, which is what lets a copy fill the cached plan's memo.
+    y_limits_by_mode: dict = field(default_factory=dict)
 
     @property
     def labels(self) -> list[str]:
@@ -346,6 +364,8 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
     A cached plan is shared, never copied, so the same rule the tables rely on
     applies here too: nothing downstream mutates it. ``_build_figure`` takes the
     group frames and builds new ones (explode, collapse, downsample, panels).
+    The single exception is the y-limit memo (`_Plan.y_limits_by_mode`), which
+    is only ever added to, under the cache lock.
     """
     key = _plan_cache_key(spec, table)
     if key is not None:
@@ -363,7 +383,7 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
                 len(_plan_cache),
                 layer=LAYER,
             )
-            return _with_presentation(hit[1], spec)
+            return _with_y_limits(_with_presentation(hit[1], spec), spec)
         Log.info("plan cache: MISS — %s", _plan_cache_miss_reason(key, table), layer=LAYER)
     else:
         Log.info(
@@ -378,7 +398,7 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
             _plan_cache[key] = (table, plan)
             while len(_plan_cache) > _PLAN_CACHE_ENTRIES:
                 _plan_cache.pop(next(iter(_plan_cache)))
-    return _with_presentation(plan, spec)
+    return _with_y_limits(_with_presentation(plan, spec), spec)
 
 
 def _with_presentation(plan: "_Plan", spec: PlotSpec) -> "_Plan":
@@ -401,6 +421,48 @@ def _with_presentation(plan: "_Plan", spec: PlotSpec) -> "_Plan":
     if not changed:
         return plan
     return replace(plan, spec=replace(plan.spec, **changed))
+
+
+def _with_y_limits(plan: "_Plan", spec: PlotSpec) -> "_Plan":
+    """Attach the y limits for THIS spec's extent mode, computing them once.
+
+    The companion of :func:`_with_presentation` for the one thing a kind
+    switch does change about the data: the drawn extent. ``plan.spec`` already
+    carries the caller's kind and style by the time this runs, so the mode is
+    read off it.
+
+    Manual limits short-circuit: with both ends typed by hand the data is never
+    consulted, and ``y_axis`` is in the plan key anyway.
+    """
+    if spec.y_axis.is_manual:
+        return replace(plan, y_limits={}) if plan.y_limits else plan
+    mode = ExtentMode.for_spec(plan.spec, plan.roles)
+    with _plan_cache_lock:
+        found = plan.y_limits_by_mode.get(mode)
+    if found is None:
+        # INFO on a miss only: a hit is the normal case and the plan-cache line
+        # above already says one resolve happened. A miss is the moment a kind
+        # switch costs something, and this line is what it cost.
+        Log.info(
+            "y limits: MISS for mode (%s) — computing over %d row(s)",
+            mode.describe(),
+            len(plan.frame),
+            layer=LAYER,
+        )
+        with Log.timer("y_limits", layer=LAYER, extra=mode.describe()):
+            found = _compute_y_limits(plan)
+        with _plan_cache_lock:
+            plan.y_limits_by_mode.setdefault(mode, found)
+    if plan.y_limits is found:
+        return plan
+    return replace(plan, y_limits=found)
+
+
+def _compute_y_limits(plan: "_Plan") -> dict:
+    """The whole fan-out's limits for `plan.spec`'s extent mode, off its frame."""
+    return reducer_for(plan.table).y_extents(
+        plan.frame, plan.spec, plan.table, plan.y_scope, plan.roles
+    )
 
 
 def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
@@ -503,15 +565,10 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
     # 419-location variable breaks: `_raw_extents` walks every cell of the
     # measure column in a Python loop, and it is the one step here that
     # deliberately spans figures `resolve_one` will never build.
-    with timer.phase("y_limits"):
-        y_scope = eligible_scope(spec.y_axis.scope, roles, table)
-        y_limits = (
-            {}
-            if spec.y_axis.is_manual
-            else reducer_for(table).y_extents(frame, spec, table, y_scope)
-        )
-
-    return _Plan(
+    #
+    # Only THIS spec's extent mode is computed; another kind's is answered by
+    # `_with_y_limits` on first use and memoised on the plan.
+    plan = _Plan(
         spec=spec,
         table=table,
         roles=roles,
@@ -521,9 +578,15 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         iterate=iterate,
         notes=_fanout_notes(spec, table),
         groups=groups,
-        y_scope=y_scope,
-        y_limits=y_limits,
+        frame=frame,
+        y_scope=eligible_scope(spec.y_axis.scope, roles, table),
     )
+    with timer.phase("y_limits"):
+        if not spec.y_axis.is_manual:
+            mode = ExtentMode.for_spec(spec, roles)
+            plan.y_limits = _compute_y_limits(plan)
+            plan.y_limits_by_mode[mode] = plan.y_limits
+    return plan
 
 
 def resolve_one(
@@ -1069,6 +1132,10 @@ def _build_figure(
             layout_notes=layout_notes,
             y_limits=figure_limits,
             y_scope=list(y_scope or []),
+            # The figure's own ITERATE keys (fan-out order) then its facets:
+            # the factors a y-limit scope may name, as RESOLVED — a promoted
+            # ancestor or a defaulted facet is in here and not in `spec.roles`.
+            panel_factors=[*figure_key.keys(), *facet_names],
             downsampled_from=(
                 original_rows if max_points and original_rows > max_points else None
             ),
@@ -1240,24 +1307,10 @@ def _summarize(frame: pd.DataFrame, spec: PlotSpec, color: str | None) -> pd.Dat
     statistic = spec.aggregate.statistic
     centre = grouped.median() if statistic is Statistic.MEDIAN else grouped.mean()
 
-    error = spec.aggregate.error
-    if error is ErrorBand.IQR:
-        low = grouped.quantile(0.25)
-        high = grouped.quantile(0.75)
-    elif error is ErrorBand.NONE:
-        low = centre
-        high = centre
-    else:
-        sd = grouped.std(ddof=1).fillna(0.0)
-        count = grouped.count()
-        if error is ErrorBand.SD:
-            spread = sd
-        elif error is ErrorBand.SEM:
-            spread = sd / np.sqrt(count.where(count > 0, 1))
-        else:  # CI95
-            spread = 1.96 * sd / np.sqrt(count.where(count > 0, 1))
-        low = centre - spread
-        high = centre + spread
+    # ONE definition of the error band, shared with the y limits
+    # (`ylimits.spread_bounds`): two definitions would put the limits and the
+    # drawing at odds, and the symptom is a band clipped by its own axis.
+    low, high = spread_bounds(grouped, centre, spec)
 
     out = pd.concat(
         {Y: centre, Y_LOW: low, Y_HIGH: high}, axis=1

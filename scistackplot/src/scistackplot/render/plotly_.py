@@ -28,6 +28,7 @@ from .base import (
     legend_levels,
     palette_for,
     panel_position,
+    axis_range,
     panel_y_limits,
     panel_y_title,
     shares_y_axis,
@@ -90,6 +91,11 @@ def render(resolved: ResolvedPlot) -> dict:
                 "cols": n_cols,
                 "panels": len(resolved.panels),
                 "layout_notes": list(resolved.layout_notes),
+                # The factors a y-limit scope may name, AS RESOLVED (promoted
+                # or defaulted ones included) — the GUI builds its checkboxes
+                # from this, never from `spec.roles`.
+                "panel_factors": list(resolved.panel_factors),
+                "y_scope": list(resolved.y_scope),
             },
         }
         if resolved.labels.title:
@@ -305,6 +311,11 @@ def _panel_traces(
                     "marker": {"color": color},
                     "line": {"color": color},
                     "boxpoints": "outliers" if kind is PlotKind.BOX else None,
+                    # A violin spans exactly its data, as matplotlib's does.
+                    # plotly's default ("soft") runs the KDE two bandwidths
+                    # past the extremes — tails the y limits, computed from the
+                    # data, would clip.
+                    **({"spanmode": "hard"} if kind is PlotKind.VIOLIN else {}),
                 }
             )
 
@@ -444,7 +455,9 @@ def _add_axes(
         if shares_y_axis(resolved):
             layout[y_key]["matches"] = "y"
     if y_limits and resolved.kind is not PlotKind.HEATMAP:
-        layout[y_key]["range"] = list(y_limits)
+        span = axis_range(y_limits, log=resolved.spec.style.log_y)
+        if span is not None:
+            layout[y_key]["range"] = list(span)
 
 
 #: Approximate width of one legend character at the webview's font size, in px.

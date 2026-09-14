@@ -212,6 +212,45 @@ def panel_y_limits(resolved: ResolvedPlot, panel) -> tuple[float, float] | None:
     return panel.y_limits or resolved.y_limits
 
 
+def drawable_limits(
+    limits: tuple[float, float], *, log: bool
+) -> tuple[float, float] | None:
+    """``limits`` an axis of this type can actually hold, in DATA units.
+
+    A non-positive end on a log axis cannot be drawn: matplotlib ignores it
+    with a warning and plotly takes ``log10`` of it and gets NaN. `ylimits`
+    never produces one (its floor is the smallest positive drawn value) but a
+    hand-typed one can arrive, so a floor at or below zero is dropped to a
+    decade under the ceiling, and a range with no positive part is None — let
+    the renderer autoscale rather than draw an empty axis.
+    """
+    if not log:
+        return limits
+    low, high = limits
+    if high <= 0:
+        return None
+    if low <= 0:
+        low = high / 10.0
+    return (low, high)
+
+
+def axis_range(
+    limits: tuple[float, float], *, log: bool
+) -> tuple[float, float] | None:
+    """``limits`` in the units plotly's ``range`` wants for this axis type.
+
+    Limits are computed and carried in DATA units everywhere (`Panel.y_limits`
+    is what the user reads back in the GUI). matplotlib's ``set_ylim`` takes
+    them as they are; plotly's ``range`` on a ``type: "log"`` axis is in
+    **log10 units** — ``[0.95, 105]`` handed over verbatim asked for
+    10^0.95 .. 10^105 and the figure came back empty.
+    """
+    drawable = drawable_limits(limits, log=log)
+    if drawable is None or not log:
+        return drawable
+    return (math.log10(drawable[0]), math.log10(drawable[1]))
+
+
 def shows_legend(resolved: ResolvedPlot) -> bool:
     """
     Whether this figure gets a legend at all.

@@ -751,7 +751,7 @@ def _y_limit_plan(spec: PlotSpec, table: LongTable, roles: dict) -> tuple:
         # across facets or not depending on the scope.
         return not per_panel, None, ""
 
-    limits = limits_by_scope(table, spec, scope)
+    limits = limits_by_scope(table, spec, scope, roles)
     if not limits:
         return not per_panel, None, ""
 

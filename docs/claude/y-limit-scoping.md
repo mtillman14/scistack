@@ -5,6 +5,9 @@ decision is made off the **table** rather than off the figures, and where the
 two renderers read it from.
 
 Written 2026-09-11, alongside `.claude/plan-plot-save-and-ylimits.md` Stage 5.
+Revised 2026-09-14 (`.claude/plan-y-limit-accuracy.md`) after "data is often
+cut off vertically": see **The rule that keeps limits honest** and **A kind
+switch on a cached plan** below — both were real clipping bugs.
 
 ## The control
 
@@ -68,9 +71,58 @@ in one pass for the entire fan-out:
   reduction, so it explodes — but only to take extremes: one groupby on
   `(scope…, x, colour, index)`, no panel frames, no series keys, no sorting.
 
-`_spread` is kept deliberately parallel to `reduce._summarize`. Two definitions
-of an error band would put the limits and the drawing at odds, and the symptom
-would be a band clipped by its own axis.
+There is ONE definition of an error band in pandas, `ylimits.spread_bounds`,
+and `reduce._summarize` (the drawing) calls it; the numpy twin is
+`series_stats.position_stats`, held to it by the parity suite. Two definitions
+would put the limits and the drawing at odds, and the symptom would be a band
+clipped by its own axis.
+
+## The rule that keeps limits honest
+
+**The statistic is computed at the granularity it is drawn at; the scope only
+decides how the per-panel extents are combined.**
+
+Until 2026-09-14 the aggregated path grouped by `scope + X + COLOR + index`.
+With `subject` as FACET and `subject` *unticked*, that pooled every subject
+into one mean ± SEM per position — a range that collapses around the grand
+mean as n grows — and every subject's own band, drawn from its own rows, fell
+outside it. The default scope ticks every panel factor, which is why it only
+showed up "in more specific combinations of the checkboxes".
+
+Now both reducers group by **every panel factor** (`ylimits.panel_factors`:
+ITERATE ∪ FACET from the *completed* roles, so a promoted ancestor or a
+defaulted facet counts) plus colour and position, apply the AGGREGATE collapse
+first exactly as the drawing does (`NumpyReducer._panel_series` is shared by
+`summarize_series` and `y_extents`), include the centre line (a MEAN with an
+IQR band can sit outside its own quartiles), and only then project each panel
+key onto the scope and take min/max. Sharing can therefore only *widen* a
+panel's range — `test_unticking_a_factor_never_narrows_a_panel_below_its_own_range`.
+
+The invariant every change must keep, parametrised over scope × kind × error
+band in `tests/test_ylimits.py`: **nothing a panel draws lies outside its own
+`y_limits`.**
+
+Cost: the same samples through the same `position_stats`, with the group set
+identical to what the default (all-ticked) scope already produced. Only the
+grouping *keys* changed. The `[timing] y_extents(numpy)` line now names the
+mode, and the `y limits (…)` INFO line says how many panels folded into how
+many groups.
+
+## A kind switch on a cached plan
+
+`kind` is deliberately not in the plan cache key (a kind change must not
+re-run variants, filters and the fan-out grouping) — but the limits depend on
+it: a band draws `centre ± spread`, a line draws the observations. LINE → BAND
+with the default MEAN ± SD was a cache HIT that drew the band inside the
+line's limits; BAND → LINE drew the raw traces inside the band's.
+
+`ylimits.ExtentMode` names what the limits depend on beyond the plan's rows
+(summary / collapse / from-zero / log), and `_Plan.y_limits_by_mode` memoises
+the limits per mode. `reduce._with_y_limits` attaches the right entry on every
+plan-cache hit, computing a missing mode once (`y limits: MISS for mode (…)`
+at INFO — the one moment a kind switch costs anything, ~the `y_limits` phase
+rather than the plan). It is the single field of a cached plan written after
+construction, only ever added to, under the cache lock.
 
 The result lives on `_Plan.y_limits`, so `resolve` and `resolve_one` agree by
 construction — a figure built alone gets the same numbers as the same figure
@@ -152,4 +204,27 @@ reproducible one.
   so this is per click.
 - **Padding is 5%** (`ylimits.PAD_FRACTION`), matching what the old
   `_shared_limits` did, so adopting a scope does not silently re-pad every
-  existing figure.
+  existing figure. On a log axis the 5% is of the log10 range.
+- **Log axes.** Limits are carried in DATA units everywhere; plotly's `range`
+  on a `type: "log"` axis is in log10 units, so `render.base.axis_range`
+  converts at the edge (handing over data units asked for 10^0.95 .. 10^105
+  and drew nothing). The computed floor is the smallest *positive* drawn value
+  (`ylimits.pair_extent`); a hand-typed floor at or below zero is lifted a
+  decade under the ceiling by `render.base.drawable_limits` for both
+  renderers rather than passed through as NaN or silently ignored.
+- **A bar chart keeps zero in view** (`ExtentMode.from_zero`): bars rise from
+  zero, and a range bracketing only the bar tops cut every bar off at its base.
+  Linear axes only — on a log axis there is no zero, and folding it in put
+  `log10(0)` on the axis.
+- **plotly violins span their data** (`spanmode: "hard"`). The default
+  ("soft") runs the KDE two bandwidths past the extremes, into the part of the
+  axis the limits cut off; matplotlib's `violinplot` spans exactly [min, max].
+- **A NaN level is a level.** pandas hands it back as `nan`, and `nan != nan`,
+  so the entry the extents wrote could never be found by `limits_for` and the
+  panel silently fell back to the global range. Both sides key it through
+  `ylimits.hashable` (NaN → None).
+- **The GUI's checkboxes come from the figure, not the spec.** `spec.roles`
+  never mentions a schema key promoted to ITERATE or a facet the table
+  defaulted, so a panel factor with no checkbox was one the user could never
+  scale apart. `ResolvedPlot.panel_factors` (also in plotly's `layout.meta`)
+  is the list, as resolved.

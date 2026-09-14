@@ -40,6 +40,7 @@ from scistacklog import Log
 
 from .spec import PlotKind, PlotSpec, Role
 from .table import LongTable
+from .ylimits import hashable
 
 LAYER = "scistackplot"
 
@@ -60,12 +61,17 @@ class Reducer(Protocol):
         spec: PlotSpec,
         table: LongTable,
         scope: list[str],
+        roles: dict[str, Role],
     ) -> dict[tuple, tuple[float, float]]:
         """``{scope values: (low, high)}`` per group, plus the global key.
 
         Raw (min/max of what is drawn) or aggregated (centre ± spread, the band
         a BAND/BAR draws) according to the spec — the same rule
         ``ylimits.limits_by_scope`` applies.
+
+        ``roles`` are the COMPLETED roles: the statistic is computed at the
+        granularity it is drawn at — every ITERATE and FACET factor, declared
+        or defaulted — and the scope only folds those panel extents together.
         """
         ...
 
@@ -140,12 +146,13 @@ class PandasReducer:
         spec: PlotSpec,
         table: LongTable,
         scope: list[str],
+        roles: dict[str, Role],
     ) -> dict[tuple, tuple[float, float]]:
         from dataclasses import replace
 
         from .ylimits import limits_by_scope
 
-        return limits_by_scope(replace(table, frame=frame), spec, scope)
+        return limits_by_scope(replace(table, frame=frame), spec, scope, roles)
 
     def explode_series(
         self,
@@ -224,61 +231,62 @@ class NumpyReducer(PandasReducer):
         spec: PlotSpec,
         table: LongTable,
         scope: list[str],
+        roles: dict[str, Role],
     ) -> dict[tuple, tuple[float, float]]:
-        from .ylimits import GLOBAL_KEY, _needs_reduction, _padded
+        from .ylimits import (
+            ExtentMode,
+            finish_extents,
+            merge_extent,
+            pair_extent,
+            panel_factors,
+            scope_key,
+        )
 
         measure = spec.y_measure
-        if not _nested_series(frame, table, measure) or not _needs_reduction(spec):
-            return super().y_extents(frame, spec, table, scope)
+        mode = ExtentMode.for_spec(spec, roles)
+        if not _nested_series(frame, table, measure) or not mode.reduces:
+            return super().y_extents(frame, spec, table, scope, roles)
 
-        # The reference groups by scope + X + COLOR + position and takes
-        # centre ± spread over the RAW samples (no AGGREGATE collapse) — see
-        # ylimits._aggregated_extents. Same grouping here, position handled
-        # inside position_stats.
+        # Computed at the granularity it is DRAWN at — per panel (every
+        # ITERATE and FACET factor, whether or not the scope names it), per
+        # colour, per position — through the SAME two stages `summarize_series`
+        # runs for a panel, and only then folded into the scope groups. The
+        # scope decides which panels share a range, never what a panel draws
+        # (ylimits module docstring, 2026-09-14).
         present = [s for s in scope if s in frame.columns]
-        grouping = [
-            name
-            for name in dict.fromkeys(
-                [*present, *[n for n, r in spec.roles.items() if r in (Role.X, Role.COLOR)]]
-            )
-            if name in frame.columns
-        ]
-        with Log.timer("y_extents(numpy)", layer=LAYER, extra=measure) as timer:
+        panels = panel_factors(roles, frame)
+        color = next((n for n, r in roles.items() if r is Role.COLOR and n in frame.columns), None)
+        with Log.timer("y_extents(numpy)", layer=LAYER, extra=f"{measure}, {mode.describe()}") as timer:
             with timer.phase("cells"):
                 arrays = _cells(frame[measure])
             with timer.phase("stats"):
                 bounds: dict[tuple, tuple[float, float]] = {}
-                for key, rows in _group_rows(frame, grouping):
-                    _, low, high, count = _stats(
-                        [arrays[i] for i in rows], spec
+                panel_count = 0
+                for key, rows in _group_rows(frame, panels):
+                    panel_count += 1
+                    group = frame.iloc[rows]
+                    series, series_color = self._panel_series(
+                        group, [arrays[i] for i in rows], roles, color
                     )
-                    ok = count > 0
-                    if not ok.any():
-                        continue
-                    scope_key = key[: len(present)]
-                    lo, hi = float(np.min(low[ok])), float(np.max(high[ok]))
-                    seen = bounds.get(scope_key)
-                    bounds[scope_key] = (
-                        (lo, hi) if seen is None else (min(seen[0], lo), max(seen[1], hi))
-                    )
-        if not bounds:
-            return {}
-        if not present:
-            extents = {GLOBAL_KEY: bounds[()]}
-        else:
-            extents = dict(bounds)
-            extents[GLOBAL_KEY] = (
-                min(lo for lo, _ in bounds.values()),
-                max(hi for _, hi in bounds.values()),
-            )
-        limits = {key: _padded(lo, hi) for key, (lo, hi) in extents.items()}
-        Log.debug(
-            "y limits over %s: %d group(s) [numpy]",
-            present or "the whole dataset",
-            len(limits),
-            layer=LAYER,
-        )
-        return limits
+                    group_key = scope_key(dict(zip(panels, key, strict=True)), present)
+                    if mode.summary:
+                        for _, centre, low, high, count in _series_stats(series, series_color, spec):
+                            ok = count > 0
+                            # The centre line is drawn too (MEAN + IQR can put
+                            # it outside its own quartiles).
+                            extent = pair_extent(
+                                np.minimum(low, centre)[ok], np.maximum(high, centre)[ok], mode
+                            )
+                            if extent:
+                                merge_extent(bounds, group_key, *extent)
+                    else:
+                        # AGGREGATE on a non-summary kind: the collapsed means
+                        # are drawn as they are.
+                        for mean in series:
+                            extent = pair_extent(mean, mean, mode)
+                            if extent:
+                                merge_extent(bounds, group_key, *extent)
+        return finish_extents(bounds, present, mode, source="numpy", panels=panel_count)
 
     # ---- explode ---------------------------------------------------------
 
@@ -388,41 +396,19 @@ class NumpyReducer(PandasReducer):
         table: LongTable,
     ) -> pd.DataFrame:
         from .resolved import COLOR, X, Y, Y_HIGH, Y_LOW
-        from .series_stats import position_mean
 
         measure = spec.y_measure
         if index_column in group.columns or not _nested_series(group, table, measure):
             return super().summarize_series(group, spec, roles, index_column, table)
         color = next((n for n, r in roles.items() if r is Role.COLOR and n in group.columns), None)
-        aggregated = [n for n, r in roles.items() if r is Role.AGGREGATE and n in group.columns]
-        keep = [
-            name
-            for name, role in roles.items()
-            if role is not Role.AGGREGATE and name in group.columns
-        ]
         with Log.timer("summarize_series(numpy)", layer=LAYER, extra=measure) as timer:
             with timer.phase("cells"):
                 arrays = _cells(group[measure])
-            # Stage 1 — the AGGREGATE collapse: one mean series per kept factor
-            # combination. Without AGGREGATE roles every row is its own series.
             with timer.phase("collapse"):
-                if aggregated:
-                    series: list[np.ndarray] = []
-                    series_color: list[Any] = []
-                    for key, rows in _group_rows(group, keep):
-                        mean, count = position_mean([arrays[i] for i in rows])
-                        mean = np.where(count > 0, mean, np.nan)
-                        series.append(mean)
-                        series_color.append(key[keep.index(color)] if color else None)
-                else:
-                    series = arrays
-                    series_color = list(group[color].to_numpy()) if color else [None] * len(arrays)
-            # Stage 2 — centre ± spread across the replicates of each colour.
+                series, series_color = self._panel_series(group, arrays, roles, color)
             with timer.phase("stats"):
                 pieces = []
-                for level in dict.fromkeys(series_color):
-                    members = [s for s, c in zip(series, series_color) if c == level]
-                    centre, low, high, count = _stats(members, spec)
+                for level, centre, low, high, count in _series_stats(series, series_color, spec):
                     ok = count > 0
                     piece = pd.DataFrame({X: np.flatnonzero(ok)})
                     if color:
@@ -440,6 +426,48 @@ class NumpyReducer(PandasReducer):
                 if spec.kind is PlotKind.BAND:
                     out = out.sort_values(X, kind="stable")
         return out.reset_index(drop=True)
+
+    def _panel_series(
+        self,
+        group: pd.DataFrame,
+        arrays: list[np.ndarray],
+        roles: dict[str, Role],
+        color: str | None,
+    ) -> tuple[list[np.ndarray], list[Any]]:
+        """Stage 1 of a BAND/BAR panel — the AGGREGATE collapse.
+
+        One mean series per kept factor combination, each tagged with its
+        colour level. Without AGGREGATE roles every row is its own series.
+        Shared by ``summarize_series`` (the drawing) and ``y_extents`` (the
+        limits) so the two cannot collapse differently.
+        """
+        from .series_stats import position_mean
+
+        aggregated = [n for n, r in roles.items() if r is Role.AGGREGATE and n in group.columns]
+        if not aggregated:
+            return arrays, (list(group[color].to_numpy()) if color else [None] * len(arrays))
+        keep = [
+            name
+            for name, role in roles.items()
+            if role is not Role.AGGREGATE and name in group.columns
+        ]
+        series: list[np.ndarray] = []
+        series_color: list[Any] = []
+        for key, rows in _group_rows(group, keep):
+            mean, count = position_mean([arrays[i] for i in rows])
+            series.append(np.where(count > 0, mean, np.nan))
+            series_color.append(key[keep.index(color)] if color else None)
+        return series, series_color
+
+
+def _series_stats(series: list[np.ndarray], series_color: list[Any], spec: PlotSpec):
+    """Stage 2 of a BAND/BAR panel — centre ± spread across the replicates of
+    each colour level, in first-seen order. Yields
+    ``(level, centre, low, high, count)`` per level."""
+    for level in dict.fromkeys(series_color):
+        members = [s for s, c in zip(series, series_color, strict=True) if c == level]
+        centre, low, high, count = _stats(members, spec)
+        yield level, centre, low, high, count
 
 
 # ---- helpers --------------------------------------------------------------
@@ -477,7 +505,7 @@ def _group_rows(frame: pd.DataFrame, columns: list[str]):
         yield (), np.arange(len(frame))
         return
     keys = [
-        tuple(_hashable(v) for v in key)
+        tuple(hashable(v) for v in key)
         for key in zip(*[frame[c].to_numpy() for c in columns], strict=True)
     ]
     order: dict[tuple, list[int]] = {}
@@ -485,15 +513,6 @@ def _group_rows(frame: pd.DataFrame, columns: list[str]):
         order.setdefault(key, []).append(position)
     for key, rows in order.items():
         yield key, np.asarray(rows)
-
-
-def _hashable(value: Any) -> Any:
-    """A group-key component: NaN as None, so every missing value is ONE group,
-    as pandas' ``groupby(dropna=False)`` has it (``nan != nan`` would make each
-    its own)."""
-    if isinstance(value, float) and value != value:
-        return None
-    return value
 
 
 #: The reducer used when a table names none — every in-memory source.

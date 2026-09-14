@@ -302,6 +302,12 @@ interface GridMeta {
   cols?: number
   panels?: number
   layout_notes?: string[]
+  /** The factors a y-limit scope may name, AS RESOLVED by the backend: the
+   *  figure's ITERATE keys then its FACET factors, including a schema key
+   *  promoted to ITERATE or a facet the table defaulted — neither of which
+   *  `spec.roles` mentions. */
+  panel_factors?: string[]
+  y_scope?: string[]
 }
 
 interface VariantSet {
@@ -1161,15 +1167,27 @@ export default function PlotStudio({
   // replicate factor lives inside one panel, so splitting on it would ask one
   // axis for two ranges. Offering only these is how the control cannot be put
   // into a state the backend has to refuse (it drops them with a warning).
-  const yScopeFactors = Object.entries(spec?.roles ?? {})
+  //
+  // Read back off the figure, not derived from `spec.roles`: the backend
+  // completes roles the spec never states (a schema key promoted to ITERATE
+  // because a nested key iterates, a `Variable` facet by default), and a
+  // panel factor with no checkbox was one the user could never scale apart.
+  // `spec.roles` is only the fallback before the first figure arrives.
+  const yScopeFactors = gridMeta.panel_factors ?? Object.entries(spec?.roles ?? {})
     .filter(([, role]) => role === 'iterate' || role === 'facet')
     .map(([name]) => name)
   const yScope = (spec?.y_axis?.scope ?? []).filter(n => yScopeFactors.includes(n))
   // The limits the backend actually applied, read back off the figure so the
   // number on screen and the number in the box cannot disagree.
-  const appliedYLimits = (
-    figures[0]?.figure?.layout?.yaxis as { range?: [number, number] } | undefined
-  )?.range
+  // On a log axis plotly's `range` is in log10 units (render.base.axis_range);
+  // the box shows data units, as the backend computed them.
+  const plotlyYRange = (
+    figures[0]?.figure?.layout?.yaxis as { range?: [number, number]; type?: string } | undefined
+  )
+  const appliedYLimits: [number, number] | undefined =
+    plotlyYRange?.range && plotlyYRange.type === 'log'
+      ? [10 ** plotlyYRange.range[0], 10 ** plotlyYRange.range[1]]
+      : plotlyYRange?.range
 
   // --- export -------------------------------------------------------------
   const handleExport = useCallback(() => {

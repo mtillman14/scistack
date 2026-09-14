@@ -141,6 +141,12 @@ class ResolvedPlot:
     #: The factors that separated the limits, after ineligible ones were
     #: dropped. Echoed back so the GUI can say WHY the axis reads as it does.
     y_scope: list[str] = field(default_factory=list)
+    #: Every factor that separates PANELS, as resolved: the figure's ITERATE
+    #: keys in fan-out order, then its FACET factors. The factors a y-limit
+    #: scope may name — offered by the GUI from HERE rather than from
+    #: `spec.roles`, because a schema key promoted to ITERATE or a facet the
+    #: table defaulted is a panel factor the spec never mentions.
+    panel_factors: list[str] = field(default_factory=list)
     #: Set when the data was reduced for transport (see reduce.MAX_TRANSPORT_POINTS).
     downsampled_from: int | None = None
     #: Notes about the FIGURE SET rather than about this figure's layout — at
@@ -201,6 +207,7 @@ class ResolvedPlot:
             "color_order": [_jsonable(v) for v in (self.color_order or [])] or None,
             "y_limits": list(self.y_limits) if self.y_limits else None,
             "y_scope": list(self.y_scope),
+            "panel_factors": list(self.panel_factors),
             "downsampled_from": self.downsampled_from,
             "fanout_notes": list(self.fanout_notes),
             "panels": [

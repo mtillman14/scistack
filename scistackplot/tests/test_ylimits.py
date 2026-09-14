@@ -17,6 +17,7 @@ One control expresses all three, and the two ends are the interesting ones:
 from __future__ import annotations
 
 import logging
+import math
 
 import numpy as np
 import pandas as pd
@@ -368,3 +369,339 @@ def test_a_spec_written_before_this_stage_still_loads():
 
     assert restored.facet.n_cols == 2
     assert restored.y_axis.scope == []
+
+
+# ---------------------------------------------------------------------------
+# The invariant: nothing a panel draws lies outside its own limits
+# ---------------------------------------------------------------------------
+#
+# Added 2026-09-14 after "data is often cut off vertically". The limits used to
+# compute the statistic at SCOPE granularity — unticking `subject` pooled every
+# subject into one mean ± SEM whose range collapsed around the grand mean, and
+# every subject's own band fell outside it. The fixture below is built so that
+# pooled-SEM is narrower than any one panel's band; the test failed on it
+# before the fix for every scope that omitted a panel factor.
+
+
+@pytest.fixture
+def three_level_table() -> LongTable:
+    """Three subjects at three well-separated levels (~10, ~5, ~0), two
+    muscles a little apart, five nearly identical trials each.
+
+    Nearly identical trials give every panel a NARROW band; well-separated
+    subjects give the pooled statistic a WIDE spread and — once divided by the
+    pooled n — a SEM/CI95 range that covers none of the panels.
+    """
+    rows = []
+    for subject, level in (("01", 10.0), ("02", 5.0), ("03", 0.0)):
+        for muscle, offset in (("TA", 0.0), ("SOL", 0.5)):
+            for trial, wobble in enumerate((0.98, 0.99, 1.0, 1.01, 1.02), start=1):
+                base = level + offset
+                rows.append(
+                    {
+                        "subject": subject,
+                        "muscle": muscle,
+                        "trial": str(trial),
+                        "EMG": [base * wobble, base * wobble + 0.1, base * wobble + 0.2],
+                    }
+                )
+    return LongTable.from_frame(
+        pd.DataFrame(rows),
+        factors=["subject", "muscle", "trial"],
+        measures=["EMG"],
+        name="EMG",
+        schema_levels=["subject", "muscle", "trial"],
+    )
+
+
+SCOPES = [[], ["subject"], ["muscle"], ["subject", "muscle"]]
+KINDS = [PlotKind.LINE, PlotKind.SCATTER, PlotKind.BOX, PlotKind.BAND, PlotKind.BAR]
+BANDS = [
+    (Statistic.MEAN, ErrorBand.SD),
+    (Statistic.MEAN, ErrorBand.SEM),
+    (Statistic.MEAN, ErrorBand.CI95),
+    (Statistic.MEAN, ErrorBand.IQR),
+    (Statistic.MEDIAN, ErrorBand.IQR),
+]
+
+
+def _drawn_extent(panel) -> tuple[float, float] | None:
+    """The lowest and highest value a panel actually draws."""
+    columns = [c for c in (Y, Y_LOW, Y_HIGH) if c in panel.frame.columns]
+    values = pd.concat(
+        [pd.to_numeric(panel.frame[c], errors="coerce") for c in columns]
+    ).dropna()
+    if values.empty:
+        return None
+    return float(values.min()), float(values.max())
+
+
+def _assert_within_limits(figures, *, label: str) -> None:
+    checked = 0
+    for figure in figures:
+        for panel in figure.panels:
+            drawn = _drawn_extent(panel)
+            if drawn is None:
+                continue
+            assert panel.y_limits is not None, f"{label}: panel {panel.key} has no limits"
+            low, high = panel.y_limits
+            assert low <= drawn[0], f"{label}: {panel.key} floor {low} above drawn {drawn[0]}"
+            assert high >= drawn[1], f"{label}: {panel.key} ceiling {high} below drawn {drawn[1]}"
+            checked += 1
+    assert checked, f"{label}: nothing was drawn"
+
+
+@pytest.mark.parametrize("statistic,error", BANDS, ids=[f"{s.value}-{e.value}" for s, e in BANDS])
+@pytest.mark.parametrize("kind", KINDS, ids=[k.value for k in KINDS])
+@pytest.mark.parametrize("scope", SCOPES, ids=["global", "subject", "muscle", "panel"])
+def test_every_panel_draws_inside_its_own_limits(three_level_table, scope, kind, statistic, error):
+    """For every scope, every kind and every error band: the statistic is
+    computed at the granularity it is DRAWN at, and the scope only decides
+    which panels share a range."""
+    spec = _spec(
+        scope,
+        kind=kind,
+        aggregate=Aggregation(statistic=statistic, error=error),
+    )
+    figures = resolve(spec, three_level_table)
+    _assert_within_limits(figures, label=f"{kind.value}/{scope}/{statistic.value}±{error.value}")
+
+
+def test_a_shared_scope_is_the_union_of_the_panels_it_shares(three_level_table):
+    """Scope [] on a BAND ± SEM: the range must reach subject 01's band near
+    10 AND subject 03's near 0 — not the pooled mean ± pooled SEM, which sat
+    between them and covered neither."""
+    spec = _spec([], kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SEM))
+    figures = resolve(spec, three_level_table)
+
+    limits = {panel.y_limits for figure in figures for panel in figure.panels}
+    assert len(limits) == 1, "one range everywhere"
+    low, high = limits.pop()
+    # Subject 03 TA's centre at position 0 is 0.0; subject 01 SOL's at
+    # position 2 is 10.7. The pooled statistic reached neither.
+    assert low <= 0.0
+    assert high >= 10.7
+
+
+def test_unticking_a_factor_never_narrows_a_panel_below_its_own_range(three_level_table):
+    """Sharing can only WIDEN a panel's range: its per-panel limits are the
+    tightest, and every coarser scope contains them."""
+    band = dict(kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SEM))
+    tight = {
+        (figure.figure_label, tuple(panel.key.items())): panel.y_limits
+        for figure in resolve(_spec(["subject", "muscle"], **band), three_level_table)
+        for panel in figure.panels
+    }
+    for scope in ([], ["subject"], ["muscle"]):
+        for figure in resolve(_spec(scope, **band), three_level_table):
+            for panel in figure.panels:
+                own = tight[(figure.figure_label, tuple(panel.key.items()))]
+                low, high = panel.y_limits
+                assert low <= own[0] and high >= own[1], (scope, panel.key)
+
+
+def test_the_centre_line_is_inside_the_limits_when_it_leaves_its_iqr():
+    """MEAN with an IQR band on skewed data: the mean sits above the third
+    quartile, and the line drawn through it was clipped while the band was
+    covered."""
+    rows = [
+        {"subject": "01", "trial": str(i), "EMG": [value] * 3}
+        for i, value in enumerate((0.0, 0.0, 0.0, 0.0, 10.0), start=1)
+    ]
+    table = LongTable.from_frame(
+        pd.DataFrame(rows), factors=["subject", "trial"], measures=["EMG"], name="EMG"
+    )
+    spec = PlotSpec(
+        measures=["EMG"],
+        roles={"subject": Role.ITERATE, "trial": Role.FREE},
+        kind=PlotKind.BAND,
+        aggregate=Aggregation(statistic=Statistic.MEAN, error=ErrorBand.IQR),
+    )
+    figure = resolve(spec, table)[0]
+    panel = figure.panels[0]
+    centre = pd.to_numeric(panel.frame[Y]).max()
+    assert centre == pytest.approx(2.0)
+    assert panel.frame[Y_HIGH].max() == pytest.approx(0.0)
+    assert panel.y_limits[1] >= centre
+
+
+def test_a_bar_chart_keeps_zero_in_view(three_level_table):
+    """Bars rise from zero; a range that brackets only the bar tops cuts
+    every bar off at its base."""
+    spec = _spec(["subject", "muscle"], kind=PlotKind.BAR, aggregate=Aggregation(error=ErrorBand.SD))
+    for figure in resolve(spec, three_level_table):
+        for panel in figure.panels:
+            low, high = panel.y_limits
+            assert low <= 0.0 <= high, panel.key
+
+
+def test_an_aggregated_line_is_scaled_to_the_means_it_draws(three_level_table):
+    """AGGREGATE over trials draws per-position means; limits that bracket the
+    raw trials are merely loose, but they are not what is drawn."""
+    spec = _spec(
+        ["subject", "muscle"],
+        kind=PlotKind.LINE,
+        roles={"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.AGGREGATE},
+    )
+    figures = resolve(spec, three_level_table)
+    _assert_within_limits(figures, label="aggregated line")
+    # Subject 01, TA: per-position means 10.0, 10.1, 10.2 over trials that
+    # individually reach 10.4. The ceiling is padded off the MEAN series (5 %
+    # of its 0.2 range), not off the highest trial.
+    top = next(p for p in figures[0].panels if p.key["muscle"] == "TA")
+    drawn = _drawn_extent(top)
+    assert drawn[1] == pytest.approx(10.2)
+    assert top.y_limits[1] == pytest.approx(drawn[1] + 0.05 * (drawn[1] - drawn[0]))
+
+
+# --- a kind switch on a cached plan -----------------------------------------
+
+
+def test_switching_kind_on_a_cached_plan_recomputes_the_limits(three_level_table):
+    """LINE -> BAND reuses the plan (deliberately: kind is not in its key) but
+    must NOT reuse the line's limits — the band draws mean ± SD, which sits
+    outside the observations for small n. Until 2026-09-14 it did."""
+    from scistackplot import reduce as reduce_mod
+
+    reduce_mod._plan_cache.clear()
+    line = _spec([], kind=PlotKind.LINE)
+    band = _spec([], kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SD))
+
+    resolve_one(line, three_level_table, 0)
+    figure, _, _ = resolve_one(band, three_level_table, 0)
+
+    assert len(reduce_mod._plan_cache) == 1, "the plan was shared"
+    _assert_within_limits([figure], label="band after line")
+    # And back again: the line's own limits, not the band's.
+    figure, _, _ = resolve_one(line, three_level_table, 0)
+    _assert_within_limits([figure], label="line after band")
+
+
+def test_each_extent_mode_is_computed_once(three_level_table, caplog):
+    from scistackplot import reduce as reduce_mod
+
+    reduce_mod._plan_cache.clear()
+    line = _spec([], kind=PlotKind.LINE)
+    band = _spec([], kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SD))
+    with caplog.at_level(logging.INFO, logger=LAYER):
+        for spec in (line, band, line, band):
+            resolve_one(spec, three_level_table, 0)
+    misses = [r for r in caplog.records if "y limits: MISS" in r.getMessage()]
+    # The build computed the line's; the band's was the one miss.
+    assert len(misses) == 1
+    assert "summary" in misses[0].getMessage()
+
+
+# --- log axes ---------------------------------------------------------------
+
+
+def test_a_log_axis_never_gets_a_non_positive_floor(spread_table):
+    """Every trace in `spread_table` starts at 0.0. On a log axis the floor
+    is the smallest POSITIVE drawn value, padded geometrically — a linear 5 %
+    pad below zero is an axis plotly cannot draw."""
+    from scistackplot import StyleOptions
+
+    spec = _spec(["subject", "muscle"], style=StyleOptions(log_y=True))
+    figure = resolve(spec, spread_table)[0]
+    for panel in figure.panels:
+        low, high = panel.y_limits
+        positive = pd.to_numeric(panel.frame[Y], errors="coerce")
+        positive = positive[positive > 0]
+        assert 0 < low <= positive.min(), panel.key
+        assert high >= positive.max()
+
+
+def test_plotly_gets_a_log_range_in_log10_units(spread_table):
+    """plotly's `range` on a log axis is log10: handing over data units asked
+    for 10^0.95 .. 10^105 and the figure came back empty."""
+    import math
+
+    from scistackplot import StyleOptions
+
+    spec = _spec(["subject"], style=StyleOptions(log_y=True))
+    figure = resolve(spec, spread_table)[0]
+    payload = render_plotly(figure)
+
+    axis = payload["layout"]["yaxis"]
+    assert axis["type"] == "log"
+    low, high = figure.y_limits
+    assert axis["range"] == pytest.approx([math.log10(low), math.log10(high)])
+
+    mpl = render_matplotlib(figure)
+    try:
+        assert mpl.axes[0].get_ylim() == pytest.approx((low, high))
+    finally:
+        matplotlib.pyplot.close(mpl)
+
+
+def test_a_hand_typed_zero_floor_on_a_log_axis_is_lifted_not_passed_through(spread_table):
+    from scistackplot import StyleOptions
+
+    spec = _spec(["subject"], style=StyleOptions(log_y=True), y_axis=YAxis(scope=["subject"], minimum=0.0))
+    figure = resolve(spec, spread_table)[0]
+    payload = render_plotly(figure)
+    low, high = payload["layout"]["yaxis"]["range"]
+    assert all(math.isfinite(v) for v in (low, high))
+    assert low < high
+
+
+# --- keys and eligibility -----------------------------------------------------
+
+
+def test_a_missing_level_finds_its_own_group():
+    """pandas hands a NaN level back as nan, and nan != nan: the entry the
+    extents wrote could never be found, so the panel fell back to the global
+    range. Both sides now key NaN as None."""
+    from scistackplot.ylimits import GLOBAL_KEY, limits_for, scope_key
+
+    limits = {(None,): (1.0, 2.0), ("TA",): (5.0, 6.0), GLOBAL_KEY: (0.0, 9.0)}
+    assert scope_key({"muscle": float("nan")}, ["muscle"]) == (None,)
+    assert limits_for(limits, {"muscle": float("nan")}, ["muscle"], YAxis()) == (1.0, 2.0)
+
+
+def test_the_figure_reports_the_panel_factors_the_scope_may_name(spread_table):
+    """A schema key promoted to ITERATE (`iterate_ancestors`) is a panel
+    factor the spec never mentions. The GUI builds its checkboxes from this
+    list, not from `spec.roles`, or the promoted key never gets one."""
+    spec = _spec(
+        ["trial"],
+        roles={"subject": Role.FREE, "muscle": Role.FACET, "trial": Role.ITERATE},
+    )
+    figure = resolve(spec, spread_table)[0]
+    assert figure.panel_factors == ["subject", "trial", "muscle"]
+
+    meta = render_plotly(figure)["layout"]["meta"]
+    assert meta["panel_factors"] == ["subject", "trial", "muscle"]
+    assert meta["y_scope"] == ["trial"]
+
+
+def test_a_bar_chart_on_a_log_axis_does_not_reach_for_zero(three_level_table):
+    """Bars rise from zero on a LINEAR axis. A log axis has no zero; folding it
+    in put log10(0) on the axis."""
+    from scistackplot import StyleOptions
+
+    spec = _spec(
+        ["subject", "muscle"],
+        kind=PlotKind.BAR,
+        aggregate=Aggregation(error=ErrorBand.SD),
+        style=StyleOptions(log_y=True),
+    )
+    for figure in resolve(spec, three_level_table):
+        for panel in figure.panels:
+            drawn = _drawn_extent(panel)
+            if drawn is None or drawn[1] <= 0:
+                continue
+            low, high = panel.y_limits
+            assert 0 < low and math.isfinite(low), panel.key
+            assert math.isfinite(high)
+
+
+def test_a_plotly_violin_spans_its_data_not_two_bandwidths_past_it(three_level_table):
+    """plotly's default violin `spanmode` is "soft": the KDE runs past the
+    extremes, into the part of the axis the limits cut off. matplotlib's spans
+    exactly [min, max]; both must."""
+    spec = _spec(["subject", "muscle"], kind=PlotKind.VIOLIN)
+    figure = resolve(spec, three_level_table)[0]
+    violins = [t for t in render_plotly(figure)["data"] if t["type"] == "violin"]
+    assert violins
+    assert all(t["spanmode"] == "hard" for t in violins)

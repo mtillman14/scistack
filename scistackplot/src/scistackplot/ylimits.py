@@ -17,16 +17,26 @@ reduction happens, in one pass:
 * the drawn extent of a line/scatter/box/violin is the raw extent of the data,
   so for those it is a min/max over the unexploded arrays — 48 rows of numpy
   work for a figure set that would otherwise be 17 million;
-* a band or a bar draws ``centre ± spread``, which genuinely needs the
-  reduction — but only its extremes, so it is one groupby on the sample index,
-  with no panel frames, no series keys and no sorting.
+* a band or a bar draws ``centre ± spread``, and an AGGREGATE role draws
+  per-position means; both genuinely need the reduction — but only its
+  extremes, so it is one grouped pass with no panel frames, no series keys and
+  no sorting.
 
 Both cover the whole fan-out at once, which is the point: paging through thirty
 subjects must not recompute anything.
+
+**The one rule that keeps limits honest** (2026-09-14): the statistic is
+computed at the granularity it is *drawn* at — one ``centre ± spread`` per
+panel, per colour, per position, where a panel is one combination of every
+ITERATE and FACET factor — and the scope only decides how those per-panel
+extents are *combined*. It used to be computed at scope granularity instead:
+unticking ``subject`` pooled every subject into one mean ± SEM whose range
+collapsed around the grand mean, and every subject's own band fell outside it.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 import numpy as np
@@ -42,11 +52,65 @@ LAYER = "scistackplot"
 
 #: Fraction of the data range left as breathing room at each end. Matches what
 #: ``reduce._shared_limits`` has always done, so switching to a scope does not
-#: silently re-pad every existing figure.
+#: silently re-pad every existing figure. On a log axis the same fraction is
+#: applied to the log10 range.
 PAD_FRACTION = 0.05
 
 #: The key of the single group when nothing separates the limits.
 GLOBAL_KEY: tuple = ()
+
+
+@dataclass(frozen=True)
+class ExtentMode:
+    """What the y limits depend on *beyond* the rows a plan selected.
+
+    A plan is keyed by the data question (measure, roles, filters, variants —
+    ``reduce._plan_cache_key``) and deliberately NOT by the plot kind, because
+    a kind switch must not re-run the variants, filters and fan-out grouping.
+    But the limits DO depend on the kind: a band draws ``centre ± spread``,
+    which sits outside the raw data, and a bar rises from zero. This is the
+    part of the answer that the plan cannot share across kinds, spelled out as
+    a hashable key so ``reduce`` can memoise the limits per mode instead of
+    either rebuilding the plan or — as it did until 2026-09-14 — drawing a
+    band inside a line plot's limits.
+    """
+
+    #: BAND/BAR with an error band: the drawn extent is ``centre ± spread``.
+    summary: bool
+    #: Any AGGREGATE role: the drawn values are per-position means, not the
+    #: observations. Raw extents would only be loose, but it is one path.
+    collapse: bool
+    #: BAR on a linear axis: bars rise from zero, so zero is always in view.
+    #: Never on a log axis — there is no zero to rise from, and folding it in
+    #: would put log10(0) on the axis.
+    from_zero: bool
+    #: Log y axis: only positive values can be drawn, and padding is geometric.
+    log: bool
+
+    @classmethod
+    def for_spec(cls, spec: PlotSpec, roles: dict[str, Role]) -> "ExtentMode":
+        return cls(
+            summary=spec.kind in (PlotKind.BAND, PlotKind.BAR)
+            and spec.aggregate.error is not ErrorBand.NONE,
+            collapse=any(role is Role.AGGREGATE for role in roles.values()),
+            from_zero=spec.kind is PlotKind.BAR and not spec.style.log_y,
+            log=bool(spec.style.log_y),
+        )
+
+    @property
+    def reduces(self) -> bool:
+        """Whether the drawn extent differs from the raw extent at all."""
+        return self.summary or self.collapse
+
+    def describe(self) -> str:
+        parts = ["summary" if self.summary else "raw"]
+        if self.collapse:
+            parts.append("collapsed")
+        if self.from_zero:
+            parts.append("from zero")
+        if self.log:
+            parts.append("log")
+        return ", ".join(parts)
 
 
 def eligible_scope(
@@ -93,38 +157,98 @@ def eligible_scope(
     return kept
 
 
+def panel_factors(roles: dict[str, Role], frame: pd.DataFrame) -> list[str]:
+    """Every factor that puts data in a *different panel* — ITERATE and FACET
+    — in role order, restricted to what the frame still holds.
+
+    This is the granularity a statistic is drawn at, and therefore the
+    granularity it must be computed at for the limits. The scope is always a
+    subset of it (``eligible_scope``), so folding panel extents into scope
+    groups is a projection of the panel key.
+    """
+    return [
+        name
+        for name, role in roles.items()
+        if role in (Role.ITERATE, Role.FACET) and name in frame.columns
+    ]
+
+
 def limits_by_scope(
     table: LongTable,
     spec: PlotSpec,
     scope: list[str],
+    roles: dict[str, Role],
 ) -> dict[tuple, tuple[float, float]]:
     """``{scope values: (low, high)}`` for every group the scope names.
 
-    ``scope`` must already be :func:`eligible_scope`-filtered. An empty scope
-    returns exactly one entry, keyed ``()`` — one range for the whole dataset.
+    ``scope`` must already be :func:`eligible_scope`-filtered, and ``roles``
+    are the COMPLETED roles (``roles.complete_roles``) — a defaulted colour or
+    facet is as real to the drawing as a declared one, and must be as real
+    here. An empty scope returns exactly one entry, keyed ``()`` — one range
+    for the whole dataset.
 
     The frame is whatever the caller hands over, which for the resolve path is
     the **post-variant, post-filter** table: limits must describe what will be
     drawn, so a variant selection that removes half the data has to move them.
+
+    This is the pandas reference; ``reducer.NumpyReducer.y_extents`` answers
+    the nested 1-D cases over ndarray cells and is held to it by
+    ``scistackplotdb/tests/test_reducer_parity.py``.
     """
     frame = table.frame
     measure = spec.y_measure
     if measure not in frame.columns or frame.empty:
         return {}
 
+    mode = ExtentMode.for_spec(spec, roles)
     present = [name for name in scope if name in frame.columns]
-    if _needs_reduction(spec):
-        extents = _aggregated_extents(frame, spec, table, present)
+    if mode.reduces:
+        extents = _reduced_extents(frame, spec, table, roles, present, mode)
     else:
-        extents = _raw_extents(frame, measure, present)
+        extents = _raw_extents(frame, measure, present, mode)
+    return finish_extents(extents, present, mode, source="pandas")
 
-    limits = {key: _padded(low, high) for key, (low, high) in extents.items()}
-    Log.debug(
-        "y limits over %s: %d group(s)",
-        present or "the whole dataset",
-        len(limits),
+
+def finish_extents(
+    extents: dict[tuple, tuple[float, float]],
+    scope: list[str],
+    mode: ExtentMode,
+    *,
+    source: str,
+    panels: int | None = None,
+) -> dict[tuple, tuple[float, float]]:
+    """Per-scope-group extents -> the limits the panels draw.
+
+    One tail for both reducers: the global fallback entry, zero for a bar
+    chart, padding, and the log line. Kept here rather than in each reducer so
+    the two cannot pad differently.
+    """
+    if not extents:
+        Log.debug("y limits (%s, %s): no drawable values", mode.describe(), source, layer=LAYER)
+        return {}
+    folded = dict(extents)
+    if scope:
+        # The global entry always exists as a fallback for a panel whose own
+        # group has no data (`limits_for`), and it is free: same numbers.
+        folded[GLOBAL_KEY] = (
+            min(low for low, _ in extents.values()),
+            max(high for _, high in extents.values()),
+        )
+    if mode.from_zero:
+        folded = {key: (min(low, 0.0), max(high, 0.0)) for key, (low, high) in folded.items()}
+
+    limits = {key: _padded(low, high, mode) for key, (low, high) in folded.items()}
+    Log.info(
+        "y limits (%s, %s): %d group(s) over %s%s",
+        mode.describe(),
+        source,
+        len(limits) - (1 if scope else 0),
+        scope or "the whole dataset",
+        f" from {panels} panel(s)" if panels is not None else "",
         layer=LAYER,
     )
+    for key, (low, high) in limits.items():
+        Log.debug("  y limits %s: %.6g to %.6g", key or "(global)", low, high, layer=LAYER)
     return limits
 
 
@@ -152,7 +276,7 @@ def limits_for(
         # consults the data and so never passed through the ordering below.
         return _ordered(float(y_axis.minimum), float(y_axis.maximum))
 
-    group = tuple(key.get(name) for name in scope)
+    group = scope_key({name: key.get(name) for name in scope}, scope)
     found = limits.get(group)
     if found is None and scope:
         found = limits.get(GLOBAL_KEY)
@@ -187,25 +311,75 @@ def describe(scope: list[str], y_axis) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Keys
+# ---------------------------------------------------------------------------
+
+
+def hashable(value: Any) -> Any:
+    """A group-key component: NaN as None, so every missing value is ONE group.
+
+    pandas' ``groupby(dropna=False)`` keeps a NaN level as one group but hands
+    it back as ``nan``, and ``nan != nan`` — so a NaN-keyed entry written by
+    the extents could never be found by ``limits_for``. Both sides go through
+    this, so a missing level is a level like any other.
+    """
+    if isinstance(value, float) and value != value:
+        return None
+    return value
+
+
+def scope_key(values: dict[str, Any], scope: list[str]) -> tuple:
+    """The dict key of one scope group, from a panel's identifying values."""
+    return tuple(hashable(values.get(name)) for name in scope)
+
+
+def _as_key(key: Any) -> tuple:
+    key = key if isinstance(key, tuple) else (key,)
+    return tuple(hashable(v) for v in key)
+
+
+# ---------------------------------------------------------------------------
 # Extents
 # ---------------------------------------------------------------------------
 
 
-def _needs_reduction(spec: PlotSpec) -> bool:
-    """Whether the drawn extent differs from the raw extent.
-
-    Only for the kinds that draw a summary: a band or a bar draws
-    ``centre ± spread``, which can sit outside the data (a mean plus an SD) and
-    inside it (a mean of anything). Everything else draws the observations, or
-    box statistics that lie within them.
-    """
-    return spec.kind in (PlotKind.BAND, PlotKind.BAR) and (
-        spec.aggregate.error is not ErrorBand.NONE
+def merge_extent(
+    extents: dict[tuple, tuple[float, float]], key: tuple, low: float, high: float
+) -> None:
+    """Widen ``extents[key]`` to include ``(low, high)``."""
+    seen = extents.get(key)
+    extents[key] = (
+        (low, high) if seen is None else (min(seen[0], low), max(seen[1], high))
     )
 
 
+def pair_extent(
+    low: np.ndarray, high: np.ndarray, mode: ExtentMode
+) -> tuple[float, float] | None:
+    """The extent of a set of drawn ``(low, high)`` pairs, or None if nothing
+    in it can be drawn.
+
+    On a log axis the floor is the smallest POSITIVE drawn value: a band whose
+    lower edge crosses zero is drawn clipped there anyway, so its floor is
+    wherever it re-enters the positive half-plane — its centre, if the whole
+    lower edge is below zero. Never a negative number, which the axis would
+    refuse, and never an invented one.
+    """
+    low = np.asarray(low, dtype=float)
+    high = np.asarray(high, dtype=float)
+    if mode.log:
+        floor = np.where(low > 0, low, np.where(high > 0, high, np.nan))
+        ceiling = np.where(high > 0, high, np.nan)
+    else:
+        floor, ceiling = low, high
+    ok = ~(np.isnan(floor) | np.isnan(ceiling))
+    if not ok.any():
+        return None
+    return float(floor[ok].min()), float(ceiling[ok].max())
+
+
 def _raw_extents(
-    frame: pd.DataFrame, measure: str, scope: list[str]
+    frame: pd.DataFrame, measure: str, scope: list[str], mode: ExtentMode
 ) -> dict[tuple, tuple[float, float]]:
     """Min/max per group, **without exploding anything**.
 
@@ -215,7 +389,7 @@ def _raw_extents(
     build 8.9 million rows to answer the same question.
     """
     values = frame[measure]
-    lows, highs = _cell_extents(values)
+    lows, highs = _cell_extents(values, mode)
 
     usable = ~(np.isnan(lows) | np.isnan(highs))
     if not usable.any():
@@ -227,39 +401,34 @@ def _raw_extents(
     keys = _scope_keys(frame, scope)
     extents: dict[tuple, tuple[float, float]] = {}
     for key, low, high, ok in zip(keys, lows, highs, usable, strict=True):
-        if not ok:
-            continue
-        seen = extents.get(key)
-        extents[key] = (
-            (low, high) if seen is None else (min(seen[0], low), max(seen[1], high))
-        )
-    # The global entry always exists as a fallback for a panel whose own group
-    # has no data (`limits_for`), and it is free: these are the same numbers.
-    if extents:
-        extents[GLOBAL_KEY] = (
-            min(low for low, _ in extents.values()),
-            max(high for _, high in extents.values()),
-        )
+        if ok:
+            merge_extent(extents, key, float(low), float(high))
     return extents
 
 
-def _cell_extents(values: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+def _cell_extents(values: pd.Series, mode: ExtentMode) -> tuple[np.ndarray, np.ndarray]:
     """Per-row (min, max) of a measure column that may hold scalars or arrays."""
     numeric = coerce_numeric(values)
     if not numeric.isna().all():
         # A plain scalar column: its own values are the extents, and this is one
         # vectorized cast rather than a Python loop.
         column = numeric.to_numpy(dtype=float, na_value=np.nan)
+        if mode.log:
+            column = np.where(column > 0, column, np.nan)
         return column, column
 
     lows = np.full(len(values), np.nan)
     highs = np.full(len(values), np.nan)
     for position, value in enumerate(values.to_numpy()):
         array = _as_array(value)
+        if array is None or not array.size:
+            continue
+        if mode.log:
+            array = array[array > 0]
         # An all-NaN cell stays NaN rather than going through nanmin, which
         # warns and returns NaN anyway — the caller drops it either way, and a
         # RuntimeWarning per empty trial is noise in a real run.
-        if array is None or not array.size or np.isnan(array).all():
+        if not array.size or np.isnan(array).all():
             continue
         lows[position] = np.nanmin(array)
         highs[position] = np.nanmax(array)
@@ -281,20 +450,28 @@ def _as_array(value: Any) -> np.ndarray | None:
         return None
 
 
-def _aggregated_extents(
+def _reduced_extents(
     frame: pd.DataFrame,
     spec: PlotSpec,
     table: LongTable,
+    roles: dict[str, Role],
     scope: list[str],
+    mode: ExtentMode,
 ) -> dict[tuple, tuple[float, float]]:
-    """Extents of ``centre ± spread`` — the band a BAND/BAR actually draws.
+    """Extents of what a reducing plot draws, at the granularity it draws it.
 
-    This is the expensive branch and it is deliberately narrow: it reduces to
-    the same statistic ``reduce._summarize`` does, grouped by everything that
-    separates an x position, and then takes extremes. No panel frames, no series
-    keys, no sorting, and one pass for the whole fan-out rather than one per
-    figure.
+    Mirrors the figure path step for step — explode, the AGGREGATE collapse,
+    then ``centre ± spread`` per panel, per x position, per colour — and only
+    then folds the result into scope groups. The panel factors are ALWAYS in
+    the grouping whether or not the scope names them: the scope decides which
+    panels share a range, never what statistic each panel draws.
+
+    Deliberately narrow all the same: no panel frames, no series keys, no
+    sorting, and one pass for the whole fan-out rather than one per figure.
     """
+    # Imported here: `reduce` imports this module.
+    from .reduce import _collapse_aggregates
+
     measure = spec.y_measure
     working = frame
     index_column = spec.index_column or table.index_column
@@ -302,45 +479,62 @@ def _aggregated_extents(
     if table.shape_of(measure) is Shape.SERIES_1D and not table.measure(measure).exploded:
         working, index_column = _explode_for_limits(frame, measure, index_column)
 
-    # What separates one drawn point from another: the scope (which separates
-    # panels), plus the x position and the colour within a panel.
-    grouping = [
-        name
-        for name in dict.fromkeys(
-            [
-                *scope,
-                *[n for n, r in spec.roles.items() if r in (Role.X, Role.COLOR)],
-                *( [index_column] if index_column else [] ),
-            ]
-        )
-        if name in working.columns
-    ]
     values = coerce_numeric(working[measure])
     working = working.assign(**{measure: values}).dropna(subset=[measure])
     if working.empty:
         return {}
+    if mode.collapse:
+        working = _collapse_aggregates(working, spec, roles, index_column)
+
+    panels = panel_factors(roles, working)
+    if not mode.summary:
+        # Collapsed means drawn as they are: the extent is the values', folded
+        # by scope. `scope` ⊆ `panels` ⊆ the collapse's kept columns.
+        return _raw_extents(working, measure, scope, mode)
+
+    # What separates one drawn point from another: the panel, plus the x
+    # position and the colour within it.
+    grouping = [
+        name
+        for name in dict.fromkeys(
+            [
+                *panels,
+                *[n for n, r in roles.items() if r in (Role.X, Role.COLOR)],
+                *([index_column] if index_column else []),
+            ]
+        )
+        if name in working.columns
+    ]
     if not grouping:
         centre, low, high = _summary_bounds(working[measure], spec)
-        return {GLOBAL_KEY: (float(min(low, centre)), float(max(high, centre)))}
+        extent = pair_extent(
+            np.asarray([min(low, centre)]), np.asarray([max(high, centre)]), mode
+        )
+        return {GLOBAL_KEY: extent} if extent else {}
 
     grouped = working.groupby(grouping, dropna=False, sort=False)[measure]
     centre = grouped.median() if spec.aggregate.statistic is Statistic.MEDIAN else grouped.mean()
-    low, high = _spread(grouped, centre, spec)
+    low, high = spread_bounds(grouped, centre, spec)
+    # The centre line is drawn too, and a MEAN with an IQR band can sit outside
+    # its own quartiles on skewed data — the band was covered, the line not.
+    bounds = pd.DataFrame(
+        {"low": np.minimum(low, centre), "high": np.maximum(high, centre)}
+    ).reset_index()
+    return _fold(bounds, scope, mode)
 
-    bounds = pd.DataFrame({"low": low, "high": high}).reset_index()
+
+def _fold(
+    bounds: pd.DataFrame, scope: list[str], mode: ExtentMode
+) -> dict[tuple, tuple[float, float]]:
+    """``(low, high)`` rows with their scope columns -> one extent per group."""
     if not scope:
-        return {GLOBAL_KEY: (float(bounds["low"].min()), float(bounds["high"].max()))}
-
-    by_scope = bounds.groupby(scope, dropna=False, sort=False)
-    extents = {
-        _as_key(key): (float(part["low"].min()), float(part["high"].max()))
-        for key, part in by_scope
-    }
-    if extents:
-        extents[GLOBAL_KEY] = (
-            min(low for low, _ in extents.values()),
-            max(high for _, high in extents.values()),
-        )
+        extent = pair_extent(bounds["low"].to_numpy(), bounds["high"].to_numpy(), mode)
+        return {GLOBAL_KEY: extent} if extent else {}
+    extents: dict[tuple, tuple[float, float]] = {}
+    for key, part in bounds.groupby(scope, dropna=False, sort=False):
+        extent = pair_extent(part["low"].to_numpy(), part["high"].to_numpy(), mode)
+        if extent:
+            extents[_as_key(key)] = extent
     return extents
 
 
@@ -363,14 +557,16 @@ def _explode_for_limits(
     return working.explode([measure, column], ignore_index=True), column
 
 
-def _spread(grouped, centre, spec: PlotSpec):
-    """``(low, high)`` per group — the same definitions ``reduce._summarize`` uses.
+def spread_bounds(grouped, centre, spec: PlotSpec):
+    """``(low, high)`` per group — THE definition of an error band in pandas.
 
-    Kept deliberately parallel to that function: two definitions of an error
-    band would put the limits and the drawing at odds, and the symptom would be
-    a band clipped by its own axis.
+    ``reduce._summarize`` (the drawing) calls this too, so there is exactly one
+    place that says what ``± SEM`` means; the numpy twin is
+    ``series_stats.position_stats``, held to it by the parity suite.
     """
     error = spec.aggregate.error
+    if error is ErrorBand.NONE:
+        return centre, centre
     if error is ErrorBand.IQR:
         return grouped.quantile(0.25), grouped.quantile(0.75)
     sd = grouped.std(ddof=1).fillna(0.0)
@@ -412,13 +608,7 @@ def _summary_bounds(values: pd.Series, spec: PlotSpec):
 def _scope_keys(frame: pd.DataFrame, scope: list[str]) -> list[tuple]:
     """One key tuple per row, matching what a panel's ``key`` will produce."""
     columns = [frame[name].to_numpy() for name in scope]
-    return list(zip(*columns, strict=True)) if len(columns) > 1 else [
-        (value,) for value in columns[0]
-    ]
-
-
-def _as_key(key: Any) -> tuple:
-    return key if isinstance(key, tuple) else (key,)
+    return [tuple(hashable(v) for v in key) for key in zip(*columns, strict=True)]
 
 
 def _ordered(low: float, high: float) -> tuple[float, float]:
@@ -444,7 +634,13 @@ def _ordered(low: float, high: float) -> tuple[float, float]:
     return (high, low)
 
 
-def _padded(low: float, high: float) -> tuple[float, float]:
+def _padded(low: float, high: float, mode: ExtentMode) -> tuple[float, float]:
+    if mode.log:
+        # Geometric: 5 % of the DECADES, so a 0.01-100 axis gets the same
+        # breathing room at both ends instead of a floor pushed below zero.
+        lo, hi = np.log10(low), np.log10(high)
+        pad = (hi - lo) * PAD_FRACTION if hi > lo else 0.05
+        return (float(10 ** (lo - pad)), float(10 ** (hi + pad)))
     if low == high:
         pad = abs(low) * PAD_FRACTION or 1.0
         return (low - pad, high + pad)
