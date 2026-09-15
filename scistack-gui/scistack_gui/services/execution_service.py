@@ -228,6 +228,130 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
     return targets
 
 
+def column_selections_for_nodes(
+    db, node_ids, function_name: str = ""
+) -> dict[str, dict]:
+    """``{param: {"columns": [...], "iterate": bool}}`` saved for any of
+    *node_ids*, merged.
+
+    Matching is PLACEMENT-INSENSITIVE. A config is stored under whichever id
+    the canvas showed when it was saved, and that is the placement-qualified
+    ``fn__{fn}__{cid}::{scope}`` form whenever the node has a qualified
+    placement — while the id sets assembled by the derivation paths are a mix
+    of bare canonical ids, manual-node uuids and edge endpoints. Comparing
+    those with ``==`` is the same trap ``edge_resolver.bare_fn_node_ids``
+    documents, and here it would silently run with the whole variable.
+
+    Passing *function_name* additionally admits any ``fn__{function_name}__*``
+    config id, whether or not it is in *node_ids*. That is the NAME-scoped
+    reading, and the only one that works for a source-declared pipeline: such
+    a function has no manual edge rows at all once it has run, so the id set
+    assembled from edges and manual nodes does not contain the canvas id the
+    panel actually saved under. Node-scoped callers omit it, so one call
+    site's selection can never leak onto another's run.
+
+    A parameter selected differently on two node ids of the same function is a
+    genuine conflict (two call sites of one name, configured apart). The first
+    wins and the loser is WARNed rather than merged, because a union of column
+    sets is not a thing the user asked for on either node.
+    """
+    from scistack_gui import pipeline_store
+    from scistack_gui.domain import column_selection as _cs
+    from scistack_gui.domain.graph_builder import parse_fn_node_id, strip_placement
+
+    wanted = {strip_placement(i) for i in (node_ids or set())}
+    if not wanted and not function_name:
+        return {}
+
+    def _matches(nid: str) -> bool:
+        bare = strip_placement(nid)
+        if bare in wanted:
+            return True
+        if not function_name:
+            return False
+        parsed = parse_fn_node_id(bare)
+        return parsed is not None and parsed[0] == function_name
+
+    merged: dict[str, dict] = {}
+    source: dict[str, str] = {}
+    for nid, config in sorted(pipeline_store.get_node_configs(db).items()):
+        if not _matches(nid):
+            continue
+        for param, raw in ((config or {}).get("columnSelections") or {}).items():
+            sel = _cs.normalize(raw)
+            if sel is None:
+                continue
+            previous = merged.get(param)
+            if previous is not None and previous != sel:
+                logger.warning(
+                    "[execution] parameter %r has conflicting column "
+                    "selections: %s (node %s) vs %s (node %s) — keeping the "
+                    "first. Configure the two call sites' Inputs sections to "
+                    "agree, or run them as separate nodes.",
+                    param,
+                    _cs.describe(previous),
+                    source.get(param),
+                    _cs.describe(sel),
+                    nid,
+                )
+                continue
+            merged[param] = sel
+            source[param] = nid
+    return merged
+
+
+def _attach_column_selections(
+    db,
+    node_ids,
+    targets: list[dict],
+    function_name: str = "",
+    name_scoped: bool = False,
+) -> list[dict]:
+    """Stamp the GUI's saved column selections onto every target's bindings.
+
+    Modelled directly on :func:`_attach_db_path_inputs` — the existing
+    precedent for "GUI state that DB history cannot carry". Provenance records
+    an input edge as ``(param -> record -> variable_type)``, so a run that used
+    ``Trials["filename"]`` is indistinguishable in history from one that used
+    the whole variable; the GUI's own config is the only record there is (see
+    ``docs/claude/column-selection.md`` §From the GUI, "Known limitations").
+
+    Called from BOTH derivation paths, because either can be the one a run
+    bottoms out in: ``derive_fn_targets`` (``name_scoped=True`` — any node id
+    of this function counts) and ``derive_target_for_node`` (node-scoped —
+    only the node clicked, so two call sites of one name stay independent).
+    """
+    if not targets:
+        return targets
+    from scistack_gui.domain import column_selection as _cs
+
+    selections = column_selections_for_nodes(
+        db, node_ids, function_name if name_scoped else ""
+    )
+    if not selections:
+        return targets
+
+    context = f"'{function_name}'" if function_name else ""
+    for t in targets:
+        t["bindings"] = _cs.apply_to_bindings(
+            t.get("bindings"), selections, context=context
+        )
+
+    # One line per parameter, not per target: its ABSENCE is the diagnostic
+    # when a selection shows in the panel and the run loads whole tables, and
+    # N identical lines per derivation make that harder to see, not easier.
+    for param, sel in sorted(selections.items()):
+        logger.info(
+            "[execution] '%s': '%s' restricted to %s (%s) on %d target(s)",
+            function_name or "?",
+            param,
+            _cs.describe(sel),
+            sel["columns"] or "all data columns",
+            len(targets),
+        )
+    return targets
+
+
 def _hidden_constant_values(db) -> dict[str, set[str]]:
     """{const_name: {hidden values}} from the ``ConstantNode.tsx`` checkbox
     state — grouped once per derivation call so ``filter_hidden_
@@ -380,7 +504,13 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
         fn_variants = overridden
 
     if fn_variants:
-        return filter_hidden_constant_value_targets(fn_variants, hidden_values)
+        return _attach_column_selections(
+            db,
+            fn_node_ids,
+            filter_hidden_constant_value_targets(fn_variants, hidden_values),
+            function_name,
+            name_scoped=True,
+        )
 
     # Never-run fallback: infer the call from manual edges.
     resolved = resolve_function_edges(
@@ -409,8 +539,14 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
             log_context=f"'{function_name}'",
         )
 
-    return filter_hidden_constant_value_targets(
-        _inferred_targets(resolved, inferred_constants), hidden_values
+    return _attach_column_selections(
+        db,
+        fn_node_ids,
+        filter_hidden_constant_value_targets(
+            _inferred_targets(resolved, inferred_constants), hidden_values
+        ),
+        function_name,
+        name_scoped=True,
     )
 
 
@@ -551,7 +687,12 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
                 before - len(matching),
             )
     if matching:
-        return filter_hidden_constant_value_targets(matching, hidden_values)
+        return _attach_column_selections(
+            db,
+            {node_id},
+            filter_hidden_constant_value_targets(matching, hidden_values),
+            function_name,
+        )
     if resolved is None:
         # An already-graduated node whose embedded wiring matches nothing
         # in current history (stale) — nothing safe to run as this node.
@@ -584,8 +725,13 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             log_context=f"'{function_name}' (node {node_id})",
         )
 
-    return filter_hidden_constant_value_targets(
-        _inferred_targets(resolved, inferred_constants), hidden_values
+    return _attach_column_selections(
+        db,
+        {node_id},
+        filter_hidden_constant_value_targets(
+            _inferred_targets(resolved, inferred_constants), hidden_values
+        ),
+        function_name,
     )
 
 
@@ -903,6 +1049,29 @@ def _apply_hidden_values(param, name: str, function_name: str, hidden: dict):
     return Parameter(*kept, description=param.description)
 
 
+def _apply_column_selection(var_cls, sel: "dict | None"):
+    """*var_cls*, or a ``scidb.ColumnSelection`` around it when *sel* asks for
+    one.
+
+    The two spellings are not interchangeable and the difference is what the
+    function receives: ``MyVar[cols]`` passes the column(s) as ONE argument
+    (a numpy array for one column, a DataFrame subset for several), while
+    ``MyVar.for_columns(cols)`` runs the function once per column and
+    reassembles the results into a one-row table with the source column
+    names. See docs/claude/for-columns-iteration.md.
+
+    ``for_columns([])`` is legal and means "all data columns, resolved at
+    for_each time"; ``MyVar[[]]`` is not a thing the UI can produce, because
+    :func:`column_selection.normalize` drops an empty non-iterate selection.
+    """
+    if sel is None:
+        return var_cls
+    columns = list(sel.get("columns") or [])
+    if sel.get("iterate"):
+        return var_cls.for_columns(columns)
+    return var_cls[columns]
+
+
 def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     """The for_each ``inputs=`` dict for a derived target: variable-class
     inputs, scalar constants, and any remaining signature params resolved
@@ -947,6 +1116,7 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     from scidb import EachOf
     from scistack_gui import registry
     from scistack_gui.api.pipeline import _fn_params_from_registry
+    from scistack_gui.domain import column_selection as _column_selection
     from scistack_gui.domain.edge_resolver import (
         BINDING_PARAMETER,
         BINDING_PATHINPUT,
@@ -971,12 +1141,33 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
 
         if kind == BINDING_VARIABLE:
             type_names = ref if isinstance(ref, list) else [ref]
+            sel = _column_selection.from_binding(binding)
             if len(type_names) > 1:
+                # Each alternative is wrapped separately: EachOf documents
+                # ColumnSelection as a legal alternative, and one selection
+                # per PARAMETER (not per edge) is the stated v1 scope — a
+                # column present in one type and absent in the other fails at
+                # load with scifor's KeyError naming the available columns.
                 inputs[param] = EachOf(
-                    *(registry.get_variable_class(t) for t in type_names)
+                    *(
+                        _apply_column_selection(
+                            registry.get_variable_class(t), sel
+                        )
+                        for t in type_names
+                    )
                 )
             elif type_names:
-                inputs[param] = registry.get_variable_class(type_names[0])
+                inputs[param] = _apply_column_selection(
+                    registry.get_variable_class(type_names[0]), sel
+                )
+            if sel is not None and type_names:
+                logger.info(
+                    "[execution] '%s': input '%s' (%s) restricted to %s",
+                    function_name,
+                    param,
+                    ", ".join(type_names),
+                    _column_selection.describe(sel),
+                )
 
         elif kind == BINDING_PATHINPUT:
             pi = path_inputs_by_name.get(ref)

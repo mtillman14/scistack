@@ -90,6 +90,58 @@ def plot_variant_graph(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+class GroupingGraphRequest(BaseModel):
+    variable: str
+    csv_path: str | None = None
+
+
+@router.post("/plot/grouping-graph")
+def plot_grouping_graph(
+    req: GroupingGraphRequest, db: DatabaseManager = Depends(get_db)
+) -> dict:
+    try:
+        return plot_service.grouping_graph(db, req.variable, csv_path=req.csv_path)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class GroupingColumnsRequest(BaseModel):
+    #: The figure's measure — what is being grouped.
+    variable: str
+    #: The variable whose columns are being listed — what it is grouped BY.
+    group_variable: str
+    csv_path: str | None = None
+
+
+@router.post("/plot/grouping-columns")
+def plot_grouping_columns(
+    req: GroupingColumnsRequest, db: DatabaseManager = Depends(get_db)
+) -> dict:
+    try:
+        return plot_service.grouping_columns(
+            db, req.variable, req.group_variable, csv_path=req.csv_path
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class GroupingDefaultVariantRequest(BaseModel):
+    group_variable: str
+    csv_path: str | None = None
+
+
+@router.post("/plot/grouping-default-variant")
+def plot_grouping_default_variant(
+    req: GroupingDefaultVariantRequest, db: DatabaseManager = Depends(get_db)
+) -> dict:
+    try:
+        return plot_service.grouping_default_variant(
+            db, req.group_variable, csv_path=req.csv_path
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 class LocationTreeRequest(BaseModel):
     variable: str
     # The plotting layer's column-keyed variant selection ({"Code:bandpass":

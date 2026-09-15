@@ -40,8 +40,30 @@ BINDING_PARAMETER = "parameter"  # ref: declared Parameter name
 GLUE_NODE_TYPE = "glueNode"
 
 
-def variable_binding(type_names: list[str]) -> dict:
-    return {"kind": BINDING_VARIABLE, "ref": type_names}
+def variable_binding(
+    type_names: list[str],
+    columns: "list[str] | None" = None,
+    iterate: bool = False,
+) -> dict:
+    """A variable binding, optionally restricted to named columns.
+
+    ``columns``/``iterate`` express the GUI's column selection
+    (``MyVar["col"]`` / ``MyVar.for_columns([...])``) and are OMITTED entirely
+    when there is no selection, so an ordinary whole-variable binding keeps
+    exactly the two keys it always had. That matters beyond tidiness:
+    ``resolve_function_edges._bind`` compares bindings with ``==`` to detect
+    two edges fighting over one handle, and every consumer that reads the
+    binding's shape (``bindings_of_kind``, ``variable_types_view``,
+    ``variant_resolver.compute_call_id``) reads ``ref`` alone.
+
+    See ``domain/column_selection.py`` for why the selection deliberately does
+    NOT reach ``wiring_id``/``compute_call_id``.
+    """
+    binding = {"kind": BINDING_VARIABLE, "ref": type_names}
+    if columns or iterate:
+        binding["columns"] = list(columns or [])
+        binding["iterate"] = bool(iterate)
+    return binding
 
 
 def pathinput_binding(declared_name: str) -> dict:

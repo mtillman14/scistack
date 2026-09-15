@@ -153,6 +153,7 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     set_note:               { path: (p) => `/api/notes/${encodeURIComponent(p.key as string)}`, method: 'PUT', body: true },
     get_variable_records:   { path: (p) => `/api/variables/${encodeURIComponent(p.name as string)}/records` },
     get_variable_plot_data: { path: (p) => `/api/variables/${encodeURIComponent(p.name as string)}/plot-data` },
+    get_variable_columns:   { path: (p) => `/api/variables/${encodeURIComponent((p.variable_type as string) ?? (p.name as string))}/columns` },
     get_variables_list:     { path: '/api/variables' },
     get_parameters:         { path: '/api/parameters' },
     get_path_inputs:        { path: '/api/path-inputs' },

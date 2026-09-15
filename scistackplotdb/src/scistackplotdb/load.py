@@ -125,14 +125,74 @@ def table_name_for(db, variable: str) -> str:
 
 
 def data_columns_for(db, variable: str) -> list[str]:
+    return list(data_column_types_for(db, variable))
+
+
+def data_column_types_for(db, variable: str) -> dict[str, str]:
+    """``{column: declared DuckDB type}``, in ordinal order.
+
+    One query, the same one :func:`data_columns_for` has always made — it just
+    keeps the type column it was already paying for. The type is used for one
+    purpose only: cheaply REFUSING a column that cannot hold a group label
+    (:func:`is_container_type`). It never accepts one; see that function.
+    """
     table = table_name_for(db, variable)
     rows = db._duck._fetchall(
-        "SELECT column_name FROM information_schema.columns "
+        "SELECT column_name, data_type FROM information_schema.columns "
         "WHERE table_name = ? AND column_name != 'record_id' "
         "ORDER BY ordinal_position",
         [table],
     )
-    return [row[0] for row in rows]
+    return {row[0]: str(row[1] or "") for row in rows}
+
+
+#: DuckDB type names whose values are containers rather than single cells.
+#: Matched as a whole leading word so ``DECIMAL(18,3)`` and ``TIMESTAMP WITH
+#: TIME ZONE`` — which have punctuation but hold one value — are not caught.
+_CONTAINER_TYPE_HEADS = ("STRUCT", "MAP", "UNION", "LIST", "ARRAY")
+
+#: Types holding one value that is still not a label a human would group by.
+_OPAQUE_TYPES = frozenset({"BLOB", "BIT", "JSON"})
+
+
+def is_container_type(data_type: str) -> bool:
+    """Whether a declared DuckDB type holds an array/struct rather than a value.
+
+    ``DOUBLE[]`` (a 1-D signal per cell), ``DOUBLE[][]`` (a matrix),
+    ``DOUBLE[3]`` (a fixed-size array), ``STRUCT(...)``, ``MAP(...)``, ``BLOB``.
+    See ``docs/claude/duckdb-column-types.md``: the DuckDB column type IS the
+    cell value type, so this is exactly "does one cell hold a signal".
+
+    **Refusal only, never acceptance, and that asymmetry is the whole design.**
+    :func:`sample_value` states plainly why shape classification reads a VALUE
+    and not a declared type name: the duckdb client's own Python type for a cell
+    is ground truth, with no dependency on how DuckDB spells list types across
+    versions. That reasoning still stands and is not being reversed here — this
+    is a PRE-FILTER in front of it, not a replacement.
+
+    So an unrecognised spelling falls through to the sampling path and is
+    classified exactly as before. A new DuckDB version renaming ``DOUBLE[]``
+    costs this function its speed-up; it can never cost it a wrong answer, and
+    a wrong answer here would mean a signal column offered as a grouping or a
+    real label column silently missing from the list.
+
+    Why it is worth having at all: classifying by value means
+    :func:`sample_column_value` pulls a whole EMG trace out of DuckDB per
+    muscle, only to discard it. Measured on the user's project (scidb.log
+    2026-09-15), that was 4.2 s for ``FilteredDelsys`` and 5.4 s for ``RawEMG``
+    — ~8 s added to every panel open, by two variables that offer no groupings
+    at all.
+    """
+    text = str(data_type or "").strip().upper()
+    if not text:
+        return False
+    if text in _OPAQUE_TYPES:
+        return True
+    # `DOUBLE[]`, `DOUBLE[][]`, `DOUBLE[3]` — anything with a subscript.
+    if "[" in text:
+        return True
+    head = text.split("(", 1)[0].strip()
+    return head in _CONTAINER_TYPE_HEADS
 
 
 def sample_value(db, variable: str) -> Any:

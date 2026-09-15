@@ -151,6 +151,15 @@ Two things that consume this dict and are easy to forget when widening it:
 `input_types`/`output_type` only, so the binding keys don't perturb node
 identity.
 
+A **variable** binding may additionally carry `"columns"` and `"iterate"` —
+the GUI's column selection (`MyVar["col"]` / `MyVar.for_columns([...])`),
+stamped on by `execution_service._attach_column_selections` from the node's
+saved config, since DB history carries no trace of it. The two keys are
+absent entirely when there is no selection, and they are deliberately NOT
+part of `wiring_id` or `compute_call_id`. See
+`docs/claude/column-selection.md` §From the GUI for why that asymmetry with
+scidb's forward `to_call_id` is correct rather than an oversight.
+
 ---
 
 ## 5. `build_run_inputs` — the single construction point

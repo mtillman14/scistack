@@ -223,3 +223,139 @@ def test_a_grouping_column_reaches_the_pipeline_the_same_way(
         "Onward",
         "(missing)",
     ]
+
+
+def test_a_pinned_grouping_reaches_the_pipeline_the_same_way(
+    two_label_variants, tmp_path
+):
+    """A grouping variable with TWO variants, previewed and exported.
+
+    The two paths select the pinned records by genuinely different mechanisms:
+    interactively it is ``variant_set_mask`` over the loaded frame, and in the
+    pipeline it is scidb's load-time ``branch_params_filter`` behind
+    ``Variant(GroupLabel, fn=..., scheme=...)``. Nothing makes those agree
+    except that they were written to.
+
+    The figures prove it rather than the source text. Both pins are exported and
+    run; a pipeline that ignored the pin would load every variant of the sheet
+    and draw the SAME figure twice, so the bytes differing is the evidence.
+
+    That evidence needs one prop: the bytes have to be deterministic, or
+    "different" could be satisfied by noise. Established by rendering one
+    ResolvedPlot twice — deliberately NOT by running a third pipeline, which
+    ``for_each`` may legitimately skip as already computed and which would then
+    be testing the cache rather than the renderer.
+    """
+    from scidb import Variant
+    from scistackplot import FactorVariable
+
+    from conftest import GroupLabel, scheme_axis
+
+    source = ScidbSource(two_label_variants)
+    axis = scheme_axis(source)
+
+    def draw(scheme: str, into):
+        into.mkdir(exist_ok=True)
+        groups = [FactorVariable("GroupLabel", variant={axis: scheme})]
+        table = source.get_table(["StepLength"], factor_variables=groups)
+        spec = PlotSpec(
+            measures=["StepLength"],
+            factor_variables=groups,
+            roles={
+                "GroupLabel": Role.X,
+                "subject": Role.FREE,
+                "session": Role.FREE,
+                "trial": Role.FREE,
+            },
+            kind=PlotKind.BAR,
+        )
+        interactive = resolve(spec, table)
+        code = generate_endpoint(
+            spec,
+            table,
+            input_variable="StepLength",
+            path_template=str(into / "fig_all.png"),
+        )
+        files, failures = _run_generated(
+            code, into, extra={"GroupLabel": GroupLabel, "Variant": Variant}
+        )
+        return interactive, code, files, failures
+
+    a_figures, a_code, a_files, a_failures = draw("a", tmp_path / "a")
+    b_figures, b_code, b_files, b_failures = draw("b", tmp_path / "b")
+
+    assert len(a_files) == 1, _explain(a_code, a_failures)
+    assert len(b_files) == 1, _explain(b_code, b_failures)
+
+    # The pin reached the generated code at all.
+    assert "Variant(GroupLabel" in a_code.foreach_source, a_code.foreach_source
+
+    # The preview shows one pin's labels and not the other's.
+    a_drawn = [str(v) for v in a_figures[0].x_order]
+    b_drawn = [str(v) for v in b_figures[0].x_order]
+    assert a_drawn and all(label.startswith("a-") for label in a_drawn), a_drawn
+    assert b_drawn and all(label.startswith("b-") for label in b_drawn), b_drawn
+
+    # The prop: identical input, identical bytes.
+    import matplotlib.pyplot as plt
+    from scistackplot import render_matplotlib
+
+    rendered = []
+    for name in ("det1.png", "det2.png"):
+        path = tmp_path / name
+        figure = render_matplotlib(a_figures[0])
+        try:
+            figure.savefig(path)
+        finally:
+            plt.close(figure)
+        rendered.append(path.read_bytes())
+    assert rendered[0] == rendered[1], (
+        "rendering one figure twice gave different bytes, so the comparison "
+        "below cannot distinguish a working pin from noise"
+    )
+
+    # ...and so the pipeline really did honour the pin.
+    assert a_files[0].read_bytes() != b_files[0].read_bytes(), (
+        "both pins exported the same figure — the pipeline loaded every variant "
+        "of the grouping variable instead of the one that was pinned"
+        + _explain(a_code, a_failures)
+    )
+
+
+def test_an_unpinned_grouping_exports_the_variable_bare(seeded, tmp_path):
+    """The wrapper appears because a pin was made, not by default.
+
+    Worth its own case beside the one above: if `Variant(...)` were emitted
+    unconditionally, the parity test would still pass — both pins would differ —
+    while every unpinned grouping in every existing pipeline gained a wrapper
+    around an empty selection.
+    """
+    from scistackplot import FactorVariable
+
+    from conftest import Condition
+
+    groups = [FactorVariable("Condition")]
+    source = ScidbSource(seeded)
+    table = source.get_table(["StepLength"], factor_variables=groups)
+    spec = PlotSpec(
+        measures=["StepLength"],
+        factor_variables=groups,
+        roles={
+            "Condition": Role.X,
+            "subject": Role.FREE,
+            "session": Role.FREE,
+            "trial": Role.FREE,
+        },
+        kind=PlotKind.BAR,
+    )
+
+    code = generate_endpoint(
+        spec,
+        table,
+        input_variable="StepLength",
+        path_template=str(tmp_path / "fig_all.png"),
+    )
+    files, failures = _run_generated(code, tmp_path, extra={"Condition": Condition})
+
+    assert '"group_condition": Condition,' in code.foreach_source
+    assert len(files) == 1, _explain(code, failures)

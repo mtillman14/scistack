@@ -180,39 +180,27 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         else {"offered": source.stackable_with(variable), "rejected": {}}
     )
     stackable = stacking["offered"]
-    # Offers AND refusals here too: a demographics column that is numeric, or
-    # holds one value per subject, is absent from the list for a reason the user
-    # cannot otherwise guess — they can see the column in their spreadsheet.
-    grouping = (
-        source.groupable_report(variable)
-        if hasattr(source, "groupable_report")
-        else {
-            "offered": [
-                {
-                    "variable": g.variable,
-                    "column": g.column,
-                    "label": g.label,
-                    "name": g.factor_name,
-                    "levels": [],
-                    "level_count": 0,
-                }
-                for g in source.groupable_with(variable)
-            ],
-            "rejected": {},
-        }
-    )
+    # Which VARIABLES may group this figure — never their columns.
+    #
+    # `groupable_report` used to answer both here, which meant every wide
+    # variable's per-column work ran on every panel open whether or not anyone
+    # looked: 4.2 s for FilteredDelsys and 5.4 s for RawEMG on the user's
+    # project (scidb.log 2026-09-15), both offering nothing. The columns are now
+    # `plot_grouping_columns`, asked once per variable the user opens.
+    grouping = source.groupable_variables(variable)
     groupable = grouping["offered"]
     # Which optional sections the panel can show, and why. Each of these gates a
     # control that is simply absent when the list is empty, so an empty list has
     # to be visible somewhere — otherwise "no other variable qualifies" and "the
     # feature is missing" look identical from the outside.
     logger.info(
-        "[plot] describe(%s): %d stackable %s, %d groupable %s, %d joinable",
+        "[plot] describe(%s): %d stackable %s, %d groupable variable(s) %s "
+        "(no column query), %d joinable",
         variable,
         len(stackable),
         stackable,
         len(groupable),
-        [offer["label"] for offer in groupable],
+        [(offer["label"], offer["kind"]) for offer in groupable],
         len(source.joinable_with(variable)),
     )
 
@@ -232,10 +220,12 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         # Why each remaining variable is NOT offered, so the picker can draw it
         # refused-with-a-reason instead of leaving it inert and unexplained.
         "stackable_refused": stacking["rejected"],
-        # Groupings usable as a FACTOR — a variable recorded at or above this
-        # variable's schema level, or one categorical column of such a variable
-        # (a demographics sheet), so each row gets exactly one of their values.
-        "groupable_with": groupable,
+        # VARIABLES usable as a grouping — one recorded at or above this
+        # variable's schema level, so each row gets exactly one of its values.
+        # One entry per variable, never per column: a wide sheet arrives with
+        # `kind: "columns"` and a count, and WHICH of its columns qualify is
+        # `plot_grouping_columns`, asked when the user opens that variable.
+        "groupable_variables": groupable,
         "groupable_refused": grouping["rejected"],
         # What this matplotlib can write, so the format dropdown offers exactly
         # what the save will accept rather than a second list that can drift.
@@ -325,9 +315,25 @@ def _variant_graph(db, variable, *, functions, csv_path) -> dict:
     # Read from scistackplot rather than recomputed here (CLAUDE.md NOTE 3) —
     # the panel's opening pin and a row added later must be the same rule, or
     # the two disagree about what "one variant" means.
+    #
+    # Over `variant_table`, NOT `get_table`. `default_selection` reads
+    # `default_pin`, `latest_column` and the variant factors' levels and never
+    # touches a measure column, and `variant_table` answers exactly that from a
+    # query selecting no data columns — which is the whole reason it exists
+    # (`.claude/plot-at-scale-plan.md` §7: reading a handful of variant levels
+    # through `get_table` meant loading 174 M samples, and the schema-location
+    # picker timed out on a 419-location variable).
+    #
+    # It was survivable while the popup only ever opened over the variable the
+    # panel had already loaded and cached. It stops being survivable now that
+    # the grouping picker asks this for a variable nobody has plotted.
     from scistackplot import default_selection
 
-    graph["default_selection"] = default_selection(source.get_table([variable]))
+    graph["default_selection"] = default_selection(
+        source.variant_table(variable)
+        if hasattr(source, "variant_table")
+        else source.get_table([variable])
+    )
 
     logger.info(
         "[plot] variant_graph(%s): %d axes, %d function(s) with versions, "
@@ -339,6 +345,89 @@ def _variant_graph(db, variable, *, functions, csv_path) -> dict:
     )
     graph["node_bindings"] = axis_node_bindings(db, graph["axes"])
     return graph
+
+
+def grouping_graph(db, variable: str, *, csv_path: str | None = None) -> dict:
+    """Which variable nodes may group ``variable``'s figure, and why not.
+
+    The canvas half of the Grouping picker, and the reason it is its own call:
+    drawing it must cost no value read and no ``DISTINCT`` on a wide table
+    (``ScidbSource.groupable_variables``). Its companion
+    :func:`grouping_columns` is the expensive half, asked once per variable the
+    user opens rather than once per panel.
+
+    Read-only, like every other picker call. Nothing here touches execution
+    state, which is the property ``test_plot_service`` asserts for the variant
+    popup and which this one has to keep: a dialog about what to LOOK at must
+    never change what a run does.
+    """
+    from scistack_gui.db import db_connection
+
+    with db_connection("plot_grouping_graph", needed=not csv_path):
+        source = get_source(db, csv_path=csv_path)
+        report = source.groupable_variables(variable)
+        logger.info(
+            "[plot] grouping_graph(%s): %d offered %s, %d refused",
+            variable,
+            len(report["offered"]),
+            [(o["label"], o["kind"]) for o in report["offered"]],
+            len(report["rejected"]),
+        )
+        return report
+
+
+def grouping_columns(
+    db, variable: str, group_variable: str, *, csv_path: str | None = None
+) -> dict:
+    """Which columns of ``group_variable`` may group ``variable``'s figure.
+
+    The click half (see :func:`grouping_graph`). One ``SELECT DISTINCT … LIMIT``
+    per candidate column, so it is paid for the variable the user actually
+    opened and for no other.
+    """
+    from scistack_gui.db import db_connection
+
+    with db_connection("plot_grouping_columns", needed=not csv_path):
+        source = get_source(db, csv_path=csv_path)
+        report = source.groupable_columns(variable, group_variable)
+        logger.info(
+            "[plot] grouping_columns(%s of %s): %d offered %s, %d refused %s",
+            group_variable,
+            variable,
+            len(report["offered"]),
+            [o["label"] for o in report["offered"]],
+            len(report["rejected"]),
+            report["rejected"] or "",
+        )
+        return report
+
+
+def grouping_default_variant(
+    db, group_variable: str, *, csv_path: str | None = None
+) -> dict:
+    """The variant a grouping by ``group_variable`` should open on: latest.
+
+    Separate from the graph so it is asked once per variable the user picks,
+    not once per variable drawn — and answered by
+    ``ScidbSource.default_variant_for``, which is
+    ``scistackplot.default_selection`` over that variable's cheap variant table.
+    One rule for "latest", shared with the Variants section (CLAUDE.md NOTE 3).
+    """
+    from scistack_gui.db import db_connection
+
+    with db_connection("plot_grouping_default_variant", needed=not csv_path):
+        source = get_source(db, csv_path=csv_path)
+        if not hasattr(source, "default_variant_for"):
+            # A CSV has no provenance and so no variants. An empty selection is
+            # the honest answer and is inert everywhere downstream.
+            return {"variable": group_variable, "selection": {}}
+        selection = source.default_variant_for(group_variable)
+        logger.info(
+            "[plot] grouping_default_variant(%s): %s",
+            group_variable,
+            selection or "none",
+        )
+        return {"variable": group_variable, "selection": selection}
 
 
 def location_tree(

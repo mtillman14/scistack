@@ -416,6 +416,32 @@ class FactorVariable:
 
     variable: str
     column: str | None = None
+    #: Which VARIANT of the grouping variable supplies the labels, as a
+    #: selection keyed by frame column — the same plain-data shape
+    #: :class:`VariantSet.selection` uses, and for the same two hard reasons: it
+    #: round-trips through JSON-RPC and through a generated docstring, and
+    #: ``scistackplot`` must keep working with no scidb installed.
+    #:
+    #: Stored as a tuple of pairs rather than a dict because this class is
+    #: frozen AND hashable — ``BaseSource.get_table`` memoizes on a tuple of
+    #: these, so a dict field would make the memo key unhashable. Construct it
+    #: with a dict (``FactorVariable("Demographics", "Sex", {"CodeIsLatest":
+    #: True})``); read it back through :attr:`selection`.
+    #:
+    #: Empty means **nothing said**, not "latest": every variant of the variable
+    #: contributes, and where that leaves two labels for one schema location the
+    #: join warns and takes the first. The picker always writes an explicit pin
+    #: (defaulting to latest), so the empty case is a hand-written spec or one
+    #: predating this field.
+    variant: tuple[tuple[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "variant", _hashable_selection(self.variant))
+
+    @property
+    def selection(self) -> dict[str, Any]:
+        """:attr:`variant` as the dict every selection consumer expects."""
+        return {key: value for key, value in self.variant}
 
     @property
     def factor_name(self) -> str:
@@ -438,11 +464,50 @@ class FactorVariable:
         return f"{self.variable}.{self.column}" if self.column else self.variable
 
     def to_dict(self) -> dict:
-        return {"variable": self.variable, "column": self.column}
+        return {
+            "variable": self.variable,
+            "column": self.column,
+            # A dict on the wire, a tuple in memory. JSON has no tuples, and the
+            # GUI edits this as an object like every other selection.
+            "variant": self.selection,
+        }
 
     @classmethod
     def from_dict(cls, raw: dict) -> "FactorVariable":
-        return cls(variable=raw["variable"], column=raw.get("column"))
+        return cls(
+            variable=raw["variable"],
+            column=raw.get("column"),
+            variant=raw.get("variant") or (),
+        )
+
+
+def _hashable_selection(raw: Any) -> tuple[tuple[str, Any], ...]:
+    """A variant selection as a hashable, order-stable tuple of pairs.
+
+    Accepts the dict form callers naturally write and the tuple form a
+    round-trip hands back. **List values become tuples**: a selection may name
+    several levels (``{"bandpass.low_hz": ["20", "50"]}`` — membership, the same
+    semantics ``scidb.database._match_branch_param`` gives a list-valued
+    ``Variant`` kwarg), and a list inside a frozen dataclass makes the whole
+    thing unhashable, which would break ``get_table``'s memo the moment anyone
+    pinned a subcube.
+
+    Sorted by key so two selections written in different orders are the same
+    object — and therefore the same cache key.
+    """
+    if not raw:
+        return ()
+    items = raw.items() if isinstance(raw, dict) else raw
+    normalised = []
+    for key, value in items:
+        if isinstance(value, (list, tuple, set, frozenset)):
+            # Sorted for the same reason the keys are: {"20", "50"} and
+            # {"50", "20"} select identically and must not be two cache keys.
+            # Tuples included, so normalising is idempotent — this runs again on
+            # every round-trip through `from_dict`.
+            value = tuple(sorted(value, key=str))
+        normalised.append((str(key), value))
+    return tuple(sorted(normalised, key=lambda pair: pair[0]))
 
 
 def _factor_variable_from_raw(raw: Any) -> FactorVariable:

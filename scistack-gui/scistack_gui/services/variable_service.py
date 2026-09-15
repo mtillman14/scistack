@@ -254,3 +254,77 @@ def get_variable_plot_data(variable_name: str, db) -> dict:
     from scistack_gui.api.variables import get_variable_plot_data as _get_plot_data
 
     return _get_plot_data(variable_name, db)
+
+
+def input_columns(variable_type: str, db=None) -> dict:
+    """The columns a consumer of *variable_type* will actually receive.
+
+    Not guessable from the canvas — it depends on how the variable stores its
+    data:
+
+    * a **DataFrame**-stored variable arrives under the user's own column
+      names; there is no column named after the class;
+    * a **dict**-stored (multi_column) variable arrives as one column per key;
+    * a **scalar or array** arrives as schema-key columns plus ONE data column
+      named after the class (``view_name()``).
+
+    Read live from ``_variables.dtype`` on every panel open rather than
+    scaffolded anywhere — a cached list goes stale the moment the variable is
+    re-saved with a different shape, and both consumers of this (the glue
+    panel and the function node's Inputs picker) re-read it every time.
+
+    Variables own this, not glue. It grew up inside ``glue_service`` because
+    glue was the first caller; a second caller with the same question is a
+    reason to move it to the layer that owns the answer, not to copy it
+    (``feedback_avoid_scifor_scidb_duplication``).
+
+    Returns ``{"ok": True, "variable_type", "schema_keys", "data_columns",
+    "note"}``, or ``{"ok": False, "error"}`` when no database is open.
+    """
+    from scistack_gui import db as db_module
+
+    try:
+        active = db if db is not None else db_module.get_db()
+    except Exception:
+        active = None
+    if active is None:
+        return {"ok": False, "error": "No database is open."}
+
+    schema_keys = list(active.dataset_schema_keys)
+    try:
+        dtype = active.get_dtype_meta(variable_type)
+    except Exception as exc:
+        logger.debug(
+            "[variables] dtype lookup failed for %s: %s", variable_type, exc
+        )
+        dtype = None
+
+    mode = (dtype or {}).get("mode") if isinstance(dtype, dict) else None
+    if mode == "dataframe":
+        data_columns = list((dtype or {}).get("columns", {}) or {})
+        note = "This variable stores a DataFrame, so its own column names arrive."
+    elif mode == "multi_column":
+        data_columns = list((dtype or {}).get("columns", {}) or {})
+        note = "This variable stores a dict; one column per key arrives."
+    else:
+        data_columns = [variable_type]
+        note = (
+            f"This variable stores a scalar or array, so its data arrives in one "
+            f"column named '{variable_type}'."
+        )
+
+    logger.info(
+        "[variables] input_columns(%s): mode=%s, %d data column(s), "
+        "%d schema key(s)",
+        variable_type,
+        mode or "scalar/array",
+        len(data_columns),
+        len(schema_keys),
+    )
+    return {
+        "ok": True,
+        "variable_type": variable_type,
+        "schema_keys": schema_keys,
+        "data_columns": data_columns,
+        "note": note,
+    }

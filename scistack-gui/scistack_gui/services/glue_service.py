@@ -366,56 +366,17 @@ def delete_glue_node(name: str, db=None) -> dict:
 def input_columns(variable_type: str, db=None) -> dict:
     """The column list a glue on ``variable_type`` will actually receive.
 
-    This is the genuinely non-obvious half of writing glue, and it is not
-    guessable from the canvas — it depends on how the variable stores its
-    data:
-
-    * a **DataFrame**-stored variable arrives under the user's own column
-      names; there is no column named after the class;
-    * a **scalar or array** arrives as schema-key columns plus ONE data
-      column named after the class (``view_name()``).
-
-    Read live from ``_variables.dtype`` on every panel open rather than
-    scaffolded into the file as a comment — a comment goes stale the moment
-    the node is rewired, the panel re-reads it every time.
+    Thin delegation to :func:`variable_service.input_columns`, which is where
+    this logic now lives: a variable's storage shape is a question about the
+    VARIABLE, and it acquired a second asker (the function node's Inputs
+    column picker) that has nothing to do with glue. Copying it there instead
+    would have been the drift this codebase keeps paying for
+    (``feedback_avoid_scifor_scidb_duplication``); behaviour for glue is
+    unchanged, byte for byte.
     """
-    from scistack_gui import db as db_module
+    from scistack_gui.services import variable_service
 
-    try:
-        active = db if db is not None else db_module.get_db()
-    except Exception:
-        active = None
-    if active is None:
-        return {"ok": False, "error": "No database is open."}
-
-    schema_keys = list(active.dataset_schema_keys)
-    try:
-        dtype = active.get_dtype_meta(variable_type)
-    except Exception as exc:
-        logger.debug("[glue] dtype lookup failed for %s: %s", variable_type, exc)
-        dtype = None
-
-    mode = (dtype or {}).get("mode") if isinstance(dtype, dict) else None
-    if mode == "dataframe":
-        data_columns = list((dtype or {}).get("columns", {}) or {})
-        note = "This variable stores a DataFrame, so its own column names arrive."
-    elif mode == "multi_column":
-        data_columns = list((dtype or {}).get("columns", {}) or {})
-        note = "This variable stores a dict; one column per key arrives."
-    else:
-        data_columns = [variable_type]
-        note = (
-            f"This variable stores a scalar or array, so its data arrives in one "
-            f"column named '{variable_type}'."
-        )
-
-    return {
-        "ok": True,
-        "variable_type": variable_type,
-        "schema_keys": schema_keys,
-        "data_columns": data_columns,
-        "note": note,
-    }
+    return variable_service.input_columns(variable_type, db=db)
 
 
 def _refresh(path: "Path | None" = None) -> dict:

@@ -140,3 +140,81 @@ class TestMetadataLoadIsOptIn:
         assert "RHAM" not in frame.frame.columns
         # Still a real frame of records — this is a narrower load, not an empty one.
         assert len(frame.frame) > 0
+
+
+# --- the frame behind it: provenance without payload -----------------------
+#
+# `variant_table` and `variant_graph` ask the same three questions of a
+# variable — record ids, variant columns, variant axes — and neither touches a
+# measure. `_variant_frame` is what answers them, and the cache it uses has to
+# stay apart from the full-frame one or a later plot gets a frame with no data
+# in it.
+
+
+class TestTheProvenanceFrame:
+    def test_variant_graph_does_not_load_the_data(self, source):
+        """The case that matters: a variable nobody has plotted. Before this,
+        opening a picker over `Emg` read every muscle's every sample to answer
+        "which versions of its loader exist"."""
+        assert "Emg" not in source._frames
+
+        source.variant_graph("Emg")
+
+        assert "Emg" not in source._frames, "the full frame was loaded"
+        assert "Emg" in source._variant_frames
+
+    def test_the_provenance_frame_carries_no_data_columns(self, source, seeded):
+        """Checked against the TABLE's real columns, not against the frame's own
+        `data_columns` — `include_data=False` reports that as empty, so reading
+        it back would assert nothing at all."""
+        from scistackplotdb.load import data_columns_for
+
+        loaded = source._variant_frame("Emg")
+        stored = data_columns_for(seeded, "Emg")
+
+        assert stored, "precondition: Emg has data columns to leave out"
+        assert loaded.data_columns == []
+        for column in stored:
+            assert column not in loaded.frame.columns, (
+                f"{column!r} is a measure column and should not have been read"
+            )
+
+    def test_a_loaded_variable_is_reused_rather_than_re_read(self, source):
+        """When the panel has already loaded it, the full frame answers these
+        questions too — paying for a second read would be the mirror of the
+        bug this fixes."""
+        source.get_table(["Emg"])
+        assert "Emg" in source._frames
+
+        assert source._variant_frame("Emg") is source._frames["Emg"]
+        assert "Emg" not in source._variant_frames
+
+    def test_the_two_caches_are_separate(self, source):
+        """A data-less frame in `_frames` would be handed to a later plot as
+        though it held the measure — an empty figure with no error anywhere."""
+        source.variant_graph("Emg")
+
+        table = source.get_table(["Emg"])
+
+        assert len(table.measures) == 1
+        assert not table.frame.empty
+
+    def test_invalidate_drops_the_provenance_frame_too(self, source):
+        """Provenance goes stale with the data: a re-run writes new records
+        under a new function version, which is what this cache answers."""
+        source.variant_graph("Emg")
+        assert "Emg" in source._variant_frames
+
+        source.invalidate("Emg")
+
+        assert "Emg" not in source._variant_frames
+
+    def test_the_graph_is_the_same_either_way(self, source):
+        """The contract this shares with `variant_table`: the cheap path's
+        ANSWER is the expensive path's answer. If they ever diverge, a picker
+        would offer versions the figure does not have."""
+        cheap = source.variant_graph("Emg")
+        source.get_table(["Emg"])
+        source._variant_frames.clear()
+
+        assert source.variant_graph("Emg") == cheap

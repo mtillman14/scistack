@@ -35,22 +35,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  ReactFlow,
-  ReactFlowProvider,
-  Background,
-  Controls,
-  Handle,
-  Position,
-  type Edge,
-  type Node,
-} from '@xyflow/react'
-import '@xyflow/react/dist/style.css'
+import { Handle, Position, type Node } from '@xyflow/react'
 
 import FunctionNode from '../DAG/FunctionNode'
 import ParameterNode, { VariantParameterNode } from '../DAG/ParameterNode'
-import { applyDagreLayout } from '../../layout'
 import { callBackend } from '../../api'
+import {
+  PickerDialog,
+  pickerStyles as styles,
+  usePipelineCanvas,
+} from './DagPicker'
 import {
   VariantSelectionProvider,
   useVariantSelection,
@@ -244,41 +238,18 @@ export default function VariantDagPopup({
   onApply,
   onCancel,
 }: Props) {
-  const [nodes, setNodes] = useState<Node[]>([])
-  const [edges, setEdges] = useState<Edge[]>([])
+  // The pipeline canvas, independent of which variable is chosen — and shared
+  // with the grouping picker, which draws the same graph to ask a different
+  // question (see `DagPicker`).
+  const { nodes, edges, loading, error: canvasError } = usePipelineCanvas()
   const [graph, setGraph] = useState<VariantGraph | null>(null)
   const [selection, setSelection] = useState<Record<string, unknown>>(initial)
   const [name, setName] = useState(initialName)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [axesError, setAxesError] = useState('')
   // null while step one is still open. In edit mode there is no step one, so it
   // is the variable being edited from the start and nothing else can set it.
   const [chosen, setChosen] = useState<string | null>(pick ? null : variable)
-
-  // --- the pipeline canvas, independent of which variable is chosen --------
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const pipeline = (await callBackend('get_pipeline', { pipeline_id: 'main' })) as {
-          nodes: Node[]
-          edges: Edge[]
-        }
-        const layout = (await callBackend('get_layout', { pipeline_id: 'main' })) as
-          Record<string, unknown>
-        const saved = (layout.positions ?? layout) as Record<string, { x: number; y: number }>
-        if (cancelled) return
-
-        setNodes(applyDagreLayout(pipeline.nodes, pipeline.edges, saved))
-        setEdges(pipeline.edges)
-      } catch (err) {
-        if (!cancelled) setError((err as Error).message)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [])
+  const error = canvasError || axesError
 
   // --- the chosen variable's axes -----------------------------------------
   // Separate from the canvas load so step one can draw immediately, and so
@@ -303,18 +274,11 @@ export default function VariantDagPopup({
         // "+ Add variant" would quietly add all of them to the figure.
         if (pick) setSelection(variantGraph.default_selection ?? {})
       } catch (err) {
-        if (!cancelled) setError((err as Error).message)
+        if (!cancelled) setAxesError((err as Error).message)
       }
     })()
     return () => { cancelled = true }
   }, [chosen, nodes, pick])
-
-  // Escape cancels — a modal that traps you is worse than one you can leave.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onCancel])
 
   // --- selection ----------------------------------------------------------
   const axes = graph?.axes ?? []
@@ -466,81 +430,52 @@ export default function VariantDagPopup({
   }, [choosing, boundNodes, variable, pickable, refusals])
 
   return (
-    <div style={styles.backdrop} onClick={onCancel}>
-      <div style={styles.dialog} onClick={e => e.stopPropagation()}>
-        <div style={styles.header}>
-          <div style={styles.headerLeft}>
-            <span style={styles.title}>
-              {choosing ? 'Which variable?' : 'Select variant'}
-            </span>
+    <PickerDialog
+      title={choosing ? 'Which variable?' : 'Select variant'}
+      subtitle={
+        choosing
+          ? 'Click the variable to plot. Anything that cannot be drawn alongside this figure says why.'
+          : 'Checkboxes and versions here choose what the FIGURE shows. Nothing on this graph changes what a run does.'
+      }
+      headerExtra={
+        !choosing && (
+          <>
             {/* The chosen variable, once there is one. A row names a variable
                 AND a variant, and after step one the second question is
                 meaningless without the answer to the first on screen. */}
-            {!choosing && (
-              <span style={styles.chosenVariable} title="The variable this variant plots">
-                {chosen}
-              </span>
-            )}
-            {!choosing && (
-              <input
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder={placeholder || 'variant name'}
-                style={styles.nameInput}
-                title="What this variant is called in the figure"
-              />
-            )}
-          </div>
-          <span style={styles.subtitle}>
-            {choosing
-              ? 'Click the variable to plot. Anything that cannot be drawn alongside this figure says why.'
-              : 'Checkboxes and versions here choose what the FIGURE shows. Nothing on this graph changes what a run does.'}
-          </span>
-        </div>
-
-        <div style={styles.canvas}>
-          {loading && <div style={styles.note}>Loading the pipeline…</div>}
-          {error && <div style={styles.error}>Could not load the pipeline: {error}</div>}
-          {!loading && !error && (
-            <VariantSelectionProvider value={value}>
-              <ReactFlowProvider>
-                <ReactFlow
-                  nodes={pickingNodes}
-                  edges={edges}
-                  nodeTypes={choosing ? pickNodeTypes : nodeTypes}
-                  nodesDraggable={false}
-                  nodesConnectable={false}
-                  // MUST stay true. React Flow gives a node wrapper
-                  // `pointer-events: none` unless it is selectable, draggable,
-                  // or carries a mouse handler — so turning all three off made
-                  // every control in this popup unclickable, checkboxes as well
-                  // as the version dropdowns. Selection is inert here anyway
-                  // (nothing reads node.selected); it exists to keep the nodes
-                  // reachable by the mouse.
-                  elementsSelectable
-                  fitView
-                  fitViewOptions={{ padding: 0.2 }}
-                  proOptions={{ hideAttribution: true }}
-                >
-                  <Background />
-                  <Controls showInteractive={false} />
-                </ReactFlow>
-              </ReactFlowProvider>
-            </VariantSelectionProvider>
-          )}
-        </div>
-
-        {!choosing && unmapped.length > 0 && (
-          <div style={styles.unmapped}>
-            <div style={styles.unmappedTitle}>
-              No node on this canvas
-            </div>
+            <span style={styles.chosenVariable} title="The variable this variant plots">
+              {chosen}
+            </span>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder={placeholder || 'variant name'}
+              style={localStyles.nameInput}
+              title="What this variant is called in the figure"
+            />
+          </>
+        )
+      }
+      nodes={pickingNodes}
+      edges={edges}
+      nodeTypes={choosing ? pickNodeTypes : nodeTypes}
+      loading={loading}
+      error={error}
+      // The provider wraps the CANVAS, not the dialog: the node components read
+      // the selection through it, and nothing else in the chrome does.
+      canvasWrapper={children => (
+        <VariantSelectionProvider value={value}>{children}</VariantSelectionProvider>
+      )}
+      below={
+        !choosing && unmapped.length > 0 ? (
+          <div style={localStyles.unmapped}>
+            <div style={localStyles.unmappedTitle}>No node on this canvas</div>
             {unmapped.map(axis => (
-              <div key={axis.column} style={styles.unmappedRow}>
-                <span style={styles.unmappedName}>{axis.column}</span>
-                <div style={styles.unmappedLevels}>
+              <div key={axis.column} style={localStyles.unmappedRow}>
+                <span style={localStyles.unmappedName}>{axis.column}</span>
+                <div style={localStyles.unmappedLevels}>
                   {axis.levels.map(level => (
-                    <label key={level} style={styles.unmappedLevel}>
+                    <label key={level} style={localStyles.unmappedLevel}>
                       <input
                         type="checkbox"
                         checked={value.isLevelSelected(axis.column, level)}
@@ -553,12 +488,10 @@ export default function VariantDagPopup({
               </div>
             ))}
           </div>
-        )}
-
-        <div style={styles.footer}>
-          <button type="button" style={styles.button} onClick={onCancel}>
-            Cancel
-          </button>
+        ) : null
+      }
+      footer={
+        <>
           {/* Step one back to nothing: leaving the popup open on the variable
               pick is cheaper than cancelling and re-opening when the wrong
               node was clicked. Only in `pick` mode — editing an existing row
@@ -591,46 +524,18 @@ export default function VariantDagPopup({
               Apply
             </button>
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+      onCancel={onCancel}
+    />
   )
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  backdrop: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100,
-  },
-  dialog: {
-    width: '82vw', height: '80vh', background: '#16162a',
-    border: '1px solid #7b68ee', borderRadius: 8,
-    display: 'flex', flexDirection: 'column', overflow: 'hidden',
-    boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
-  },
-  header: {
-    padding: '10px 14px', borderBottom: '1px solid #2a2a4a', background: '#1a1a2e',
-    display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0,
-  },
-  headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
-  title: { color: '#eee', fontSize: 14, fontWeight: 600 },
-  subtitle: { color: '#8a8aa8', fontSize: 11, fontStyle: 'italic' },
+/** Only what the shared shell does not provide (`DagPicker.pickerStyles`). */
+const localStyles: Record<string, React.CSSProperties> = {
   nameInput: {
     background: '#22223a', color: '#ddd', border: '1px solid #3a3a5a',
     borderRadius: 4, fontSize: 12, padding: '3px 6px', minWidth: 200,
-  },
-  canvas: { flex: 1, minHeight: 0, position: 'relative' },
-  footer: {
-    display: 'flex', justifyContent: 'flex-end', gap: 8,
-    padding: '10px 14px', borderTop: '1px solid #2a2a4a', flexShrink: 0,
-  },
-  button: {
-    padding: '5px 14px', background: '#22223a', color: '#ccc',
-    border: '1px solid #3a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 12,
-  },
-  primaryButton: {
-    padding: '5px 14px', background: '#7b68ee', color: '#fff',
-    border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600,
   },
   unmapped: {
     borderTop: '1px solid #2a2a4a', padding: '8px 14px', maxHeight: 120,
@@ -642,43 +547,5 @@ const styles: Record<string, React.CSSProperties> = {
   unmappedLevels: { display: 'flex', gap: 8, flexWrap: 'wrap' },
   unmappedLevel: {
     display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: '#ddd',
-  },
-  note: { fontSize: 12, color: '#777', fontStyle: 'italic', padding: 12 },
-  error: { fontSize: 12, color: '#f87171', padding: 12 },
-  inertNode: {
-    background: '#2a2438', border: '2px dashed #6b5a9a', borderRadius: 6,
-    padding: '8px 12px', minWidth: 150, opacity: 0.55,
-  },
-  inertNodeLabel: {
-    fontWeight: 600, color: '#c4b5fd', fontFamily: 'monospace',
-    textAlign: 'center', fontSize: 13,
-  },
-  inertNodeHint: {
-    fontSize: 10, color: '#8a8aa8', fontStyle: 'italic', textAlign: 'center',
-  },
-  // The chosen variable, beside the title in step two.
-  chosenVariable: {
-    fontFamily: 'monospace', fontSize: 12, color: '#9d92f5',
-    background: '#22223a', border: '1px solid #4c3a8a', borderRadius: 4,
-    padding: '2px 8px',
-  },
-  pickNode: {
-    borderRadius: 6, padding: '8px 12px', minWidth: 150, textAlign: 'center',
-  },
-  pickNodeReady: {
-    background: '#1e2a44', border: '2px solid #4f7fd0', cursor: 'pointer',
-  },
-  // Drawn, not hidden, and not merely dim: the reason is the content. A node
-  // the user expected to click has to say why it cannot be, in place.
-  pickNodeRefused: {
-    background: '#22223a', border: '2px dashed #3a3a5a', opacity: 0.6,
-    cursor: 'not-allowed',
-  },
-  pickNodeLabel: {
-    fontWeight: 600, color: '#ddd', fontFamily: 'monospace', fontSize: 13,
-  },
-  pickNodeHint: {
-    fontSize: 9, color: '#8a8aa8', fontStyle: 'italic', marginTop: 2,
-    maxWidth: 200, whiteSpace: 'normal', lineHeight: 1.3,
   },
 }

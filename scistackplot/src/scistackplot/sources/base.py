@@ -94,6 +94,28 @@ class DataSource(Protocol):
 
         The same offers with the refusals kept, for the GUI: a column a user can
         see in their spreadsheet and not in the Grouping list has to say why.
+
+        The **expensive** form: everything at once. A source that can answer
+        more cheaply in two steps also implements the pair below, and the
+        grouping picker asks those instead.
+        """
+        ...
+
+    def groupable_variables(self, measure: str) -> dict:
+        """Which VARIABLES may group ``measure``, without reading any values.
+
+        One entry per variable rather than per column, each carrying ``kind``
+        (``"categorical"``/``"numeric"`` for a variable offerable whole, with
+        its ready-made ``offer``; ``"columns"`` for a wide table whose columns
+        are a separate question). The canvas half of the grouping picker.
+        """
+        ...
+
+    def groupable_columns(self, measure: str, variable: str) -> dict:
+        """Which COLUMNS of ``variable`` may group ``measure``.
+
+        The click half: paid once per variable the user opens, not once per
+        panel. Same ``{"offered", "rejected"}`` shape.
         """
         ...
 
@@ -322,6 +344,15 @@ class BaseSource:
 
     def groupable_report(self, measure: str) -> dict:
         """Offers and refusals. Nothing to offer and nothing to explain here."""
+        return {"offered": [], "rejected": {}}
+
+    def groupable_variables(self, measure: str) -> dict:
+        """Nothing to offer, for the reason above — and so nothing to make
+        cheap either. Implemented rather than inherited so the picker can call
+        it on any source without a ``hasattr`` guard."""
+        return {"offered": [], "rejected": {}}
+
+    def groupable_columns(self, measure: str, variable: str) -> dict:
         return {"offered": [], "rejected": {}}
 
     def stackable_with(self, measure: str) -> list[str]:

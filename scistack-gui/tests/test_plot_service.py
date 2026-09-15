@@ -203,6 +203,13 @@ def test_variant_graph_carries_the_default_selection_for_a_new_row(populated_db)
     It comes from ``scistackplot.default_selection``, the same rule the panel
     opens on, so a row added later and the row that was already there cannot
     disagree about what "one variant" means.
+
+    The assertion below is also an EQUIVALENCE check, and is worth keeping in
+    that shape: the service computes this over ``variant_table`` (no data
+    columns) while the comparison uses ``get_table`` (the whole variable). The
+    two are documented to produce the same variant structure, and if they ever
+    stop doing so, the cheap path would silently open figures on a different
+    variant than the expensive one.
     """
     from scistackplot import default_selection
 
@@ -212,6 +219,32 @@ def test_variant_graph_carries_the_default_selection_for_a_new_row(populated_db)
     assert "default_selection" in graph
     assert graph["default_selection"] == default_selection(
         source.get_table(["FilteredSignal"])
+    )
+
+
+def test_variant_graph_does_not_load_the_variable(populated_db):
+    """Opening a picker must not read the data it is picking over.
+
+    `default_selection` reads `default_pin`, `latest_column` and the variant
+    factors' levels and never touches a measure column, which is exactly what
+    `variant_table` answers from a query selecting no data columns. Through
+    `get_table` it meant loading the whole variable — 174 M samples on the case
+    that produced `.claude/plot-at-scale-plan.md` §7, where the schema-location
+    picker timed out on a 419-location variable.
+
+    It was survivable while the popup only opened over the variable the panel
+    had already cached. The grouping picker asks it for a variable nobody has
+    plotted, so it is not survivable any more.
+    """
+    source = plot_service.get_source(populated_db)
+    assert "FilteredSignal" not in source._frames, "precondition: nothing cached yet"
+
+    plot_service.variant_graph(populated_db, "FilteredSignal")
+
+    # `_frames` is the FULL-frame cache; `variant_table` fills its own memo
+    # under a separate key and never populates this one.
+    assert "FilteredSignal" not in source._frames, (
+        "variant_graph loaded the variable's data to read its variant levels"
     )
 
 
@@ -2098,3 +2131,200 @@ def test_the_export_of_a_collapsed_1d_variable_runs(populated_db):
     assert "np.asarray" in result["function_source"]
     assert ".explode(" not in result["function_source"]
     compile(result["source"], "<generated>", "exec")
+
+
+# --- grouping: which variables, then one variable's columns ----------------
+#
+# `describe` used to answer both at once, so opening the panel paid every wide
+# variable's per-column queries whether or not anyone looked. On the user's
+# project that was ~8 s (scidb.log 2026-09-15): 4.2 s for FilteredDelsys and
+# 5.4 s for RawEMG, two variables that offer no groupings at all. The columns
+# are now `plot_grouping_columns`, asked once per variable the user opens.
+
+
+@pytest.fixture
+def grouping_db(populated_db):
+    """``populated_db`` plus a subject-level wide sheet to group by.
+
+    Defined inside the fixture rather than in conftest so it lands in the
+    per-test subclass cleanup (`BaseVariable._all_subclasses` is restored after
+    every test) and no existing test gains a variable it was not written
+    against.
+    """
+    from scidb import BaseVariable
+
+    class Demographics(BaseVariable):
+        schema_version = 1
+
+    rows = {
+        1: {"Age": 64.0, "Sex": "F", "Site": "Boston"},
+        2: {"Age": 71.0, "Sex": "M", "Site": "Boston"},
+    }
+    for subject, row in rows.items():
+        Demographics.save(row, subject=subject)
+    return populated_db
+
+
+@pytest.fixture
+def column_query_spy(monkeypatch):
+    """Records every per-column query the source makes."""
+    import scistackplotdb.source as source_module
+
+    calls: list[tuple[str, str]] = []
+    real_sample = source_module.sample_column_value
+    real_levels = source_module.column_levels
+
+    def sample(db, variable, column):
+        calls.append(("sample", variable, column))
+        return real_sample(db, variable, column)
+
+    def levels(db, variable, column, *, limit):
+        calls.append(("levels", variable, column))
+        return real_levels(db, variable, column, limit=limit)
+
+    monkeypatch.setattr(source_module, "sample_column_value", sample)
+    monkeypatch.setattr(source_module, "column_levels", levels)
+    return calls
+
+
+def test_describe_ships_variables_never_their_columns(grouping_db):
+    described = plot_service.describe(grouping_db, "RawSignal")
+
+    assert "groupable_with" not in described, (
+        "describe must no longer enumerate columns — that is what cost seconds"
+    )
+    by_name = {o["variable"]: o for o in described["groupable_variables"]}
+    assert by_name["Demographics"]["kind"] == "columns"
+    assert by_name["Demographics"]["column_count"] == 3
+    # WHICH of them qualify is deliberately absent: it is the click's question.
+    assert "offer" not in by_name["Demographics"]
+
+
+def test_opening_the_panel_makes_no_column_query(grouping_db, column_query_spy):
+    """The end-to-end pin on the ~8 s. A per-column query here is one paid on
+    every panel open, by every user, whether or not they ever group anything."""
+    plot_service.describe(grouping_db, "RawSignal")
+
+    assert not [
+        call for call in column_query_spy if call[1] == "Demographics"
+    ], f"describe queried the sheet's columns: {column_query_spy}"
+
+
+def test_grouping_graph_is_the_source_s_answer(grouping_db):
+    """The service renders what scistackplotdb decided (CLAUDE.md NOTE 3); it
+    does not get a vote on what may group a figure."""
+    source = plot_service.get_source(grouping_db)
+
+    assert plot_service.grouping_graph(grouping_db, "RawSignal") == (
+        source.groupable_variables("RawSignal")
+    )
+
+
+def test_grouping_columns_answers_for_one_variable(grouping_db):
+    report = plot_service.grouping_columns(grouping_db, "RawSignal", "Demographics")
+
+    assert {o["label"] for o in report["offered"]} == {"Demographics.Sex"}
+    assert "not offered yet" in report["rejected"]["Demographics.Age"]
+    assert "one value" in report["rejected"]["Demographics.Site"]
+
+
+def test_grouping_columns_is_the_only_thing_that_reads_columns(
+    grouping_db, column_query_spy
+):
+    """The cost moved, it did not vanish — and it must land here, on the
+    variable the user actually opened, and on no other."""
+    plot_service.describe(grouping_db, "RawSignal")
+    assert not column_query_spy
+
+    plot_service.grouping_columns(grouping_db, "RawSignal", "Demographics")
+
+    assert {call[1] for call in column_query_spy} == {"Demographics"}
+
+
+def test_grouping_default_variant_is_the_latest_rule(grouping_db):
+    """One rule for "latest", shared with the Variants section — never a second
+    implementation that could disagree with it."""
+    source = plot_service.get_source(grouping_db)
+    answer = plot_service.grouping_default_variant(grouping_db, "Demographics")
+
+    assert answer["variable"] == "Demographics"
+    assert answer["selection"] == source.default_variant_for("Demographics")
+
+
+def test_the_grouping_calls_change_nothing(grouping_db):
+    """Read-only, like every picker call. The Variants popup is held to this by
+    `test_variant_mode_nodes_never_call_the_backend`; the grouping picker DOES
+    call the backend (it has to fetch columns), so the property that matters is
+    narrower and is asserted here instead: looking must not alter what a run
+    would do, or what the figure holds."""
+    before = plot_service.describe(grouping_db, "RawSignal")
+
+    plot_service.grouping_graph(grouping_db, "RawSignal")
+    plot_service.grouping_columns(grouping_db, "RawSignal", "Demographics")
+    plot_service.grouping_default_variant(grouping_db, "Demographics")
+
+    assert plot_service.describe(grouping_db, "RawSignal") == before
+
+
+def test_the_grouping_methods_are_registered_and_self_managed():
+    """A plot method that takes the connection inside the service MUST be in
+    `SELF_MANAGED_DB_METHODS`, or the server holds the file lock across the
+    whole request — which is what blocked MATLAB for 31 s once already."""
+    from scistack_gui import server
+
+    for method in (
+        "plot_grouping_graph",
+        "plot_grouping_columns",
+        "plot_grouping_default_variant",
+    ):
+        assert method in server.METHODS, f"{method} is not dispatchable"
+        assert method in server.SELF_MANAGED_DB_METHODS, (
+            f"{method} takes its own connection but is not declared self-managed"
+        )
+
+
+# --- the grouping picker's own boundary ------------------------------------
+
+
+def test_the_grouping_popup_calls_only_read_rpcs():
+    """The variant popup's node components may call NOTHING
+    (`test_variant_mode_nodes_never_call_the_backend`). The grouping popup is
+    different in kind: it has to fetch a variable's columns, which is the whole
+    point of moving that cost off the panel open.
+
+    So the property is narrower and it is this one — every RPC it makes is a
+    READ. If a grouping dialog ever reached a write, choosing what to look at
+    would quietly rewrite the run configuration, which is the same failure the
+    variant guard exists to prevent, arriving through a door left open on
+    purpose.
+    """
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).parent.parent
+        / "frontend/src/components/PlotStudio/GroupingDagPopup.tsx"
+    ).read_text()
+    called = set(re.findall(r"callBackend\(\s*'([a-z_]+)'", source))
+
+    assert called, "the popup should fetch something — it lists columns"
+    assert called <= {"plot_grouping_columns", "plot_variant_graph"}, (
+        f"unexpected RPC(s) from the grouping popup: "
+        f"{called - {'plot_grouping_columns', 'plot_variant_graph'}}"
+    )
+
+
+def test_the_shared_picker_shell_is_read_only():
+    """`DagPicker` draws the canvas for both pickers, so a write from there
+    would reach the variant popup too — behind the guard that was written
+    before the shell existed."""
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).parent.parent
+        / "frontend/src/components/PlotStudio/DagPicker.tsx"
+    ).read_text()
+    called = set(re.findall(r"callBackend\(\s*'([a-z_]+)'", source))
+
+    assert called == {"get_pipeline", "get_layout"}, called

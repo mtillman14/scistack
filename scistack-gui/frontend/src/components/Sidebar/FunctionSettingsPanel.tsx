@@ -59,6 +59,44 @@ export interface WhereFilter {
   value: string
 }
 
+/**
+ * One parameter's column pick — `MyVar["col"]` / `MyVar[["a","b"]]` when
+ * `iterate` is false, `MyVar.for_columns([...])` when it is true.
+ *
+ * Empty `columns` with `iterate: false` means "the whole variable" and is
+ * stored as no entry at all, so an untouched parameter and one whose columns
+ * were all unticked cannot differ (the backend's
+ * `domain/column_selection.normalize` drops it too, from the other side).
+ *
+ * Empty `columns` WITH `iterate` is meaningful and IS stored: it means every
+ * data column, one call each, resolved at for_each time.
+ */
+export interface ColumnSelection {
+  columns: string[]
+  iterate: boolean
+}
+
+export type ColumnSelectionMap = Record<string, ColumnSelection>
+
+/** The one spelling of a selection, matching the backend's
+ *  `column_selection.describe` — two spellings is how a user ends up reading
+ *  a log line that disagrees with what the node shows. */
+export function describeColumnSelection(sel: ColumnSelection | undefined): string {
+  if (!sel) return '(whole variable)'
+  const n = sel.columns.length
+  if (sel.iterate) return n === 0 ? 'per column' : `per column (${n})`
+  if (n === 1) return `"${sel.columns[0]}"`
+  return `${n} columns`
+}
+
+interface VariableColumns {
+  ok: boolean
+  error?: string
+  data_columns?: string[]
+  schema_keys?: string[]
+  note?: string
+}
+
 const OPERATORS = ['==', '!=', '<', '<=', '>', '>=', 'IN'] as const
 
 interface Props {
@@ -71,6 +109,8 @@ interface Props {
   schemaLevel: string[] | null    // which schema keys to iterate over; null = all
   whereFilters: WhereFilter[]
   runOptions: RunOptions
+  inputParams: Record<string, string>
+  columnSelections: ColumnSelectionMap
 }
 
 interface SchemaInfo {
@@ -142,7 +182,140 @@ function WhereFilterRow({ nodeId, index, filter, variableNames, onUpdateCanvas, 
   )
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions }: Props) {
+interface ColumnSelectRowProps {
+  param: string
+  variableType: string
+  columns: VariableColumns | undefined
+  selection: ColumnSelection | undefined
+  onChange: (param: string, next: ColumnSelection | null) => void
+}
+
+/**
+ * One row of the Inputs section: which columns of `variableType` this
+ * parameter receives.
+ *
+ * The column list is whatever the backend read live from `_variables.dtype`
+ * (`variable_service.input_columns`) — never a list this component guessed.
+ * A scalar/array-stored variable reports its single class-named column plus
+ * the note saying why, which is why an "empty" picker still shows one row
+ * instead of looking broken.
+ */
+function ColumnSelectRow({ param, variableType, columns, selection, onChange }: ColumnSelectRowProps) {
+  const [open, setOpen] = useState(false)
+  const available = columns?.data_columns ?? []
+  const loaded = columns !== undefined
+  const resolvable = loaded && columns.ok && available.length > 0
+  const picked = selection?.columns ?? []
+  const iterate = selection?.iterate ?? false
+  // No variable type means the graph has no record of a variable feeding this
+  // parameter — it is unwired, or it is fed by a PathInput/Parameter, which
+  // the aggregate partitions out of `input_params` and the fill-in pass adds
+  // back as an empty string. Either way there is no table to pick columns
+  // from, so the row says so rather than spinning on a fetch it can't make.
+  const unbound = !variableType
+
+  // Emit through one funnel so the "empty + not iterating = no entry" rule
+  // lives in exactly one place on this side, matching the backend's.
+  const emit = useCallback((cols: string[], it: boolean) => {
+    onChange(param, cols.length === 0 && !it ? null : { columns: cols, iterate: it })
+  }, [param, onChange])
+
+  const toggleColumn = useCallback((col: string) => {
+    const next = picked.includes(col)
+      ? picked.filter(c => c !== col)
+      : available.filter(c => picked.includes(c) || c === col)  // keep source order
+    emit(next, iterate)
+  }, [picked, available, iterate, emit])
+
+  return (
+    <div style={styles.inputRow}>
+      <div style={styles.inputRowHead}>
+        <span style={styles.inputParamName} title={`${param}: ${variableType || 'not wired'}`}>
+          {param}
+        </span>
+        <span style={styles.inputTypeName}>{variableType || '—'}</span>
+        <button
+          type="button"
+          style={{ ...styles.columnPickBtn, ...(unbound ? styles.columnPickBtnInert : {}) }}
+          disabled={unbound}
+          onClick={() => setOpen(o => !o)}
+          title={
+            unbound
+              ? 'No variable feeds this parameter, so there are no columns to '
+                + 'pick. Only a variable-fed parameter can have a column selection.'
+              : resolvable
+                ? 'Choose which columns of this variable the function receives'
+                : loaded
+                  ? (columns?.error ?? 'No columns could be read for this variable.')
+                  : 'Reading columns…'
+          }
+        >
+          {unbound ? 'n/a' : describeColumnSelection(selection)}
+          {unbound ? '' : ` ${open ? '▴' : '▾'}`}
+        </button>
+      </div>
+
+      {open && !unbound && (
+        <div style={styles.columnPanel}>
+          {!loaded && <div style={styles.empty}>Reading columns…</div>}
+          {loaded && !columns.ok && (
+            <div style={styles.empty}>{columns.error ?? 'No columns available.'}</div>
+          )}
+          {resolvable && (
+            <>
+              <div style={styles.columnPanelActions}>
+                <button
+                  type="button"
+                  style={styles.columnActionBtn}
+                  onClick={() => emit([...available], iterate)}
+                >Select all</button>
+                <button
+                  type="button"
+                  style={styles.columnActionBtn}
+                  onClick={() => emit([], iterate)}
+                >Deselect all</button>
+              </div>
+              <div style={styles.columnList}>
+                {available.map(col => (
+                  <label key={col} style={styles.checkboxLabel}>
+                    <input
+                      type="checkbox"
+                      checked={picked.includes(col)}
+                      onChange={() => toggleColumn(col)}
+                      style={styles.checkbox}
+                    />
+                    <span style={styles.checkboxText}>{col}</span>
+                  </label>
+                ))}
+              </div>
+              <label
+                style={styles.optionLabel}
+                title={
+                  'Run the function once per column and reassemble the results '
+                  + 'into ONE output variable whose data, per schema combo, is a '
+                  + 'one-row table with the same column names as the source. '
+                  + 'With no columns ticked this iterates every data column.'
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={iterate}
+                  onChange={() => emit(picked, !iterate)}
+                  style={styles.checkbox}
+                />
+                <span style={styles.optionText}>Run once per column</span>
+                <span style={styles.optionHint}>for_columns</span>
+              </label>
+              {columns.note && <div style={styles.columnNote}>{columns.note}</div>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
@@ -150,6 +323,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
   const [hiddenCombos, setHiddenCombos] = useState<HiddenCombo[]>([])
   const [showHidden, setShowHidden] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [columnsByType, setColumnsByType] = useState<Record<string, VariableColumns>>({})
 
   useEffect(() => {
     callBackend('get_schema')
@@ -162,6 +336,34 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       })
       .catch(console.error)
   }, [])
+
+  // The distinct variable types this node's parameters are bound to. Joined
+  // into a string so the effect below re-runs when the SET changes, not on
+  // every render (a fresh array literal is a new identity every time).
+  const boundTypes = Object.values(inputParams).filter(Boolean)
+  const boundTypesKey = Array.from(new Set(boundTypes)).sort().join(' ')
+
+  // Columns are read live, once per distinct variable type, when the panel
+  // opens on a node — mirroring the glue panel. No scaffolding and no cache
+  // across nodes: re-saving a variable with a different shape changes this
+  // answer, and a stale list would silently offer columns that no longer
+  // exist (the run then fails at load with scifor's KeyError).
+  useEffect(() => {
+    const types = boundTypesKey ? boundTypesKey.split(' ') : []
+    if (types.length === 0) {
+      setColumnsByType({})
+      return
+    }
+    let cancelled = false
+    Promise.all(types.map(t =>
+      callBackend('get_variable_columns', { variable_type: t })
+        .then(d => [t, d as VariableColumns] as const)
+        .catch(err => [t, { ok: false, error: String(err) }] as const)
+    )).then(entries => {
+      if (!cancelled) setColumnsByType(Object.fromEntries(entries))
+    })
+    return () => { cancelled = true }
+  }, [boundTypesKey])
 
   const refetchHidden = useCallback(() => {
     callBackend('list_hidden_combos', { function_name: label })
@@ -219,6 +421,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
         if (d.schemaLevel) config.schemaLevel = d.schemaLevel
         if (d.whereFilters) config.whereFilters = d.whereFilters
         if (d.runOptions) config.runOptions = d.runOptions
+        if (d.columnSelections) config.columnSelections = d.columnSelections
         callBackend('put_node_config', { node_id: id, config })
           .then(() => clearNodeDirty(id))
           .catch(err => console.error('[FunctionSettings] save error:', err))
@@ -264,6 +467,18 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
     const isAll = updated.length === allKeys.length
     updateNodeData({ schemaLevel: isAll ? null : updated })
   }, [schema, schemaLevel, updateNodeData])
+
+  // Set (or clear) one parameter's column selection. Saved exactly like
+  // runOptions — updateNodeData + put_node_config. Unlike run options there
+  // is deliberately NO second, live-canvas route: the backend reads only the
+  // stored config, so the two cannot disagree (the disagreement
+  // docs/claude/gui-run-options-flow.md warns about).
+  const setColumnSelection = useCallback((param: string, next: ColumnSelection | null) => {
+    const updated: ColumnSelectionMap = { ...columnSelections }
+    if (next === null) delete updated[param]
+    else updated[param] = next
+    updateNodeData({ columnSelections: updated })
+  }, [columnSelections, updateNodeData])
 
   // Toggle a run option.
   const toggleRunOption = useCallback((opt: keyof RunOptions) => {
@@ -375,6 +590,35 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
           <button style={styles.showHiddenToggle} onClick={() => setShowHidden(s => !s)}>
             {showHidden ? 'hide restored rows' : `${hiddenCombos.length} hidden \u2014 show`}
           </button>
+        )}
+      </section>
+
+      {/* ---- Inputs (column selection) ---- */}
+      <section style={styles.section}>
+        <div style={styles.sectionTitle}>Inputs</div>
+
+        {Object.keys(inputParams).length === 0 ? (
+          <div style={styles.empty}>
+            No variable inputs wired. Connect a variable to a parameter&rsquo;s
+            handle to choose its columns.
+          </div>
+        ) : (
+          <>
+            <div style={styles.hint}>
+              Which columns of each wired variable this function receives.
+              Nothing ticked means the whole variable.
+            </div>
+            {Object.entries(inputParams).map(([param, type]) => (
+              <ColumnSelectRow
+                key={param}
+                param={param}
+                variableType={type}
+                columns={type ? columnsByType[type] : undefined}
+                selection={columnSelections[param]}
+                onChange={setColumnSelection}
+              />
+            ))}
+          </>
         )}
       </section>
 
@@ -747,5 +991,87 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: '#555',
     fontStyle: 'italic',
+  },
+  // Inputs / column selection
+  inputRow: {
+    marginBottom: 6,
+  },
+  inputRowHead: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  inputParamName: {
+    flex: '0 0 auto',
+    fontFamily: 'monospace',
+    fontSize: 11,
+    color: '#ccc',
+    maxWidth: 90,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  inputTypeName: {
+    flex: '0 0 auto',
+    fontFamily: 'monospace',
+    fontSize: 10,
+    color: '#6bb5f0',
+    maxWidth: 80,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  columnPickBtn: {
+    flex: '1 1 0',
+    minWidth: 0,
+    background: '#1a1a2e',
+    border: '1px solid #3a3a5a',
+    borderRadius: 3,
+    color: '#ccc',
+    fontSize: 11,
+    padding: '2px 6px',
+    cursor: 'pointer',
+    textAlign: 'left',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  columnPickBtnInert: {
+    opacity: 0.45,
+    cursor: 'default',
+    color: '#777',
+  },
+  columnPanel: {
+    margin: '4px 0 0 8px',
+    padding: '6px 8px',
+    background: '#16162a',
+    border: '1px solid #2a2a4a',
+    borderRadius: 3,
+  },
+  columnPanelActions: {
+    display: 'flex',
+    gap: 8,
+    marginBottom: 4,
+  },
+  columnActionBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#6bb5f0',
+    fontSize: 10,
+    padding: 0,
+    cursor: 'pointer',
+    textDecoration: 'underline',
+  },
+  columnList: {
+    maxHeight: 160,
+    overflowY: 'auto',
+    marginBottom: 6,
+  },
+  columnNote: {
+    fontSize: 10,
+    color: '#777',
+    fontStyle: 'italic',
+    lineHeight: 1.4,
+    marginTop: 4,
   },
 }

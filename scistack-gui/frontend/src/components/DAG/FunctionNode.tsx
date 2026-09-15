@@ -49,10 +49,30 @@ interface FunctionNodeData {
   schemaSelection?: { include: [string, string][][]; exclude_levels: Record<string, string[]> } | null
   schemaLevel?: string[] | null
   runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean }
+  // param_name → which columns of its wired variable the function receives.
+  // Display only here: editing lives in FunctionSettingsPanel's Inputs
+  // section, which is also the only writer of the stored node config.
+  columnSelections?: Record<string, { columns: string[]; iterate: boolean }>
   // Set to 'matlab' for functions backed by a .m file. The extension uses this
   // to intercept start_run and route to handleMatlabRun instead of calling
   // into the Python registry (which doesn't know about MATLAB functions).
   language?: string
+}
+
+/**
+ * The one spelling of a column selection, matching the backend's
+ * `domain/column_selection.describe` and the settings panel's
+ * `describeColumnSelection`. Kept in sync by hand across the three because
+ * a user reading "3 columns" on the node and `["a","b"]` in scidb.log has no
+ * way to tell whether they are looking at the same thing.
+ */
+function describeColumns(sel: { columns: string[]; iterate: boolean } | undefined): string | null {
+  if (!sel) return null
+  const n = sel.columns.length
+  if (sel.iterate) return n === 0 ? 'per column' : `per column (${n})`
+  if (n === 0) return null
+  if (n === 1) return `"${sel.columns[0]}"`
+  return `${n} columns`
 }
 
 const STATE_STYLES: Record<string, { border: string; background: string }> = {
@@ -294,14 +314,27 @@ function PipelineFunctionNode({ id, data }: Props) {
   // the declared name and the parameter name happen to coincide. The
   // fallback is gone (inputs are built from edges alone), so the id has to
   // be the real one.
+  const columnSelections = data.columnSelections ?? {}
   const leftHandles = [
-    ...Object.entries(inputParams).map(([param, type]) => ({
-      id: `in__${param}`,
-      label: param,
-      title: type ? `${param}: ${type}` : param,
-    })),
+    ...Object.entries(inputParams).map(([param, type]) => {
+      const cols = describeColumns(columnSelections[param])
+      const base = type ? `${param}: ${type}` : param
+      return {
+        id: `in__${param}`,
+        label: param,
+        // The selection is on the handle's own tooltip as well as on the chip
+        // below, so hovering the wire tells you what it actually carries.
+        title: cols ? `${base} ⟨${cols}⟩` : base,
+      }
+    }),
     ...constParams.map(c => ({ id: `param__${c}`, label: c, title: c })),
   ]
+  // Only parameters with a real selection get a chip — an unrestricted input
+  // is the default and saying so on every node would bury the ones that are
+  // restricted.
+  const columnChips = Object.entries(inputParams)
+    .map(([param]) => [param, describeColumns(columnSelections[param])] as const)
+    .filter(([, text]) => text !== null) as [string, string][]
 
   // React Flow caches each handle's measured bounds at mount. A node
   // dropped on the canvas changes its handle set twice afterwards — first
@@ -386,6 +419,24 @@ function PipelineFunctionNode({ id, data }: Props) {
       >
         {data.label}
       </div>
+
+      {columnChips.length > 0 && (
+        <div style={styles.columnChipList}>
+          {columnChips.map(([param, text]) => (
+            <div
+              key={param}
+              style={styles.columnChip}
+              title={
+                `'${param}' is restricted to ${text}. Change it in the `
+                + 'function node’s Inputs section in the sidebar.'
+              }
+            >
+              <span style={styles.columnChipParam}>{param}</span>
+              <span style={styles.columnChipCols}>{'⟨'}{text}{'⟩'}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {(() => {
         // Variant rows: one per constant-value call site of this wiring,
@@ -679,6 +730,33 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 6,
     maxHeight: 96,
     overflowY: 'auto',
+  },
+  // Column-selection chips. Left-aligned and in input-handle order so they
+  // read as annotations on the inputs down the node's left edge.
+  columnChipList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    marginBottom: 6,
+  },
+  columnChip: {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: 4,
+    fontSize: 9,
+    lineHeight: 1.3,
+  },
+  columnChipParam: {
+    fontFamily: 'monospace',
+    color: '#6b6b8f',
+  },
+  columnChipCols: {
+    fontFamily: 'monospace',
+    color: '#3a1a8e',
+    fontWeight: 600,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
   // Variant popup only.
   variantInert: { opacity: 0.4, borderStyle: 'dashed' },

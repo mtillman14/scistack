@@ -190,8 +190,33 @@ Step 4 is the one that cannot lie. In the 2026-09-14 run the columns were
 `['subject','session','speed','trial','GAITRiteLoaded']` — no `cycle` — which
 settled it regardless of what any other layer claimed.
 
+## A second consumer of node config — single-route on purpose
+
+Run options are not the only thing `_node_config` carries. Since the column
+selection UI it also holds `columnSelections` — `{param: {"columns": [...],
+"iterate": bool}}`, the GUI's spelling of `MyVar["col"]` /
+`MyVar.for_columns([...])`.
+
+It uses the same table, the same upsert and the same two rehydration passes
+(`_apply_saved_config` by bare id, `apply_placement_configs` by qualified
+id), and it is in `_SAVED_CONFIG_KEYS` — which is the whole of what stops the
+snap-back bug above from happening again to a different key.
+
+What it deliberately does **not** copy is the two-source read. Run options
+have one because a single-node Run reads live canvas data; column selections
+are read from the **stored config only**, on every path — per-node run,
+pipeline run, MATLAB generation and code export all go through
+`execution_service.column_selections_for_nodes`. There is therefore no
+second value that can disagree with the first, which is the failure mode this
+document's "these two can disagree" warning is about. The cost is that a
+column pick needs its `put_node_config` to land before the run reads it; the
+write is synchronous from the panel and a failed write already WARNs.
+
+See `docs/claude/column-selection.md` §From the GUI.
+
 ## Related
 
+- `docs/claude/column-selection.md` — the second consumer of node config.
 - `docs/claude/for-each-kwargs.md` — the option semantics themselves.
 - `docs/claude/graph-database-state.md` §Identity — why `distribute`/`as_table`
   are part of `invocation_id` and `call_id`.

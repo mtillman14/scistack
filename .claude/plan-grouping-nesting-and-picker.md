@@ -141,7 +141,7 @@ table)`), not TSX — x when there is room, colour when x is full or unavailable
 
 ## Part 2 — grouping selection: cost and UI
 
-### Stage 4 — classify columns by DuckDB type, not by sampling a value
+### Stage 4 — classify columns by DuckDB type, not by sampling a value  ✅ BUILT 2026-09-15
 
 The 7.9 s. `data_columns_for` already reads `information_schema.columns`; widen
 it (or add `data_column_types_for`) to return `(name, data_type)`.
@@ -163,7 +163,7 @@ schema read instead of 13 signal reads, whoever asks.
   (the existing assertions must not move);
 - a `VARCHAR[]` column is refused the same way as `DOUBLE[]`.
 
-### Stage 5 — split the report (`scistackplotdb/source.py`)
+### Stage 5 — split the report (`scistackplotdb/source.py`)  ✅ BUILT 2026-09-15
 
 - `groupable_variables(measure)` — candidates by schema prefix + column types +
   the cached `_shape_of` (already paid by `describe()`'s catalog). Returns per
@@ -180,7 +180,7 @@ schema read instead of 13 signal reads, whoever asks.
 `groupable_report`'s; `groupable_columns` reproduces all three refusal reasons
 verbatim; composing the two equals `groupable_report` (the anti-drift test).
 
-### Stage 6 — pin the grouping variable to a variant (user request)
+### Stage 6 — pin the grouping variable to a variant (user request)  ✅ BUILT 2026-09-15
 
 Today `_attach_factor_variables` merges
 `right[[*on, factor]].drop_duplicates(subset=on)` over **all** variants of the
@@ -221,7 +221,7 @@ grouping variable: first row wins, silently.
 - spec round-trip with the pin through `to_dict`/`from_dict`, and the bare-string
   back-compat form still parses.
 
-### Stage 7 — GUI backend (`scistack-gui`)
+### Stage 7 — GUI backend (`scistack-gui`)  ✅ BUILT 2026-09-15
 
 - `describe` calls `groupable_variables`, ships `groupable_variables` /
   `groupable_refused`, and **stops shipping a per-column list**. Checked entries
@@ -245,7 +245,7 @@ grouping variable: first row wins, silently.
   `groupable_report`'s column half for that variable;
 - `plot_grouping_graph` marks a too-deep variable refused with its reason.
 
-### Stage 8 — frontend (`scistack-gui/frontend`)
+### Stage 8 — frontend (`scistack-gui/frontend`)  ✅ BUILT 2026-09-15
 
 The popup is the Variants picker's **two-step flow**, which is what the request
 describes:
@@ -279,7 +279,7 @@ grouping popup calls only read RPCs and never execution-mutating ones
 (`hide_constant_value` and friends). Plus a `locationSelection.test.ts`-style
 unit test for the accumulate-across-variables selection reducer.
 
-### Stage 9 — export parity
+### Stage 9 — export parity  ✅ BUILT 2026-09-15
 
 `scidb.Variant` explicitly accepts a `ColumnSelection` (`variant.py` arg docs),
 so a pinned column grouping exports as

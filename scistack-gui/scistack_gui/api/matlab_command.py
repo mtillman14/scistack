@@ -496,15 +496,83 @@ def _order_inputs_by_signature(
     return ordered
 
 
-def _format_variable_input(type_names) -> str:
+def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool]":
+    """``(type_names, columns, iterate)`` for one ``variable_inputs`` entry.
+
+    The ONE parser for the two shapes an entry may take:
+
+    * ``"RawEMG"`` / ``["RawEMG", "RawVO2"]`` — the plain binding;
+    * ``{"types": [...], "columns": [...], "iterate": bool}`` — the same
+      binding with a GUI column selection on it.
+
+    Both :func:`_variable_input_items` (which renders expressions) and
+    :func:`_variable_input_type_names` (which the unresolvable-classdef
+    preflight needs) go through here, so the map stays SINGLE. A parallel
+    ``column_selections`` dict alongside ``variable_inputs`` would be the
+    "one concept, two representations" trap this subsystem keeps falling into
+    — the two then have to be threaded through three emit sites each and only
+    one of them gets updated.
+    """
+    if isinstance(ref, dict):
+        types = ref.get("types") or []
+        if isinstance(types, str):
+            types = [types]
+        columns = ref.get("columns") or []
+        if isinstance(columns, str):
+            columns = [columns]
+        return (
+            [str(t) for t in types if t],
+            [str(c) for c in columns if c],
+            bool(ref.get("iterate")),
+        )
+    names = [ref] if isinstance(ref, str) else [n for n in (ref or []) if n]
+    return [str(n) for n in names], [], False
+
+
+def _format_variable_class(name: str, columns: list[str], iterate: bool) -> str:
+    """One variable type as the MATLAB expression ``for_each`` loads from.
+
+    MATLAB has no separate ``ColumnSelection`` wrapper — the column names go
+    to the ``BaseVariable`` constructor (``selected_columns``) and ``iterate``
+    comes from ``for_columns`` (``+scidb/BaseVariable.m``), so the four shapes
+    are:
+
+    ====================================  =================================
+    Selection                             MATLAB
+    ====================================  =================================
+    none                                  ``Trials()``
+    ``["filename"]``                      ``Trials("filename")``
+    ``["a", "b"]``                        ``Trials(["a", "b"])``
+    iterate, ``["a", "b"]``               ``Trials().for_columns(["a", "b"])``
+    iterate, all columns                  ``Trials().for_columns()``
+    ====================================  =================================
+    """
+    if iterate:
+        if not columns:
+            return f"{name}().for_columns()"
+        return f"{name}().for_columns({_format_matlab_string_array(columns)})"
+    if not columns:
+        return f"{name}()"
+    if len(columns) == 1:
+        return f'{name}("{_escape_matlab_dq(columns[0])}")'
+    return f"{name}({_format_matlab_string_array(columns)})"
+
+
+def _format_variable_input(type_names, columns=None, iterate: bool = False) -> str:
     """A variable binding as the MATLAB expression ``for_each`` loads from:
     ``RawEMG()`` for one type, ``scifor.EachOf(A(), B())`` for several
     (mirrors ``execution_service.build_run_inputs``, which builds ``EachOf``
-    for the same multi-type binding on the Python side)."""
+    for the same multi-type binding on the Python side).
+
+    A column selection applies to EVERY alternative of a multi-type binding —
+    one selection per PARAMETER, not per edge, matching the Python side.
+    """
     names = [type_names] if isinstance(type_names, str) else list(type_names)
+    cols = list(columns or [])
     if len(names) == 1:
-        return f"{names[0]}()"
-    return "scifor.EachOf(" + ", ".join(f"{n}()" for n in names) + ")"
+        return _format_variable_class(names[0], cols, iterate)
+    items = ", ".join(_format_variable_class(n, cols, iterate) for n in names)
+    return f"scifor.EachOf({items})"
 
 
 def _variable_input_items(variable_inputs: "dict | None"):
@@ -519,7 +587,7 @@ def _variable_input_items(variable_inputs: "dict | None"):
     one, which would be a failure at run time rather than here.)
     """
     for param, ref in (variable_inputs or {}).items():
-        names = [ref] if isinstance(ref, str) else [n for n in ref if n]
+        names, columns, iterate = _variable_binding_parts(ref)
         if not names:
             logger.warning(
                 "generate_matlab_command: variable binding for parameter %r "
@@ -527,7 +595,15 @@ def _variable_input_items(variable_inputs: "dict | None"):
                 param,
             )
             continue
-        yield param, _format_variable_input(names)
+        if columns or iterate:
+            logger.info(
+                "generate_matlab_command: parameter %r restricted to "
+                "column(s) %s (iterate=%s)",
+                param,
+                columns or "<all data columns>",
+                iterate,
+            )
+        yield param, _format_variable_input(names, columns, iterate)
 
 
 def _variable_input_type_names(variable_inputs: "dict | None") -> list[str]:
@@ -535,7 +611,7 @@ def _variable_input_type_names(variable_inputs: "dict | None") -> list[str]:
     the unresolvable-classdef preflight, which needs names, not expressions."""
     names: list[str] = []
     for ref in (variable_inputs or {}).values():
-        names.extend([ref] if isinstance(ref, str) else list(ref))
+        names.extend(_variable_binding_parts(ref)[0])
     return names
 
 
@@ -554,7 +630,7 @@ def generate_matlab_command(
     project_root: str | None = None,
     entities_script: str | None = None,
     entities_file: str | None = None,
-    variable_inputs: dict[str, "str | list[str]"] | None = None,
+    variable_inputs: "dict | None" = None,
     glue: dict[str, list[dict]] | None = None,
     run_options: dict | None = None,
 ) -> str:
@@ -601,8 +677,9 @@ def generate_matlab_command(
         from the registry via manual-edge wiring, never DB variants — see
         ``matlab_command_service``'s collection logic.
     variable_inputs
-        Optional ``{param_name: type_name | [type_names]}`` for the canvas's
-        VARIABLE bindings — the third binding kind alongside ``path_inputs``
+        Optional ``{param_name: type_name | [type_names] | {"types": [...],
+        "columns": [...], "iterate": bool}}`` for the canvas's VARIABLE
+        bindings — the third binding kind alongside ``path_inputs``
         and ``sweeps``, and the one this generator used to have no source for
         at all. A function with DB history got its variables from each
         variant's ``input_types``; one that had never run got none, and its
@@ -611,6 +688,10 @@ def generate_matlab_command(
         arguments that remain). Supplied for both cases now, as the live
         overlay on top of recorded ``input_types`` — the same role
         edge-resolved ``path_inputs`` already played.
+
+        The dict form carries the GUI's column selection on the SAME entry
+        rather than in a parallel map, so every emit site picks it up through
+        :func:`_variable_binding_parts` without a second thing to remember.
 
     Returns
     -------
@@ -925,7 +1006,7 @@ def _for_each_call_lines(
     matlab_fn: str = "scidb.for_each",
     indent: str = "    ",
     sweeps: dict[str, list] | None = None,
-    variable_inputs: dict[str, "str | list[str]"] | None = None,
+    variable_inputs: "dict | None" = None,
     glue: dict[str, list[dict]] | None = None,
     run_options: dict | None = None,
 ) -> list[str]:
@@ -1361,6 +1442,23 @@ def _escape_matlab_string(s: str) -> str:
     return s.replace("'", "''")
 
 
+def _escape_matlab_dq(s: str) -> str:
+    """Escape for a DOUBLE-quoted MATLAB string (``"..."``).
+
+    The two quotings escape different characters and are not interchangeable:
+    inside ``"..."`` a double quote is doubled and a single quote is literal;
+    inside ``'...'`` it is the other way round. Running a value through
+    :func:`_escape_matlab_string` and then wrapping it in double quotes —
+    which is what :func:`_format_matlab_string_array` used to do — leaves an
+    embedded ``"`` unescaped (it terminates the literal) and corrupts an
+    embedded ``'`` into ``''``.
+
+    Latent until column selection, whose values are user spreadsheet headers
+    rather than the identifiers this was previously only ever called with.
+    """
+    return s.replace('"', '""')
+
+
 def _format_pyenv_preamble(python_executable: str) -> list[str]:
     """Return MATLAB lines that bind AND force-load ``pyenv`` to the given interpreter.
 
@@ -1587,7 +1685,7 @@ def _format_matlab_string_array(items: list[str]) -> str:
     """Format a Python list of strings as a MATLAB string array ``["a", "b"]``."""
     if not items:
         return "[]"
-    escaped = [f'"{_escape_matlab_string(s)}"' for s in items]
+    escaped = [f'"{_escape_matlab_dq(s)}"' for s in items]
     return "[" + ", ".join(escaped) + "]"
 
 

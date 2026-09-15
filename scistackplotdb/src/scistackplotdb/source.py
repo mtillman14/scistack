@@ -33,7 +33,9 @@ from .hierarchy import join_frames, joinable, joined_levels
 from .load import (
     LATEST_COLUMN,
     column_levels,
+    data_column_types_for,
     data_columns_for,
+    is_container_type,
     load_variable,
     registered_variables,
     sample_column_value,
@@ -95,6 +97,10 @@ class ScidbSource(BaseSource):
         # latter, so this silently fell through to "scidb" for every project.
         self.name = name or str(getattr(db, "dataset_db_path", None) or "scidb")
         self._frames: dict[str, Any] = {}
+        # Data-LESS frames, for questions about a variable's provenance rather
+        # than its values. A separate cache, deliberately: putting one of these
+        # in `_frames` would hand a later plot a frame with no measure in it.
+        self._variant_frames: dict[str, Any] = {}
         self._shapes: dict[str, Shape] = {}
         self._levels: dict[str, list[str]] = {}
         # Whether tables from this source carry the numpy reducer
@@ -274,7 +280,9 @@ class ScidbSource(BaseSource):
                 Log.info("%s: table cache HIT (filled while waiting)", label, layer=LAYER)
                 return memo[key]
             Log.info("%s: table cache MISS — building (no data columns)", label, layer=LAYER)
-            variable_frame = load_variable(self._db, variable, include_data=False)
+            # Shared with `variant_graph`: the picker asks both of these about
+            # the same variable one call apart, and they want the same frame.
+            variable_frame = self._variant_frame(variable)
             frame = variable_frame.frame
             latest = variable_frame.latest_column
             # Variant columns first, then schema keys — the same order and the
@@ -592,8 +600,9 @@ class ScidbSource(BaseSource):
                     f"recorded at or above the level of the data."
                 )
             on = list(variable.levels)
-            right = variable.frame.rename(columns={source_column: factor})
-            right = right[[*on, factor]].drop_duplicates(subset=on)
+            right = self._pinned_variant(variable, group)
+            right = right.rename(columns={source_column: factor})
+            right = self._one_label_per_location(right, on, factor, group)
             frame = frame.merge(right, on=on, how="left")
 
             # A row the grouping variable says nothing about keeps its place and
@@ -638,6 +647,87 @@ class ScidbSource(BaseSource):
                     layer=LAYER,
                 )
         return frame, attached
+
+    def _pinned_variant(self, variable_frame, group: FactorVariable):
+        """The grouping variable's rows, narrowed to the pinned variant.
+
+        A grouping variable has variants like any other: edit the loader that
+        reads the demographics sheet and two records per subject coexist, each
+        with its own labels. Before this they were merged together and
+        ``drop_duplicates`` silently kept whichever came first — a figure
+        stratified by a version of the spreadsheet nobody chose.
+
+        The pin is applied with :func:`scistackplot.variants.variant_set_mask`,
+        the same one definition the measure's own variant rows use, so "what a
+        selection keeps" cannot mean two things one call apart.
+
+        An **empty** selection means nothing was said and nothing is filtered —
+        the same inert reading an unfilled variant row has
+        (``plot-variant-rows.md`` § "An unfilled row is inert"). What used to be
+        silent about that state is now :meth:`_one_label_per_location`.
+        """
+        from scistackplot.variants import variant_set_mask
+
+        selection = group.selection
+        frame = variable_frame.frame
+        if not selection:
+            return frame
+
+        mask = variant_set_mask(
+            frame, selection, latest_column=variable_frame.latest_column
+        )
+        kept = frame[mask]
+        Log.info(
+            "%r pinned to %s: %d of %d record(s)",
+            group.label,
+            selection,
+            len(kept),
+            len(frame),
+            layer=LAYER,
+        )
+        if kept.empty and not frame.empty:
+            # Never silently: every row of the figure is about to be labelled
+            # `(missing)`, which looks exactly like a spreadsheet with no
+            # matching subjects. The pin is applied blindly by design (see
+            # `variants.default_selection`), so an empty result is a state the
+            # user can reach and has to be told about.
+            Log.warn(
+                "%r: the pinned variant %s matched no records — every row will "
+                "be grouped as %r. Pick a different variant for this grouping.",
+                group.label,
+                selection,
+                MISSING_LEVEL,
+                layer=LAYER,
+            )
+        return kept
+
+    def _one_label_per_location(self, right, on: list[str], factor: str, group):
+        """``[*on, factor]``, one row per schema location — saying so if it had
+        to choose.
+
+        ``drop_duplicates`` is not new; being loud about what it dropped is. A
+        pin need not resolve to exactly one record (two variants can differ in
+        something this column does not depend on, or the selection may name a
+        subcube), so the ambiguity survives pinning and the user has no other
+        way to find out which label won.
+        """
+        right = right[[*on, factor]]
+        # Cheap pre-check: with no duplicate locations there is nothing to
+        # choose between, which is the ordinary case and must cost nothing.
+        if on and right.duplicated(subset=on).any():
+            per_location = right.groupby(on, dropna=False)[factor].nunique()
+            ambiguous = int((per_location > 1).sum())
+            if ambiguous:
+                Log.warn(
+                    "%r has more than one %s for %d schema location(s) even "
+                    "after the variant pin — taking the first. Narrow the "
+                    "grouping's variant to choose deliberately.",
+                    group.label,
+                    factor,
+                    ambiguous,
+                    layer=LAYER,
+                )
+        return right.drop_duplicates(subset=on)
 
     def _factor_source_column(self, variable_frame, group: FactorVariable) -> str:
         """Which column of the grouping variable's frame holds the labels."""
@@ -828,17 +918,71 @@ class ScidbSource(BaseSource):
         table.reducer = self._reducer()
         return table
 
+    def default_variant_for(self, variable: str) -> dict:
+        """The variant a GROUPING by ``variable`` should open on: latest.
+
+        Exactly :func:`scistackplot.variants.default_selection` over that
+        variable's own variant table — the same rule, and the same *code*, that
+        decides what a plot opens on. Two rules for "latest" would be two
+        answers, and this one has to agree with the Variants section beside it.
+
+        Read :func:`~scistackplot.variants.default_selection` before touching
+        this: "latest" here is the per-schema-location **boolean flag**, never
+        the string ``"latest"``. The string stops resolving through the flag the
+        moment anything else is pinned in the same selection, and silently drops
+        every location never re-run under the newest code.
+
+        Cheap: ``variant_table`` selects no data columns and is cached, so
+        offering a default for every groupable variable costs a handful of
+        metadata queries rather than reading any of them.
+        """
+        from scistackplot.variants import default_selection
+
+        return default_selection(self.variant_table(variable))
+
+    def _variant_frame(self, variable: str):
+        """The variable's frame for PROVENANCE questions — no data columns.
+
+        ``variants.variant_graph`` reads ``record_id``, the variant columns and
+        ``variant_axes``, and nothing else; ``variant_table`` needs the same
+        three. Neither touches a measure, so neither should pay to read one.
+
+        Reuses the full frame when the panel has already loaded it — the common
+        case, and free. Otherwise loads without data, which is the case that
+        matters: the grouping picker asks this for variables nobody has
+        plotted, where ``_variable_frame`` would read every sample of an EMG
+        variable to answer a question about its loader's version.
+
+        Its own cache, never ``_frames``: a data-less frame stored there would
+        be handed to a later plot as though it held the measure.
+        """
+        if variable in self._frames:
+            return self._frames[variable]
+        if variable not in self._variant_frames:
+            Log.info(
+                "variant frame MISS: %s — loading provenance only (no data)",
+                variable,
+                layer=LAYER,
+            )
+            self._variant_frames[variable] = load_variable(
+                self._db, variable, include_data=False
+            )
+        return self._variant_frames[variable]
+
     def variant_graph(self, variable: str, functions: list[str] | None = None) -> dict:
         """Variant axes and per-function versions for ``variable``.
 
-        A method rather than a bare function so it reuses this source's frame
-        cache: the picker opens over a variable the panel has already loaded,
-        and re-reading it to answer "what versions exist" would double the cost
-        of opening a dialog.
+        A method rather than a bare function so it reuses this source's caches:
+        the picker often opens over a variable the panel has already loaded, and
+        re-reading it to answer "what versions exist" would double the cost of
+        opening a dialog.
+
+        Over :meth:`_variant_frame`, so the case where it has NOT been loaded
+        costs a provenance read rather than the whole variable.
         """
         from .variants import variant_graph
 
-        return variant_graph(self._db, self._variable_frame(variable), functions)
+        return variant_graph(self._db, self._variant_frame(variable), functions)
 
     def _melt_fields(
         self, variable_frame, measure: str, *, fields: list[str] | None = None
@@ -1038,68 +1182,33 @@ class ScidbSource(BaseSource):
         saved once per subject is what the user recorded as that subject's
         value. Columns are also refused for holding one value (a constant is not
         a factor) or more than :data:`MAX_GROUP_LEVELS` of them.
+
+        **This is now the COMPOSITION of the two halves it used to be**:
+        :meth:`groupable_variables` (cheap, schema only) followed by one
+        :meth:`groupable_columns` per wide variable. It stays because
+        :meth:`groupable_with` is the library API and the CSV source answers the
+        same question in one call — but it is the expensive form, and the GUI
+        no longer opens a panel with it.
         """
-        own = self._levels_of(measure)
-        categorical: list[dict] = []
-        other: list[dict] = []
-        columns_offered: list[dict] = []
-        rejected: dict[str, str] = {}
+        report = self.groupable_variables(measure)
+        rejected: dict[str, str] = dict(report["rejected"])
+        buckets: dict[str, list[dict]] = {
+            "categorical": [],
+            "numeric": [],
+            "columns": [],
+        }
+        for entry in report["offered"]:
+            if entry["kind"] != "columns":
+                buckets[entry["kind"]].append(entry["offer"])
+                continue
+            # ONCE per wide variable. Asking twice — offers here, refusals in a
+            # second pass — would double the very DISTINCT queries this split
+            # exists to ration.
+            columns = self.groupable_columns(measure, entry["variable"])
+            buckets["columns"].extend(columns["offered"])
+            rejected.update(columns["rejected"])
 
-        def offer(variable: str, column: str | None, levels: list[str]) -> dict:
-            group = FactorVariable(variable, column)
-            return {
-                "variable": variable,
-                "column": column,
-                "label": group.label,
-                "name": group.factor_name,
-                "levels": levels,
-                "level_count": len(levels),
-            }
-
-        for candidate in registered_variables(self._db):
-            if candidate == measure:
-                continue
-            levels = self._levels_of(candidate)
-            if len(levels) > len(own) or own[: len(levels)] != levels:
-                # Deeper than the data, or a different branch: `_attach_factor_
-                # variables` would refuse it, and there are far too many of
-                # these to be worth listing as refusals.
-                continue
-            columns = data_columns_for(self._db, candidate)
-            if len(columns) > 1:
-                columns_offered.extend(
-                    self._groupable_columns(candidate, columns, rejected, offer)
-                )
-                continue
-            shape = self._shape_of(candidate)
-            if shape in (Shape.SERIES_1D, Shape.MATRIX_2D):
-                rejected[candidate] = (
-                    f"holds {shape} values — a signal is data, not a group label"
-                )
-                continue
-            if shape is Shape.CATEGORICAL:
-                # Its levels ARE the groups, so they are worth the one query —
-                # the panel can show them, and a text column with a value per
-                # record is as much an identifier here as it is in a wide sheet.
-                found = column_levels(
-                    self._db, candidate, columns[0], limit=MAX_GROUP_LEVELS + 1
-                )
-                if len(found) > MAX_GROUP_LEVELS:
-                    rejected[candidate] = (
-                        f"more than {MAX_GROUP_LEVELS} distinct values — an "
-                        f"identifier, not a group"
-                    )
-                    continue
-                categorical.append(
-                    offer(candidate, None, self._ordered(candidate, found))
-                )
-                continue
-            # Numeric and offered whole, unlike a numeric COLUMN: a scalar saved
-            # once per subject is what the user recorded as that subject's
-            # value, and a group coded 1/2 is still a group.
-            other.append(offer(candidate, None, []))
-
-        offered = [*categorical, *other, *columns_offered]
+        offered = [*buckets["categorical"], *buckets["numeric"], *buckets["columns"]]
         Log.info(
             "groupable_with(%s): %d offered %s; %d rejected %s",
             measure,
@@ -1111,8 +1220,160 @@ class ScidbSource(BaseSource):
         )
         return {"offered": offered, "rejected": rejected}
 
+    def groupable_variables(self, measure: str) -> dict:
+        """Which VARIABLES may group ``measure`` — **from the schema alone**.
+
+        The canvas half of the Grouping picker: one entry per variable node,
+        answering "can I click this, and if not why not", with **no value read
+        and no DISTINCT**. The columns of a wide variable are a separate, more
+        expensive question, asked once per click by :meth:`groupable_columns`.
+
+        Why the split. Answering both together cost ~8 s on every panel open of
+        the user's project (scidb.log 2026-09-15): `FilteredDelsys` 4.2 s and
+        `RawEMG` 5.4 s, both offering nothing, because classifying a column
+        meant fetching one of its EMG traces. Stage 4 made *that* cheap; this
+        makes the per-column work happen only when someone asks for a specific
+        variable's columns.
+
+        Each offer carries ``kind``:
+
+        * ``"categorical"`` / ``"numeric"`` — a single-data-column variable,
+          offerable whole. ``offer`` holds the ready-made entry, levels
+          included, because deciding this at all already required the one
+          ``DISTINCT`` that produces them.
+        * ``"columns"`` — a wide table. ``column_count`` is how many of its
+          columns could hold a label at all (container-typed ones are already
+          out); WHICH of them qualify needs :meth:`groupable_columns`.
+
+        ``kind`` also fixes the order :meth:`groupable_report` reassembles in —
+        categorical groups lead — so the two cannot drift about what comes
+        first.
+        """
+        own = self._levels_of(measure)
+        offered: list[dict] = []
+        rejected: dict[str, str] = {}
+
+        for candidate in registered_variables(self._db):
+            if candidate == measure:
+                continue
+            levels = self._levels_of(candidate)
+            if len(levels) > len(own) or own[: len(levels)] != levels:
+                # Deeper than the data, or a different branch: `_attach_factor_
+                # variables` would refuse it, and there are far too many of
+                # these to be worth listing as refusals.
+                continue
+            # Types, not just names: one information_schema read answers both
+            # "how many data columns" and "which of them can hold a label".
+            types = data_column_types_for(self._db, candidate)
+            if len(types) > 1:
+                labelled = [c for c, t in types.items() if not is_container_type(t)]
+                if not labelled:
+                    # Every column holds a signal. Silent, like the per-column
+                    # branch: a struct of signals sits at the measure's own
+                    # level and is obviously not a sheet of labels, so listing
+                    # it would bury the refusals that ARE near misses.
+                    continue
+                offered.append(
+                    {
+                        "variable": candidate,
+                        "kind": "columns",
+                        "label": candidate,
+                        "column_count": len(labelled),
+                    }
+                )
+                continue
+            entry, reason = self._whole_variable_offer(candidate, list(types))
+            if reason:
+                rejected[candidate] = reason
+            elif entry:
+                offered.append(entry)
+
+        Log.info(
+            "groupable_variables(%s): %d offered %s; %d rejected — no column "
+            "query made",
+            measure,
+            len(offered),
+            [(o["label"], o["kind"]) for o in offered],
+            len(rejected),
+            layer=LAYER,
+        )
+        return {"offered": offered, "rejected": rejected}
+
+    def _whole_variable_offer(
+        self, candidate: str, columns: list[str]
+    ) -> tuple[dict | None, str | None]:
+        """A single-data-column variable as a grouping: ``(offer, refusal)``."""
+        shape = self._shape_of(candidate)
+        if shape in (Shape.SERIES_1D, Shape.MATRIX_2D):
+            return None, (
+                f"holds {shape} values — a signal is data, not a group label"
+            )
+        if shape is Shape.CATEGORICAL:
+            # Its levels ARE the groups, so they are worth the one query — the
+            # panel can show them, and a text column with a value per record is
+            # as much an identifier here as it is in a wide sheet. One query per
+            # VARIABLE, not per column, which is why it stays on the cheap path.
+            found = column_levels(
+                self._db, candidate, columns[0], limit=MAX_GROUP_LEVELS + 1
+            )
+            if len(found) > MAX_GROUP_LEVELS:
+                return None, (
+                    f"more than {MAX_GROUP_LEVELS} distinct values — an "
+                    f"identifier, not a group"
+                )
+            return {
+                "variable": candidate,
+                "kind": "categorical",
+                "label": candidate,
+                "column_count": 1,
+                "offer": self._offer(
+                    candidate, None, self._ordered(candidate, found)
+                ),
+            }, None
+        # Numeric and offered whole, unlike a numeric COLUMN: a scalar saved
+        # once per subject is what the user recorded as that subject's value,
+        # and a group coded 1/2 is still a group.
+        return {
+            "variable": candidate,
+            "kind": "numeric",
+            "label": candidate,
+            "column_count": 1,
+            "offer": self._offer(candidate, None, []),
+        }, None
+
+    @staticmethod
+    def _offer(variable: str, column: str | None, levels: list[str]) -> dict:
+        """One entry of an ``offered`` list, however it was arrived at."""
+        group = FactorVariable(variable, column)
+        return {
+            "variable": variable,
+            "column": column,
+            "label": group.label,
+            "name": group.factor_name,
+            "levels": levels,
+            "level_count": len(levels),
+        }
+
+    def groupable_columns(self, measure: str, variable: str) -> dict:
+        """Which COLUMNS of ``variable`` may group ``measure``.
+
+        The click half of the picker, paid once per variable the user opens
+        rather than once per panel — see :meth:`groupable_variables`. Same
+        ``{"offered": [...], "rejected": {label: reason}}`` shape as every other
+        report here.
+
+        ``measure`` is taken so the signature matches the question being asked
+        ("group THIS figure by a column of THAT variable") and so the level
+        check can move here later; today the columns of a variable do not depend
+        on it.
+        """
+        rejected: dict[str, str] = {}
+        types = data_column_types_for(self._db, variable)
+        offered = self._groupable_columns(variable, types, rejected, self._offer)
+        return {"offered": offered, "rejected": rejected}
+
     def _groupable_columns(
-        self, variable: str, columns: list[str], rejected: dict, offer
+        self, variable: str, types: dict[str, str], rejected: dict, offer
     ) -> list[dict]:
         """The columns of one wide table that may group a figure.
 
@@ -1120,11 +1381,27 @@ class ScidbSource(BaseSource):
         sheet is small, but this runs for every wide variable at or above the
         measure's level every time the panel opens, and a slow describe is the
         kind of cost that is impossible to attribute afterwards.
+
+        **Container-typed columns are refused from the schema alone**, before
+        any value is read. Classifying them by value meant one whole EMG trace
+        fetched per muscle and thrown away: 4.2 s for ``FilteredDelsys`` and
+        5.4 s for ``RawEMG`` on the user's project (scidb.log 2026-09-15), ~8 s
+        added to every panel open by two variables that offer nothing. The type
+        check only ever REFUSES — see :func:`~scistackplotdb.load.
+        is_container_type` for why that asymmetry is what keeps it safe.
         """
         found: list[dict] = []
+        skipped_by_type = 0
         with Log.timer(f"groupable_columns({variable})", layer=LAYER):
-            for column in columns:
+            for column, data_type in types.items():
                 label = f"{variable}.{column}"
+                if is_container_type(data_type):
+                    # Same outcome as the SERIES_1D/MATRIX_2D branch below and
+                    # silent for the same reason — a struct of signals is
+                    # obviously not a sheet of labels — but reached without
+                    # reading a value.
+                    skipped_by_type += 1
+                    continue
                 shape = classify_value(
                     sample_column_value(self._db, variable, column)
                 )
@@ -1159,6 +1436,18 @@ class ScidbSource(BaseSource):
                     )
                     continue
                 found.append(offer(variable, column, self._ordered(column, levels)))
+        if skipped_by_type:
+            # At INFO: this is the difference between "the panel opened slowly"
+            # and "the panel opened slowly because of these 13 columns", and the
+            # count is the only visible sign the pre-filter is doing its job.
+            Log.info(
+                "groupable_columns(%s): %d of %d column(s) refused on their "
+                "declared type alone — no value read",
+                variable,
+                skipped_by_type,
+                len(types),
+                layer=LAYER,
+            )
         return found
 
     def joinable_with(self, measure: str) -> list[str]:
@@ -1186,10 +1475,15 @@ class ScidbSource(BaseSource):
         """Drop cached frames after a pipeline run has written new records."""
         if variable is None:
             self._frames.clear()
+            self._variant_frames.clear()
             self._shapes.clear()
             self._levels.clear()
         else:
             self._frames.pop(variable, None)
+            # Provenance goes stale with the data: a re-run writes new records
+            # under a new function version, which is exactly what this cache
+            # holds the answer to.
+            self._variant_frames.pop(variable, None)
             self._shapes.pop(variable, None)
             self._levels.pop(variable, None)
         # Built tables are derived from those frames, so they are stale too —

@@ -21,6 +21,7 @@ import Plotly from 'plotly.js-cartesian-dist-min'
 import { callBackend, isVSCodeMode } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import VariantDagPopup from './VariantDagPopup'
+import GroupingDagPopup from './GroupingDagPopup'
 import SchemaLocationPicker, { type PathStep } from './SchemaLocationPicker'
 import {
   type LocationSelection,
@@ -128,6 +129,28 @@ interface LevelGroup {
 interface FactorVariable {
   variable: string
   column: string | null
+  /** Which VARIANT of the grouping variable supplies the labels — a selection
+   *  keyed by frame column, exactly like a variant row's. Absent/empty means
+   *  nothing was said: every variant contributes, and where that leaves two
+   *  labels for one schema location the backend warns and takes the first. */
+  variant?: Record<string, unknown>
+}
+
+/** A variable that MAY group this figure — one entry per variable, never per
+ *  column.
+ *
+ *  `kind` says which question comes next. A single-data-column variable
+ *  ("categorical"/"numeric") is offerable as it stands and arrives with its
+ *  ready-made `offer`. A wide sheet ("columns") needs `plot_grouping_columns`
+ *  to say which of its columns qualify — asked when the user opens it, because
+ *  answering for every wide variable on every panel open cost ~8 s on a real
+ *  project (two EMG variables that offer nothing). */
+interface GroupableVariableInfo {
+  variable: string
+  kind: 'categorical' | 'numeric' | 'columns'
+  label: string
+  column_count: number
+  offer?: GroupableInfo
 }
 
 /** One offer in the Grouping section: a FactorVariable plus what it looks like. */
@@ -479,10 +502,11 @@ interface DescribeResponse {
    *  to say why in place — an un-clickable node with no explanation is
    *  indistinguishable from a broken dialog. */
   stackable_refused?: Record<string, string>
-  /** Groupings usable as a FACTOR — a variable recorded at or above this
-   *  variable's level, or one categorical column of such a variable, so each
-   *  row gets exactly one of their values. */
-  groupable_with?: GroupableInfo[]
+  /** VARIABLES usable as a grouping — one recorded at or above this variable's
+   *  level, so each row gets exactly one of its values. One entry per variable,
+   *  never per column: `describe` no longer enumerates any wide table's
+   *  columns, which is what made opening the panel cost seconds. */
+  groupable_variables?: GroupableVariableInfo[]
   /** Why a column of an otherwise eligible variable is not offered,
    *  `{label: reason}`. A user can see the column in their spreadsheet, so its
    *  absence from the list has to be explained where they look for it. */
@@ -1015,60 +1039,6 @@ export default function PlotStudio({
     []
   )
 
-  /** Join a grouping in as a factor, or drop it again. */
-  const toggleFactorVariable = useCallback((offer: GroupableInfo, on: boolean) => {
-    setSpec(prev => {
-      if (!prev) return prev
-      const current = prev.factor_variables ?? []
-      // Matched on BOTH fields: two columns of one demographics sheet are two
-      // different groupings, and matching on the variable alone would let
-      // ticking Sex untick InterventionGroup.
-      const others = current.filter(
-        f => !(f.variable === offer.variable && (f.column ?? null) === (offer.column ?? null))
-      )
-      if (!on) {
-        return {
-          ...prev,
-          factor_variables: others,
-          // A role assigned to a factor that is going away would be an unknown
-          // factor to `validate`, which refuses the whole figure. The role is
-          // keyed by the FACTOR name (the column's own name), not the label.
-          roles: Object.fromEntries(
-            Object.entries(prev.roles).filter(([factor]) => factor !== offer.name)
-          ),
-          x_layers: (prev.x_layers ?? []).filter(name => name !== offer.name),
-        }
-      }
-
-      // A grouping arrives WITH a role. Left unassigned it defaulted to FREE,
-      // which on a bar or box figure means pooled into the means — so ticking
-      // a grouping changed the figure not at all, silently, and `validate`'s
-      // pooling guard does not catch it (that guard is armed only for variant
-      // factors). The backend decides which role
-      // (`roles.role_for_new_grouping`); this applies the answer it already
-      // sent, the same way `setKind` applies a suggested role map.
-      //
-      // Only when that answer describes the spec on screen: the capability
-      // report is a debounced echo, and one computed against an older spec
-      // could place the layer against a stale x axis. Falling back to 'free'
-      // is the honest default — it is what the factor would have got anyway.
-      const fresh = capsSpecRef.current === specKey
-      const role: Role = (fresh && grouping?.new_grouping_role) || 'free'
-      return {
-        ...prev,
-        factor_variables: [
-          ...others,
-          { variable: offer.variable, column: offer.column ?? null },
-        ],
-        roles: { ...prev.roles, [offer.name]: role },
-        x_layers:
-          role === 'x'
-            ? placeXLayer(prev.x_layers ?? [], offer.name, factorDepths)
-            : (prev.x_layers ?? []),
-      }
-    })
-  }, [factorDepths, grouping?.new_grouping_role, specKey])
-
   const addLevelGroup = useCallback((source: string, levels: (string | number)[]) => {
     setSpec(prev => {
       if (!prev) return prev
@@ -1234,7 +1204,43 @@ export default function PlotStudio({
     return orderXLayers(spec?.x_layers ?? [], holders, factorDepths)
   }, [spec?.roles, spec?.x_layers, factorDepths])
 
-  const groupable = describe?.groupable_with ?? []
+  const groupableVariables = describe?.groupable_variables ?? []
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
+
+  /** Apply the picker's selection: replace `factor_variables` wholesale.
+   *
+   *  Wholesale because the popup shows every grouping at once and opens with
+   *  the current ones ticked — so what comes back IS the answer, unticking
+   *  included. Merging would make unticking impossible.
+   *
+   *  Each grouping still arrives with a role (`roles.role_for_new_grouping`,
+   *  published on the capability report): left unassigned it would default to
+   *  FREE, which on a bar or box figure means pooled into the means — the
+   *  figure would not change at all, silently. */
+  const applyGroupings = useCallback(
+    (groups: { variable: string; column: string | null; variant: Record<string, unknown> }[]) => {
+      setGroupPickerOpen(false)
+      setSpec(prev => {
+        if (!prev) return prev
+        const names = new Set(groups.map(g => g.column ?? g.variable))
+        const gone = (prev.factor_variables ?? [])
+          .map(f => f.column ?? f.variable)
+          .filter(name => !names.has(name))
+        const fresh = (capsSpecRef.current === specKey && grouping?.new_grouping_role) || 'free'
+        const roles = { ...prev.roles }
+        for (const name of gone) delete roles[name]
+        let layers = (prev.x_layers ?? []).filter(name => !gone.includes(name))
+        for (const group of groups) {
+          const name = group.column ?? group.variable
+          if (roles[name]) continue // a decision already made is never overwritten
+          roles[name] = fresh
+          if (fresh === 'x') layers = placeXLayer(layers, name, factorDepths)
+        }
+        return { ...prev, factor_variables: groups, roles, x_layers: layers }
+      })
+    },
+    [factorDepths, grouping?.new_grouping_role, specKey]
+  )
   // Only real factors can be bucketed — not a factor this spec already derived
   // (bucketing a bucket answers nothing) and not a variant axis.
   const derivedNames = useMemo(
@@ -1652,7 +1658,7 @@ export default function PlotStudio({
             {/* Refusals count towards showing this: if every column of a sheet
                 was rejected, the reasons are the only thing that explains an
                 otherwise empty section. */}
-            {(groupable.length > 0 ||
+            {(groupableVariables.length > 0 ||
               Object.keys(describe?.groupable_refused ?? {}).length > 0 ||
               (spec?.level_groups ?? []).length > 0) && (
               <>
@@ -1661,45 +1667,43 @@ export default function PlotStudio({
                   Both become factors you can colour, facet, or group the x
                   axis by.
                 </div>
-                {groupable.map(offer => {
-                  const checked = (spec?.factor_variables ?? []).some(
-                    f =>
-                      f.variable === offer.variable &&
-                      (f.column ?? null) === (offer.column ?? null)
-                  )
+                {/* One button, and the groupings it produced. The flat list of
+                    every column of every wide variable that used to live here
+                    did not scale — a demographics sheet is 18 checkboxes and
+                    ~100 queries on every panel open — and it could not express
+                    WHICH version of the sheet supplies the labels. Both are the
+                    picker's job now, on the canvas the user already knows. */}
+                <button
+                  type="button"
+                  style={styles.locationButton}
+                  onClick={() => setGroupPickerOpen(true)}
+                  disabled={groupableVariables.length === 0}
+                  title={
+                    groupableVariables.length === 0
+                      ? 'No variable is recorded at or above this data’s level.'
+                      : 'Choose what stratifies this figure'
+                  }
+                >
+                  {(spec?.factor_variables ?? []).length === 0
+                    ? 'Group by…'
+                    : `Group by: ${(spec?.factor_variables ?? [])
+                        .map(f => f.column ?? f.variable)
+                        .join(', ')}`}
+                </button>
+                {(spec?.factor_variables ?? []).map(group => {
+                  const name = group.column ?? group.variable
                   return (
-                    <label key={offer.label} style={styles.kindRow} title={
-                      offer.level_count
-                        ? `${offer.level_count} level(s): ${offer.levels.join(', ')}`
-                        : undefined
-                    }>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={e => toggleFactorVariable(offer, e.target.checked)}
-                        style={{ marginRight: 6 }}
-                      />
-                      {offer.label}
-                      {offer.level_count > 0 && (
-                        <span style={styles.levelCount}>{offer.level_count}</span>
-                      )}
-                      {/* What ticking it actually did. A grouping now arrives
-                          with a role, and the one case that still pools — FREE,
-                          when x and colour are both taken — has to SAY so:
-                          silently changing nothing is the failure this whole
-                          change exists to fix, and it must not survive in the
-                          corner where no channel was left. */}
-                      {checked && (
-                        <span style={styles.groupRole}>
-                          {groupingPlacement(spec, xLayers, factors, offer.name)}
-                        </span>
-                      )}
-                    </label>
+                    <div key={name} style={styles.kindRow}>
+                      <span style={styles.factorName}>{name}</span>
+                      <span style={styles.groupRole}>
+                        {groupingPlacement(spec, xLayers, factors, name)}
+                      </span>
+                    </div>
                   )
                 })}
-                {/* Refusals in place, for the reason the variant picker shows
-                    them: a column the user can see in their own spreadsheet and
-                    not in this list is otherwise indistinguishable from a bug. */}
+                {/* Variables refused in place, for the reason the variant
+                    picker shows them: one a user expected to group by, absent
+                    with no explanation, is indistinguishable from a bug. */}
                 {Object.entries(describe?.groupable_refused ?? {}).map(
                   ([label, reason]) => (
                     <div key={label} style={styles.refusedRow} title={reason}>
@@ -2190,6 +2194,24 @@ export default function PlotStudio({
           name=""
           onCancel={() => setAddingVariant(false)}
           onApply={addVariantFromPicker}
+        />
+      )}
+
+      {/* "Group by…": pick a variable on the canvas, then its columns and the
+          variant of it that supplies the labels. Not offered on the CSV path —
+          a flat table has no separately-recorded variable to join in. */}
+      {groupPickerOpen && !csvPath && (
+        <GroupingDagPopup
+          measure={describe?.variable ?? variable}
+          candidates={groupableVariables}
+          refusals={describe?.groupable_refused ?? {}}
+          selected={(spec?.factor_variables ?? []).map(f => ({
+            variable: f.variable,
+            column: f.column ?? null,
+          }))}
+          sourceParams={sourceParams}
+          onCancel={() => setGroupPickerOpen(false)}
+          onApply={applyGroupings}
         />
       )}
 
@@ -3119,6 +3141,8 @@ const styles: Record<string, React.CSSProperties> = {
   // Where a ticked grouping ended up. Muted: it is a confirmation, not a
   // warning — the one reading that IS a warning ("pooled") says so in words.
   groupRole: { fontSize: 9, color: '#7c7ca0', marginLeft: 6 },
+  // A wide variable, collapsed. Reads as a row rather than a button so the
+  // section still scans as one list of groupings.
   variantTag: {
     fontSize: 8, color: '#fbbf24', border: '1px solid #6b5a1a',
     borderRadius: 3, padding: '0 3px', textTransform: 'uppercase',

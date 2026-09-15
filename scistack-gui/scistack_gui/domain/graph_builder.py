@@ -2134,7 +2134,18 @@ def find_cycle(
 #: Every key FunctionSettingsPanel.updateNodeData persists. Rehydration has to
 #: cover the same set the panel writes, or a setting saves successfully and
 #: comes back missing -- which reads to the user as "it didn't save".
-_SAVED_CONFIG_KEYS = ("schemaSelection", "schemaLevel", "whereFilters", "runOptions")
+_SAVED_CONFIG_KEYS = (
+    "schemaSelection",
+    "schemaLevel",
+    "whereFilters",
+    "runOptions",
+    # Per-parameter column picks — {param: {"columns": [...], "iterate": bool}}.
+    # See docs/claude/column-selection.md §From the GUI. Omitting a key the
+    # panel writes is the 2026-09-14 snap-back bug in miniature: it saves
+    # fine, is never read back, and the control visibly reverts on the next
+    # dag_updated refetch.
+    "columnSelections",
+)
 
 
 def _apply_saved_config(node_data: dict, config: dict | None) -> None:

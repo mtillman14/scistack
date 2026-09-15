@@ -85,6 +85,20 @@ class Scaled(BaseVariable):
     schema_version = 1
 
 
+class GroupLabel(BaseVariable):
+    """Subject-level TEXT **produced by a pipeline step**, so it has variants.
+
+    ``Condition`` is saved directly and therefore has exactly one record per
+    subject — which is why it cannot exercise the question "WHICH variant of the
+    grouping variable supplies the labels". This one is written by a swept
+    ``for_each``, so each subject has two records carrying different labels, and
+    a figure grouped by it is wrong in a way that looks like data unless the
+    variant is pinned.
+    """
+
+    schema_version = 1
+
+
 class Summarized(BaseVariable):
     """Produced from ``Scaled`` — the SECOND pipeline layer.
 
@@ -189,3 +203,54 @@ def with_demographics(seeded):
     for subject, row in rows.items():
         Demographics.save(row, subject=subject)
     return seeded
+
+
+def _label(mass, scheme):
+    """Two labelling schemes that disagree about every subject.
+
+    Module level, not inside the fixture: ``for_each`` hashes the callable and
+    records it as the producing function, and a nested def would be a different
+    object on every call.
+    """
+    return f"{scheme}-{'high' if mass > 71.5 else 'low'}"
+
+
+@pytest.fixture
+def two_label_variants(seeded):
+    """``GroupLabel`` written twice per subject, under two swept schemes.
+
+    The grouping-variable equivalent of a variable with two pipeline variants,
+    and the only fixture here where "which variant supplies the labels" has a
+    visible answer: the two schemes label every subject differently, so a figure
+    grouped by it is wrong in a way that looks like data unless the variant is
+    pinned.
+
+    In conftest rather than beside its first test because the parity suite needs
+    the same database — the interactive pin and the exported one have to be
+    compared against one set of records, not two that happen to be built the
+    same way.
+    """
+    from scidb import EachOf, for_each
+
+    for_each(
+        _label,
+        inputs={"mass": Mass, "scheme": EachOf("a", "b")},
+        outputs=[GroupLabel],
+        subject=[],
+    )
+    return seeded
+
+
+def scheme_axis(source) -> str:
+    """The branch-param column ``two_label_variants`` produces.
+
+    Read off the frame by SUFFIX rather than hard-coded: the namespacing
+    (``<function>.<param>``) is scidb's, and a test is not the place to restate
+    it. A second axis appearing later should fail here loudly rather than
+    silently pin the wrong one.
+    """
+    columns = source._variable_frame("GroupLabel").variant_columns
+    assert columns, "the fixture should have produced a variant axis"
+    matches = [column for column in columns if column.endswith(".scheme")]
+    assert len(matches) == 1, f"expected one scheme axis, got {columns}"
+    return matches[0]

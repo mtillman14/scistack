@@ -125,13 +125,72 @@ def _skip_comments(db, pipeline_id: str, comment_prefix: str) -> tuple[list[str]
 # ---------------------------------------------------------------------------
 
 
+def _each_of_cls():
+    """``scifor.EachOf`` itself. Imported lazily for the same reason
+    :func:`_column_selection_parts` is: this module is imported at server
+    start, before a project's registry exists."""
+    from scifor import EachOf
+
+    return EachOf
+
+
+def _column_selection_parts(value):
+    """``(inner, columns, iterate)`` for a ``scifor.ColumnSelection``, or
+    ``None`` for anything else.
+
+    Matched against the SCIFOR base class, not scidb's subclass: a bare
+    ``scifor.ColumnSelection`` is a legal for_each input too, and every other
+    isinstance check in this stack is written the same way (see
+    docs/claude/column-selection.md).
+    """
+    try:
+        from scifor import ColumnSelection
+    except ImportError:  # pragma: no cover - scifor is a hard dependency
+        return None
+    if not isinstance(value, ColumnSelection):
+        return None
+    return value.data, list(value.columns or []), bool(value.iterate)
+
+
 def _py_literal(value) -> str:
     """A bare class (BaseVariable subclass) -> its name; everything else
     -> repr(). EachOf/PathInput's own __repr__ already produce valid,
     readable Python constructor syntax (recursively, via this same rule),
-    so no per-type branching is needed here — see plan doc."""
+    so no per-type branching is needed here — see plan doc.
+
+    ``ColumnSelection`` is the exception that does need a branch: its
+    ``__repr__`` is the default ``<...ColumnSelection object at 0x...>``, so
+    without this the exported script renders an object address where a
+    subscript belongs — a file that looks fine until it is run.
+    """
+    parts = _column_selection_parts(value)
+    if parts is not None:
+        inner, columns, iterate = parts
+        base = _py_literal(inner)
+        if iterate:
+            if columns:
+                return f"{base}.for_columns({columns!r})"
+            return f"{base}.for_columns()"
+        if len(columns) == 1:
+            return f"{base}[{columns[0]!r}]"
+        return f"{base}[{columns!r}]"
     if isinstance(value, type):
         return value.__name__
+    if type(value) is _each_of_cls():
+        # A BARE EachOf only -- deliberately `type(...) is`, not isinstance.
+        # `scidb.Parameter` IS an EachOf, and its own __repr__ spells
+        # `Parameter(10, 20, description='')`, which is both the right
+        # constructor and what the generated header imports. Catching
+        # subclasses here rendered every exported Parameter as `EachOf(...)`,
+        # losing the description and the type.
+        #
+        # The bare case needs the branch because EachOf.__repr__ renders each
+        # alternative via ``__name__`` -- a DISPLAY name: ColumnSelection's
+        # spells a multi-column iterate selection ``Trials["a", "b",
+        # iterate]``, which is not Python. `build_run_inputs` produces exactly
+        # this shape for a multi-type binding with a column selection.
+        items = ", ".join(_py_literal(a) for a in value.alternatives)
+        return f"EachOf({items})"
     return repr(value)
 
 
@@ -277,7 +336,29 @@ def _matlab_str(s) -> str:
 
 def _matlab_literal(value) -> str:
     """Same resolved values build_run_inputs already returns (classes,
-    constants, EachOf, PathInput) — MATLAB syntax instead of Python's."""
+    constants, EachOf, PathInput, ColumnSelection) — MATLAB syntax instead of
+    Python's.
+
+    MATLAB has no ``ColumnSelection`` wrapper: the columns go to the
+    ``BaseVariable`` constructor and ``iterate`` comes from ``for_columns``
+    (``+scidb/BaseVariable.m``), so the four spellings match
+    ``api.matlab_command._format_variable_class`` exactly — two renderers, one
+    syntax, and a test in each pins it.
+    """
+    parts = _column_selection_parts(value)
+    if parts is not None:
+        inner, columns, iterate = parts
+        name = inner.__name__ if isinstance(inner, type) else str(inner)
+        if iterate:
+            cols = (
+                "[" + ", ".join(_matlab_str(c) for c in columns) + "]"
+                if columns
+                else ""
+            )
+            return f"{name}().for_columns({cols})"
+        if len(columns) == 1:
+            return f"{name}({_matlab_str(columns[0])})"
+        return f"{name}([" + ", ".join(_matlab_str(c) for c in columns) + "])"
     if isinstance(value, type):
         return f"{value.__name__}()"  # MATLAB convention: constructed instance
     alternatives = getattr(value, "alternatives", None)

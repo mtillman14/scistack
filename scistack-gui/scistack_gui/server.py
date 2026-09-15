@@ -375,6 +375,24 @@ def _h_get_variable_plot_data(params):
     return get_variable_plot_data(params["name"], get_db())
 
 
+def _h_get_variable_columns(params):
+    """Which columns a consumer of this variable receives — the Inputs
+    column picker's live read (and the glue panel's, through the same
+    service). Mirrors ``GET /api/variables/{name}/columns``."""
+    from scistack_gui.services.variable_service import input_columns
+
+    variable_type = params.get("variable_type") or params.get("name") or ""
+    if not variable_type:
+        return {
+            "ok": False,
+            "error": (
+                "This parameter is not wired to a variable yet, so there are "
+                "no columns to show."
+            ),
+        }
+    return input_columns(variable_type)
+
+
 def _h_get_parameters(params):
     from scistack_gui.services.layout_service import get_parameters
 
@@ -992,6 +1010,36 @@ def _h_plot_variant_graph(params):
     )
 
 
+def _h_plot_grouping_graph(params):
+    from scistack_gui.db import get_db
+    from scistack_gui.services.plot_service import grouping_graph
+
+    return grouping_graph(
+        get_db(), params["variable"], csv_path=params.get("csv_path")
+    )
+
+
+def _h_plot_grouping_columns(params):
+    from scistack_gui.db import get_db
+    from scistack_gui.services.plot_service import grouping_columns
+
+    return grouping_columns(
+        get_db(),
+        params["variable"],
+        params["group_variable"],
+        csv_path=params.get("csv_path"),
+    )
+
+
+def _h_plot_grouping_default_variant(params):
+    from scistack_gui.db import get_db
+    from scistack_gui.services.plot_service import grouping_default_variant
+
+    return grouping_default_variant(
+        get_db(), params["group_variable"], csv_path=params.get("csv_path")
+    )
+
+
 def _h_plot_location_tree(params):
     from scistack_gui.db import get_db
     from scistack_gui.services.plot_service import location_tree
@@ -1108,6 +1156,7 @@ METHODS = {
     "set_note": _h_set_note,
     "get_variable_records": _h_get_variable_records,
     "get_variable_plot_data": _h_get_variable_plot_data,
+    "get_variable_columns": _h_get_variable_columns,
     "get_parameters": _h_get_parameters,
     "get_variables_list": _h_get_variables_list,
     "get_path_inputs": _h_get_path_inputs,
@@ -1192,6 +1241,9 @@ METHODS = {
     "plot_describe": _h_plot_describe,
     "plot_capabilities": _h_plot_capabilities,
     "plot_variant_graph": _h_plot_variant_graph,
+    "plot_grouping_graph": _h_plot_grouping_graph,
+    "plot_grouping_columns": _h_plot_grouping_columns,
+    "plot_grouping_default_variant": _h_plot_grouping_default_variant,
     "plot_location_tree": _h_plot_location_tree,
     "node_location_tree": _h_node_location_tree,
     "plot_resolve": _h_plot_resolve,
@@ -1233,6 +1285,14 @@ SELF_MANAGED_DB_METHODS = frozenset(
         "plot_describe",
         "plot_capabilities",
         "plot_variant_graph",
+        # Same shape as plot_variant_graph: read-only picker calls that take
+        # the connection inside the service for exactly as long as the query
+        # needs it. `plot_grouping_columns` is the one that can cost real time
+        # (one DISTINCT per column of a wide sheet), which is precisely why it
+        # must not hold the lock across the whole request.
+        "plot_grouping_graph",
+        "plot_grouping_columns",
+        "plot_grouping_default_variant",
         "plot_location_tree",
         # Same shape as plot_location_tree: it takes the connection inside
         # `node_location_tree` and can spend seconds there (one

@@ -128,6 +128,18 @@ def default_path_template(function_name: str, iterate_keys: list[str]) -> str:
     return f"plots/{slug}{parts}.png"
 
 
+def _pin_literal(value) -> str:
+    """One pinned value as source. Tuples render as **lists**.
+
+    ``scidb._match_branch_param`` accepts either for membership, so this is
+    about the generated text rather than about behaviour: a ``FactorVariable``
+    stores its selection as tuples (it must stay hashable for ``get_table``'s
+    memo) while a ``VariantSet`` stores lists, and the same pin spelled two ways
+    in exported code is a diff nobody should have to explain.
+    """
+    return repr(list(value) if isinstance(value, tuple) else value)
+
+
 def variant_expression(input_variable: str, variant_set) -> str:
     """A ``Variant(...)`` call selecting one named variant's records.
 
@@ -171,7 +183,10 @@ def variant_expression(input_variable: str, variant_set) -> str:
         arguments = []
         if fn_name:
             arguments.append(f"fn={fn_name!r}")
-        arguments.extend(f"{key}={value!r}" for key, value in by_function[fn_name].items())
+        arguments.extend(
+            f"{key}={_pin_literal(value)}"
+            for key, value in by_function[fn_name].items()
+        )
         expression = f"Variant({expression}, {', '.join(arguments)})"
     return expression
 
@@ -235,6 +250,17 @@ def _foreach_call(
             if group.column is None
             else f"{group.variable}[{group.column!r}]"
         )
+        if group.selection:
+            # The grouping's own variant pin, exported so the generated figure
+            # is stratified by the same version of the sheet the preview used.
+            # `scidb.Variant` takes a ColumnSelection (see its `var_type` arg),
+            # so the two wrappers compose in either order and this nests
+            # cleanly: Variant(Demographics["InterventionGroup"], ...).
+            #
+            # `variant_expression` reads `.selection`, which FactorVariable and
+            # VariantSet both provide — one translation from frame columns to
+            # `Variant(...)` keywords, not two that can disagree.
+            expression = variant_expression(expression, group)
         inputs.append(f'        "{group_param(group)}": {expression},')
         table_inputs.append(group_param(group))
     inputs.append(f'        "filename": PathOutput("{path_template}"),')

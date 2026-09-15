@@ -3924,3 +3924,262 @@ class TestRunOptionsInGeneratedCommand:
         two = cmd.index("@step_two")
         assert "'distribute', true" in cmd[one:two]
         assert "'distribute', true" not in cmd[two:]
+
+
+class TestVariableInputColumnSelection:
+    """Stage 6 of .claude/plan-column-selection-ui.md.
+
+    MATLAB has no ``ColumnSelection`` wrapper: the column names go to the
+    ``BaseVariable`` constructor (``selected_columns``) and ``iterate`` comes
+    from ``for_columns`` (``+scidb/BaseVariable.m``). The four spellings below
+    are what ``_format_variable_class`` must emit, and what
+    ``code_export_service._matlab_literal`` renders too -- two renderers, one
+    syntax.
+    """
+
+    def _expr(self, ref):
+        from scistack_gui.api.matlab_command import _variable_input_items
+
+        return dict(_variable_input_items({"table_in": ref}))["table_in"]
+
+    def test_no_selection_is_the_plain_constructor(self):
+        assert self._expr("Trials") == "Trials()"
+        assert self._expr({"types": ["Trials"]}) == "Trials()"
+
+    def test_single_column(self):
+        assert (
+            self._expr({"types": ["Trials"], "columns": ["filename"]})
+            == 'Trials("filename")'
+        )
+
+    def test_multiple_columns(self):
+        assert (
+            self._expr({"types": ["Trials"], "columns": ["a", "b"]})
+            == 'Trials(["a", "b"])'
+        )
+
+    def test_iterate_over_named_columns(self):
+        assert (
+            self._expr({"types": ["Trials"], "columns": ["a", "b"], "iterate": True})
+            == 'Trials().for_columns(["a", "b"])'
+        )
+
+    def test_iterate_over_all_columns(self):
+        assert (
+            self._expr({"types": ["Trials"], "columns": [], "iterate": True})
+            == "Trials().for_columns()"
+        )
+
+    def test_multi_type_wraps_every_alternative(self):
+        assert (
+            self._expr({"types": ["A", "B"], "columns": ["c"]})
+            == 'scifor.EachOf(A("c"), B("c"))'
+        )
+
+    def test_type_names_still_reach_the_classdef_preflight(self):
+        """``_variable_input_type_names`` feeds the unresolvable-classdef
+        warning; the dict shape must not hide the names from it."""
+        from scistack_gui.api.matlab_command import _variable_input_type_names
+
+        names = _variable_input_type_names(
+            {
+                "a": "RawEMG",
+                "b": ["RawVO2"],
+                "c": {"types": ["Trials"], "columns": ["x"]},
+            }
+        )
+        assert sorted(names) == ["RawEMG", "RawVO2", "Trials"]
+
+    def test_column_names_are_escaped(self):
+        assert (
+            self._expr({"types": ["Trials"], "columns": ['say "hi"']})
+            == 'Trials("say ""hi""")'
+        )
+
+    def test_multiple_column_names_are_escaped(self):
+        assert (
+            self._expr({"types": ["Trials"], "columns": ['a"b', "c'd"]})
+            == 'Trials(["a""b", "c\'d"])'
+        )
+
+
+class TestDoubleQuotedStringEscaping:
+    """``_format_matlab_string_array`` emits DOUBLE-quoted literals but used
+    to escape SINGLE quotes -- the escaping of the other quoting style. An
+    embedded ``"`` therefore terminated the literal and an embedded ``'`` was
+    corrupted into ``''``.
+
+    Latent while its only callers were identifiers (schema keys, parameter
+    names); column selection is what first routes user spreadsheet headers
+    through it.
+    """
+
+    def test_double_quote_is_doubled(self):
+        from scistack_gui.api.matlab_command import _format_matlab_string_array
+
+        assert _format_matlab_string_array(['a"b']) == '["a""b"]'
+
+    def test_single_quote_is_left_alone(self):
+        """Inside ``"..."`` a single quote is an ordinary character. Doubling
+        it is not a harmless over-escape -- it changes the value."""
+        from scistack_gui.api.matlab_command import _format_matlab_string_array
+
+        assert _format_matlab_string_array(["c'd"]) == "[\"c'd\"]"
+
+    def test_single_quoted_helper_still_escapes_single_quotes(self):
+        """The other helper is unchanged -- ``'...'`` literals (addpath, db
+        path, pipeline id) still need ``''``."""
+        from scistack_gui.api.matlab_command import _escape_matlab_string
+
+        assert _escape_matlab_string("c'd") == "c''d"
+
+    def test_agrees_with_the_code_export_renderer(self):
+        from scistack_gui.api.matlab_command import _escape_matlab_dq
+        from scistack_gui.services.code_export_service import _matlab_str
+
+        for s in ('a"b', "c'd", "plain"):
+            assert _matlab_str(s) == f'"{_escape_matlab_dq(s)}"'
+
+    def test_selection_reaches_the_template_branch(self):
+        """The first-run branch: no DB variants, wiring is the only source."""
+        from scistack_gui.api.matlab_command import generate_matlab_command
+
+        cmd = generate_matlab_command(
+            function_name="summarise",
+            db_path="/db.duckdb",
+            schema_keys=["subject"],
+            variants=[],
+            output_types=["Summary"],
+            variable_inputs={
+                "table_in": {"types": ["Trials"], "columns": ["filename"]}
+            },
+        )
+        assert 'Trials("filename")' in cmd
+
+    def test_selection_reaches_the_db_variant_branch(self):
+        """A function WITH history. The recorded ``input_types`` renders
+        ``Trials()``; the overlay must replace it, not sit beside it."""
+        from scistack_gui.api.matlab_command import generate_matlab_command
+
+        cmd = generate_matlab_command(
+            function_name="summarise",
+            db_path="/db.duckdb",
+            schema_keys=["subject"],
+            variants=[
+                {
+                    "input_types": {"table_in": "Trials"},
+                    "output_type": "Summary",
+                    "constants": {},
+                }
+            ],
+            variable_inputs={
+                "table_in": {"types": ["Trials"], "columns": ["filename"]}
+            },
+        )
+        assert 'Trials("filename")' in cmd
+        assert "'table_in', Trials()" not in cmd
+
+    def test_selection_reaches_a_pipeline_step(self):
+        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+
+        cmd = generate_matlab_pipeline_command(
+            pipeline_id="main",
+            steps=[
+                {
+                    "function_name": "summarise",
+                    "variants": [
+                        {
+                            "input_types": {"table_in": "Trials"},
+                            "output_type": "Summary",
+                            "constants": {},
+                        }
+                    ],
+                    "variable_inputs": {
+                        "table_in": {
+                            "types": ["Trials"],
+                            "columns": [],
+                            "iterate": True,
+                        }
+                    },
+                }
+            ],
+            db_path="/db.duckdb",
+            schema_keys=["subject"],
+        )
+        assert "Trials().for_columns()" in cmd
+
+
+class TestApplyColumnSelectionsToVariableInputs:
+    """``matlab_command_service._apply_column_selections`` keeps ONE map --
+    no parallel ``column_selections`` dict, which is the "one concept, two
+    representations" trap that leaves two of the three emit sites unupdated.
+    """
+
+    def test_promotes_an_edge_derived_entry(self):
+        from scistack_gui.services.matlab_command_service import (
+            _apply_column_selections,
+        )
+
+        out = _apply_column_selections(
+            "summarise", {"table_in": ["Trials"]}, {"table_in": ["filename"]}
+        )
+        assert out == {
+            "table_in": {
+                "types": ["Trials"],
+                "columns": ["filename"],
+                "iterate": False,
+            }
+        }
+
+    def test_falls_back_to_the_recorded_type_when_there_is_no_edge(self):
+        """A source-declared function that has already run has no manual edge
+        rows, so DB history is the only source of the class name."""
+        from scistack_gui.services.matlab_command_service import (
+            _apply_column_selections,
+        )
+
+        out = _apply_column_selections(
+            "summarise", {}, {"table_in": ["filename"]}, {"table_in": "Trials"}
+        )
+        assert out["table_in"]["types"] == ["Trials"]
+
+    def test_drops_a_selection_with_no_type_from_either_source(self, caplog):
+        """``("filename")`` with no class in front of it is a parse error in
+        the generated script."""
+        from scistack_gui.services.matlab_command_service import (
+            _apply_column_selections,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            out = _apply_column_selections(
+                "summarise", {}, {"table_in": ["filename"]}, {}
+            )
+        assert out == {}
+        assert "no variable type" in caplog.text
+
+    def test_leaves_unselected_params_untouched(self):
+        from scistack_gui.services.matlab_command_service import (
+            _apply_column_selections,
+        )
+
+        out = _apply_column_selections(
+            "summarise", {"a": ["A"], "b": ["B"]}, {"a": ["x"]}
+        )
+        assert out["b"] == ["B"]
+
+    def test_db_input_types_excludes_path_input_specs(self):
+        """A PathInput spec sitting in ``input_types`` is not a variable type
+        and must never be constructed as one."""
+        from scistack_gui.services.matlab_command_service import _db_input_types
+
+        out = _db_input_types(
+            [
+                {
+                    "input_types": {
+                        "table_in": "Trials",
+                        "filepath": "PathInput('data/{subject}.csv')",
+                    }
+                }
+            ]
+        )
+        assert out == {"table_in": "Trials"}

@@ -296,3 +296,99 @@ class TestSerializationHelpers:
         ]
         with pytest.raises(ValueError, match="cycle"):
             _topo_sort_targets(steps)
+
+
+class TestColumnSelectionLiterals:
+    """Stage 7 of .claude/plan-column-selection-ui.md.
+
+    ``ColumnSelection`` has no Python-syntax ``__repr__`` -- it is the default
+    ``<...ColumnSelection object at 0x...>`` -- so without a branch here the
+    exported script renders an object address where a subscript belongs. That
+    is a file which looks fine until it is run.
+    """
+
+    def _sel(self, columns, iterate=False):
+        from conftest import RawSignal
+
+        if iterate:
+            return RawSignal.for_columns(columns)
+        return RawSignal[columns]
+
+    # --- Python ---
+
+    def test_py_single_column(self):
+        assert _py_literal(self._sel(["speed"])) == "RawSignal['speed']"
+
+    def test_py_multiple_columns(self):
+        assert _py_literal(self._sel(["a", "b"])) == "RawSignal[['a', 'b']]"
+
+    def test_py_iterate_named_columns(self):
+        assert (
+            _py_literal(self._sel(["a", "b"], iterate=True))
+            == "RawSignal.for_columns(['a', 'b'])"
+        )
+
+    def test_py_iterate_all_columns(self):
+        assert _py_literal(self._sel([], iterate=True)) == "RawSignal.for_columns()"
+
+    def test_py_never_renders_an_object_address(self):
+        for value in (
+            self._sel(["a"]),
+            self._sel(["a", "b"]),
+            self._sel([], iterate=True),
+        ):
+            assert "object at 0x" not in _py_literal(value)
+
+    def test_py_each_of_recurses_through_this_rule(self):
+        """``EachOf.__repr__`` renders alternatives via ``__name__``, which is
+        a DISPLAY name: a multi-column iterate selection spells
+        ``RawSignal["a", "b", iterate]``, which is not Python."""
+        from scidb import EachOf
+
+        src = _py_literal(EachOf(self._sel(["a", "b"], iterate=True)))
+        assert src == "EachOf(RawSignal.for_columns(['a', 'b']))"
+
+    def test_a_parameter_is_not_rendered_as_an_each_of(self):
+        """``scidb.Parameter`` IS an ``EachOf``, and its own ``__repr__`` is
+        the right constructor -- and the one the generated header imports.
+        The EachOf branch above must therefore match the BARE class only
+        (``type(...) is``), or every exported Parameter loses its type and
+        its description."""
+        from scidb import Parameter
+
+        assert _py_literal(Parameter(10, 20)).startswith("Parameter(")
+
+    # --- MATLAB (must match api.matlab_command._format_variable_class) ---
+
+    def test_matlab_single_column(self):
+        assert _matlab_literal(self._sel(["speed"])) == 'RawSignal("speed")'
+
+    def test_matlab_multiple_columns(self):
+        assert _matlab_literal(self._sel(["a", "b"])) == 'RawSignal(["a", "b"])'
+
+    def test_matlab_iterate_named_columns(self):
+        assert (
+            _matlab_literal(self._sel(["a", "b"], iterate=True))
+            == 'RawSignal().for_columns(["a", "b"])'
+        )
+
+    def test_matlab_iterate_all_columns(self):
+        assert (
+            _matlab_literal(self._sel([], iterate=True))
+            == "RawSignal().for_columns()"
+        )
+
+    def test_the_two_renderers_agree_with_the_matlab_generator(self):
+        """One syntax, two renderers. They drifted before (the generated
+        command and the exported script are read side by side)."""
+        from scistack_gui.api.matlab_command import _format_variable_class
+
+        for columns, iterate in (
+            (["speed"], False),
+            (["a", "b"], False),
+            (["a", "b"], True),
+            ([], True),
+        ):
+            assert _matlab_literal(self._sel(columns, iterate)) == (
+                _format_variable_class("RawSignal", columns, iterate)
+            )

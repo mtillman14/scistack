@@ -320,6 +320,29 @@ def get_variable_plot_data(variable_name: str, db: DatabaseManager = Depends(get
     }
 
 
+# ---- Column list -------------------------------------------------------------
+
+
+@router.get("/variables/{variable_name}/columns")
+def get_variable_columns(
+    variable_name: str, db: DatabaseManager = Depends(get_db)
+) -> dict:
+    """Which columns a consumer of this variable receives.
+
+    Read live by the function node's Inputs column picker and by the glue
+    panel, on every open — a variable re-saved with a different shape changes
+    this answer, and neither surface caches it.
+
+    Response: ``{"ok", "variable_type", "data_columns", "schema_keys",
+    "note"}``. A scalar/array-stored variable reports its single class-named
+    column plus the note explaining why, rather than an empty list, so the
+    picker can say something true instead of looking broken.
+    """
+    from scistack_gui.services import variable_service
+
+    return variable_service.input_columns(variable_name, db=db)
+
+
 # ---- Create new variable type -------------------------------------------------
 
 
