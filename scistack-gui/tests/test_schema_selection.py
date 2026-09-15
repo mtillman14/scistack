@@ -108,9 +108,16 @@ class TestProjectionToSchemaFilter:
 
 
 class TestNodeLocationTree:
-    def test_a_node_with_no_resolvable_inputs_explains_itself(self, populated_db):
+    def test_a_node_the_canvas_cannot_resolve_explains_itself(self, populated_db):
         """The panel must OPEN and say why it is empty. An error here would
-        read as a broken picker rather than a loader with no DB inputs."""
+        read as a broken picker.
+
+        The wording matters: the first version said "a loader that reads
+        files, or a node whose input edges were removed" for EVERY empty case,
+        which is what a user saw on an ordinary node and could do nothing
+        with. An unresolvable node now says it has no wiring; a loader does
+        not come here at all.
+        """
         from scistack_gui.services.node_location_service import node_location_tree
 
         payload = node_location_tree(populated_db, "fn__does_not_exist")
@@ -118,7 +125,44 @@ class TestNodeLocationTree:
         assert payload["roots"] == []
         assert payload["total"] == 0
         assert payload["notes"]
-        assert "no input variables" in payload["notes"][0]
+        assert "Nothing is wired into this node" in payload["notes"][0]
+
+    def test_a_loader_falls_back_to_its_own_output(self, populated_db, monkeypatch):
+        """A node that reads FILES has no variable inputs, and an empty pane
+        was useless there. Its locations are where its own output exists."""
+        from scistack_gui.services import node_location_service as svc
+
+        monkeypatch.setattr(
+            svc,
+            "input_variables_for_node",
+            lambda db, node_id: [],
+        )
+        monkeypatch.setattr(
+            svc,
+            "output_variables_for_node",
+            lambda db, node_id: ["RawSignal"],
+        )
+
+        payload = svc.node_location_tree(populated_db, "fn__loader")
+
+        assert payload["roots"], "a loader's own output has locations"
+        assert payload["total"] > 0
+        assert "reads files rather than variables" in payload["notes"][0]
+
+    def test_one_input_is_not_wrapped_in_an_intersection(self, populated_db, monkeypatch):
+        """A one-input node must cost exactly what the plotting tab costs —
+        `location_states` measured 9.5s on a big variable, and wrapping it in
+        an intersection of one would pay it twice for nothing."""
+        from scistack_gui.services import node_location_service as svc
+
+        monkeypatch.setattr(
+            svc, "input_variables_for_node", lambda db, node_id: ["FilteredSignal"]
+        )
+
+        payload = svc.node_location_tree(populated_db, "fn__one_input")
+
+        assert payload["variable"] == "FilteredSignal"
+        assert "∩" not in payload["variable"]
 
     def test_the_payload_shape_matches_the_plotting_tab(self, populated_db):
         """One component draws both tabs, so a second shape would be a second
