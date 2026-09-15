@@ -48,6 +48,17 @@ CODE_FACTOR_PREFIX = "Code:"
 #: (``distribute=true``); no ordinal, because the options have no version order.
 RUN_FACTOR_PREFIX = "Run:"
 
+#: Level given to rows a joined factor variable has no value for — a subject
+#: who is not in the demographics sheet, say.
+#:
+#: Dropping those rows instead would remove data from the figure to answer a
+#: question about grouping, and silently: the figure would simply hold fewer
+#: subjects than the database does, with nothing on screen saying so. An
+#: explicit level is visible, takes a role like any other level, and can be
+#: filtered out deliberately in one click. Named here because naming is
+#: presentation, even though only the scidb-backed source produces it.
+MISSING_LEVEL = "(missing)"
+
 
 def natural_sort_key(value: Any) -> tuple:
     """

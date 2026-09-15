@@ -17,6 +17,7 @@ from scistacklog import Log
 
 from ..dedup import SingleFlight
 from ..framesize import format_extent, frame_extent
+from ..spec import FactorVariable
 from ..table import LongTable
 
 LAYER = "scistackplot"
@@ -58,7 +59,7 @@ class DataSource(Protocol):
         measures: list[str],
         *,
         x_measure: str | None = None,
-        factor_variables: list[str] | None = None,
+        factor_variables: "list[FactorVariable] | None" = None,
     ) -> LongTable:
         """The long-format table for a plot's measures.
 
@@ -82,9 +83,18 @@ class DataSource(Protocol):
         """Measures that can be plotted as another series alongside ``measure``."""
         ...
 
-    def groupable_with(self, measure: str) -> list[str]:
-        """Variables usable as a grouping FACTOR for ``measure`` — recorded at
-        or above its schema level, so each row gets exactly one value."""
+    def groupable_with(self, measure: str) -> "list[FactorVariable]":
+        """Groupings usable as a FACTOR for ``measure`` — a variable recorded at
+        or above its schema level, or one column of such a variable, so each row
+        gets exactly one value."""
+        ...
+
+    def groupable_report(self, measure: str) -> dict:
+        """``{"offered": [...], "rejected": {label: reason}}``.
+
+        The same offers with the refusals kept, for the GUI: a column a user can
+        see in their spreadsheet and not in the Grouping list has to say why.
+        """
         ...
 
 
@@ -123,7 +133,7 @@ class BaseSource:
         measures: list[str],
         *,
         x_measure: str | None = None,
-        factor_variables: list[str] | None = None,
+        factor_variables: "list[FactorVariable] | None" = None,
     ) -> LongTable:
         """The long table for these measures, built once per distinct request.
 
@@ -240,7 +250,7 @@ class BaseSource:
         measures: list[str],
         *,
         x_measure: str | None = None,
-        factor_variables: list[str] | None = None,
+        factor_variables: "list[FactorVariable] | None" = None,
     ) -> LongTable:
         # `factor_variables` is accepted and ignored: a flat table's factors are
         # already columns of every row, so there is nothing to join in
@@ -301,7 +311,7 @@ class BaseSource:
     def joinable_with(self, measure: str) -> list[str]:
         return [m for m in self._table().measure_names if m != measure]
 
-    def groupable_with(self, measure: str) -> list[str]:
+    def groupable_with(self, measure: str) -> "list[FactorVariable]":
         """A flat table's factors are already columns of every row.
 
         Grouping variables exist because scidb records a subject-level fact
@@ -309,6 +319,10 @@ class BaseSource:
         nothing to join in.
         """
         return []
+
+    def groupable_report(self, measure: str) -> dict:
+        """Offers and refusals. Nothing to offer and nothing to explain here."""
+        return {"offered": [], "rejected": {}}
 
     def stackable_with(self, measure: str) -> list[str]:
         """Same shape, so the two share an axis. A flat table has no levels to

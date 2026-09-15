@@ -67,6 +67,18 @@ class Condition(BaseVariable):
     schema_version = 1
 
 
+class Demographics(BaseVariable):
+    """Subject-level WIDE table — the spreadsheet case.
+
+    One column per field (scidb multi_column mode), holding a different KIND of
+    value in each: a number, two categoricals, a constant and an identifier. The
+    variable as a whole therefore has no value to group by, which is the whole
+    reason a grouping has to be able to name a column.
+    """
+
+    schema_version = 1
+
+
 class Scaled(BaseVariable):
     """Produced by a pipeline step, so it can carry branch params."""
 
@@ -145,3 +157,35 @@ def seeded(db):
                     trial=trial,
                 )
     return db
+
+
+@pytest.fixture
+def with_demographics(seeded):
+    """``seeded`` plus a wide demographics sheet, missing one subject.
+
+    Subject 03 is deliberately absent: a participant who is in the study but not
+    in the spreadsheet is the ordinary case, and their trials must still reach
+    the figure (as ``MISSING_LEVEL``) rather than disappear from it.
+
+    Kept as its own fixture rather than folded into ``seeded`` so every existing
+    test keeps the variable set it was written against.
+    """
+    rows = {
+        "01": {
+            "Age": 64.0,
+            "Sex": "F",
+            "InterventionGroup": "Onward",
+            "Site": "Boston",
+            "RecordId": "R-0001",
+        },
+        "02": {
+            "Age": 71.0,
+            "Sex": "M",
+            "InterventionGroup": "Digitimer",
+            "Site": "Boston",
+            "RecordId": "R-0002",
+        },
+    }
+    for subject, row in rows.items():
+        Demographics.save(row, subject=subject)
+    return seeded

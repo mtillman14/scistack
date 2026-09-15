@@ -22,7 +22,7 @@ from scistackplotdb import ScidbSource, generate_endpoint
 pytest.importorskip("seaborn")
 
 
-def _run_generated(code, tmp_path):
+def _run_generated(code, tmp_path, extra: dict | None = None):
     """Execute the generated endpoint, returning the files and any failures.
 
     ``for_each`` records a per-combo failure and carries on (see
@@ -54,6 +54,7 @@ def _run_generated(code, tmp_path):
         "PathOutput": PathOutput,
         "StepLength": StepLength,
         "StepLengthFigure": StepLengthFigure,
+        **(extra or {}),
     }
     exec(compile(code.source, "<generated>", "exec"), namespace)  # noqa: S102
     return sorted(tmp_path.glob("fig_*.png")), failures
@@ -171,3 +172,54 @@ def test_no_iterate_produces_exactly_one_figure_both_ways(seeded, tmp_path):
 
     assert len(interactive) == 1
     assert len(files) == 1, _explain(code, failures)
+
+
+def test_a_grouping_column_reaches_the_pipeline_the_same_way(
+    with_demographics, tmp_path
+):
+    """One column of a wide sheet, previewed and exported.
+
+    The two paths reach the same column by different routes: interactively it
+    is a pandas merge inside ``ScidbSource``, and in the pipeline it is a
+    ``Demographics["InterventionGroup"]`` input that ``as_table`` delivers as
+    schema keys plus that one column. This runs the real ``for_each`` over the
+    real database, which is the only thing that proves the second route.
+    """
+    from scistackplot import FactorVariable
+
+    from conftest import Demographics
+
+    groups = [FactorVariable("Demographics", "InterventionGroup")]
+    source = ScidbSource(with_demographics)
+    table = source.get_table(["StepLength"], factor_variables=groups)
+    spec = PlotSpec(
+        measures=["StepLength"],
+        factor_variables=groups,
+        roles={
+            "InterventionGroup": Role.X,
+            "subject": Role.FREE,
+            "session": Role.FREE,
+            "trial": Role.FREE,
+        },
+        kind=PlotKind.BAR,
+    )
+
+    interactive = resolve(spec, table)
+    code = generate_endpoint(
+        spec,
+        table,
+        input_variable="StepLength",
+        path_template=str(tmp_path / "fig_all.png"),
+    )
+    files, failures = _run_generated(
+        code, tmp_path, extra={"Demographics": Demographics}
+    )
+
+    assert len(interactive) == 1
+    assert len(files) == 1, _explain(code, failures)
+    # Every group the preview drew, including the subject the sheet omits.
+    assert [str(v) for v in interactive[0].x_order] == [
+        "Digitimer",
+        "Onward",
+        "(missing)",
+    ]

@@ -180,7 +180,28 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         else {"offered": source.stackable_with(variable), "rejected": {}}
     )
     stackable = stacking["offered"]
-    groupable = source.groupable_with(variable)
+    # Offers AND refusals here too: a demographics column that is numeric, or
+    # holds one value per subject, is absent from the list for a reason the user
+    # cannot otherwise guess — they can see the column in their spreadsheet.
+    grouping = (
+        source.groupable_report(variable)
+        if hasattr(source, "groupable_report")
+        else {
+            "offered": [
+                {
+                    "variable": g.variable,
+                    "column": g.column,
+                    "label": g.label,
+                    "name": g.factor_name,
+                    "levels": [],
+                    "level_count": 0,
+                }
+                for g in source.groupable_with(variable)
+            ],
+            "rejected": {},
+        }
+    )
+    groupable = grouping["offered"]
     # Which optional sections the panel can show, and why. Each of these gates a
     # control that is simply absent when the list is empty, so an empty list has
     # to be visible somewhere — otherwise "no other variable qualifies" and "the
@@ -191,7 +212,7 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         len(stackable),
         stackable,
         len(groupable),
-        groupable,
+        [offer["label"] for offer in groupable],
         len(source.joinable_with(variable)),
     )
 
@@ -211,9 +232,11 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         # Why each remaining variable is NOT offered, so the picker can draw it
         # refused-with-a-reason instead of leaving it inert and unexplained.
         "stackable_refused": stacking["rejected"],
-        # Variables usable as a grouping FACTOR — recorded at or above this
-        # variable's schema level, so each row gets exactly one of their values.
+        # Groupings usable as a FACTOR — a variable recorded at or above this
+        # variable's schema level, or one categorical column of such a variable
+        # (a demographics sheet), so each row gets exactly one of their values.
         "groupable_with": groupable,
+        "groupable_refused": grouping["rejected"],
         # What this matplotlib can write, so the format dropdown offers exactly
         # what the save will accept rather than a second list that can drift.
         "image_formats": supported_formats(),

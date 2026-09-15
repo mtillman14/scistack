@@ -15,6 +15,8 @@ from typing import Any
 import pandas as pd
 from scistacklog import Log
 from scistackplot import (
+    MISSING_LEVEL,
+    FactorVariable,
     LongTable,
     Shape,
     classify_column,
@@ -30,9 +32,11 @@ from scistackplot.variants import VARIABLE_COLUMN
 from .hierarchy import join_frames, joinable, joined_levels
 from .load import (
     LATEST_COLUMN,
+    column_levels,
     data_columns_for,
     load_variable,
     registered_variables,
+    sample_column_value,
     sample_value,
     schema_keys,
     variable_levels,
@@ -46,6 +50,31 @@ LAYER = "scistackplotdb"
 #: (docs/claude/for-columns-iteration.md) — so a plot faceted by field and a
 #: ``for_columns`` run name the same axis the same way.
 FIELD_FACTOR = "ColName"
+
+#: How many distinct values a column may hold and still be offered as a
+#: grouping. Past this it is an identifier, not a group: a colour per level is
+#: unreadable and a facet per level is hundreds of empty panels. Not a hard
+#: limit — a spec naming such a column still works — only what
+#: :meth:`ScidbSource.groupable_report` will put in front of a user.
+MAX_GROUP_LEVELS = 50
+
+
+def _as_levels(column):
+    """A joined grouping column as factor levels: missing named, rest as text.
+
+    Text because a factor level IS text everywhere else in the stack — schema
+    keys are cast to VARCHAR on load for the same reason
+    (``load.load_variable``).
+
+    Deliberately these two calls and nothing cleverer: ``scistackplot.codegen``
+    emits ``fillna(...).astype(str)`` into the exported endpoint, so anything
+    extra here (normalising ``70.0`` to ``70``, say) would spell a level one way
+    in the preview and another way in the export — the disagreement that
+    synthetic-factors invariant 4 exists to prevent. The order matters:
+    ``astype(str)`` first would turn every missing value into the string
+    ``"nan"``.
+    """
+    return column.fillna(MISSING_LEVEL).astype(str)
 
 
 class ScidbSource(BaseSource):
@@ -182,6 +211,12 @@ class ScidbSource(BaseSource):
         """
         declared = getattr(self._db, "dataset_schema_key_types", None) or {}
         unique = list(dict.fromkeys(values))
+        # "no value here" is not a level the sort has an opinion about — it goes
+        # last wherever it appears, so a legend reads as the groups first and
+        # the leftovers after them.
+        has_missing = MISSING_LEVEL in unique
+        if has_missing:
+            unique = [v for v in unique if v != MISSING_LEVEL]
 
         def default(vals: list[str]) -> list[str]:
             if declared.get(key) == "numeric":
@@ -202,8 +237,10 @@ class ScidbSource(BaseSource):
         if order.get(key):
             from scidb.schema_order import order_levels
 
-            return order_levels(key, unique, declared=order, fallback=default)
-        return default(unique)
+            ordered = order_levels(key, unique, declared=order, fallback=default)
+        else:
+            ordered = default(unique)
+        return [*ordered, MISSING_LEVEL] if has_missing else ordered
 
     # ---- metadata --------------------------------------------------------
 
@@ -329,7 +366,7 @@ class ScidbSource(BaseSource):
         measures: list[str],
         *,
         x_measure: str | None = None,
-        factor_variables: list[str] | None = None,
+        factor_variables: list[FactorVariable] | None = None,
     ) -> LongTable:
         """
         Build the long table for a plot's variables.
@@ -346,9 +383,11 @@ class ScidbSource(BaseSource):
         one x value per row of y, broadcast down the hierarchy when it lives at
         a shallower level (see :mod:`.hierarchy`).
 
-        ``factor_variables`` are variables joined in as **factors** rather than
-        plotted: a subject-level ``Condition`` holding stim/sham becomes a
-        column every row carries, and takes a role like any other factor.
+        ``factor_variables`` are variables — or single columns of them — joined
+        in as **factors** rather than plotted: a subject-level ``Condition``
+        holding stim/sham, or the ``InterventionGroup`` column of a wide
+        demographics table, becomes a column every row carries and takes a role
+        like any other factor.
 
         The two are genuinely different operations, which is why they are
         different parameters. Stacking two variables that a wide join would
@@ -369,7 +408,7 @@ class ScidbSource(BaseSource):
         requested = [
             *measures,
             *([x_measure] if x_measure else []),
-            *factor_variables,
+            *(group.variable for group in factor_variables),
         ]
         unknown = [name for name in requested if name not in known]
         if unknown:
@@ -487,7 +526,7 @@ class ScidbSource(BaseSource):
         return table
 
     def _attach_factor_variables(
-        self, frame, levels: list[str], factor_variables: list[str]
+        self, frame, levels: list[str], factor_variables: list[FactorVariable]
     ):
         """Join grouping variables onto the frame as ordinary factor columns.
 
@@ -495,6 +534,13 @@ class ScidbSource(BaseSource):
         that subject's rows — the same prefix-merge :mod:`.hierarchy` performs
         for an x measure, and the reason "stim vs sham" needs no new concept
         once the database already records it.
+
+        An entry naming a ``column`` takes that one column of a wide table
+        (``Demographics.InterventionGroup``) instead of the variable's single
+        value. That is the only way a spreadsheet of demographics can group a
+        figure: the variable as a whole holds Age, Sex and InterventionGroup at
+        once and so has no value to group by, which is exactly what the error
+        below says when the column is left out.
 
         A grouping variable's own **variant columns are deliberately dropped**.
         Which version of the code produced a group label is not what the figure
@@ -506,12 +552,21 @@ class ScidbSource(BaseSource):
         if not factor_variables:
             return frame, attached
 
-        for name in factor_variables:
+        for group in factor_variables:
+            name = group.variable
             variable = self._variable_frame(name)
-            if len(variable.data_columns) > 1:
+            source_column = self._factor_source_column(variable, group)
+            factor = group.factor_name
+            if factor in frame.columns:
+                # Never merge over a column that is already there. pandas would
+                # suffix one of them (`InterventionGroup_x`) and every role,
+                # filter and y-scope naming the factor would then point at a
+                # column nobody meant — a figure that is wrong in a way no
+                # error message accounts for.
                 raise ValueError(
-                    f"{name!r} stores one column per dict/struct field, so it "
-                    f"has no single value to group by."
+                    f"Grouping by {group.label!r} would add a column named "
+                    f"{factor!r}, which this table already has. Rename the "
+                    f"column in the source data, or group by something else."
                 )
             if len(variable.levels) > len(levels) or levels[
                 : len(variable.levels)
@@ -521,28 +576,83 @@ class ScidbSource(BaseSource):
                 # the figure would be quietly wrong about how many observations
                 # it holds.
                 raise ValueError(
-                    f"{name!r} sits at {variable.levels}, which is not a prefix "
-                    f"of {levels} — there is no unambiguous way to attach one "
-                    f"of its values to each row. Group by a variable recorded "
-                    f"at or above the level of the data."
+                    f"{group.label!r} sits at {variable.levels}, which is not a "
+                    f"prefix of {levels} — there is no unambiguous way to "
+                    f"attach one of its values to each row. Group by a variable "
+                    f"recorded at or above the level of the data."
                 )
             on = list(variable.levels)
-            right = self._named_frame(variable, name)[[*on, name]].drop_duplicates(
-                subset=on
-            )
+            right = variable.frame.rename(columns={source_column: factor})
+            right = right[[*on, factor]].drop_duplicates(subset=on)
             frame = frame.merge(right, on=on, how="left")
-            attached.append(name)
+
+            # A row the grouping variable says nothing about keeps its place and
+            # says so. Dropping it would remove data from the figure to answer a
+            # question about grouping, and silently — see MISSING_LEVEL.
+            missing = int(frame[factor].isna().sum())
+            if missing:
+                Log.warn(
+                    "%r has no value for %d of %d row(s) — those rows are "
+                    "grouped as %r rather than dropped",
+                    group.label,
+                    missing,
+                    len(frame),
+                    MISSING_LEVEL,
+                    layer=LAYER,
+                )
+            frame[factor] = _as_levels(frame[factor])
+
+            attached.append(factor)
+            n_levels = frame[factor].nunique(dropna=True)
             Log.info(
-                "attached %r as a factor on %s (%d level(s))",
-                name,
+                "attached %r as factor %r on %s (%d level(s))",
+                group.label,
+                factor,
                 on,
-                frame[name].nunique(dropna=True),
+                n_levels,
                 layer=LAYER,
             )
+            if n_levels < 2:
+                # Kept, unlike an auto-derived single-level variant column
+                # (synthetic-factors invariant 6): the user ticked this one, so
+                # dropping it would read as a broken checkbox. Say why it does
+                # nothing instead.
+                Log.warn(
+                    "%r holds one level (%s) across this table, so it separates "
+                    "nothing",
+                    group.label,
+                    list(frame[factor].unique()),
+                    layer=LAYER,
+                )
         return frame, attached
 
+    def _factor_source_column(self, variable_frame, group: FactorVariable) -> str:
+        """Which column of the grouping variable's frame holds the labels."""
+        columns = list(variable_frame.data_columns)
+        if group.column is None:
+            if len(columns) > 1:
+                raise ValueError(
+                    f"{group.variable!r} stores one column per field "
+                    f"({columns}), so it has no single value to group by. Name "
+                    f"the column to group by, e.g. "
+                    f"FactorVariable({group.variable!r}, {columns[0]!r})."
+                )
+            if not columns:
+                raise ValueError(
+                    f"{group.variable!r} has no data column to group by."
+                )
+            return columns[0]
+        if group.column not in columns:
+            raise ValueError(
+                f"{group.variable!r} has no column {group.column!r}. "
+                f"It has: {columns}."
+            )
+        return group.column
+
     def _stacked_table(
-        self, measures: list[str], factor_variables: list[str] | None = None
+        self,
+        measures: list[str],
+        factor_variables: list[FactorVariable] | None = None,
     ) -> LongTable:
         """Several variables as ONE measure plus a ``Variable`` column.
 
@@ -882,34 +992,159 @@ class ScidbSource(BaseSource):
         )
         return {"offered": result, "rejected": rejected}
 
-    def groupable_with(self, measure: str) -> list[str]:
-        """Variables usable as a grouping FACTOR for ``measure``.
+    def groupable_with(self, measure: str) -> list[FactorVariable]:
+        """Groupings offered for ``measure``. See :meth:`groupable_report`."""
+        return [
+            FactorVariable(offer["variable"], offer["column"])
+            for offer in self.groupable_report(measure)["offered"]
+        ]
 
-        Anything recorded at or above the measure's level, with one data column
-        — a per-subject ``Condition``, a per-session ``Protocol``. Categorical
-        ones come first because that is what a group usually is, but numeric
-        ones are offered too rather than guessed at: a group coded ``1``/``2``
-        is a group, and ``sources/csv.py`` already documents that bare numeric
-        IDs are indistinguishable from measurements by shape alone.
+    def groupable_report(self, measure: str) -> dict:
+        """Variables — and columns of variables — usable as a grouping FACTOR.
+
+        Anything recorded at or above the measure's level: a per-subject
+        ``Condition``, a per-session ``Protocol``. A variable with ONE data
+        column is offered whole; a wide table (a demographics sheet) is offered
+        **one entry per categorical column**, which is what makes
+        ``Demographics.InterventionGroup`` a factor without saving it as its own
+        variable.
+
+        Returns ``{"offered": [...], "rejected": {label: reason}}``, the same
+        shape as :meth:`stackable_report` and for the same reason: a column the
+        user can see in their spreadsheet and not in this list has to say why.
+        Only candidates that got as far as their *columns* are refused here —
+        a variable recorded deeper than the measure is not a near miss, it is
+        most of the database.
+
+        Numeric *columns* are refused rather than offered: grouping by ``Age``
+        means grouping by RANGES of age, and offering the raw column would
+        produce one level per distinct age. A numeric *variable* keeps the
+        older, looser rule (a group coded 1/2 is a group), because a scalar
+        saved once per subject is what the user recorded as that subject's
+        value. Columns are also refused for holding one value (a constant is not
+        a factor) or more than :data:`MAX_GROUP_LEVELS` of them.
         """
         own = self._levels_of(measure)
-        categorical: list[str] = []
-        other: list[str] = []
+        categorical: list[dict] = []
+        other: list[dict] = []
+        columns_offered: list[dict] = []
+        rejected: dict[str, str] = {}
+
+        def offer(variable: str, column: str | None, levels: list[str]) -> dict:
+            group = FactorVariable(variable, column)
+            return {
+                "variable": variable,
+                "column": column,
+                "label": group.label,
+                "name": group.factor_name,
+                "levels": levels,
+                "level_count": len(levels),
+            }
+
         for candidate in registered_variables(self._db):
             if candidate == measure:
                 continue
-            if len(data_columns_for(self._db, candidate)) > 1:
-                continue
             levels = self._levels_of(candidate)
             if len(levels) > len(own) or own[: len(levels)] != levels:
+                # Deeper than the data, or a different branch: `_attach_factor_
+                # variables` would refuse it, and there are far too many of
+                # these to be worth listing as refusals.
                 continue
-            target = (
-                categorical
-                if self._shape_of(candidate) is Shape.CATEGORICAL
-                else other
-            )
-            target.append(candidate)
-        return categorical + other
+            columns = data_columns_for(self._db, candidate)
+            if len(columns) > 1:
+                columns_offered.extend(
+                    self._groupable_columns(candidate, columns, rejected, offer)
+                )
+                continue
+            shape = self._shape_of(candidate)
+            if shape in (Shape.SERIES_1D, Shape.MATRIX_2D):
+                rejected[candidate] = (
+                    f"holds {shape} values — a signal is data, not a group label"
+                )
+                continue
+            if shape is Shape.CATEGORICAL:
+                # Its levels ARE the groups, so they are worth the one query —
+                # the panel can show them, and a text column with a value per
+                # record is as much an identifier here as it is in a wide sheet.
+                found = column_levels(
+                    self._db, candidate, columns[0], limit=MAX_GROUP_LEVELS + 1
+                )
+                if len(found) > MAX_GROUP_LEVELS:
+                    rejected[candidate] = (
+                        f"more than {MAX_GROUP_LEVELS} distinct values — an "
+                        f"identifier, not a group"
+                    )
+                    continue
+                categorical.append(
+                    offer(candidate, None, self._ordered(candidate, found))
+                )
+                continue
+            # Numeric and offered whole, unlike a numeric COLUMN: a scalar saved
+            # once per subject is what the user recorded as that subject's
+            # value, and a group coded 1/2 is still a group.
+            other.append(offer(candidate, None, []))
+
+        offered = [*categorical, *other, *columns_offered]
+        Log.info(
+            "groupable_with(%s): %d offered %s; %d rejected %s",
+            measure,
+            len(offered),
+            [o["label"] for o in offered],
+            len(rejected),
+            rejected or "",
+            layer=LAYER,
+        )
+        return {"offered": offered, "rejected": rejected}
+
+    def _groupable_columns(
+        self, variable: str, columns: list[str], rejected: dict, offer
+    ) -> list[dict]:
+        """The columns of one wide table that may group a figure.
+
+        One ``DISTINCT … LIMIT`` per candidate column, timed: a demographics
+        sheet is small, but this runs for every wide variable at or above the
+        measure's level every time the panel opens, and a slow describe is the
+        kind of cost that is impossible to attribute afterwards.
+        """
+        found: list[dict] = []
+        with Log.timer(f"groupable_columns({variable})", layer=LAYER):
+            for column in columns:
+                label = f"{variable}.{column}"
+                shape = classify_value(
+                    sample_column_value(self._db, variable, column)
+                )
+                if shape in (Shape.SERIES_1D, Shape.MATRIX_2D, Shape.UNKNOWN):
+                    # Silent, unlike the refusals below: a struct of signals
+                    # (EMG, one column per muscle) sits at the measure's own
+                    # level and is obviously not a sheet of labels, so naming
+                    # every muscle as a rejected grouping would bury the
+                    # refusals that ARE near misses under a dozen that are not.
+                    continue
+                if shape is not Shape.CATEGORICAL:
+                    rejected[label] = (
+                        "numeric column — grouping by ranges of it is not "
+                        "offered yet"
+                    )
+                    continue
+                levels = column_levels(
+                    self._db, variable, column, limit=MAX_GROUP_LEVELS + 1
+                )
+                if len(levels) > MAX_GROUP_LEVELS:
+                    rejected[label] = (
+                        f"more than {MAX_GROUP_LEVELS} distinct values — an "
+                        f"identifier, not a group"
+                    )
+                    continue
+                if len(levels) < 2:
+                    # A constant is not a factor (synthetic-factors invariant 6).
+                    rejected[label] = (
+                        f"one value ({levels[0]!r}) across every record"
+                        if levels
+                        else "no values"
+                    )
+                    continue
+                found.append(offer(variable, column, self._ordered(column, levels)))
+        return found
 
     def joinable_with(self, measure: str) -> list[str]:
         """Variables that can supply an x axis for ``measure``."""

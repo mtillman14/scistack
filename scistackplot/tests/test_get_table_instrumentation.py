@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from scistackplot import FactorVariable
 from scistackplot.sources.frame import DataFrameSource
 
 LAYER = "scistackplot"
@@ -79,7 +80,11 @@ def test_a_different_key_is_a_miss_not_a_hit(source, caplog):
 
     caplog.clear()
     with caplog.at_level(logging.INFO, logger=LAYER):
-        source.get_table(["Signal"], x_measure=None, factor_variables=["subject"])
+        source.get_table(
+            ["Signal"],
+            x_measure=None,
+            factor_variables=[FactorVariable("subject")],
+        )
     assert "MISS" in "\n".join(_lines(caplog))
 
 

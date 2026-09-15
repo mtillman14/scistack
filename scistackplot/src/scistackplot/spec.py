@@ -400,6 +400,71 @@ class LevelGroup:
 
 
 @dataclass(frozen=True)
+class FactorVariable:
+    """A variable joined in as a FACTOR rather than plotted, or one column of it.
+
+    ``column`` is what makes a wide table usable: a Demographics variable loaded
+    from a spreadsheet stores one column per field (``Age``, ``Sex``,
+    ``InterventionGroup``), so the variable as a whole has no single value to
+    group by, and naming the column is the only way to say which question is
+    being asked. ``column=None`` means the variable itself, which is the
+    single-data-column case (a per-subject ``Condition``).
+
+    Frozen because :meth:`scistackplot.sources.base.BaseSource.get_table`
+    memoizes on the tuple of these.
+    """
+
+    variable: str
+    column: str | None = None
+
+    @property
+    def factor_name(self) -> str:
+        """The column this factor occupies in the long table.
+
+        The **column's own name**, not ``Variable.column``: a plot endpoint
+        receives the same column under that name from ``as_table``
+        (``scifor.foreach._prepare_input`` keeps schema keys plus the selected
+        column), so the interactive path and the generated code agree with no
+        rename on either side. A name that collides with something already in
+        the frame is refused where the join happens — never silently merged
+        over.
+        """
+        return self.column or self.variable
+
+    @property
+    def label(self) -> str:
+        """How the GUI names it — qualified, because a bare column name does not
+        say which variable it came from once two sheets are in play."""
+        return f"{self.variable}.{self.column}" if self.column else self.variable
+
+    def to_dict(self) -> dict:
+        return {"variable": self.variable, "column": self.column}
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "FactorVariable":
+        return cls(variable=raw["variable"], column=raw.get("column"))
+
+
+def _factor_variable_from_raw(raw: Any) -> FactorVariable:
+    """Read one ``factor_variables`` entry, refusing the old flat form loudly.
+
+    Grouping variables used to be bare names. A spec written before columns
+    existed still parses everywhere else, so the failure would otherwise be a
+    ``TypeError: string indices must be integers`` from three frames down —
+    say what it is and how to fix it instead.
+    """
+    if isinstance(raw, str):
+        raise ValueError(
+            f"factor_variables entry {raw!r} is a bare variable name, which "
+            f"this version no longer reads. Write it as "
+            f'{{"variable": "{raw}"}} (or {{"variable": "{raw}", "column": '
+            f'"SomeColumn"}} for one column of a wide table), or re-tick the '
+            f"grouping in Plot Studio's Grouping section."
+        )
+    return FactorVariable.from_dict(raw)
+
+
+@dataclass(frozen=True)
 class Aggregation:
     statistic: Statistic = Statistic.MEAN
     error: ErrorBand = ErrorBand.SD
@@ -654,10 +719,11 @@ class PlotSpec:
     #: why a set of ``Filter``s cannot express the same selection.
     location_filter: LocationFilter = field(default_factory=LocationFilter)
     #: Variables joined in as FACTORS rather than plotted — a subject-level
-    #: ``Condition`` holding stim/sham, say. They classify as CATEGORICAL and so
-    #: are rightly refused as measures; as factors they take a role like any
-    #: other and give you the grouping the data already records.
-    factor_variables: list[str] = field(default_factory=list)
+    #: ``Condition`` holding stim/sham, say, or one column of a wide
+    #: demographics table. They classify as CATEGORICAL and so are rightly
+    #: refused as measures; as factors they take a role like any other and give
+    #: you the grouping the data already records.
+    factor_variables: list[FactorVariable] = field(default_factory=list)
     #: Factors derived by bucketing another factor's levels.
     level_groups: list[LevelGroup] = field(default_factory=list)
     #: Named variants to plot — one entry per row of the GUI's Variants section.
@@ -758,6 +824,7 @@ class PlotSpec:
         raw["location_filter"] = self.location_filter.to_dict()
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
         raw["level_groups"] = [g.to_dict() for g in self.level_groups]
+        raw["factor_variables"] = [f.to_dict() for f in self.factor_variables]
         raw["x_layers"] = list(self.x_layers)
         # TOML has no null; drop empty optionals so a round trip is stable.
         return _drop_nulls(raw)
@@ -784,7 +851,10 @@ class PlotSpec:
             style=StyleOptions(**(raw.get("style") or {})),
             filters=[Filter(**f) for f in (raw.get("filters") or [])],
             location_filter=LocationFilter.from_dict(raw.get("location_filter") or {}),
-            factor_variables=list(raw.get("factor_variables") or []),
+            factor_variables=[
+                _factor_variable_from_raw(f)
+                for f in (raw.get("factor_variables") or [])
+            ],
             level_groups=[
                 LevelGroup.from_dict(g) for g in (raw.get("level_groups") or [])
             ],

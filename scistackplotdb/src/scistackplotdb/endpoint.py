@@ -226,7 +226,16 @@ def _foreach_call(
         # data inside the function: `as_table` hands a function schema keys and
         # data columns only, so a subject-level Condition cannot ride along on
         # the measure's frame.
-        inputs.append(f'        "{group_param(group)}": {group},')
+        # One column of a wide table arrives as a ColumnSelection, which
+        # `as_table` honours by keeping the schema keys alongside that column
+        # (`scifor.foreach._prepare_input`) — so the merge in the generated body
+        # is the same either way.
+        expression = (
+            group.variable
+            if group.column is None
+            else f"{group.variable}[{group.column!r}]"
+        )
+        inputs.append(f'        "{group_param(group)}": {expression},')
         table_inputs.append(group_param(group))
     inputs.append(f'        "filename": PathOutput("{path_template}"),')
 

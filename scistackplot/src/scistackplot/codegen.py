@@ -24,8 +24,16 @@ from .groups import apply_level_groups
 from .reduce import plan_layout
 from .roles import complete_roles, fanout_keys
 from .shape import Shape
-from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic, value_spellings
-from .table import LongTable
+from .spec import (
+    ErrorBand,
+    FactorVariable,
+    PlotKind,
+    PlotSpec,
+    Role,
+    Statistic,
+    value_spellings,
+)
+from .table import MISSING_LEVEL, LongTable
 from .ylimits import eligible_scope, limits_by_scope
 from .variants import (
     LATEST,
@@ -189,15 +197,17 @@ def _slug(name: str) -> str:
     return f"v_{slug}" if slug[0].isdigit() or keyword.iskeyword(slug) else slug
 
 
-def group_param(variable: str) -> str:
+def group_param(group: FactorVariable) -> str:
     """Parameter name a grouping variable arrives under.
 
     Prefixed so it cannot collide with ``df``/``df_x`` or with a variant row's
-    parameter, and named after the variable so the generated call reads as what
-    it is. Defined here, beside the signature it appears in, so
-    ``scistackplotdb.endpoint`` and this module cannot disagree about it.
+    parameter, and named after the variable AND column so two columns of one
+    demographics sheet do not land on the same parameter. Defined here, beside
+    the signature it appears in, so ``scistackplotdb.endpoint`` and this module
+    cannot disagree about it.
     """
-    slug = re.sub(r"[^0-9a-zA-Z]+", "_", variable).strip("_").lower() or "group"
+    text = group.variable if group.column is None else f"{group.variable}_{group.column}"
+    slug = re.sub(r"[^0-9a-zA-Z]+", "_", text).strip("_").lower() or "group"
     return f"group_{slug}"
 
 
@@ -205,7 +215,7 @@ def function_params(spec: PlotSpec) -> list[str]:
     """The generated function's signature, in for_each input order."""
     variants = variant_params(spec)
     data = [variant.param for variant in variants] if variants else ["df"]
-    groups = [group_param(name) for name in spec.factor_variables]
+    groups = [group_param(group) for group in spec.factor_variables]
     return [*data, *groups, "filename"]
 
 
@@ -350,14 +360,27 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     # whatever schema keys they share. The join keys are computed from the
     # frames rather than hard-coded so the generated code stays readable and
     # keeps working if the variable is later saved at a different level.
-    for name in spec.factor_variables:
-        param = group_param(name)
+    for group in spec.factor_variables:
+        param = group_param(group)
+        factor = group.factor_name
+        # The input arrives as schema keys plus its data column(s): a
+        # single-column variable's column is renamed to the variable by scidb's
+        # loader, and a ColumnSelection keeps the column's own name
+        # (`scifor.foreach._prepare_input`). Either way the column is already
+        # named `factor`, which is why nothing is renamed here and the
+        # interactive path's column name is the exported one.
         lines.extend(
             [
-                f"# {name}: one value per {param}'s schema level, broadcast to every row",
+                f"# {group.label}: one value per {param}'s schema level, "
+                f"broadcast to every row",
                 f"_on = [c for c in {param}.columns if c in df.columns]",
-                f"df = df.merge({param}.drop_duplicates(subset=_on), "
-                f'on=_on, how="left")',
+                f"_group = {param}[[*_on, {factor!r}]].drop_duplicates(subset=_on)",
+                'df = df.merge(_group, on=_on, how="left")',
+                # Mirrors ScidbSource._attach_factor_variables: a row the
+                # grouping says nothing about is labelled, not dropped, or the
+                # exported figure would hold fewer observations than the
+                # previewed one.
+                f"df[{factor!r}] = df[{factor!r}].fillna({MISSING_LEVEL!r}).astype(str)",
                 "",
             ]
         )

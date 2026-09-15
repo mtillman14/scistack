@@ -92,6 +92,47 @@ def test_spec_toml_round_trip():
     assert PlotSpec.from_toml(spec.to_toml()) == spec
 
 
+def test_spec_round_trip_preserves_factor_variables():
+    from scistackplot import FactorVariable
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        factor_variables=[
+            FactorVariable("Condition"),
+            FactorVariable("Demographics", "InterventionGroup"),
+        ],
+    )
+
+    restored = PlotSpec.from_json(spec.to_json())
+
+    assert restored == spec
+    assert restored.factor_variables[1].column == "InterventionGroup"
+
+
+def test_a_factor_variable_is_named_after_its_column():
+    """Roles, filters and y-scoping all key on the factor's name, and the
+    endpoint's `as_table` input delivers the column under that same name — so
+    the interactive path and the generated code need no rename on either side.
+    """
+    from scistackplot import FactorVariable
+
+    assert FactorVariable("Demographics", "InterventionGroup").factor_name == (
+        "InterventionGroup"
+    )
+    assert FactorVariable("Demographics", "InterventionGroup").label == (
+        "Demographics.InterventionGroup"
+    )
+    assert FactorVariable("Condition").factor_name == "Condition"
+
+
+def test_a_bare_grouping_name_is_refused_with_the_new_spelling():
+    """Specs written before groupings could name a column carried a bare string.
+    Read as-is it would fail three frames down with `string indices must be
+    integers`; say what it is and what to write instead."""
+    with pytest.raises(ValueError, match='{"variable": "Condition"}'):
+        PlotSpec.from_dict({"measures": ["x"], "factor_variables": ["Condition"]})
+
+
 def test_spec_round_trip_preserves_role_enum_types():
     spec = PlotSpec(measures=["a"], roles={"f": Role.ITERATE})
     restored = PlotSpec.from_json(spec.to_json())

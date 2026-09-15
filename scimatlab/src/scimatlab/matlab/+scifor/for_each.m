@@ -383,6 +383,16 @@ function varargout = for_each(fn, inputs, varargin)
     % bridge) are not experimental LEVELS — hide them from distribute
     % resolution, or an aggregation over a variant-tracked input would see
     % the discriminator as the deepest key and refuse to distribute.
+    %
+    % The resolved target is logged at INFO, matching the wording of Python's
+    % scifor (foreach.py resolve_distribute_target). A distribute that lands
+    % on the wrong level fails INVISIBLY — the run still succeeds and still
+    % saves, just at the wrong granularity — so 'options: distribute=true' on
+    % its own is not enough to read a run: it says the flag arrived, never
+    % which key it chose. A GUI node with every schema level deselected ran
+    % the full grid and distributed to 'cycle' instead of 'subject' for
+    % exactly this reason (2026-09-15); see
+    % .claude/plan-schema-level-empty-distribute.md.
     distribute_key = '';
     % True only when distribute_key is synthesized by the "nothing
     % iterated" fallback below (no source table/iterable ever carries this
@@ -406,6 +416,8 @@ function varargout = for_each(fn, inputs, varargin)
             % schema rather than erroring.
             distribute_key = real_schema_keys(1);
             distribute_key_synthetic = true;
+            scifor.Log.info('resolve_distribute_target: ''%s'' (top of schema; nothing iterated)', ...
+                distribute_key);
         else
             deepest_iterated = iter_keys_in_schema(end);
             deepest_idx = find(real_schema_keys == deepest_iterated, 1);
@@ -416,6 +428,8 @@ function varargout = for_each(fn, inputs, varargin)
                     deepest_iterated, strjoin(real_schema_keys, ', '));
             end
             distribute_key = real_schema_keys(deepest_idx + 1);
+            scifor.Log.info('resolve_distribute_target: ''%s'' (one level below ''%s'')', ...
+                distribute_key, deepest_iterated);
         end
     end
 

@@ -159,6 +159,49 @@ def sample_value(db, variable: str) -> Any:
     return row[0] if row else None
 
 
+def sample_column_value(db, variable: str, column: str) -> Any:
+    """One value from ONE column of a variable — enough to classify it.
+
+    The per-column twin of :func:`sample_value`, which always samples the first
+    column. A wide table (a demographics sheet) holds a different kind of value
+    in every column, so "what is this variable" cannot answer "may this column
+    group a figure".
+    """
+    table = table_name_for(db, variable)
+    row = db._duck._fetchone(
+        f'SELECT t."{column}" FROM "{table}" t '
+        f"JOIN _record r ON t.record_id = r.record_id "
+        f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
+        f'AND t."{column}" IS NOT NULL LIMIT 1',
+        [variable],
+    )
+    return row[0] if row else None
+
+
+def column_levels(db, variable: str, column: str, *, limit: int) -> list[str]:
+    """Distinct values of one column, as text, at most ``limit`` of them.
+
+    ``limit`` is asked for as *one more* than the caller's threshold by
+    convention, so "too many to be a group" is answerable without counting the
+    whole column — a column of free text on a large table would otherwise pay a
+    full scan to be rejected.
+
+    Text for the same reason the loader casts schema keys: a column that holds a
+    NULL arrives as float64 in pandas and would spell its integer levels
+    ``1.0``, which nothing downstream matches.
+    """
+    table = table_name_for(db, variable)
+    rows = db._duck._fetchall(
+        f'SELECT DISTINCT CAST(t."{column}" AS VARCHAR) AS level FROM "{table}" t '
+        f"JOIN _record r ON t.record_id = r.record_id "
+        f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
+        f'AND t."{column}" IS NOT NULL '
+        f"LIMIT {int(limit)}",
+        [variable],
+    )
+    return [row[0] for row in rows]
+
+
 def variable_levels(db, variable: str) -> list[str]:
     """
     Which schema keys a variable occupies, without loading any data.

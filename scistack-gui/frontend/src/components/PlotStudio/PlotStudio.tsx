@@ -112,6 +112,28 @@ interface LevelGroup {
   unmatched: string | null
 }
 
+/** A variable joined in as a factor, or one column of it.
+ *
+ *  `column: null` is the single-data-column case (a per-subject Condition). A
+ *  named column is how a wide sheet groups a figure: Demographics as a whole
+ *  holds Age, Sex and InterventionGroup at once and so has no value to group
+ *  by. The factor lands in the table under the COLUMN's own name, which is
+ *  what `name` carries — roles, filters and y-scoping all key on that. */
+interface FactorVariable {
+  variable: string
+  column: string | null
+}
+
+/** One offer in the Grouping section: a FactorVariable plus what it looks like. */
+interface GroupableInfo extends FactorVariable {
+  /** Qualified, for display: `Demographics.InterventionGroup`. */
+  label: string
+  /** The factor name it will occupy in the table. */
+  name: string
+  levels: string[]
+  level_count: number
+}
+
 /** A row filter, applied before anything else is reduced. */
 interface Filter {
   column: string
@@ -371,9 +393,11 @@ interface Spec {
      this is only the order, so assigning a role can never make the spec
      invalid. */
   x_layers?: string[]
-  /* Variables joined in as FACTORS rather than plotted — a subject-level
-     Condition holding stim/sham. They take a role like any other factor. */
-  factor_variables?: string[]
+  /* Variables — or single columns of them — joined in as FACTORS rather than
+     plotted: a subject-level Condition holding stim/sham, or the
+     InterventionGroup column of a wide demographics table. They take a role
+     like any other factor. `column: null` means the variable itself. */
+  factor_variables?: FactorVariable[]
   /* Factors derived by bucketing another factor's levels (session -> Phase). */
   level_groups?: LevelGroup[]
   /* Row filters. The Filters section writes these. Schema keys no longer do:
@@ -444,9 +468,14 @@ interface DescribeResponse {
    *  to say why in place — an un-clickable node with no explanation is
    *  indistinguishable from a broken dialog. */
   stackable_refused?: Record<string, string>
-  /** Variables usable as a grouping FACTOR — recorded at or above this
-   *  variable's level, so each row gets exactly one of their values. */
-  groupable_with?: string[]
+  /** Groupings usable as a FACTOR — a variable recorded at or above this
+   *  variable's level, or one categorical column of such a variable, so each
+   *  row gets exactly one of their values. */
+  groupable_with?: GroupableInfo[]
+  /** Why a column of an otherwise eligible variable is not offered,
+   *  `{label: reason}`. A user can see the column in their spreadsheet, so its
+   *  absence from the list has to be explained where they look for it. */
+  groupable_refused?: Record<string, string>
   /** File types this matplotlib can write. Asked of the backend rather than
    *  listed here, so the dropdown and the save cannot disagree. */
   image_formats?: string[]
@@ -944,22 +973,29 @@ export default function PlotStudio({
     []
   )
 
-  /** Join a variable in as a factor, or drop it again. */
-  const toggleFactorVariable = useCallback((name: string, on: boolean) => {
+  /** Join a grouping in as a factor, or drop it again. */
+  const toggleFactorVariable = useCallback((offer: GroupableInfo, on: boolean) => {
     setSpec(prev => {
       if (!prev) return prev
       const current = prev.factor_variables ?? []
+      // Matched on BOTH fields: two columns of one demographics sheet are two
+      // different groupings, and matching on the variable alone would let
+      // ticking Sex untick InterventionGroup.
+      const others = current.filter(
+        f => !(f.variable === offer.variable && (f.column ?? null) === (offer.column ?? null))
+      )
       return {
         ...prev,
         factor_variables: on
-          ? [...current.filter(n => n !== name), name]
-          : current.filter(n => n !== name),
+          ? [...others, { variable: offer.variable, column: offer.column ?? null }]
+          : others,
         // A role assigned to a factor that is going away would be an unknown
-        // factor to `validate`, which refuses the whole figure.
+        // factor to `validate`, which refuses the whole figure. The role is
+        // keyed by the FACTOR name (the column's own name), not the label.
         roles: on
           ? prev.roles
           : Object.fromEntries(
-              Object.entries(prev.roles).filter(([factor]) => factor !== name)
+              Object.entries(prev.roles).filter(([factor]) => factor !== offer.name)
             ),
       }
     })
@@ -1555,24 +1591,50 @@ export default function PlotStudio({
               held X, making it unreachable until the user found the role
               dropdown). One question, one place, read top to bottom. */}
           <Section title="Grouping">
-            {(groupable.length > 0 || (spec?.level_groups ?? []).length > 0) && (
+            {/* Refusals count towards showing this: if every column of a sheet
+                was rejected, the reasons are the only thing that explains an
+                otherwise empty section. */}
+            {(groupable.length > 0 ||
+              Object.keys(describe?.groupable_refused ?? {}).length > 0 ||
+              (spec?.level_groups ?? []).length > 0) && (
               <>
                 <div style={styles.hint}>
                   Grouping the data already records, and buckets you define.
                   Both become factors you can colour, facet, or group the x
                   axis by.
                 </div>
-                {groupable.map(name => (
-                  <label key={name} style={styles.kindRow}>
+                {groupable.map(offer => (
+                  <label key={offer.label} style={styles.kindRow} title={
+                    offer.level_count
+                      ? `${offer.level_count} level(s): ${offer.levels.join(', ')}`
+                      : undefined
+                  }>
                     <input
                       type="checkbox"
-                      checked={(spec?.factor_variables ?? []).includes(name)}
-                      onChange={e => toggleFactorVariable(name, e.target.checked)}
+                      checked={(spec?.factor_variables ?? []).some(
+                        f =>
+                          f.variable === offer.variable &&
+                          (f.column ?? null) === (offer.column ?? null)
+                      )}
+                      onChange={e => toggleFactorVariable(offer, e.target.checked)}
                       style={{ marginRight: 6 }}
                     />
-                    {name}
+                    {offer.label}
+                    {offer.level_count > 0 && (
+                      <span style={styles.levelCount}>{offer.level_count}</span>
+                    )}
                   </label>
                 ))}
+                {/* Refusals in place, for the reason the variant picker shows
+                    them: a column the user can see in their own spreadsheet and
+                    not in this list is otherwise indistinguishable from a bug. */}
+                {Object.entries(describe?.groupable_refused ?? {}).map(
+                  ([label, reason]) => (
+                    <div key={label} style={styles.refusedRow} title={reason}>
+                      {label} — {reason}
+                    </div>
+                  )
+                )}
                 {(spec?.level_groups ?? []).map((group, index) => (
                   <LevelGroupEditor
                     key={index}
@@ -2922,6 +2984,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#7b68ee', marginBottom: 6, fontWeight: 700,
   },
   hint: { fontSize: 10, color: '#777', marginBottom: 6, fontStyle: 'italic' },
+  refusedRow: {
+    fontSize: 10, color: '#6b6b7a', marginBottom: 4, paddingLeft: 18,
+    fontFamily: 'monospace',
+  },
   locationButton: {
     width: '100%',
     textAlign: 'left',

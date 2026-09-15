@@ -68,6 +68,7 @@ from .spec import (
     Aggregation,
     ErrorBand,
     FacetOptions,
+    FactorVariable,
     Filter,
     LevelGroup,
     LocationFilter,
@@ -88,6 +89,7 @@ from .ylimits import describe as describe_y_limits
 from .ylimits import eligible_scope, limits_by_scope
 from .table import (
     CODE_FACTOR_PREFIX,
+    MISSING_LEVEL,
     RUN_FACTOR_PREFIX,
     FactorInfo,
     LongTable,
@@ -126,6 +128,7 @@ __all__ = [
     "MatchOp",
     "StyleOptions",
     "Filter",
+    "FactorVariable",
     "LevelGroup",
     "LocationFilter",
     "VariantSet",
@@ -138,6 +141,7 @@ __all__ = [
     # data
     "LongTable",
     "FactorInfo",
+    "MISSING_LEVEL",
     "MeasureInfo",
     "Shape",
     "classify_value",
