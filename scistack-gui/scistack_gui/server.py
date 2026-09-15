@@ -1139,6 +1139,12 @@ def _h_plot_invalidate(params):
     return invalidate(get_db())
 
 
+def _h_report_client_error(params):
+    from scistack_gui.services.client_errors import report_client_error
+
+    return report_client_error(params)
+
+
 # ---------------------------------------------------------------------------
 # Method dispatch table
 # ---------------------------------------------------------------------------
@@ -1251,6 +1257,8 @@ METHODS = {
     "plot_add_to_pipeline": _h_plot_add_to_pipeline,
     "plot_save_start": _h_plot_save_start,
     "plot_invalidate": _h_plot_invalidate,
+    # The webview's error boundaries write what they caught into scidb.log.
+    "report_client_error": _h_report_client_error,
 }
 
 
@@ -1306,6 +1314,10 @@ SELF_MANAGED_DB_METHODS = frozenset(
         # schedule, which is the point — a save must not hold the DuckDB file
         # for the minutes it spends in pandas and matplotlib.
         "plot_save_start",
+        # Touches no database at all — it only writes a log line, and must
+        # still work while MATLAB holds the file (that is exactly when a
+        # webview crash is worth hearing about).
+        "report_client_error",
     }
 )
 

@@ -46,7 +46,6 @@ import {
   usePipelineCanvas,
 } from './DagPicker'
 import {
-  VariantSelectionProvider,
   useVariantSelection,
   type FunctionVersion,
   type VariantAxis,
@@ -461,11 +460,7 @@ export default function VariantDagPopup({
       nodeTypes={choosing ? pickNodeTypes : nodeTypes}
       loading={loading}
       error={error}
-      // The provider wraps the CANVAS, not the dialog: the node components read
-      // the selection through it, and nothing else in the chrome does.
-      canvasWrapper={children => (
-        <VariantSelectionProvider value={value}>{children}</VariantSelectionProvider>
-      )}
+      selection={value}
       below={
         !choosing && unmapped.length > 0 ? (
           <div style={localStyles.unmapped}>

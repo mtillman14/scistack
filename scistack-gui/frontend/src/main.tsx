@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import PlotRoot, { type PlotViewConfig } from './PlotRoot'
+import ClientErrorBoundary from './components/ClientErrorBoundary'
 
 /**
  * One bundle, two roots. The extension opens the Plot Studio in its own editor
@@ -19,6 +20,16 @@ const view = window.__SCISTACK_VIEW__
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {view?.view === 'plot' ? <PlotRoot initial={view} /> : <App />}
+    {/* Outermost, so a render crash anywhere shows itself and reaches
+        scidb.log instead of blanking the webview. */}
+    {view?.view === 'plot' ? (
+      <ClientErrorBoundary where="Plot Studio tab">
+        <PlotRoot initial={view} />
+      </ClientErrorBoundary>
+    ) : (
+      <ClientErrorBoundary where="pipeline view">
+        <App />
+      </ClientErrorBoundary>
+    )}
   </StrictMode>
 )

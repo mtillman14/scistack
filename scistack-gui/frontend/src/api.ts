@@ -241,6 +241,9 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     plot_capabilities:      { path: '/api/plot/capabilities', method: 'POST', body: true },
     plot_resolve:           { path: '/api/plot/resolve', method: 'POST', body: true },
     plot_variant_graph:     { path: '/api/plot/variant-graph', method: 'POST', body: true },
+    plot_grouping_graph:    { path: '/api/plot/grouping-graph', method: 'POST', body: true },
+    plot_grouping_columns:  { path: '/api/plot/grouping-columns', method: 'POST', body: true },
+    plot_grouping_default_variant: { path: '/api/plot/grouping-default-variant', method: 'POST', body: true },
     plot_location_tree:     { path: '/api/plot/locations', method: 'POST', body: true },
     plot_export:            { path: '/api/plot/export', method: 'POST', body: true },
     plot_add_to_pipeline:   { path: '/api/plot/add-to-pipeline', method: 'POST', body: true },
@@ -250,6 +253,8 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     // minutes of work, against the 30 s timeout below.
     plot_save_start:        { path: '/api/plot/save', method: 'POST', body: true },
     plot_invalidate:        { path: '/api/plot/invalidate', method: 'POST' },
+    // An error boundary's report — see components/ClientErrorBoundary.tsx.
+    report_client_error:    { path: '/api/client-error', method: 'POST', body: true },
   };
 
   const route = routes[method];

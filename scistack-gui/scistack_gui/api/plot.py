@@ -12,6 +12,7 @@ extension cannot diverge.
     POST /api/plot/export          — generated plot_ function + for_each call
     POST /api/plot/add-to-pipeline — write the endpoint into the project
     POST /api/plot/invalidate      — drop cached frames after a run
+    POST /api/client-error         — a webview error boundary's report
 """
 
 import logging
@@ -22,6 +23,7 @@ from scidb.database import DatabaseManager
 
 from scistack_gui.db import get_db
 from scistack_gui.services import plot_service
+from scistack_gui.services.client_errors import report_client_error
 
 logger = logging.getLogger(__name__)
 
@@ -262,3 +264,16 @@ def plot_save(req: SaveRequest, db: DatabaseManager = Depends(get_db)) -> dict:
 @router.post("/plot/invalidate")
 def plot_invalidate(db: DatabaseManager = Depends(get_db)) -> dict:
     return plot_service.invalidate(db)
+
+
+class ClientErrorRequest(BaseModel):
+    where: str = "webview"
+    message: str = ""
+    stack: str | None = None
+    component_stack: str | None = None
+
+
+@router.post("/client-error")
+def client_error(req: ClientErrorRequest) -> dict:
+    """The webview caught a render error; write it into the shared log."""
+    return report_client_error(req.model_dump())

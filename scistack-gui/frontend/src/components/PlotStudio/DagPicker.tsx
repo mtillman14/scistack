@@ -33,6 +33,10 @@ import '@xyflow/react/dist/style.css'
 
 import { applyDagreLayout } from '../../layout'
 import { callBackend } from '../../api'
+import {
+  VariantSelectionProvider,
+  type VariantSelectionValue,
+} from '../../context/VariantSelectionContext'
 
 /**
  * The project's pipeline graph, laid out and ready to draw.
@@ -91,7 +95,7 @@ export function PickerDialog({
   sidebar,
   below,
   footer,
-  canvasWrapper,
+  selection,
   onCancel,
 }: {
   title: string
@@ -108,13 +112,18 @@ export function PickerDialog({
   /** Under the canvas, full width — the variant picker's unmapped axes. */
   below?: React.ReactNode
   footer: React.ReactNode
-  /** Wrap the ReactFlow tree — a context provider the node components read.
+  /** What the node controls mean on this canvas. REQUIRED, and provided here
+   *  rather than by each caller, because the DAG node components branch on the
+   *  PRESENCE of this context: without it a function node mounts its pipeline
+   *  body, which reaches for `useScope`/`useRunLog` and throws in the Plot
+   *  Studio tab (`PlotRoot` mounts no providers). The grouping picker's first
+   *  step did exactly that on 2026-09-15 and the whole tab went blank. A step
+   *  with nothing to select passes `INERT_VARIANT_SELECTION`.
    *
    *  Around the CANVAS and not around the dialog, deliberately: only the nodes
    *  consume it, and a provider mounted higher would be one more thing the
-   *  chrome depends on. `PlotRoot` mounts this panel with no providers at all,
-   *  which is why the popups are careful about what they mount and where. */
-  canvasWrapper?: (children: React.ReactNode) => React.ReactNode
+   *  chrome depends on. */
+  selection: VariantSelectionValue
   onCancel: () => void
 }) {
   // Escape cancels — a modal that traps you is worse than one you can leave.
@@ -125,8 +134,6 @@ export function PickerDialog({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancel])
-
-  const wrap = canvasWrapper ?? ((children: React.ReactNode) => children)
 
   return (
     <div style={pickerStyles.backdrop} onClick={onCancel}>
@@ -147,7 +154,8 @@ export function PickerDialog({
                 Could not load the pipeline: {error}
               </div>
             )}
-            {!loading && !error && wrap(
+            {!loading && !error && (
+              <VariantSelectionProvider value={selection}>
               <ReactFlowProvider>
                 <ReactFlow
                   nodes={nodes}
@@ -171,6 +179,7 @@ export function PickerDialog({
                   <Controls showInteractive={false} />
                 </ReactFlow>
               </ReactFlowProvider>
+              </VariantSelectionProvider>
             )}
           </div>
           {sidebar && <div style={pickerStyles.sidebar}>{sidebar}</div>}

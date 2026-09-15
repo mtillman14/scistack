@@ -25,6 +25,7 @@
     "src/components/PlotStudio/locationSelection.ts",
     "src/components/PlotStudio/locationSelection.test.ts",
     "src/components/PlotStudio/xLayers.ts",
-    "src/components/PlotStudio/xLayers.test.ts"
+    "src/components/PlotStudio/xLayers.test.ts",
+    "src/components/PlotStudio/pickerCanvas.test.ts"
   ]
 }

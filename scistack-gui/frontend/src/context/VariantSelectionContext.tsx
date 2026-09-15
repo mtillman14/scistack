@@ -94,3 +94,26 @@ export const VariantSelectionProvider = VariantSelectionContext.Provider
 export function useVariantSelection(): VariantSelectionValue | null {
   return useContext(VariantSelectionContext)
 }
+
+/**
+ * A selection with no axes at all — every node renders its inert popup body.
+ *
+ * This exists for a picker step that is not about variants yet (the grouping
+ * picker's "which variable?" step) but still draws the pipeline. The node
+ * components branch on whether this context is PRESENT, not on what it holds:
+ * absent, a function node mounts the pipeline body, which reaches for
+ * `useScope`/`useRunLog` and throws in the Plot Studio tab (PlotRoot mounts no
+ * providers). That was a blank tab on 2026-09-15. So a picker canvas always
+ * gets a provider, and a step with nothing to select gets this one.
+ */
+export const INERT_VARIANT_SELECTION: VariantSelectionValue = {
+  selection: {},
+  axisForColumn: () => null,
+  axisForFunction: () => null,
+  runAxisForFunction: () => null,
+  versionsFor: () => [],
+  toggleLevel: () => undefined,
+  setVersion: () => undefined,
+  isLevelSelected: () => true,
+  versionFor: () => 'latest',
+}
