@@ -709,8 +709,12 @@ def generate_matlab_command(
         # iterable — which is exactly why this went unnoticed until a
         # never-run function consumed a DB variable instead of a file.
         # See .claude/plan-matlab-struct-and-iteration-26-09-02.md defect 2.
+        #
+        # An EXPLICITLY empty schema_level is still honoured here: "iterate
+        # nothing" is a deliberate choice (a dataset-level call), not the
+        # absence of one — see _resolve_iterate_keys.
         template_schema_str = _format_schema_kwargs(
-            schema_level if schema_level else schema_keys,
+            _resolve_iterate_keys(schema_level, schema_keys, function_name),
             schema_filter,
             {},
             function_name,
@@ -938,6 +942,11 @@ def _for_each_call_lines(
     """
     from scistack_gui.api.pipeline import _parse_path_input
 
+    # Resolved once, outside the loop: it does not vary per group, and it logs.
+    # schema_level is tri-state — None = all keys, [k...] = those keys,
+    # [] = deselect all (no iteration at all).
+    iterate_keys = _resolve_iterate_keys(schema_level, schema_keys, function_name)
+
     lines: list[str] = []
     for entry in grouped_entries:
         input_types = entry["input_types"]
@@ -975,8 +984,7 @@ def _for_each_call_lines(
             else "{}"
         )
 
-        # Build schema kwargs
-        iterate_keys = schema_level if schema_level else schema_keys
+        # Build schema kwargs (iterate_keys resolved above the loop).
         schema_str = _format_schema_kwargs(
             iterate_keys, schema_filter, constants, function_name
         )
@@ -1659,6 +1667,53 @@ def _format_run_option_pairs(
         )
 
     return ", ".join(parts)
+
+
+def _resolve_iterate_keys(
+    schema_level: list[str] | None,
+    schema_keys: list[str],
+    function_name: str,
+) -> list[str]:
+    """Which schema keys this run iterates — the tri-state of ``schema_level``.
+
+    ``schema_level`` is **three**-valued, and the third value is the one that
+    used to be lost:
+
+    - ``None``  -> not specified; iterate ALL of ``schema_keys``.
+    - ``[k...]`` -> iterate exactly those keys.
+    - ``[]``     -> the user deselected EVERY level; iterate nothing, i.e. one
+      dataset-level call.
+
+    The old test was ``schema_level if schema_level else schema_keys``, which
+    is a truthiness test, so the empty list folded back into "all keys" and a
+    deselect-everything node ran the full schema grid anyway. With
+    ``distribute=true`` that is not merely extra work — it changes the
+    distribute target (scifor resolves it from the DEEPEST ITERATED key), so
+    the run also saved at the wrong level. See
+    ``.claude/plan-schema-level-empty-distribute.md`` and
+    ``docs/claude/gui-run-options-flow.md``.
+
+    ``domain/variant_resolver.resolve_variants`` and ``api/run.py``'s Python
+    path already distinguish the three; this is the same contract, spelled the
+    same way.
+    """
+    if schema_level is None:
+        return list(schema_keys)
+    if not schema_level:
+        # INFO, not DEBUG: "no schema kwargs in the generated script" is
+        # otherwise indistinguishable from a generator that dropped them
+        # (which is exactly the bug this replaced), and it is the only
+        # observable difference between a dataset-level run and a full-grid
+        # run before MATLAB starts printing combos.
+        logger.info(
+            "generate_matlab_command: %s: schema_level=[] — every schema level "
+            "deselected, emitting NO schema kwargs (one dataset-level call; "
+            "distribute, if set, targets the top of the schema %s)",
+            function_name or "<fn>",
+            list(schema_keys),
+        )
+        return []
+    return list(schema_level)
 
 
 def _format_schema_kwargs(

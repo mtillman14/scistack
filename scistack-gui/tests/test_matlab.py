@@ -1566,6 +1566,111 @@ class TestFormatPathInput:
         assert ", ...\n        );" not in cmd
 
 
+class TestSchemaLevelTriState:
+    """``schema_level`` has THREE values and all three must survive generation.
+
+    ``None`` = unspecified (iterate all keys), ``[k...]`` = iterate those,
+    ``[]`` = the user deselected every level (iterate nothing — one
+    dataset-level call). The generator used to test ``schema_level`` for
+    truthiness, so ``[]`` collapsed into ``None`` and a deselect-everything
+    node ran the whole schema grid. See
+    ``.claude/plan-schema-level-empty-distribute.md``.
+    """
+
+    VARIANTS = [
+        {
+            "input_types": {"sig": "RawEMG"},
+            "output_type": "FilteredEMG",
+            "constants": {},
+        }
+    ]
+
+    def _cmd(self, **kwargs):
+        from scistack_gui.api.matlab_command import generate_matlab_command
+
+        defaults = dict(
+            function_name="filter_emg",
+            db_path="/data/exp.duckdb",
+            schema_keys=["subject", "session", "cycle"],
+            variants=self.VARIANTS,
+        )
+        defaults.update(kwargs)
+        return generate_matlab_command(**defaults)
+
+    def test_none_iterates_every_schema_key(self):
+        cmd = self._cmd(schema_level=None)
+        assert "'subject', []" in cmd
+        assert "'session', []" in cmd
+        assert "'cycle', []" in cmd
+
+    def test_subset_iterates_only_those_keys(self):
+        cmd = self._cmd(schema_level=["subject"])
+        assert "'subject', []" in cmd
+        assert "'session'" not in cmd
+        assert "'cycle'" not in cmd
+
+    def test_empty_list_iterates_nothing(self):
+        """All levels deselected — the run is ONE dataset-level call."""
+        cmd = self._cmd(schema_level=[])
+        assert "'subject'" not in cmd
+        assert "'session'" not in cmd
+        assert "'cycle'" not in cmd
+
+    def test_empty_list_with_distribute_still_emits_the_option(self):
+        """The reported case: deselect every level + ``distribute=true``.
+
+        Both halves matter. With the schema keys emitted anyway, scifor
+        resolves the distribute target from the deepest ITERATED key and lands
+        on the level below it ('cycle' here) instead of the top of the schema
+        ('subject'), and the run succeeds while saving at the wrong
+        granularity.
+        """
+        cmd = self._cmd(
+            schema_level=[],
+            run_options={
+                "dry_run": False,
+                "save": True,
+                "distribute": True,
+                "as_table": False,
+            },
+        )
+        assert "'distribute', true" in cmd
+        assert "'subject'" not in cmd
+        assert "'cycle'" not in cmd
+
+    def test_never_run_branch_honors_empty_list(self):
+        """The no-variants (first run) branch defaults to all keys for a
+        reason (see test_never_run_function_still_iterates_the_schema) — but
+        an explicit ``[]`` is a choice, not an absence, and outranks it."""
+        cmd = self._cmd(
+            variants=[],
+            variable_inputs={"sig": "RawEMG"},
+            output_types=["FilteredEMG"],
+            schema_level=[],
+        )
+        assert "'subject'" not in cmd
+        assert "'cycle'" not in cmd
+        assert "scidb.for_each(@filter_emg" in cmd
+
+    def test_pipeline_step_honors_empty_list(self):
+        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+
+        cmd = generate_matlab_pipeline_command(
+            pipeline_id="p1",
+            steps=[
+                {
+                    "function_name": "filter_emg",
+                    "variants": self.VARIANTS,
+                    "schema_level": [],
+                }
+            ],
+            db_path="/data/exp.duckdb",
+            schema_keys=["subject", "session", "cycle"],
+        )
+        assert "'subject'" not in cmd
+        assert "'cycle'" not in cmd
+
+
 # ---------------------------------------------------------------------------
 # _format_sweep tests
 # ---------------------------------------------------------------------------
