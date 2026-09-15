@@ -690,8 +690,9 @@ class PlotSpec:
     #: Membership is the roles dict (who holds ``Role.X``); this is only the
     #: order they nest in, so assigning a role can never produce an invalid
     #: spec — a name here that no longer holds X is ignored, and an X-holder
-    #: missing from here is appended. :meth:`ordered_x_layers` is the one place
-    #: those two are reconciled.
+    #: missing from here is placed by the data's own nesting (shallower
+    #: outside deeper). :meth:`ordered_x_layers` is the one place those two are
+    #: reconciled, and the only place either rule is written down.
     x_layers: list[str] = field(default_factory=list)
     kind: PlotKind = PlotKind.SCATTER
     aggregate: Aggregation = field(default_factory=Aggregation)
@@ -758,25 +759,56 @@ class PlotSpec:
                 names.append(variant.variable)
         return names
 
-    def ordered_x_layers(self, roles: dict[str, Role] | None = None) -> list[str]:
+    def ordered_x_layers(
+        self,
+        roles: dict[str, Role] | None = None,
+        depths: dict[str, int] | None = None,
+    ) -> list[str]:
         """The factors on x, outermost first.
 
         Reconciles two sources that are edited independently — which factors
         hold ``Role.X`` (a dropdown per factor) and what order they nest in (a
         list the user reorders). Names that no longer hold X are dropped, and
-        X-holders the order never mentioned are appended in declaration order,
+        X-holders the order never mentioned are placed after the ones it did,
         so neither widget can put the spec in a state the other rejects.
 
         ``roles`` defaults to the spec's own; pass completed roles when the
         table may have defaulted some.
+
+        ``depths`` (``LongTable.factor_depths``) orders the holders this spec
+        never placed: **shallower nests outside deeper**, so a subject-level
+        ``InterventionGroup`` clusters the sessions inside it rather than the
+        other way round. Without it they fall in declaration order, which put
+        every newly added layer innermost — the transpose of the figure people
+        ask for, reachable only by finding the ↑ button. A factor with no depth
+        (a variant axis, a derived bucket) is not in the hierarchy at all and
+        sorts after the ones that are.
+
+        An explicit :attr:`x_layers` always wins: depth is where to *start*,
+        not an order the user cannot override.
         """
         holders = [
             name
             for name, role in (roles if roles is not None else self.roles).items()
             if role is Role.X
         ]
+        def depth_rank(depth: int | None) -> tuple[int, int]:
+            """``None`` is not "depth zero" — a variant axis or a derived
+            bucket is not a place in the hierarchy at all, so it cannot be
+            claimed to sit outside a subject. Ranking it after everything with
+            a real depth keeps the derived thing inside the recorded ones,
+            which is the readable arrangement. Mirrored by `depthRank` in
+            `scistack-gui/frontend/.../xLayers.ts`."""
+            return (1, 0) if depth is None else (0, depth)
+
         ordered = [name for name in self.x_layers if name in holders]
-        ordered.extend(name for name in holders if name not in ordered)
+        rest = [name for name in holders if name not in ordered]
+        if depths:
+            # Stable: equal depths (a schema key and a factor variable recorded
+            # at the same level) keep declaration order rather than swapping on
+            # a dict rebuild.
+            rest.sort(key=lambda name: depth_rank(depths.get(name)))
+        ordered.extend(rest)
         return ordered
 
     def factors_with_role(self, role: Role) -> list[str]:

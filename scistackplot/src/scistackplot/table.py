@@ -105,6 +105,22 @@ class FactorInfo:
     #: ``":"`` and ``"."`` would be re-implementing them one layer away from
     #: where they are defined — the first place to break when they change.
     origin: dict[str, Any] | None = None
+    #: **How many schema keys pin one value of this factor**, or None when the
+    #: question does not apply.
+    #:
+    #: A schema key is pinned by itself and everything above it, so ``subject``
+    #: is 1 and ``session`` is 2. A variable joined in as a factor is pinned by
+    #: the keys it is recorded at, so a subject-level ``Demographics`` column is
+    #: also 1. A variant axis or a derived bucket has no depth: neither is a
+    #: place in the hierarchy.
+    #:
+    #: One use, and it is the reason the two cases had to end up on the same
+    #: scale: it orders a nested x axis (:meth:`PlotSpec.ordered_x_layers`).
+    #: "One cluster per intervention group, one bar per session inside it" is
+    #: the data's own nesting read outward-in, and deriving it beats making the
+    #: user press ↑ every time — which is what the plain append did, always
+    #: putting the newest layer innermost.
+    depth: int | None = None
 
     @property
     def display(self) -> str:
@@ -210,6 +226,12 @@ class LongTable:
         return self.measure(measure).shape
 
     @property
+    def factor_depths(self) -> dict[str, int]:
+        """``{factor: depth}`` for every factor that has one — the sort key a
+        nested x axis nests by (:attr:`FactorInfo.depth`)."""
+        return {f.name: f.depth for f in self.factors if f.depth is not None}
+
+    @property
     def variant_factors(self) -> list[FactorInfo]:
         return [f for f in self.factors if f.is_variant]
 
@@ -234,6 +256,7 @@ class LongTable:
         default_pin: dict[str, Any] | None = None,
         latest_column: str | None = None,
         factor_origins: dict[str, dict] | None = None,
+        factor_depths: dict[str, int] | None = None,
         schema_levels: Iterable[str] = (),
         measure_labels: dict[str, str] | None = None,
     ) -> "LongTable":
@@ -264,6 +287,18 @@ class LongTable:
             factors = list(factors) if factors is not None else inferred_factors
             measures = list(measures) if measures is not None else inferred_measures
 
+        # A schema key's depth is its place in the hierarchy, derived rather
+        # than supplied — the list is right here and a source repeating it in
+        # `factor_depths` would be a second copy that can disagree. Only keys
+        # the frame actually carries count, for the same reason `schema_levels`
+        # is filtered below: a variable saved at subject level has no `trial`.
+        present_levels = [key for key in schema_levels if key in frame.columns]
+        depths = {key: index + 1 for index, key in enumerate(present_levels)}
+        # A joined factor variable's depth comes from the source, which knows
+        # what schema levels it was recorded at. It wins where both are known,
+        # since a grouping column named after a schema key is the source's call.
+        depths.update(factor_depths or {})
+
         factor_infos = []
         for column in factors:
             if column in level_order:
@@ -279,6 +314,7 @@ class LongTable:
                     is_variant=column in variant_set,
                     is_field=column in field_set,
                     origin=(factor_origins or {}).get(column),
+                    depth=depths.get(column),
                 )
             )
 
@@ -336,6 +372,11 @@ class LongTable:
                     # lives here (CLAUDE.md NOTE 3).
                     "is_schema_key": self.is_schema_key(f.name),
                     "origin": f.origin,
+                    # How many schema keys pin one of its values — the sort key
+                    # for a nested x axis. Published so the panel orders a
+                    # newly added layer by the SAME number the figure does,
+                    # rather than deciding for itself what "outer" means.
+                    "depth": f.depth,
                 }
                 for f in self.factors
             ],

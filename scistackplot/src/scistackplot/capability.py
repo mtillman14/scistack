@@ -465,34 +465,52 @@ def grouping_summary(spec: PlotSpec, table: LongTable) -> dict:
     within-observation index — which is why this is offered for SCALAR measures
     and refused, with a reason, for everything else.
     """
+    from .roles import role_for_new_grouping
     from .spec import MAX_X_LAYERS
 
-    shape = table.shape_of(spec.y_measure)
-    reason = None
-    if spec.x_measure is not None:
-        reason = (
-            f"{spec.x_measure!r} already supplies the x axis, so it is a "
-            f"measured value rather than groups of records."
-        )
-    elif shape is Shape.SERIES_1D:
-        reason = (
-            "This measure is 1-D: its x axis is the within-observation index "
-            "(time, or percent of cycle). Separate the groups with colour or "
-            "facets instead."
-        )
-    elif shape is Shape.MATRIX_2D:
-        reason = "This measure is 2-D: a heatmap's axes come from the matrix."
-    elif shape is not Shape.SCALAR:
-        reason = f"Grouping the x axis needs a scalar measure; this one is {shape}."
-
+    reason = x_axis_refusal(spec, table)
     return {
         "available": reason is None,
         "reason": reason,
         # Membership and order reconciled the same way the figure does it, so
         # the control cannot show an order the renderer disagrees with.
-        "layers": spec.ordered_x_layers(),
+        "layers": spec.ordered_x_layers(depths=table.factor_depths),
         "max_layers": MAX_X_LAYERS,
+        # The role a grouping ticked RIGHT NOW would take, so the panel applies
+        # one rule rather than inventing a second (`roles.role_for_new_grouping`
+        # says why a tick takes a role at all). It does not depend on which
+        # grouping: the factor is not in the table yet, so the answer is a
+        # property of the spec — which is why it is published once here instead
+        # of costing a round trip per checkbox.
+        "new_grouping_role": str(role_for_new_grouping(spec, table)),
     }
+
+
+def x_axis_refusal(spec: PlotSpec, table: LongTable) -> str | None:
+    """Why factors may not group the x axis, or None when they may.
+
+    Its own function because :func:`~scistackplot.roles.role_for_new_grouping`
+    asks the same question, and having it ask ``grouping_summary`` made the two
+    call each other without end — that summary now REPORTS the new grouping's
+    role. One predicate, two callers, no cycle.
+    """
+    shape = table.shape_of(spec.y_measure)
+    if spec.x_measure is not None:
+        return (
+            f"{spec.x_measure!r} already supplies the x axis, so it is a "
+            f"measured value rather than groups of records."
+        )
+    if shape is Shape.SERIES_1D:
+        return (
+            "This measure is 1-D: its x axis is the within-observation index "
+            "(time, or percent of cycle). Separate the groups with colour or "
+            "facets instead."
+        )
+    if shape is Shape.MATRIX_2D:
+        return "This measure is 2-D: a heatmap's axes come from the matrix."
+    if shape is not Shape.SCALAR:
+        return f"Grouping the x axis needs a scalar measure; this one is {shape}."
+    return None
 
 
 def factor_summary(spec: PlotSpec, derived: LongTable) -> list[dict]:

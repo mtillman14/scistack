@@ -28,6 +28,7 @@ import {
   describeSelection,
   rolesAfterPick,
 } from './locationSelection'
+import { orderXLayers, placeXLayer } from './xLayers'
 
 const Plot = createPlotlyComponent(Plotly)
 
@@ -97,6 +98,11 @@ interface FactorInfo {
    *  question, reported apart from `roles` because X is not in that menu. */
   x_available?: boolean
   x_reason?: string | null
+  /** How many schema keys pin one of this factor's values — 1 for `subject`
+   *  and for a subject-level grouping column, 2 for `session`. Null for a
+   *  variant axis or a derived bucket, which are not places in the hierarchy.
+   *  The sort key for a nested x axis; see `xLayers.ts`. */
+  depth?: number | null
 }
 
 /** A factor derived by bucketing another factor's levels. */
@@ -299,6 +305,11 @@ interface GroupingInfo {
    *  the same way the figure does it. */
   layers: string[]
   max_layers: number
+  /** The role a grouping ticked right now would take (`roles.role_for_new_
+   *  grouping`). Published per SPEC, not per grouping: the factor is not in
+   *  the table yet, so the answer does not depend on which one — which is what
+   *  keeps a checkbox from costing a round trip. */
+  new_grouping_role?: Role
 }
 
 type MatchOp = 'starts_with' | 'ends_with' | 'contains' | 'not_contains' | 'equals' | 'regex'
@@ -545,6 +556,31 @@ export default function PlotStudio({
   const [describe, setDescribe] = useState<DescribeResponse | null>(null)
   const [spec, setSpec] = useState<Spec | null>(null)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
+
+  // Factors of the resolved table (Variant included, selected-away columns
+  // gone). `describe.table.factors` is the pre-selection view and would show
+  // both a `Code:` column and the `Variant` factor that consumed it.
+  //
+  // Declared up here, beside the state it reads, because the role callbacks
+  // below need `factorDepths` — a callback referring forward to a `const`
+  // further down the body reads fine and is a trip hazard nobody should have
+  // to check.
+  const factors = capabilities?.factors ?? describe?.table?.factors ?? []
+
+  // Depth per factor, from the backend (`FactorInfo.depth`). Nothing here works
+  // out what "outer" means — it reads the number scistackplot publishes, so the
+  // control and the figure nest a new layer the same way. See `xLayers.ts`.
+  const factorDepths = useMemo(() => {
+    const depths: Record<string, number | null | undefined> = {}
+    for (const factor of factors) depths[factor.name] = factor.depth
+    return depths
+  }, [factors])
+
+  // Policy, though, comes from the backend: whether the x axis can be grouped
+  // at all for this measure's shape, why not when it cannot, and what role a
+  // grouping ticked right now would take.
+  const grouping = capabilities?.grouping
+
   const [figures, setFigures] = useState<FigurePayload[]>([])
   // Which figure of the ITERATE fan-out is on screen. The fan-out runs in
   // schema order (outermost key most significant), so stepping past subject
@@ -792,19 +828,25 @@ export default function PlotStudio({
     setSpec(prev => {
       if (!prev) return prev
       const roles = { ...prev.roles, [factor]: role }
-      // Keep the x order in step with membership: a factor newly on x joins the
-      // end of the nesting, one leaving drops out. The backend reconciles these
-      // anyway (`ordered_x_layers`), so this only keeps the control honest.
+      // Keep the x order in step with membership: a factor newly on x is placed
+      // by the data's own nesting, one leaving drops out.
+      //
+      // PLACED, not appended. Appending put every new layer innermost, so
+      // ticking a subject-level grouping beside `session` drew one bar per
+      // group inside each session — the transpose of the usual request, and
+      // undoable only by finding the ↑ button. And because this writes
+      // `x_layers` on every toggle, the backend's own depth rule
+      // (`ordered_x_layers`) never sees an unplaced holder to place: this is
+      // the copy that decides what the user gets, which is why it lives in a
+      // tested module rather than inline here.
       const current = prev.x_layers ?? []
       const x_layers =
         role === 'x'
-          ? current.includes(factor)
-            ? current
-            : [...current, factor]
+          ? placeXLayer(current, factor, factorDepths)
           : current.filter(name => name !== factor)
       return { ...prev, roles, x_layers }
     })
-  }, [])
+  }, [factorDepths])
 
   /** Move an x layer one step outward (-1) or inward (+1). */
   const moveXLayer = useCallback((factor: string, delta: number) => {
@@ -984,22 +1026,48 @@ export default function PlotStudio({
       const others = current.filter(
         f => !(f.variable === offer.variable && (f.column ?? null) === (offer.column ?? null))
       )
+      if (!on) {
+        return {
+          ...prev,
+          factor_variables: others,
+          // A role assigned to a factor that is going away would be an unknown
+          // factor to `validate`, which refuses the whole figure. The role is
+          // keyed by the FACTOR name (the column's own name), not the label.
+          roles: Object.fromEntries(
+            Object.entries(prev.roles).filter(([factor]) => factor !== offer.name)
+          ),
+          x_layers: (prev.x_layers ?? []).filter(name => name !== offer.name),
+        }
+      }
+
+      // A grouping arrives WITH a role. Left unassigned it defaulted to FREE,
+      // which on a bar or box figure means pooled into the means — so ticking
+      // a grouping changed the figure not at all, silently, and `validate`'s
+      // pooling guard does not catch it (that guard is armed only for variant
+      // factors). The backend decides which role
+      // (`roles.role_for_new_grouping`); this applies the answer it already
+      // sent, the same way `setKind` applies a suggested role map.
+      //
+      // Only when that answer describes the spec on screen: the capability
+      // report is a debounced echo, and one computed against an older spec
+      // could place the layer against a stale x axis. Falling back to 'free'
+      // is the honest default — it is what the factor would have got anyway.
+      const fresh = capsSpecRef.current === specKey
+      const role: Role = (fresh && grouping?.new_grouping_role) || 'free'
       return {
         ...prev,
-        factor_variables: on
-          ? [...others, { variable: offer.variable, column: offer.column ?? null }]
-          : others,
-        // A role assigned to a factor that is going away would be an unknown
-        // factor to `validate`, which refuses the whole figure. The role is
-        // keyed by the FACTOR name (the column's own name), not the label.
-        roles: on
-          ? prev.roles
-          : Object.fromEntries(
-              Object.entries(prev.roles).filter(([factor]) => factor !== offer.name)
-            ),
+        factor_variables: [
+          ...others,
+          { variable: offer.variable, column: offer.column ?? null },
+        ],
+        roles: { ...prev.roles, [offer.name]: role },
+        x_layers:
+          role === 'x'
+            ? placeXLayer(prev.x_layers ?? [], offer.name, factorDepths)
+            : (prev.x_layers ?? []),
       }
     })
-  }, [])
+  }, [factorDepths, grouping?.new_grouping_role, specKey])
 
   const addLevelGroup = useCallback((source: string, levels: (string | number)[]) => {
     setSpec(prev => {
@@ -1121,11 +1189,6 @@ export default function PlotStudio({
     })
   }, [])
 
-  // Factors of the resolved table (Variant included, selected-away columns
-  // gone). `describe.table.factors` is the pre-selection view and would show
-  // both a `Code:` column and the `Variant` factor that consumed it.
-  const factors = capabilities?.factors ?? describe?.table?.factors ?? []
-
   // Schema keys get their own section: "plot subject 01, trial 2" is a
   // different question from "narrow this factor", asked far more often, and the
   // keys are the same few every time. Everything else filterable — a struct's
@@ -1168,13 +1231,8 @@ export default function PlotStudio({
     const holders = Object.entries(spec?.roles ?? {})
       .filter(([, role]) => role === 'x')
       .map(([name]) => name)
-    const ordered = (spec?.x_layers ?? []).filter(name => holders.includes(name))
-    return [...ordered, ...holders.filter(name => !ordered.includes(name))]
-  }, [spec?.roles, spec?.x_layers])
-
-  // Policy, though, comes from the backend: whether the x axis can be grouped
-  // at all for this measure's shape, and why not when it cannot.
-  const grouping = capabilities?.grouping
+    return orderXLayers(spec?.x_layers ?? [], holders, factorDepths)
+  }, [spec?.roles, spec?.x_layers, factorDepths])
 
   const groupable = describe?.groupable_with ?? []
   // Only real factors can be bucketed — not a factor this spec already derived
@@ -1603,28 +1661,42 @@ export default function PlotStudio({
                   Both become factors you can colour, facet, or group the x
                   axis by.
                 </div>
-                {groupable.map(offer => (
-                  <label key={offer.label} style={styles.kindRow} title={
-                    offer.level_count
-                      ? `${offer.level_count} level(s): ${offer.levels.join(', ')}`
-                      : undefined
-                  }>
-                    <input
-                      type="checkbox"
-                      checked={(spec?.factor_variables ?? []).some(
-                        f =>
-                          f.variable === offer.variable &&
-                          (f.column ?? null) === (offer.column ?? null)
+                {groupable.map(offer => {
+                  const checked = (spec?.factor_variables ?? []).some(
+                    f =>
+                      f.variable === offer.variable &&
+                      (f.column ?? null) === (offer.column ?? null)
+                  )
+                  return (
+                    <label key={offer.label} style={styles.kindRow} title={
+                      offer.level_count
+                        ? `${offer.level_count} level(s): ${offer.levels.join(', ')}`
+                        : undefined
+                    }>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => toggleFactorVariable(offer, e.target.checked)}
+                        style={{ marginRight: 6 }}
+                      />
+                      {offer.label}
+                      {offer.level_count > 0 && (
+                        <span style={styles.levelCount}>{offer.level_count}</span>
                       )}
-                      onChange={e => toggleFactorVariable(offer, e.target.checked)}
-                      style={{ marginRight: 6 }}
-                    />
-                    {offer.label}
-                    {offer.level_count > 0 && (
-                      <span style={styles.levelCount}>{offer.level_count}</span>
-                    )}
-                  </label>
-                ))}
+                      {/* What ticking it actually did. A grouping now arrives
+                          with a role, and the one case that still pools — FREE,
+                          when x and colour are both taken — has to SAY so:
+                          silently changing nothing is the failure this whole
+                          change exists to fix, and it must not survive in the
+                          corner where no channel was left. */}
+                      {checked && (
+                        <span style={styles.groupRole}>
+                          {groupingPlacement(spec, xLayers, factors, offer.name)}
+                        </span>
+                      )}
+                    </label>
+                  )
+                })}
                 {/* Refusals in place, for the reason the variant picker shows
                     them: a column the user can see in their own spreadsheet and
                     not in this list is otherwise indistinguishable from a bug. */}
@@ -2793,6 +2865,35 @@ function RangeFilter({
 }
 
 /**
+ * What ticking a grouping did to the figure, in three words.
+ *
+ * Reads the spec, never decides anything: the role itself came from
+ * `roles.role_for_new_grouping` and the nesting position from `xLayers.ts`.
+ * The one that matters is "pooled" — a grouping that landed on FREE because
+ * both channels were taken really does average its levels together, and a row
+ * that looks applied while doing nothing is what this work set out to remove.
+ */
+function groupingPlacement(
+  spec: Spec | null,
+  xLayers: string[],
+  factors: FactorInfo[],
+  name: string
+): string {
+  const role = spec?.roles?.[name]
+  if (role === 'x') {
+    const at = xLayers.indexOf(name)
+    const inside = xLayers[at + 1]
+    const display = (n: string) => factors.find(f => f.name === n)?.display ?? n
+    return inside ? `x axis, outside ${display(inside)}` : 'x axis'
+  }
+  if (role === 'color') return 'colour'
+  if (role === 'facet') return 'subplots'
+  if (role === 'iterate') return 'separate figures'
+  if (role === 'aggregate') return 'averaged away'
+  return 'pooled — give it a role in Factors'
+}
+
+/**
  * Which factors group the x axis, and how they nest.
  *
  * Both halves of one question, in one control. Membership used to be a value
@@ -3015,6 +3116,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 9, color: '#666', background: '#22223a',
     borderRadius: 8, padding: '0 5px',
   },
+  // Where a ticked grouping ended up. Muted: it is a confirmation, not a
+  // warning — the one reading that IS a warning ("pooled") says so in words.
+  groupRole: { fontSize: 9, color: '#7c7ca0', marginLeft: 6 },
   variantTag: {
     fontSize: 8, color: '#fbbf24', border: '1px solid #6b5a1a',
     borderRadius: 3, padding: '0 3px', textTransform: 'uppercase',

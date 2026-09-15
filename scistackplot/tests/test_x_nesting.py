@@ -333,3 +333,459 @@ def test_generated_code_builds_the_same_axis(grouped_table):
     ticks = [t.get_text() for t in figure.axes[0].get_xticklabels()]
     assert ticks == ["stim · pre", "stim · post", "sham · pre", "sham · post"]
     matplotlib.pyplot.close(figure)
+
+
+# --- the plotly axis: stated order, spacers, brackets -----------------------
+#
+# The composition above was always right. What was missing was saying it to
+# plotly, which orders a categorical axis by FIRST APPEARANCE IN THE TRACES
+# unless told otherwise — and the trace order is `_summarize(sort=False)`, i.e.
+# database row order. Spacers made it worse: they hold no data by construction,
+# so they reached no trace and plotly never learned they existed.
+
+
+def test_the_plotly_axis_states_the_whole_plan_order(grouped_table):
+    """Including the spacers — they are the gap between groups."""
+    from scistackplot import render_plotly
+    from scistackplot.xaxis import is_spacer
+
+    figure = resolve(_nested_spec(), grouped_table)[0]
+    layout = render_plotly(figure)["layout"]
+
+    assert layout["xaxis"]["categoryorder"] == "array"
+    assert layout["xaxis"]["categoryarray"] == list(figure.x_plan.order)
+    assert any(is_spacer(key) for key in layout["xaxis"]["categoryarray"])
+
+
+def test_the_plotly_axis_is_stated_categorical(grouped_table):
+    """Never left to auto-detection: plotly reads an array of numeric-LOOKING
+    strings as a linear axis, and on a linear axis `categoryarray` is ignored.
+    Zero-padded schema keys are exactly that kind of string."""
+    from scistackplot import render_plotly
+
+    layout = render_plotly(resolve(_nested_spec(), grouped_table)[0])["layout"]
+
+    assert layout["xaxis"]["type"] == "category"
+
+
+def test_zero_padded_levels_keep_their_declared_order_in_plotly():
+    """The case the stated type exists for: every level stringifies as a
+    number, so auto-detection would make this a number line and drop the
+    order — putting "10" between "01" and "02"."""
+    from scistackplot import render_plotly
+
+    table = LongTable.from_frame(
+        pd.DataFrame(
+            [
+                {"session": session, "subject": "01", "StepLength": 1.0}
+                # Deliberately NOT in declared order: this is what the database
+                # hands back, and what plotly would otherwise draw.
+                for session in ["10", "02", "01"]
+            ]
+        ),
+        factors=["session", "subject"],
+        measures=["StepLength"],
+        level_order={"session": ["01", "02", "10"]},
+        schema_levels=["subject"],
+    )
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"session": Role.X, "subject": Role.FREE},
+        kind=PlotKind.BAR,
+    )
+
+    layout = render_plotly(resolve(spec, table)[0])["layout"]
+
+    assert layout["xaxis"]["type"] == "category"
+    assert layout["xaxis"]["categoryarray"] == ["01", "02", "10"]
+
+
+def test_a_flat_categorical_axis_is_ordered_too(grouped_table):
+    """Not a nested-axis fix: a single factor on x had the same hole."""
+    from scistackplot import render_plotly
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"group": Role.X, "session": Role.FREE, "subject": Role.FREE},
+        kind=PlotKind.BAR,
+    )
+
+    layout = render_plotly(resolve(spec, grouped_table)[0])["layout"]
+
+    assert layout["xaxis"]["categoryarray"] == ["stim", "sham"]
+
+
+def test_a_numeric_axis_is_left_alone(series_table):
+    """A 1-D measure's x is its sample index. Forcing that into categories
+    would turn a number line into evenly spaced ticks."""
+    from scistackplot import render_plotly
+
+    spec = PlotSpec(
+        measures=["Signal"],
+        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        kind=PlotKind.LINE,
+    )
+
+    layout = render_plotly(resolve(spec, series_table)[0])["layout"]
+
+    assert "categoryarray" not in layout["xaxis"]
+    assert layout["xaxis"]["type"] != "category"
+
+
+def test_brackets_span_the_leaves_they_name(grouped_table):
+    """`_add_x_groups` divides by `len(plan.order)`, which is only true once the
+    spacers occupy slots. Before they did, every bracket sat left of its bars."""
+    from scistackplot import render_plotly
+
+    figure = resolve(_nested_spec(), grouped_table)[0]
+    payload = render_plotly(figure)
+    positions = len(figure.x_plan.order)
+    domain = payload["layout"]["xaxis"]["domain"]
+    width = domain[1] - domain[0]
+
+    by_label = {a["text"]: a["x"] for a in payload["layout"]["annotations"]}
+    for group in figure.x_plan.groups:
+        left = domain[0] + width * (group.start / positions)
+        right = domain[0] + width * ((group.end + 1) / positions)
+        assert left <= by_label[group.label] <= right
+
+
+def test_the_two_backends_order_the_axis_the_same_way(grouped_table):
+    """The panel and the saved PNG disagreeing is its own bug, and is how this
+    shipped: matplotlib indexes into `x_order` and was always right."""
+    pytest.importorskip("matplotlib")
+    from scistackplot import render_matplotlib, render_plotly
+    from scistackplot.xaxis import is_spacer
+
+    figure = resolve(_nested_spec(), grouped_table)[0]
+    layout = render_plotly(figure)["layout"]
+    drawn = [key for key in layout["xaxis"]["categoryarray"] if not is_spacer(key)]
+
+    mpl_figure = render_matplotlib(figure)
+    try:
+        # matplotlib positions leaves at their index in x_plan.order, so the
+        # ticks it labels (spacers are blank) are the same sequence.
+        labels = [t.get_text() for t in mpl_figure.axes[0].get_xticklabels()]
+    finally:
+        import matplotlib.pyplot as plt
+
+        plt.close(mpl_figure)
+
+    assert [key.split("␟")[-1] for key in drawn] == [
+        label for label in labels if label
+    ]
+
+
+# --- bar layout, stated ----------------------------------------------------
+
+
+def test_bar_layout_is_stated_not_inherited(grouped_table):
+    from scistackplot import render_plotly
+
+    layout = render_plotly(
+        resolve(_nested_spec(kind=PlotKind.BAR), grouped_table)[0]
+    )["layout"]
+
+    assert layout["barmode"] == "group"
+    assert layout["bargap"] == 0.2
+    assert layout["bargroupgap"] == 0.0
+
+
+def test_a_non_bar_figure_states_no_bar_layout(grouped_table):
+    from scistackplot import render_plotly
+
+    layout = render_plotly(resolve(_nested_spec(), grouped_table)[0])["layout"]
+
+    assert "barmode" not in layout
+
+
+# --- where a new layer lands (depth) ---------------------------------------
+#
+# `FactorInfo.depth` is "how many schema keys pin one value of this factor", so
+# a subject-level grouping and `subject` itself are both 1 and `session` is 2.
+# The panel's `xLayers.ts` places a ticked factor by the same numbers; its own
+# cases are in `scistack-gui/frontend/.../xLayers.test.ts`.
+
+
+@pytest.fixture
+def depth_table() -> LongTable:
+    """The study that prompted this: a subject-level grouping beside sessions."""
+    rows = [
+        {
+            "subject": subject,
+            "session": session,
+            "InterventionGroup": "onward" if subject == "01" else "usual",
+            "bandpass.low_hz": "20",
+            "StepLength": 1.0,
+        }
+        for subject in ["01", "02"]
+        for session in ["pre", "post"]
+    ]
+    return LongTable.from_frame(
+        pd.DataFrame(rows),
+        factors=["subject", "session", "InterventionGroup", "bandpass.low_hz"],
+        measures=["StepLength"],
+        variant_factors=["bandpass.low_hz"],
+        # What the scidb source supplies: the grouping variable's own depth.
+        factor_depths={"InterventionGroup": 1},
+        schema_levels=["subject", "session"],
+    )
+
+
+def test_schema_keys_are_numbered_by_their_place_in_the_hierarchy(depth_table):
+    assert depth_table.factor("subject").depth == 1
+    assert depth_table.factor("session").depth == 2
+
+
+def test_a_joined_grouping_takes_the_depth_the_source_gave_it(depth_table):
+    """A subject-level sheet pins one value per subject, so it sits WITH
+    `subject`, not with whatever position the column list left it in."""
+    assert depth_table.factor("InterventionGroup").depth == 1
+
+
+def test_a_variant_axis_has_no_depth(depth_table):
+    """It is not a place in the hierarchy, so it cannot claim to sit outside a
+    subject. `None` is not depth zero."""
+    assert depth_table.factor("bandpass.low_hz").depth is None
+
+
+def test_a_new_layer_is_placed_by_depth_not_appended(depth_table):
+    """The defect this fixes: appending put `InterventionGroup` INSIDE
+    `session`, giving one bar per group within each session — the transpose of
+    "one cluster per group, one bar per session"."""
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"session": Role.X, "InterventionGroup": Role.X, "subject": Role.FREE},
+        # Nothing declared: this is a spec that never went through the arrows.
+        x_layers=[],
+        kind=PlotKind.BAR,
+    )
+
+    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
+        "InterventionGroup",
+        "session",
+    ]
+    figure = resolve(spec, depth_table)[0]
+    assert [g.label for g in figure.x_plan.groups] == ["onward", "usual"]
+
+
+def test_an_explicit_order_still_wins(depth_table):
+    """Depth is where to start, not an order the user cannot override."""
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"session": Role.X, "InterventionGroup": Role.X, "subject": Role.FREE},
+        x_layers=["session", "InterventionGroup"],
+        kind=PlotKind.BAR,
+    )
+
+    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
+        "session",
+        "InterventionGroup",
+    ]
+
+
+def test_a_depthless_factor_sorts_innermost(depth_table):
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={
+            "bandpass.low_hz": Role.X,
+            "session": Role.X,
+            "subject": Role.FREE,
+            "InterventionGroup": Role.FREE,
+        },
+    )
+
+    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
+        "session",
+        "bandpass.low_hz",
+    ]
+
+
+def test_equal_depths_keep_declaration_order(depth_table):
+    """`subject` and a subject-level grouping tie. A tie must not swap on a
+    dict rebuild — a legend that reshuffles for no reason is the standing
+    complaint this package keeps answering."""
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.X, "InterventionGroup": Role.X},
+    )
+    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
+        "subject",
+        "InterventionGroup",
+    ]
+
+    reversed_spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"InterventionGroup": Role.X, "subject": Role.X},
+    )
+    assert reversed_spec.ordered_x_layers(depths=depth_table.factor_depths) == [
+        "InterventionGroup",
+        "subject",
+    ]
+
+
+def test_the_control_and_the_figure_read_the_same_order(depth_table):
+    """`capability.grouping["layers"]` is what the panel draws; `resolve` is
+    what the figure draws. The panel showing an order the renderer disagrees
+    with is the whole reason this is one function."""
+    from scistackplot import capabilities
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"session": Role.X, "InterventionGroup": Role.X, "subject": Role.FREE},
+        kind=PlotKind.BAR,
+    )
+
+    reported = capabilities(spec, depth_table)["grouping"]["layers"]
+    figure = resolve(spec, depth_table)[0]
+
+    assert reported == ["InterventionGroup", "session"]
+    # The leaves are composed outer-to-inner, so the first layer's levels are
+    # the bracket labels.
+    assert [g.label for g in figure.x_plan.groups] == ["onward", "usual"]
+
+
+# --- the role a new grouping takes -----------------------------------------
+
+
+def test_a_new_grouping_goes_on_the_x_axis_when_there_is_room(depth_table):
+    """FREE would pool it into the bar means — the figure would not change at
+    all, and `validate`'s pooling guard is armed only for variant factors."""
+    from scistackplot import role_for_new_grouping
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"session": Role.X, "subject": Role.FREE},
+        kind=PlotKind.BAR,
+    )
+
+    assert role_for_new_grouping(spec, depth_table) is Role.X
+
+
+def test_a_new_grouping_takes_colour_when_the_x_axis_is_full(depth_table):
+    from scistackplot import role_for_new_grouping
+    from scistackplot.spec import MAX_X_LAYERS
+
+    roles = {
+        name: Role.X
+        for name in ["subject", "session", "InterventionGroup"][:MAX_X_LAYERS]
+    }
+    spec = PlotSpec(measures=["StepLength"], roles=roles, kind=PlotKind.BAR)
+
+    assert role_for_new_grouping(spec, depth_table) is Role.COLOR
+
+
+def test_a_new_grouping_takes_colour_for_a_1d_measure(series_table):
+    """A 1-D measure's x is its sample index, so there is no axis to group."""
+    from scistackplot import role_for_new_grouping
+
+    spec = PlotSpec(
+        measures=["Signal"],
+        roles={"subject": Role.FREE, "session": Role.FREE, "trial": Role.FREE},
+        kind=PlotKind.LINE,
+    )
+
+    assert role_for_new_grouping(spec, series_table) is Role.COLOR
+
+
+def test_a_new_grouping_falls_back_to_free_when_both_are_taken(depth_table):
+    """FREE really does pool, so the caller has to SAY so on the row. Returning
+    a role that quietly does nothing is the bug this function exists to fix."""
+    from scistackplot import role_for_new_grouping
+    from scistackplot.spec import MAX_X_LAYERS
+
+    roles = {
+        name: Role.X
+        for name in ["subject", "session", "InterventionGroup"][:MAX_X_LAYERS]
+    }
+    roles["bandpass.low_hz"] = Role.COLOR
+    spec = PlotSpec(measures=["StepLength"], roles=roles, kind=PlotKind.BAR)
+
+    assert role_for_new_grouping(spec, depth_table) is Role.FREE
+
+
+def test_a_role_already_chosen_is_never_overwritten(depth_table):
+    """Re-applying a picker must not undo a decision already made."""
+    from scistackplot import role_for_new_grouping
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"InterventionGroup": Role.FACET, "session": Role.X},
+        kind=PlotKind.BAR,
+    )
+
+    assert role_for_new_grouping(spec, depth_table, "InterventionGroup") is Role.FACET
+
+
+def test_the_capability_report_publishes_the_same_answer(depth_table):
+    """The panel applies this rather than inventing a second rule, and it is
+    published per SPEC because the factor is not in the table yet.
+
+    Also the guard against a cycle: `grouping_summary` reports the role and
+    `role_for_new_grouping` needs the summary's availability, so the two called
+    each other without end until the predicate (`capability.x_axis_refusal`)
+    was split out. This test fails with RecursionError if it comes back."""
+    from scistackplot import capabilities, role_for_new_grouping
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"session": Role.X, "subject": Role.FREE},
+        kind=PlotKind.BAR,
+    )
+
+    assert capabilities(spec, depth_table)["grouping"]["new_grouping_role"] == str(
+        role_for_new_grouping(spec, depth_table)
+    )
+
+
+# --- the summary must not eat the axis -------------------------------------
+#
+# `_summarize` (BAR and BAND) groups the panel frame down to centre + error and
+# `reset_index`es the keys back. Anything not in the keys is gone — which for a
+# while included the nested axis's LAYER columns, so `_plan_nested_x` found no
+# panel carrying every layer, composed an empty plan, and bar figures lost
+# their order, their ticks and their brackets. Box never summarizes, and every
+# nested test used box.
+
+
+@pytest.mark.parametrize(
+    "kind", [PlotKind.BOX, PlotKind.VIOLIN, PlotKind.STRIP, PlotKind.BAR]
+)
+def test_the_nested_axis_survives_every_scalar_kind(grouped_table, kind):
+    figure = resolve(_nested_spec(kind=kind), grouped_table)[0]
+
+    assert [g.label for g in figure.x_plan.groups] == ["stim", "sham"]
+    assert figure.x_order == figure.x_plan.order
+    assert figure.x_order != []
+
+
+def test_a_summarized_panel_still_carries_its_layer_columns(grouped_table):
+    figure = resolve(_nested_spec(kind=PlotKind.BAR), grouped_table)[0]
+    frame = figure.panels[0].frame
+
+    assert {"group", "session"} <= set(frame.columns)
+    assert set(frame["group"]) == {"stim", "sham"}
+
+
+def test_carrying_the_layers_does_not_split_the_summary(grouped_table):
+    """The layer columns are a FUNCTION of the composed key, so grouping by
+    them as well must change no group — one row per leaf, not one per
+    replicate. If this ever fails, the bars became replicate bars."""
+    figure = resolve(_nested_spec(kind=PlotKind.BAR), grouped_table)[0]
+    frame = figure.panels[0].frame
+
+    # 2 groups x 2 sessions, each summarizing the two subjects' rows.
+    assert len(frame) == 4
+    assert frame["__x"].nunique() == 4
+
+
+def test_a_nested_bar_axis_reaches_plotly_in_order(grouped_table):
+    """End to end, on the kind that was broken: the composed order (spacers
+    included) is what the figure states, and the brackets are drawn."""
+    from scistackplot import render_plotly
+
+    figure = resolve(_nested_spec(kind=PlotKind.BAR), grouped_table)[0]
+    payload = render_plotly(figure)
+
+    assert payload["layout"]["xaxis"]["categoryarray"] == list(figure.x_plan.order)
+    assert [a["text"] for a in payload["layout"]["annotations"]] == ["stim", "sham"]

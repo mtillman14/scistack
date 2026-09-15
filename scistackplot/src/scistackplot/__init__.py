@@ -59,6 +59,7 @@ from .roles import (
     default_roles,
     default_spec,
     fanout_keys,
+    role_for_new_grouping,
     roles_for_kind,
     validate,
 )
@@ -182,6 +183,7 @@ __all__ = [
     "default_spec",
     "complete_roles",
     "fanout_keys",
+    "role_for_new_grouping",
     "roles_for_kind",
     "validate",
     "RoleError",

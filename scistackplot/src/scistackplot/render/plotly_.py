@@ -25,6 +25,7 @@ from ..spec import PlotKind
 from .base import (
     color_groups,
     grid_shape,
+    is_categorical_x,
     legend_levels,
     palette_for,
     panel_position,
@@ -100,6 +101,17 @@ def render(resolved: ResolvedPlot) -> dict:
         }
         if resolved.labels.title:
             layout["title"] = {"text": resolved.labels.title}
+
+        if resolved.kind is PlotKind.BAR:
+            # Stated, never inferred — the same rule as `orientation: "v"` on
+            # the trace. plotly's defaults happen to agree today, but a figure
+            # whose bar layout depends on which defaults the bundled plotly.js
+            # ships is a figure that can change without anyone editing it.
+            # 0.2/0.0 is also exactly what the matplotlib path draws
+            # (`mpl._draw_bars`: width = 0.8 / n_colour_levels, no inner gap).
+            layout["barmode"] = "group"
+            layout["bargap"] = 0.2
+            layout["bargroupgap"] = 0.0
 
         positions = [
             panel_position(resolved, index) for index in range(len(resolved.panels))
@@ -422,7 +434,45 @@ def _add_axes(
             if resolved.x_plan
             else {}
         ),
-        "type": "log" if resolved.spec.style.log_x else "-",
+        # The category order, STATED. Left unsaid, plotly orders a categorical
+        # axis by first appearance in the traces, and the trace order is
+        # whatever `_summarize(..., sort=False)` left behind — i.e. database row
+        # order. Three things follow from saying it instead:
+        #
+        #  * the declared level order (`[schema_keys]` -> ScidbSource._ordered
+        #    -> FactorInfo.levels -> x_order) actually reaches the figure. It
+        #    did not before, for a flat axis as much as a nested one;
+        #  * SPACER categories get positions. They hold no data by construction
+        #    (xaxis.SPACER_PREFIX), so they appear in no trace and plotly never
+        #    learned they existed — which is why a nested axis drew as one
+        #    undifferentiated run of bars with no gap between groups;
+        #  * `_add_x_groups` places its brackets at `group.start /
+        #    len(plan.order)`, arithmetic that assumes the spacers occupy slots.
+        #    With them missing every bracket sat left of the bars it named.
+        #
+        # Categorical only: `is_categorical_x` is false for a 1-D sample index
+        # or a joined x measure, and forcing a numeric axis into categories
+        # would turn a number line into evenly spaced ticks.
+        **(
+            {
+                "categoryorder": "array",
+                "categoryarray": [str(v) for v in resolved.x_order],
+            }
+            if is_categorical_x(resolved)
+            else {}
+        ),
+        # "category", stated, whenever the axis holds levels — and not left to
+        # plotly's auto-detection, which reads an array of NUMERIC-LOOKING
+        # STRINGS as a linear axis. Zero-padded schema keys ("01", "02", …) are
+        # exactly that, and on a linear axis `categoryarray` is ignored: the
+        # declared order would be silently dropped again for precisely the keys
+        # this project pads. log_x still wins, since a log category axis is not
+        # a thing either backend can draw.
+        "type": (
+            "log"
+            if resolved.spec.style.log_x
+            else ("category" if is_categorical_x(resolved) else "-")
+        ),
         # Upright, always. Plotly rotates category tick labels towards vertical
         # once a cell is too narrow for them, so the same figure reads
         # differently at two facet counts. Fixed at 0; automargin buys the room.

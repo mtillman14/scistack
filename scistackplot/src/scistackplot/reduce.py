@@ -1107,7 +1107,7 @@ def _build_figure(
         # them so neither control can produce a spec the other rejects.
         x_layers = [
             name
-            for name in spec.ordered_x_layers(roles)
+            for name in spec.ordered_x_layers(roles, table.factor_depths)
             if name in frame.columns
         ]
         x_factor = x_layers[0] if x_layers else None
@@ -1302,7 +1302,19 @@ def _panel_frame(
 
     # --- summarize replicates into centre + error ------------------------
     if spec.kind in (PlotKind.BAR, PlotKind.BAND):
-        out = _summarize(out, spec, color)
+        # Carry the nested axis's LAYER columns through the summary. They are a
+        # function of the composed key, so grouping by them as well changes no
+        # group — but without them `_summarize`'s `reset_index` returns three
+        # columns and the layer values are gone, and `_plan_nested_x` (which
+        # requires every layer to be present in a panel) then skips every panel
+        # and composes an EMPTY axis: no order, no ticks, no brackets.
+        #
+        # That was the whole nested-x feature silently absent for exactly one
+        # kind — bar — which is the kind people group bars with. Every existing
+        # nested test used box, which does not summarize, so nothing caught it.
+        out = _summarize(
+            out, spec, color, carry=[n for n in x_layers if n in out.columns]
+        )
 
     if spec.kind is PlotKind.LINE or spec.kind is PlotKind.BAND:
         out = out.sort_values(X, kind="stable")
@@ -1401,9 +1413,22 @@ def _matrix_frame(group: pd.DataFrame, measure: str) -> pd.DataFrame:
     return pd.DataFrame({Z: [stacked]})
 
 
-def _summarize(frame: pd.DataFrame, spec: PlotSpec, color: str | None) -> pd.DataFrame:
-    """Collapse replicate rows at each x (and colour) into centre + error."""
-    group_cols = [X] + ([COLOR] if color else [])
+def _summarize(
+    frame: pd.DataFrame,
+    spec: PlotSpec,
+    color: str | None,
+    carry: list[str] | None = None,
+) -> pd.DataFrame:
+    """Collapse replicate rows at each x (and colour) into centre + error.
+
+    ``carry`` names columns to keep alongside the result — the nested axis's
+    layer columns. They are functionally determined by ``__x`` (the composed
+    leaf key IS their combination), so grouping by them splits nothing that was
+    not already split; it only keeps them from being dropped by the
+    ``reset_index`` below, which is what the renderers and ``_plan_nested_x``
+    read the group labels from.
+    """
+    group_cols = [X, *(carry or [])] + ([COLOR] if color else [])
     grouped = frame.groupby(group_cols, dropna=False, sort=False)[Y]
 
     statistic = spec.aggregate.statistic

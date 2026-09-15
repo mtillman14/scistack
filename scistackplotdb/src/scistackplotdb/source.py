@@ -480,7 +480,7 @@ class ScidbSource(BaseSource):
             latest_column = LATEST_COLUMN if LATEST_COLUMN in frame.columns else None
             default_pin = {latest_column: True} if latest_column else None
 
-        frame, group_columns = self._attach_factor_variables(
+        frame, group_depths = self._attach_factor_variables(
             frame, levels, factor_variables
         )
 
@@ -491,7 +491,8 @@ class ScidbSource(BaseSource):
         # schema happened to leave them.
         factors = [c for c in variant_columns if c in frame.columns]
         factors.extend(key for key in levels if key in frame.columns)
-        factors.extend(group_columns)
+        # Keys: the attached factor names, in the order they were joined.
+        factors.extend(group_depths)
         factors.extend(c for c in field_columns if c in frame.columns)
 
         level_order = {
@@ -510,6 +511,9 @@ class ScidbSource(BaseSource):
             default_pin=default_pin,
             latest_column=latest_column,
             factor_origins={axis["column"]: axis for axis in variant_axes},
+            # Where each joined grouping sits in the hierarchy, so a nested x
+            # axis puts a subject-level grouping OUTSIDE the sessions inside it.
+            factor_depths=group_depths,
             # The variable's own schema depth, outermost first — the nesting
             # that decides which keys a fan-out has to iterate together and in
             # which order (roles.iterate_ancestors / roles.fanout_keys).
@@ -547,8 +551,14 @@ class ScidbSource(BaseSource):
         is comparing, and carrying those columns in would put a variant factor
         on screen that ``roles.validate`` then demands a role for. If a
         variable's variants are the subject, it belongs in a variant row.
+
+        Returns the frame and ``{factor name: depth}`` — how many schema keys
+        pin one of the factor's values, which is what nests a grouping OUTSIDE
+        the keys recorded beneath it on a shared x axis
+        (``FactorInfo.depth``). The number is the grouping variable's own
+        schema depth, known here and nowhere downstream.
         """
-        attached: list[str] = []
+        attached: dict[str, int] = {}
         if not factor_variables:
             return frame, attached
 
@@ -602,7 +612,10 @@ class ScidbSource(BaseSource):
                 )
             frame[factor] = _as_levels(frame[factor])
 
-            attached.append(factor)
+            # Depth is the grouping variable's own schema depth: a subject-level
+            # sheet pins one value per subject, so it sits at the same level as
+            # `subject` and OUTSIDE `session` when both share the x axis.
+            attached[factor] = len(on)
             n_levels = frame[factor].nunique(dropna=True)
             Log.info(
                 "attached %r as factor %r on %s (%d level(s))",
@@ -756,7 +769,7 @@ class ScidbSource(BaseSource):
             named[VARIABLE_COLUMN] = frame.name
             stacked.append(named)
         combined = pd.concat(stacked, ignore_index=True, sort=False)
-        combined, group_columns = self._attach_factor_variables(
+        combined, group_depths = self._attach_factor_variables(
             combined, levels, list(factor_variables or [])
         )
 
@@ -772,7 +785,8 @@ class ScidbSource(BaseSource):
 
         factors = [c for c in variant_columns if c in combined.columns]
         factors.extend(key for key in levels if key in combined.columns)
-        factors.extend(group_columns)
+        # Keys: the attached factor names, in the order they were joined.
+        factors.extend(group_depths)
         factors.extend(c for c in field_columns if c in combined.columns)
         factors.append(VARIABLE_COLUMN)
         level_order = {
@@ -800,6 +814,7 @@ class ScidbSource(BaseSource):
             default_pin=None,
             latest_column=latest_column,
             factor_origins={axis["column"]: axis for axis in variant_axes},
+            factor_depths=group_depths,
             schema_levels=levels,
             measure_labels={primary: " / ".join(measures)},
         )

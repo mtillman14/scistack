@@ -257,7 +257,7 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
     shape = table.shape_of(spec.y_measure)
 
     # --- x-axis ownership ------------------------------------------------
-    x_layers = spec.ordered_x_layers()
+    x_layers = spec.ordered_x_layers(depths=table.factor_depths)
     if len(x_layers) > MAX_X_LAYERS:
         raise RoleError(
             f"At most {MAX_X_LAYERS} factors can share the x axis; got "
@@ -426,6 +426,68 @@ def _with_replicates_for(
     if not plain:
         return roles
     return {**roles, plain[-1]: Role.FREE}
+
+
+def role_for_new_grouping(
+    spec: PlotSpec, table: LongTable, factor: str | None = None
+) -> Role:
+    """The role a grouping the user has just ticked should take.
+
+    ``factor`` names it when it is already in the spec; ``None`` asks the same
+    question about a grouping not yet added, which is what ``capability``
+    publishes so the panel can apply the answer without a round trip per
+    checkbox.
+
+    **Why it takes one at all.** A factor arriving with no role defaults to FREE
+    (:func:`complete_roles`), and FREE on a bar or box figure means *pooled into
+    the means*. So ticking a grouping changed the figure not at all, silently —
+    and ``validate``'s pooling guard does not catch it, because that guard is
+    armed only for variant factors. The user then has to discover the Factors
+    dropdown to make the thing they just asked for happen.
+
+    Acting on the tick is right here, and is NOT in tension with "+ Add variant
+    must not change the figure" (``plot-variant-rows.md`` § "An unfilled row is
+    inert"). Opening a picker is not a statement about the data; ticking a
+    grouping is one, and the only question is where to put it.
+
+    The order, and it is a preference not a law — every part of it is one
+    dropdown away from being changed:
+
+    1. **X**, when the measure has a categorical x axis with room left. That is
+       what "group the bars by intervention and session" means, and Stage 2's
+       depth rule then puts the new layer on the correct side of the ones
+       already there.
+    2. **COLOR**, when the x axis is full, or is the sample index of a 1-D
+       measure, or is a joined measure — colour separates without needing an
+       axis.
+    3. **FREE** when both are taken, which really does pool. The caller is
+       expected to SAY so on the row rather than let it look applied; returning
+       a role that quietly does nothing is the failure this function exists to
+       fix, and it must not be reintroduced one branch down.
+
+    A factor that already carries a role keeps it: re-ticking something, or
+    re-applying a picker, must never overwrite a decision already made.
+    """
+    # The predicate, not `grouping_summary` — that summary REPORTS this
+    # function's answer, so asking it here would be an endless mutual call.
+    from .capability import x_axis_refusal
+
+    existing = spec.roles.get(factor) if factor else None
+    if existing is not None and existing is not Role.FREE:
+        return existing
+
+    if x_axis_refusal(spec, table) is None:
+        # Count the layers as the FIGURE will, including this one's absence —
+        # `ordered_x_layers` is the only place membership and order are
+        # reconciled, so asking it beats counting `spec.roles` by hand.
+        layers = spec.ordered_x_layers(depths=table.factor_depths)
+        if factor not in layers and len(layers) < MAX_X_LAYERS:
+            return Role.X
+
+    if Role.COLOR not in spec.roles.values():
+        return Role.COLOR
+
+    return Role.FREE
 
 
 def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:

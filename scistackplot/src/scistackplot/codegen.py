@@ -969,7 +969,11 @@ def _nested_x_layers(spec, table, roles, shape) -> list[str]:
     """The factors sharing the x axis, when there is more than one."""
     if spec.x_measure or shape is not Shape.SCALAR:
         return []
-    layers = [name for name in spec.ordered_x_layers(roles) if table.has_factor(name)]
+    layers = [
+        name
+        for name in spec.ordered_x_layers(roles, table.factor_depths)
+        if table.has_factor(name)
+    ]
     return layers if len(layers) > 1 else []
 
 
