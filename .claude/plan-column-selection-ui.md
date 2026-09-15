@@ -244,3 +244,31 @@ Frontend typechecks clean and BOTH vite bundles were rebuilt. Uncommitted.
   which `aggregate_variants` partitions out of `input_params` and the fill-in
   pass restores as `""`) renders an inert `n/a` row rather than spinning on a
   fetch it cannot make.
+
+### Two pre-existing defects the test run surfaced
+
+Both were found by tests written for this feature, and both are fixed here.
+
+1. **`_format_matlab_string_array` escaped the wrong quote.** It emits
+   DOUBLE-quoted MATLAB literals (`["a", "b"]`) but ran each value through
+   `_escape_matlab_string`, which doubles SINGLE quotes. Inside `"..."` a `"`
+   must be doubled and a `'` is an ordinary character, so an embedded `"`
+   terminated the literal and an embedded `'` was corrupted into `''`.
+   Latent while every caller passed identifiers (schema keys, `as_table`
+   parameter names); column selection is the first to route user spreadsheet
+   headers through it. New `_escape_matlab_dq` beside `_escape_matlab_string`;
+   `_escape_matlab_string` unchanged, since `'...'` literals (addpath, db
+   path, pipeline id, `_format_matlab_value`) still need it. Pinned by
+   `TestDoubleQuotedStringEscaping`, including that the two renderers
+   (`_escape_matlab_dq` and `code_export_service._matlab_str`) agree.
+
+2. **`scidb.Parameter` IS a `scifor.EachOf`.** The `EachOf` branch added to
+   `_py_literal` for ColumnSelection alternatives originally matched on
+   `getattr(value, "alternatives", None)`, so it swallowed `Parameter` too and
+   rendered `EachOf(10, 20, 30)` where `Parameter(10, 20, 30, description='')`
+   belongs — losing the type and the description, and breaking the existing
+   header-import round-trip test. Narrowed to `type(value) is EachOf`
+   (deliberately not `isinstance`); `build_run_inputs` only ever produces a
+   bare `EachOf` for a multi-type binding. Pinned by
+   `test_a_parameter_is_not_rendered_as_an_each_of`, sited next to the
+   ColumnSelection cases so neither is re-broken by an edit to the other.

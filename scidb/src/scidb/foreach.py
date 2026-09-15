@@ -2140,6 +2140,8 @@ def _for_each_prepare(
 
     # For each rid_key, map combo_tuple → [rid_values at that combo]
     rid_per_combo: dict = {}
+    # rid_col -> set of _lookup_keys positions that input actually populates
+    rid_populated_idx: dict = {}
     for rid_col in rid_keys:
         param_name = rid_col[len("__rid_") :]
         data = loaded_inputs.get(param_name)
@@ -2160,11 +2162,17 @@ def _for_each_prepare(
         # pandas groupby drops NaN-key groups by default, so EVERY row is dropped →
         # empty mapping → no rids tracked → no __upstream → no _invocation_input
         # edges (severed input provenance, the precondition for the orphan cascade).
-        # The mapping key is still built over the full _lookup_keys (missing keys
-        # filled with ""), so downstream combo matching is unaffected.
+        # The mapping key is still built over the full _lookup_keys, with the
+        # keys this input does not populate filled with "". Those "" positions
+        # are why rid_populated_idx exists: a combo key has REAL values in every
+        # position, so the full-iteration lookup below has to blank the same
+        # positions before probing or it would never match (see _rid_probe_key).
         schema_cols_in_df = [
             k for k in _lookup_keys if k in df.columns and not df[k].isna().all()
         ]
+        rid_populated_idx[rid_col] = {
+            _lookup_keys.index(k) for k in schema_cols_in_df
+        }
         mapping: dict = {}
         # Dedupe rids per group so DataFrame-mode inputs (one DuckDB row
         # per inner-table row, all sharing a single record_id) don't
@@ -2186,6 +2194,28 @@ def _for_each_prepare(
                 dict.fromkeys(df[rid_col].tolist())
             )
         rid_per_combo[rid_col] = mapping
+
+    def _rid_probe_key(rid_col: str, schema_vals: tuple) -> tuple:
+        """The key to look up *rid_col*'s mapping with for a combo location.
+
+        ``schema_vals`` carries a real value in every position; a coarse input's
+        mapping keys carry "" wherever that input has no axis. Blank the same
+        positions before probing, so a subject-level input matches at every
+        session/trial below it instead of matching nothing — which pruned the
+        ENTIRE grid, since a combo with no rids for any rid key is skipped.
+
+        An input that populates every lookup key probes with ``schema_vals``
+        unchanged: the overwhelmingly common case, byte-identical to the exact
+        match this replaced. Same shape as ``_colsel_combo_present``, which has
+        always compared this way — that asymmetry is why a coarse
+        ``ColumnSelection`` input worked while a coarse plain one did not.
+        """
+        populated = rid_populated_idx.get(rid_col)
+        if populated is None or len(populated) == len(_lookup_keys):
+            return schema_vals
+        return tuple(
+            schema_vals[i] if i in populated else "" for i in range(len(_lookup_keys))
+        )
 
     # Existence coverage for ColumnSelection inputs: the set of schema-location
     # keys (over _lookup_keys) each one actually has data for. Used purely to
@@ -2685,7 +2715,7 @@ def _for_each_prepare(
             rid_col_names: list = []
             valid = True
             for rid_col, mapping in rid_per_combo.items():
-                rids = mapping.get(schema_vals, [])
+                rids = mapping.get(_rid_probe_key(rid_col, schema_vals), [])
                 if not rids:
                     valid = False
                     break
@@ -3201,7 +3231,7 @@ def _convert_inputs(
                 result[param_name] = _resolve_colname_from_db(var_spec, db)
         elif _is_loadable(var_spec):
             t0 = time.perf_counter()
-            loaded = _load_input(var_spec, db, where)
+            loaded = _load_input(var_spec, db, where, param_name=param_name)
             elapsed = time.perf_counter() - t0
             result[param_name] = loaded
             _log_loaded_input(param_name, var_spec, loaded, elapsed)
@@ -3470,11 +3500,88 @@ def _resolve_colname_from_db(colname: "ColName", db: Any | None) -> str:
     return var_name
 
 
+def _drop_unpopulated_schema_columns(
+    df: "pd.DataFrame",
+    schema_keys: "set | list",
+    *,
+    context: str,
+) -> "pd.DataFrame":
+    """Drop schema-key columns a loaded input never populates.
+
+    ``load_all_as_df(layout="spread")`` emits one column per *dataset* schema
+    key, so a variable stored at a coarser level -- Demographics at ``subject``
+    in a ``subject/session/speed/trial`` schema -- comes back carrying the finer
+    keys as all-NULL columns.  An all-NULL schema column does not mean "these
+    rows have no session"; it means the variable has no session axis at all, so
+    its rows must BROADCAST across that dimension.
+
+    Left in, both per-combo filters read it the other way, and differently --
+    which is why this lives here, once, rather than as the same rule written
+    twice in two scifor implementations:
+
+    * Python -- ``scifor._filter_df_for_combo`` evaluates ``None == "BL"`` for
+      every row, so every combo filters to zero rows and raises ``scifor:NoData``.
+    * MATLAB -- the column crosses the bridge as a cell array of ``0x0 double``
+      and ``filter_table_for_combo``'s ``string(col_data)`` raises
+      ``MATLAB:string:MustBeConvertibleCellArray``, failing EVERY iteration with
+      "failed to filter <param>".
+
+    Dropping them lets the filter skip the dimension, which is the broadcast
+    behaviour the Merge path has always had -- this is the generalisation of the
+    drop that used to live inline in ``_load_input``'s Merge branch, to every
+    input kind.  See docs/claude/coarse-level-inputs.md.
+
+    Only columns that are ENTIRELY null are dropped.  A variable with records
+    saved at mixed granularity keeps its partially-populated key and still
+    filters on it: a row that genuinely has no session is a different thing from
+    a variable with no session axis, and the two must not be conflated.
+    """
+    import pandas as pd
+
+    if not isinstance(df, pd.DataFrame) or df.empty or not schema_keys:
+        return df
+    unpopulated = [c for c in df.columns if c in schema_keys and df[c].isna().all()]
+    if not unpopulated:
+        return df
+    kept = sorted(c for c in df.columns if c in schema_keys and c not in unpopulated)
+    Log.info(
+        f"[coarse-input] {context}: dropped unpopulated schema column(s) "
+        f"{sorted(unpopulated)} — stored at a coarser level, so its rows "
+        f"broadcast across {'/'.join(sorted(unpopulated))} and filter only on "
+        f"{kept if kept else '(nothing — constant table)'}"
+    )
+    return df.drop(columns=unpopulated)
+
+
+def _drop_unpopulated_schema_columns_in_place(
+    loaded: Any,
+    schema_keys: "set | list",
+    *,
+    context: str,
+) -> Any:
+    """``_drop_unpopulated_schema_columns`` for a frame or a wrapper around one.
+
+    Accepts a bare DataFrame, or anything with a ``.data`` DataFrame (scifor's
+    ``Fixed`` / ``ColumnSelection``), and returns the same kind of thing.
+    """
+    import pandas as pd
+
+    if isinstance(loaded, pd.DataFrame):
+        return _drop_unpopulated_schema_columns(loaded, schema_keys, context=context)
+    inner = getattr(loaded, "data", None)
+    if isinstance(inner, pd.DataFrame):
+        loaded.data = _drop_unpopulated_schema_columns(
+            inner, schema_keys, context=context
+        )
+    return loaded
+
+
 def _load_input(
     var_spec: Any,
     db: Any | None,
     where: Any | None,
     branch_params_filter: dict | None = None,
+    param_name: str | None = None,
 ) -> Any:
     """Load a single input and return a scifor-compatible wrapper or sentinel.
 
@@ -3482,8 +3589,17 @@ def _load_input(
     the recursion exactly like ``where``.  A ``Variant`` wrapper *injects* it into
     its subtree; the other wrappers pass it through; the leaf load applies it via
     ``load_all_as_df(branch_params_filter=…)``.
+
+    ``param_name`` is threaded for LOGGING only — it never changes what loads.
+    A coarse-input drop reported against the variable type alone is hard to act
+    on, because the failure it prevents (MATLAB's "failed to filter <param>")
+    names the parameter, not the type.
     """
     import pandas as pd
+
+    def _ctx(var_label: str) -> str:
+        """Log context for this input: parameter name plus what it is bound to."""
+        return f"'{param_name}' ({var_label})" if param_name else var_label
 
     # Already a DataFrame — pass through
     if isinstance(var_spec, pd.DataFrame):
@@ -3495,7 +3611,11 @@ def _load_input(
     # columns), keyed off the original ``inputs`` spec, so here we just unwrap.
     if isinstance(var_spec, AcrossVariants):
         return _load_input(
-            var_spec.var_type, db, where, branch_params_filter=branch_params_filter
+            var_spec.var_type,
+            db,
+            where,
+            branch_params_filter=branch_params_filter,
+            param_name=param_name,
         )
 
     # Variant: inject/merge its branch_params into the inherited filter (error on
@@ -3514,7 +3634,13 @@ def _load_input(
         Log.debug(
             f"[Variant] {var_spec.__name__}: injecting branch_params_filter={merged}"
         )
-        return _load_input(var_spec.var_type, db, where, branch_params_filter=merged)
+        return _load_input(
+            var_spec.var_type,
+            db,
+            where,
+            branch_params_filter=merged,
+            param_name=param_name,
+        )
 
     # Merge: check if any constituent needs per-combo loading
     if isinstance(var_spec, Merge):
@@ -3579,27 +3705,15 @@ def _load_input(
                 db,
                 where=constituent_where,
                 branch_params_filter=branch_params_filter,
+                param_name=param_name,
             )
             # Strip scidb metadata columns that would conflict when merged column-wise.
             # __record_id/__branch_params/version appear in every constituent but carry
             # no per-row meaning after merge; scifor's _prepare_merge doesn't track them.
-            #
-            # Also drop schema key columns that are entirely null: when a variable was
-            # saved at a coarser granularity (e.g. subject-level only), the spread layout
-            # includes ALL schema key columns but fills unused ones with NaN.  Keeping
-            # these all-null columns causes MATLAB's filter_table_for_combo to receive
-            # cell arrays of empty doubles and crash when it attempts string conversion.
-            # Dropping them lets the constituent broadcast across the missing dimension.
             if isinstance(loaded, pd.DataFrame):
                 drop_cols = [
                     c for c in loaded.columns if c in _SCIDB_META or c.startswith("__")
                 ]
-                all_null_sk = [
-                    c
-                    for c in loaded.columns
-                    if c in _schema_keys and loaded[c].isna().all()
-                ]
-                drop_cols = list(dict.fromkeys(drop_cols + all_null_sk))
                 if drop_cols:
                     loaded = loaded.drop(columns=drop_cols)
             elif hasattr(loaded, "data") and isinstance(loaded.data, pd.DataFrame):
@@ -3609,14 +3723,21 @@ def _load_input(
                     for c in loaded.data.columns
                     if c in _SCIDB_META or c.startswith("__")
                 ]
-                all_null_sk = [
-                    c
-                    for c in loaded.data.columns
-                    if c in _schema_keys and loaded.data[c].isna().all()
-                ]
-                drop_cols = list(dict.fromkeys(drop_cols + all_null_sk))
                 if drop_cols:
                     loaded.data = loaded.data.drop(columns=drop_cols)
+            # Unpopulated schema columns: the recursion above already dropped them
+            # for every constituent that is a loaded variable type. Repeat it here
+            # so a constituent the user handed in as a raw DataFrame gets the same
+            # broadcast semantics — this branch owned that rule alone until it was
+            # generalised (docs/claude/coarse-level-inputs.md).
+            loaded = _drop_unpopulated_schema_columns_in_place(
+                loaded,
+                _schema_keys,
+                context=_ctx(
+                    "Merge constituent "
+                    f"'{getattr(sub_spec, '__name__', type(sub_spec).__name__)}'"
+                ),
+            )
             loaded_tables.append(loaded)
         return _scifor.Merge(*loaded_tables)
 
@@ -3633,6 +3754,7 @@ def _load_input(
             db,
             where,
             branch_params_filter=branch_params_filter,
+            param_name=param_name,
         )
         if isinstance(inner_loaded, PerComboLoader):
             # Inner needs per-combo loading; wrap the whole Fixed spec
@@ -3670,6 +3792,14 @@ def _load_input(
                 where,
                 branch_params_filter=branch_params_filter,
             )
+            loaded_df = _drop_unpopulated_schema_columns(
+                loaded_df,
+                _get_schema_keys(db),
+                context=_ctx(
+                    "ColumnSelection on "
+                    f"{getattr(var_spec.data, '__name__', type(var_spec.data).__name__)}"
+                ),
+            )
             return _scifor.ColumnSelection(
                 loaded_df, var_spec.columns, iterate=var_spec.iterate
             )
@@ -3695,11 +3825,18 @@ def _load_input(
                 except Exception:
                     pass
             if _check_db is not None and hasattr(_check_db, "load_all_as_df"):
-                return _load_var_type_as_spread(
+                loaded_df = _load_var_type_as_spread(
                     var_spec,
                     db,
                     where,
                     branch_params_filter=branch_params_filter,
+                )
+                return _drop_unpopulated_schema_columns(
+                    loaded_df,
+                    _get_schema_keys(_check_db),
+                    context=_ctx(
+                        getattr(var_spec, "__name__", type(var_spec).__name__)
+                    ),
                 )
             return PerComboLoader(var_spec)
         return PerComboLoader(var_spec)

@@ -146,6 +146,13 @@ Inputs panel ──put_node_config──▶ _node_config.columnSelections
 `derive_target_for_node` is node-scoped, so two call sites of one function
 name keep their own selections.
 
+The panel offers a picker for the parameters in the node's `input_params`
+that have a non-empty variable type. The rest render as an inert `n/a` — and
+that is the most honest thing available, because an empty type means
+"unwired", "fed by a PathInput", *or* "fed by a variable the user hid", with
+nothing in the node data to tell them apart. See
+`docs/claude/function-node-input-params.md`.
+
 The MATLAB side folds the selection into the **same** `variable_inputs` map
 rather than a parallel `column_selections` dict — one map, one parser
 (`_variable_binding_parts`), so all three `for_each` emit sites

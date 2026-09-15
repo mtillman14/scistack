@@ -283,6 +283,9 @@ error.
 
 ## Related
 
+- `docs/claude/function-node-input-params.md` — the DISPLAY projection of
+  these bindings onto a canvas node's handles, and why an empty type there
+  cannot be read as "unwired".
 - `docs/claude/code-discovery-categories.md` — how PathInputs/Parameters get
   into the registry in the first place, and the declared-name identity they
   carry.
