@@ -44,6 +44,7 @@ from .each_of import EachOf, require_alternatives
 from .filters import Col, ColFilter, CompoundFilter, NotFilter
 from .fixed import Fixed
 from .foreach import ColumnFunctionError, ForColumnsError, NoDataError, for_each
+from .locations import LocationFilter, filter_combos
 from .merge import Merge
 from .pathinput import (
     PathInput,
@@ -75,6 +76,9 @@ __all__ = [
     "require_alternatives",
     "PathInput",
     "PathOutput",
+    # Location selection
+    "LocationFilter",
+    "filter_combos",
     # Rootless-PathInput resolution base
     "set_project_root",
     "get_project_root",

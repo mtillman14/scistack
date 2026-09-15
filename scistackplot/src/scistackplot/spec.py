@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from typing import Any
@@ -202,6 +203,38 @@ class Filter:
     maximum: float | None = None
 
 
+#: A number with no leading zeros whose value is integral: ``1``, ``-3``,
+#: ``1.0``, ``1.00``. NOT ``01`` (leading zero) and NOT ``1.5``.
+_INTEGRAL = re.compile(r"-?(?:0|[1-9]\d*)(?:\.0+)?")
+
+
+def value_spellings(value: Any) -> tuple[str, ...]:
+    """Every text form *value* may legitimately arrive as, sorted.
+
+    One value crosses three layers and can pick up a different spelling in
+    each: a schema key that round-tripped through DuckDB as a float reaches
+    this frame as ``1.0``, while the picker -- whose tree comes from scidb --
+    sends ``1``. Compared as raw text those select nothing, in silence, which
+    is the worst available failure. So an integral number matches both
+    spellings.
+
+    A zero-padded string does NOT: ``"01"`` and ``"1"`` can be two genuinely
+    distinct trials, and which one is identity is scidb's decision
+    (docs/claude/schema-key-types.md), never a shortcut taken here.
+
+    Sorted so :mod:`scistackplot.codegen` can bake the result into generated
+    source and get byte-identical output for one spec.
+
+    ``scifor.locations.value_spellings`` is the same function for combos; the
+    shared cases in docs/claude/location-filter-cases.json pin them together.
+    """
+    text = str(value)
+    if _INTEGRAL.fullmatch(text):
+        whole = int(float(text))
+        return tuple(sorted({text, str(whole), f"{whole}.0"}))
+    return (text,)
+
+
 @dataclass(frozen=True)
 class LocationFilter:
     """Which schema locations to draw, as a set of hierarchy **prefixes**.
@@ -238,11 +271,15 @@ class LocationFilter:
     misinterpret, and it means the picker sends a node's own path back verbatim
     with no translation step to get wrong.
 
-    An empty ``include`` is **inert**: it constrains nothing, matching the rule
-    an unfilled variant row follows (docs/claude/plot-variant-rows.md §3).
-    Clicking into a picker is not a statement about the data.
+    An empty filter -- no ``include`` prefixes and no ``exclude_levels`` -- is
+    **inert**: it constrains nothing, matching the rule an unfilled variant row
+    follows (docs/claude/plot-variant-rows.md §3). Clicking into a picker is
+    not a statement about the data.
 
-    Values are compared as text, like every other selection that crosses JSON.
+    Values are compared as text, like every other selection that crosses JSON,
+    with one documented exception: :func:`value_spellings`. The whole rule,
+    including the cases both sides are tested against, is
+    docs/claude/location-filter-semantics.md.
     """
 
     #: Schema keys, outermost first. Display order only — matching reads the
@@ -251,6 +288,31 @@ class LocationFilter:
     #: Prefixes to keep. Lists rather than tuples so JSON and TOML round-trip
     #: with no conversion; :meth:`prefixes` is the tuple view for matching.
     include: list[list[list[str]]] = field(default_factory=list)
+    #: ``{key: [levels]}`` dropped wherever they appear — a standing RULE, not
+    #: a set of places, and the half ``include`` cannot express.
+    #:
+    #: Unticking one trial of one subject is ragged and belongs in ``include``.
+    #: Unticking a *session* means "that session is out, everywhere, including
+    #: in data that does not exist yet": exploding it into prefixes would
+    #: enumerate today's subjects and freeze them, so a subject added next
+    #: month would vanish entirely rather than merely lose that session. Both
+    #: halves are needed, and a location survives only if ``include`` covers it
+    #: AND no level rule names one of its values.
+    exclude_levels: dict[str, list[str]] = field(default_factory=dict)
+
+    def excluded(self) -> dict[str, tuple[str, ...]]:
+        """``exclude_levels`` as text, empty lists dropped.
+
+        An empty list means "nothing excluded" and must be INERT rather than a
+        rule matching nothing, or :meth:`is_empty` would report a filter where
+        there is none and every fast path would be skipped for no reason.
+        """
+        out: dict[str, tuple[str, ...]] = {}
+        for key, values in (self.exclude_levels or {}).items():
+            levels = tuple(dict.fromkeys(str(value) for value in values))
+            if levels:
+                out[str(key)] = levels
+        return out
 
     def prefixes(self) -> list[tuple[tuple[str, str], ...]]:
         """``include`` as tuples of ``(key, value)`` text pairs, empties dropped."""
@@ -264,7 +326,7 @@ class LocationFilter:
         return out
 
     def is_empty(self) -> bool:
-        return not self.prefixes()
+        return not self.prefixes() and not self.excluded()
 
     def to_dict(self) -> dict:
         return {
@@ -273,6 +335,9 @@ class LocationFilter:
                 [[str(pair[0]), str(pair[1])] for pair in entry if len(pair) == 2]
                 for entry in self.include
             ],
+            "exclude_levels": {
+                key: list(values) for key, values in self.excluded().items()
+            },
         }
 
     @classmethod
@@ -283,6 +348,10 @@ class LocationFilter:
                 [[str(pair[0]), str(pair[1])] for pair in entry if len(pair) == 2]
                 for entry in (raw.get("include") or [])
             ],
+            exclude_levels={
+                str(key): [str(value) for value in values]
+                for key, values in (raw.get("exclude_levels") or {}).items()
+            },
         )
 
 

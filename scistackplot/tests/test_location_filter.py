@@ -15,13 +15,16 @@ body. Two implementations of one rule will drift unless something compares them.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, capabilities, resolve
 from scistackplot.codegen import _location_lines, extract_spec, generate_plot_function
 from scistackplot.reduce import apply_filters
-from scistackplot.spec import Filter, LocationFilter
+from scistackplot.spec import Filter, LocationFilter, value_spellings
 
 KEYS = ["subject", "session", "trial"]
 
@@ -263,6 +266,11 @@ class TestRoundTrip:
         assert raw["location_filter"] == {
             "keys": KEYS,
             "include": [[["subject", "01"]]],
+            # Always present, even when empty: a spec written by a newer GUI
+            # and read by an older one differs by a missing key otherwise, and
+            # `from_dict` would have to guess whether absent means "no rule" or
+            # "this file predates rules".
+            "exclude_levels": {},
         }
 
     def test_through_generated_source(self, scalar_table):
@@ -411,3 +419,150 @@ class TestLevelsAfterLocation:
         spec = _spec(_loc(("01",)))
 
         assert _levels_after_location(spec, "gone", ["a", "b"]) == ["a", "b"]
+
+
+# --- the shared parity cases ------------------------------------------------
+#
+# Loaded, never transcribed. The same rule exists four times — scifor.locations
+# over for_each combos, the mask below, the pandas that mask EMITS, and the
+# GUI's locationSelection.ts — and scistackplot cannot import scifor
+# (pandas/numpy/scistacklog only), so the copies are real. One shared file
+# means a case added to the spec fails every implementation that has not
+# adopted it, instead of passing quietly wherever nobody copied it across.
+
+CASES_FILE = (
+    Path(__file__).resolve().parents[2]
+    / "docs"
+    / "claude"
+    / "location-filter-cases.json"
+)
+
+
+def _row_cases() -> list[dict]:
+    if not CASES_FILE.exists():
+        raise AssertionError(
+            f"Shared location-filter cases not found at {CASES_FILE}. "
+            "Every implementation of the rule reads this one file."
+        )
+    data = json.loads(CASES_FILE.read_text(encoding="utf-8"))
+    return [case for case in data["cases"] if "row" in case["applies_to"]]
+
+
+def _case_id(case: dict) -> str:
+    return f"{case['id']:02d}-{case['name']}"
+
+
+def _case_frame(case: dict) -> pd.DataFrame:
+    """The case's location as a ONE-ROW frame.
+
+    JSON types are load-bearing here: ``1.0`` builds a float64 column (the
+    DuckDB round-trip that motivates :func:`value_spellings`), ``"01"`` a
+    string one, ``null`` a NaN. A key absent from the case is an absent
+    COLUMN, which is how a cross-cutting or shallower variable looks.
+    """
+    return pd.DataFrame([{**case["location"], "StepLength": 1.0}])
+
+
+def _case_spec(case: dict) -> PlotSpec:
+    return _spec(LocationFilter.from_dict(case["filter"]))
+
+
+@pytest.mark.parametrize("case", _row_cases(), ids=_case_id)
+def test_shared_case_against_the_mask(case):
+    frame = _case_frame(case)
+    kept = apply_filters(frame, _case_spec(case))
+    assert (len(kept) == 1) is case["in"], case["why"]
+
+
+@pytest.mark.parametrize("case", _row_cases(), ids=_case_id)
+def test_shared_case_against_the_generated_code(case):
+    """The export path reads the same table as the live one.
+
+    An exported script that filters differently from the figure it came from
+    is the worst kind of wrong: the picture was approved, and the data behind
+    it silently is not the same data.
+    """
+    frame = _case_frame(case)
+    namespace: dict = {"df": frame.copy(), "pd": pd}
+
+    exec("\n".join(_location_lines(_case_spec(case))), namespace)  # noqa: S102
+
+    assert (len(namespace["df"]) == 1) is case["in"], case["why"]
+
+
+class TestValueSpellings:
+    """The numeric-spelling rule (shared cases 16-18), at the unit level.
+
+    ``scifor.locations.value_spellings`` is the same function for combos; both
+    are pinned by the shared cases, and these assertions say what the shared
+    cases imply.
+    """
+
+    def test_an_integral_number_has_both_spellings(self):
+        assert value_spellings("1") == ("1", "1.0")
+        assert value_spellings(1.0) == ("1", "1.0")
+        assert value_spellings("1.00") == ("1", "1.0", "1.00")
+
+    def test_a_zero_padded_value_is_only_itself(self):
+        """Guards the padding rule: "01" and "1" may be two distinct trials,
+        and which spelling is identity is scidb's decision."""
+        assert value_spellings("01") == ("01",)
+
+    def test_a_non_integral_number_is_only_itself(self):
+        assert value_spellings("1.5") == ("1.5",)
+
+    def test_the_result_is_sorted_for_stable_codegen(self):
+        """Generated source must be byte-identical for one spec, or an export
+        diff is full of reordered literals."""
+        assert list(value_spellings("1")) == sorted(value_spellings("1"))
+
+
+class TestExcludeLevels:
+    """The standing rule, beyond what one-row cases can show."""
+
+    def test_a_level_is_dropped_across_every_other_key(self, scalar_table):
+        """The point of the left-hand pane: omit one session everywhere,
+        rather than per subject."""
+        spec = _spec(LocationFilter(keys=KEYS, exclude_levels={"session": ["pre"]}))
+        kept = apply_filters(scalar_table.frame, spec)
+        assert "pre" not in set(kept["session"].astype(str))
+        assert len(set(kept["subject"].astype(str))) == len(
+            set(scalar_table.frame["subject"].astype(str))
+        )
+
+    def test_exclusion_beats_coverage(self, scalar_table):
+        spec = _spec(
+            LocationFilter(
+                keys=KEYS,
+                include=[[["subject", "01"]]],
+                exclude_levels={"session": ["pre"]},
+            )
+        )
+        kept = apply_filters(scalar_table.frame, spec)
+        assert set(kept["subject"].astype(str)) == {"01"}
+        assert "pre" not in set(kept["session"].astype(str))
+
+    def test_an_empty_level_list_is_inert(self):
+        """"Nothing excluded" must not read as a filter, or every fast path
+        that checks is_empty() is skipped for no reason."""
+        assert LocationFilter(exclude_levels={"session": []}).is_empty()
+        assert _location_lines(_spec(LocationFilter(exclude_levels={"s": []}))) == []
+
+    def test_it_round_trips_through_the_spec(self):
+        """A reopened plot must filter like the one that was saved."""
+        original = LocationFilter(
+            keys=KEYS,
+            include=[[["subject", "01"]]],
+            exclude_levels={"session": ["pre", "pre", "post"]},
+        )
+        restored = LocationFilter.from_dict(original.to_dict())
+        assert restored.excluded() == {"session": ("pre", "post")}
+        assert restored.prefixes() == original.prefixes()
+
+    def test_an_excluded_level_leaves_the_generated_axis_order(self):
+        """An omitted level must not reserve an empty slot on the exported
+        figure's axis."""
+        from scistackplot.codegen import _levels_after_location
+
+        spec = _spec(LocationFilter(keys=KEYS, exclude_levels={"session": ["pre"]}))
+        assert _levels_after_location(spec, "session", ["pre", "post"]) == ["post"]

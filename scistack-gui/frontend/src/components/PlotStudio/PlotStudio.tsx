@@ -22,7 +22,12 @@ import { callBackend, isVSCodeMode } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import VariantDagPopup from './VariantDagPopup'
 import SchemaLocationPicker, { type PathStep } from './SchemaLocationPicker'
-import { describeSelection, rolesAfterPick } from './locationSelection'
+import {
+  type LocationSelection,
+  asSelection,
+  describeSelection,
+  rolesAfterPick,
+} from './locationSelection'
 
 const Plot = createPlotlyComponent(Plotly)
 
@@ -381,7 +386,7 @@ interface Spec {
      means something RAGGED (all of subject 01, plus trials 1-3 of subject 02)
      and per-column include-lists can only express a Cartesian product.
      Empty `include` is inert: everything is drawn. */
-  location_filter?: { keys: string[]; include: PathStep[][] }
+  location_filter?: { keys: string[]; include: PathStep[][]; exclude_levels?: Record<string, string[]> }
   /* One entry per row of the Variants section. One row is a pin (the figure
      shows that variant); several are a comparison, and a `Variant` factor
      appears in Factors carrying whichever role the user gives it. */
@@ -411,7 +416,13 @@ function applyPickedLocation(spec: Spec, path: PathStep[], schemaKeys: string[])
   return {
     ...spec,
     roles: rolesAfterPick(spec.roles, path, schemaKeys),
-    location_filter: { keys: schemaKeys, include: [path] },
+    // A picked row answers "which places", and says nothing about which
+    // levels are omitted — so the standing rule survives the pick.
+    location_filter: {
+      keys: schemaKeys,
+      include: [path],
+      exclude_levels: spec.location_filter?.exclude_levels ?? {},
+    },
   }
 }
 
@@ -877,9 +888,20 @@ export default function PlotStudio({
    * "select all" click store the same thing. `keys` travels with it as display
    * order; matching reads the keys named inside each prefix.
    */
-  const setLocationInclude = useCallback(
-    (include: PathStep[][], keys: string[]) => {
-      setSpec(prev => (prev ? { ...prev, location_filter: { keys, include } } : prev))
+  const setLocationSelection = useCallback(
+    (selection: LocationSelection, keys: string[]) => {
+      setSpec(prev =>
+        prev
+          ? {
+              ...prev,
+              location_filter: {
+                keys,
+                include: selection.include,
+                exclude_levels: selection.exclude_levels,
+              },
+            }
+          : prev
+      )
     },
     []
   )
@@ -1085,7 +1107,7 @@ export default function PlotStudio({
   const schemaKeyNames = useMemo(() => schemaKeys.map(f => f.name), [schemaKeys])
 
   const locationSummary = useMemo(
-    () => describeSelection(spec?.location_filter?.include ?? []),
+    () => describeSelection(asSelection(spec?.location_filter)),
     [spec?.location_filter]
   )
 
@@ -1492,7 +1514,8 @@ export default function PlotStudio({
                   way the Variants/Factors duplication went wrong. */}
               <div style={styles.hint}>
                 Which records to plot, and whether each location's data is
-                sound. Everything is included until you say otherwise.
+                sound. Omit a level everywhere (by key), or pick locations one
+                by one. Everything is included until you say otherwise.
               </div>
               <button
                 type="button"
@@ -2040,8 +2063,8 @@ export default function PlotStudio({
         <SchemaLocationPicker
           variable={describe?.variable ?? variable}
           selection={pickerSelection}
-          value={spec?.location_filter?.include ?? []}
-          onChange={include => setLocationInclude(include, schemaKeyNames)}
+          value={asSelection(spec?.location_filter)}
+          onChange={selection => setLocationSelection(selection, schemaKeyNames)}
           onPick={path => {
             pickLocation(path, schemaKeyNames)
             setLocationPickerOpen(false)

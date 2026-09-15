@@ -242,6 +242,7 @@ def for_each(
     skip_computed: bool = False,
     schema_filter: "dict[str, list] | None" = None,
     schema_keys: "list[str] | None" = None,
+    locations: "Any" = None,
     share_limits: "dict[str, list[str]] | None" = None,
     finalized: bool = False,
     glue: "dict[str, Any] | None" = None,
@@ -304,6 +305,17 @@ def for_each(
                     Defaults to all schema keys. Cannot be combined with
                     explicit **metadata_iterables. Implemented via scifor's
                     ``expand_schema_keys()``, shared with scifor.for_each().
+        locations: Optional ``scifor.LocationFilter`` (or its mapping form)
+                    naming which schema locations to run: ragged ``include``
+                    prefixes plus a standing ``exclude_levels`` rule. Passed
+                    straight through to ``scifor.for_each`` — the filter is a
+                    pure combo predicate and owns no database concepts, so it
+                    lives in scifor and is applied once, there, after this
+                    layer has built the full combo list (rid variants
+                    included). Distinct from ``schema_filter``, which is a
+                    per-key Cartesian narrowing applied while combos are
+                    RESOLVED; ``locations`` can express what that cannot
+                    (see docs/claude/location-filter-semantics.md).
         finalized: Endpoint (``plot_``/``stat_``) functions only. Default False
                     = DRAFT mode: nothing is written to the database — a
                     ``plot_`` figure is still rendered to its PathOutput path,
@@ -501,6 +513,11 @@ def for_each(
                 # success. Any glue on a function with a multi-valued
                 # Parameter or a multi-type input was affected.
                 glue=glue,
+                # Same reasoning as glue above: every alternative runs over
+                # the same locations (a selection is about which data
+                # exists, not which variant produced it), and a kwarg
+                # dropped from this hand-written recursion fails silently.
+                locations=locations,
                 introspect=introspect,
                 track_lineage=track_lineage,
                 skip_computed=skip_computed,
@@ -598,6 +615,10 @@ def for_each(
             _pre_combo_hook=_pre_combo_hook,
             _cancel_check=_cancel_check,
             metadata_iterables=metadata_iterables,
+            # Only the DRY-RUN shortcut inside prepare needs this: it makes
+            # its own scifor call, and a preview that describes a different
+            # run than the one that follows is worse than no preview.
+            locations=locations,
         )
     if state is None:
         return None
@@ -767,6 +788,7 @@ def for_each(
             distribute=distribute,
             output_names=state.output_names,
             share_limits=share_limits,
+            locations=locations,
             _all_combos=state.full_combos,
             _progress_fn=_tracking_progress_fn,
             _cancel_check=_cancel_check,
@@ -1408,6 +1430,7 @@ def _for_each_prepare(
     metadata_iterables: dict,
     glue: "dict[str, Any] | None" = None,
     glue_language: str = "python",
+    locations: "Any" = None,
 ) -> "_ForEachState | None":
     """Run scidb.for_each's pre-loop work (Steps 2-15).
 
@@ -1803,6 +1826,7 @@ def _for_each_prepare(
             as_table=as_table,
             distribute=distribute,
             output_names=output_names,
+            locations=locations,
             _cancel_check=_cancel_check,
             **scifor_kwargs,
         )

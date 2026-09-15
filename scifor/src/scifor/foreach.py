@@ -24,6 +24,7 @@ from .colname import ColName
 from .column_selection import ColumnSelection
 from .each_of import EachOf, require_alternatives
 from .fixed import Fixed
+from .locations import LocationFilter, filter_combos
 from .merge import Merge
 from .pathinput import PathInput
 from .pathoutput import PathOutput
@@ -89,6 +90,7 @@ def for_each(
     as_table: list[str] | bool | None = None,
     distribute: bool = False,
     where=None,
+    locations: "LocationFilter | dict | None" = None,
     output_names: list[str] | int | None = None,
     share_limits: "dict[str, list[str]] | None" = None,
     schema_keys: "list[str] | None" = None,
@@ -123,6 +125,12 @@ def for_each(
                     schema instead.
         where: Optional scifor.ColFilter/CompoundFilter to filter DataFrame
                rows after combo filtering.
+        locations: Optional scifor.LocationFilter (or its mapping form) naming
+               which schema locations to run: ragged ``include`` prefixes plus
+               a standing ``exclude_levels`` rule. Filters COMBOS, where
+               ``where=`` filters ROWS within a combo — the two are unrelated
+               and compose. An empty/omitted filter is inert. See
+               docs/claude/location-filter-semantics.md.
         output_names: Names for result columns. list[str] names them;
                       int N auto-names (output_1, ..., output_N);
                       None defaults to ["output"] (single output).
@@ -202,6 +210,11 @@ def for_each(
                 as_table=as_table,
                 distribute=distribute,
                 where=concrete_where,
+                # Every alternative runs over the same locations: a selection
+                # is about which data exists, not which variant produced it.
+                # (Dropping a kwarg here is a silent, well-worn failure —
+                # `glue=` went missing from this same recursion in 2026-09-10.)
+                locations=locations,
                 output_names=output_names,
                 share_limits=share_limits,
                 schema_keys=schema_keys,
@@ -575,8 +588,17 @@ def for_each(
             layer="scifor",
         )
 
-    total = len(all_combos)
     fn_name = getattr(fn, "__name__", repr(fn))
+
+    # Step 6.5: locations= — narrow the combo list to the selected schema
+    # locations. Applied to BOTH branches above on purpose: a filter that only
+    # touched the Cartesian branch would be silently ignored on every
+    # database-driven run, which is the path that has one (scidb hands its
+    # pre-filtered combos in through _all_combos).
+    if locations is not None:
+        all_combos = filter_combos(all_combos, locations, context=f"for_each({fn_name})")
+
+    total = len(all_combos)
 
     # Step 7.5: share_limits prepass — compute per-group numeric extents so all
     # combos in a group (e.g. all trials within a subject) can share axis limits.
@@ -661,6 +683,12 @@ def for_each(
         _opts_parts.append(f"as_table={as_table!r}")
     if where is not None:
         _opts_parts.append(f"where={where!r}")
+    if locations is not None and not LocationFilter.of(locations).is_empty():
+        _location_filter = LocationFilter.of(locations)
+        _opts_parts.append(
+            f"locations={len(_location_filter.include)} prefix(es), "
+            f"excluding {dict(_location_filter.exclude_levels) or '{}'}"
+        )
     if _opts_parts:
         Log.info(f"options: {', '.join(_opts_parts)}", layer="scifor")
 
@@ -1009,6 +1037,18 @@ def for_each(
         f"{cancelled_suffix}",
         layer="scifor",
     )
+    # Everything failed: the caller gets an EMPTY DataFrame, which is exactly
+    # what "there was nothing to iterate" looks like from the outside. The two
+    # have opposite causes and the same symptom, so this one is a WARNING —
+    # found twice in one afternoon (2026-09-14), both times read as a discovery
+    # or filter bug when in fact every call had raised the same TypeError.
+    if total and completed == 0 and failed_count:
+        Log.warn(
+            f"for_each({fn_name}): every one of the {total} iteration(s) "
+            f"failed, so the result is EMPTY — this is not an empty schema. "
+            f"Reasons follow.",
+            layer="scifor",
+        )
     # One line per distinct failure reason, so the default (INFO) log always
     # answers "what failed and why" without per-iteration lines.
     for reason, combos in failure_reasons.items():

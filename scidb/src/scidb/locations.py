@@ -230,7 +230,11 @@ def location_states(
     )
     t0 = time.perf_counter()
     tree.roots, tree.counts = _build_tree(
-        leaf_states, present, versions, _schema_ids_by_combo(db)
+        leaf_states,
+        present,
+        versions,
+        _schema_ids_by_combo(db),
+        getattr(db, "dataset_schema_key_order", None),
     )
     timings["tree"] = time.perf_counter() - t0
 
@@ -252,6 +256,157 @@ def location_states(
         total=time.perf_counter() - _t_all,
     )
     return tree
+
+
+def _leaf_states_of(
+    tree: LocationTree, schema_ids: dict[tuple, int | None]
+) -> dict[tuple, LocationState]:
+    """``{location: state}`` for the tree's LEAVES, collecting schema ids on
+    the way down.
+
+    Leaves only: an interior node is rebuilt from whatever survives beneath it,
+    so intersecting parents as well would keep a subject whose every trial was
+    dropped.
+    """
+    leaves: dict[tuple, LocationState] = {}
+
+    def walk(node: LocationNode) -> None:
+        if node.schema_id is not None:
+            schema_ids.setdefault(node.path, node.schema_id)
+        if node.is_leaf:
+            leaves[node.path] = node.state
+        for child in node.children:
+            walk(child)
+
+    for root in tree.roots:
+        walk(root)
+    return leaves
+
+
+def intersect_location_states(
+    variables,
+    *,
+    variant: dict | None = None,
+    db=None,
+    fn_registry: dict | None = None,
+    **grid: list,
+) -> LocationTree:
+    """One tree for SEVERAL variables: the locations they all have.
+
+    What a function node needs, and what :func:`location_states` cannot answer.
+    A node has no single variable — it has inputs — and the locations it will
+    actually run are the ones every input has, which is the INNER JOIN of their
+    location sets. A location one input is missing is a location the function
+    cannot be called at, so it is absent here rather than present-and-red.
+
+    Per surviving location the state is the **worst** across the variables,
+    with one exception: an excluded location stays grey. Grey is a decision the
+    user already made and justified (``scidb.exclusions``); reddening it
+    because some variable has no record there would argue with them.
+
+    Cost is linear in the number of variables — each one is a full
+    :func:`location_states` — and that function measured 9.5 s on a
+    419-location variable (2026-09-13). Per-variable timings are therefore
+    logged, not assumed: this is the call that turns a slow view into an
+    unusable one, and the breakdown is what says which input did it.
+
+    Args:
+        variables: variable classes or type names. One of them delegates
+            straight to :func:`location_states`; none returns an empty tree
+            that says so.
+        variant: applied to EVERY variable. A per-variable selection would be
+            the plotting layer's question, not a function node's — a node runs
+            on whatever its inputs currently are.
+        db, fn_registry, grid: as :func:`location_states`.
+
+    Returns:
+        A :class:`LocationTree` whose nodes carry no ``record_id`` or
+        ``code_version``: at an intersected location there are several records,
+        and naming one of them would be a lie the renderer cannot qualify.
+    """
+    if db is None:
+        from .database import get_database
+
+        db = get_database()
+
+    names = [getattr(v, "__name__", v) for v in variables]
+    if not names:
+        return LocationTree(
+            variable="",
+            schema_keys=list(db.dataset_schema_keys),
+            variant=dict(variant or {}),
+            notes=["No input variables — there are no locations to intersect."],
+        )
+    if len(names) == 1:
+        return location_states(
+            names[0], variant=variant, db=db, fn_registry=fn_registry, **grid
+        )
+
+    _t_all = time.perf_counter()
+    timings: dict[str, float] = {}
+    trees: list[LocationTree] = []
+    for name in names:
+        t0 = time.perf_counter()
+        trees.append(
+            location_states(name, variant=variant, db=db, fn_registry=fn_registry, **grid)
+        )
+        timings[name] = time.perf_counter() - t0
+
+    # Leaves only: an interior node is rebuilt from whatever survives beneath
+    # it, so intersecting parents as well would keep a subject whose every
+    # trial was dropped.
+    per_variable: list[dict[tuple, LocationState]] = []
+    schema_ids: dict[tuple, int | None] = {}
+    for tree in trees:
+        per_variable.append(_leaf_states_of(tree, schema_ids))
+
+    shared: set[tuple] = set(per_variable[0])
+    for leaves in per_variable[1:]:
+        shared &= set(leaves)
+
+    merged: dict[tuple, LocationState] = {}
+    for combo in shared:
+        states = [leaves[combo] for leaves in per_variable]
+        if "grey" in states:
+            merged[combo] = "grey"
+        else:
+            merged[combo] = max(states, key=lambda s: _SEVERITY[s])
+
+    label = " ∩ ".join(names)
+    bases = {tree.basis for tree in trees}
+    notes = [
+        f"Locations every input has ({label}) — a location any one of them is "
+        f"missing cannot be run, so it is not listed.",
+    ]
+    for tree in trees:
+        notes.extend(f"{tree.variable}: {note}" for note in tree.notes)
+
+    combined = LocationTree(
+        variable=label,
+        schema_keys=list(db.dataset_schema_keys),
+        variant=dict(variant or {}),
+        basis=bases.pop() if len(bases) == 1 else "mixed",
+        notes=notes,
+    )
+    t0 = time.perf_counter()
+    combined.roots, combined.counts = _build_tree(
+        merged, {}, {}, schema_ids, getattr(db, "dataset_schema_key_order", None)
+    )
+    timings["intersect"] = time.perf_counter() - t0
+
+    dropped = sum(len(leaves) for leaves in per_variable) - len(shared) * len(names)
+    Log.info(
+        f"intersect_location_states({label}): {combined.green}/{combined.total} "
+        f"green over {len(shared)} shared location(s); "
+        f"{dropped} per-variable location(s) dropped as not shared",
+    )
+    Log.timings(
+        f"intersect_location_states({label})",
+        timings,
+        extra=f"{len(names)} variable(s), {combined.total} location(s)",
+        total=time.perf_counter() - _t_all,
+    )
+    return combined
 
 
 def prune_to_problems(tree: LocationTree) -> LocationTree:
@@ -685,7 +840,11 @@ def _schema_ids_by_combo(db) -> dict:
 
 
 def _build_tree(
-    leaf_states: dict, present: dict, versions: dict, schema_ids: dict
+    leaf_states: dict,
+    present: dict,
+    versions: dict,
+    schema_ids: dict,
+    level_order: dict | None = None,
 ) -> tuple[list[LocationNode], dict[str, int]]:
     """Assemble the nested tree and roll the counts up.
 
@@ -752,8 +911,23 @@ def _build_tree(
         for k, v in roll(root).items():
             grand[k] += v
 
+    # Sibling order is what the picker DRAWS, so a declared level order
+    # (`[schema_keys]` in the project config) applies here too — otherwise the
+    # tree reads BL, FU, POST beside a figure whose axis reads BL, POST, FU.
+    # Undeclared levels keep the alphabetical order, after the declared ones.
+    ranks = level_order or {}
+
+    def rank(node: LocationNode) -> tuple:
+        declared = ranks.get(node.key)
+        if not declared:
+            return (node.key, 0, node.value)
+        try:
+            return (node.key, declared.index(node.value), "")
+        except ValueError:
+            return (node.key, len(declared), node.value)
+
     def sort_rec(children: list[LocationNode]):
-        children.sort(key=lambda n: (n.key, n.value))
+        children.sort(key=rank)
         for c in children:
             sort_rec(c.children)
 

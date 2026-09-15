@@ -340,3 +340,50 @@ def test_no_diag_file_written():
 
     for_each(fn, inputs={"value": df}, subject=[1, 2])
     assert not os.path.exists(diag)
+
+
+# ---------------------------------------------------------------------------
+# An all-failed run is not an empty schema
+# ---------------------------------------------------------------------------
+
+
+def test_every_iteration_failing_warns_that_the_result_is_empty(caplog):
+    """An empty result has two opposite causes — nothing to iterate, or
+    everything raised — and they look identical to the caller. Twice on
+    2026-09-14 the second was read as the first (a PathInput discovery test
+    that had never been green, and a locations= test), so the all-failed case
+    says so at WARN."""
+    set_schema(["subject", "trial"])
+    with caplog.at_level(logging.WARNING, logger="scifor"):
+        result = for_each(
+            # Parameter name deliberately not the input name: for_each calls
+            # fn(**kwargs), so every combo raises TypeError.
+            lambda wrong_name: wrong_name,
+            inputs={"value": make_df()},
+            subject=[1, 2, 3],
+            trial=[1, 2],
+        )
+    assert len(result) == 0
+    warnings = messages(caplog, logging.WARNING)
+    assert any("every one of the 6 iteration(s) failed" in m for m in warnings)
+    assert any("this is not an empty schema" in m for m in warnings)
+
+
+def test_a_genuinely_empty_run_does_not_warn(caplog):
+    """The contrast case: nothing to iterate is not a failure, and warning
+    about it would train the reader to ignore the line that matters."""
+    set_schema(["subject", "trial"])
+    # The columns exist, so the empty-list resolver finds a source and reports
+    # "0 iterations" rather than raising — which is the genuinely-empty case.
+    empty = pd.DataFrame({"subject": [], "trial": [], "value": []})
+    with caplog.at_level(logging.WARNING, logger="scifor"):
+        result = for_each(
+            lambda value: value.mean(),
+            inputs={"value": empty},
+            subject=[],
+            trial=[],
+        )
+    assert len(result) == 0
+    assert not any(
+        "every one of" in m for m in messages(caplog, logging.WARNING)
+    )

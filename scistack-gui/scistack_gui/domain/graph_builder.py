@@ -1560,7 +1560,7 @@ def build_function_nodes(
         if fn in matlab_functions:
             fn_data["language"] = "matlab"
 
-        # Apply saved config (schemaFilter, schemaLevel, whereFilters,
+        # Apply saved config (schemaSelection, schemaLevel, whereFilters,
         # runOptions). This node's own config wins; the fn_name-keyed manual
         # config is the fallback for a node that has never been saved under
         # its composite id. Without the node_id lookup, a function that has
@@ -2134,7 +2134,7 @@ def find_cycle(
 #: Every key FunctionSettingsPanel.updateNodeData persists. Rehydration has to
 #: cover the same set the panel writes, or a setting saves successfully and
 #: comes back missing -- which reads to the user as "it didn't save".
-_SAVED_CONFIG_KEYS = ("schemaFilter", "schemaLevel", "whereFilters", "runOptions")
+_SAVED_CONFIG_KEYS = ("schemaSelection", "schemaLevel", "whereFilters", "runOptions")
 
 
 def _apply_saved_config(node_data: dict, config: dict | None) -> None:

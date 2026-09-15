@@ -40,6 +40,7 @@ from .spec import (
     Role,
     Statistic,
     grid_shape_for,
+    value_spellings,
 )
 from .table import LongTable, natural_sort_key
 from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
@@ -740,7 +741,20 @@ def _fanout_notes(spec: PlotSpec, table: LongTable) -> list[str]:
 
 
 def _location_mask(frame: pd.DataFrame, spec: PlotSpec) -> "pd.Series | None":
-    """Rows matching any prefix in ``spec.location_filter``, or None if inert.
+    """Rows selected by ``spec.location_filter``, or None if it is inert.
+
+    Two clauses, and a row survives both or neither (the whole rule, with the
+    cases this is tested against, is docs/claude/location-filter-semantics.md):
+
+    * ``include`` prefixes — a set of PLACES, possibly ragged.
+    * ``exclude_levels`` — a standing RULE per key, applied AFTER coverage and
+      always winning. "All of subject 01" plus "BL is out" draws subject 01
+      minus its BL sessions.
+
+    NULL at a key is not a level: a null row matches no prefix step and is
+    dropped by no rule. Cross-cutting records (saved at subject+speed with
+    ``timepoint`` NULL) make that routine rather than exotic — without it, the
+    first level rule anyone writes would delete every one of them.
 
     One prefix constrains only the keys it names **that the frame actually
     has**. A key the frame lacks is simply not constrained — the graceful answer
@@ -760,27 +774,55 @@ def _location_mask(frame: pd.DataFrame, spec: PlotSpec) -> "pd.Series | None":
     common cases are small by construction.
     """
     prefixes = spec.location_filter.prefixes()
-    if not prefixes:
+    excluded = spec.location_filter.excluded()
+    if not prefixes and not excluded:
         return None  # inert: clicking into a picker is not a statement
 
-    named = {key for prefix in prefixes for key, _value in prefix}
-    known = [key for key in named if key in frame.columns]
-    if not known:
-        Log.warn(
-            "location filter names none of this table's columns (%s) — ignored",
-            ", ".join(sorted(named)),
-            layer=LAYER,
-        )
-        return None
+    mask: "pd.Series | None" = None
 
-    as_text = {key: frame[key].astype(str) for key in known}
-    mask = pd.Series(False, index=frame.index)
-    for prefix in prefixes:
-        matched = pd.Series(True, index=frame.index)
-        for key, value in prefix:
-            if key in as_text:
-                matched &= as_text[key] == str(value)
-        mask |= matched
+    if prefixes:
+        named = {key for prefix in prefixes for key, _value in prefix}
+        known = [key for key in named if key in frame.columns]
+        if not known:
+            # Inert rather than empty: a subject-level Mass contributes its one
+            # value to every trial, and a trial prefix must not delete it.
+            Log.warn(
+                "location filter names none of this table's columns (%s) — "
+                "those prefixes are ignored",
+                ", ".join(sorted(named)),
+                layer=LAYER,
+            )
+        else:
+            as_text = {key: frame[key].astype(str) for key in known}
+            present = {key: frame[key].notna() for key in known}
+            mask = pd.Series(False, index=frame.index)
+            for prefix in prefixes:
+                matched = pd.Series(True, index=frame.index)
+                for key, value in prefix:
+                    if key in as_text:
+                        matched &= present[key] & as_text[key].isin(
+                            value_spellings(value)
+                        )
+                mask |= matched
+
+    for key, values in excluded.items():
+        if key not in frame.columns:
+            # The rule's twin of the prefix case above: a table that never
+            # carried `trial` must not lose every row to a trial rule.
+            Log.debug(
+                "location filter excludes %s levels of '%s', a column this "
+                "table does not have — no rows dropped",
+                len(values),
+                key,
+                layer=LAYER,
+            )
+            continue
+        spellings: set[str] = set()
+        for value in values:
+            spellings.update(value_spellings(value))
+        drop = frame[key].notna() & frame[key].astype(str).isin(spellings)
+        mask = ~drop if mask is None else (mask & ~drop)
+
     return mask
 
 
@@ -803,13 +845,30 @@ def apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
     mask = pd.Series(True, index=frame.index)
     if location is not None:
         mask &= location
+        kept = int(mask.sum())
+        excluded = spec.location_filter.excluded()
         Log.debug(
-            "location filter: %d -> %d row(s) over %d prefix(es)",
+            "location filter: %d -> %d row(s) over %d prefix(es), "
+            "omitting %s",
             len(frame),
-            int(mask.sum()),
+            kept,
             len(spec.location_filter.prefixes()),
+            {key: list(values) for key, values in excluded.items()} or "nothing",
             layer=LAYER,
         )
+        # An empty figure has two opposite causes — no data, or a selection
+        # that kept none of it — and they look identical on screen. Say which,
+        # the way scifor does for a run that filters away every combo.
+        if len(frame) and not kept:
+            Log.warn(
+                "location filter kept none of the %d row(s): %d prefix(es), "
+                "omitting %s. The figure will be empty — this is the "
+                "selection, not missing data.",
+                len(frame),
+                len(spec.location_filter.prefixes()),
+                {key: list(values) for key, values in excluded.items()} or "nothing",
+                layer=LAYER,
+            )
     for flt in spec.filters:
         if flt.column not in frame.columns:
             # A spec outlives the table it was written against — a filter naming

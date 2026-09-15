@@ -671,7 +671,7 @@ def _h_start_run(params):
     run_id = params.get("run_id") or str(uuid.uuid4())[:8]
     function_name = params["function_name"]
     variants = params.get("variants", [])
-    schema_filter = params.get("schema_filter")
+    schema_selection = params.get("schema_selection")
     schema_level = params.get("schema_level")
     run_options = params.get("run_options")
     raw_where = params.get("where_filters")
@@ -681,12 +681,12 @@ def _h_start_run(params):
 
     logger.info(
         "[server] Parsed request: run_id=%s, function=%s, language=%s, variants=%d, "
-        "schema_filter=%s, schema_level=%s, run_options=%s, where_filters=%d",
+        "schema_selection=%s, schema_level=%s, run_options=%s, where_filters=%d",
         run_id,
         function_name,
         language,
         len(variants),
-        list(schema_filter.keys()) if schema_filter else None,
+        schema_selection or None,
         schema_level,
         run_options,
         len(where_filters) if where_filters else 0,
@@ -716,7 +716,7 @@ def _h_start_run(params):
                 function_name,
                 variants,
                 db,
-                schema_filter,
+                schema_selection,
                 schema_level,
                 run_options,
                 where_filters,
@@ -1005,6 +1005,17 @@ def _h_plot_location_tree(params):
     )
 
 
+def _h_node_location_tree(params):
+    from scistack_gui.db import get_db
+    from scistack_gui.services.node_location_service import node_location_tree
+
+    return node_location_tree(
+        get_db(),
+        params["node_id"],
+        problems_only=bool(params.get("problems_only")),
+    )
+
+
 def _h_plot_resolve(params):
     from scistack_gui.db import get_db
     from scistack_gui.services.plot_service import resolve_figures
@@ -1182,6 +1193,7 @@ METHODS = {
     "plot_capabilities": _h_plot_capabilities,
     "plot_variant_graph": _h_plot_variant_graph,
     "plot_location_tree": _h_plot_location_tree,
+    "node_location_tree": _h_node_location_tree,
     "plot_resolve": _h_plot_resolve,
     "plot_export": _h_plot_export,
     "plot_add_to_pipeline": _h_plot_add_to_pipeline,
@@ -1222,6 +1234,11 @@ SELF_MANAGED_DB_METHODS = frozenset(
         "plot_capabilities",
         "plot_variant_graph",
         "plot_location_tree",
+        # Same shape as plot_location_tree: it takes the connection inside
+        # `node_location_tree` and can spend seconds there (one
+        # `location_states` per input variable), so it must not hold it
+        # across the whole request.
+        "node_location_tree",
         "plot_resolve",
         "plot_export",
         # Spawns a thread and returns; the HANDLER touches nothing. Its worker

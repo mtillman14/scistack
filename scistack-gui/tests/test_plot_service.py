@@ -1854,10 +1854,18 @@ def test_the_picker_only_ever_reads():
     the picker draws a tree of checkboxes, and the canvas has checkboxes that
     mean EXECUTION state (unticking a constant value excludes it from future
     for_each fan-outs). These select what a figure DRAWS. If this component
-    ever reached a second backend method, inspecting a study could quietly
-    rewrite the run configuration or the database.
+    ever reached a WRITE method, inspecting a study could quietly rewrite the
+    run configuration or the database.
 
-    One call, one method — everything else it does is arithmetic on the reply.
+    TWO read methods now, not one: the same component serves the plotting tab
+    (one variable under a variant) and the processing tab (one node's inputs,
+    intersected). Both compute and return; neither writes. Everything else the
+    component does is arithmetic on the reply.
+
+    The method name is read out of the whole call expression rather than from
+    the first token after ``callBackend(``, because it is chosen by a ternary —
+    a regex anchored on the opening quote saw NO calls at all and passed the
+    emptiness off as "reaches nothing".
     """
     import re
 
@@ -1865,10 +1873,17 @@ def test_the_picker_only_ever_reads():
         "frontend/src/components/PlotStudio/SchemaLocationPicker.tsx"
     )
 
-    called = set(re.findall(r"callBackend\(\s*'([^']+)'", source))
-    assert called == {"plot_location_tree"}, (
-        f"the location picker calls {sorted(called)}; it is a read-only view and "
-        f"must reach exactly one read method"
+    # Everything quoted in the call expression, up to the params object (`{`)
+    # or the closing paren of a bare call — which is where the method name is,
+    # ternary or not.
+    called = {
+        name
+        for chunk in re.findall(r"callBackend\(([\s\S]*?)[{)]", source)
+        for name in re.findall(r"'([^']+)'", chunk)
+    }
+    assert called == {"plot_location_tree", "node_location_tree"}, (
+        f"the location picker calls {sorted(called)}; it is a read-only view "
+        f"and must reach only read methods"
     )
 
 

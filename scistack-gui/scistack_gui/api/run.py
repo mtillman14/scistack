@@ -34,6 +34,7 @@ from scidb import for_each
 from scistack_gui import registry
 from scistack_gui.api.ws import push_message
 from scistack_gui.db import external_db_access, get_db
+from scistack_gui.domain.schema_selection import is_empty
 
 # This logger is configured in server.py (FastAPI) / __main__.py (JSON-RPC)
 # to write to stderr with the "[scistack] …" prefix. The extension forwards
@@ -73,7 +74,10 @@ class RunRequest(BaseModel):
     function_name: str
     variants: list[dict] = []  # list of constants dicts; empty = run all known
     run_id: str | None = None  # frontend-generated ID; we generate one if absent
-    schema_filter: dict[str, list] | None = None  # {key: [selected values]}; None = all
+    # The picker's pair: ragged `include` prefixes + a standing
+    # `exclude_levels` rule. Replaces the old per-key `schema_filter`, which
+    # could only express a Cartesian product. None/empty = everything.
+    schema_selection: dict | None = None
     schema_level: list[str] | None = None  # which schema keys to iterate; None = all
     run_options: dict | None = None  # {dry_run, save, distribute}; all optional
     where_filters: list[WhereFilterSpec] | None = None  # data filters for where= param
@@ -98,7 +102,7 @@ def _run_in_thread(
     function_name: str,
     variants: list[dict],
     db: DatabaseManager,
-    schema_filter: dict[str, list] | None = None,
+    schema_selection: dict | None = None,
     schema_level: list[str] | None = None,
     run_options: dict | None = None,
     where_filters: list[WhereFilterSpec] | None = None,
@@ -110,12 +114,12 @@ def _run_in_thread(
     """
     logger.info(
         "[run_thread] Thread started for run_id=%s, function=%s, variants=%d, "
-        "schema_level=%s, schema_filter=%s, where_filters=%s, run_options=%s",
+        "schema_level=%s, schema_selection=%s, where_filters=%s, run_options=%s",
         run_id,
         function_name,
         len(variants or []),
         schema_level,
-        _summarize_schema_filter(schema_filter),
+        _summarize_selection(schema_selection),
         len(where_filters) if where_filters else 0,
         run_options,
     )
@@ -352,13 +356,18 @@ def _run_in_thread(
             run_id,
         )
 
-    # Schema iteration is handled by for_each via schema_filter/schema_level —
-    # but for_each ONLY auto-iterates when one of them is set. With both None
-    # it pools every schema row into a single call, which is never what a
-    # canvas Run means for per-combo functions (the seed scripts pass
-    # explicit iterables). Default to iterating ALL schema keys — EXCEPT
-    # when the user explicitly chose as_table, which means "pool the rows".
-    if schema_level is None and schema_filter is None and not opt_as_table:
+    # Schema iteration is handled by for_each via schema_level — but for_each
+    # ONLY auto-iterates when it is set. Left None it pools every schema row
+    # into a single call, which is never what a canvas Run means for per-combo
+    # functions (the seed scripts pass explicit iterables). Default to
+    # iterating ALL schema keys — EXCEPT when the user explicitly chose
+    # as_table, which means "pool the rows".
+    #
+    # `schema_selection` does NOT suppress this, and the old `schema_filter`
+    # did: a filtered run then established no iteration at all and silently
+    # pooled. A location selection says WHICH combos to run, never whether to
+    # iterate, so the two are now independent.
+    if schema_level is None and not opt_as_table:
         schema_level = list(db.dataset_schema_keys)
         logger.info(
             "[run_thread] No schema iteration requested — defaulting "
@@ -368,10 +377,13 @@ def _run_in_thread(
         )
     if schema_level:
         logger.debug("[run_thread] Schema level: %s (run_id=%s)", schema_level, run_id)
-    if schema_filter:
-        logger.debug(
-            "[run_thread] Schema filter: %s (run_id=%s)",
-            {k: f"{len(v)} values" for k, v in schema_filter.items()},
+    if not is_empty(schema_selection):
+        # INFO, not DEBUG: this changes which combos run, and a run that does
+        # less than expected is read as a broken pipeline unless the log says
+        # a selection was in force. scifor logs the resulting counts.
+        logger.info(
+            "[run_thread] Schema selection: %s (run_id=%s)",
+            _summarize_selection(schema_selection),
             run_id,
         )
 
@@ -393,7 +405,7 @@ def _run_in_thread(
 
     logger.info(
         "[run_thread] Starting execution of %d target(s) for '%s' "
-        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, schema_level=%s, schema_filter=%s) (run_id=%s)",
+        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, schema_level=%s, schema_selection=%s) (run_id=%s)",
         len(unique_targets),
         function_name,
         opt_dry_run,
@@ -401,7 +413,7 @@ def _run_in_thread(
         opt_distribute,
         opt_as_table,
         schema_level,
-        _summarize_schema_filter(schema_filter),
+        _summarize_selection(schema_selection),
         run_id,
     )
 
@@ -577,7 +589,10 @@ def _run_in_thread(
                         glue=glue_arg,
                         _progress_fn=_progress_fn,
                         _cancel_check=_is_cancelled,
-                        schema_filter=schema_filter,
+                        # The picker's pair, applied to the COMBO list by
+                        # scifor. Distinct from schema_keys below, which says
+                        # which keys to iterate at all.
+                        locations=schema_selection,
                         # NOTE: scidb.for_each's real parameter is
                         # `schema_keys`, not `schema_level` — `schema_level`
                         # is this module's own GUI-facing name for "which
@@ -806,11 +821,21 @@ def _build_where(where_filters: list[WhereFilterSpec] | None):
     return EachOf(*scidb_filters)
 
 
-def _summarize_schema_filter(schema_filter: dict[str, list] | None) -> str:
-    """Compact one-line summary of a schema_filter for logging."""
-    if not schema_filter:
+def _summarize_selection(selection: dict | None) -> str:
+    """Compact one-line summary of a schema selection for logging."""
+    from scistack_gui.domain.schema_selection import as_selection, is_empty
+
+    if is_empty(selection):
         return "none"
-    return ", ".join(f"{k}={len(v)}v" for k, v in schema_filter.items())
+    pair = as_selection(selection)
+    parts = []
+    if pair["include"]:
+        parts.append(f"{len(pair['include'])} location(s)")
+    for key, values in pair["exclude_levels"].items():
+        parts.append(f"-{len(values)} {key}")
+    return ", ".join(parts)
+
+
 
 
 @router.get("/matlab-engine")
@@ -938,13 +963,13 @@ def start_run(req: RunRequest, db: DatabaseManager = Depends(get_db)):
     logger.info("[api/run] POST /api/run - Validating request")
     logger.debug(
         "[api/run] Request: function_name=%s, node_id=%s, variants=%d, run_id=%s, "
-        "schema_filter=%s, schema_level=%s, run_options=%s, where_filters=%d, "
+        "schema_selection=%s, schema_level=%s, run_options=%s, where_filters=%d, "
         "language=%s",
         req.function_name,
         req.node_id,
         len(req.variants),
         req.run_id,
-        _summarize_schema_filter(req.schema_filter),
+        _summarize_selection(req.schema_selection),
         req.schema_level,
         req.run_options,
         len(req.where_filters) if req.where_filters else 0,
@@ -984,7 +1009,7 @@ def start_run(req: RunRequest, db: DatabaseManager = Depends(get_db)):
             req.function_name,
             req.variants,
             db,
-            req.schema_filter,
+            req.schema_selection,
             req.schema_level,
             req.run_options,
             req.where_filters,

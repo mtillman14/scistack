@@ -891,6 +891,39 @@ def get_database() -> "DatabaseManager":
     return db
 
 
+def _declared_rank_column(col, declared: list[str]) -> list[int]:
+    """Sort positions for *col* under a declared level order.
+
+    One integer per row, because a DataFrame sort needs a comparable column and
+    a ``(group, position)`` tuple would make every undeclared level tie — they
+    would then come out in whatever order the query happened to return.
+
+    Declared levels take ``0…n-1``; everything else is appended, ordered among
+    itself by the same numeric-or-string rule the undeclared path below uses,
+    so the promise "the rest keeps the default order" holds literally.
+    """
+    position = {level: index for index, level in enumerate(declared)}
+    extra = sorted(
+        {str(v) for v in col if v is not None and str(v) not in position},
+        key=_natural_text_key,
+    )
+    for offset, value in enumerate(extra):
+        position[value] = len(declared) + offset
+    # A null has no level, so it sorts after every real one rather than
+    # colliding with the first declared position.
+    return [position.get(str(v), len(position)) for v in col]
+
+
+def _natural_text_key(value: str) -> tuple:
+    """Numeric when the whole value is a number, text otherwise — the same
+    distinction ``_sort_by_schema_keys`` makes per column, applied per value so
+    a mixed set ("1", "S01") still has a total order."""
+    try:
+        return (0, float(value), "")
+    except (TypeError, ValueError):
+        return (1, 0.0, value)
+
+
 class DatabaseManager:
     """
     Manages data storage and lineage persistence (both in DuckDB via SciDuck).
@@ -948,6 +981,18 @@ class DatabaseManager:
                 f"{_VALID_SCHEMA_KEY_TYPES}, got: {bad_types}"
             )
         self.dataset_schema_key_types = key_types
+
+        # Declared level order, from the project config's `[schema_keys]`
+        # table. Read once here and validated against THIS dataset's keys, so
+        # a typo is reported when the database opens rather than silently
+        # ordering nothing (see scidb.schema_order).
+        from . import schema_order as _schema_order
+
+        self.dataset_schema_key_order = _schema_order.declared_level_order()
+        if self.dataset_schema_key_order:
+            _schema_order.validate(
+                self.dataset_schema_key_order, self.dataset_schema_keys
+            )
 
         self.read_only = bool(read_only)
         self._registered_types: dict[str, type[BaseVariable]] = {}
@@ -1883,9 +1928,22 @@ class DatabaseManager:
 
             temp_col_name = f"__sort_{key}"
             temp_col_names.append(temp_col_name)
+            col = df[key]
+
+            # A DECLARED order wins outright: `[schema_keys] session = ["BL",
+            # "POST", "FU"]` is the user saying these levels are chronological,
+            # not alphabetical, and no amount of value inspection can work that
+            # out. Undeclared levels rank after every declared one and then
+            # sort among themselves by the rules below — which is also what
+            # every other consumer of the declaration does (scidb.schema_order).
+            declared = (self.dataset_schema_key_order or {}).get(key)
+            if declared:
+                df[temp_col_name] = _declared_rank_column(col, declared)
+                sort_cols.append(temp_col_name)
+                sort_ascending.append(True)
+                continue
 
             # Get non-null values to check if column is numeric-only
-            col = df[key]
             non_null_mask = col.notna()
             non_null_values = col[non_null_mask]
 

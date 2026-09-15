@@ -1899,7 +1899,14 @@ def test_case_a_adopts_template_keys_in_placeholder_order(tmp_path):
         root_folder=str(tmp_path),
     )
 
-    result = for_each(lambda p: str(p), inputs={"xlsx_file_path": path_input})
+    # The parameter name must BE the input name: for_each calls fn(**kwargs).
+    # A mismatch raises TypeError on every combo, which continue-and-report
+    # swallows into an empty result — indistinguishable from "discovery found
+    # nothing" at the assert, which is how this test read as a discovery bug.
+    result = for_each(
+        lambda xlsx_file_path: str(xlsx_file_path),
+        inputs={"xlsx_file_path": path_input},
+    )
 
     # One row per real file, not the 2x2x2 Cartesian product: Case A returns
     # the disk combos so they drive iteration directly.

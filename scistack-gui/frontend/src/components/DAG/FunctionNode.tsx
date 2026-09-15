@@ -45,7 +45,8 @@ interface FunctionNodeData {
   // with an explicit error rather than silently no-op'ing — see
   // execution_service.disconnected_reason).
   disconnected?: boolean
-  schemaFilter?: Record<string, unknown[]> | null
+  // The picker's pair (include prefixes + exclude_levels rule); null = all.
+  schemaSelection?: { include: [string, string][][]; exclude_levels: Record<string, string[]> } | null
   schemaLevel?: string[] | null
   runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean }
   // Set to 'matlab' for functions backed by a .m file. The extension uses this
@@ -178,7 +179,7 @@ function PipelineFunctionNode({ id, data }: Props) {
         node_id: id,
         variants: checkedVariants,
         run_id: newRunId,
-        schema_filter: data.schemaFilter ?? null,
+        schema_selection: data.schemaSelection ?? null,
         schema_level: data.schemaLevel ?? null,
         run_options: data.runOptions ?? null,
         where_filters: (wf && wf.length > 0) ? wf : null,

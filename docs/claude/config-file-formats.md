@@ -139,6 +139,42 @@ test suite pins the hint to `tmp_path` in an autouse fixture
 (`scistack-gui/tests/conftest.py::_pin_project_root`). That pin now governs
 config *reading* and folder-scan discovery too, not just where files land.
 
+## `[schema_keys]` — declared level order
+
+The one table in this file that scidb reads and the GUI never writes.
+
+```toml
+# scistack.toml
+[schema_keys]
+session = ["BL", "POST", "FU"]
+speed   = ["SSV", "FAST"]
+
+# pyproject.toml
+[tool.scistack.schema_keys]
+session = ["BL", "POST", "FU"]
+```
+
+A schema key's levels have no inherent order: `session` is chronological to the
+person who ran the study and alphabetical to everything else, so without this
+every axis and every table reads `BL, FU, POST`. Declared levels come first, in
+the declared order; anything not named is appended in whatever order sorted it
+before, so a level collected after the file was written shows up at the end
+rather than disappearing. An undeclared KEY is untouched entirely.
+
+Values are matched as text, so `"01"` stays `"01"` — which spelling is identity
+is `schema_key_types`' decision (`docs/claude/schema-key-types.md`), never this
+table's.
+
+One reader owns it, `scidb.schema_order`, and every display surface asks it:
+DataFrame row order, plot factor levels, the GUI's level lists, the location
+picker's tree. A key named here that is not a schema key of the dataset is
+WARNED about when the database opens — otherwise a typo is completely silent.
+
+**The GUI round-trips this table without understanding it.** `add_path` and
+friends rewrite the whole file from the fields they know, so the table is
+carried across verbatim and emitted last (a TOML table swallows every key after
+it). Tests pin both halves.
+
 ## All fields are optional
 
 Every config field has a sensible default. An empty `scistack.toml` (or a `pyproject.toml` with an empty `[tool.scistack]` section, or even a `pyproject.toml` with no `[tool.scistack]` at all) produces a valid config:

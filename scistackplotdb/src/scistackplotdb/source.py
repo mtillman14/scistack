@@ -182,15 +182,28 @@ class ScidbSource(BaseSource):
         """
         declared = getattr(self._db, "dataset_schema_key_types", None) or {}
         unique = list(dict.fromkeys(values))
-        if declared.get(key) == "numeric":
-            def numeric_key(value: str):
-                try:
-                    return (0, float(value))
-                except (TypeError, ValueError):
-                    return (1, 0.0)
 
-            return sorted(unique, key=numeric_key)
-        return sorted(unique, key=natural_sort_key)
+        def default(vals: list[str]) -> list[str]:
+            if declared.get(key) == "numeric":
+                def numeric_key(value: str):
+                    try:
+                        return (0, float(value))
+                    except (TypeError, ValueError):
+                        return (1, 0.0)
+
+                return sorted(vals, key=numeric_key)
+            return sorted(vals, key=natural_sort_key)
+
+        # A DECLARED order (`[schema_keys]` in the project config) wins, and
+        # everything it does not name is appended by the rule above — so a
+        # session added after the file was written appears at the end instead
+        # of vanishing. scidb owns the declaration; this only applies it.
+        order = getattr(self._db, "dataset_schema_key_order", None) or {}
+        if order.get(key):
+            from scidb.schema_order import order_levels
+
+            return order_levels(key, unique, declared=order, fallback=default)
+        return default(unique)
 
     # ---- metadata --------------------------------------------------------
 

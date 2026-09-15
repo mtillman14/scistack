@@ -478,6 +478,7 @@ def for_each_prepare(
     schema_keys=None,
     schema_filter=None,
     glue=None,
+    locations=None,
 ):
     """Bridge entry: run scidb.for_each's prepare phase in Python.
 
@@ -511,6 +512,12 @@ def for_each_prepare(
         ``scifor.expand_schema_keys()`` scidb.for_each's pure-Python path
         uses. Mutually exclusive with an already-populated
         ``metadata_iterables``.
+    locations : dict or None
+        Schema location selection — ragged ``include`` prefixes plus a standing
+        ``exclude_levels`` rule (docs/claude/location-filter-semantics.md).
+        Applied to ``full_combos`` before they cross to MATLAB, because
+        ``+scifor/for_each.m`` runs the loop and never sees Python's
+        ``scifor.for_each(locations=)``.
     schema_filter : dict[str, list] or None
         ``{schema_key: [values]}`` overrides. A key also in schema_keys (or,
         if schema_keys is None, any schema key) gets these values instead of
@@ -713,6 +720,8 @@ def for_each_prepare(
                 metadata_iterables=meta,
                 glue=glue_arg,
                 glue_language="matlab",
+                # So the preview counts the combos the real run will do.
+                locations=locations,
             )
         except Exception:
             raise
@@ -791,6 +800,22 @@ def for_each_prepare(
     # Override the sentinel's auto-computed hash with the MATLAB hash so
     # the recorded version_keys identify the real MATLAB function source.
     state.config_keys["__fn_hash"] = fn_hash
+
+    # Schema location selection. The Python path hands `locations=` to
+    # scifor.for_each, which applies it to the combo list; MATLAB's loop is
+    # `+scifor/for_each.m` and never sees that argument, so the SAME filter is
+    # applied here to the combos this bridge is about to hand over. Full
+    # parity, including the RAGGED half a generated `subject = [...]` value
+    # list cannot express, without touching a .m file.
+    #
+    # Placed before the PathOutput pre-resolution below, which builds one
+    # resolved path per combo and asserts the two lists are the same length.
+    if locations is not None and not isinstance(locations, type(None)):
+        from scifor.locations import filter_combos
+
+        state.full_combos = filter_combos(
+            state.full_combos, locations, context=f"matlab for_each({fn_name})"
+        )
 
     # PathInput special case: scidb's _load_input wraps PathInput in a
     # PerComboLoader because PathInput's load() is template substitution,

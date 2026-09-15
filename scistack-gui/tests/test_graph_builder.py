@@ -1240,9 +1240,9 @@ class TestBuildFunctionNodes:
 
     def test_saved_config_applied(self):
         nodes = self._make(
-            saved_configs={"bandpass": {"schemaFilter": {"subject": [1]}}}
+            saved_configs={"bandpass": {"schemaSelection": {"include": [[["subject", "1"]]]}}}
         )
-        assert nodes[0]["data"]["schemaFilter"] == {"subject": [1]}
+        assert nodes[0]["data"]["schemaSelection"] == {"include": [[["subject", "1"]]]}
 
     def test_unknown_param_filled_with_empty_string(self):
         nodes = self._make(
@@ -2861,7 +2861,7 @@ class TestSavedConfigRehydration:
         or a setting saves and comes back missing -- indistinguishable, to the
         user, from not saving at all."""
         cfg = {
-            "schemaFilter": {"subject": ["SS01"]},
+            "schemaSelection": {"exclude_levels": {"subject": ["SS01"]}},
             "schemaLevel": ["subject", "session"],
             "whereFilters": [{"variable": "x", "op": "==", "value": "1"}],
             "runOptions": {"distribute": True, "save": False},
@@ -2873,7 +2873,7 @@ class TestSavedConfigRehydration:
     def test_absent_config_leaves_no_keys_behind(self):
         data = self._make(node_configs={})[0]["data"]
         assert "runOptions" not in data
-        assert "schemaFilter" not in data
+        assert "schemaSelection" not in data
 
 
 class TestPlacementQualifiedConfigRehydration:

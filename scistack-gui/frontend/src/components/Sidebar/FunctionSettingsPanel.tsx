@@ -4,11 +4,13 @@
  * Sections:
  *   1. Variants — read-only Cartesian product of constant node values and multi-type inputs.
  *   2. Data Filters — where= filter definitions (structured form).
- *   3. Schema Filter — checkboxes per schema key to restrict which combos run.
+ *   3. Schema Selection — which schema locations the node runs at, chosen in
+ *      the same two-pane picker the plotting tab uses.
  *   4. Run Options — dry_run, save, distribute toggles.
  *
- * Schema filter, where filters, and run options are stored on the function node's
- * data so they persist across selection changes and are available to handleRun.
+ * Schema selection, where filters, and run options are stored on the function
+ * node's data so they persist across selection changes and are available to
+ * handleRun.
  */
 
 import { useEffect, useState, useCallback } from 'react'
@@ -16,6 +18,13 @@ import { useReactFlow } from '@xyflow/react'
 import { callBackend } from '../../api'
 import { useCommittedInput } from '../../hooks/useCommittedInput'
 import { useScope } from '../../context/ScopeContext'
+import SchemaLocationPicker from '../PlotStudio/SchemaLocationPicker'
+import {
+  type LocationSelection,
+  asSelection,
+  describeSelection,
+  isInert,
+} from '../PlotStudio/locationSelection'
 
 interface VariantRow {
   [constantName: string]: string
@@ -26,9 +35,16 @@ interface HiddenCombo {
   variant_key: Record<string, string>
 }
 
-export interface SchemaFilter {
-  [key: string]: unknown[]  // schema key → selected values
-}
+/**
+ * Which schema locations this node runs at: ragged `include` prefixes plus a
+ * standing `exclude_levels` rule, the same pair the plotting tab stores.
+ *
+ * Replaces the old per-key `SchemaFilter`, which could only express a
+ * Cartesian product — so "all of subject 01, plus trial 3 of subject 02" was
+ * not sayable, and unticking one trial of one subject dropped that trial from
+ * every subject. See docs/claude/location-filter-semantics.md.
+ */
+export type SchemaSelection = LocationSelection
 
 export interface RunOptions {
   dry_run: boolean
@@ -51,7 +67,7 @@ interface Props {
   variants: VariantRow[]
   constantNames: string[]
   inputTypeNames: string[]
-  schemaFilter: SchemaFilter | null
+  schemaSelection: SchemaSelection | null
   schemaLevel: string[] | null    // which schema keys to iterate over; null = all
   whereFilters: WhereFilter[]
   runOptions: RunOptions
@@ -126,13 +142,14 @@ function WhereFilterRow({ nodeId, index, filter, variableNames, onUpdateCanvas, 
   )
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaFilter, schemaLevel, whereFilters, runOptions }: Props) {
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
   const [variableNames, setVariableNames] = useState<string[]>([])
   const [hiddenCombos, setHiddenCombos] = useState<HiddenCombo[]>([])
   const [showHidden, setShowHidden] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   useEffect(() => {
     callBackend('get_schema')
@@ -198,7 +215,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       if (node) {
         const config: Record<string, unknown> = {}
         const d = node.data as Record<string, unknown>
-        if (d.schemaFilter) config.schemaFilter = d.schemaFilter
+        if (d.schemaSelection) config.schemaSelection = d.schemaSelection
         if (d.schemaLevel) config.schemaLevel = d.schemaLevel
         if (d.whereFilters) config.whereFilters = d.whereFilters
         if (d.runOptions) config.runOptions = d.runOptions
@@ -222,45 +239,11 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
     markNodeDirty(id, patch)
   }, [id, setNodes, markNodeDirty])
 
-  // Toggle a single value in the schema filter.
-  const toggleSchemaValue = useCallback((key: string, value: unknown) => {
-    if (!schema) return
-    const allValues = schema.values[key] ?? []
-    const current = schemaFilter?.[key] ?? allValues
-    const valStr = String(value)
-    const isSelected = current.some(v => String(v) === valStr)
-
-    let updated: unknown[]
-    if (isSelected) {
-      updated = current.filter(v => String(v) !== valStr)
-    } else {
-      updated = [...current, value]
-    }
-
-    const newFilter: SchemaFilter = { ...(schemaFilter ?? {}), [key]: updated }
-
-    // If all values selected for this key, remove the key from filter (means "all").
-    if (updated.length === allValues.length) {
-      delete newFilter[key]
-    }
-
-    // If filter is empty (all keys have all values), store null.
-    const hasFilter = Object.keys(newFilter).length > 0
-    updateNodeData({ schemaFilter: hasFilter ? newFilter : null })
-  }, [schema, schemaFilter, updateNodeData])
-
-  // Select all / none helpers.
-  const selectAll = useCallback((key: string) => {
-    const newFilter = { ...(schemaFilter ?? {}) }
-    delete newFilter[key]
-    const hasFilter = Object.keys(newFilter).length > 0
-    updateNodeData({ schemaFilter: hasFilter ? newFilter : null })
-  }, [schemaFilter, updateNodeData])
-
-  const selectNone = useCallback((key: string) => {
-    const newFilter: SchemaFilter = { ...(schemaFilter ?? {}), [key]: [] }
-    updateNodeData({ schemaFilter: newFilter })
-  }, [schemaFilter, updateNodeData])
+  // The picker writes the whole pair at once; an inert selection is stored as
+  // null so an untouched node and a "select all" click cannot differ.
+  const setSchemaSelection = useCallback((next: LocationSelection) => {
+    updateNodeData({ schemaSelection: isInert(next) ? null : next })
+  }, [updateNodeData])
 
   // Toggle a schema key in the iteration level.
   const toggleSchemaLevel = useCallback((key: string) => {
@@ -437,58 +420,21 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
         )}
       </section>
 
-      {/* ---- Schema Filter ---- */}
+      {/* ---- Schema Selection ---- */}
       <section style={styles.section}>
-        <div style={styles.sectionTitle}>Schema Filter</div>
-
-        {!schema && <div style={styles.empty}>Loading schema...</div>}
-
-        {schema && schema.keys.length === 0 && (
-          <div style={styles.empty}>No schema keys configured.</div>
-        )}
-
-        {schema && schema.keys.map(key => {
-          const allValues = schema.values[key] ?? []
-          const selected = schemaFilter?.[key] ?? allValues
-
-          return (
-            <div key={key} style={styles.schemaKey}>
-              <div style={styles.schemaKeyHeader}>
-                <span style={styles.schemaKeyName}>{key}</span>
-                <span style={styles.schemaKeyActions}>
-                  <button
-                    style={styles.linkBtn}
-                    onClick={() => selectAll(key)}
-                    title="Select all"
-                  >all</button>
-                  <span style={styles.separator}>/</span>
-                  <button
-                    style={styles.linkBtn}
-                    onClick={() => selectNone(key)}
-                    title="Select none"
-                  >none</button>
-                </span>
-              </div>
-              <div style={styles.checkboxGrid}>
-                {allValues.map(value => {
-                  const valStr = String(value)
-                  const checked = selected.some(v => String(v) === valStr)
-                  return (
-                    <label key={valStr} style={styles.checkboxLabel}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleSchemaValue(key, value)}
-                        style={styles.checkbox}
-                      />
-                      <span style={styles.checkboxText}>{valStr}</span>
-                    </label>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })}
+        <div style={styles.sectionTitle}>Schema Selection</div>
+        <div style={styles.hint}>
+          Which schema locations this node runs at. Omit a level everywhere
+          (by key), or pick locations one by one. Everything runs until you
+          say otherwise.
+        </div>
+        <button
+          style={styles.locationBtn}
+          onClick={() => setPickerOpen(true)}
+          type="button"
+        >
+          {describeSelection(asSelection(schemaSelection))}
+        </button>
       </section>
 
       {/* ---- Schema Level ---- */}
@@ -574,6 +520,20 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
           <span style={styles.optionHint}>Keep schema columns in DataFrames</span>
         </label>
       </section>
+
+      {/* The same picker the plotting tab opens. `nodeId` switches its tree to
+          the INNER JOIN of this node's input variables — the locations it can
+          actually run — and `onPick` is omitted because "plot this location
+          alone" means nothing here. */}
+      {pickerOpen && (
+        <SchemaLocationPicker
+          variable={label}
+          nodeId={id}
+          value={asSelection(schemaSelection)}
+          onChange={setSchemaSelection}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -723,38 +683,23 @@ const styles: Record<string, React.CSSProperties> = {
     fontStyle: 'italic',
     marginTop: 4,
   },
-  // Schema filter styles
-  schemaKey: {
-    marginBottom: 10,
+  // Schema selection styles
+  hint: {
+    fontSize: 10,
+    color: '#777',
+    marginBottom: 6,
+    lineHeight: 1.4,
   },
-  schemaKeyHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  schemaKeyName: {
-    fontFamily: 'monospace',
+  locationBtn: {
+    width: '100%',
+    background: '#1a1a2e',
+    border: '1px solid #3a3a5a',
+    borderRadius: 3,
+    color: '#ccc',
     fontSize: 11,
-    fontWeight: 600,
-    color: '#a89cf0',
-  },
-  schemaKeyActions: {
-    fontSize: 10,
-    color: '#555',
-  },
-  linkBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#7b68ee',
-    fontSize: 10,
+    padding: '4px 8px',
     cursor: 'pointer',
-    padding: 0,
-    textDecoration: 'underline',
-  },
-  separator: {
-    margin: '0 2px',
-    color: '#444',
+    textAlign: 'left',
   },
   checkboxGrid: {
     display: 'flex',

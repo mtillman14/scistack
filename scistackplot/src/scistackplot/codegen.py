@@ -24,7 +24,7 @@ from .groups import apply_level_groups
 from .reduce import plan_layout
 from .roles import complete_roles, fanout_keys
 from .shape import Shape
-from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic
+from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic, value_spellings
 from .table import LongTable
 from .ylimits import eligible_scope, limits_by_scope
 from .variants import (
@@ -546,22 +546,51 @@ def _location_lines(spec: PlotSpec) -> list[str]:
     :func:`scistackplot.reduce._location_mask` on the same frame.
     """
     prefixes = spec.location_filter.prefixes()
-    if not prefixes:
+    excluded = spec.location_filter.excluded()
+    if not prefixes and not excluded:
         return []
-    plural = "" if len(prefixes) == 1 else "s"
-    return [
-        f"# schema locations: {len(prefixes)} selection{plural}",
-        f"_loc_prefixes = {[[list(pair) for pair in p] for p in prefixes]!r}",
-        "_loc_mask = pd.Series(False, index=df.index)",
-        "for _p in _loc_prefixes:",
-        "    _m = pd.Series(True, index=df.index)",
-        "    for _k, _v in _p:",
-        "        if _k in df.columns:",
-        "            _m &= df[_k].astype(str) == _v",
-        "    _loc_mask |= _m",
-        "df = df[_loc_mask]",
-        "",
-    ]
+
+    lines: list[str] = []
+
+    # The spellings are BAKED IN rather than recomputed by generated code: the
+    # exported script must not carry a copy of `value_spellings` that can drift
+    # from the one the live figure used. One spec therefore always produces
+    # byte-identical source, which is why `value_spellings` sorts.
+    if prefixes:
+        baked = [
+            [[key, list(value_spellings(value))] for key, value in prefix]
+            for prefix in prefixes
+        ]
+        plural = "" if len(prefixes) == 1 else "s"
+        lines += [
+            f"# schema locations: {len(prefixes)} selection{plural}",
+            f"_loc_prefixes = {baked!r}",
+            "_loc_mask = pd.Series(False, index=df.index)",
+            "for _p in _loc_prefixes:",
+            "    _m = pd.Series(True, index=df.index)",
+            "    for _k, _vs in _p:",
+            "        if _k in df.columns:",
+            "            _m &= df[_k].notna() & df[_k].astype(str).isin(_vs)",
+            "    _loc_mask |= _m",
+            "df = df[_loc_mask]",
+            "",
+        ]
+
+    if excluded:
+        baked_levels = {
+            key: sorted({s for value in values for s in value_spellings(value)})
+            for key, values in excluded.items()
+        }
+        lines += [
+            f"# schema levels omitted everywhere: {len(baked_levels)} key(s)",
+            f"_loc_excluded = {baked_levels!r}",
+            "for _k, _vs in _loc_excluded.items():",
+            "    if _k in df.columns:",
+            "        df = df[~(df[_k].notna() & df[_k].astype(str).isin(_vs))]",
+            "",
+        ]
+
+    return lines
 
 
 def _facet_layout_args(spec, table: LongTable, facets: list[str]) -> list[str]:
@@ -883,14 +912,30 @@ def _levels_after_location(spec: PlotSpec, column: str, levels: list[str]) -> li
     ``trial`` with all its levels — because "all of subject 01" did not name a
     trial — which is what the figure will actually draw.
     """
+    # The level RULE applies first and unconditionally: an omitted level is
+    # gone from this key's axis however the prefixes fall out, and leaving it
+    # in the generated `order=` would reserve an empty slot on the exported
+    # figure that the preview does not have.
+    dropped = {
+        spelling
+        for value in spec.location_filter.excluded().get(column, ())
+        for spelling in value_spellings(value)
+    }
+    if dropped:
+        levels = [level for level in levels if str(level) not in dropped]
+
     prefixes = spec.location_filter.prefixes()
     if not prefixes:
         return levels
     named = [dict(prefix) for prefix in prefixes]
     if any(column not in prefix for prefix in named):
         return levels
-    keep = {prefix[column] for prefix in named}
-    return [level for level in levels if level in keep]
+    keep = {
+        spelling
+        for prefix in named
+        for spelling in value_spellings(prefix[column])
+    }
+    return [level for level in levels if str(level) in keep]
 
 
 #: Column the generated code builds for a nested x axis.

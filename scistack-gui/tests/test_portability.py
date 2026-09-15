@@ -69,7 +69,7 @@ class TestExportImportSameDatabase:
         })
         client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
-        client.put("/api/layout/mf_proc/config", json={"config": {"schemaFilter": {"subject": ["S01"]}}})
+        client.put("/api/layout/mf_proc/config", json={"config": {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}})
 
         db = get_db()
         document = export_pipeline(db, pid)
@@ -101,7 +101,7 @@ class TestExportImportSameDatabase:
         }
         fn_node = next(n for n in graph["nodes"] if n["data"]["label"] == "custom_proc")
         manual = ps.get_manual_nodes(db, new_pid)
-        assert manual[fn_node["id"]]["config"] == {"schemaFilter": {"subject": ["S01"]}}
+        assert manual[fn_node["id"]]["config"] == {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}
 
         edges = ps.get_manual_edges(db)
         id_by_label = {n["data"]["label"]: n["id"] for n in graph["nodes"]}

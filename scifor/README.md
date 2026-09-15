@@ -89,6 +89,8 @@ The examples above cover the most common case, but real pipelines have real-worl
 
 - **Row filtering** — Apply column-based filters (like "only right-side trials" or "speed > 1.5") on top of the metadata filtering.
 
+- **Location selection** — `locations=` names which schema locations to run: ragged prefixes (`all of subject 01, plus trials 1-3 of subject 02`) plus standing per-key rules (`session BL is out, everywhere, including in data collected next month`). Filters *combinations*, where `where=` filters *rows within* a combination. See [location filter semantics](../docs/claude/location-filter-semantics.md).
+
 - **Dry run** — Preview which combinations would be processed and what data would be passed, without actually running anything.
 
 - **Distribute** — When a function returns a vector of values that should each become their own row at a deeper schema level (e.g., splitting a trial into individual gait cycles), scifor can expand the output automatically.

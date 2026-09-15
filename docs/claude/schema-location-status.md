@@ -213,3 +213,41 @@ report`). CLAUDE.md NOTE 3, and the standing invariant from
 compute a second opinion. If a question here cannot be answered from the
 primitives, that is a gap in the graph model — not something to patch in a
 webview.
+
+## The fifth question: several variables at once
+
+> Added 2026-09-14 with `intersect_location_states`, Stage 2 of
+> `.claude/plan-schema-key-picker-and-level-order.md`.
+
+A **function node** has no single variable. It has inputs, and the question it
+asks is "where can this run?" — which is the INNER JOIN of its inputs' location
+sets. `location_states` cannot answer it at any granularity, because every one
+of its four states is scoped to one variable.
+
+`intersect_location_states(variables, …)` runs `location_states` per variable
+and merges:
+
+| | |
+|---|---|
+| **which locations** | only those EVERY variable has. A location one input lacks is one the function cannot be called at, so it is absent — not present-and-red. |
+| **what state** | the worst across the variables, so green-here-and-red-there reads red. |
+| **except grey** | an excluded location stays grey. The exclusion is a decision the user made and justified; reddening it because some variable has no record there argues with them. |
+| **`record_id` / `code_version`** | `None`. Several records sit at an intersected location and naming one would be a lie the renderer cannot qualify. |
+
+Three consequences worth knowing before calling it:
+
+- **Cost is linear in the inputs.** `location_states` measured 9.5 s on a
+  419-location variable (2026-09-13), so a four-input node is four of those.
+  Per-variable timings are logged (`[timing] intersect_location_states(A ∩ B):
+  …`) precisely so "the pane is slow" can be answered with "because of input
+  B", rather than guessed at.
+- **One variable delegates**, returning `location_states`' own tree rather than
+  a wrapper — so a one-input node costs exactly what it used to.
+- **The variant applies to every variable.** A per-variable variant selection is
+  the plotting layer's question; a node runs on whatever its inputs currently
+  are.
+
+Leaves, not parents, are intersected. Intersecting interior nodes as well would
+keep a subject whose every trial was dropped — the tree is rebuilt from the
+surviving leaves by the same `_build_tree` the single-variable path uses, so
+the roll-up rules above hold unchanged.

@@ -227,14 +227,42 @@ class TestEveryKindRoutesThroughTheReducer:
 
     def test_1d_kinds_reduce_through_the_reducer(self, source, label, kind, measure, roles, aggregate):
         """Which per-sample operation a 1-D kind takes is part of the contract:
-        BAND/BAR summarise from the cells, an AGGREGATE role collapses, and
-        everything else explodes."""
+        a SCALAR kind collapses each vector to one value first, BAND/BAR
+        summarise from the cells, an AGGREGATE role collapses, and everything
+        else explodes.
+
+        A SCALAR kind is the exception, and it is not a reducer operation at
+        all: ``collapse.apply_collapse`` turns each vector into ONE value over
+        the cells, before any panel work, so the measure the panel path sees is
+        scalar and there is no per-sample work left to route. That is a
+        different operation from ``Reducer.collapse_series``, which is the
+        AGGREGATE collapse — a mean per sample POSITION across aggregated
+        factors, whose result is still 1-D. Confusing the two is easy: they
+        share a word and neither name says which.
+
+        This branch used to demand ``explode_series`` for every non-BAND/BAR
+        kind, which went stale the moment scalar kinds began implying a
+        collapse. It asks ``collapses`` now rather than re-deriving the rule.
+        """
         if measure != "Series":
             pytest.skip("only 1-D measures have per-sample work")
+        from scistackplot.collapse import collapses
+
         table = source.get_table([measure])
+        spec = _spec(kind, measure, roles, aggregate)
         spy = _Spy()
         table.reducer = spy
-        resolve(_spec(kind, measure, roles, aggregate), table)
+        resolve(spec, table)
+        if collapses(spec, table):
+            # The vectors are gone by the time the panel path runs. What must
+            # NOT happen is per-sample work on top of a collapse already done —
+            # that would be the samples being read twice, once per meaning.
+            assert not ({"explode_series", "collapse_series", "summarize_series"}
+                        & set(spy.calls)), (
+                f"{label}: the kind implies a vector-to-scalar collapse, so no "
+                f"per-sample reducer work should remain ({spy.calls})"
+            )
+            return
         if kind in (PlotKind.BAND, PlotKind.BAR):
             expected = "summarize_series"
         elif Role.AGGREGATE in roles.values():

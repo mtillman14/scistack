@@ -20,7 +20,7 @@ Fixture (schema keys subject/trial), for ``LocFilt``::
 
 import numpy as np
 import pytest
-from scidb.locations import location_states
+from scidb.locations import intersect_location_states, location_states
 from scidb.state import check_combo_state, check_node_state, check_pathinput_node_state
 
 from scidb import BaseVariable, configure_database, for_each, scistack
@@ -866,3 +866,90 @@ class TestLocationStatesReusesTheDiscoveryWalk:
             assert calls["n"] > walked
         finally:
             type(path_input).discover = original
+
+
+# ---------------------------------------------------------------------------
+# Several variables at once: the inner join a function node needs
+# ---------------------------------------------------------------------------
+
+
+class TestIntersectedLocations:
+    """``intersect_location_states`` — Stage 2 of the schema key picker plan.
+
+    A function node has no single variable, it has INPUTS, and the locations it
+    will actually run are the ones every input has. A location one input is
+    missing is a location the function cannot be called at.
+    """
+
+    def test_a_location_only_one_variable_has_is_dropped(self, states_db):
+        # LocLoaded exists at S01/t1 alone; LocRaw exists at five locations.
+        LocLoaded.save(np.array([1.0]), subject="S01", trial="t1")
+
+        tree = intersect_location_states([LocRaw, LocLoaded], db=states_db)
+
+        assert _state_of(tree, subject="S01", trial="t1") is not None
+        assert _node_at(tree, subject="S01", trial="t2") is None
+        assert _node_at(tree, subject="S02") is None
+        assert tree.total == 1
+
+    def test_the_worst_state_across_variables_wins(self, states_db):
+        """Green in one input and red in another reads red: the node cannot
+        run there, and the pane exists to say which location and why."""
+        tree = intersect_location_states([LocRaw, LocFilt], db=states_db)
+
+        # LocRaw is present (green) at all of these; LocFilt supplies the rest.
+        assert _state_of(tree, subject="S01", trial="t1") == "green"
+        assert _state_of(tree, subject="S01", trial="t2") == "amber"
+        assert _state_of(tree, subject="S01", trial="t3") == "red"
+        assert _state_of(tree, subject="S02", trial="t2") == "green"
+
+    def test_an_excluded_location_stays_grey(self, states_db):
+        """Grey is a decision the user already made and justified. It must not
+        be recoloured by a variable that has no record there."""
+        tree = intersect_location_states([LocRaw, LocFilt], db=states_db)
+        assert _state_of(tree, subject="S02", trial="t1") == "grey"
+
+    def test_one_variable_delegates_rather_than_wrapping(self, states_db):
+        one = intersect_location_states([LocFilt], db=states_db)
+        direct = location_states(LocFilt, db=states_db)
+        assert one.variable == direct.variable == "LocFilt"
+        assert one.counts == direct.counts
+
+    def test_no_variables_returns_an_empty_tree_that_says_so(self, states_db):
+        tree = intersect_location_states([], db=states_db)
+        assert tree.roots == []
+        assert tree.total == 0
+        assert any("no locations" in note.lower() for note in tree.notes)
+
+    def test_names_are_accepted_as_strings(self, states_db):
+        by_class = intersect_location_states([LocRaw, LocFilt], db=states_db)
+        by_name = intersect_location_states(["LocRaw", "LocFilt"], db=states_db)
+        assert by_name.counts == by_class.counts
+
+    def test_an_intersected_node_names_no_single_record(self, states_db):
+        """Several records sit at an intersected location, so naming one would
+        be a lie the renderer cannot qualify."""
+        tree = intersect_location_states([LocRaw, LocFilt], db=states_db)
+        node = _node_at(tree, subject="S01", trial="t1")
+        assert node.record_id is None
+        assert node.code_version is None
+
+    def test_the_notes_say_which_variables_and_stay_attributable(self, states_db):
+        tree = intersect_location_states([LocRaw, LocFilt], db=states_db)
+        assert tree.variable == "LocRaw ∩ LocFilt"
+        assert any("LocRaw" in note and "LocFilt" in note for note in tree.notes)
+        # Per-variable caveats survive, prefixed, rather than being pooled into
+        # an unattributable list.
+        for note in tree.notes[1:]:
+            assert note.startswith("LocRaw:") or note.startswith("LocFilt:")
+
+    def test_it_logs_a_timing_per_variable(self, states_db, caplog):
+        """Cost is linear in the inputs, and location_states measured 9.5s on
+        a 419-location variable. Which input was slow has to be visible."""
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="scidb"):
+            intersect_location_states([LocRaw, LocFilt], db=states_db)
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert "intersect_location_states(LocRaw ∩ LocFilt)" in text
+        assert "LocRaw=" in text and "LocFilt=" in text

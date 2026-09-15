@@ -1796,3 +1796,60 @@ def test_glue_dir_files_are_not_duplicated_when_also_in_modules(tmp_path):
     config = load_config(None, db_path)
 
     assert [p.name for p in config.modules] == ["glue_x.py"]
+
+
+def test_add_path_preserves_a_hand_authored_schema_keys_table(tmp_path):
+    """``[schema_keys]`` is read by scidb.schema_order and written by nobody.
+
+    The Paths popup rewrites the whole file from the fields it knows, so a
+    level order the user typed would be DELETED by an unrelated '+' click —
+    the exact failure `_render_scistack_toml`'s docstring says must not
+    happen, one table later.
+    """
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text(
+        'modules = ["existing"]\n'
+        "\n"
+        "[schema_keys]\n"
+        'session = ["BL", "POST", "FU"]\n'
+        'speed = ["SSV", "FAST"]\n'
+    )
+    (tmp_path / "existing").mkdir()
+    shared_repo = tmp_path / "shared_repo"
+    shared_repo.mkdir()
+
+    add_path(db_path, shared_repo)
+
+    data = _read_raw_section(toml_file)
+    assert data["schema_keys"] == {
+        "session": ["BL", "POST", "FU"],
+        "speed": ["SSV", "FAST"],
+    }
+    # And the write it was actually asked to do still happened.
+    assert str(_normalize(shared_repo)) in data["modules"]
+
+
+def test_a_preserved_schema_keys_table_is_rendered_last(tmp_path):
+    """A TOML table swallows every key after it, so a top-level key emitted
+    below `[schema_keys]` would silently become `schema_keys.modules`."""
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text(
+        'modules = ["existing"]\n'
+        'packages = ["foo"]\n'
+        "\n"
+        "[schema_keys]\n"
+        'session = ["BL"]\n'
+    )
+    (tmp_path / "existing").mkdir()
+    shared_repo = tmp_path / "shared_repo"
+    shared_repo.mkdir()
+
+    add_path(db_path, shared_repo)
+
+    data = _read_raw_section(toml_file)
+    assert data["packages"] == ["foo"]
+    assert set(data["schema_keys"]) == {"session"}

@@ -97,7 +97,7 @@ def _ensure_tables(db) -> None:
             pipeline_id VARCHAR NOT NULL DEFAULT 'main'
         )
     """)
-    # Node config (schemaFilter / schemaLevel / whereFilters / runOptions)
+    # Node config (schemaSelection / schemaLevel / whereFilters / runOptions)
     # keyed by node_id, deliberately NOT a column on _pipeline_nodes.
     #
     # _pipeline_nodes holds MANUALLY PLACED nodes, and merge_manual_nodes
@@ -469,7 +469,7 @@ def write_manual_node(
 
 
 def update_node_config(db, node_id: str, config: dict) -> None:
-    """Write a node's saved config (schemaFilter, schemaLevel, whereFilters,
+    """Write a node's saved config (schemaSelection, schemaLevel, whereFilters,
     runOptions), keyed by ``node_id``.
 
     An **upsert** into ``_node_config``, for any node id -- manual

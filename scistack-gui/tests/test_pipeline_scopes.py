@@ -1296,7 +1296,7 @@ class TestDuplicatePipeline:
         })
         client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
-        client.put("/api/layout/mf_proc/config", json={"config": {"schemaFilter": {"subject": ["S01"]}}})
+        client.put("/api/layout/mf_proc/config", json={"config": {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}})
 
         r = client.post(f"/api/pipelines/{pid}/duplicate", json={"name": "loading_v2"})
         assert r.status_code == 200
@@ -1314,7 +1314,7 @@ class TestDuplicatePipeline:
         }
         # Config forked to the new node id.
         fn_copy = next(n for n in copy_nodes.values() if n["type"] == "functionNode")
-        assert fn_copy.get("config") == {"schemaFilter": {"subject": ["S01"]}}
+        assert fn_copy.get("config") == {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}
 
         # Edges duplicated onto the new node ids.
         id_by_label = {n["label"]: nid for nid, n in copy_nodes.items()}
@@ -1476,7 +1476,7 @@ class TestPasteNodes:
 
     def test_paste_within_same_scope_copies_config_and_internal_edges(self, client):
         self._wire(client, "main")
-        client.put("/api/layout/mf_proc/config", json={"config": {"schemaFilter": {"subject": ["S01"]}}})
+        client.put("/api/layout/mf_proc/config", json={"config": {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}})
 
         r = client.post(
             "/api/pipelines/main/paste-nodes",
@@ -1502,7 +1502,7 @@ class TestPasteNodes:
             ("variableNode", "PasteFilteredSignal"),
         }
         fn_copy_id = node_id_map["mf_proc"]
-        assert copy_nodes[fn_copy_id].get("config") == {"schemaFilter": {"subject": ["S01"]}}
+        assert copy_nodes[fn_copy_id].get("config") == {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}
 
         copy_edges = [
             e for e in ps.get_manual_edges(db)

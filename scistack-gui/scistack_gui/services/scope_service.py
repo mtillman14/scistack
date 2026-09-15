@@ -329,7 +329,7 @@ def _clone_nodes(
     its OWN independent placement in the new scope, rather than colliding
     with and stealing the original's.
 
-    What's copied is the per-node GUI config (schemaFilter/schemaLevel/
+    What's copied is the per-node GUI config (schemaSelection/schemaLevel/
     runOptions, and eventually whereFilters) and the wiring, since each
     copy gets its own node_id — copying those verbatim is what makes the
     copy compute IDENTICALLY to the original until the user changes

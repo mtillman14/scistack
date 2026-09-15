@@ -19,7 +19,7 @@ import { useStore } from '@xyflow/react'
 import EditTab from './EditTab'
 import FunctionSettingsPanel from './FunctionSettingsPanel'
 import GlueSettingsPanel from './GlueSettingsPanel'
-import type { SchemaFilter, RunOptions, WhereFilter } from './FunctionSettingsPanel'
+import type { SchemaSelection, RunOptions, WhereFilter } from './FunctionSettingsPanel'
 import ParameterSettingsPanel from './ParameterSettingsPanel'
 import VariableSettingsPanel from './VariableSettingsPanel'
 import PathInputSettingsPanel from './PathInputSettingsPanel'
@@ -33,7 +33,7 @@ import type { ParameterValue } from '../DAG/ParameterNode'
 interface FnNodeData {
   label: string
   endpoint_kind?: 'plot' | 'stat'
-  schemaFilter?: SchemaFilter | null
+  schemaSelection?: SchemaSelection | null
   schemaLevel?: string[] | null
   whereFilters?: WhereFilter[]
   runOptions?: RunOptions
@@ -194,7 +194,7 @@ export default function Sidebar() {
             variants={variants}
             constantNames={constantNames}
             inputTypeNames={inputTypeNames}
-            schemaFilter={(selectedNode.data as FnNodeData).schemaFilter ?? null}
+            schemaSelection={(selectedNode.data as FnNodeData).schemaSelection ?? null}
             schemaLevel={(selectedNode.data as FnNodeData).schemaLevel ?? null}
             whereFilters={(selectedNode.data as FnNodeData).whereFilters ?? []}
             runOptions={(selectedNode.data as FnNodeData).runOptions ?? { dry_run: false, save: true, distribute: false, as_table: false }}

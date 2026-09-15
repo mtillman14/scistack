@@ -13,36 +13,63 @@
  *   grey   deliberately excluded, and so counted in neither the numerator nor
  *          the denominator
  *
- * Two interactions, deliberately distinct (plan D3 + D5):
+ * TWO PANES, ONE SELECTION. They are two lenses on the same stored pair, and
+ * neither holds its own checkbox state, so they cannot disagree:
+ *
+ *   left, "By key"     one entry per schema key, with its levels nested. A
+ *                      tick here is a standing RULE — "this session is out,
+ *                      everywhere, including in data collected next month".
+ *   right, "Locations" the hierarchy. A tick here is a PLACE, and the set of
+ *                      them may be RAGGED: all of subject 01, plus trials 1-3
+ *                      of subject 02.
+ *
+ * Neither can express the other. A tree has one subtree per subject and so no
+ * single box for "that session, everywhere"; a per-key list cannot untick one
+ * trial of one subject without unticking that trial for all of them. A
+ * selection is therefore a PAIR, and the full rule — including why an omitted
+ * level is stored as a rule rather than exploded into prefixes — is
+ * docs/claude/location-filter-semantics.md.
+ *
+ * Three interactions, deliberately distinct:
  *
  *   click a row      "only this one" — the single select. Clears every other
  *                    selection, so the figure shows that location alone.
  *   tick a checkbox  add or remove that location from what is drawn, leaving
  *                    the rest of the selection alone.
+ *   tick on the left omit (or restore) a level across every other key. A level
+ *                    the tree has partly unticked shows AMBER here; clicking
+ *                    it resolves to fully on, so one click is always
+ *                    recoverable by a second.
  *
- * The checkbox is why `LocationFilter` exists: a tree of them means something
- * RAGGED (all of subject 01, plus trials 1-3 of subject 02), and per-column
- * `Filter` include-lists can only express a Cartesian product. See
- * scistackplot.spec.LocationFilter.
- *
- * Selection is stored as the MINIMAL COVERING SET: a fully-ticked subject
+ * `include` is stored as the MINIMAL COVERING SET: a fully-ticked subject
  * collapses to its own one-element prefix, so a trial added to that subject
- * later is inside the selection rather than silently outside it. Empty means
- * "everything", which is also what an untouched picker means.
+ * later is inside the selection rather than silently outside it. An empty pair
+ * means "everything", which is also what an untouched picker means.
  */
 
 import { useEffect, useMemo, useState } from 'react'
 import { callBackend } from '../../api'
+import SchemaKeyLevels from './SchemaKeyLevels'
 import { overlay, dialog, dialogTitle } from '../modalStyles'
 import {
   type LocationNode,
+  type LocationSelection,
   type LocationTree,
   type PathStep,
   type Prefix,
+  EMPTY_SELECTION,
+  asSelection,
   coverageOf,
+  describeSelection,
   hasProblem,
+  keyCoverage,
+  levelCoverage,
+  levelsByKey,
   matchesQuery,
+  toggleKey,
+  toggleLevel,
   without,
+  visibleSelection,
   withPath,
 } from './locationSelection'
 
@@ -54,16 +81,23 @@ export type { PathStep, Prefix, LocationNode, LocationTree }
 
 interface Props {
   variable: string
+  /**
+   * A function node, instead of a variable. The tree is then the INNER JOIN of
+   * that node's input variables' locations (`node_location_tree` →
+   * `scidb.locations.intersect_location_states`): the locations it can
+   * actually run, which is the processing tab's question.
+   */
+  nodeId?: string
   /** The plotting layer's column-keyed variant selection; omit on the canvas. */
   selection?: Record<string, unknown> | null
-  /** Current `spec.location_filter.include`; `[]` or undefined means "all". */
-  value?: Prefix[]
+  /** Current `spec.location_filter`; an empty pair means "all". */
+  value?: LocationSelection | null
   /**
    * Checkbox edits. Omitted (the canvas entry, where no spec is open) hides
    * the checkboxes entirely: a control that cannot change anything should not
    * be drawn as though it could.
    */
-  onChange?: (include: Prefix[]) => void
+  onChange?: (selection: LocationSelection) => void
   /** A row was clicked: show this location alone. */
   onPick?: (path: Prefix) => void
   onClose: () => void
@@ -83,6 +117,7 @@ const COLOR: Record<string, string> = {
 
 export default function SchemaLocationPicker({
   variable,
+  nodeId,
   selection = null,
   value,
   onChange,
@@ -97,17 +132,44 @@ export default function SchemaLocationPicker({
   const [problemsOnly, setProblemsOnly] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
-  const include = useMemo<Prefix[]>(() => value ?? [], [value])
+  // What this TREE can show: a spec's filter is shared by every variant row,
+  // so it may carry steps for a key this variable was never saved at.
+  //
+  // Named `locations` rather than `selection` because the PROP called
+  // `selection` is a different thing entirely — the column-keyed VARIANT
+  // selection the tree is computed for.
+  const locations = useMemo(
+    () => visibleSelection(tree?.roots ?? [], asSelection(value)),
+    [tree, value]
+  )
+
+  // Levels come from the TREE, so the by-key pane lists only what this
+  // variable and variant actually have: a level with no data here cannot be
+  // omitted from a figure that was never going to draw it, and offering it
+  // would invite exactly that click.
+  const levels = useMemo(() => levelsByKey(tree?.roots ?? []), [tree])
+  // Schema order for the keys — `levelsByKey` returns them in tree order,
+  // which is the same thing until a variable skips a level of the hierarchy.
+  const keyOrder = useMemo(() => {
+    const found = Object.keys(levels)
+    const declared = (tree?.schema_keys ?? []).filter(key => key in levels)
+    return [...declared, ...found.filter(key => !declared.includes(key))]
+  }, [levels, tree])
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const result = (await callBackend('plot_location_tree', {
-          variable,
-          selection,
-          csv_path: csvPath ?? null,
-        })) as LocationTree
+        // One component, two questions: a VARIABLE under a variant (the
+        // plotting tab), or a NODE's inputs intersected (the processing
+        // tab). Same payload shape on purpose — a second shape here would
+        // be a second renderer.
+        const result = (await callBackend(
+          nodeId ? 'node_location_tree' : 'plot_location_tree',
+          nodeId
+            ? { node_id: nodeId }
+            : { variable, selection, csv_path: csvPath ?? null }
+        )) as LocationTree
         if (!cancelled) setTree(result)
       } catch (err) {
         if (!cancelled) setError((err as Error).message)
@@ -116,7 +178,7 @@ export default function SchemaLocationPicker({
       }
     })()
     return () => { cancelled = true }
-  }, [variable, selection, csvPath])
+  }, [variable, nodeId, selection, csvPath])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -143,7 +205,7 @@ export default function SchemaLocationPicker({
     // A search auto-expands: hiding the hit inside a collapsed parent is the
     // one thing a search must never do.
     const open = expanded.has(id) || normalizedQuery.length > 0
-    const cov = onChange ? coverageOf(node, include) : 'none'
+    const cov = onChange ? coverageOf(node, locations) : 'none'
     const countable = node.counts.green + node.counts.amber + node.counts.red
 
     return (
@@ -165,8 +227,8 @@ export default function SchemaLocationPicker({
               onChange={() =>
                 onChange(
                   cov === 'full'
-                    ? without(tree!.roots, include, node.path)
-                    : withPath(tree!.roots, include, node.path)
+                    ? without(tree!.roots, locations, node.path)
+                    : withPath(tree!.roots, locations, node.path)
                 )
               }
               title="Include this location in the figure"
@@ -211,7 +273,7 @@ export default function SchemaLocationPicker({
 
   return (
     <div style={overlay} onClick={onClose}>
-      <div style={{ ...dialog, width: 620, display: 'flex', flexDirection: 'column' }}
+      <div style={{ ...dialog, width: 860, maxWidth: '95vw', display: 'flex', flexDirection: 'column' }}
            onClick={e => e.stopPropagation()}>
         <div style={dialogTitle}>Schema locations — {variable}</div>
 
@@ -268,21 +330,52 @@ export default function SchemaLocationPicker({
               </label>
             </div>
 
-            <div style={styles.scroll}>
-              {tree.roots.length === 0 && (
-                <div style={styles.muted}>(no schema locations)</div>
-              )}
-              {tree.roots.map(root => renderNode(root, 0))}
+            {/* Two panes, one selection. The left says "which LEVELS" (a
+                standing rule, applying across every other key); the right says
+                "which PLACES" (ragged, per location). Both are drawn from the
+                same pair and neither stores its own checkbox state, so ticking
+                a subject on the left ticks its whole subtree on the right, and
+                unticking one of its trials on the right turns the left entry
+                amber. See docs/claude/location-filter-semantics.md. */}
+            <div style={styles.panes}>
+              <div style={{ ...styles.scroll, ...styles.keyPane }}>
+                <div style={styles.paneTitle}>By key</div>
+                <SchemaKeyLevels
+                  keys={keyOrder}
+                  levels={levels}
+                  coverageOfKey={key => keyCoverage(tree.roots, locations, key)}
+                  coverageOfLevel={(key, value) =>
+                    levelCoverage(tree.roots, locations, key, value)
+                  }
+                  onToggleKey={
+                    onChange
+                      ? key => onChange(toggleKey(tree.roots, locations, key))
+                      : undefined
+                  }
+                  onToggleLevel={
+                    onChange
+                      ? (key, value) =>
+                          onChange(toggleLevel(tree.roots, locations, key, value))
+                      : undefined
+                  }
+                />
+              </div>
+
+              <div style={{ ...styles.scroll, ...styles.treePane }}>
+                <div style={styles.paneTitle}>Locations</div>
+                {tree.roots.length === 0 && (
+                  <div style={styles.muted}>(no schema locations)</div>
+                )}
+                {tree.roots.map(root => renderNode(root, 0))}
+              </div>
             </div>
 
             {onChange && (
               <div style={styles.footer}>
                 <span style={styles.muted}>
-                  {include.length === 0
-                    ? 'Every location included'
-                    : `${include.length} selection${include.length === 1 ? '' : 's'}`}
+                  {describeSelection(locations)}
                 </span>
-                <button style={styles.button} onClick={() => onChange([])} type="button">
+                <button style={styles.button} onClick={() => onChange(EMPTY_SELECTION)} type="button">
                   Select all
                 </button>
               </div>
@@ -320,7 +413,22 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
   },
   toggle: { fontSize: 11, color: '#9aa0b4', display: 'flex', alignItems: 'center', gap: 4 },
+  panes: { display: 'flex', gap: 8, alignItems: 'stretch' },
   scroll: { overflowY: 'auto', maxHeight: '45vh', border: '1px solid #2a2a4a', borderRadius: 4 },
+  // The by-key pane is deliberately THIN: it lists short level names, and the
+  // tree beside it carries the long ones plus their status.
+  keyPane: { flex: '0 0 220px', minWidth: 160 },
+  treePane: { flex: 1, minWidth: 0 },
+  paneTitle: {
+    fontSize: 10,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: '#6b7280',
+    padding: '4px 6px 2px',
+    position: 'sticky',
+    top: 0,
+    background: '#161626',
+  },
   row: { display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px', fontSize: 12 },
   twisty: { cursor: 'pointer', width: 12, color: '#9aa0b4', userSelect: 'none' },
   checkbox: { margin: 0 },

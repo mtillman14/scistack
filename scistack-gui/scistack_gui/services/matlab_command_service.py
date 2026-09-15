@@ -330,6 +330,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     from scistack_gui import matlab_registry
     from scistack_gui import registry
     from scistack_gui.api.matlab_command import generate_matlab_command as _fmt
+    from scistack_gui.domain import schema_selection as _schema_selection
     from scistack_gui.db import get_db_path
     from scistack_gui.domain.edge_resolver import infer_manual_fn_output_types
     from scistack_gui.domain.graph_builder import parse_path_input, path_input_display
@@ -478,7 +479,17 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         db_path=db_path,
         schema_keys=list(db.dataset_schema_keys),
         variants=fn_variants if fn_variants else params.get("variants"),
-        schema_filter=params.get("schema_filter"),
+        # A MATLAB command can only spell one value list per schema key, so a
+        # ragged selection is projected onto that shape here — and the
+        # projection runs MORE than was selected. `report` logs exactly what
+        # was lost rather than letting the generated script quietly disagree
+        # with the picker. Closing it means teaching +scifor/for_each.m the
+        # same `locations=` argument the Python side has.
+        schema_filter=_schema_selection.report(
+            params.get("schema_selection"),
+            db,
+            context=f"matlab command for {function_name}",
+        ),
         schema_level=params.get("schema_level"),
         addpath_dirs=addpath_dirs if addpath_dirs else None,
         python_executable=sys.executable,

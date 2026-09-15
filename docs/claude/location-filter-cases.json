@@ -1,0 +1,248 @@
+{
+  "version": 1,
+  "about": [
+    "The location filter's meaning, as data. Prose is in",
+    "docs/claude/location-filter-semantics.md; this file is what the tests",
+    "actually run, because the same rule is transcribed FOUR times and nothing",
+    "but a shared table can keep them in step:",
+    "  combo  scifor.locations         — a dict predicate over for_each combos",
+    "  row    scistackplot.reduce      — a vectorised pandas mask",
+    "  row    scistackplot.codegen     — the same mask, EMITTED as plain pandas",
+    "  tree   locationSelection.ts     — checkbox coverage in the GUI",
+    "scistackplot cannot import scifor (pandas/numpy/scistacklog only), so the",
+    "copies are real. Adding a case here fails every implementation that has",
+    "not adopted it, which is the point: a suite that hand-copied the table",
+    "would silently keep passing.",
+    "",
+    "applies_to: which implementations a case is meaningful for.",
+    "  'combo' — scifor. A combo may be COARSER than a location (a run",
+    "            iterating subject only), which rows never are.",
+    "  'row'   — the pandas sides. `location` becomes a one-row DataFrame, so a",
+    "            key absent from `location` is an absent COLUMN, and a null is",
+    "            NaN. JSON types are deliberate: 1.0 is a float column, 1 an",
+    "            int one, \"01\" a string one.",
+    "  'tree'  — the GUI's coverage walk. `location` becomes a single chain of",
+    "            nodes, one per key, and the case asks what the LEAF's checkbox",
+    "            shows: 'full' for in, 'none' for out. Null cases are absent",
+    "            here on purpose — a location tree has no null steps, because a",
+    "            key a record was not saved at simply contributes no node."
+  ],
+  "cases": [
+    {
+      "id": 1,
+      "name": "empty-pair-is-inert",
+      "filter": {"include": [], "exclude_levels": {}},
+      "location": {"subject": "01", "session": "BL", "trial": "1"},
+      "in": true,
+      "why": "Clicking into a picker is not a statement. 'Everything selected' and 'never opened' must store the same thing.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 2,
+      "name": "covered-by-prefix",
+      "filter": {"include": [[["subject", "01"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "session": "BL", "trial": "1"},
+      "in": true,
+      "why": "The ordinary case.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 3,
+      "name": "uncovered-by-prefix",
+      "filter": {"include": [[["subject", "01"]]], "exclude_levels": {}},
+      "location": {"subject": "02", "session": "BL", "trial": "1"},
+      "in": false,
+      "why": "A non-empty include excludes everything it does not cover.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 4,
+      "name": "level-rule-drops-it",
+      "filter": {"include": [], "exclude_levels": {"session": ["BL"]}},
+      "location": {"subject": "01", "session": "BL", "trial": "1"},
+      "in": false,
+      "why": "The left pane's standing rule.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 5,
+      "name": "the-rule-survives-new-data",
+      "filter": {"include": [], "exclude_levels": {"session": ["BL"]}},
+      "location": {"subject": "09", "session": "POST", "trial": "1"},
+      "in": true,
+      "why": "Subject 09 did not exist when the rule was written. This is why exclude_levels is a rule and not exploded prefixes: exploding would freeze today's subjects and drop tomorrow's entirely.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 6,
+      "name": "exclusion-beats-coverage",
+      "filter": {"include": [[["subject", "01"]]], "exclude_levels": {"session": ["BL"]}},
+      "location": {"subject": "01", "session": "BL", "trial": "1"},
+      "in": false,
+      "why": "The rule is applied AFTER coverage and always wins; it is never merged into it.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 7,
+      "name": "ragged-prefix-skipping-a-key",
+      "filter": {"include": [[["subject", "02"], ["trial", "3"]]], "exclude_levels": {}},
+      "location": {"subject": "02", "session": "BL", "trial": "3"},
+      "in": true,
+      "why": "A prefix names its keys, so it can skip one — a cross-cutting selection of subject+trial is not subject+session.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 8,
+      "name": "ragged-prefix-excludes-siblings",
+      "filter": {"include": [[["subject", "02"], ["trial", "3"]]], "exclude_levels": {}},
+      "location": {"subject": "02", "session": "BL", "trial": "4"},
+      "in": false,
+      "why": "Every named key must match.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 9,
+      "name": "values-compare-as-text",
+      "filter": {"include": [], "exclude_levels": {"trial": ["3"]}},
+      "location": {"subject": "01", "session": "BL", "trial": 3},
+      "in": false,
+      "why": "Every selection crosses JSON, so an int 3 and a string \"3\" are one value.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 10,
+      "name": "absent-key-is-not-a-match",
+      "filter": {"include": [], "exclude_levels": {"timepoint": ["T1"]}},
+      "location": {"subject": "01", "speed": "SSV"},
+      "in": true,
+      "why": "A cross-cutting record saved at subject+speed has no timepoint step, so a timepoint rule does not touch it. Reading positionally would match the value against the wrong key and select nothing, in silence.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 11,
+      "name": "every-level-excluded-selects-nothing",
+      "filter": {"include": [], "exclude_levels": {"session": ["BL", "POST", "FU"]}},
+      "location": {"subject": "01", "session": "BL", "trial": "1"},
+      "in": false,
+      "why": "Legal, and reported rather than corrected.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 12,
+      "name": "ancestor-combo-is-kept",
+      "filter": {"include": [[["subject", "02"], ["trial", "3"]]], "exclude_levels": {}},
+      "location": {"subject": "02"},
+      "in": true,
+      "why": "A run iterating subject only, against a selection naming trial: some of what this combo covers was selected, and dropping it would silently run nothing. No row counterpart — a row always carries every key it was saved at.",
+      "applies_to": ["combo"]
+    },
+    {
+      "id": 13,
+      "name": "ancestor-rule-does-not-weaken-a-mismatch",
+      "filter": {"include": [[["subject", "01"]]], "exclude_levels": {}},
+      "location": {"subject": "02"},
+      "in": false,
+      "why": "Ignoring keys the combo LACKS must not start ignoring keys it HAS.",
+      "applies_to": ["combo"]
+    },
+    {
+      "id": 14,
+      "name": "empty-prefix-inside-include-means-everything",
+      "filter": {"include": [[]], "exclude_levels": {}},
+      "location": {"subject": "07", "session": "FU", "trial": "2"},
+      "in": true,
+      "why": "A prefix constraining no keys constrains nothing. The two sides reach this by different routes (a vacuous all() vs the 'names no known column' path), so it is pinned rather than assumed.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 15,
+      "name": "overlapping-prefixes-are-idempotent",
+      "filter": {"include": [[["subject", "01"]], [["subject", "01"], ["trial", "3"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "session": "BL", "trial": "9"},
+      "in": true,
+      "why": "include is a union. A prefix covered by another one changes nothing — the picker normalises to a minimal covering set, but a hand-written spec need not.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 16,
+      "name": "integral-float-matches-its-integer-spelling",
+      "filter": {"include": [[["subject", "1"]]], "exclude_levels": {}},
+      "location": {"subject": 1.0, "session": "BL"},
+      "in": true,
+      "why": "A schema key that round-tripped through DuckDB as a float gives the pandas side \"1.0\" while the picker (whose tree comes from scidb) gives \"1\". Comparing raw text would silently select nothing across that seam, so a value is matched against the numeric spellings of itself.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 17,
+      "name": "zero-padding-is-identity-not-a-number",
+      "filter": {"include": [[["subject", "1"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "session": "BL"},
+      "in": false,
+      "why": "Guards case 16 from eating the padding rule: \"01\" and \"1\" can be two distinct trials, and which spelling is identity is scidb's decision (schema-key-types.md), never a comparison shortcut here.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 18,
+      "name": "a-non-integral-float-keeps-its-own-spelling",
+      "filter": {"include": [[["speed", "1.5"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "speed": 1.5},
+      "in": true,
+      "why": "Case 16 normalises only the .0 tail; 1.5 must still match itself.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 19,
+      "name": "a-null-key-matches-no-real-value",
+      "filter": {"include": [[["session", "BL"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "session": null},
+      "in": false,
+      "why": "NULL at a key is not a level. The two sides spell it differently (NaN vs None) and must agree on the outcome anyway.",
+      "applies_to": ["combo", "row"]
+    },
+    {
+      "id": 20,
+      "name": "a-null-key-is-not-excluded-by-a-level-rule",
+      "filter": {"include": [], "exclude_levels": {"session": ["BL"]}},
+      "location": {"subject": "01", "session": null},
+      "in": true,
+      "why": "The contrast to case 19: a null is not the excluded level either, so the row survives. Getting this wrong drops every cross-cutting record the moment any rule exists.",
+      "applies_to": ["combo", "row"]
+    },
+    {
+      "id": 21,
+      "name": "values-are-case-sensitive",
+      "filter": {"include": [[["session", "BL"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "session": "bl"},
+      "in": false,
+      "why": "Folding case would merge two levels a dataset may genuinely distinguish.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 22,
+      "name": "separator-lookalikes-are-matched-literally",
+      "filter": {"include": [[["session", "BL / POST"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "session": "BL / POST"},
+      "in": true,
+      "why": "' / ' is how a selection is DISPLAYED (describeSelection); it is not a delimiter in the stored form, and a level containing it must not be parsed as two steps.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 23,
+      "name": "a-rule-naming-an-absent-key-drops-nothing",
+      "filter": {"include": [], "exclude_levels": {"trial": ["3"]}},
+      "location": {"subject": "01", "session": "BL"},
+      "in": true,
+      "why": "The row-side twin of case 10: a table that never carried `trial` (a subject-level variable) must not lose every row to a trial rule.",
+      "applies_to": ["combo", "row", "tree"]
+    },
+    {
+      "id": 24,
+      "name": "an-include-naming-only-absent-keys-is-inert",
+      "filter": {"include": [[["trial", "3"]]], "exclude_levels": {}},
+      "location": {"subject": "01", "session": "BL"},
+      "in": true,
+      "why": "A subject-level Mass contributes its one value to every trial. Both sides keep the row and SAY SO (a warning naming the unmatched keys), rather than returning an empty figure with no explanation.",
+      "applies_to": ["combo", "row", "tree"]
+    }
+  ]
+}

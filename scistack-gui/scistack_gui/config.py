@@ -1092,6 +1092,7 @@ def _render_scistack_toml(
     matlab_sources: list,
     matlab_variable_dir,
     matlab_entities_file=None,
+    schema_keys: dict | None = None,
 ) -> str:
     """Render a complete scistack.toml from known [tool.scistack] fields.
 
@@ -1137,6 +1138,18 @@ def _render_scistack_toml(
             lines.append(f"variable_dir = {_toml_str(str(matlab_variable_dir))}")
         if matlab_entities_file is not None:
             lines.append(f"entities_file = {_toml_str(str(matlab_entities_file))}")
+
+    # `[schema_keys]` is HAND-AUTHORED (scidb.schema_order reads it; nothing
+    # here writes it), and this function rewrites the whole file — so it has to
+    # be carried across or the Paths popup silently deletes a level order the
+    # user typed. Emitted last: a TOML table swallows every key after it, so a
+    # top-level key rendered below this line would land inside it.
+    if schema_keys:
+        lines.append("")
+        lines.append("[schema_keys]")
+        for key, levels in schema_keys.items():
+            if isinstance(levels, (list, tuple)):
+                lines.append(f"{key} = {_toml_array(list(levels))}")
     lines.append("")
     return "\n".join(lines)
 
@@ -1294,6 +1307,10 @@ def add_path(db_path: Path, new_path: Path) -> Path:
         matlab_sources=raw_sources,
         matlab_variable_dir=matlab_section.get("variable_dir"),
         matlab_entities_file=matlab_section.get("entities_file"),
+        # Round-tripped, never written by the GUI: hand-authored level order
+        # would otherwise be DELETED by the Paths popup, which rewrites the
+        # whole file from the fields it knows.
+        schema_keys=section.get("schema_keys"),
     )
     target_path.write_text(content)
     logger.info("[config] add_path: wrote %s (added %s)", target_path, new_str)
@@ -1351,6 +1368,10 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
         matlab_sources=raw_sources,
         matlab_variable_dir=matlab_section.get("variable_dir"),
         matlab_entities_file=matlab_section.get("entities_file"),
+        # Round-tripped, never written by the GUI: hand-authored level order
+        # would otherwise be DELETED by the Paths popup, which rewrites the
+        # whole file from the fields it knows.
+        schema_keys=section.get("schema_keys"),
     )
     toml_path.write_text(content)
     logger.info("[config] remove_path: wrote %s (removed %s)", toml_path, target)
@@ -1506,6 +1527,10 @@ def set_entities_file(
         matlab_sources=raw_sources,
         matlab_variable_dir=matlab_section.get("variable_dir"),
         matlab_entities_file=matlab_section.get("entities_file"),
+        # Round-tripped, never written by the GUI: hand-authored level order
+        # would otherwise be DELETED by the Paths popup, which rewrites the
+        # whole file from the fields it knows.
+        schema_keys=section.get("schema_keys"),
     )
     target_path.write_text(content)
     logger.info(
@@ -1591,6 +1616,10 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
         matlab_sources=raw_sources,
         matlab_variable_dir=matlab_section.get("variable_dir"),
         matlab_entities_file=matlab_section.get("entities_file"),
+        # Round-tripped, never written by the GUI: hand-authored level order
+        # would otherwise be DELETED by the Paths popup, which rewrites the
+        # whole file from the fields it knows.
+        schema_keys=section.get("schema_keys"),
     )
     target_path.write_text(content)
     logger.info(
@@ -1641,6 +1670,10 @@ def clear_entities_file(db_path: Path) -> Path:
         matlab_sources=list(matlab_section.get("sources", [])),
         matlab_variable_dir=matlab_section.get("variable_dir"),
         matlab_entities_file=matlab_section.get("entities_file"),
+        # Round-tripped, never written by the GUI: hand-authored level order
+        # would otherwise be DELETED by the Paths popup, which rewrites the
+        # whole file from the fields it knows.
+        schema_keys=section.get("schema_keys"),
     )
     toml_path.write_text(content)
     logger.info(
