@@ -143,7 +143,33 @@ def data_column_types_for(db, variable: str) -> dict[str, str]:
         "ORDER BY ordinal_position",
         [table],
     )
-    return {row[0]: str(row[1] or "") for row in rows}
+    types = {row[0]: str(row[1] or "") for row in rows}
+
+    # A data column named after a schema key is an address stored as payload:
+    # a record saved before the spread/collision rules stripped such columns
+    # (FunctionalOutcomes, 2026-09-15: one dataset-level 73x27 record carrying
+    # `subject`/`session`) adds them to the table for good, since records are
+    # excluded, never deleted. `load_variable` selects every data column AND
+    # every schema key, so the frame would hold two `subject` columns and
+    # `frame["subject"]` becomes a DataFrame ("The truth value of a Series is
+    # ambiguous", 2026-09-16). The schema key is the one that can be plotted
+    # against, so the data copy is dropped here, at the one owner of the
+    # column list.
+    shadowed = [name for name in types if name in set(schema_keys(db))]
+    if shadowed:
+        Log.warn(
+            "variable %r: table %r has data column(s) %s named after schema "
+            "key(s) — ignoring them; the schema key columns are the address. "
+            "They were written by a record saved before schema-key columns were "
+            "stripped from returned tables (pre-2026-09-16).",
+            variable,
+            table,
+            shadowed,
+            layer=LAYER,
+        )
+        for name in shadowed:
+            del types[name]
+    return types
 
 
 #: DuckDB type names whose values are containers rather than single cells.
