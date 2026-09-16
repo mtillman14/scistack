@@ -4,7 +4,7 @@ Status: **not yet built.** This doc exists to capture how the "disconnected
 wiring" mechanism (delete/hide an edge → function turns red and refuses to
 run — see `pipeline_store.hide_edge`, `graph_builder.hidden_wirings`,
 `run_state.propagate_run_states(disconnected_fkeys=...)`,
-`execution_service.filter_disconnected_targets`/`disconnected_reason`,
+`execution_service.reconcile_manual_inputs`/`disconnected_reason`,
 2026-08-09) interacts with the eventual "convert a GUI-authored pipeline
 into a standalone runnable .py script" feature, so that work doesn't have
 to re-derive this from scratch.
@@ -29,7 +29,7 @@ of the GUI's document).
   but scidb's own APIs (`for_each`, `Pipeline`, `.load()`,
   provenance/lineage) never query them. A plain script calling
   `scidb.for_each(fn, inputs={...}, outputs=[...])` directly never touches
-  `derive_fn_targets`/`filter_disconnected_targets` — those are
+  `derive_fn_targets`/`reconcile_manual_inputs` — those are
   scistack-gui orchestration functions.
 - `hide_edge` never deletes or alters a DB record, provenance row, or
   lineage entry (project-wide "never delete, mark hidden" ethos) — it only
@@ -97,7 +97,7 @@ these rather than reinventing the check:
   → a ready-made human-readable message ("input 'sample_interval' is
   disconnected — reconnect it before running") — reuse verbatim as the
   warning-comment text in option (2) above.
-- `variant_resolver.filter_disconnected_targets(targets, function_name, hidden_edge_ids)`
+- `variant_resolver.reconcile_manual_inputs(targets, function_name, hidden_edge_ids)`
   → if the exporter walks `derive_fn_targets` output directly, this is
   the same filter `build_backend_pipeline` already applies; calling it
   keeps "what the GUI would actually run" and "what gets exported"

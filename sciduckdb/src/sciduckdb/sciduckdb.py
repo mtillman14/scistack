@@ -247,6 +247,87 @@ def _python_to_storage(value: Any, meta: dict) -> Any:
     return value
 
 
+def _array_from_storage(value: Any, dtype: np.dtype) -> np.ndarray:
+    """``np.asarray`` for a stored list value that may carry NULL elements.
+
+    DuckDB hands a LIST holding NULL elements back as a ``numpy.ma.MaskedArray``.
+    ``np.asarray`` on that DROPS the mask and exposes DuckDB's fill buffer, so a
+    NaN saved from MATLAB came back as ``0`` (GAITRiteLoaded.L_StepLengths_GR,
+    2026-09-15) — silently, through every load path, because they all funnel
+    here. NULL in storage means NaN in Python: fill the masked slots with NaN,
+    upcasting to float64 when the declared dtype (int/bool) cannot carry one.
+    """
+    if isinstance(value, np.ma.MaskedArray) and np.ma.is_masked(value):
+        n_null = int(np.ma.count_masked(value))
+        if dtype.kind != "f":
+            logger.debug(
+                "NULL list element(s) in a %s column: upcast to float64 so they "
+                "can be restored as NaN",
+                dtype,
+            )
+            dtype = np.dtype("float64")
+        logger.debug("restored %d NULL list element(s) as NaN", n_null)
+        return np.ma.filled(value.astype(dtype), np.nan)
+
+    # Never cast NaN into an integer dtype: np.asarray([1., nan], dtype=int64)
+    # yields INT_MIN silently. This fires when the DECLARED dtype cannot hold a
+    # NaN the value actually has — either a column that acquired a NULL after
+    # its dtype was recorded, or a second restoration pass over an array this
+    # function already upcast (SciDuck.load runs _restore_types AND then
+    # _storage_to_python on the same cell, so restoration must be idempotent).
+    arr = np.asarray(value)
+    if dtype.kind != "f" and arr.dtype.kind == "f" and arr.size and np.isnan(arr).any():
+        logger.debug(
+            "array holds NaN but is declared %s: keeping float64 rather than "
+            "casting NaN to an integer",
+            dtype,
+        )
+        return arr.astype(np.float64)
+    return np.asarray(value, dtype=dtype)
+
+
+def count_null_list_elements(values) -> int:
+    """Number of NULL elements across stored list values (masked slots).
+
+    ``values`` is any iterable of cells as DuckDB returned them — a pandas
+    Series, a list, or a column of an object-dtype DataFrame. Nested lists
+    (2-D ``ndarray`` columns arrive as an ndarray of per-row arrays) are
+    counted one level down. Loaders use this to log how many NaN were
+    restored, at the seam where the corruption used to happen.
+    """
+    n = 0
+    for v in values:
+        if isinstance(v, np.ma.MaskedArray):
+            n += int(np.ma.count_masked(v))
+        elif isinstance(v, np.ndarray) and v.dtype == object:
+            n += sum(
+                int(np.ma.count_masked(row))
+                for row in v
+                if isinstance(row, np.ma.MaskedArray)
+            )
+    return n
+
+
+def count_nan_array_elements(values) -> int:
+    """Number of NaN elements across in-memory array cells about to be saved.
+
+    The save-side twin of :func:`count_null_list_elements`: DuckDB's pandas
+    scanner stores these as NULL, and the loader restores them as NaN. Logged
+    at save time so a NaN-vs-NULL question is answerable from scidb.log.
+    """
+    n = 0
+    for v in values:
+        if isinstance(v, np.ndarray) and v.dtype.kind == "f" and v.size:
+            n += int(np.isnan(v).sum())
+        elif isinstance(v, list) and v:
+            try:
+                arr = np.asarray(v, dtype=float)
+            except (TypeError, ValueError):
+                continue
+            n += int(np.isnan(arr).sum())
+    return n
+
+
 def _storage_to_python(value: Any, meta: dict) -> Any:
     """Restore a stored DuckDB value back to its original Python type."""
     ptype = meta.get("python_type", "")
@@ -255,9 +336,21 @@ def _storage_to_python(value: Any, meta: dict) -> Any:
         dtype = np.dtype(meta.get("numpy_dtype", "float64"))
         ndim = meta.get("ndim", 1)
         if ndim >= 2:
-            # DuckDB returns ndarray of ndarrays; stack them
+            # DuckDB returns an ndarray of ndarrays, or one 2-D masked array
+            # when an element is NULL. The NaN restoration engages ONLY when a
+            # mask is actually present: matrix shape through this branch is
+            # load-bearing (TestEndToEnd.test_matrix_through_pipeline,
+            # TestFromPython.test_numpy_2d_orientation_is_not_transposed), so
+            # NaN-free data must take the exact path it always took.
+            if isinstance(value, np.ma.MaskedArray):
+                return _array_from_storage(value, dtype)
+            if any(
+                isinstance(row, np.ma.MaskedArray) and np.ma.is_masked(row)
+                for row in value
+            ):
+                return np.stack([_array_from_storage(row, dtype) for row in value])
             return np.stack([np.asarray(row) for row in value]).astype(dtype)
-        return np.asarray(value, dtype=dtype)
+        return _array_from_storage(value, dtype)
 
     if ptype == "ndarray_json":
         dtype = np.dtype(meta.get("numpy_dtype", "float64"))
@@ -284,9 +377,7 @@ def _storage_to_python(value: Any, meta: dict) -> Any:
         if meta.get("contains_ndarray"):
             # Restore as list of ndarrays
             dtype = np.dtype(meta.get("ndarray_dtype", "float64"))
-            if isinstance(value, np.ndarray):
-                return [np.asarray(v, dtype=dtype) for v in value]
-            return [np.asarray(v, dtype=dtype) for v in value]
+            return [_array_from_storage(v, dtype) for v in value]
         if isinstance(value, np.ndarray):
             if meta.get("nested"):
                 return [v.tolist() if isinstance(v, np.ndarray) else v for v in value]
@@ -328,6 +419,8 @@ def _storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
         return series.apply(lambda v: json.loads(v) if isinstance(v, str) else v)
 
     # All remaining types (ndarray, ndarray_json, list, …): delegate per-element.
+    # NULL list elements are restored as NaN inside _storage_to_python; the
+    # caller aggregates count_null_list_elements() into one INFO line per load.
     return series.apply(lambda v: _storage_to_python(v, meta))
 
 
@@ -577,12 +670,16 @@ def _bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) 
 
     # Build per-column storage arrays using column-level operations.
     col_arrays: dict = {}
+    nan_counts: dict = {}
     for col, col_meta in col_metas.items():
         ptype = col_meta.get("python_type", "")
         raw = big_df[col]
 
         if ptype == "ndarray":
             vals = raw.to_numpy()
+            n_nan = count_nan_array_elements(vals)
+            if n_nan:
+                nan_counts[col] = n_nan
             col_arrays[col] = [
                 v.tolist()
                 if isinstance(v, np.ndarray)
@@ -603,6 +700,15 @@ def _bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) 
             # Scalar types (float, int, str, bool …): tolist() converts numpy
             # scalars to Python builtins, which is what DuckDB expects.
             col_arrays[col] = raw.tolist()
+
+    if nan_counts:
+        # DuckDB's pandas scanner stores these as NULL; the loader restores
+        # them as NaN (_array_from_storage). Said once per batch so a
+        # NaN-vs-NULL question is answerable from the log.
+        logger.info(
+            "array column(s) contain NaN — stored as NULL, reload as NaN: %s",
+            nan_counts,
+        )
 
     cols_in_order = list(col_metas.keys())
     n = len(big_df)
@@ -1603,13 +1709,21 @@ class SciDuck:
     def _restore_types(self, df: pd.DataFrame, dtype_meta: dict) -> pd.DataFrame:
         """Apply type restoration to data columns of a loaded DataFrame."""
         columns_meta = dtype_meta.get("columns", {})
+        null_counts: dict = {}
         for col_name, col_meta in columns_meta.items():
             if col_name in df.columns:
+                n_null = count_null_list_elements(df[col_name])
+                if n_null:
+                    null_counts[col_name] = n_null
                 restored = [
                     _storage_to_python(df[col_name].iloc[i], col_meta)
                     for i in range(len(df))
                 ]
                 df[col_name] = restored
+        if null_counts:
+            logger.debug(
+                "_restore_types: restored NULL list element(s) as NaN: %s", null_counts
+            )
         return df
 
     # ------------------------------------------------------------------

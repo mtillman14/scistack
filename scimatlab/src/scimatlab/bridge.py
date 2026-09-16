@@ -1098,6 +1098,7 @@ def for_each_save(
     """
     import pandas as pd
     from scidb.foreach import _for_each_save_resolved
+    from scifor.foreach import spread_nested_results as _spread_nested_results
 
     cached = _for_each_state_cache.pop(int(handle), None)
     if cached is None:
@@ -1161,8 +1162,37 @@ def for_each_save(
 
     from scidb.log import Log as _Log
 
+    # MATLAB's loop always runs in nested mode (+scidb/for_each.m passes
+    # _nest_table_outputs=true), so each output cell holds the combo's whole
+    # return value. Python's loop would now decide whether a returned table's
+    # ROWS are separately addressed (it carries a schema key the combo did
+    # not pin) — that decision lives in scifor, and applying it here is what
+    # keeps the two languages filing a labelled table identically. Before
+    # this call a 73-row (subject, session) table saved as ONE dataset-level
+    # record on the MATLAB path (scidb.log 2026-09-15 19:16).
+    #
+    # Single-output runs only. scifor's spread lays every output's columns
+    # flat side by side, and _save_results then files ALL data columns under
+    # EACH output — Python's multi-table-output limitation. The nested path
+    # keeps each MATLAB output's table separate, so it stays in force there
+    # rather than importing that limitation.
+    nested_shape = result_tbl.shape
+    if len(state.output_names) == 1:
+        result_tbl = _spread_nested_results(
+            result_tbl,
+            list(state.output_names),
+            list(state.current_schema_keys or []),
+        )
+    elif len(state.output_names) > 1:
+        _Log.info(
+            f"[bridge] for_each_save: {len(state.output_names)} outputs — spread "
+            f"rule not applied (single-output runs only); each output's table "
+            f"is saved whole per combination"
+        )
+
     _Log.info(
         f"[bridge] for_each_save: handle={handle}, "
+        f"nested shape={nested_shape}, "
         f"result_tbl shape={result_tbl.shape}, "
         f"columns={list(result_tbl.columns)}"
     )

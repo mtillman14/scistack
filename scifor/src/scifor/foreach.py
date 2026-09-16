@@ -699,7 +699,9 @@ def for_each(
         print(f"[dry-run] inputs: {_format_inputs(inputs)}")
         if distribute_key is not None:
             print(
-                f"[dry-run] distribute: '{distribute_key}' (split outputs by element/row, 1-based)"
+                f"[dry-run] distribute: '{distribute_key}' (split outputs by "
+                f"element/row; a returned '{distribute_key}' column addresses "
+                f"the pieces, otherwise 1-based row ordinals)"
             )
         print()
 
@@ -707,6 +709,11 @@ def for_each(
     skipped = 0
     collected_rows: list[tuple[dict, tuple]] = []
     was_cancelled = False
+    # distribute: whether the "key column addresses the pieces" branch has
+    # been reported yet. Once per run at INFO, then DEBUG per combo — the
+    # ordinal-vs-column choice changes every saved address, so it must be
+    # visible in scidb.log without flooding it.
+    distribute_column_reported = False
     # Failure aggregation for the end-of-run summary: reason -> combo strings.
     failure_reasons: dict[str, list[str]] = {}
     warned_reasons: set[str] = set()
@@ -990,13 +997,27 @@ def for_each(
         if distribute_key is not None:
             for output_value in result:
                 try:
-                    pieces = _split_for_distribute(output_value)
+                    key_values, pieces, from_column = _distribute_pieces(
+                        output_value, distribute_key
+                    )
                 except TypeError as e:
                     Log.warn(f"{metadata_str}: cannot distribute: {e}", layer="scifor")
                     continue
 
-                for i, piece in enumerate(pieces):
-                    dist_metadata = {**metadata, distribute_key: i + 1}
+                if from_column:
+                    _msg = (
+                        "distribute: output carries a '%s' column — its values "
+                        "address the %d piece(s) and the column is removed from "
+                        "the data (row ordinals are not used)"
+                    )
+                    if not distribute_column_reported:
+                        Log.info(_msg, distribute_key, len(pieces), layer="scifor")
+                        distribute_column_reported = True
+                    else:
+                        Log.debug(_msg, distribute_key, len(pieces), layer="scifor")
+
+                for key_value, piece in zip(key_values, pieces, strict=True):
+                    dist_metadata = {**metadata, distribute_key: key_value}
                     collected_rows.append((dist_metadata, (piece,)))
         else:
             collected_rows.append((metadata, result))
@@ -2310,9 +2331,86 @@ def _results_to_output_dataframe(
     return _restore_schema_column_dtypes(result, col_dtypes)
 
 
+def spread_nested_results(
+    result_tbl: "pd.DataFrame",
+    output_names: list[str],
+    schema_keys: "list | tuple" = (),
+    col_dtypes: "dict | None" = None,
+) -> "pd.DataFrame":
+    """Re-run for_each's result assembly on a NESTED-mode result table.
+
+    A nested-mode table has one row per combination: the metadata columns
+    plus one column per output whose cells hold that combination's raw
+    return value (a DataFrame, an array, a scalar). It is what the MATLAB
+    loop (``+scifor/for_each.m`` with ``_nest_table_outputs=true``) hands
+    back across the bridge, and what this module's own loop holds in
+    ``collected_rows`` before ``_results_to_output_dataframe``.
+
+    This is the one owner of the spread rule (``_spread_decision``) for both
+    languages: the MATLAB bridge calls it before saving so a returned table
+    that carries an unpinned schema key is filed row by row exactly as the
+    Python loop would file it, with the same log lines. Without it the
+    MATLAB path saved a 73-row ``(subject, session)``-labelled table as ONE
+    dataset-level record while Python saved 73 (2026-09-15).
+
+    Output columns absent from ``result_tbl`` are ignored; a table with no
+    output column at all (already flat) is returned unchanged.
+    """
+    import pandas as pd
+
+    if result_tbl is None or not isinstance(result_tbl, pd.DataFrame):
+        return result_tbl
+    present = [n for n in output_names if n in result_tbl.columns]
+    if not present or result_tbl.empty:
+        return result_tbl
+    meta_cols = [c for c in result_tbl.columns if c not in present]
+    collected_rows: list[tuple[dict, tuple]] = []
+    for row in result_tbl.to_dict("records"):
+        metadata = {c: row[c] for c in meta_cols}
+        collected_rows.append((metadata, tuple(row[n] for n in present)))
+    Log.debug(
+        "spread_nested_results: %d combination row(s), outputs %s, %d metadata "
+        "column(s)",
+        len(collected_rows),
+        present,
+        len(meta_cols),
+        layer="scifor",
+    )
+    return _results_to_output_dataframe(
+        collected_rows, present, col_dtypes, schema_keys
+    )
+
+
 # ---------------------------------------------------------------------------
 # Distribute
 # ---------------------------------------------------------------------------
+
+
+def _distribute_pieces(data: Any, distribute_key: str) -> tuple[list, list, bool]:
+    """Split one output for ``distribute`` and decide what addresses each piece.
+
+    Returns ``(key_values, pieces, from_column)``.
+
+    A DataFrame that carries the target key as a column already says where
+    each row belongs: its values become the key values and the column is
+    stripped from the pieces so it does not collide with the metadata column
+    of the same name. Anything else (an unlabelled DataFrame, a numpy array,
+    a list) is addressed by 1-based position. This mirrors the MATLAB loop
+    (``+scifor/for_each.m``, ``ismember(dist_key_char, VariableNames)``) so
+    the two languages file a labelled table identically.
+    """
+    try:
+        import pandas as pd
+
+        if isinstance(data, pd.DataFrame) and distribute_key in data.columns:
+            key_values = data[distribute_key].tolist()
+            stripped = data.drop(columns=[distribute_key])
+            pieces = [stripped.iloc[[i]] for i in range(len(stripped))]
+            return key_values, pieces, True
+    except ImportError:
+        pass
+    pieces = _split_for_distribute(data)
+    return list(range(1, len(pieces) + 1)), pieces, False
 
 
 def _split_for_distribute(data: Any) -> list[Any]:

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 
 from ..exceptions import AmbiguousVersionError, NotFoundError
@@ -1055,6 +1056,22 @@ class Inspector:
                 return None
             if isinstance(value, (str, int, float, bool)):
                 return value
+            # A LIST holding NULLs arrives as a masked array, whose str() is
+            # numpy's "--" for the masked slots. Say NULL instead: "--" reads
+            # like data and cost an investigation once (2026-09-15).
+            if isinstance(value, np.ma.MaskedArray):
+                return (
+                    "["
+                    + " ".join(
+                        "NULL" if m else repr(v)
+                        for v, m in zip(
+                            value.data.tolist(),
+                            np.ma.getmaskarray(value).tolist(),
+                            strict=False,
+                        )
+                    )
+                    + "]"
+                )
             if hasattr(value, "isoformat"):
                 return _iso(value)
             if hasattr(value, "item"):  # numpy scalar

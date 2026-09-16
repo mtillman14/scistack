@@ -14,7 +14,7 @@ that input.
 
 Root cause: every "is this input disconnected" check —
 `graph_builder.hidden_wirings()` (badge + forced-red run state) and
-`variant_resolver.filter_disconnected_targets()` (actual execution
+`variant_resolver.reconcile_manual_inputs()` (actual execution
 eligibility, via `execution_service.derive_fn_targets`/
 `derive_target_for_node`) — decided purely from the function's **DB-recorded**
 wiring (`db.list_pipeline_variants()`) crossed against the hidden-edge-id
@@ -57,7 +57,7 @@ This check now happens in two independent places that both needed it:
    "Disconnected wirings" block) so it's available at this point, and
    passes it through. This is what clears `node["data"]["disconnected"]`
    and the forced-red `run_state`.
-2. **Execution** — `variant_resolver.filter_disconnected_targets()` takes
+2. **Execution** — `variant_resolver.reconcile_manual_inputs()` takes
    `manual_edges`/`manual_nodes` params. When a target's hidden handles are
    all covered, it does **not** just re-admit the stale DB target as-is
    (that historical call was never run with the new variable) — it
@@ -100,7 +100,7 @@ regression, just not addressed here.
 
 - `scistack_gui/domain/graph_builder.py`: `inbound_edge_candidates_by_handle`,
   `manual_edge_handle_index`, `hidden_wirings`.
-- `scistack_gui/domain/variant_resolver.py`: `filter_disconnected_targets`.
+- `scistack_gui/domain/variant_resolver.py`: `reconcile_manual_inputs`.
 - `scistack_gui/domain/edge_resolver.py`: `node_id_to_var_label` (reused,
   not new).
 - `scistack_gui/services/execution_service.py`: `derive_fn_targets`,

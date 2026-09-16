@@ -78,6 +78,31 @@ and no lifecycle coupling at all.
 `_pipeline_nodes.config` is still **read** as a fallback, so configs saved
 before the split are not orphaned. Nothing writes it any more.
 
+"No lifecycle coupling" has one exception, and it is deliberate:
+**graduation moves the row.** When a fresh node graduates into a history node
+(`layout_store.graduate_manual_node`), position and manual edges were always
+carried across; since 2026-09-15 `pipeline_store.migrate_node_config` carries
+the config too — every row whose bare id is the fresh node's (bare or
+`::scope`), plus the legacy column — and writes it under the graduated id.
+The fresh node's settings **win** over anything the history node already
+had: the realistic conflict is a wired fresh node the user configured and
+ran, whose settings produced the very history it graduates into, so the
+node must keep running the way it just ran. Replaced values are logged
+verbatim. The source row is renamed away (a move, not a deletion), which is
+what stops `apply_placement_configs`' orphan WARN from naming it forever.
+`_build_graph` re-applies the moved config onto the node in the graduating
+response itself, so no toggle appears to reset for one refresh.
+
+Before this, the row stayed under the fresh id and the settings silently
+vanished — that is what a WARN naming ids like `fn__grSides__5c9r0r` means
+(the WARN now says so). Those older orphans are not adopted automatically:
+their fresh nodes are gone, so the target would be a guess.
+
+Log lines: `[pipeline_store] graduation: config keys [...] moved from <old>
+to <new>` and, on a conflict, `... previous values replaced by the fresh
+node's — previous: {...}`.
+
+
 Node ids come in **three** shapes and all must work as keys:
 
 - `fn__{fn_name}` — the legacy/manual form, a node placed but never run.
@@ -189,6 +214,12 @@ Follow one run by its `run_id`:
 Step 4 is the one that cannot lie. In the 2026-09-14 run the columns were
 `['subject','session','speed','trial','GAITRiteLoaded']` — no `cycle` — which
 settled it regardless of what any other layer claimed.
+
+Since 2026-09-15 the same line also reports `nested shape=` (what MATLAB's
+loop handed back) next to `result_tbl shape=` (after scifor's spread rule).
+`distribute` is not the only way rows become records — a returned table
+that names its own `subject`/`session` spreads without the flag; see
+`docs/claude/distribute-vs-spread.md`.
 
 ## A second consumer of node config — single-route on purpose
 

@@ -153,6 +153,13 @@ that is the most honest thing available, because an empty type means
 nothing in the node data to tell them apart. See
 `docs/claude/function-node-input-params.md`.
 
+A manual edge drawn onto a node that has **already run** counts too: the
+overlay in `docs/claude/manual-edges-on-history-nodes.md` writes the wired
+type into `input_params` at build time, so the picker lights up for it and
+the same rule owner binds it at run time. Before 2026-09-15 such an edge
+left the type empty (`n/a`) and the run ignored it — the grSides/Demographics
+session.
+
 The MATLAB side folds the selection into the **same** `variable_inputs` map
 rather than a parallel `column_selections` dict — one map, one parser
 (`_variable_binding_parts`), so all three `for_each` emit sites

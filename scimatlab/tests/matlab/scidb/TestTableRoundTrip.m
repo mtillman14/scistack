@@ -325,6 +325,71 @@ classdef TestTableRoundTrip < matlab.unittest.TestCase
             end
         end
 
+        function test_nan_in_ragged_vector_column_survives(testCase)
+            %% NaN inside a cell vector must come back as NaN, never as 0.
+            %  DuckDB stores a NaN list element as NULL and returns the list as
+            %  a masked array; numpy's asarray drops the mask and exposes the
+            %  fill buffer (zeros), so GAITRiteLoaded.L_StepLengths_GR reached
+            %  the next function with a leading 0 where the loader wrote NaN
+            %  (2026-09-15). The Python-side guard is
+            %  sciduckdb._array_from_storage; this is the MATLAB end of it.
+            t = table;
+            t.a{1} = [NaN 0.49146 0.45202]';   % leading NaN: the real shape
+            t.a{2} = [0.51156 NaN]';
+            t.a{3} = [1 2 3]';                 % no NaN: must be untouched
+            t.b = [2 4 6]';
+
+            CellTableVar().save(t, 'subject', 30, 'session', 'A');
+            result = CellTableVar().load('subject', 30, 'session', 'A');
+
+            testCase.verifyTrue(istable(result.data));
+            testCase.verifyEqual(height(result.data), 3);
+
+            first = result.data.a{1};
+            testCase.verifyTrue(isnan(first(1)), ...
+                sprintf('leading NaN came back as %g', first(1)));
+            testCase.verifyEqual(first(2:3), [0.49146; 0.45202], 'AbsTol', 1e-10);
+
+            second = result.data.a{2};
+            testCase.verifyEqual(second(1), 0.51156, 'AbsTol', 1e-10);
+            testCase.verifyTrue(isnan(second(2)));
+
+            testCase.verifyEqual(result.data.a{3}, [1 2 3]', 'AbsTol', 1e-10);
+            testCase.verifyEqual(result.data.b, t.b, 'AbsTol', 1e-10);
+        end
+
+        function test_real_zero_stays_zero(testCase)
+            %% The NaN restoration must not turn a genuine 0 into NaN.
+            t = table;
+            t.a{1} = [0 0.49146]';
+            t.b = 2;
+
+            CellTableVar().save(t, 'subject', 31, 'session', 'A');
+            result = CellTableVar().load('subject', 31, 'session', 'A');
+
+            first = result.data.a{1};
+            testCase.verifyFalse(isnan(first(1)));
+            testCase.verifyEqual(first(1), 0, 'AbsTol', 1e-12);
+        end
+
+        function test_nan_roundtrip_is_hash_stable(testCase)
+            %% Re-saving what came back must reproduce the same record, i.e.
+            %  the round trip is a fixed point. Before the fix NaN went out and
+            %  0 came back, so a no-op re-save wrote a SECOND record at the
+            %  same location.
+            t = table;
+            t.a{1} = [NaN 0.49146]';
+            t.b = 2;
+
+            CellTableVar().save(t, 'subject', 32, 'session', 'A');
+            first = CellTableVar().load('subject', 32, 'session', 'A');
+
+            CellTableVar().save(first.data, 'subject', 32, 'session', 'A');
+            again = CellTableVar().load('subject', 32, 'session', 'A');
+
+            testCase.verifyEqual(again.record_id, first.record_id);
+        end
+
     end
 
     methods (Access = private)

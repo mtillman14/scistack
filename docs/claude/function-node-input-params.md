@@ -205,3 +205,8 @@ honesty about `""` looks like in the UI.
   `call_id` are built from.
 - `docs/claude/placement-qualified-ids.md` — the other id-shape trap in this
   area.
+- `docs/claude/manual-edges-on-history-nodes.md` — a manual variable edge
+  onto a DB-derived node's `in__` handle is overlaid onto `input_params`
+  after the fill-in pass (`graph_builder.overlay_manual_inputs`), so since
+  2026-09-15 "there is a manual edge here" is no longer one of the meanings
+  of `""`; `data.manual_inputs` names the overlaid params.

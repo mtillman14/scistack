@@ -43,7 +43,13 @@ from .discovery import (
 from .each_of import EachOf, require_alternatives
 from .filters import Col, ColFilter, CompoundFilter, NotFilter
 from .fixed import Fixed
-from .foreach import ColumnFunctionError, ForColumnsError, NoDataError, for_each
+from .foreach import (
+    ColumnFunctionError,
+    ForColumnsError,
+    NoDataError,
+    for_each,
+    spread_nested_results,
+)
 from .locations import LocationFilter, filter_combos
 from .merge import Merge
 from .pathinput import (
@@ -67,6 +73,7 @@ __all__ = [
     "ColumnFunctionError",
     "ForColumnsError",
     "NoDataError",
+    "spread_nested_results",
     # Input wrappers
     "Fixed",
     "Merge",

@@ -1221,6 +1221,64 @@ def test_distribute_composes_with_whole_table_rule():
     assert sorted(result["session"]) == [1, 2, 3]
 
 
+def test_distribute_reads_target_key_column_when_present(caplog):
+    """A returned DataFrame that carries the distribute target as a column
+    already says where each row belongs: its values address the pieces and
+    the column is stripped from the data. Row ordinals are NOT used. This is
+    what the MATLAB loop has always done (+scifor/for_each.m), so a labelled
+    table now files identically in both languages."""
+    set_schema(["subject", "session"])
+    with caplog.at_level(logging.INFO):
+        result = for_each(
+            lambda: pd.DataFrame({"session": ["07", "03"], "val": [1.0, 2.0]}),
+            inputs={},
+            distribute=True,
+            subject=[1],
+        )
+    assert len(result) == 2
+    # Values, in the table's own order — not 1, 2.
+    assert list(result["session"]) == ["07", "03"]
+    assert list(result["val"]) == [1.0, 2.0]
+    # Exactly one 'session' column: the data column was removed, so it does
+    # not collide with the metadata column of the same name.
+    assert list(result.columns).count("session") == 1
+    assert "column is removed from the data" in caplog.text
+    assert not any("collide" in r.message for r in caplog.records)
+
+
+def test_distribute_uses_ordinals_when_target_key_column_absent():
+    """Without the column, position addresses the pieces (1-based) — the
+    original contract for unlabelled outputs."""
+    set_schema(["subject", "session"])
+    result = for_each(
+        lambda: pd.DataFrame({"val": [1.0, 2.0]}),
+        inputs={},
+        distribute=True,
+        subject=[1],
+    )
+    assert list(result["session"]) == [1, 2]
+
+
+def test_distribute_column_reading_top_of_schema_nothing_iterated():
+    """The 2026-09-15 loadFunctionalOutcomes shape with distribute ON: no
+    schema level iterated, so the target is the top of the schema. A
+    'subject' column addresses the pieces; a 'session' column is an unpinned
+    schema key, so the spread rule files each piece at (subject, session)."""
+    set_schema(["subject", "session", "speed"])
+    result = for_each(
+        lambda: pd.DataFrame(
+            {"subject": ["A", "A", "B"], "session": [1, 2, 1], "val": [1.0, 2.0, 3.0]}
+        ),
+        inputs={},
+        distribute=True,
+    )
+    assert len(result) == 3
+    assert list(result["subject"]) == ["A", "A", "B"]
+    assert list(result["session"]) == [1, 2, 1]
+    assert list(result.columns).count("subject") == 1
+    assert "speed" not in result.columns
+
+
 def test_distribute_at_deepest_key_still_raises():
     """There is no escape hatch below the deepest key, and that guard is what
     makes 'add a schema level' the honest answer rather than distribute."""
@@ -1916,3 +1974,96 @@ def test_case_a_adopts_template_keys_in_placeholder_order(tmp_path):
     # adopted once, at first appearance.
     key_cols = [c for c in result.columns if c in {"subject", "session", "speed"}]
     assert key_cols == ["subject", "session", "speed"]
+
+
+# ---------------------------------------------------------------------------
+# spread_nested_results — the spread rule applied to a nested-mode table
+# (what the MATLAB loop hands back across the bridge)
+# ---------------------------------------------------------------------------
+
+
+def _nested(rows):
+    """Build a nested-mode result table: metadata columns + 'Out' cells."""
+    return pd.DataFrame(rows)
+
+
+def test_spread_nested_results_spreads_labelled_table(caplog):
+    """The 2026-09-15 loadFunctionalOutcomes shape: nothing iterated, ONE
+    combination row whose 'Out' cell is a table carrying subject/session.
+    Every row must get its own address, exactly as the Python loop files it."""
+    from scifor.foreach import spread_nested_results
+
+    inner = pd.DataFrame(
+        {"subject": ["A", "A", "B"], "session": [1, 2, 1], "val": [1.0, 2.0, 3.0]}
+    )
+    nested = _nested([{"Out": inner}])
+    with caplog.at_level(logging.INFO):
+        out = spread_nested_results(nested, ["Out"], ["subject", "session", "speed"])
+    assert len(out) == 3
+    assert "Out" not in out.columns  # flat: data columns spread directly
+    assert list(out["subject"]) == ["A", "A", "B"]
+    assert list(out["session"]) == [1, 2, 1]
+    assert list(out["val"]) == [1.0, 2.0, 3.0]
+    assert "discriminated by unpinned schema key(s)" in caplog.text
+
+
+def test_spread_nested_results_keeps_metadata_per_row():
+    """Pinned metadata (an iterated subject, a __rid_* column) is replicated
+    onto every spread row; the unpinned key comes from the data."""
+    from scifor.foreach import spread_nested_results
+
+    nested = _nested(
+        [
+            {
+                "subject": "A",
+                "__rid_x": "r1",
+                "Out": pd.DataFrame({"session": [1, 2], "val": [1.0, 2.0]}),
+            },
+            {
+                "subject": "B",
+                "__rid_x": "r2",
+                "Out": pd.DataFrame({"session": [1], "val": [3.0]}),
+            },
+        ]
+    )
+    out = spread_nested_results(nested, ["Out"], ["subject", "session"])
+    assert len(out) == 3
+    assert list(out["subject"]) == ["A", "A", "B"]
+    assert list(out["__rid_x"]) == ["r1", "r1", "r2"]
+    assert list(out["session"]) == [1, 2, 1]
+
+
+def test_spread_nested_results_unlabelled_table_stays_one_row(caplog):
+    """A multi-row table with NO schema-key column has nothing to address
+    its rows with — one record per combination, table kept whole in the
+    output cell, and the log says so."""
+    from scifor.foreach import spread_nested_results
+
+    inner = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    nested = _nested([{"subject": "A", "Out": inner}])
+    with caplog.at_level(logging.INFO):
+        out = spread_nested_results(nested, ["Out"], ["subject", "session"])
+    assert len(out) == 1
+    assert list(out.columns) == ["subject", "Out"]
+    assert out["Out"].iloc[0].equals(inner)
+    assert "saving each whole table as ONE record" in caplog.text
+
+
+def test_spread_nested_results_non_dataframe_cells_pass_through():
+    """Scalars / arrays are not spread candidates; the table comes back with
+    the same rows and values."""
+    from scifor.foreach import spread_nested_results
+
+    nested = _nested([{"subject": "A", "Out": 1.5}, {"subject": "B", "Out": 2.5}])
+    out = spread_nested_results(nested, ["Out"], ["subject", "session"])
+    assert len(out) == 2
+    assert list(out["Out"]) == [1.5, 2.5]
+
+
+def test_spread_nested_results_ignores_absent_output_columns():
+    """An already-flat table (no output column present) is returned as is."""
+    from scifor.foreach import spread_nested_results
+
+    flat = pd.DataFrame({"subject": ["A"], "val": [1.0]})
+    out = spread_nested_results(flat, ["Out"], ["subject"])
+    assert out is flat

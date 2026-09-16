@@ -22,6 +22,7 @@ from sciduckdb import (
     _storage_to_python_column,
     _unflatten_dict,
     _value_to_storage_row,
+    count_null_list_elements,
 )
 
 from .exceptions import (
@@ -2521,12 +2522,23 @@ class DatabaseManager:
             if mode == "dataframe":
                 # One DuckDB row per DataFrame row: apply _storage_to_python per cell.
                 result = {}
+                null_counts: dict = {}
                 for c, meta in columns_meta.items():
                     if c in row_df.columns:
+                        n_null = count_null_list_elements(row_df[c])
+                        if n_null:
+                            null_counts[c] = n_null
                         result[c] = [
                             _storage_to_python(row_df[c].iloc[i], meta)
                             for i in range(len(row_df))
                         ]
+                if null_counts:
+                    # DEBUG here: load() is per record, and a bulk MATLAB load
+                    # of GAITRiteLoaded would otherwise emit 420 lines.
+                    Log.debug(
+                        f"load({type_name}, {record_id}): restored NULL list "
+                        f"element(s) as NaN: {null_counts}"
+                    )
                 df_columns = dtype_meta.get("df_columns", list(columns_meta.keys()))
                 data = pd.DataFrame(result, columns=df_columns)
             else:
@@ -3158,9 +3170,22 @@ class DatabaseManager:
         )
 
         # -- Apply vectorized type restoration to data columns --
+        # NULL list elements come back from DuckDB as masked arrays and are
+        # restored as NaN by sciduckdb; count them BEFORE restoration so the
+        # log says how many were touched (they used to become 0 — 2026-09-15).
+        null_counts: dict = {}
         for col, col_meta in columns_meta.items():
             if col in data_df.columns:
+                n_null = count_null_list_elements(data_df[col])
+                if n_null:
+                    null_counts[col] = n_null
                 data_df[col] = _storage_to_python_column(data_df[col], col_meta)
+        if null_counts:
+            Log.info(
+                f"load_all_as_df({variable_class.__name__}): restored "
+                f"{sum(null_counts.values())} NULL list element(s) as NaN in "
+                f"{len(null_counts)} column(s): {null_counts}"
+            )
 
         # -- Build metadata DataFrame --
         meta_dict: dict = {}
