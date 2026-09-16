@@ -339,9 +339,17 @@ def _normalize_cell(value: Any) -> Any:
 
 
 def _float_row(row: Any) -> np.ndarray:
-    """One 1-D float64 array from a row/cell, a masked element becoming NaN."""
-    masked = np.ma.asarray(row, dtype="float64")
-    return np.ma.filled(masked, np.nan)
+    """One 1-D float64 array from a row/cell, a masked element becoming NaN.
+
+    Delegates to sciduckdb, which OWNS what a stored cell means: the same
+    mask-dropping bug was found and fixed independently here (2026-09-13) and
+    in ``storage path (2026-09-15), two days apart, because the rule
+    lived in two places. It lives in one now — this layer still decides WHEN to
+    apply it, since it has no dtype metadata and infers shape from the value.
+    """
+    from sciduckdb import array_from_storage
+
+    return array_from_storage(row, np.dtype("float64"))
 
 
 def _object_column(cells: list, index) -> pd.Series:

@@ -247,7 +247,7 @@ def _python_to_storage(value: Any, meta: dict) -> Any:
     return value
 
 
-def _array_from_storage(value: Any, dtype: np.dtype) -> np.ndarray:
+def array_from_storage(value: Any, dtype: np.dtype) -> np.ndarray:
     """``np.asarray`` for a stored list value that may carry NULL elements.
 
     DuckDB hands a LIST holding NULL elements back as a ``numpy.ma.MaskedArray``.
@@ -343,14 +343,14 @@ def _storage_to_python(value: Any, meta: dict) -> Any:
             # TestFromPython.test_numpy_2d_orientation_is_not_transposed), so
             # NaN-free data must take the exact path it always took.
             if isinstance(value, np.ma.MaskedArray):
-                return _array_from_storage(value, dtype)
+                return array_from_storage(value, dtype)
             if any(
                 isinstance(row, np.ma.MaskedArray) and np.ma.is_masked(row)
                 for row in value
             ):
-                return np.stack([_array_from_storage(row, dtype) for row in value])
+                return np.stack([array_from_storage(row, dtype) for row in value])
             return np.stack([np.asarray(row) for row in value]).astype(dtype)
-        return _array_from_storage(value, dtype)
+        return array_from_storage(value, dtype)
 
     if ptype == "ndarray_json":
         dtype = np.dtype(meta.get("numpy_dtype", "float64"))
@@ -377,7 +377,7 @@ def _storage_to_python(value: Any, meta: dict) -> Any:
         if meta.get("contains_ndarray"):
             # Restore as list of ndarrays
             dtype = np.dtype(meta.get("ndarray_dtype", "float64"))
-            return [_array_from_storage(v, dtype) for v in value]
+            return [array_from_storage(v, dtype) for v in value]
         if isinstance(value, np.ndarray):
             if meta.get("nested"):
                 return [v.tolist() if isinstance(v, np.ndarray) else v for v in value]
@@ -703,7 +703,7 @@ def _bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) 
 
     if nan_counts:
         # DuckDB's pandas scanner stores these as NULL; the loader restores
-        # them as NaN (_array_from_storage). Said once per batch so a
+        # them as NaN (array_from_storage). Said once per batch so a
         # NaN-vs-NULL question is answerable from the log.
         logger.info(
             "array column(s) contain NaN — stored as NULL, reload as NaN: %s",
@@ -883,6 +883,38 @@ class SciDuck:
             except Exception:
                 logger.exception(
                     "_execute FAILED thread=%d tx_owner=%s foreign_tx=%s sql=%s",
+                    thread, self._tx_owner, foreign_tx, _truncate_sql(sql),
+                )
+                self._recover_from_autocommit_failure()
+                raise
+
+    def _fetch_table(self, sql: str, params=None) -> tuple[list[str], list[tuple]]:
+        """``(column_names, rows)`` with SQL NULL preserved as ``None``.
+
+        ``_fetchdf`` goes through pandas, which has no NULL for a float column:
+        every NULL DOUBLE arrives as NaN and becomes indistinguishable from a
+        stored NaN. That is fine for computation and wrong for a diagnostic —
+        the `scidb sql` renderer printed `nan` for a NULL and sent an
+        investigation chasing a save-path difference that did not exist
+        (2026-09-15). Callers that must report what the database actually holds
+        use this instead.
+        """
+        thread = threading.get_ident()
+        wait_start = time.monotonic()
+        with self._lock:
+            waited = time.monotonic() - wait_start
+            foreign_tx = self._tx_owner is not None and self._tx_owner != thread
+            logger.debug(
+                "_fetch_table thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s sql=%s",
+                thread, waited, self._tx_owner, foreign_tx, _truncate_sql(sql),
+            )
+            try:
+                cur = self.con.execute(sql, params) if params else self.con.execute(sql)
+                columns = [d[0] for d in (cur.description or [])]
+                return columns, cur.fetchall()
+            except Exception:
+                logger.exception(
+                    "_fetch_table FAILED thread=%d tx_owner=%s foreign_tx=%s sql=%s",
                     thread, self._tx_owner, foreign_tx, _truncate_sql(sql),
                 )
                 self._recover_from_autocommit_failure()

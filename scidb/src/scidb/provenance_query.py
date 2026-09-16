@@ -2363,3 +2363,34 @@ def expected_invocations_for_function(
             _predict_config_invocations(duck, fn_hash, fallback_cfg, expected)
 
     return expected
+
+
+def variable_content_fingerprint(duck, variable: str) -> tuple[int, int]:
+    """``(n_records, fingerprint)`` over a variable's non-excluded records.
+
+    A cheap answer to "has this variable's CONTENT changed?", for caches that
+    hold a whole variable and cannot be told when someone writes to it. Both
+    halves derive from ``record_id``, which is a content hash, so:
+
+    * re-running a function over unchanged inputs produces the SAME record_ids
+      and leaves the fingerprint alone — a cache built before that run is still
+      correct and must not be thrown away;
+    * a run whose output differs anywhere writes new record_ids and changes the
+      fingerprint, as does excluding or un-excluding a record.
+
+    Deliberately NOT ``max(timestamp)`` over ``_record_save``: every execution
+    appends a save event even when it stores nothing new (that table is the
+    audit trail), so a timestamp watermark would invalidate on every re-run
+    including the no-op ones.
+
+    ``bit_xor`` over per-id hashes is order-independent and needs no sort, so
+    this stays one aggregate scan whatever the row count.
+    """
+    row = duck._fetchone(
+        "SELECT count(*), coalesce(bit_xor(hash(record_id)), 0) "
+        "FROM _record WHERE type = ? AND excluded IS DISTINCT FROM TRUE",
+        [variable],
+    )
+    if not row:
+        return (0, 0)
+    return (int(row[0]), int(row[1] or 0))

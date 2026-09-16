@@ -60,6 +60,33 @@ class TestSql:
         # timestamps must arrive as ISO strings, not raw datetime objects
         assert all(isinstance(row[1], str) for row in result.rows)
 
+    def test_null_is_none_not_nan(self, insp):
+        """A NULL DOUBLE must report as NULL, not as the number nan.
+
+        `sql` used to fetch through pandas, which has no NULL for a float
+        column — so a NULL arrived as NaN and printed as `nan`, making a NULL
+        indistinguishable from a stored NaN. That sent a live investigation
+        after a save-path difference that did not exist (2026-09-15).
+        """
+        result = insp.sql("SELECT CAST(NULL AS DOUBLE) AS v, CAST(1.5 AS DOUBLE) AS w")
+        assert result.rows == [[None, 1.5]]
+
+    def test_null_renders_as_the_word_null(self, db_path, capsys):
+        assert (
+            main(
+                [
+                    "--db",
+                    str(db_path),
+                    "sql",
+                    "SELECT CAST(NULL AS DOUBLE) AS v",
+                ]
+            )
+            == 0
+        )
+        out = capsys.readouterr().out
+        assert "NULL" in out
+        assert "nan" not in out
+
     def test_write_rejected_read_only(self, insp):
         with pytest.raises(Exception, match="(?i)read.only"):
             insp.sql("CREATE TABLE _sneaky (i INTEGER)")

@@ -103,6 +103,13 @@ class ScidbSource(BaseSource):
         self._variant_frames: dict[str, Any] = {}
         self._shapes: dict[str, Shape] = {}
         self._levels: dict[str, list[str]] = {}
+        # variable -> the content fingerprint its cached frames were built at.
+        # Checked on every cache hit, because nothing tells this process when
+        # records are written (see `_cache_is_current`).
+        self._fingerprints: dict[str, tuple[int, int]] = {}
+        # Set once if the fingerprint query itself fails, so the warning that
+        # self-validation is off is said exactly once per source.
+        self._fingerprint_failed = False
         # Whether tables from this source carry the numpy reducer
         # (``scistackplot.NumpyReducer``, over the ndarray cells `load_variable`
         # delivers) or the pandas reference. On by default — the reference is
@@ -327,12 +334,73 @@ class ScidbSource(BaseSource):
 
     # ---- data ------------------------------------------------------------
 
+    def _content_fingerprint(self, variable: str):
+        """This variable's current content fingerprint, or None if unavailable.
+
+        Never fatal: a fingerprint we cannot compute means "cannot prove the
+        cache is stale", and a plot that fails to draw would be a worse answer
+        than one drawn from a cache that is almost certainly still good.
+        """
+        try:
+            from scidb.provenance_query import variable_content_fingerprint
+
+            return variable_content_fingerprint(self._db._duck, variable)
+        except Exception as exc:
+            # WARN, once per source, not DEBUG: failing here degrades silently
+            # to "keep the cache forever", which IS the bug this exists to fix.
+            # A stale figure that nobody can explain is far worse than a noisy
+            # line, so say it out loud the first time.
+            if not self._fingerprint_failed:
+                self._fingerprint_failed = True
+                Log.warn(
+                    "cannot fingerprint variable content (%s: %s) — cached plot "
+                    "frames can no longer detect new records in this session; "
+                    "re-open the panel after a run to be sure of what you see",
+                    type(exc).__name__,
+                    exc,
+                    layer=LAYER,
+                )
+            return None
+
+    def _cache_is_current(self, variable: str) -> bool:
+        """True when the cached frame still matches what the database holds.
+
+        The cache cannot be told when records appear: a MATLAB run driven from
+        a terminal never reports completion to this process, and neither does
+        the `scidb` CLI or a second GUI. So it asks the database instead, on
+        every hit. `record_id` is a content hash, which is what makes this
+        precise rather than merely conservative — a re-run that produces
+        IDENTICAL data leaves the fingerprint untouched and keeps the cache,
+        while any real change drops it (2026-09-15: a re-run wrote 390 new
+        records and the plot kept serving the pre-run frame for the rest of
+        the session).
+        """
+        current = self._content_fingerprint(variable)
+        if current is None:
+            return True
+        cached = self._fingerprints.get(variable)
+        if cached is None or cached == current:
+            return True
+        Log.info(
+            "variable content changed: %s (%d record(s) fp=%d -> %d record(s) "
+            "fp=%d) — dropping its cached frames",
+            variable,
+            cached[0],
+            cached[1],
+            current[0],
+            current[1],
+            layer=LAYER,
+        )
+        return False
+
     def _variable_frame(self, variable: str):
         # Hit/miss at INFO: this cache is the difference between a request that
         # reads the whole variable and one that reads nothing, and a plot request
         # that returned in milliseconds is otherwise unattributable
         # (.claude/plot-at-scale-plan.md §1). The layer below (load_variable)
         # reports what a miss actually cost.
+        if variable in self._frames and not self._cache_is_current(variable):
+            self.invalidate(variable)
         if variable in self._frames:
             Log.info("variable frame cache HIT: %s", variable, layer=LAYER)
             return self._frames[variable]
@@ -346,8 +414,14 @@ class ScidbSource(BaseSource):
                 )
                 return self._frames[variable]
             Log.info("variable frame cache MISS: %s — loading", variable, layer=LAYER)
+            # Read BEFORE the load, not after: a run committing records while
+            # we read would otherwise be stamped as already included, and the
+            # frame we are about to store — which does not contain them —
+            # would look current forever.
+            fingerprint_before = self._content_fingerprint(variable)
             frame = load_variable(self._db, variable)
             self._frames[variable] = frame
+            self._fingerprints[variable] = fingerprint_before
             return frame
 
         # Deduped for the same reason get_table is, one layer down: two DIFFERENT
@@ -956,6 +1030,12 @@ class ScidbSource(BaseSource):
         Its own cache, never ``_frames``: a data-less frame stored there would
         be handed to a later plot as though it held the measure.
         """
+        # Same self-validation as the data frame: this cache is what served a
+        # stale `variant_table` for a whole session after a re-run (2026-09-15).
+        if (
+            variable in self._frames or variable in self._variant_frames
+        ) and not self._cache_is_current(variable):
+            self.invalidate(variable)
         if variable in self._frames:
             return self._frames[variable]
         if variable not in self._variant_frames:
@@ -964,9 +1044,11 @@ class ScidbSource(BaseSource):
                 variable,
                 layer=LAYER,
             )
+            fingerprint_before = self._content_fingerprint(variable)
             self._variant_frames[variable] = load_variable(
                 self._db, variable, include_data=False
             )
+            self._fingerprints[variable] = fingerprint_before
         return self._variant_frames[variable]
 
     def variant_graph(self, variable: str, functions: list[str] | None = None) -> dict:
@@ -1478,6 +1560,7 @@ class ScidbSource(BaseSource):
             self._variant_frames.clear()
             self._shapes.clear()
             self._levels.clear()
+            self._fingerprints.clear()
         else:
             self._frames.pop(variable, None)
             # Provenance goes stale with the data: a re-run writes new records
@@ -1486,6 +1569,7 @@ class ScidbSource(BaseSource):
             self._variant_frames.pop(variable, None)
             self._shapes.pop(variable, None)
             self._levels.pop(variable, None)
+            self._fingerprints.pop(variable, None)
         # Built tables are derived from those frames, so they are stale too —
         # and they are keyed by measure NAMES, which cannot say which variable a
         # stacked table drew from. Dropping all of them is the only answer that

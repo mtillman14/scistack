@@ -186,3 +186,4 @@ class TestRoundTrip:
         out = duck.load("clean", subject="S01", trial="1")["v"]
         np.testing.assert_array_equal(out, [0.0, 1.0, 2.0])
         assert not np.any(np.isnan(out))
+

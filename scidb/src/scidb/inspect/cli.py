@@ -336,7 +336,12 @@ def _cmd_sql(insp: Inspector, args) -> None:
     if args.json:
         _emit_json(result)
     else:
-        print(render.format_table(result.columns, result.rows))
+        # Spell NULL out here rather than in format_table: elsewhere a None is
+        # an absent field and blank reads better, but `sql` reports what the
+        # database holds, where blank is ambiguous with an empty string and a
+        # NULL is often the answer being looked for.
+        rows = [["NULL" if v is None else v for v in row] for row in result.rows]
+        print(render.format_table(result.columns, rows))
         print(f"({result.row_count} rows)")
 
 

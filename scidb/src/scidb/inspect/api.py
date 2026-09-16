@@ -1086,13 +1086,14 @@ class Inspector:
                 pass
             return str(value)
 
-        df = self._duck._fetchdf(query)
+        # _fetch_table, not _fetchdf: pandas turns a NULL DOUBLE into NaN, so a
+        # NULL would be reported as the number `nan` by the one command whose
+        # job is to say what the database actually holds.
+        columns, rows = self._duck._fetch_table(query)
         return SqlResult(
-            columns=[str(c) for c in df.columns],
-            rows=[
-                [cell(v) for v in row] for row in df.itertuples(index=False, name=None)
-            ],
-            row_count=len(df),
+            columns=[str(c) for c in columns],
+            rows=[[cell(v) for v in row] for row in rows],
+            row_count=len(rows),
         )
 
     # -- report (endpoint surface; see inspect/report.py) -------------------

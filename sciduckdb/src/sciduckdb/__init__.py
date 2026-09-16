@@ -15,6 +15,7 @@ from .sciduckdb import (
     _storage_to_python_column,
     _unflatten_dict,
     _value_to_storage_row,
+    array_from_storage,
     count_nan_array_elements,
     count_null_list_elements,
     schema_keys_from_db,
@@ -23,6 +24,7 @@ from .sciduckdb import (
 __all__ = [
     "SciDuck",
     "schema_keys_from_db",
+    "array_from_storage",
     "count_null_list_elements",
     "count_nan_array_elements",
     "_infer_duckdb_type",

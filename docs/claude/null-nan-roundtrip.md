@@ -140,8 +140,22 @@ Two traps, both hit during the investigation:
    late in the frame is never visible. Use `scidb sql` against `<Type>_data`
    for a specific column.
 
-`scidb sql` now renders masked elements as `NULL` rather than numpy's `--`
-(which reads like data).
+3. **`scidb sql` used to print a NULL as `nan`.** It fetched through
+   `_fetchdf`, and pandas has no NULL for a float column, so every NULL
+   `DOUBLE` arrived as NaN — which made a NULL indistinguishable from a
+   stored NaN in the one command whose job is to report what is stored. It
+   cost a wrong hypothesis (a save-path difference between the "normal" and
+   "flatten" batch paths) that a follow-up query disproved: `n_null=212,
+   n_nan=0`. `Inspector.sql` now uses `SciDuck._fetch_table`, which keeps
+   NULL as `None`, and the CLI prints the word `NULL`.
+
+**There is exactly one stored form.** A missing number is a NULL, whichever
+save path wrote it; `count(*) FILTER (WHERE isnan(col[1]))` returns 0 across
+the real data. If that ever stops being true, the contract at the top of this
+document is what broke.
+
+`scidb sql` also renders masked list elements as `NULL` rather than numpy's
+`--` (which reads like data).
 
 ```
 scidb sql "SELECT rowid, record_id, L_StepLengths_GR FROM GAITRiteLoaded_data
