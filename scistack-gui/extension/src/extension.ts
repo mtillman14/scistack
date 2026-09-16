@@ -261,6 +261,12 @@ async function startPipeline(
   }
 
   // Create or reveal the DAG Webview panel
+  // Plot tabs outlive the process they were opened with (retainContextWhenHidden),
+  // so they must be rebound too, or their next RPC hits a destroyed stdin.
+  const reboundPlots = PlotPanel.updatePythonProcess(pythonProcess);
+  if (reboundPlots > 0) {
+    outputChannel.appendLine(`Rebound ${reboundPlots} plot panel(s) to the new server`);
+  }
   if (dagPanel) {
     dagPanel.updatePythonProcess(pythonProcess);
     dagPanel.reveal();

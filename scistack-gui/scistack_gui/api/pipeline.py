@@ -211,6 +211,16 @@ def _wiring_conflicts_with_candidate(
         real_type = candidate_input_params.get(param)
         if real_type and real_type != var_type:
             return True
+        if not real_type:
+            # The manual node ACTIVELY binds a variable to a parameter the
+            # candidate has no variable on (added to the signature after the
+            # candidate's runs, or left unbound there). That is a different
+            # wiring, not missing information: graduating would fold this
+            # node into the candidate and the edge would then only be
+            # honoured as an overlay on it (graph_builder.manual_input_
+            # overrides) — the user dragged a fresh node precisely to get a
+            # separate call site (grSides/Demographics, 2026-09-15).
+            return True
     if output_types and candidate_output_types:
         if not set(output_types) & set(candidate_output_types):
             return True
@@ -232,6 +242,57 @@ def _find_db_fn_candidate(
     if key not in agg.fn_input_params and key not in agg.fn_outputs:
         return None
     return agg.fn_input_params.get(key, {}), agg.fn_outputs.get(key, set())
+
+
+def _migrate_column_selections(
+    db, node_configs: dict[str, dict], old_id: str, new_id: str
+) -> dict | None:
+    """Carry ``columnSelections`` from the node a manual input overlay was
+    configured on to the node its run produced (graph_builder.
+    superseded_manual_input_overrides), unless the new node already has its
+    own. Returns the map that was copied, or None.
+
+    Config keys may be bare or placement-qualified (``::scope``); the copy
+    keeps whatever suffix the source key had. ``node_configs`` is updated in
+    place so ``apply_placement_configs`` later in the same build rehydrates
+    a qualified copy without a second fetch.
+
+    Only the column selection moves. It is the one setting the run that
+    created the new node actually USED (``_attach_column_selections`` reads
+    it off the old node id), so leaving it behind would make the new node's
+    next run silently load whole tables — the trap column-selection.md
+    documents. The other saved settings were never applied to that run and
+    stay where they were.
+    """
+    from scistack_gui import pipeline_store as _store
+    from scistack_gui.domain.graph_builder import strip_placement
+
+    old_bare, new_bare = strip_placement(old_id), strip_placement(new_id)
+    if any(
+        cfg.get("columnSelections")
+        for nid, cfg in node_configs.items()
+        if strip_placement(nid) == new_bare
+    ):
+        return None
+    for nid, cfg in list(node_configs.items()):
+        if strip_placement(nid) != old_bare:
+            continue
+        selections = cfg.get("columnSelections")
+        if not selections:
+            continue
+        target_key = new_bare + nid[len(old_bare) :]
+        merged = {**node_configs.get(target_key, {}), "columnSelections": selections}
+        _store.update_node_config(db, target_key, merged)
+        node_configs[target_key] = merged
+        logger.info(
+            "[pipeline] column selection %s migrated from %s to %s (the run that "
+            "created the new node used it)",
+            selections,
+            nid,
+            target_key,
+        )
+        return selections
+    return None
 
 
 def _compute_run_states(
@@ -745,6 +806,65 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         fn_node_count,
     )
 
+    # --- Manual input edges onto history nodes ---
+    # The edges visible on the DAG are the ground truth, for display and for
+    # execution (docs/claude/manual-edges-on-history-nodes.md). A history
+    # node's input_params come from provenance above; a manual variable edge
+    # the user drew onto one of its in__ handles must show there too, or the
+    # handle, the Inputs column picker and the code export all describe a
+    # wiring the run (variant_resolver.reconcile_manual_inputs, same rule
+    # owner) will not use. Node identity is untouched: the overlay is on the
+    # built node data only.
+    #
+    # Once the overlaid wiring has actually RUN, history carries it under a
+    # second node id, so the overlay is superseded: the manual edge is moved
+    # onto that node (where build_edges' endpoint dedup folds it into the
+    # DB-derived edge — the row stays, hide never delete), this node reverts
+    # to its true history, and the column selection saved here follows the
+    # edge so the new node's next run does not silently load whole tables.
+    input_overrides = gb.collect_manual_input_overrides(
+        nodes,
+        agg.fn_input_params,
+        agg.fn_constants,
+        manual_edges_for_fn_lookup,
+        manual_nodes,
+        hidden_edge_ids,
+    )
+    if input_overrides:
+        overlay_rewrites, superseded_overlays = gb.superseded_manual_input_overrides(
+            input_overrides,
+            agg.fn_input_params,
+            agg.fn_outputs,
+            agg.path_inputs,
+            manual_edges_for_fn_lookup,
+            manual_nodes,
+        )
+        for rewritten in overlay_rewrites:
+            _ps.write_manual_edge(db, rewritten)
+            for me in manual_edges_for_fn_lookup:
+                if me["id"] == rewritten["id"]:
+                    me["target"] = rewritten["target"]
+            logger.info(
+                "[pipeline] manual edge %s moved onto %s — its overlaid wiring "
+                "has run and is now history there",
+                rewritten["id"],
+                rewritten["target"],
+            )
+        for old_id, new_id in superseded_overlays.items():
+            input_overrides.pop(old_id, None)
+            migrated = _migrate_column_selections(db, node_configs, old_id, new_id)
+            if migrated:
+                for n in nodes:
+                    if n["id"] == new_id and "columnSelections" not in n["data"]:
+                        n["data"]["columnSelections"] = migrated
+        overlaid = gb.overlay_manual_inputs(nodes, input_overrides)
+        if overlaid:
+            logger.info(
+                "[pipeline] manual input overlay applied to %d history node(s): %s",
+                overlaid,
+                input_overrides,
+            )
+
     # --- Tag disconnected function nodes ---
     # By this point agg is wiring-grouped, so function node ids are exactly
     # fn__{fn_name}__{wiring_id} — directly comparable to disconnected_wirings
@@ -977,6 +1097,33 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
                 e["source"] = action.new_id
             if e["target"] == action.old_id:
                 e["target"] = action.new_id
+        # Same in-memory patch for the node's config: build_function_nodes
+        # and apply_placement_configs read the pre-graduation node_configs
+        # snapshot, so without this the first response after a graduation
+        # shows defaults and every toggle looks reset until the next
+        # rebuild (pipeline_store.migrate_node_config moved the row).
+        # The snapshot must also FORGET the fresh id, or apply_placement_
+        # configs' orphan check (which reads this dict, not the DB) names a
+        # row that was just moved.
+        old_bare = gb.strip_placement(action.old_id)
+        for stale_key in [k for k in node_configs if gb.strip_placement(k) == old_bare]:
+            node_configs.pop(stale_key, None)
+        moved_cfg = _ps.get_node_config(db, action.new_id)
+        if moved_cfg:
+            node_configs[action.new_id] = moved_cfg
+            target_node = next(
+                (n for n in nodes if n["id"] == action.new_id), None
+            ) or next(
+                (n for n in nodes if n["id"] == gb.strip_placement(action.new_id)),
+                None,
+            )
+            if target_node is not None:
+                gb._apply_saved_config(target_node["data"], moved_cfg)
+                logger.debug(
+                    "[pipeline] applied graduated config %s onto %s in this response",
+                    sorted(moved_cfg),
+                    target_node["id"],
+                )
 
     # Build and append manual nodes that should be added.
     logger.info("[pipeline] Building %d manual node(s) to add", len(to_add))

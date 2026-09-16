@@ -599,12 +599,102 @@ def rename_edge_endpoints(db, old_id: str, new_id: str) -> None:
     )
 
 
+def migrate_node_config(db, old_id: str, new_id: str) -> dict:
+    """Move a node's saved settings from *old_id* to *new_id* — the third
+    thing graduation has to carry across, beside position and edges.
+
+    Sources, in increasing precedence: the legacy ``_pipeline_nodes.config``
+    column, then ``_node_config`` rows whose bare id is *old_id*'s (a fresh
+    node's config is usually keyed bare, sometimes ``::scope``-qualified).
+    The merged result is written OVER whatever *new_id* already has — the
+    fresh node's settings win: the realistic route to a conflict is a wired
+    fresh node the user configured and ran, whose settings produced the very
+    history it graduates into, so after graduation the node must run the way
+    it just ran (``.claude/plan-graduation-config-migration.md``). Values
+    that get replaced are logged verbatim, so nothing is silently gone.
+
+    The migrated ``_node_config`` row(s) are renamed away: this is a move —
+    the content lives on under *new_id* — and leaving the source row would
+    keep ``apply_placement_configs``' orphan WARN firing forever for a
+    setting that did rehydrate. Must run BEFORE the ``_pipeline_nodes`` row
+    is deleted, or the legacy column is gone.
+
+    Returns ``{"moved": [keys], "replaced": {key: previous_value}}``; both
+    empty when there was nothing to move.
+    """
+    from scistack_gui.domain.graph_builder import strip_placement
+
+    _ensure_tables(db)
+    old_bare = strip_placement(old_id)
+
+    def _parse(raw, label):
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw) or {}
+        except (ValueError, TypeError):
+            logger.warning(
+                "[pipeline_store] %s has unparseable config JSON — not migrated", label
+            )
+            return {}
+
+    merged: dict = {}
+    legacy = _duck(db)._fetchone(
+        "SELECT config FROM _pipeline_nodes WHERE node_id = ?", [old_id]
+    )
+    if legacy is not None:
+        merged.update(_parse(legacy[0], f"legacy row {old_id!r}"))
+    source_rows: list[str] = []
+    for nid, raw in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
+        if strip_placement(nid) != old_bare:
+            continue
+        source_rows.append(nid)
+    # Bare first, qualified after, so a scope-specific save wins over a bare one.
+    for nid in sorted(source_rows, key=lambda n: (n != old_bare, n)):
+        raw = _duck(db)._fetchone(
+            "SELECT config FROM _node_config WHERE node_id = ?", [nid]
+        )
+        merged.update(_parse(raw[0] if raw else None, f"config row {nid!r}"))
+
+    if not merged:
+        logger.debug(
+            "[pipeline_store] graduation %s -> %s: no saved config to move",
+            old_id,
+            new_id,
+        )
+        return {"moved": [], "replaced": {}}
+
+    target = get_node_config(db, new_id)
+    replaced = {k: target[k] for k in merged if k in target and target[k] != merged[k]}
+    update_node_config(db, new_id, {**target, **merged})
+    for nid in source_rows:
+        _duck(db)._execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
+
+    logger.info(
+        "[pipeline_store] graduation: config keys %s moved from %s to %s",
+        sorted(merged),
+        old_id,
+        new_id,
+    )
+    if replaced:
+        logger.info(
+            "[pipeline_store] graduation: %s's previous values replaced by the "
+            "fresh node's — previous: %s",
+            new_id,
+            replaced,
+        )
+    return {"moved": sorted(merged), "replaced": replaced}
+
+
 def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     """Remove the manual node entry for old_id (the DB-derived node takes over).
 
     Also rewrites any manual edges that reference old_id so they point to
-    new_id instead of becoming dangling.
+    new_id instead of becoming dangling, and moves the node's saved config
+    across (migrate_node_config — before the row delete, which would take
+    the legacy config column with it).
     """
+    migrate_node_config(db, old_id, new_id)
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id])
     rename_edge_endpoints(db, old_id, new_id)
 

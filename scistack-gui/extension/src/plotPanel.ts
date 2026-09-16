@@ -44,7 +44,7 @@ export class PlotPanel {
    * Every open plot tab, including the `newTab` ones `current` does not track.
    * Push notifications go here — see `broadcast`.
    */
-  private static openPanels = new PanelRegistry();
+  private static openPanels = new PanelRegistry<PythonProcess>();
 
   private panel: vscode.WebviewPanel;
   private disposables: vscode.Disposable[] = [];
@@ -66,6 +66,17 @@ export class PlotPanel {
     return PlotPanel.openPanels.send(msg);
   }
 
+  /**
+   * The server was restarted: every open plot tab must talk to the NEW
+   * process. Returns how many did. Called from `startPipeline` beside
+   * `dagPanel.updatePythonProcess` — a tab that keeps the old handle writes
+   * to a destroyed stdin and every `plot_*` RPC fails with
+   * ERR_STREAM_DESTROYED (2026-09-15).
+   */
+  static updatePythonProcess(proc: PythonProcess): number {
+    return PlotPanel.openPanels.rebind(proc);
+  }
+
   static show(
     context: vscode.ExtensionContext,
     pythonProcess: PythonProcess,
@@ -74,6 +85,8 @@ export class PlotPanel {
     options: { newTab?: boolean; column?: vscode.ViewColumn } = {},
   ): PlotPanel {
     if (!options.newTab && PlotPanel.current) {
+      // The reused tab may predate the process it is being shown with.
+      PlotPanel.current.updatePythonProcess(pythonProcess);
       PlotPanel.current.retarget(target);
       return PlotPanel.current;
     }
@@ -214,6 +227,15 @@ export class PlotPanel {
   /** Post a message into this panel's webview (the `MessageSink` contract). */
   postMessage(msg: Record<string, unknown>): void {
     this.panel.webview.postMessage(msg);
+  }
+
+  /** The other half of `MessageSink`: route later RPCs to a new server. */
+  updatePythonProcess(proc: PythonProcess): void {
+    if (proc === this.pythonProcess) return;
+    this.outputChannel.appendLine(
+      `plot panel: rebound to the restarted Python server (${this.title()})`,
+    );
+    this.pythonProcess = proc;
   }
 
   private title(): string {

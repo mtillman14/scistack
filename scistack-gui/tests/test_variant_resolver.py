@@ -9,7 +9,7 @@ from scistack_gui.domain.variant_resolver import (
     build_schema_kwargs,
     compute_call_id,
     deduplicate_variants,
-    filter_disconnected_targets,
+    reconcile_manual_inputs,
     filter_hidden_constant_value_targets,
     filter_hidden_targets,
     filter_variants,
@@ -502,7 +502,7 @@ class TestFilterHiddenConstantValueTargets:
         assert filter_hidden_constant_value_targets(targets, {"hz": {"10"}}) == []
 
 
-class TestFilterDisconnectedTargets:
+class TestReconcileManualInputsHiddenEdges:
     def _target(self, input_types=None, output_type="Out", constants=None):
         # `or` would silently treat an explicitly-passed {} as "use the
         # default" (empty dict is falsy) — tests below rely on {} being
@@ -520,7 +520,7 @@ class TestFilterDisconnectedTargets:
 
     def test_no_hidden_edges_returns_unchanged(self):
         targets = [self._target()]
-        assert filter_disconnected_targets(targets, "fn", set()) == targets
+        assert reconcile_manual_inputs(targets, "fn", set()) == targets
 
     def test_disconnected_var_input_dropped(self):
         from scistack_gui.domain.graph_builder import wiring_id
@@ -528,7 +528,7 @@ class TestFilterDisconnectedTargets:
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         hidden = {f"e__RawEMG__fn__{wid}"}
-        assert filter_disconnected_targets([target], "fn", hidden) == []
+        assert reconcile_manual_inputs([target], "fn", hidden) == []
 
     def test_disconnected_constant_input_dropped(self):
         from scistack_gui.domain.graph_builder import wiring_id
@@ -536,11 +536,11 @@ class TestFilterDisconnectedTargets:
         target = self._target({}, constants={"low_hz": 20})
         wid = wiring_id("fn", {}, {"Out"}, {})
         hidden = {f"e__low_hz__fn__{wid}"}
-        assert filter_disconnected_targets([target], "fn", hidden) == []
+        assert reconcile_manual_inputs([target], "fn", hidden) == []
 
     def test_unrelated_hidden_edge_keeps_target(self):
         target = self._target({"signal": "RawEMG"})
-        assert filter_disconnected_targets([target], "fn", {"e__Other__fn__deadbeef"}) == [
+        assert reconcile_manual_inputs([target], "fn", {"e__Other__fn__deadbeef"}) == [
             target
         ]
 
@@ -553,7 +553,7 @@ class TestFilterDisconnectedTargets:
         t2 = self._target({"signal": "RawEMG"}, constants={"hz": 20})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         hidden = {f"e__RawEMG__fn__{wid}"}
-        assert filter_disconnected_targets([t1, t2], "fn", hidden) == []
+        assert reconcile_manual_inputs([t1, t2], "fn", hidden) == []
 
     def test_different_wiring_of_same_function_name_unaffected(self):
         # compute_rolling_vo2 fed by RawVO2 in one wiring, RawHeartRate in
@@ -564,7 +564,7 @@ class TestFilterDisconnectedTargets:
         hr = self._target({"signal": "RawHeartRate"})
         wid_vo2 = wiring_id("fn", {"signal": "RawVO2"}, {"Out"}, {})
         hidden = {f"e__RawVO2__fn__{wid_vo2}"}
-        assert filter_disconnected_targets([vo2, hr], "fn", hidden) == [hr]
+        assert reconcile_manual_inputs([vo2, hr], "fn", hidden) == [hr]
 
     def test_multitype_input_list_checked_per_element(self):
         from scistack_gui.domain.graph_builder import wiring_id
@@ -572,10 +572,10 @@ class TestFilterDisconnectedTargets:
         target = self._target({"signal": ["A", "B"]})
         wid = wiring_id("fn", {"signal": ["A", "B"]}, {"Out"}, {})
         hidden = {f"e__B__fn__{wid}"}
-        assert filter_disconnected_targets([target], "fn", hidden) == []
+        assert reconcile_manual_inputs([target], "fn", hidden) == []
 
     def test_empty_targets_returns_empty(self):
-        assert filter_disconnected_targets([], "fn", {"anything"}) == []
+        assert reconcile_manual_inputs([], "fn", {"anything"}) == []
 
     def test_manual_reconnect_substitutes_new_input_type(self):
         # A manual edge onto the SAME handle a hidden inbound edge fed,
@@ -594,7 +594,7 @@ class TestFilterDisconnectedTargets:
                 "source": "var__OtherEMG",
             }
         ]
-        result = filter_disconnected_targets([target], "fn", hidden, manual_edges)
+        result = reconcile_manual_inputs([target], "fn", hidden, manual_edges)
         assert result == [
             {
                 "bindings": {"signal": {"kind": "variable", "ref": ["OtherEMG"]}},
@@ -619,7 +619,7 @@ class TestFilterDisconnectedTargets:
                 "source": "var__OtherEMG",
             }
         ]
-        assert filter_disconnected_targets([target], "fn", hidden, manual_edges) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, manual_edges) == []
 
     def test_partial_reconnection_multi_handle_still_drops(self):
         # Hidden var input AND hidden constant; manual edge covers only the
@@ -636,11 +636,15 @@ class TestFilterDisconnectedTargets:
                 "source": "var__OtherEMG",
             }
         ]
-        assert filter_disconnected_targets([target], "fn", hidden, manual_edges) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, manual_edges) == []
 
     def test_manual_reconnect_covers_one_of_multitype_list_elements(self):
-        # Reconnecting the in__signal handle collapses a multitype
-        # ["A", "B"] input down to the single manually-wired type.
+        # Multitype ["A", "B"] input, B's edge hidden, C wired manually onto
+        # the handle. The edges VISIBLE on the DAG are the ground truth
+        # (docs/claude/manual-edges-on-history-nodes.md): A's edge is still
+        # visible, so the handle now reads EachOf [A, C] — not C alone, which
+        # is what it meant before 2026-09-15 and which silently dropped a
+        # wire the user could see.
         from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
 
         target = self._target({"signal": ["A", "B"]})
@@ -649,20 +653,141 @@ class TestFilterDisconnectedTargets:
         manual_edges = [
             {"target": fn_node_id("fn", wid), "targetHandle": "in__signal", "source": "var__C"}
         ]
-        result = filter_disconnected_targets([target], "fn", hidden, manual_edges)
+        result = reconcile_manual_inputs([target], "fn", hidden, manual_edges)
         assert result == [
             {
-                "bindings": {"signal": {"kind": "variable", "ref": ["C"]}},
-                "input_types": {"signal": "C"},
+                "bindings": {"signal": {"kind": "variable", "ref": ["A", "C"]}},
+                "input_types": {"signal": ["A", "C"]},
                 "output_type": "Out",
                 "constants": {},
             }
         ]
 
 
-# ---------------------------------------------------------------------------
-# build_schema_kwargs
-# ---------------------------------------------------------------------------
+class TestReconcileManualInputsUnboundParams:
+    """Manual variable edges onto a parameter HISTORY NEVER BOUND (added to
+    the signature after the recorded runs — grSides/Demographics,
+    2026-09-15). No hidden edge is involved, so the old
+    filter_disconnected_targets never even looked at these."""
+
+    def _target(self, input_types, constants=None, call_id="stale"):
+        return {
+            "bindings": {
+                p: {"kind": "variable", "ref": t if isinstance(t, list) else [t]}
+                for p, t in input_types.items()
+            },
+            "input_types": dict(input_types),
+            "output_type": "Out",
+            "constants": constants or {},
+            "call_id": call_id,
+        }
+
+    def _edge(self, wid, handle, source, fn="fn"):
+        from scistack_gui.domain.graph_builder import fn_node_id
+
+        return {"target": fn_node_id(fn, wid), "targetHandle": handle, "source": source}
+
+    def test_unbound_param_bound_from_manual_edge(self):
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"}, constants={"low_hz": 20})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        edges = [self._edge(wid, "in__side", "var__Demographics")]
+
+        result = reconcile_manual_inputs([target], "fn", set(), edges)
+
+        assert len(result) == 1
+        assert result[0]["bindings"]["side"] == {"kind": "variable", "ref": ["Demographics"]}
+        assert result[0]["bindings"]["signal"] == {"kind": "variable", "ref": ["RawEMG"]}
+        assert result[0]["input_types"] == {"signal": "RawEMG", "side": "Demographics"}
+        assert result[0]["constants"] == {"low_hz": 20}, "history constants are kept"
+        assert "call_id" not in result[0], "stale call_id must be recomputed"
+
+    def test_runs_with_no_hidden_edges_at_all(self):
+        # The trigger used to be "hidden_edge_ids non-empty"; an unbound
+        # param has no hidden edge, so the reconcile must not short-circuit.
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        edges = [self._edge(wid, "in__side", "var__Demographics")]
+        assert reconcile_manual_inputs([target], "fn", None, edges)[0]["bindings"]["side"][
+            "ref"
+        ] == ["Demographics"]
+
+    def test_placement_qualified_target_id_matches(self):
+        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+
+        target = self._target({"signal": "RawEMG"})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        edges = [
+            {
+                "target": fn_node_id("fn", wid) + "::main",
+                "targetHandle": "in__side",
+                "source": "var__Demographics::main",
+            }
+        ]
+        result = reconcile_manual_inputs([target], "fn", set(), edges)
+        assert result[0]["bindings"]["side"]["ref"] == ["Demographics"]
+
+    def test_manual_edge_beside_visible_history_edge_is_each_of(self):
+        # Same picture on a fresh node means EachOf; a history node must
+        # read it the same way rather than ignore the wire the user drew.
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        edges = [self._edge(wid, "in__signal", "var__OtherEMG")]
+        result = reconcile_manual_inputs([target], "fn", set(), edges)
+        assert result[0]["bindings"]["signal"] == {
+            "kind": "variable",
+            "ref": ["RawEMG", "OtherEMG"],
+        }
+        assert result[0]["input_types"] == {"signal": ["RawEMG", "OtherEMG"]}
+
+    def test_hidden_reconnect_and_unbound_param_in_one_pass(self):
+        # Both on one node: the substitution changes the wiring id, so a
+        # two-pass design keyed on the new id would miss the second edge.
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        hidden = {f"e__RawEMG__fn__{wid}"}
+        edges = [
+            self._edge(wid, "in__signal", "var__OtherEMG"),
+            self._edge(wid, "in__side", "var__Demographics"),
+        ]
+        result = reconcile_manual_inputs([target], "fn", hidden, edges)
+        assert result[0]["input_types"] == {"signal": "OtherEMG", "side": "Demographics"}
+
+    def test_unbound_override_never_readmits_uncovered_hidden_handle(self):
+        # Partial reconnection stays dropped even when an unrelated manual
+        # edge binds a new param on the same node.
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"}, constants={"low_hz": 20})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        hidden = {f"e__low_hz__fn__{wid}"}
+        edges = [self._edge(wid, "in__side", "var__Demographics")]
+        assert reconcile_manual_inputs([target], "fn", hidden, edges) == []
+
+    def test_non_variable_source_is_not_an_override(self):
+        # PathInput / Parameter sources have their own binding rules.
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        edges = [self._edge(wid, "in__side", "pathInput__files")]
+        result = reconcile_manual_inputs([target], "fn", set(), edges)
+        assert result == [target]
+
+    def test_edge_on_another_wiring_does_not_leak(self):
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"})
+        other_wid = wiring_id("fn", {"signal": "Other"}, {"Out"}, {})
+        edges = [self._edge(other_wid, "in__side", "var__Demographics")]
+        assert reconcile_manual_inputs([target], "fn", set(), edges) == [target]
 
 
 class TestBuildSchemaKwargs:

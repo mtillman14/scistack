@@ -3019,3 +3019,300 @@ class TestPlacementQualifiedConfigRehydration:
         with caplog.at_level(logging.WARNING, logger="scistack_gui.domain.graph_builder"):
             apply_placement_configs(nodes, node_configs)
         assert not [r for r in caplog.records if "match no node" in r.getMessage()]
+
+
+class TestManualInputOverrides:
+    """graph_builder.manual_input_overrides — the one owner of "the edges
+    visible on the DAG are the ground truth" for a history node's inputs
+    (docs/claude/manual-edges-on-history-nodes.md)."""
+
+    FN = "grSides"
+
+    def _wid(self, inputs, outputs=("GRTable",)):
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        return wiring_id(self.FN, inputs, set(outputs), {})
+
+    def _index(self, wid, *edges):
+        from scistack_gui.domain.graph_builder import fn_node_id, manual_edge_handle_index
+
+        return manual_edge_handle_index(
+            [
+                {
+                    "id": f"manual__{i}",
+                    "source": src,
+                    "target": fn_node_id(self.FN, wid) + suffix,
+                    "targetHandle": handle,
+                }
+                for i, (src, handle, suffix) in enumerate(edges)
+            ]
+        )
+
+    def test_unbound_param_takes_the_manual_variable(self):
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = self._index(wid, ("var__Demographics", "in__side", ""))
+        assert manual_input_overrides(self.FN, wid, history, set(), index) == {
+            "side": "Demographics"
+        }
+
+    def test_placement_suffixes_on_both_endpoints_are_stripped(self):
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = self._index(wid, ("var__Demographics::main", "in__side", "::main"))
+        assert manual_input_overrides(self.FN, wid, history, set(), index) == {
+            "side": "Demographics"
+        }
+
+    def test_hidden_history_edge_plus_manual_edge_is_a_reconnect(self):
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = self._index(wid, ("var__OtherGR", "in__gr", ""))
+        hidden = {f"e__GAITRiteLoaded__{self.FN}__{wid}"}
+        assert manual_input_overrides(self.FN, wid, history, set(), index, None, hidden) == {
+            "gr": "OtherGR"
+        }
+
+    def test_visible_history_edge_plus_manual_edge_is_each_of(self):
+        # The same picture on a fresh node resolves to EachOf; a history
+        # node must not silently ignore a wire the user can see.
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = self._index(wid, ("var__OtherGR", "in__gr", ""))
+        assert manual_input_overrides(self.FN, wid, history, set(), index) == {
+            "gr": ["GAITRiteLoaded", "OtherGR"]
+        }
+
+    def test_handle_without_a_manual_edge_is_left_alone(self):
+        # Hidden-and-uncovered stays "disconnected" (reconcile's business),
+        # and a visible history binding is simply not in the result.
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded", "other": "X"}
+        wid = self._wid(history)
+        index = self._index(wid, ("var__Demographics", "in__side", ""))
+        hidden = {f"e__X__{self.FN}__{wid}"}
+        assert manual_input_overrides(self.FN, wid, history, set(), index, None, hidden) == {
+            "side": "Demographics"
+        }
+
+    def test_non_variable_sources_are_ignored(self):
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = self._index(
+            wid,
+            ("pathInput__files", "in__side", ""),
+            ("param__low_hz", "in__low_hz", ""),
+            ("fn__other__abc", "in__side2", ""),
+        )
+        assert manual_input_overrides(self.FN, wid, history, set(), index) == {}
+
+    def test_manual_variable_node_source_resolves_via_manual_nodes(self):
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = self._index(wid, ("mv_demo", "in__side", ""))
+        manual_nodes = {"mv_demo": {"type": "variableNode", "label": "Demographics"}}
+        assert manual_input_overrides(self.FN, wid, history, set(), index, manual_nodes) == {
+            "side": "Demographics"
+        }
+
+    def test_edges_on_other_wirings_do_not_leak(self):
+        from scistack_gui.domain.graph_builder import manual_input_overrides
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        other = self._wid({"gr": "Other"})
+        index = self._index(other, ("var__Demographics", "in__side", ""))
+        assert manual_input_overrides(self.FN, wid, history, set(), index) == {}
+
+
+class TestOverlayManualInputs:
+    FN = "grSides"
+
+    def _graph(self, history, manual_edges, hidden=frozenset(), extra_nodes=()):
+        from scistack_gui.domain.graph_builder import (
+            collect_manual_input_overrides,
+            fn_node_id,
+            wiring_id,
+        )
+
+        wid = wiring_id(self.FN, history, {"GRTable"}, {})
+        node_id = fn_node_id(self.FN, wid)
+        fn_input_params = {(self.FN, wid): dict(history)}
+        nodes = [
+            {
+                "id": node_id,
+                "type": "functionNode",
+                "data": {
+                    "label": self.FN,
+                    "input_params": {**history, "side": ""},
+                    "constant_params": [],
+                },
+            },
+            {"id": "var__Demographics", "type": "variableNode", "data": {}},
+            *extra_nodes,
+        ]
+        edges = [
+            {**e, "target": e["target"].replace("{node}", node_id)} for e in manual_edges
+        ]
+        overrides = collect_manual_input_overrides(
+            nodes, fn_input_params, {(self.FN, wid): set()}, edges, {}, hidden
+        )
+        return nodes, node_id, wid, fn_input_params, overrides
+
+    def test_overlay_fills_the_unbound_handle(self):
+        from scistack_gui.domain.graph_builder import overlay_manual_inputs
+
+        nodes, node_id, _, _, overrides = self._graph(
+            {"gr": "GAITRiteLoaded"},
+            [
+                {
+                    "id": "manual__1",
+                    "source": "var__Demographics",
+                    "target": "{node}::main",
+                    "targetHandle": "in__side",
+                }
+            ],
+        )
+        assert overrides == {node_id: {"side": "Demographics"}}
+        assert overlay_manual_inputs(nodes, overrides) == 1
+        data = nodes[0]["data"]
+        assert data["input_params"] == {"gr": "GAITRiteLoaded", "side": "Demographics"}
+        assert data["manual_inputs"] == {"side": "Demographics"}
+
+    def test_each_of_shows_first_source_and_keeps_the_list(self):
+        # input_params stays {param: str} for every frontend consumer; the
+        # full list rides in manual_inputs (same first-source choice the
+        # fresh-node path makes).
+        from scistack_gui.domain.graph_builder import overlay_manual_inputs
+
+        nodes, node_id, _, _, overrides = self._graph(
+            {"gr": "GAITRiteLoaded"},
+            [
+                {
+                    "id": "manual__1",
+                    "source": "var__Demographics",
+                    "target": "{node}",
+                    "targetHandle": "in__gr",
+                }
+            ],
+        )
+        overlay_manual_inputs(nodes, overrides)
+        data = nodes[0]["data"]
+        assert data["input_params"]["gr"] == "GAITRiteLoaded"
+        assert data["manual_inputs"] == {"gr": ["GAITRiteLoaded", "Demographics"]}
+
+    def test_no_manual_edges_touches_nothing(self):
+        from scistack_gui.domain.graph_builder import overlay_manual_inputs
+
+        nodes, _, _, _, overrides = self._graph({"gr": "GAITRiteLoaded"}, [])
+        assert overrides == {}
+        assert overlay_manual_inputs(nodes, overrides) == 0
+        assert "manual_inputs" not in nodes[0]["data"]
+
+
+class TestSupersededManualInputOverrides:
+    FN = "grSides"
+
+    def _wid(self, inputs):
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        return wiring_id(self.FN, inputs, {"GRTable"}, {})
+
+    def test_overlay_whose_wiring_has_run_moves_the_edge(self):
+        from scistack_gui.domain.graph_builder import (
+            fn_node_id,
+            superseded_manual_input_overrides,
+        )
+
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        new_wid = self._wid({"gr": "GAITRiteLoaded", "side": "Demographics"})
+        old_id, new_id = fn_node_id(self.FN, old_wid), fn_node_id(self.FN, new_wid)
+        fn_input_params = {
+            (self.FN, old_wid): {"gr": "GAITRiteLoaded"},
+            (self.FN, new_wid): {"gr": "GAITRiteLoaded", "side": "Demographics"},
+        }
+        fn_outputs = {(self.FN, old_wid): {"GRTable"}, (self.FN, new_wid): {"GRTable"}}
+        edge = {
+            "id": "manual__juqmgq",
+            "source": "var__Demographics::main",
+            "target": old_id + "::main",
+            "targetHandle": "in__side",
+        }
+        rewrites, superseded = superseded_manual_input_overrides(
+            {old_id: {"side": "Demographics"}}, fn_input_params, fn_outputs, {}, [edge]
+        )
+        assert superseded == {old_id: new_id}
+        assert rewrites == [{**edge, "target": new_id + "::main"}], (
+            "placement suffix preserved; the rewritten edge now duplicates the "
+            "DB-derived edge on the new node and build_edges' dedup folds it"
+        )
+
+    def test_overlay_whose_wiring_has_not_run_is_kept(self):
+        from scistack_gui.domain.graph_builder import (
+            fn_node_id,
+            superseded_manual_input_overrides,
+        )
+
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        old_id = fn_node_id(self.FN, old_wid)
+        fn_input_params = {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}}
+        edge = {
+            "id": "manual__1",
+            "source": "var__Demographics",
+            "target": old_id,
+            "targetHandle": "in__side",
+        }
+        rewrites, superseded = superseded_manual_input_overrides(
+            {old_id: {"side": "Demographics"}},
+            fn_input_params,
+            {(self.FN, old_wid): {"GRTable"}},
+            {},
+            [edge],
+        )
+        assert rewrites == [] and superseded == {}
+
+    def test_each_of_overlay_is_superseded_by_the_manual_variables_wiring(self):
+        # An EachOf run records one wiring per source; the history source's
+        # wiring is this node already, so the wiring to look for is history
+        # with the MANUAL edge's variable.
+        from scistack_gui.domain.graph_builder import (
+            fn_node_id,
+            superseded_manual_input_overrides,
+        )
+
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        new_wid = self._wid({"gr": "OtherGR"})
+        old_id, new_id = fn_node_id(self.FN, old_wid), fn_node_id(self.FN, new_wid)
+        fn_input_params = {
+            (self.FN, old_wid): {"gr": "GAITRiteLoaded"},
+            (self.FN, new_wid): {"gr": "OtherGR"},
+        }
+        fn_outputs = {(self.FN, old_wid): {"GRTable"}, (self.FN, new_wid): {"GRTable"}}
+        edge = {
+            "id": "manual__1",
+            "source": "var__OtherGR",
+            "target": old_id,
+            "targetHandle": "in__gr",
+        }
+        rewrites, superseded = superseded_manual_input_overrides(
+            {old_id: {"gr": ["GAITRiteLoaded", "OtherGR"]}},
+            fn_input_params,
+            fn_outputs,
+            {},
+            [edge],
+        )
+        assert superseded == {old_id: new_id}
+        assert rewrites[0]["target"] == new_id

@@ -175,6 +175,14 @@ export class PythonProcess {
     return this.exitCode;
   }
 
+  /** Why this process can no longer take a request, or null while it can. */
+  private deadReason(): string | null {
+    if (this.exitCode !== null) return `it exited with code ${this.exitCode}`;
+    if (this.proc.killed) return 'it was stopped';
+    if (!this.proc.stdin || this.proc.stdin.destroyed) return 'its input stream is closed';
+    return null;
+  }
+
   /**
    * Wait for the Python server to signal readiness.
    * Returns the ready notification params (db_name, schema_keys).
@@ -224,6 +232,17 @@ export class PythonProcess {
    * and configurable via `scistack.rpcTimeoutMs`.
    */
   request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    // A dead process cannot be written to. Say so, instead of letting Node
+    // report the symptom ("ERR_STREAM_DESTROYED: Cannot call write after a
+    // stream was destroyed"), which names neither the server nor the fix.
+    const gone = this.deadReason();
+    if (gone) {
+      this.outputChannel.appendLine(`RPC refused: ${method} — ${gone}`);
+      return Promise.reject(new Error(
+        `SciStack: the Python server is not running (${gone}). ` +
+        `Reopen the pipeline (or run "SciStack: Restart Python") and try again.`,
+      ));
+    }
     const id = this.nextId++;
     const timeoutMs = vscode.workspace
       .getConfiguration('scistack')
@@ -263,8 +282,14 @@ export class PythonProcess {
       const msg = JSON.stringify({ jsonrpc: '2.0', method, params, id });
       this.proc.stdin?.write(msg + '\n', (err) => {
         if (err) {
+          this.outputChannel.appendLine(`RPC write failed: ${method} — ${err.message}`);
           const pending = this.pending.get(id);
-          if (pending) pending.reject(err);
+          if (pending) {
+            pending.reject(new Error(
+              `SciStack: could not send '${method}' to the Python server ` +
+              `(${err.message}). It may have exited — check the SciStack output channel.`,
+            ));
+          }
         }
       });
     });

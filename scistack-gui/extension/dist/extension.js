@@ -161,6 +161,16 @@ var PythonProcess = class {
   getExitCode() {
     return this.exitCode;
   }
+  /** Why this process can no longer take a request, or null while it can. */
+  deadReason() {
+    if (this.exitCode !== null)
+      return `it exited with code ${this.exitCode}`;
+    if (this.proc.killed)
+      return "it was stopped";
+    if (!this.proc.stdin || this.proc.stdin.destroyed)
+      return "its input stream is closed";
+    return null;
+  }
   /**
    * Wait for the Python server to signal readiness.
    * Returns the ready notification params (db_name, schema_keys).
@@ -207,6 +217,13 @@ var PythonProcess = class {
    * and configurable via `scistack.rpcTimeoutMs`.
    */
   request(method, params) {
+    const gone = this.deadReason();
+    if (gone) {
+      this.outputChannel.appendLine(`RPC refused: ${method} \u2014 ${gone}`);
+      return Promise.reject(new Error(
+        `SciStack: the Python server is not running (${gone}). Reopen the pipeline (or run "SciStack: Restart Python") and try again.`
+      ));
+    }
     const id = this.nextId++;
     const timeoutMs = vscode.workspace.getConfiguration("scistack").get("rpcTimeoutMs", 3e5);
     return new Promise((resolve, reject) => {
@@ -239,9 +256,13 @@ var PythonProcess = class {
       const msg = JSON.stringify({ jsonrpc: "2.0", method, params, id });
       this.proc.stdin?.write(msg + "\n", (err) => {
         if (err) {
+          this.outputChannel.appendLine(`RPC write failed: ${method} \u2014 ${err.message}`);
           const pending = this.pending.get(id);
-          if (pending)
-            pending.reject(err);
+          if (pending) {
+            pending.reject(new Error(
+              `SciStack: could not send '${method}' to the Python server (${err.message}). It may have exited \u2014 check the SciStack output channel.`
+            ));
+          }
         }
       });
     });
@@ -1063,6 +1084,27 @@ var PanelRegistry = class {
     }
     return delivered;
   }
+  /**
+   * Hand every registered panel the process that replaced the last one.
+   * Returns how many panels took it, for the same reason `send` counts:
+   * "restarted, 0 panels rebound" while a plot tab is open is this bug.
+   *
+   * The DAG panel is rebound by name in `startPipeline`; plot tabs are
+   * created after the fact and can only be reached through here.
+   */
+  rebind(proc) {
+    let rebound = 0;
+    for (const sink of this.sinks) {
+      if (!sink.updatePythonProcess)
+        continue;
+      try {
+        sink.updatePythonProcess(proc);
+        rebound += 1;
+      } catch {
+      }
+    }
+    return rebound;
+  }
 };
 
 // src/plotPanel.ts
@@ -1181,8 +1223,19 @@ var PlotPanel = class _PlotPanel {
   static broadcast(msg) {
     return _PlotPanel.openPanels.send(msg);
   }
+  /**
+   * The server was restarted: every open plot tab must talk to the NEW
+   * process. Returns how many did. Called from `startPipeline` beside
+   * `dagPanel.updatePythonProcess` — a tab that keeps the old handle writes
+   * to a destroyed stdin and every `plot_*` RPC fails with
+   * ERR_STREAM_DESTROYED (2026-09-15).
+   */
+  static updatePythonProcess(proc) {
+    return _PlotPanel.openPanels.rebind(proc);
+  }
   static show(context, pythonProcess2, outputChannel2, target, options = {}) {
     if (!options.newTab && _PlotPanel.current) {
+      _PlotPanel.current.updatePythonProcess(pythonProcess2);
       _PlotPanel.current.retarget(target);
       return _PlotPanel.current;
     }
@@ -1214,6 +1267,15 @@ var PlotPanel = class _PlotPanel {
   /** Post a message into this panel's webview (the `MessageSink` contract). */
   postMessage(msg) {
     this.panel.webview.postMessage(msg);
+  }
+  /** The other half of `MessageSink`: route later RPCs to a new server. */
+  updatePythonProcess(proc) {
+    if (proc === this.pythonProcess)
+      return;
+    this.outputChannel.appendLine(
+      `plot panel: rebound to the restarted Python server (${this.title()})`
+    );
+    this.pythonProcess = proc;
   }
   title() {
     if (this.target.csvPath)
@@ -1665,6 +1727,10 @@ async function startPipeline(context, dbPath, schemaKeys) {
     failed.kill();
     await reportStartupFailure(failed, interpreterSource, err);
     return;
+  }
+  const reboundPlots = PlotPanel.updatePythonProcess(pythonProcess);
+  if (reboundPlots > 0) {
+    outputChannel.appendLine(`Rebound ${reboundPlots} plot panel(s) to the new server`);
   }
   if (dagPanel) {
     dagPanel.updatePythonProcess(pythonProcess);

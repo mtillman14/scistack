@@ -1821,7 +1821,7 @@ def build_edges(
 # entirely, not just decluttered from the canvas. Every call site sharing
 # that wiring is affected (run_state forced red, execution blocked) — see
 # domain.run_state.propagate_run_states(disconnected_fkeys=...) and
-# domain.variant_resolver.filter_disconnected_targets. Hiding an OUTBOUND
+# domain.variant_resolver.reconcile_manual_inputs. Hiding an OUTBOUND
 # (function -> variable) edge is deliberately excluded here: it's cosmetic
 # only, since the function's real output still exists in the DB either way.
 # ---------------------------------------------------------------------------
@@ -1834,7 +1834,7 @@ def inbound_edge_candidates(
     wiring — the same id shape build_edges constructs, reusable anywhere a
     caller needs to check "is this call site's required input hidden?"
     without needing the edge to already exist (hidden_wirings,
-    variant_resolver.filter_disconnected_targets)."""
+    variant_resolver.reconcile_manual_inputs)."""
     return (
         [f"e__{vt}__{fn}__{wid}" for vt in var_types]
         + [f"e__{cn}__{fn}__{wid}" for cn in const_names]
@@ -1850,7 +1850,7 @@ def inbound_edge_candidates_by_handle(
     ``param__{name}``) — the id shape alone doesn't say WHICH input a hidden
     edge blocks, and callers reconciling hidden edges against manual
     reconnects need that to check per-handle coverage rather than a flat
-    yes/no (see hidden_wirings, variant_resolver.filter_disconnected_targets).
+    yes/no (see hidden_wirings, variant_resolver.reconcile_manual_inputs).
 
     ``input_params``: {param_name: var_type-or-list-of-var_types}, same
     shape as a call site's ``fn_input_params`` entry / a DB variant's
@@ -1876,7 +1876,7 @@ def manual_edge_handle_index(
     """Index manual edges by the (fn_name, wiring_id, target_handle) call
     site they currently feed — the "is this exact input handle covered by
     a manual reconnect?" lookup used by hidden_wirings/
-    filter_disconnected_targets to stop treating a hidden DB-derived edge
+    reconcile_manual_inputs to stop treating a hidden DB-derived edge
     as disconnected once the user has manually wired a replacement onto
     the same handle. Matches by parsing each edge's ``target`` the same
     way execution_service.derive_fn_targets already matches manual edges
@@ -1896,6 +1896,270 @@ def manual_edge_handle_index(
         index[(parsed[0], parsed[1], handle)] = edge
     logger.debug("[graph_builder] manual_edge_handle_index: indexed %d edge(s)", len(index))
     return index
+
+
+def manual_input_overrides(
+    fn: str,
+    wid: str,
+    input_params: dict,
+    const_names,
+    manual_index: dict[tuple[str, str, str], dict],
+    manual_nodes: "dict[str, dict] | None" = None,
+    hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
+) -> dict:
+    """``{param: variable_type_or_list}`` — the VISIBLE variable sources of
+    every ``in__<param>`` handle of the ``(fn, wid)`` call site that a manual
+    variable edge lands on.
+
+    This is the one owner of the rule (docs/claude/manual-edges-on-history-
+    nodes.md): **the edges visible on the DAG are the ground truth**, for
+    display and for execution, whether they came from history or were drawn
+    by the user. A history node's inputs are therefore resolved exactly as a
+    fresh node's are (edge_resolver.resolve_function_edges): per handle, the
+    variable sources of every visible edge — history types whose edge is
+    not hidden, plus the manual edge's variable. One source → bare string;
+    several → a list, which is EachOf; a handle with no manual edge is not
+    in the result at all (history stands, hidden or not — the hidden-and-
+    uncovered case stays "disconnected", see reconcile_manual_inputs).
+
+    That covers, with no special cases: a parameter history never bound
+    (added to the signature after the recorded runs — the grSides/
+    Demographics ``n/a`` of 2026-09-15), a hidden history edge the user
+    reconnected to a different variable (the reconnect flow hidden_wirings /
+    variant_resolver already handled on its own), and a manual edge beside a
+    still-visible history edge (EachOf of both — the same picture means the
+    same thing on a fresh node; replacing is what hiding the edge is for).
+
+    Shared by the display overlay (overlay_manual_inputs) and the execution
+    path (variant_resolver.reconcile_manual_inputs) so the panel can never
+    show a binding the run would not use, or vice versa.
+
+    ``input_params``: the call site's RECORDED variable inputs, DB shape
+    (bare string when single). ``manual_index``: manual_edge_handle_index.
+    """
+    from scistack_gui.domain.edge_resolver import node_id_to_var_label
+
+    handle_map = inbound_edge_candidates_by_handle(
+        fn, wid, input_params, const_names=const_names
+    )
+    # Visible history sources per handle, in recorded order.
+    visible: dict[str, list[str]] = {}
+    for param, type_val in input_params.items():
+        handle = f"in__{param}"
+        types = type_val if isinstance(type_val, (list, set, tuple)) else [type_val]
+        visible[handle] = [
+            vt
+            for vt in types
+            if vt and f"e__{vt}__{fn}__{wid}" not in hidden_edge_ids
+        ]
+    hidden_handles = {h for eid, h in handle_map.items() if eid in hidden_edge_ids}
+
+    overrides: dict = {}
+    for (ifn, iwid, handle), edge in manual_index.items():
+        if ifn != fn or iwid != wid or not handle.startswith("in__"):
+            continue
+        var_label = node_id_to_var_label(edge.get("source", ""), {}, manual_nodes or {})
+        if not var_label:
+            # PathInput / Parameter / glue sources have their own binding
+            # rules (edge_resolver); this rule is about variables only.
+            continue
+        sources = list(visible.get(handle, []))
+        if var_label in sources:
+            # Re-drawing an edge history already shows: nothing to override
+            # (layout_service.put_edge auto-unhides that case anyway).
+            continue
+        sources.append(var_label)
+        overrides[handle[len("in__") :]] = sources[0] if len(sources) == 1 else sources
+
+    if overrides:
+        logger.debug(
+            "[graph_builder] manual_input_overrides(%s, %s): %s (recorded=%s, "
+            "hidden handles=%s)",
+            fn,
+            wid,
+            overrides,
+            input_params,
+            sorted(hidden_handles),
+        )
+    return overrides
+
+
+def collect_manual_input_overrides(
+    nodes: list[dict],
+    fn_input_params: dict[FnKey, dict],
+    fn_constants: dict[FnKey, set],
+    manual_edges: "list[dict] | tuple",
+    manual_nodes: "dict[str, dict] | None",
+    hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
+) -> dict[str, dict[str, str]]:
+    """``{node_id: {param: variable_label}}`` — manual_input_overrides
+    evaluated for every wiring-grouped function node in *nodes*.
+
+    Node ids at this point are the bare ``fn__{fn}__{wid}`` (build_function_
+    nodes runs before scope resolution); manual edge targets may carry a
+    ``::scope`` suffix, which manual_edge_handle_index strips.
+    """
+    manual_index = manual_edge_handle_index(manual_edges)
+    if not manual_index:
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for node in nodes:
+        if node.get("type") != "functionNode":
+            continue
+        parsed = parse_fn_node_id(node["id"])
+        if parsed is None:
+            continue
+        fn, wid = parsed
+        fkey: FnKey = (fn, wid)
+        overrides = manual_input_overrides(
+            fn,
+            wid,
+            fn_input_params.get(fkey, {}),
+            fn_constants.get(fkey, set()),
+            manual_index,
+            manual_nodes,
+            hidden_edge_ids,
+        )
+        if overrides:
+            result[node["id"]] = overrides
+    return result
+
+
+def superseded_manual_input_overrides(
+    overrides_by_node: dict[str, dict],
+    fn_input_params: dict[FnKey, dict],
+    fn_outputs: dict[FnKey, set],
+    path_inputs: dict[str, dict],
+    manual_edges: "list[dict] | tuple",
+    manual_nodes: "dict[str, dict] | None" = None,
+) -> tuple[list[dict], dict[str, str]]:
+    """Which overlays have been made redundant by a run.
+
+    A run through an overlay records provenance under the EFFECTIVE wiring
+    (history inputs ∪ overrides), so afterwards a second node
+    ``fn__{fn}__{W2}`` exists with a DB-derived edge for the very same
+    connection. Left alone, node A would keep the overlay and the manual
+    edge forever — two runnable copies of one wiring, and the column
+    selection saved on A never reaching B. So: for every node whose
+    effective wiring already exists in this graph, return
+
+    - edge rewrites: the manual edges behind those overrides with their
+      ``target`` moved from A to B (placement suffix preserved). Persisted by
+      the caller exactly like legacy_edge_rewrites; the rewritten edge is
+      then an endpoint-duplicate of B's DB-derived edge and build_edges'
+      dedup drops it (the row stays — hide, never delete).
+    - ``{A: B}`` so the caller can drop A's overlay (A reverts to its true
+      history) and migrate A's node config onto B.
+
+    Pure: computes, never writes.
+    """
+    if not overrides_by_node:
+        return [], {}
+    pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
+    manual_index = manual_edge_handle_index(manual_edges)
+    rewrites: list[dict] = []
+    superseded: dict[str, str] = {}
+    for node_id, overrides in overrides_by_node.items():
+        parsed = parse_fn_node_id(node_id)
+        if parsed is None:
+            continue
+        fn, wid = parsed
+        fkey: FnKey = (fn, wid)
+        # The wiring a run through this overlay records is history with the
+        # MANUAL edge's variable on each overridden param — never a list:
+        # provenance stores one variable type per input, so an EachOf run
+        # splits into one wiring per source, and the history source's own
+        # wiring is this node already. Read the variable off the edge itself.
+        from scistack_gui.domain.edge_resolver import node_id_to_var_label
+
+        manual_vars: dict[str, str] = {}
+        edges_by_param: dict[str, dict] = {}
+        for param in overrides:
+            edge = manual_index.get((fn, wid, f"in__{param}"))
+            if edge is None:
+                continue
+            label = node_id_to_var_label(edge.get("source", ""), {}, manual_nodes or {})
+            if label:
+                manual_vars[param] = label
+                edges_by_param[param] = edge
+        if not manual_vars:
+            continue
+        effective = {**fn_input_params.get(fkey, {}), **manual_vars}
+        new_wid = wiring_id(
+            fn, effective, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
+        )
+        if new_wid == wid or (fn, new_wid) not in fn_input_params:
+            continue
+        new_id = fn_node_id(fn, new_wid)
+        superseded[node_id] = new_id
+        node_rewrites: list[dict] = []
+        for edge in edges_by_param.values():
+            target = edge.get("target", "")
+            suffix = target[len(strip_placement(target)) :]
+            node_rewrites.append({**edge, "target": new_id + suffix})
+        rewrites.extend(node_rewrites)
+        logger.info(
+            "[graph_builder] manual input overlay on %s (%s) is superseded by "
+            "%s — that wiring has run; rewriting %d manual edge(s) onto it",
+            node_id,
+            overrides,
+            new_id,
+            len(node_rewrites),
+        )
+    return rewrites, superseded
+
+
+def overlay_manual_inputs(nodes: list[dict], overrides_by_node: dict[str, dict]) -> int:
+    """Apply manual input overrides to the built function nodes' data:
+    ``input_params[param]`` becomes the handle's visible source (what the
+    handles, the Inputs column picker and the code exporter read) and
+    ``manual_inputs`` carries the full override per param, so a consumer —
+    or a log reader — can tell an overlay from a recorded binding. Returns
+    the number of nodes touched.
+
+    ``input_params`` stays ``{param: str}``: every frontend consumer types it
+    that way, and DB-derived values are always bare (provenance records one
+    variable type per input). An EachOf override (list) therefore shows its
+    FIRST source there — the same choice the fresh-node path makes
+    (``api/pipeline.py``: ``inferred_inputs = {p: ts[0]}``) — with the whole
+    list in ``manual_inputs``. The Inputs column picker is per parameter, so
+    one column set applies to every source of an EachOf handle either way
+    (docs/claude/column-selection.md, Known limitations).
+
+    One DEBUG line per touched node lists every parameter with its origin,
+    because "why does this handle say what it says" is exactly the question
+    that was unanswerable from scidb.log before (2026-09-15).
+    """
+    touched = 0
+    if not overrides_by_node:
+        return touched
+    for node in nodes:
+        overrides = overrides_by_node.get(node["id"])
+        if not overrides:
+            continue
+        data = node["data"]
+        params = dict(data.get("input_params") or {})
+        for param, sources in overrides.items():
+            params[param] = sources[0] if isinstance(sources, list) else sources
+        data["input_params"] = params
+        data["manual_inputs"] = {
+            p: (list(s) if isinstance(s, list) else s) for p, s in overrides.items()
+        }
+        touched += 1
+        origins = {
+            p: ("manual" if p in overrides else ("history" if t else "unbound"))
+            for p, t in params.items()
+        }
+        logger.debug(
+            "[graph_builder] %s input_params after manual overlay: %s (origins=%s, "
+            "manual_inputs=%s, constants=%s)",
+            node["id"],
+            params,
+            origins,
+            data["manual_inputs"],
+            data.get("constant_params"),
+        )
+    return touched
 
 
 def hidden_wirings(
@@ -2212,12 +2476,31 @@ def apply_placement_configs(
         # Not necessarily wrong: a config may belong to a node in another
         # scope, or to a wiring that has since been hidden. But if the node
         # the user is toggling is in this list, the toggle can never stick.
+        # A bare id that parses as fn__{fn}__{something-not-a-wiring-hash} is
+        # a FRESH node's id: before 2026-09-15 graduation left its config
+        # behind (pipeline_store.migrate_node_config now moves it), so these
+        # are settings from an older session that must be re-applied by hand
+        # on the graduated node.
+        stale_fresh = [
+            nid
+            for nid in orphans
+            if strip_placement(nid).startswith("fn__")
+            and parse_fn_node_id(nid) is None
+            and strip_placement(nid).count("__") >= 2
+        ]
         logger.warning(
             "[graph_builder] %d saved node config(s) match no node in the "
             "resolved graph (by exact or bare id): %s -- a setting saved "
-            "under one of these ids will not rehydrate",
+            "under one of these ids will not rehydrate%s",
             len(orphans),
             orphans,
+            (
+                f". {len(stale_fresh)} of them ({stale_fresh}) are fresh-node ids "
+                "whose node graduated before config migration existed; "
+                "re-apply those settings on the graduated node"
+            )
+            if stale_fresh
+            else "",
         )
     return applied
 

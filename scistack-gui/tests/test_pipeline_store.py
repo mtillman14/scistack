@@ -483,3 +483,98 @@ class TestNodeConfig:
                 populated_db, self.DERIVED_ID, {"runOptions": {"distribute": True}}
             )
         assert self.DERIVED_ID in caplog.text
+
+
+class TestGraduationMovesNodeConfig:
+    """Graduation moves position and edges; it must move the saved config
+    too, or the settings the user made on a fresh node are orphaned under
+    an id that no longer exists on the canvas — the "saved node config(s)
+    match no node" WARN. See .claude/plan-graduation-config-migration.md.
+    """
+
+    OLD = "fn__grSides__5c9r0r"
+    NEW = "fn__grSides__a50088e2da549e1b::main"
+
+    def _fresh(self, db, node_id=None, config=None, key=None):
+        node_id = node_id or self.OLD
+        pipeline_store.write_manual_node(db, node_id, "functionNode", "grSides", "main")
+        if config is not None:
+            pipeline_store.update_node_config(db, key or node_id, config)
+
+    def test_bare_config_moves_to_the_graduated_id(self, populated_db):
+        db = populated_db
+        self._fresh(db, config={"schemaLevel": ["subject"], "runOptions": {"distribute": True}})
+
+        result = pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+
+        assert result == {"moved": ["runOptions", "schemaLevel"], "replaced": {}}
+        assert pipeline_store.get_node_config(db, self.NEW) == {
+            "schemaLevel": ["subject"],
+            "runOptions": {"distribute": True},
+        }
+        assert self.OLD not in pipeline_store.get_node_configs(db), (
+            "a move, not a copy — the orphan WARN must stop naming this id"
+        )
+
+    def test_scope_qualified_source_key_moves_too(self, populated_db):
+        db = populated_db
+        self._fresh(db, config={"whereFilters": [{"a": 1}]}, key=f"{self.OLD}::sub1")
+        pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+        assert pipeline_store.get_node_config(db, self.NEW)["whereFilters"] == [{"a": 1}]
+        assert f"{self.OLD}::sub1" not in pipeline_store.get_node_configs(db)
+
+    def test_qualified_source_wins_over_bare_source(self, populated_db):
+        db = populated_db
+        self._fresh(db, config={"schemaLevel": ["subject"]})
+        pipeline_store.update_node_config(db, f"{self.OLD}::main", {"schemaLevel": ["session"]})
+        pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+        assert pipeline_store.get_node_config(db, self.NEW)["schemaLevel"] == ["session"]
+
+    def test_legacy_pipeline_nodes_column_is_a_source(self, populated_db):
+        db = populated_db
+        self._fresh(db)
+        pipeline_store._duck(db)._execute(
+            "UPDATE _pipeline_nodes SET config = ? WHERE node_id = ?",
+            ['{"runOptions": {"as_table": true}}', self.OLD],
+        )
+        pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+        assert pipeline_store.get_node_config(db, self.NEW)["runOptions"] == {"as_table": True}
+
+    def test_fresh_node_wins_and_previous_value_is_logged(self, populated_db, caplog):
+        import logging
+
+        db = populated_db
+        pipeline_store.update_node_config(
+            db, self.NEW, {"schemaLevel": ["session"], "whereFilters": [{"old": 1}]}
+        )
+        self._fresh(db, config={"schemaLevel": ["subject"]})
+
+        with caplog.at_level(logging.INFO, logger="scistack_gui.pipeline_store"):
+            result = pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+
+        assert result["replaced"] == {"schemaLevel": ["session"]}
+        cfg = pipeline_store.get_node_config(db, self.NEW)
+        assert cfg["schemaLevel"] == ["subject"], "the fresh node's setting wins"
+        assert cfg["whereFilters"] == [{"old": 1}], "keys the fresh node never set stay"
+        assert "['session']" in caplog.text, "the replaced value is in the log verbatim"
+
+    def test_nothing_to_move_is_a_no_op(self, populated_db):
+        db = populated_db
+        self._fresh(db)
+        pipeline_store.update_node_config(db, self.NEW, {"schemaLevel": ["session"]})
+        assert pipeline_store.migrate_node_config(db, self.OLD, self.NEW) == {
+            "moved": [],
+            "replaced": {},
+        }
+        assert pipeline_store.get_node_config(db, self.NEW) == {"schemaLevel": ["session"]}
+
+    def test_graduate_manual_node_moves_config_before_deleting_the_row(self, populated_db):
+        db = populated_db
+        self._fresh(db)
+        pipeline_store._duck(db)._execute(
+            "UPDATE _pipeline_nodes SET config = ? WHERE node_id = ?",
+            ['{"schemaLevel": ["subject"]}', self.OLD],
+        )
+        pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
+        assert self.OLD not in pipeline_store.get_manual_nodes(db)
+        assert pipeline_store.get_node_config(db, self.NEW) == {"schemaLevel": ["subject"]}

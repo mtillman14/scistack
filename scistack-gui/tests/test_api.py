@@ -1685,3 +1685,333 @@ class TestPendingConstantRecovery:
         assert self._fn_state(client_never_run) == "green"
         pending = layout_store.get_pending_constants()
         assert "42" not in pending.get("low_hz", set())
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+class TestManualInputEdgesOnHistoryNodes:
+    """A manual variable edge drawn onto a HISTORY node's parameter that
+    history never bound (docs/claude/manual-edges-on-history-nodes.md).
+
+    Real session, 2026-09-15: ``grSides`` had run; ``side`` was added to its
+    signature afterwards; the user wired ``Demographics → in__side`` and the
+    Inputs section said ``n/a``, the run would have ignored the edge, and a
+    fresh ``grSides`` node graduated straight into the history node. The
+    rule now: the edges visible on the DAG are the ground truth.
+
+    The vehicle is the populated ``bandpass_filter(RawSignal, low_hz=20)``
+    history with the registry re-pointed at a WIDER signature, exactly the
+    real shape (grSides' log said "source has changed since it last ran").
+    """
+
+    @pytest.fixture
+    def wide(self, client):
+        def bandpass_filter(signal, low_hz, side=None):  # noqa: ARG001
+            return np.asarray(signal, dtype=float) * float(low_hz)
+
+        _registry._functions["bandpass_filter"] = bandpass_filter
+        return client
+
+    @pytest.fixture
+    def side_var(self, wide):
+        class SideTable(BaseVariable):
+            pass
+
+        SideTable.save(np.zeros(3), subject=1, session="pre")
+        return SideTable
+
+    def _node(self, client, node_id):
+        data = client.get("/api/pipeline").json()
+        return next(n for n in data["nodes"] if n["id"] == node_id)
+
+    def _wire_side(self, client, bp_node_id, source="var__SideTable", edge_id="manual__side"):
+        r = client.put(
+            f"/api/edges/{edge_id}",
+            json={
+                "source": source,
+                "target": bp_node_id,
+                "source_handle": None,
+                "target_handle": "in__side",
+            },
+        )
+        assert r.status_code == 200
+
+    def test_unbound_param_shows_n_a_shape_before_the_edge(self, wide, bp_node_id):
+        node = self._node(wide, bp_node_id)
+        assert node["data"]["input_params"]["side"] == ""
+        assert "manual_inputs" not in node["data"]
+
+    def test_manual_edge_fills_the_history_nodes_input_params(
+        self, wide, side_var, bp_node_id
+    ):
+        self._wire_side(wide, bp_node_id)
+        node = self._node(wide, bp_node_id)
+        assert node["data"]["input_params"]["side"] == "SideTable", (
+            "the Inputs picker keys off input_params — an empty type is the "
+            "one and only reason it renders 'n/a'"
+        )
+        assert node["data"]["input_params"]["signal"] == "RawSignal"
+        assert node["data"]["manual_inputs"] == {"side": "SideTable"}
+        # Node identity is untouched: saved position/config still key off it.
+        assert node["id"] == bp_node_id
+
+    def test_run_binds_the_manually_wired_variable(
+        self, wide, side_var, bp_node_id, monkeypatch
+    ):
+        from scistack_gui.api import run as run_api
+
+        self._wire_side(wide, bp_node_id)
+        captured: list[dict] = []
+        monkeypatch.setattr(run_api, "for_each", lambda *a, **k: captured.append(k) or None)
+
+        r = wide.post("/api/run", json={"function_name": "bandpass_filter", "variants": []})
+        assert r.status_code == 200
+        _wait_for_threads("Thread-")
+
+        assert len(captured) == 1
+        assert captured[0]["inputs"]["signal"] is RawSignal
+        assert captured[0]["inputs"]["side"] is side_var
+        assert captured[0]["inputs"]["low_hz"] == 20, "history constants are kept"
+
+    def test_node_scoped_run_binds_it_too(self, wide, side_var, bp_node_id, monkeypatch):
+        from scistack_gui.api import run as run_api
+
+        self._wire_side(wide, bp_node_id)
+        captured: list[dict] = []
+        monkeypatch.setattr(run_api, "for_each", lambda *a, **k: captured.append(k) or None)
+
+        r = wide.post(
+            "/api/run",
+            json={"function_name": "bandpass_filter", "variants": [], "node_id": bp_node_id},
+        )
+        assert r.status_code == 200
+        _wait_for_threads("Thread-")
+        assert len(captured) == 1
+        assert captured[0]["inputs"]["side"] is side_var
+
+    def test_column_selection_on_the_overlaid_param_reaches_the_run(
+        self, wide, side_var, bp_node_id, monkeypatch
+    ):
+        from scifor import ColumnSelection
+
+        from scistack_gui import pipeline_store
+        from scistack_gui.api import run as run_api
+
+        self._wire_side(wide, bp_node_id)
+        pipeline_store.update_node_config(
+            _gui_db.get_db(),
+            bp_node_id,
+            {"columnSelections": {"side": {"columns": ["age"], "iterate": False}}},
+        )
+        captured: list[dict] = []
+        monkeypatch.setattr(run_api, "for_each", lambda *a, **k: captured.append(k) or None)
+
+        wide.post("/api/run", json={"function_name": "bandpass_filter", "variants": []})
+        _wait_for_threads("Thread-")
+
+        sel = captured[0]["inputs"]["side"]
+        assert isinstance(sel, ColumnSelection)
+        assert sel.columns == ["age"]
+
+    def test_fresh_node_wired_to_the_unbound_param_does_not_graduate(
+        self, wide, side_var, bp_node_id
+    ):
+        # The escape hatch the user tried: a fresh bandpass_filter node wired
+        # like the history node PLUS SideTable on `side`. That is a different
+        # visible wiring, so it must stay its own node instead of being
+        # folded into the history node (which is what made the fresh node
+        # inherit the history node's saved settings and its 'n/a').
+        wide.put(
+            "/api/layout/mf_fresh",
+            json={"x": 10, "y": 0, "node_type": "functionNode", "label": "bandpass_filter"},
+        )
+        wide.put(
+            "/api/edges/mf_e_sig",
+            json={"source": "var__RawSignal", "target": "mf_fresh", "target_handle": "in__signal"},
+        )
+        wide.put(
+            "/api/edges/mf_e_side",
+            json={"source": "var__SideTable", "target": "mf_fresh", "target_handle": "in__side"},
+        )
+        wide.put(
+            "/api/edges/mf_e_out",
+            json={"source": "mf_fresh", "target": "var__FilteredSignal"},
+        )
+        data = wide.get("/api/pipeline").json()
+        ids = {n["id"] for n in data["nodes"]}
+        assert "mf_fresh" in ids, "must not graduate into the history node"
+        assert bp_node_id in ids
+        fresh = next(n for n in data["nodes"] if n["id"] == "mf_fresh")
+        assert fresh["data"]["input_params"]["side"] == "SideTable"
+
+    def test_bare_fresh_node_still_graduates(self, wide, bp_node_id):
+        # The existing one-candidate-wins UX for an UNWIRED fresh node.
+        wide.put(
+            "/api/layout/mf_bare",
+            json={"x": 10, "y": 0, "node_type": "functionNode", "label": "bandpass_filter"},
+        )
+        ids = {n["id"] for n in wide.get("/api/pipeline").json()["nodes"]}
+        assert "mf_bare" not in ids
+
+    def test_after_the_wiring_has_run_the_edge_moves_and_the_selection_follows(
+        self, wide, side_var, bp_node_id
+    ):
+        from scistack_gui import pipeline_store
+        from scistack_gui.domain.graph_builder import fn_node_id, strip_placement, wiring_id
+
+        db = _gui_db.get_db()
+        self._wire_side(wide, bp_node_id)
+        pipeline_store.update_node_config(
+            db,
+            bp_node_id,
+            {"columnSelections": {"side": {"columns": ["age"], "iterate": False}}},
+        )
+
+        # The run the overlay describes, done for real: history now carries
+        # the effective wiring under a second node id.
+        for_each(
+            _registry._functions["bandpass_filter"],
+            inputs={"signal": RawSignal, "low_hz": 20, "side": side_var},
+            outputs=[FilteredSignal],
+            subject=[1],
+            session=["pre"],
+        )
+        new_wid = wiring_id(
+            "bandpass_filter",
+            {"signal": "RawSignal", "side": "SideTable"},
+            {"FilteredSignal"},
+            {},
+        )
+        new_id = fn_node_id("bandpass_filter", new_wid)
+
+        data = wide.get("/api/pipeline").json()
+        by_id = {n["id"]: n for n in data["nodes"]}
+        assert new_id in by_id
+        # The old node reverts to its true history.
+        assert by_id[bp_node_id]["data"]["input_params"]["side"] == ""
+        assert "manual_inputs" not in by_id[bp_node_id]["data"]
+        # The manual edge row now names the new node and is folded into the
+        # DB-derived edge there — drawn once, not twice.
+        stored = next(e for e in pipeline_store.get_manual_edges(db) if e["id"] == "manual__side")
+        assert strip_placement(stored["target"]) == new_id
+        side_edges = [
+            e
+            for e in data["edges"]
+            if e["target"] == new_id and e.get("targetHandle") == "in__side"
+        ]
+        assert len(side_edges) == 1
+        # The column selection used by that run follows it.
+        assert by_id[new_id]["data"]["columnSelections"] == {
+            "side": {"columns": ["age"], "iterate": False}
+        }
+        assert pipeline_store.get_node_config(db, new_id)["columnSelections"] == {
+            "side": {"columns": ["age"], "iterate": False}
+        }
+
+
+class TestGraduationCarriesNodeConfig:
+    """Settings made on a fresh node must survive its graduation into the
+    history node — in the SAME response that graduates it, and without
+    leaving an orphaned config row behind. Real symptom: three
+    "saved node config(s) match no node" warnings for fresh-node ids
+    (`fn__grSides__5c9r0r`, ...) whose settings had silently vanished.
+    See .claude/plan-graduation-config-migration.md.
+    """
+
+    FRESH = "fn__bandpass_filter__zz9fr3"
+
+    def _place_fresh(self, client, config, pipeline_id=None):
+        body = {"x": 0, "y": 0, "node_type": "functionNode", "label": "bandpass_filter"}
+        if pipeline_id:
+            body["pipeline_id"] = pipeline_id
+        assert client.put(f"/api/layout/{self.FRESH}", json=body).status_code == 200
+        assert (
+            client.put(f"/api/layout/{self.FRESH}/config", json={"config": config}).status_code
+            == 200
+        )
+
+    def _graduated(self, data, bp_node_id):
+        ids = {n["id"] for n in data["nodes"]}
+        assert self.FRESH not in ids, "the bare fresh node must graduate"
+        return next(
+            n for n in data["nodes"] if n["id"] in (bp_node_id, f"{bp_node_id}::main")
+        )
+
+    def test_setting_shows_on_the_graduated_node_in_the_graduating_response(
+        self, client, bp_node_id, caplog
+    ):
+        import logging
+
+        from scistack_gui import pipeline_store
+
+        self._place_fresh(
+            client,
+            {"schemaLevel": ["subject"], "columnSelections": {"signal": {"columns": ["a"]}}},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="scistack_gui.domain.graph_builder"):
+            data = client.get("/api/pipeline").json()
+
+        node = self._graduated(data, bp_node_id)
+        assert node["data"]["schemaLevel"] == ["subject"]
+        assert node["data"]["columnSelections"] == {"signal": {"columns": ["a"]}}
+
+        configs = pipeline_store.get_node_configs(_gui_db.get_db())
+        assert self.FRESH not in configs, "moved, not copied"
+        # caplog.records spans the whole test call at every level — the INFO
+        # lines from put_layout / update_node_config legitimately name the
+        # fresh id. Only a WARN naming it (the orphan check) is a failure.
+        naming_fresh = [
+            f"{r.name}:{r.levelname}: {r.getMessage()}"
+            for r in caplog.records
+            if r.levelno >= logging.WARNING and self.FRESH in r.getMessage()
+        ]
+        assert naming_fresh == [], (
+            "the orphan WARN must not name an id whose config was migrated"
+        )
+        # And it sticks on the next, unrelated rebuild.
+        again = self._graduated(client.get("/api/pipeline").json(), bp_node_id)
+        assert again["data"]["schemaLevel"] == ["subject"]
+
+    def test_migrated_setting_reaches_the_run(self, client, bp_node_id, monkeypatch):
+        from scifor import ColumnSelection
+
+        from scistack_gui.api import run as run_api
+
+        self._place_fresh(client, {"columnSelections": {"signal": {"columns": ["a"]}}})
+        client.get("/api/pipeline")  # graduates
+
+        captured: list[dict] = []
+        monkeypatch.setattr(run_api, "for_each", lambda *a, **k: captured.append(k) or None)
+        client.post("/api/run", json={"function_name": "bandpass_filter", "variants": []})
+        _wait_for_threads("Thread-")
+
+        sel = captured[0]["inputs"]["signal"]
+        assert isinstance(sel, ColumnSelection) and sel.columns == ["a"]
+
+    def test_fresh_node_setting_replaces_the_history_nodes_and_is_logged(
+        self, client, bp_node_id, caplog
+    ):
+        import logging
+
+        from scistack_gui import pipeline_store
+
+        pipeline_store.update_node_config(
+            _gui_db.get_db(), f"{bp_node_id}::main", {"schemaLevel": ["session"]}
+        )
+        self._place_fresh(client, {"schemaLevel": ["subject"]})
+
+        with caplog.at_level(logging.INFO, logger="scistack_gui.pipeline_store"):
+            data = client.get("/api/pipeline").json()
+
+        node = self._graduated(data, bp_node_id)
+        assert node["data"]["schemaLevel"] == ["subject"], "the fresh node's setting wins"
+        assert "['session']" in caplog.text, "the replaced value is logged verbatim"
+
+    def test_sub_scope_graduation_keeps_the_setting_on_the_sub_canvas(self, client):
+        pid = client.post("/api/pipelines", json={"name": "loading"}).json()["pipeline_id"]
+        self._place_fresh(client, {"schemaLevel": ["subject"]}, pipeline_id=pid)
+
+        sub = client.get("/api/pipeline", params={"pipeline_id": pid}).json()
+        canonical = [n for n in sub["nodes"] if n["id"].startswith("fn__bandpass_filter__")]
+        assert len(canonical) == 1
+        assert canonical[0]["data"]["schemaLevel"] == ["subject"]

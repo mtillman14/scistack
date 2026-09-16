@@ -471,12 +471,17 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
         fn_node_ids, all_edges, manual_nodes, existing_node_labels={}
     )
 
-    from scistack_gui.domain.variant_resolver import filter_disconnected_targets
+    from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
 
+    # Manual edges onto a history node's handles are authoritative for the
+    # parameters they feed (hidden-and-reconnected OR never bound) — see
+    # graph_builder.manual_input_overrides. Runs whenever there is anything
+    # to reconcile, not only when an edge is hidden: a manual edge onto a
+    # parameter history never bound has no hidden edge to trigger on.
     hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
-    if hidden_edge_ids and fn_variants:
+    if fn_variants and (hidden_edge_ids or all_edges):
         before = len(fn_variants)
-        fn_variants = filter_disconnected_targets(
+        fn_variants = reconcile_manual_inputs(
             fn_variants, function_name, hidden_edge_ids, all_edges, manual_nodes
         )
         if len(fn_variants) != before:
@@ -672,11 +677,11 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             ],
         )
     hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
-    if hidden_edge_ids and matching:
-        from scistack_gui.domain.variant_resolver import filter_disconnected_targets
+    if matching and (hidden_edge_ids or all_edges):
+        from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
 
         before = len(matching)
-        matching = filter_disconnected_targets(
+        matching = reconcile_manual_inputs(
             matching, function_name, hidden_edge_ids, all_edges, manual_nodes
         )
         if len(matching) != before:

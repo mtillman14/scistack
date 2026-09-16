@@ -78,3 +78,61 @@ test('registering the same panel twice delivers once', () => {
   assert.equal(registry.size, 1);
   assert.equal(registry.send({ method: 'plot_save_complete' }), 1);
 });
+
+// --- server restart -------------------------------------------------------
+// A plot tab outlives the Python process it was opened with. After
+// `startPipeline` respawns the server, every open tab must take the new
+// handle, or its next RPC writes to the old process's destroyed stdin
+// ("Could not open the plot panel: Error [ERR_STREAM_DESTROYED]", 2026-09-15).
+
+class RebindablePanel extends FakePanel {
+  backend: unknown = 'old';
+  updatePythonProcess(proc: unknown): void {
+    if (this.throws) throw new Error('webview disposed');
+    this.backend = proc;
+  }
+}
+
+test('a restart rebinds every open panel to the new process', () => {
+  const registry = new PanelRegistry<string>();
+  const a = new RebindablePanel();
+  const b = new RebindablePanel();
+  registry.add(a);
+  registry.add(b);
+
+  assert.equal(registry.rebind('new'), 2);
+  assert.equal(a.backend, 'new');
+  assert.equal(b.backend, 'new');
+});
+
+test('a closed panel is not rebound', () => {
+  const registry = new PanelRegistry<string>();
+  const closed = new RebindablePanel();
+  const open = new RebindablePanel();
+  const remove = registry.add(closed);
+  registry.add(open);
+  remove();
+
+  assert.equal(registry.rebind('new'), 1);
+  assert.equal(closed.backend, 'old');
+  assert.equal(open.backend, 'new');
+});
+
+test('a panel that cannot be rebound does not block the rest', () => {
+  const registry = new PanelRegistry<string>();
+  const dead = new RebindablePanel();
+  dead.throws = true;
+  const alive = new RebindablePanel();
+  registry.add(dead);
+  registry.add(alive);
+
+  assert.equal(registry.rebind('new'), 1);
+  assert.equal(alive.backend, 'new');
+});
+
+test('a post-only panel is skipped, and counted out, by rebind', () => {
+  const registry = new PanelRegistry<string>();
+  registry.add(new FakePanel());
+  // Zero here with a plot tab open is the bug's signature in the output channel.
+  assert.equal(registry.rebind('new'), 0);
+});
