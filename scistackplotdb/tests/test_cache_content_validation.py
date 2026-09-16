@@ -190,3 +190,54 @@ class TestSharedStorageRule:
             )[0]
             == 0.0
         )
+
+
+class TestSupersededWithoutAnAxis:
+    """A superseded record must be filterable even with no axis to explain it.
+
+    Until 2026-09-15 the `CodeIsLatest` flag was attached only when a code or
+    run-option axis existed. Those axes are how a superseded record is usually
+    made *explicable* to a reader, but they are not what makes it superseded:
+    re-running over changed inputs supersedes the previous output with no code
+    edit at all, and a record whose LINEAGE was severed can produce no code
+    axis however many versions exist upstream. `GAITRiteSymmetry` hit both —
+    780 records, `variants=none`, no flag — and the old generation drew
+    alongside the new one as extra replicates.
+    """
+
+    def test_single_generation_gains_no_flag(self, seeded):
+        """The ordinary case must be untouched: nothing superseded, no column,
+        no default pin."""
+        from scistackplotdb.load import LATEST_COLUMN, load_variable
+
+        loaded = load_variable(seeded, "StepLength")
+        assert loaded.latest_column is None
+        assert LATEST_COLUMN not in loaded.frame.columns
+
+    def test_a_superseded_record_gets_the_flag(self, seeded):
+        """Re-save one location: two records there, the older superseded."""
+        from scistackplotdb.load import load_variable
+
+        StepLength.save(
+            42.0, subject=SUBJECTS[0], session=SESSIONS[0], trial=TRIALS[0]
+        )
+        loaded = load_variable(seeded, "StepLength")
+        if loaded.latest_column is None:
+            pytest.skip(
+                "this database marks no record superseded — is_latest is "
+                "chain-derived and a plain re-save may share a chain"
+            )
+        flags = loaded.frame[loaded.latest_column]
+        assert not flags.all(), "nothing marked superseded despite a second record"
+        assert flags.any(), "everything marked superseded"
+
+    def test_the_flag_is_not_offered_as_a_plottable_factor(self, seeded):
+        """It is a filter helper, not a condition anyone plots by — attaching
+        it more often must not add an axis to the variant UI."""
+        from scistackplotdb.load import load_variable
+
+        StepLength.save(
+            42.0, subject=SUBJECTS[0], session=SESSIONS[0], trial=TRIALS[0]
+        )
+        loaded = load_variable(seeded, "StepLength")
+        assert loaded.latest_column not in loaded.variant_columns

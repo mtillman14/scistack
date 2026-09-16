@@ -766,19 +766,42 @@ def attach_variants(
             layer=LAYER,
         )
 
+    # `is_latest` is one chain-wide, per-location flag over code AND run
+    # options, so it answers a run-option axis exactly as it answers a code
+    # axis — and the default pin needs it for either.
+    #
+    # Attached whenever ANY record is superseded, NOT only when a code or run
+    # axis exists (the rule until 2026-09-15). Those axes are how a superseded
+    # record is usually *explicable* to a reader, but they are not what makes
+    # it superseded: re-running a function over changed inputs supersedes its
+    # previous output with no code edit and no option flip, and a record whose
+    # LINEAGE was severed cannot produce a code axis at all however many
+    # versions exist upstream. Both happened to `GAITRiteSymmetry`: 780 records
+    # loaded, `variants=none`, no flag, and the superseded generation drew
+    # alongside the current one as extra replicates.
+    #
+    # Gated on "would this exclude anything" rather than attached
+    # unconditionally, so the ordinary single-generation variable gains no
+    # column and no default pin, exactly as before.
+    # `is_latest` is None for a RAW record — one saved directly, with no
+    # producing invocation. None means "the question does not apply", NOT
+    # "superseded": a record with no chain cannot be stale relative to a chain.
+    # Treating None as False counts every directly-saved record as superseded,
+    # which attaches an all-False flag, pins it, and draws an EMPTY figure for
+    # any hand-saved variable (caught by
+    # test_single_generation_gains_no_flag, 2026-09-15).
+    latest_raw = [(ident.get(rid) or {}).get("is_latest") for rid in record_ids]
+    latest_flags = [value is not False for value in latest_raw]
+    n_superseded = sum(1 for value in latest_raw if value is False)
+    n_current = len(record_ids) - n_superseded
     latest_column = None
-    if code_keys or run_keys:
-        # `is_latest` is one chain-wide, per-location flag over code AND run
-        # options, so it answers a run-option axis exactly as it answers a code
-        # axis — and the default pin needs it for either.
+    if code_keys or run_keys or n_superseded:
         latest_column = LATEST_COLUMN
         while latest_column in frame.columns:
             latest_column += "_"
         # Deliberately NOT appended to `keys`: it is a filter helper, not a
         # condition anyone plots by.
-        frame[latest_column] = [
-            bool((ident.get(rid) or {}).get("is_latest")) for rid in record_ids
-        ]
+        frame[latest_column] = latest_flags
 
         Log.info(
             "attached %d code column(s) %s and %d run-option column(s) %s over "
@@ -789,9 +812,24 @@ def attach_variants(
             len(run_keys),
             run_keys,
             len(record_ids),
-            int(frame[latest_column].sum()),
+            n_current,
             layer=LAYER,
         )
+        if not code_keys and not run_keys:
+            # The case the old gate missed entirely. Say it separately and
+            # loudly: superseded records with no axis to explain them usually
+            # mean severed lineage upstream (scidb logs "NO variable
+            # input-binding source" when it happens), and the figure would
+            # otherwise silently pool two generations.
+            Log.warn(
+                "%d of %d record(s) are superseded but carry NO code or "
+                "run-option axis to tell them apart — plotting the current "
+                "ones only. This usually means their lineage was not recorded; "
+                "check scidb.log for 'NO variable input-binding source'",
+                n_superseded,
+                len(record_ids),
+                layer=LAYER,
+            )
 
     if not keys:
         return frame, [], None, []

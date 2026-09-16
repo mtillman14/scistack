@@ -2053,6 +2053,13 @@ def _for_each_prepare(
             # column-selection-dropped) discriminator on the wrapper's data, and
             # mark the param for existence-based combo pruning. Deliberately NOT
             # added to rid_keys: no schema extension, no rid expansion.
+            #
+            # Absent from rid_keys does NOT mean absent from lineage. The rids
+            # are collected separately into `colsel_rid_per_combo` and merged
+            # into `_combo_to_rids`, which is what the save path binds
+            # `_invocation_input` edges from. Before 2026-09-15 they were not,
+            # and every record built from a column-selected input was saved with
+            # no record of what it consumed.
             data.data = df_renamed
             colsel_params.append(param_name)
             Log.debug(
@@ -2142,8 +2149,22 @@ def _for_each_prepare(
     rid_per_combo: dict = {}
     # rid_col -> set of _lookup_keys positions that input actually populates
     rid_populated_idx: dict = {}
-    for rid_col in rid_keys:
+    # The SAME mapping, built for ColumnSelection inputs, kept in its own dict.
+    #
+    # ColumnSelection is deliberately absent from `rid_keys` (below): coupling
+    # it into rid expansion changes Variant pinning and for_columns semantics.
+    # But rid_keys was also the only thing feeding the SAVE path's input
+    # binding, so switching off iteration switched off LINEAGE too — records
+    # saved from a column-selected input got no `_invocation_input` edges at
+    # all (2026-09-15: GAITRiteSymmetry, which then could not be told apart
+    # from its own superseded generation and plotted as replicates of it).
+    # Two unrelated jobs on one wire. This dict is the second wire: it feeds
+    # `_combo_to_rids`, which the save path reads, and nothing that decides
+    # how many times the function is called or how its schema is extended.
+    colsel_rid_per_combo: dict = {}
+    for rid_col in list(rid_keys) + [f"__rid_{p}" for p in colsel_params]:
         param_name = rid_col[len("__rid_") :]
+        _is_colsel_input = param_name in colsel_params
         data = loaded_inputs.get(param_name)
 
         # Extract DataFrame from Fixed wrapper if needed
@@ -2170,9 +2191,11 @@ def _for_each_prepare(
         schema_cols_in_df = [
             k for k in _lookup_keys if k in df.columns and not df[k].isna().all()
         ]
-        rid_populated_idx[rid_col] = {
-            _lookup_keys.index(k) for k in schema_cols_in_df
-        }
+        # Populated for BOTH kinds. It is read only by `_rid_probe_key`, and
+        # the full-iteration expansion loop probes `rid_per_combo` alone — so a
+        # ColumnSelection entry here changes no combo, and lets the lineage
+        # lookup below blank the same positions a coarse input leaves empty.
+        rid_populated_idx[rid_col] = {_lookup_keys.index(k) for k in schema_cols_in_df}
         mapping: dict = {}
         # Dedupe rids per group so DataFrame-mode inputs (one DuckDB row
         # per inner-table row, all sharing a single record_id) don't
@@ -2193,7 +2216,10 @@ def _for_each_prepare(
             mapping[tuple("" for _ in _lookup_keys)] = list(
                 dict.fromkeys(df[rid_col].tolist())
             )
-        rid_per_combo[rid_col] = mapping
+        if _is_colsel_input:
+            colsel_rid_per_combo[rid_col] = mapping
+        else:
+            rid_per_combo[rid_col] = mapping
 
     def _rid_probe_key(rid_col: str, schema_vals: tuple) -> tuple:
         """The key to look up *rid_col*'s mapping with for a combo location.
@@ -2610,7 +2636,15 @@ def _for_each_prepare(
             # (AcrossVariants opt-outs and any rid-tracked input without a
             # __vsig column) — identical for every group of this combo.
             pooled_by_param = {}
-            for rid_col, mapping in rid_per_combo.items():
+            # ColumnSelection inputs are merged in HERE and only here: this dict
+            # becomes `_combo_to_rids`, which the save path reads to write
+            # `_invocation_input` edges. They are still absent from `rid_keys`,
+            # `vsig_cols` and `rid_keys_for_schema`, so combo expansion, schema
+            # extension, Variant pinning and for_columns are untouched.
+            for rid_col, mapping in {
+                **rid_per_combo,
+                **colsel_rid_per_combo,
+            }.items():
                 if f"__vsig_{rid_col[len('__rid_') :]}" in vsig_cols:
                     continue
                 param_rids = []
@@ -2671,6 +2705,24 @@ def _for_each_prepare(
         )
     else:
         # Full iteration mode: expand combos with rid variants.
+        #
+        # Plain inputs bind lineage through the `__rid_*` columns their
+        # expansion puts in the result table. ColumnSelection has no such
+        # column by design, so it binds through `combo_to_rids` here as it does
+        # in aggregation mode — keyed by SCHEMA keys only, because that is what
+        # a saved result row carries (`_lookup_keys` may also hold non-schema
+        # metadata iterables, which would never match).
+        #
+        # Left None when there is no ColumnSelection input, so a run without one
+        # takes exactly the path it always did.
+        # ColumnSelection binds lineage here the way `Fixed` does: by putting
+        # `__rid_{param}` straight into the combo, so the result table carries
+        # the column and the save path's row-binding loop picks it up like any
+        # other. Deliberately NOT via `combo_to_rids` — that map feeds
+        # `__upstream`, and making it non-None in this mode diverts the
+        # `elif rid_keys` branch plain inputs use, silently dropping THEIR
+        # upstream record ids (caught by
+        # test_full_iteration_binds_a_plain_and_a_selected_input_together).
         _combo_to_rids = None
         _iterated_keys_ordered = None
         rid_keys_for_schema = rid_keys
@@ -2711,6 +2763,26 @@ def _for_each_prepare(
                 _pruned_colsel += 1
                 continue
 
+            # The ColumnSelection rid(s) at this location, injected into the
+            # combo below exactly as a Fixed input's are. Computed once per
+            # location rather than per expanded combo.
+            _colsel_rid_at_combo: dict = {}
+            for _cs_col, _cs_map in colsel_rid_per_combo.items():
+                _rids = _cs_map.get(_rid_probe_key(_cs_col, schema_vals), [])
+                if not _rids:
+                    continue
+                if len(_rids) > 1:
+                    # ColumnSelection pools variants rather than expanding them
+                    # (that is the whole point of keeping it out of rid_keys),
+                    # and a single `__rid_*` combo key holds one id. Bind the
+                    # first and say so, rather than binding nothing.
+                    Log.debug(
+                        f"ColumnSelection '{_cs_col[len('__rid_') :]}' has "
+                        f"{len(_rids)} record(s) at this location; binding the "
+                        f"first for lineage"
+                    )
+                _colsel_rid_at_combo[_cs_col] = _rids[0]
+
             rid_lists: list = []
             rid_col_names: list = []
             valid = True
@@ -2733,6 +2805,8 @@ def _for_each_prepare(
                     # Add Fixed input record_ids to combo
                     for fixed_param, fixed_rid in fixed_rid_values.items():
                         full_combo[f"__rid_{fixed_param}"] = fixed_rid
+                    # Same, for ColumnSelection inputs (lineage only).
+                    full_combo.update(_colsel_rid_at_combo)
                     if _path_placeholder_names:
                         _bp_dicts = [
                             rid_to_bp.get(full_combo[k], {})
@@ -2754,6 +2828,7 @@ def _for_each_prepare(
                 # Add Fixed input record_ids to combo
                 for fixed_param, fixed_rid in fixed_rid_values.items():
                     full_combo[f"__rid_{fixed_param}"] = fixed_rid
+                full_combo.update(_colsel_rid_at_combo)
                 if _path_placeholder_names:
                     _bp_dicts = [
                         rid_to_bp.get(full_combo[k], {})
