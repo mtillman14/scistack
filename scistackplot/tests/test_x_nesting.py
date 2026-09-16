@@ -499,6 +499,51 @@ def test_a_non_bar_figure_states_no_bar_layout(grouped_table):
     assert "barmode" not in layout
 
 
+def test_box_layout_dodges_colour_levels_within_a_group(grouped_table):
+    """
+    plotly's default boxmode is "overlay": every colour level's box lands on
+    the same x position, one on top of the other. The bars are grouped, and
+    so is the matplotlib path, so the boxes must say "group" too.
+    """
+    from scistackplot import render_plotly
+
+    layout = render_plotly(
+        resolve(_nested_spec(kind=PlotKind.BOX), grouped_table)[0]
+    )["layout"]
+
+    assert layout["boxmode"] == "group"
+    assert layout["boxgap"] == 0.2
+    assert layout["boxgroupgap"] == 0.15
+    assert "violinmode" not in layout
+    assert "barmode" not in layout
+
+
+def test_violin_layout_dodges_colour_levels_within_a_group(grouped_table):
+    from scistackplot import render_plotly
+
+    layout = render_plotly(
+        resolve(_nested_spec(kind=PlotKind.VIOLIN), grouped_table)[0]
+    )["layout"]
+
+    assert layout["violinmode"] == "group"
+    assert layout["violingap"] == 0.2
+    assert layout["violingroupgap"] == 0.1
+    assert "boxmode" not in layout
+    assert "barmode" not in layout
+
+
+def test_only_the_drawn_kind_states_a_dodge_layout(grouped_table):
+    """A bar figure must not carry box/violin layout keys, and vice versa."""
+    from scistackplot import render_plotly
+
+    layout = render_plotly(
+        resolve(_nested_spec(kind=PlotKind.BAR), grouped_table)[0]
+    )["layout"]
+
+    assert "boxmode" not in layout
+    assert "violinmode" not in layout
+
+
 # --- where a new layer lands (depth) ---------------------------------------
 #
 # `FactorInfo.depth` is "how many schema keys pin one value of this factor", so

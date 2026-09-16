@@ -30,6 +30,19 @@ import {
   rolesAfterPick,
 } from './locationSelection'
 import { orderXLayers, placeXLayer } from './xLayers'
+import {
+  type AspectPreset,
+  CUSTOM_ASPECT,
+  FALLBACK_PRESETS,
+  aspectName,
+  heightFor,
+  pixelReadout,
+} from './figureSize'
+
+/** The dpi `plot_save` renders a raster at when the request names none
+ *  (`api/plot.py` SaveRequest). Only the readout uses it; the save itself
+ *  takes the backend's default. */
+const SAVE_DPI = 200
 
 const Plot = createPlotlyComponent(Plotly)
 
@@ -449,7 +462,9 @@ interface Spec {
      shows that variant); several are a comparison, and a `Variant` factor
      appears in Factors carrying whichever role the user gives it. */
   variant_sets?: VariantSet[]
-  style?: Record<string, unknown>
+  /* Cosmetics. `width`/`height` are INCHES and size the SAVED figure (and
+     the exported code); the preview fills its pane regardless. */
+  style?: { width?: number; height?: number; [key: string]: unknown }
 }
 
 /**
@@ -514,6 +529,10 @@ interface DescribeResponse {
   /** File types this matplotlib can write. Asked of the backend rather than
    *  listed here, so the dropdown and the save cannot disagree. */
   image_formats?: string[]
+  /** Aspect-ratio presets for the figure size, in dropdown order. scistackplot
+   *  owns the list (`figsize.ASPECT_PRESETS`); the panel only does the
+   *  arithmetic (`figureSize.ts`). */
+  figure_presets?: AspectPreset[]
 }
 
 interface FigurePayload {
@@ -628,6 +647,10 @@ export default function PlotStudio({
   const [addingVariant, setAddingVariant] = useState(false)
   // The schema location picker — the whole of the "Schema keys" section.
   const [locationPickerOpen, setLocationPickerOpen] = useState(false)
+  // The figure-size dropdown's own choice, held as state rather than derived
+  // from the size alone: derived-only, picking "Custom" over an 8 x 6 figure
+  // would snap straight back to 4:3. Null means "say what the size is".
+  const [aspectChoice, setAspectChoice] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [canvasHeight, setCanvasHeight] = useState(0)
   const observerRef = useRef<ResizeObserver | null>(null)
@@ -661,6 +684,7 @@ export default function PlotStudio({
     setDescribe(null)
     setSpec(null)
     setFigures([])
+    setAspectChoice(null)
     setLoadError('')
     callBackend('plot_describe', { variable: variable || undefined, ...sourceParams })
       .then(raw => {
@@ -923,6 +947,10 @@ export default function PlotStudio({
 
   const setYAxis = useCallback((patch: Partial<YAxis>) => {
     setSpec(prev => (prev ? { ...prev, y_axis: { ...(prev.y_axis ?? {}), ...patch } } : prev))
+  }, [])
+
+  const setStyle = useCallback((patch: { width?: number; height?: number }) => {
+    setSpec(prev => (prev ? { ...prev, style: { ...(prev.style ?? {}), ...patch } } : prev))
   }, [])
 
   /** Add or remove one factor from the y-limit scope, keeping panel order. */
@@ -1388,6 +1416,37 @@ export default function PlotStudio({
     ...['png', 'svg', 'pdf', 'eps'].filter(f => allFormats.includes(f)),
     ...allFormats.filter(f => !['png', 'svg', 'pdf', 'eps'].includes(f)),
   ]
+
+  // --- figure size ----------------------------------------------------------
+  // The size the SAVE draws at, in inches. The preview keeps filling its pane;
+  // this is deliberately about the file, which is where the ratio matters.
+  const presets = describe?.figure_presets ?? FALLBACK_PRESETS
+  const figWidth = typeof spec?.style?.width === 'number' ? spec.style.width : 8
+  const figHeight = typeof spec?.style?.height === 'number' ? spec.style.height : 6
+  const aspect = aspectChoice ?? aspectName(figWidth, figHeight, presets)
+  const onAspect = useCallback(
+    (name: string) => {
+      setAspectChoice(name)
+      // A ratio keeps the width and moves the height; custom moves nothing.
+      if (presets.find(p => p.name === name)?.ratio != null) {
+        setStyle({ height: heightFor(figWidth, name, presets, figHeight) })
+      }
+    },
+    [presets, figWidth, figHeight, setStyle]
+  )
+  const onWidth = useCallback(
+    (width: number) => setStyle({ width, height: heightFor(width, aspect, presets, figHeight) }),
+    [aspect, presets, figHeight, setStyle]
+  )
+  const onHeight = useCallback(
+    (height: number) => {
+      setStyle({ height })
+      // Back to "say what it is": a typed height that lands on 16:9 reads
+      // as 16:9, and anything else reads as custom.
+      setAspectChoice(null)
+    },
+    [setStyle]
+  )
 
   /** Save one figure, or the whole fan-out.
    *
@@ -1949,6 +2008,45 @@ export default function PlotStudio({
             </Section>
           )}
 
+          <Section title="Figure size">
+            <div style={styles.hint}>
+              Applies to saved images, exported code and the pipeline step. The
+              preview fills the pane regardless. Pick a ratio and set the width
+              (journal columns: 3.5 in single, 7.2 in double); the height follows.
+            </div>
+            <label style={styles.factorRow}>
+              <span style={styles.factorName}>Aspect</span>
+              <select
+                value={aspect}
+                onChange={e => onAspect(e.target.value)}
+                style={styles.select}
+              >
+                {presets.map(preset => (
+                  <option key={preset.name} value={preset.name} title={preset.hint}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div style={styles.gridSizeRow}>
+              <InchInput label="Width (in)" value={figWidth} onChange={onWidth} />
+              <InchInput
+                label="Height (in)"
+                value={figHeight}
+                onChange={onHeight}
+                title={
+                  aspect === CUSTOM_ASPECT
+                    ? 'Custom: width and height are independent'
+                    : 'Typing a height here switches the ratio to whatever it makes'
+                }
+              />
+            </div>
+            <div style={styles.layoutNote}>
+              {pixelReadout(figWidth, figHeight, SAVE_DPI)} at {SAVE_DPI} dpi for a
+              raster, before the whitespace trim takes a little off each edge.
+            </div>
+          </Section>
+
           <div style={{ ...styles.actions, flexWrap: 'wrap' }}>
             {/* Beside the save buttons, not in a menu: the format is part of
                 the save, and the two buttons share it. The list comes from the
@@ -2379,6 +2477,44 @@ function LimitInput({ label, value, onChange }: LimitInputProps) {
           width: 72,
           ...(value === null || value === undefined ? styles.gridSizeAuto : null),
         }}
+      />
+    </label>
+  )
+}
+
+interface InchInputProps {
+  label: string
+  value: number
+  onChange: (value: number) => void
+  title?: string
+}
+
+/**
+ * One dimension of the saved figure, in inches.
+ *
+ * Same typing discipline as `LimitInput`: the text is held while it is being
+ * typed and only a positive, finite number is committed — `Number('')` is 0,
+ * and a 0-inch figure is a matplotlib error, not a size. Unlike the limit,
+ * blank means nothing here: the field falls back to the value it had.
+ */
+function InchInput({ label, value, onChange, title }: InchInputProps) {
+  const [text, setText] = useState<string | null>(null)
+  return (
+    <label style={styles.gridSizeField}>
+      <span style={styles.gridSizeLabel}>{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={text ?? String(value)}
+        onChange={e => {
+          const next = e.target.value
+          setText(next)
+          const parsed = Number(next)
+          if (next.trim() !== '' && Number.isFinite(parsed) && parsed > 0) onChange(parsed)
+        }}
+        onBlur={() => setText(null)}
+        title={title}
+        style={{ ...styles.select, width: 64 }}
       />
     </label>
   )

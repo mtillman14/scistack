@@ -2230,6 +2230,19 @@ def _spread_decision(
     return spread, sorted(discriminating), sorted(collisions), max_rows
 
 
+def _strip_pinned_key_columns(
+    df: "pd.DataFrame", pinned: list[str]
+) -> "pd.DataFrame":
+    """Drop the schema-key columns in ``pinned`` from a returned DataFrame.
+
+    See the ``collisions`` branch of :func:`_results_to_output_dataframe`: a
+    pinned schema key is the record's address, and storing a copy of it as a
+    data column corrupts the variable's table for every later reader.
+    """
+    present = [c for c in pinned if c in df.columns]
+    return df.drop(columns=present) if present else df
+
+
 def _results_to_output_dataframe(
     collected_rows: list[tuple[dict, tuple]],
     output_names: list[str],
@@ -2256,14 +2269,33 @@ def _results_to_output_dataframe(
         )
         _out = ", ".join(str(n) for n in output_names) or "output"
         if collisions:
+            # A schema key is an ADDRESS, never data. The combination already
+            # says where these rows go, so the returned column can add nothing
+            # and must not be stored: a data column named after a schema key
+            # lands in the variable's DuckDB table beside the real key, and the
+            # plot loader then sees two "subject" columns and fails
+            # ("The truth value of a Series is ambiguous", 2026-09-16). The
+            # spread path already files rows by the combo address; this makes
+            # the one-record-per-combo path drop the column the same way.
             Log.warn(
                 "output %s returns schema key column(s) %s that the combination "
-                "already pins — the metadata and data columns collide and the "
-                "data column silently wins. Rename or drop them.",
+                "already pins — the combination's address wins and the data "
+                "column(s) are dropped before saving. Rename or drop them in "
+                "the function to silence this.",
                 _out,
                 collisions,
                 layer="scifor",
             )
+            collected_rows = [
+                (
+                    metadata,
+                    tuple(
+                        _strip_pinned_key_columns(df, collisions)
+                        for df in result_tuple
+                    ),
+                )
+                for metadata, result_tuple in collected_rows
+            ]
         # max_rows is the LARGEST row count across the combinations, which each
         # returned their own DataFrame — quoting it bare read as though every
         # combination returned that many rows (examples/vo2max/scidb.log

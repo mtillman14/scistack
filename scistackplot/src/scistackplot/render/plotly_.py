@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from ..figsize import describe_size
 from ..resolved import ResolvedPlot
 from ..spec import PlotKind
 from .base import (
@@ -48,6 +49,7 @@ def render(resolved: ResolvedPlot) -> dict:
     """Build a plotly.js figure dict."""
     with Log.timer("render_plotly", layer=LAYER, extra=str(resolved.kind)):
         n_rows, n_cols = grid_shape(resolved)
+        style = resolved.spec.style
         traces: list[dict] = []
         legend_on = shows_legend(resolved)
         if not legend_on and resolved.encoding.color:
@@ -97,6 +99,10 @@ def render(resolved: ResolvedPlot) -> dict:
                 # from this, never from `spec.roles`.
                 "panel_factors": list(resolved.panel_factors),
                 "y_scope": list(resolved.y_scope),
+                # The size the SAVED figure will have. The preview fills its
+                # pane regardless, so this is how the panel states what the
+                # export produces — the same numbers `render_mpl` logs.
+                "figure_size": describe_size(style.width, style.height),
             },
         }
         if resolved.labels.title:
@@ -112,6 +118,20 @@ def render(resolved: ResolvedPlot) -> dict:
             layout["barmode"] = "group"
             layout["bargap"] = 0.2
             layout["bargroupgap"] = 0.0
+        elif resolved.kind is PlotKind.BOX:
+            # Same rule as the bars: plotly's default boxmode is "overlay",
+            # which stacks every colour level's box on ONE x position. "group"
+            # dodges them side by side within each x group, as the bars are and
+            # as the matplotlib path draws them (`mpl._draw_distribution`:
+            # slot width 0.8 / n_colour_levels, box width 0.85 of its slot).
+            layout["boxmode"] = "group"
+            layout["boxgap"] = 0.2
+            layout["boxgroupgap"] = 0.15
+        elif resolved.kind is PlotKind.VIOLIN:
+            # As for boxes; a violin is 0.9 of its slot on the mpl path.
+            layout["violinmode"] = "group"
+            layout["violingap"] = 0.2
+            layout["violingroupgap"] = 0.1
 
         positions = [
             panel_position(resolved, index) for index in range(len(resolved.panels))

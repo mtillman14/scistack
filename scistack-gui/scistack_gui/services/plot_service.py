@@ -145,7 +145,7 @@ def describe(
 
 def _describe(db, variable, *, refresh, csv_path) -> dict:
     """:func:`describe`'s body, run with the database connection held."""
-    from scistackplot import capabilities, default_spec
+    from scistackplot import capabilities, default_spec, presets_payload
 
     source = get_source(db, refresh=refresh, csv_path=csv_path)
     catalog = source.describe()
@@ -230,6 +230,10 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         # What this matplotlib can write, so the format dropdown offers exactly
         # what the save will accept rather than a second list that can drift.
         "image_formats": supported_formats(),
+        # The aspect-ratio dropdown, in order. Owned by scistackplot (one
+        # vocabulary with `aspect_name`, which is what the renderer logs), so
+        # the GUI cannot carry a second list that drifts from it.
+        "figure_presets": presets_payload(),
     }
 
 

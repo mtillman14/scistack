@@ -1293,20 +1293,47 @@ def test_distribute_at_deepest_key_still_raises():
         )
 
 
-def test_pinned_schema_column_in_output_warns(caplog):
+def test_pinned_schema_column_in_output_warns_and_is_dropped(caplog):
     """A returned schema-key column that the combo ALREADY pins adds no
-    address information and collides with the metadata column of the same
-    name — pandas keeps whichever lands last, silently."""
+    address information: the combination's value is the address, and the
+    data copy is dropped (with a WARN) rather than stored. Before 2026-09-16
+    it survived into the result and, in the one-record-per-combo path, into
+    the variable's DuckDB table as a data column named after a schema key."""
     set_schema(["subject"])
     with caplog.at_level(logging.WARNING, logger="scifor"):
-        for_each(
+        result = for_each(
             lambda: pd.DataFrame({"subject": [99], "val": [1.0]}),
             inputs={},
             subject=[1, 2],
         )
-    assert any("collide" in r.message for r in caplog.records), [
+    assert any("pins" in r.message and "dropped" in r.message for r in caplog.records), [
         r.message for r in caplog.records
     ]
+    # The combo address, not the data column's 99.
+    assert sorted(result["subject"]) == [1, 2]
+    assert list(result["val"]) == [1.0, 1.0]
+
+
+def test_pinned_schema_column_dropped_from_whole_table_record():
+    """The one-record-per-combo path (multi-row table, no unpinned key): the
+    nested DataFrame is stored WITHOUT the pinned schema-key column. This is
+    the shape that produced a `subject` data column in a variable table and
+    broke the plot loader (two `subject` columns in one frame)."""
+    set_schema(["subject", "session"])
+    result = for_each(
+        lambda: pd.DataFrame(
+            {"subject": [1, 1, 1], "session": ["a", "a", "a"], "val": [1.0, 2.0, 3.0]}
+        ),
+        inputs={},
+        subject=[1],
+        session=["a"],
+    )
+    assert len(result) == 1
+    assert result.iloc[0]["subject"] == 1 and result.iloc[0]["session"] == "a"
+    nested = result.iloc[0]["output"]
+    assert isinstance(nested, pd.DataFrame)
+    assert list(nested.columns) == ["val"]
+    assert len(nested) == 3
 
 
 # ---------------------------------------------------------------------------

@@ -123,6 +123,18 @@ payload = render_plotly(resolved[0])     # interactive — a plotly.js dict
 
 `render_plotly` builds plain JSON and needs no plotly package.
 
+## Figure size
+
+`StyleOptions.width` / `height` are inches and size the **saved** figure and
+the generated code; the interactive preview fills whatever pane it is in.
+`scistackplot.figsize` is the one vocabulary of aspect-ratio presets (`4:3`,
+`16:9`, `3:2`, golden, `2:1`, `1:1`, two portrait ratios, `custom`): pick a
+ratio, name a width — a journal column is 3.5 in, a double column 7.2 in — and
+`height_for` gives the height. `aspect_name` runs the other way, so a reopened
+spec reports the ratio it was saved with, and `render_matplotlib` logs the
+size it drew at INFO. The Plot Studio panel's "Figure size" section is this
+module with a dropdown on it.
+
 ## Export: real code, not a call back into this library
 
 ```python

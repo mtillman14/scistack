@@ -815,6 +815,22 @@ def test_the_offered_formats_are_what_matplotlib_can_write(populated_db):
     assert "fig" not in offered, "matplotlib has no MATLAB .fig writer"
 
 
+def test_describe_offers_the_figure_size_presets(populated_db):
+    """The aspect dropdown is scistackplot's list, in its order — the GUI
+    carries no second copy that could drift from what `aspect_name` reports."""
+    from scistackplot import ASPECT_PRESETS, CUSTOM_ASPECT
+
+    payload = plot_service.describe(populated_db, "RawSignal")
+    offered = payload["figure_presets"]
+
+    assert [p["name"] for p in offered] == [p.name for p in ASPECT_PRESETS]
+    assert offered[-1]["name"] == CUSTOM_ASPECT and offered[-1]["ratio"] is None
+    # The opening spec's size is one of them, so the dropdown never opens on
+    # "custom" for a figure nobody has customised.
+    style = payload["spec"].get("style") or {}
+    assert style.get("width") == 8.0 and style.get("height") == 6.0
+
+
 def test_save_figure_creates_missing_parent_directories(populated_db, tmp_path):
     spec = _pooled_spec(populated_db)
     target = tmp_path / "new" / "nested" / "figure.png"

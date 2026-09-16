@@ -85,6 +85,15 @@ from .spec import (
     YAxis,
     grid_shape_for,
 )
+from .figsize import (
+    ASPECT_PRESETS,
+    CUSTOM as CUSTOM_ASPECT,
+    AspectPreset,
+    aspect_name,
+    describe_size,
+    height_for,
+    presets_payload,
+)
 from .xaxis import XGroup, XPlan, leaf_key, plan_x_axis
 from .ylimits import describe as describe_y_limits
 from .ylimits import eligible_scope, limits_by_scope
@@ -128,6 +137,14 @@ __all__ = [
     "Matcher",
     "MatchOp",
     "StyleOptions",
+    # figure size presets
+    "ASPECT_PRESETS",
+    "CUSTOM_ASPECT",
+    "AspectPreset",
+    "aspect_name",
+    "describe_size",
+    "height_for",
+    "presets_payload",
     "Filter",
     "FactorVariable",
     "LevelGroup",

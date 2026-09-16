@@ -125,3 +125,36 @@ matches MATLAB (`_distribute_pieces`).
 - `docs/claude/for-each-kwargs.md` — option semantics.
 - `scidb/tests/test_record_granularity.py` — the vo2max explosion that
   motivated the spread rule.
+
+## Schema-key columns are never stored as data (2026-09-16)
+
+A schema key is an address, never payload. Both result paths now strip
+returned schema-key columns before the save:
+
+- **spread path** — always did: scidb's flatten save reads every non-`__`,
+  non-schema-key column as data (`scidb/foreach.py`, `data_cols = ...`), so
+  the 73x27 `FunctionalOutcomes` sheet filed as 73 `1x25` records.
+- **one-record-per-combo path** — did NOT until 2026-09-16. A multi-row table
+  whose only schema-key columns were already *pinned* by the combination
+  (`collisions` in `_spread_decision`) went into the record whole, keys
+  included. `_results_to_output_dataframe` now drops those columns
+  (`_strip_pinned_key_columns`) and the WARN says so: `… the combination's
+  address wins and the data column(s) are dropped before saving`.
+
+### The lasting damage, and where it is absorbed
+
+The original 2026-09-15 19:16 save (pre-parity MATLAB nested path, since
+removed) wrote one dataset-level 73x27 record carrying `subject`/`session`.
+That put `subject` and `session` **data columns** into the variable's DuckDB
+table permanently: records are excluded, never deleted, and a table's columns
+outlive every record. Re-saving does not remove them.
+
+`scistackplotdb.load.data_column_types_for` — the one owner of "which data
+columns does this variable have" — therefore ignores any data column named
+after a schema key (WARN `… named after schema key(s) — ignoring them`).
+Without that, `load_variable` selected both the data copy and the real key,
+`frame["subject"]` was a two-column DataFrame, and `plot_describe` failed with
+`The truth value of a Series is ambiguous`.
+
+Tests: `scifor/tests/test_foreach_standalone.py::test_pinned_schema_column_*`,
+`scistackplotdb/tests/test_schema_key_data_columns.py`.

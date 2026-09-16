@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from ..figsize import aspect_name
 from ..resolved import ResolvedPlot
 from ..spec import PlotKind
 from .base import (
@@ -50,6 +51,18 @@ def render(resolved: ResolvedPlot):
     with Log.timer("render_mpl", layer=LAYER, extra=str(resolved.kind)):
         n_rows, n_cols = grid_shape(resolved)
         style = resolved.spec.style
+        # The size the file will have (before bbox_inches="tight" trims the
+        # margins). Stated in the log because the preview never shows it: a
+        # figure that "came out squashed" is diagnosed here, not in the GUI.
+        Log.info(
+            "figure size %.2f x %.2f in (%s), %d x %d panel grid",
+            style.width,
+            style.height,
+            aspect_name(style.width, style.height),
+            n_rows,
+            n_cols,
+            layer=LAYER,
+        )
         fig, axes = plt.subplots(
             n_rows,
             n_cols,
