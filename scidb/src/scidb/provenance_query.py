@@ -99,12 +99,27 @@ def _chunked_in(duck, sql_template: str, ids, tail_params=None, chunk: int = 900
     return out
 
 
-def producing_invocation_batch(duck, record_ids) -> dict:
-    """Batched :func:`producing_invocation`.
+def producing_invocations_batch(duck, record_ids) -> dict:
+    """**Every** invocation that produced each record →
+    ``{record_id: [(inv_id, fn_name, fn_hash), ...]}``, ascending by ``inv_id``.
 
-    ``{record_id: (inv_id, fn_name, fn_hash)}`` for records that have a producing
-    invocation (raw/manual records are absent from the map). Matches the
-    per-record function's "lowest invocation_id wins" tie-break.
+    Records with no producing invocation (raw/manual saves) are absent.
+
+    Today's save path writes at most one producer per record: ``record_id``
+    hashes the content **and** the save metadata (``__fn_hash``, the input
+    rids, the run options), so a re-run after a code edit or under a different
+    ``distribute``/``as_table`` lands on a *new* record rather than on this one
+    (measured 2026-09-16). Re-running the *same* recipe reuses both the record
+    and the invocation and appends a ``_run`` row — that reproduction is read
+    off :func:`runs_for_invocations_batch`, not here.
+
+    The schema still permits several producers (``_invocation_output`` has no
+    uniqueness on ``output_record_id``), and a writer outside this save path —
+    the MATLAB bridge, an import, a future identity change — could create
+    them. This is the read that would report them; the singular
+    :func:`producing_invocation` / :func:`producing_invocation_batch` keep
+    picking one (the lowest id) because variant *identity* has to be a single
+    value.
     """
     ids = list(dict.fromkeys(record_ids))
     if not ids:
@@ -119,10 +134,192 @@ def producing_invocation_batch(duck, record_ids) -> dict:
     )
     out: dict = {}
     for out_rid, inv_id, fn_name, fn_hash in rows:
-        prev = out.get(out_rid)
-        # ORDER BY io.invocation_id LIMIT 1 ⇒ keep the lowest invocation_id.
-        if prev is None or inv_id < prev[0]:
-            out[out_rid] = (inv_id, fn_name, fn_hash)
+        out.setdefault(out_rid, []).append((inv_id, fn_name, fn_hash))
+    for producers in out.values():
+        producers.sort(key=lambda p: p[0])
+    multi = sum(1 for producers in out.values() if len(producers) > 1)
+    if multi:
+        logger.info(
+            "producing_invocations_batch: %d/%d record(s) have more than one "
+            "producing invocation (a second writer claimed the record; the "
+            "for_each save path never does this)",
+            multi,
+            len(out),
+        )
+    return out
+
+
+def producing_invocation_batch(duck, record_ids) -> dict:
+    """Batched :func:`producing_invocation`.
+
+    ``{record_id: (inv_id, fn_name, fn_hash)}`` for records that have a producing
+    invocation (raw/manual records are absent from the map). Matches the
+    per-record function's "lowest invocation_id wins" tie-break.
+
+    **Deliberately lossy**: should a record ever carry a second producing
+    invocation (see :func:`producing_invocations_batch` for when that can and
+    cannot happen), the later one is dropped here. That is right for the
+    callers of this function — variant identity, the ``_find_record`` latest
+    collapse, the ``function_hash`` a trace node reports — each of which needs
+    ONE value and must keep reporting the one it always has. A caller that
+    wants every producer reads the plural function instead.
+    """
+    return {
+        rid: producers[0]
+        for rid, producers in producing_invocations_batch(duck, record_ids).items()
+    }
+
+
+def runs_for_invocations_batch(duck, invocation_ids) -> dict:
+    """``{invocation_id: [(run_id, timestamp, user_id, where_clause), ...]}``,
+    oldest run first — the ``_run_invocation`` ⨝ ``_run`` join, batched.
+
+    One (chunked) query per call, never one per node: a trace tree resolves
+    every invocation in it together. ``_run`` appends a row per *execution*, so
+    an invocation re-produced by five runs has five rows here, and
+    ``where_clause`` is display-only audit text (§10) — never parsed, never
+    used to decide what a record is.
+    """
+    ids = list(dict.fromkeys(i for i in invocation_ids if i))
+    if not ids:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT ri.invocation_id, run.run_id, run.timestamp, run.user_id, "
+        "run.where_clause "
+        "FROM _run_invocation ri "
+        "JOIN _run run ON run.run_id = ri.run_id "
+        "WHERE ri.invocation_id IN ({ph})",
+        ids,
+    )
+    out: dict = {}
+    for inv_id, run_id, ts, uid, where in rows:
+        out.setdefault(inv_id, []).append((run_id, ts, uid, where))
+    for runs in out.values():
+        runs.sort(key=lambda r: (r[1] or "", r[0] or ""))
+    missing = [i for i in ids if i not in out]
+    if missing:
+        # Not an error: a terminal MATLAB run and any pre-``_run`` database
+        # leave invocations nothing ever claimed. Logged so "no runs" is never
+        # read as "the join is broken".
+        logger.info(
+            "runs_for_invocations_batch: %d/%d invocation(s) have no _run row "
+            "(produced outside a tracked for_each execution)",
+            len(missing),
+            len(ids),
+        )
+    return out
+
+
+def glue_source_batch(duck, virtual_record_ids) -> dict:
+    """Batched :func:`glue_source` — ``{virtual_record_id: {record_id,
+    variable_type, chain_names, chain_hash}}``, with the same
+    lowest-``input_record_id`` tie-break as the per-record function."""
+    ids = list(dict.fromkeys(virtual_record_ids))
+    if not ids:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT io.output_record_id, ii.input_record_id, inv.function_name, "
+        "inv.function_hash, r.type "
+        "FROM _invocation_output io "
+        "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
+        "JOIN _invocation_input ii ON ii.invocation_id = io.invocation_id "
+        "LEFT JOIN _record r ON r.record_id = ii.input_record_id "
+        "WHERE io.output_record_id IN ({ph})",
+        ids,
+    )
+    best: dict = {}
+    for out_rid, src_rid, fn_name, fn_hash, src_type in rows:
+        prev = best.get(out_rid)
+        if prev is None or src_rid < prev[0]:
+            best[out_rid] = (src_rid, fn_name, fn_hash, src_type)
+    return {
+        out_rid: {
+            "record_id": src_rid,
+            "variable_type": src_type,
+            "chain_names": (fn_name or "").split(GLUE_NAME_SEPARATOR),
+            "chain_hash": fn_hash or "",
+        }
+        for out_rid, (src_rid, fn_name, fn_hash, src_type) in best.items()
+    }
+
+
+def invocation_call_ids_batch(duck, invocation_ids) -> dict:
+    """``{invocation_id: call_id | None}`` — the for_each call site each
+    invocation belongs to, reconstructed from its stored wiring.
+
+    ``call_id`` is not a column: it is derived from the call's config
+    (``__fn`` / ``__inputs`` / ``__constants`` / ``__distribute`` /
+    ``__as_table`` / ``__glue``), and :func:`config_call_id` owns that recipe so
+    this reverse direction keeps matching the forward
+    ``ForEachConfig.to_call_id``. Batched — a bounded number of queries however
+    many invocations are asked about, because a trace tree resolves them all at
+    once (the N+1 rule).
+
+    ``None`` for a glue invocation and for the synthetic ``__save__`` anchor:
+    neither is a pipeline step (D5), so neither has a call site.
+    """
+    ids = list(dict.fromkeys(i for i in invocation_ids if i))
+    if not ids:
+        return {}
+    inv_rows = _chunked_in(
+        duck,
+        "SELECT invocation_id, function_name, as_table, distribute "
+        "FROM _invocation WHERE invocation_id IN ({ph})",
+        ids,
+    )
+    edge_rows = _chunked_in(
+        duck,
+        "SELECT ii.invocation_id, ii.param_name, ii.input_record_id, r.type, "
+        "c.value_repr "
+        "FROM _invocation_input ii "
+        "LEFT JOIN _record r ON r.record_id = ii.input_record_id "
+        "LEFT JOIN _constant c ON c.record_id = ii.input_record_id "
+        "WHERE ii.invocation_id IN ({ph})",
+        ids,
+    )
+    glue_srcs = glue_source_batch(
+        duck, {row[2] for row in edge_rows if row[3] == GLUE_TYPE}
+    )
+    glue_invs = glue_invocation_ids(duck)
+
+    def _empty_cfg() -> dict:
+        return {
+            "input_types": {},
+            "constants": {},
+            "path_inputs": {},
+            "glue_chains": {},
+        }
+
+    cfgs: dict = {}
+    for inv_id, param, in_rid, rtype, value_repr in edge_rows:
+        cfg = cfgs.setdefault(inv_id, _empty_cfg())
+        if rtype == PATHINPUT_TYPE:
+            cfg["path_inputs"][param] = value_repr
+        elif rtype == CONSTANT_TYPE:
+            cfg["constants"][param] = _safe_literal(value_repr)
+        elif rtype == GLUE_TYPE:
+            src = glue_srcs.get(in_rid) or {}
+            cfg["input_types"][param] = src.get("variable_type") or GLUE_TYPE
+            cfg["glue_chains"][param] = (
+                src.get("chain_hash") or "",
+                tuple(src.get("chain_names") or ()),
+            )
+        else:
+            cfg["input_types"][param] = rtype
+
+    out: dict = {}
+    for inv_id, fn_name, as_table, distribute in inv_rows:
+        if inv_id in glue_invs or fn_name == SAVE_FUNCTION_NAME:
+            out[inv_id] = None
+            continue
+        cfg = {
+            **cfgs.get(inv_id, _empty_cfg()),
+            "as_table": sorted(as_table) if as_table else [],
+            "distribute": bool(distribute),
+        }
+        out[inv_id] = config_call_id(fn_name, cfg)
     return out
 
 
@@ -1288,6 +1485,77 @@ def upstream_provenance(db, record_id: str, max_depth: int = 20) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Variant pin → records
+# ---------------------------------------------------------------------------
+def records_for_variant(
+    db,
+    variable,
+    selection: dict | None = None,
+    *,
+    version_id: str | None = None,
+    include_excluded: bool = False,
+    **schema,
+) -> list[str]:
+    """The record_ids a **variant pin** names → ``[record_id, ...]``.
+
+    ``selection`` is the vocabulary ``load()`` already honours — the dict a
+    :class:`~scidb.variant.Variant` carries::
+
+        {"__code__.grSides": "v2",
+         "__run__.loadGaitRiteOneFile": "distribute=true",
+         "bandpass.low_hz": 20}
+
+    Display spellings (``Code:grSides``, ``Run:loader``, ``CodeIsLatest``) are
+    accepted too and canonicalized by
+    :func:`~scidb.variant.normalize_selection`, so a selection held by the Plot
+    Studio picker or typed at the CLI resolves to the same records as the
+    ``Variant`` a scientist writes in ``for_each``.
+
+    ``**schema`` are schema keys (``subject="S01"``); a non-schema kwarg is
+    folded into the pin, exactly as ``BaseVariable.load`` folds it.
+
+    This is the for_each input loader's own resolution and nothing beside it:
+    one :meth:`~scidb.database.DatabaseManager._find_record` call with the
+    same ``branch_params_filter`` and the same ``version_id`` rule
+    (:func:`~scidb.variant.pin_loads_uncollapsed`: a code or run pin loads
+    ``"all"``, because the latest-collapse merges code versions and run-option
+    sets before any filter runs; anything else loads ``"latest"``). It exists
+    so that "trace the variant I pinned" cannot answer about different records
+    than feeding that variant to a function would — the rule that a list value
+    means membership, that ``"latest"`` resolves per schema location, and that
+    a bare name is suffix-matched all keep living in one place. Pass
+    ``version_id`` only to override that rule deliberately.
+    """
+    from .variant import normalize_selection, pin_loads_uncollapsed
+
+    type_name = getattr(variable, "__name__", variable)
+    nested = db._split_metadata(schema)
+    pins = {
+        **normalize_selection(nested.get("version") or {}),
+        **normalize_selection(selection or {}),
+    }
+    if version_id is None:
+        version_id = "all" if pin_loads_uncollapsed(pins) else "latest"
+    df = db._find_record(
+        type_name,
+        nested_metadata={"schema": nested.get("schema", {}), "version": {}},
+        version_id=version_id,
+        branch_params_filter=pins or None,
+        include_excluded=include_excluded,
+    )
+    rids = [] if df.empty else df["record_id"].tolist()
+    logger.info(
+        "records_for_variant(%s, schema=%s, pin=%s, version_id=%s): %d record(s)",
+        type_name,
+        nested.get("schema", {}) or "(any)",
+        pins or "(none)",
+        version_id,
+        len(rids),
+    )
+    return rids
+
+
+# ---------------------------------------------------------------------------
 # Pipeline reconstruction (§8) — nodes + edges DAG for the queried record
 # ---------------------------------------------------------------------------
 def pipeline(db, record_id: str, max_depth: int = 20) -> dict:
@@ -1590,7 +1858,8 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     ``call_id_from_version_keys`` over the reconstructed config signature, so it
     matches the forward ``ForEachConfig.to_call_id`` for plain inputs),
     ``input_types`` (param→type), ``constants`` (param→typed value),
-    ``output_num`` (int|None), ``record_count`` (distinct output records).
+    ``run_options`` (:func:`run_options_label`), ``output_num`` (int|None),
+    ``record_count`` (distinct output records).
     """
     from .foreach_config import call_id_from_version_keys
 
@@ -1662,6 +1931,12 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     "call_id": call_id_from_version_keys(vk),
                     "input_types": input_types,
                     "constants": constants,
+                    # The run-option set this variant ran under. Already part of
+                    # the group key above (``distribute``/``as_table`` are
+                    # folded into invocation_id, so two runs differing only by a
+                    # flag are two variants) — it was simply never reported, so
+                    # `scidb variants` showed them as indistinguishable rows.
+                    "run_options": run_options_label(distribute, at),
                     # {param: [glue node name, ...]} — the reshaping this call
                     # site interposed on its inputs. Part of the variant so a
                     # GUI target derived from history re-runs WITH its glue.

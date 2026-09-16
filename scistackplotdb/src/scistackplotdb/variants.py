@@ -37,6 +37,42 @@ from .load import LATEST_COLUMN
 LAYER = "scistackplotdb"
 
 
+def _check_column_vocabulary() -> None:
+    """Fail loudly if the two layers stop spelling the variant columns alike.
+
+    ``scistackplot`` names the columns and ``scidb`` canonicalizes them back
+    into pins, and neither may import the other (the CSV path depends on
+    scistackplot staying scidb-free). This module imports both, so it is the
+    only place the two spellings can be compared — and a silent divergence
+    here would not raise anywhere: it would make every pin a no-op and quietly
+    plot every variant at once.
+    """
+    from scidb.variant import (
+        CODE_COLUMN_PREFIX,
+        LATEST_COLUMN_NAME,
+        RUN_COLUMN_PREFIX,
+    )
+
+    mismatches = [
+        f"{name}: scistackplot {ours!r} vs scidb {theirs!r}"
+        for name, ours, theirs in (
+            ("code prefix", CODE_FACTOR_PREFIX, CODE_COLUMN_PREFIX),
+            ("run prefix", RUN_FACTOR_PREFIX, RUN_COLUMN_PREFIX),
+            ("latest column", LATEST_COLUMN, LATEST_COLUMN_NAME),
+        )
+        if ours != theirs
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "variant column vocabulary has diverged between scistackplot and "
+            "scidb — every variant pin would silently stop matching: "
+            + "; ".join(mismatches)
+        )
+
+
+_check_column_vocabulary()
+
+
 def variant_set(
     name: str | None,
     variant: Any,
@@ -135,28 +171,18 @@ def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
 
     ``CodeIsLatest: False`` has no scidb spelling — "not the latest" is not a
     pin — so it is dropped with a warning rather than silently inverted.
-    """
-    from scidb.variant import CODE_PIN_PREFIX, LATEST_VERSION, RUN_PIN_PREFIX
 
-    out: dict[str, Any] = {}
-    for key, value in (selection or {}).items():
-        if key == LATEST_COLUMN:
-            if value is False:
-                Log.warn(
-                    "selection pins %s=False, which scidb cannot express "
-                    "(there is no 'not the latest' pin) — ignoring it",
-                    LATEST_COLUMN,
-                    layer=LAYER,
-                )
-                continue
-            out[CODE_PIN_PREFIX] = LATEST_VERSION
-        elif key.startswith(CODE_FACTOR_PREFIX):
-            out[f"{CODE_PIN_PREFIX}.{key[len(CODE_FACTOR_PREFIX):]}"] = value
-        elif key.startswith(RUN_FACTOR_PREFIX):
-            out[f"{RUN_PIN_PREFIX}.{key[len(RUN_FACTOR_PREFIX):]}"] = value
-        else:
-            out[key] = value
-    return out
+    The mapping itself is **scidb's** (:func:`scidb.variant.normalize_selection`)
+    rather than this module's, because three consumers now hand scidb a
+    column-keyed selection — this picker, the GUI's provenance RPC and
+    ``scidb trace --variant`` — and a second copy of the rule is how the two
+    dialects start to disagree about what a pin means. What stays here is the
+    *check* that the two layers still spell the columns the same way: this
+    module is the only place that can see both sides.
+    """
+    from scidb.variant import normalize_selection
+
+    return normalize_selection(selection)
 
 
 def _axes_of(table: LongTable | None) -> list[dict]:

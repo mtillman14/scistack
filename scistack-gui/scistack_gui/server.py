@@ -1010,6 +1010,19 @@ def _h_plot_variant_graph(params):
     )
 
 
+def _h_variable_provenance(params):
+    from scistack_gui.db import get_db
+    from scistack_gui.services.provenance_service import variable_provenance
+
+    return variable_provenance(
+        get_db(),
+        params["variable"],
+        selection=params.get("selection") or None,
+        schema=params.get("schema_keys") or None,
+        include_runs=params.get("include_runs", True),
+    )
+
+
 def _h_plot_grouping_graph(params):
     from scistack_gui.db import get_db
     from scistack_gui.services.plot_service import grouping_graph
@@ -1247,6 +1260,7 @@ METHODS = {
     "plot_describe": _h_plot_describe,
     "plot_capabilities": _h_plot_capabilities,
     "plot_variant_graph": _h_plot_variant_graph,
+    "variable_provenance": _h_variable_provenance,
     "plot_grouping_graph": _h_plot_grouping_graph,
     "plot_grouping_columns": _h_plot_grouping_columns,
     "plot_grouping_default_variant": _h_plot_grouping_default_variant,
@@ -1293,6 +1307,12 @@ SELF_MANAGED_DB_METHODS = frozenset(
         "plot_describe",
         "plot_capabilities",
         "plot_variant_graph",
+        # Same shape again: a read-only walk that takes the connection inside
+        # `provenance_service` for exactly as long as the queries need it. The
+        # tree walk is O(depth) queries and the panel is opened while a user is
+        # reading, so it must not hold the file against MATLAB for the whole
+        # round trip.
+        "variable_provenance",
         # Same shape as plot_variant_graph: read-only picker calls that take
         # the connection inside the service for exactly as long as the query
         # needs it. `plot_grouping_columns` is the one that can cost real time

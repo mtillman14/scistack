@@ -20,6 +20,7 @@ from scistack_gui.api.layout import router as layout_router
 from scistack_gui.api.pipeline import router as pipeline_router
 from scistack_gui.api.plot import router as plot_router
 from scistack_gui.api.project import router as project_router
+from scistack_gui.api.provenance import router as provenance_router
 from scistack_gui.api.registry import router as registry_router
 from scistack_gui.api.run import router as run_router
 from scistack_gui.api.schema import router as schema_router
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(builtin_functions_router, prefix="/api")
     app.include_router(glue_router, prefix="/api")
     app.include_router(plot_router, prefix="/api")
+    app.include_router(provenance_router, prefix="/api")
     app.include_router(ws_router)
 
     # Serve the pre-built React frontend if the static folder exists.

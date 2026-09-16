@@ -206,9 +206,22 @@ interface Props {
   /** Selection being edited, `{column: level | level[] | 'latest'}`. */
   selection: Record<string, unknown>
   /** Row label, editable here too so the popup is self-contained. Empty means
-   *  "still following the selection" — `placeholder` is what that resolves to. */
+   *  "still following the selection" — `placeholder` is what that resolves to.
+   *
+   *  A row label is a PlotSpec idea. A second consumer (the Provenance panel)
+   *  wants the same canvas to answer "which variant?" and has no rows, so it
+   *  passes `showName={false}` and the field disappears — see `showName`. */
   name: string
   placeholder?: string
+  /** False for a consumer with no row to name. The three chrome props below
+   *  exist for the same reason: this component owns the *selection*, and the
+   *  words around it belong to whoever is asking. Extracting the selection half
+   *  from its PlotSpec wiring is exactly this — one component, a second
+   *  consumer, no copy of the canvas. */
+  showName?: boolean
+  title?: string
+  subtitle?: string
+  applyLabel?: string
   /** Adding a NEW row rather than editing one: the popup opens on a variable
    *  pick first, and only then on that variable's variants. Two steps because
    *  they are two different questions — "what am I plotting" precedes "which
@@ -231,6 +244,10 @@ export default function VariantDagPopup({
   selection: initial,
   name: initialName,
   placeholder,
+  showName = true,
+  title,
+  subtitle,
+  applyLabel = 'Apply',
   pick = false,
   pickable = [],
   refusals = {},
@@ -430,11 +447,12 @@ export default function VariantDagPopup({
 
   return (
     <PickerDialog
-      title={choosing ? 'Which variable?' : 'Select variant'}
+      title={choosing ? 'Which variable?' : (title ?? 'Select variant')}
       subtitle={
         choosing
           ? 'Click the variable to plot. Anything that cannot be drawn alongside this figure says why.'
-          : 'Checkboxes and versions here choose what the FIGURE shows. Nothing on this graph changes what a run does.'
+          : (subtitle ??
+            'Checkboxes and versions here choose what the FIGURE shows. Nothing on this graph changes what a run does.')
       }
       headerExtra={
         !choosing && (
@@ -445,13 +463,15 @@ export default function VariantDagPopup({
             <span style={styles.chosenVariable} title="The variable this variant plots">
               {chosen}
             </span>
-            <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder={placeholder || 'variant name'}
-              style={localStyles.nameInput}
-              title="What this variant is called in the figure"
-            />
+            {showName && (
+              <input
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder={placeholder || 'variant name'}
+                style={localStyles.nameInput}
+                title="What this variant is called in the figure"
+              />
+            )}
           </>
         )
       }
@@ -516,7 +536,7 @@ export default function VariantDagPopup({
                 onApply({ selection, name, variable: chosen ?? undefined })
               }
             >
-              Apply
+              {applyLabel}
             </button>
           )}
         </>

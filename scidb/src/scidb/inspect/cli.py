@@ -345,6 +345,64 @@ def _cmd_sql(insp: Inspector, args) -> None:
         print(f"({result.row_count} rows)")
 
 
+def _parse_variant(pairs: list[str]) -> dict:
+    """``--variant KEY=VALUE`` (repeatable) → a selection dict.
+
+    Keys are the pin vocabulary ``load()`` honours, in either spelling:
+    ``Code:grSides`` / ``__code__.grSides``, ``Run:loader`` /
+    ``__run__.loadGaitRiteOneFile``, or a branch param (``bandpass.low_hz``).
+    ``scidb.variant.normalize_selection`` canonicalizes them, so the display
+    spelling a user reads off the Plot Studio picker can be pasted here.
+
+    Repeating a key accumulates a list, which scidb already reads as
+    membership — ``--variant Code:f=v1 --variant Code:f=v2`` means "either".
+
+    Values: code/run pins are strings by nature (``v2``, ``distribute=true``,
+    ``latest``) and stay verbatim; a branch-param value is literal-eval'd so
+    ``low_hz=20`` matches the stored int, the same rule ``_coerce_non_schema``
+    applies to a non-schema filter.
+    """
+    from ..variant import (
+        CODE_COLUMN_PREFIX,
+        CODE_PIN_PREFIX,
+        LATEST_COLUMN_NAME,
+        RUN_COLUMN_PREFIX,
+        RUN_PIN_PREFIX,
+    )
+
+    literal_free = (
+        CODE_COLUMN_PREFIX,
+        RUN_COLUMN_PREFIX,
+        CODE_PIN_PREFIX,
+        RUN_PIN_PREFIX,
+    )
+    out: dict = {}
+    for pair in pairs or []:
+        if "=" not in pair:
+            raise CLIError(
+                f"Expected KEY=VALUE for --variant, got {pair!r} "
+                f"(e.g. --variant Code:grSides=v2)"
+            )
+        key, value = pair.split("=", 1)
+        if key == LATEST_COLUMN_NAME:
+            parsed: object = value.lower() not in ("false", "0", "no")
+        elif key.startswith(literal_free):
+            parsed = value
+        else:
+            try:
+                parsed = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                parsed = value
+        if key in out:
+            existing = out[key]
+            out[key] = (
+                [*existing, parsed] if isinstance(existing, list) else [existing, parsed]
+            )
+        else:
+            out[key] = parsed
+    return out
+
+
 def _cmd_trace(insp: Inspector, args) -> None:
     if args.type is None and args.record_id is None:
         raise CLIError(
@@ -353,13 +411,28 @@ def _cmd_trace(insp: Inspector, args) -> None:
     metadata = _coerce_non_schema(
         _parse_kv(args.metadata), insp._db.dataset_schema_keys
     )
-    tree = insp.trace(
-        args.type, record_id=args.record_id, include_audit=args.audit, **metadata
-    )
+    selection = _parse_variant(args.variant)
+    try:
+        tree = insp.provenance(
+            args.type,
+            selection=selection or None,
+            record_id=args.record_id,
+            include_runs=args.runs,
+            include_audit=args.audit,
+            **metadata,
+        )
+    except ValueError as exc:
+        # `--record-id` together with `--variant` is a contradiction the API
+        # refuses; surface it as a usage error rather than a traceback.
+        raise CLIError(str(exc))
     if args.json:
         _emit_json(tree)
     else:
-        print(render.render_trace(tree, style=_resolve_style(args)))
+        print(
+            render.render_trace(
+                tree, style=_resolve_style(args), show_runs=args.runs
+            )
+        )
 
 
 def _cmd_report(insp: Inspector, args) -> None:
@@ -588,6 +661,22 @@ def _add_commands(
         "--record-id",
         default=None,
         help="Trace this exact record instead of resolving by metadata.",
+    )
+    p.add_argument(
+        "--variant",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Pin a variant, repeatable. KEY is Code:<fn> / Run:<fn> / a "
+        "branch param (bandpass.low_hz), or scidb's own __code__.<fn> / "
+        "__run__.<fn>. Same selection load() honours, so this traces the "
+        "records Variant(...) would load. Repeat a key for 'any of'.",
+    )
+    p.add_argument(
+        "--runs",
+        action="store_true",
+        help="Take every node down to the runs that produced it (run id, "
+        "when, who, where=, and the invocation/options each run used).",
     )
     p.add_argument(
         "--audit",

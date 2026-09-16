@@ -99,6 +99,31 @@ class RunRecord:
 
 
 @dataclass
+class RunRef:
+    """One execution that produced a trace node's record.
+
+    A record can have several: a re-run of the same recipe reuses its
+    invocation and appends a ``_run`` row, so "which run produced this?" is a
+    list. (A re-run under edited code or different run options is a different
+    invocation AND a different record — the save metadata is part of the
+    record_id — so it shows up as another record, not as another run here.)
+    The per-run ``invocation_id`` / ``function_hash`` / ``run_options`` are
+    carried anyway, so a second producer written by any other path is still
+    told apart in place. This is the level ``trace`` could not reach before,
+    and the reason "which run produced the records I am looking at?" needed
+    hand-written SQL.
+    """
+
+    run_id: str
+    timestamp: str
+    user_id: str | None
+    where_clause: str | None  # display-only by design — never parsed
+    invocation_id: str
+    function_hash: str | None
+    run_options: str | None  # provenance_query.run_options_label
+
+
+@dataclass
 class TraceInput:
     param: str
     record_id: str
@@ -129,6 +154,30 @@ class TraceNode:
     saved_by: str | None
     run_count: int
     last_run: str | None
+    # --- down to the run (Stage 2) --------------------------------------
+    #: The producing invocation ``function_hash`` above belongs to — the
+    #: lowest-id producer, so the two always describe the same call.
+    invocation_id: str | None = None
+    #: EVERY producing invocation, ascending. The for_each save path writes
+    #: exactly one (a non-identical re-run is a new record, not a second
+    #: producer), so longer than one means another writer put it there;
+    #: ``runs`` spans all of them either way.
+    invocation_ids: list[str] = field(default_factory=list)
+    #: The for_each call site (``provenance_query.config_call_id``). None for a
+    #: raw save, a glue hop, and the synthetic ``__save__`` anchor.
+    call_id: str | None = None
+    #: ``distribute=…[, as_table=[…]]`` for ``invocation_id`` — the third
+    #: variant axis, and the one that is invisible in constants and code.
+    run_options: str | None = None
+    #: The producing function's per-function version ordinal ("v1"/"v2"/…) for
+    #: ``function_hash``. None when that function has only ever had one
+    #: version: ``code_version_ordinals`` omits those on purpose (a single
+    #: version is not a choice), and inventing "v1" here would imply one.
+    code_version: str | None = None
+    #: Every run that produced this record, oldest first. Populated only with
+    #: ``include_runs=True`` — it is an extra join, and most trace callers are
+    #: asking about the recipe rather than the executions.
+    runs: list[RunRef] = field(default_factory=list)
 
 
 @dataclass
@@ -137,6 +186,16 @@ class ProvenanceTree:
     nodes: list[TraceNode]
     edges: list[TraceEdge]
     audit: list[RunRecord] = field(default_factory=list)
+    #: The canonical pin this tree was resolved from (empty for a record_id or
+    #: plain-metadata lookup). Echoed back so a JSON consumer can show what was
+    #: selected without re-deriving it — and so a pin typed in the display
+    #: dialect (``Code:fn=v2``) reports the ``__code__.fn`` it became.
+    selection: dict[str, str] = field(default_factory=dict)
+    #: Every record the pin matched, when more than the traced root did. A pin
+    #: usually names one record per schema location; ``trace`` roots at one, and
+    #: this says what else it named rather than leaving the other locations
+    #: silently untraced.
+    matched_record_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -493,6 +552,7 @@ class Inspector:
                 input_types=dict(v["input_types"]),
                 constants={k: _value_str(val) for k, val in v["constants"].items()},
                 record_count=int(v["record_count"]),
+                run_options=v.get("run_options"),
             )
 
         matches = [v for v in raw if v["output_type"] == name]
@@ -517,52 +577,140 @@ class Inspector:
                 s.function_name,
                 s.output_num if s.output_num is not None else -1,
                 sorted(s.constants.items()),
+                s.run_options or "",
             )
         )
+        n_run_sets = len({s.run_options for s in out if s.run_options})
+        if n_run_sets > 1:
+            Log.info(
+                f"variants({name}): {len(out)} variant(s) across {n_run_sets} "
+                f"run-option set(s) — rows identical but for the 'run options' "
+                f"column are distinct variants, not duplicates"
+            )
         return out
 
-    def _resolve_record_id(self, variable, record_id, metadata) -> str:
-        """Resolve (variable + metadata) or an explicit record_id to exactly
-        one record. Ambiguity (multiple latest records — several variants or
-        under-specified schema keys) raises with the candidates listed."""
-        from .. import provenance_query
+    def _resolve_pin(
+        self, variable, record_id, metadata, selection=None
+    ) -> tuple[str, list[str], dict]:
+        """Resolve a variant pin (or an explicit record_id) to a root record.
 
+        Returns ``(root_record_id, matched_record_ids, canonical_pin)``.
+
+        Resolution is :func:`provenance_query.records_for_variant` and nothing
+        beside it, so "trace the variant I pinned" and "load the variant I
+        pinned" cannot name different records.
+
+        Several matches mean two different things, and they are handled
+        differently on purpose:
+
+        * **without** an explicit ``selection`` — under-specified schema keys
+          or coexisting variants — it raises with the candidates listed, which
+          is what this method has always done and what the caller needs to fix;
+        * **with** one, it is the normal shape of the answer: a variant spans
+          schema locations, and ``--variant Code:grSides=v2`` with no
+          ``subject=`` is the headline case rather than a mistake. It roots at
+          the most recently saved match and returns every one.
+        """
+        from .. import provenance_query
+        from ..variant import normalize_selection
+
+        pins = normalize_selection(selection or {})
         if record_id:
             rows = self._duck._fetchall(
                 "SELECT type FROM _record WHERE record_id = ?", [record_id]
             )
             if not rows:
                 raise NotFoundError(f"Record {record_id!r} not found")
-            return record_id
+            if pins:
+                # A pin alongside an explicit record_id is a contradiction, not
+                # a narrowing: the record is already named, so the pin can only
+                # agree or be ignored, and silently ignoring it would report
+                # provenance for a variant the user did not ask about.
+                raise ValueError(
+                    f"--record-id names one record; a variant pin ({pins}) "
+                    f"selects among several. Pass one or the other."
+                )
+            return record_id, [record_id], {}
         if variable is None:
             raise ValueError("Provide a variable type (plus metadata) or a record_id")
 
         type_name = getattr(variable, "__name__", variable)
-        nested = self._db._split_metadata(metadata)
-        df = self._db._find_record(
-            type_name, nested_metadata=nested, version_id="latest"
+        rids = provenance_query.records_for_variant(
+            self._db, type_name, pins, **metadata
         )
-        if df.empty:
-            raise NotFoundError(f"No {type_name} record matches {metadata}")
-        if len(df) > 1:
-            rids = list(df["record_id"])
+        # What the pin became, including any non-schema kwarg folded into it —
+        # echoed back so a caller can show the selection it actually resolved.
+        nested = self._db._split_metadata(metadata)
+        canonical = {
+            **normalize_selection(nested.get("version") or {}),
+            **pins,
+        }
+        if not rids:
+            raise NotFoundError(
+                f"No {type_name} record matches {metadata or '(any location)'}"
+                + (f" with variant pin {canonical}" if canonical else "")
+            )
+        # NB: `pins`, not `canonical`. A branch param passed as a plain kwarg
+        # (`trace Filtered low_hz=20`) is a *filter* on an otherwise
+        # under-specified lookup and keeps raising as it always has; only an
+        # explicit `selection=` / `--variant` says "I mean the variant, across
+        # locations". Conflating the two would silently turn every existing
+        # ambiguity error into a quietly-chosen record.
+        if len(rids) > 1 and not pins:
+            # No pin: ambiguity is under-specification, and the historical
+            # behaviour is to refuse rather than pick. Unchanged.
             bp = provenance_query.branch_params_batch(self._duck, rids)
-            keys = self._db.dataset_schema_keys
-            cands = []
-            for _, row in df.head(5).iterrows():
-                schema = " ".join(
-                    f"{k}={row[k]}"
-                    for k in keys
-                    if k in row.index and row[k] is not None and not pd.isna(row[k])
-                )
-                params = bp.get(row["record_id"], {})
-                cands.append(f"{row['record_id'][:8]}… ({schema}; {params})")
+            chains = provenance_query.chain_batch(self._duck, rids)
+            cands = [
+                self._candidate_label(rid, bp, chains) for rid in rids[:5]
+            ]
             raise AmbiguousVersionError(
-                f"{len(df)} {type_name} records match {metadata}: "
+                f"{len(rids)} {type_name} records match {metadata}: "
                 + "; ".join(cands)
+                + (f" (+{len(rids) - 5} more)" if len(rids) > 5 else "")
                 + ". Narrow with schema keys / branch params, or pass record_id."
             )
-        return df.iloc[0]["record_id"]
+        if len(rids) > 1:
+            # A PIN names a variant, and a variant spans schema locations by
+            # design — `--variant Code:grSides=v2` with no subject= is the
+            # headline case, not a mistake. Refusing it would make the pin
+            # useless exactly where it is most useful, so root at the most
+            # recently saved match and say, in the result and in the log, that
+            # there were others: `matched_record_ids` carries every one, so a
+            # caller that wants the rest never has to re-derive the pin.
+            saved = provenance_query.saved_at_batch(self._duck, rids)
+            rids = sorted(rids, key=lambda r: (saved.get(r) or "", r), reverse=True)
+            Log.info(
+                f"{type_name} variant pin {canonical} matches {len(rids)} "
+                f"record(s); tracing the most recently saved ({rids[0][:8]}…). "
+                f"Narrow with schema keys to trace another."
+            )
+        return rids[0], rids, canonical
+
+    def _candidate_label(self, rid: str, bp: dict, chains: dict) -> str:
+        """One line describing a record in an ambiguity message: what tells it
+        apart from the others (schema location, constants, code, run options)."""
+        from .. import provenance_query
+
+        node = (
+            provenance_query._fetch_record_node(
+                self._duck, rid, self._db.dataset_schema_keys
+            )
+            or {}
+        )
+        schema = " ".join(f"{k}={v}" for k, v in (node.get("schema") or {}).items())
+        chain = chains.get(rid) or {}
+        return (
+            f"{rid[:8]}… ({schema}; {bp.get(rid, {})}"
+            + (f"; code={chain.get('code')}" if chain.get("code") else "")
+            + (f"; run={chain.get('run')}" if chain.get("run") else "")
+            + ")"
+        )
+
+    def _resolve_record_id(self, variable, record_id, metadata) -> str:
+        """Resolve (variable + metadata) or an explicit record_id to exactly
+        one record — :meth:`_resolve_pin` without the pin."""
+        return self._resolve_pin(variable, record_id, metadata)[0]
 
     @_timed
     def trace(
@@ -570,24 +718,36 @@ class Inspector:
         variable=None,
         record_id: str | None = None,
         include_audit: bool = False,
+        selection: dict | None = None,
+        include_runs: bool = False,
         **metadata,
     ) -> ProvenanceTree:
         """Full upstream provenance of one record (provenance_query.pipeline).
 
-        Resolve by variable + metadata (schema keys and branch params), or
-        pass record_id directly. include_audit appends the execution_audit
-        rows for the root record.
+        Resolve by variable + metadata (schema keys and branch params), by a
+        variant ``selection`` (the dict a ``Variant`` carries, or the display
+        spelling the plot picker uses), or pass record_id directly.
+        ``include_audit`` appends the execution_audit rows for the root record;
+        ``include_runs`` takes every node down to the runs that produced it.
         """
         from .. import provenance_query
         from .graph import _value_str
 
         duck = self._duck
-        rid = self._resolve_record_id(variable, record_id, metadata)
+        rid, matched, pins = self._resolve_pin(
+            variable, record_id, metadata, selection
+        )
         pipe = provenance_query.pipeline(self._db, rid)
         rids = [n["record_id"] for n in pipe["nodes"]]
 
         # Batch the per-node enrichments (never per-record loops — N+1 rule).
-        producing = provenance_query.producing_invocation_batch(duck, rids)
+        # `all_producing` keeps every producer of every record; `producing`
+        # is the one that owns `function_hash`, and the two agree by
+        # construction (producing_invocation_batch is the plural's first item).
+        all_producing = provenance_query.producing_invocations_batch(duck, rids)
+        producing = {
+            nrid: producers[0] for nrid, producers in all_producing.items()
+        }
         saves = self._latest_saves_batch(rids)
         run_info = self._run_info_batch(rids)
         path_specs = {
@@ -595,12 +755,43 @@ class Inspector:
             for inv_id in {p[0] for p in producing.values()}
         }
 
+        # Down-to-the-run enrichments, all keyed by invocation and all batched
+        # over the WHOLE tree at once — the N+1 trap this codebase has hit
+        # before (docs/claude memory: batched-provenance-hot-paths).
+        every_inv = [inv[0] for producers in all_producing.values() for inv in producers]
+        call_ids = provenance_query.invocation_call_ids_batch(duck, every_inv)
+        run_opts = provenance_query.invocation_run_options_batch(duck, every_inv)
+        ordinals = provenance_query.code_version_ordinals(
+            duck, {inv[1] for producers in all_producing.values() for inv in producers}
+        )
+        inv_runs = (
+            provenance_query.runs_for_invocations_batch(duck, every_inv)
+            if include_runs
+            else {}
+        )
+
         nodes = []
         for n in pipe["nodes"]:
             nrid = n["record_id"]
+            producers = all_producing.get(nrid, [])
             inv = producing.get(nrid)
             saved_ts, saved_by = saves.get(nrid, (None, None))
             n_runs, last_run = run_info.get(nrid, (0, None))
+            runs: list[RunRef] = []
+            for inv_id, _fn_name, fn_hash in producers:
+                for run_id, ts, uid, where in inv_runs.get(inv_id, ()):
+                    runs.append(
+                        RunRef(
+                            run_id=run_id,
+                            timestamp=_iso(ts) or "",
+                            user_id=uid,
+                            where_clause=where,
+                            invocation_id=inv_id,
+                            function_hash=fn_hash,
+                            run_options=run_opts.get(inv_id),
+                        )
+                    )
+            runs.sort(key=lambda r: (r.timestamp, r.run_id))
             nodes.append(
                 TraceNode(
                     record_id=nrid,
@@ -623,6 +814,14 @@ class Inspector:
                     saved_by=saved_by,
                     run_count=int(n_runs),
                     last_run=_iso(last_run),
+                    invocation_id=inv[0] if inv else None,
+                    invocation_ids=[p[0] for p in producers],
+                    call_id=call_ids.get(inv[0]) if inv else None,
+                    run_options=run_opts.get(inv[0]) if inv else None,
+                    code_version=(
+                        ordinals.get(inv[1], {}).get(inv[2]) if inv else None
+                    ),
+                    runs=runs,
                 )
             )
         edges = [
@@ -644,7 +843,61 @@ class Inspector:
                 )
                 for a in provenance_query.execution_audit(duck, rid)
             ]
-        return ProvenanceTree(root_record_id=rid, nodes=nodes, edges=edges, audit=audit)
+        n_reproduced = sum(1 for n in nodes if len(n.invocation_ids) > 1)
+        Log.info(
+            f"trace({getattr(variable, '__name__', variable) or rid[:8]}): "
+            f"{len(nodes)} node(s), {len(edges)} edge(s), "
+            f"{sum(len(n.runs) for n in nodes)} run ref(s), "
+            f"{n_reproduced} node(s) with more than one producing invocation"
+            + (f", pin={pins}" if pins else "")
+        )
+        return ProvenanceTree(
+            root_record_id=rid,
+            nodes=nodes,
+            edges=edges,
+            audit=audit,
+            selection={k: str(v) for k, v in pins.items()},
+            matched_record_ids=list(matched),
+        )
+
+    def provenance(
+        self,
+        variable=None,
+        selection: dict | None = None,
+        record_id: str | None = None,
+        include_runs: bool = True,
+        include_audit: bool = False,
+        **metadata,
+    ) -> ProvenanceTree:
+        """Provenance of a **pinned variant**, down to the run that produced it.
+
+        The variant-pinned entry point :meth:`trace` never had: ``selection``
+        is the vocabulary ``load()`` honours, so
+
+            insp.provenance("GAITRiteSymmetry", {"__code__.grSides": "v2"})
+
+        traces exactly the records
+
+            GAITRiteSymmetry.load(**Variant(GAITRiteSymmetry,
+                                            fn="grSides", code_version="v2"
+                                            ).branch_params)
+
+        would return. The display spelling (``{"Code:grSides": "v2"}``) is
+        accepted too — one resolution for the Plot Studio picker, the GUI panel
+        and the CLI.
+
+        ``include_runs`` defaults True here and False on :meth:`trace`: this
+        method exists to answer "which run produced this", and that is the
+        join that answers it.
+        """
+        return self.trace(
+            variable,
+            record_id=record_id,
+            include_audit=include_audit,
+            selection=selection,
+            include_runs=include_runs,
+            **metadata,
+        )
 
     def _latest_saves_batch(self, rids) -> dict:
         """{record_id: (timestamp, user_id)} of the newest save event."""

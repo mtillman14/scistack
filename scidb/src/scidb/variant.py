@@ -40,6 +40,101 @@ RUN_PIN_PREFIX = "__run__"
 LATEST_VERSION = "latest"
 
 
+#: Display spellings of the two synthetic pin dimensions, as the plotting layer
+#: and the GUI picker name their columns (``Code:bandpass``, ``Run:loader``,
+#: ``CodeIsLatest``).
+#:
+#: They live **here**, in the layer that owns the pin vocabulary, even though
+#: the columns are a display-layer idea, because the translation has to be
+#: available to every consumer that hands scidb a selection — the plotting
+#: layer, the GUI RPC, and the ``scidb`` CLI. scidb cannot import the display
+#: layer (``scistackplot`` must never import scidb — the CSV path depends on
+#: that), so the alternative was the same three-line mapping written once per
+#: consumer, which is exactly the scifor/scidb duplication this codebase has
+#: already paid for once.
+CODE_COLUMN_PREFIX = "Code:"
+RUN_COLUMN_PREFIX = "Run:"
+
+#: The per-row "newest at my own schema location" flag a variant table carries.
+#: As a *pin* it means ``__code__ = "latest"`` — the same per-location rule,
+#: spelled as a column.
+LATEST_COLUMN_NAME = "CodeIsLatest"
+
+
+def is_code_or_run_pin(key: str) -> bool:
+    """True for a ``__code__`` / ``__run__`` key (bare or ``.<fn>``-qualified)."""
+    return (
+        key == CODE_PIN_PREFIX
+        or key.startswith(f"{CODE_PIN_PREFIX}.")
+        or key == RUN_PIN_PREFIX
+        or key.startswith(f"{RUN_PIN_PREFIX}.")
+    )
+
+
+def pin_loads_uncollapsed(branch_params: dict | None) -> bool:
+    """Whether a pin must load with ``version_id="all"`` to be satisfiable.
+
+    ``version_id="latest"`` collapses on a variant key of ``(fn_name,
+    branch_params, output_num, consumed_locations)``. ``function_hash`` is
+    deliberately NOT in it — a body re-run is a newer version of the same
+    variant rather than a rival (docs/claude/function-version-variants.md) —
+    and since 2026-09-14 the collapse also supersedes an older
+    ``distribute``/``as_table`` run of the same code and constants. So two code
+    versions, or two run-option sets, merge and the newer wins *before* any
+    filter runs: a code or run pin against a collapsed load would always match
+    nothing. A branch-param pin is unaffected — ``branch_params`` IS in the
+    key, so those variants never merged.
+
+    One rule, consulted by every path that resolves a pin to records — the
+    for_each input loader and ``provenance_query.records_for_variant`` — so
+    "load this variant" and "introspect this variant" cannot disagree about
+    which records exist.
+    """
+    return any(is_code_or_run_pin(key) for key in (branch_params or {}))
+
+
+def normalize_pin_key(key: str) -> str:
+    """One selection key → its canonical ``branch_params`` spelling.
+
+    ``Code:<fn>`` → ``__code__.<fn>``, ``Run:<fn>`` → ``__run__.<fn>``;
+    anything else is already scidb's own namespacing (``fn.param``,
+    ``__code__``, a bare suffix-matched name) and passes through untouched.
+    """
+    if key.startswith(CODE_COLUMN_PREFIX):
+        return f"{CODE_PIN_PREFIX}.{key[len(CODE_COLUMN_PREFIX):]}"
+    if key.startswith(RUN_COLUMN_PREFIX):
+        return f"{RUN_PIN_PREFIX}.{key[len(RUN_COLUMN_PREFIX):]}"
+    return key
+
+
+def normalize_selection(selection: dict | None) -> dict:
+    """A column-keyed *or* already-canonical selection → ``branch_params``.
+
+    Idempotent: a dict that is already in ``Variant.branch_params`` form comes
+    back unchanged, so a caller never has to know which dialect it is holding.
+
+    ``CodeIsLatest: True`` becomes ``__code__ = "latest"``. ``CodeIsLatest:
+    False`` has no scidb spelling — "not the latest" is not a pin — so it is
+    dropped with a warning rather than silently inverted.
+    """
+    out: dict = {}
+    for key, value in (selection or {}).items():
+        if key == LATEST_COLUMN_NAME:
+            if value is False:
+                from .log import Log
+
+                Log.warn(
+                    f"selection pins {LATEST_COLUMN_NAME}=False, which scidb "
+                    f"cannot express (there is no 'not the latest' pin) — "
+                    f"ignoring it"
+                )
+                continue
+            out[CODE_PIN_PREFIX] = LATEST_VERSION
+        else:
+            out[normalize_pin_key(key)] = value
+    return out
+
+
 def branch_param(fn: str, **params: Any) -> dict:
     """Build a namespaced branch-param selector dict without a dotted-string kwarg.
 

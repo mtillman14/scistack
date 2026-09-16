@@ -105,6 +105,12 @@ Recorded so future work targets the model, not the shell:
   rows from a superseded function hash (see memory
   `latest-record-selection-future-issue`); `trace` output should surface the
   producing `function_hash` so this is at least visible.
+- ~~**Trace stops above the run; no variant-pinned entry point.**~~ Closed
+  2026-09-15: `Inspector.provenance(variable, selection, …)` /
+  `scidb trace --variant … --runs` — `TraceNode` now carries
+  `invocation_id(s)`, `call_id`, `run_options`, `code_version` and
+  `runs: [RunRef]`; `producing_invocations_batch` returns every producer of a
+  record. See docs/claude/variant-provenance-introspection.md.
 - **Branch/variant-level include/exclude.** `exclusions.py` is schema-keyed
   only — it has no notion of variant, `call_id`, or branch params, so
   "exclude this computation branch from runs" cannot be expressed today. This

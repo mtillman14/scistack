@@ -82,6 +82,17 @@ class RenderStyle:
     fn_hash_fmt: str = "fn_hash {h}"
     run_note_fmt: str = "(run {n}×, last {ts})"
     raw_tag: str = "  (raw save)"
+    # -- down to the run (`trace --runs`) ------------------------------------
+    code_version_fmt: str = "code {v}"
+    call_id_fmt: str = "call {cid}"
+    invocation_fmt: str = "invocation {inv}"
+    run_options_fmt: str = "run options: {opts}"
+    run_line_fmt: str = "run {rid}  {ts}"
+    run_user_fmt: str = "  by {user}"
+    run_where_fmt: str = "  where {where}"
+    run_variant_fmt: str = "  [{variant}]"  # per-run inv/hash when they differ
+    reproduced_note_fmt: str = "  ({n} producing invocations)"
+    no_runs_label: str = "(no tracked run)"
     const_join: str = "  "  # between k=v pairs on a constants line
     missing_line_fmt: str = "    missing  {combo}"
     missing_more_fmt: str = "    … +{n} more"
@@ -395,21 +406,28 @@ def _descendants(node) -> int:
 def render_variants_table(variants: list[VariantSummary]) -> str:
     if not variants:
         return "(no pipeline variants)"
-    return format_table(
-        ["output", "#", "function", "constants", "records", "call_id"],
-        [
-            [
-                v.output_type,
-                v.output_num,
-                v.function_name,
-                ", ".join(f"{k}={val}" for k, val in sorted(v.constants.items()))
-                or "-",
-                v.record_count,
-                v.call_id,
-            ]
-            for v in variants
-        ],
-    )
+    # The run-options column appears only when it distinguishes something. In a
+    # project that never flipped distribute/as_table every row would read
+    # "distribute=false", which is a column of noise; where two rows differ ONLY
+    # there, it is the column that explains why they are two rows.
+    show_runs = len({v.run_options for v in variants if v.run_options}) > 1
+    headers = ["output", "#", "function", "constants", "records", "call_id"]
+    if show_runs:
+        headers.insert(4, "run options")
+    rows = []
+    for v in variants:
+        row = [
+            v.output_type,
+            v.output_num,
+            v.function_name,
+            ", ".join(f"{k}={val}" for k, val in sorted(v.constants.items())) or "-",
+            v.record_count,
+            v.call_id,
+        ]
+        if show_runs:
+            row.insert(4, v.run_options or "-")
+        rows.append(row)
+    return format_table(headers, rows)
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +669,59 @@ def render_runs_table(runs: list[RunRecord]) -> str:
     return format_table(headers, rows)
 
 
-def render_trace(tree: ProvenanceTree, style: RenderStyle | None = None) -> str:
+def _run_lines(n, prefix: str, s: RenderStyle) -> list[str]:
+    """The identity + execution block under one trace node's function line.
+
+    Two layers, and the split matters. The first names the *call*: which
+    invocation, which call site, which run options — the three things that make
+    two records at one schema location different records rather than a
+    duplicate. The second lists the *executions* of that call, one line each,
+    because a record reproduced by several runs has several answers to "which
+    run produced this" and picking one would be the same silent choice this
+    whole feature exists to undo.
+
+    A run whose invocation or function hash differs from the node's headline
+    one is tagged in place — that is a record reproduced by genuinely different
+    code or flags, and it must not read as another run of the same thing.
+    """
+    lines: list[str] = []
+    identity = []
+    if n.invocation_id:
+        identity.append(s.invocation_fmt.format(inv=_abbrev(n.invocation_id, s)))
+    if n.call_id:
+        identity.append(s.call_id_fmt.format(cid=_abbrev(n.call_id, s)))
+    if n.run_options:
+        identity.append(s.run_options_fmt.format(opts=n.run_options))
+    if identity:
+        line = prefix + s.label_sep.join(identity)
+        if len(n.invocation_ids) > 1:
+            line += s.reproduced_note_fmt.format(n=len(n.invocation_ids))
+        lines.append(line)
+    if n.function_name is None:
+        return lines  # a raw save has no invocation and no run
+    if not n.runs:
+        lines.append(prefix + s.no_runs_label)
+        return lines
+    for run in n.runs:
+        line = prefix + s.run_line_fmt.format(
+            rid=_abbrev(run.run_id, s), ts=run.timestamp
+        )
+        if run.user_id:
+            line += s.run_user_fmt.format(user=run.user_id)
+        if run.invocation_id != n.invocation_id or run.function_hash != n.function_hash:
+            line += s.run_variant_fmt.format(
+                variant=f"{_abbrev(run.invocation_id, s)}"
+                + (f" {run.run_options}" if run.run_options else "")
+            )
+        if run.where_clause:
+            line += s.run_where_fmt.format(where=run.where_clause)
+        lines.append(line)
+    return lines
+
+
+def render_trace(
+    tree: ProvenanceTree, style: RenderStyle | None = None, show_runs: bool = False
+) -> str:
     s = style or DEFAULT_STYLE
     nodes = {n.record_id: n for n in tree.nodes}
     lines: list[str] = []
@@ -681,6 +751,8 @@ def render_trace(tree: ProvenanceTree, style: RenderStyle | None = None) -> str:
         fn_parts = [n.function_name]
         if n.function_hash:
             fn_parts.append(s.fn_hash_fmt.format(h=_abbrev(n.function_hash, s)))
+        if show_runs and n.code_version:
+            fn_parts.append(s.code_version_fmt.format(v=n.code_version))
         if n.run_count:
             fn_parts.append(s.run_note_fmt.format(n=n.run_count, ts=n.last_run or "?"))
         lines.append(f"{prefix}{s.branch_last}{s.label_sep.join(fn_parts)}")
@@ -691,6 +763,8 @@ def render_trace(tree: ProvenanceTree, style: RenderStyle | None = None) -> str:
                 + "  "
                 + s.const_join.join(f"{k}={v}" for k, v in sorted(n.constants.items()))
             )
+        if show_runs:
+            lines.extend(_run_lines(n, inner + "  ", s))
         for param, spec in sorted(n.path_inputs.items()):
             info = parse_path_input(spec)
             shown = info["template"] if info else spec
@@ -716,6 +790,23 @@ def render_trace(tree: ProvenanceTree, style: RenderStyle | None = None) -> str:
             visited.add(child.record_id)
             emit_producer(child, inner + cont)
 
+    if tree.selection:
+        # The CANONICAL pin, not what the user typed: `Code:grSides=v2` and
+        # `__code__.grSides=v2` are the same selection, and seeing which one it
+        # resolved to is how a typo that silently selected nothing becomes
+        # visible.
+        lines.append(
+            "variant: "
+            + "  ".join(f"{k}={v}" for k, v in sorted(tree.selection.items()))
+        )
+    if len(tree.matched_record_ids) > 1:
+        # The pin named several records — one per schema location, normally.
+        # Tracing roots at one of them; saying so beats a tree that silently
+        # describes a single subject when the user asked about a variant.
+        lines.append(
+            f"({len(tree.matched_record_ids)} records match; tracing "
+            f"{_abbrev(tree.root_record_id, s)})"
+        )
     root = nodes[tree.root_record_id]
     lines.append(record_label(root))
     visited.add(root.record_id)

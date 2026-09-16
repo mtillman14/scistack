@@ -160,7 +160,9 @@ as the `is_latest` signature component, as the `Run:<fn>` level, and as the
 
 ## Not done / open
 
-- `scidb variants <fn>` (inspect CLI) does not yet list run-option sets.
+- ~~`scidb variants <fn>` (inspect CLI) does not yet list run-option sets.~~
+  Done 2026-09-15: `VariantSummary.run_options` + a `run options` column
+  shown when more than one set is present (docs/claude/variant-provenance-introspection.md).
 - MATLAB `Variant` has no `run_options=` kwarg yet.
 - A `"latest"` on a run axis while a *code* ordinal is pinned elsewhere
   resolves to unconstrained (see scistackplot section) — acceptable but a

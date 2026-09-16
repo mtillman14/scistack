@@ -54,6 +54,12 @@ class VariantSummary:
     input_types: dict[str, str]  # param → type name (PathInput params → spec string)
     constants: dict[str, str]  # param → display string of the value
     record_count: int
+    #: ``distribute=…[, as_table=[…]]`` — the third variant axis after
+    #: constants and code. Two rows identical everywhere else and different
+    #: here are two genuinely different variants (the flags are folded into
+    #: invocation_id), which is why omitting this made them look like a
+    #: duplicate row (docs/claude/run-option-variants.md, "Not done / open").
+    run_options: str | None = None
 
 
 @dataclass
@@ -311,6 +317,7 @@ def build_pipeline_graph(
                 input_types=dict(v["input_types"]),
                 constants={k: _value_str(val) for k, val in v["constants"].items()},
                 record_count=int(v["record_count"]),
+                run_options=v.get("run_options"),
             )
         )
 

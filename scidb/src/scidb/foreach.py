@@ -4695,32 +4695,15 @@ def _load_var_type_as_spread(
                 f"[Variant] _load_var_type_as_spread({_vt_name}): applying "
                 f"branch_params_filter={branch_params_filter}"
             )
-        # A CODE pin has to see superseded records, so it loads uncollapsed.
-        #
-        # `version_id="latest"` collapses on a variant key of
-        # `(fn_name, branch_params, output_num, consumed_locations)` —
-        # `function_hash` is deliberately NOT in it, because a body re-run is a
-        # newer version of the same variant rather than a rival
-        # (docs/claude/function-version-variants.md). So two code versions merge
-        # and the newer wins *before* any filter runs. A branch-param pin is
-        # unaffected: branch_params IS in that key, so its variants never merged
-        # in the first place. A code pin would otherwise always match nothing.
-        #
+        # A CODE or RUN-OPTIONS pin has to see superseded records, so it loads
+        # uncollapsed. The rule — and why — is `variant.pin_loads_uncollapsed`,
+        # shared with `provenance_query.records_for_variant` so a pin traced
+        # in the inspector names the records this loader would feed a function.
         # Scoped to exactly this case, so an unpinned load keeps today's
         # behaviour byte for byte.
-        from .variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
+        from .variant import pin_loads_uncollapsed
 
-        # A RUN-OPTIONS pin needs the same: since 2026-09-14 the collapse also
-        # supersedes an older distribute/as_table run of the same code and
-        # constants (database._find_record, run-option supersession), so the
-        # older option set only exists in the uncollapsed load.
-        has_code_pin = any(
-            key == CODE_PIN_PREFIX
-            or key.startswith(f"{CODE_PIN_PREFIX}.")
-            or key == RUN_PIN_PREFIX
-            or key.startswith(f"{RUN_PIN_PREFIX}.")
-            for key in (branch_params_filter or {})
-        )
+        has_code_pin = pin_loads_uncollapsed(branch_params_filter)
         if has_code_pin:
             Log.info(
                 f"[Variant] {_vt_name}: code/run-options pin present — loading "

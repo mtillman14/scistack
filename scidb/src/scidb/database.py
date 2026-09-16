@@ -4246,6 +4246,8 @@ class DatabaseManager:
                                cosmetic source edits to the fn body),
                 input_types   (dict: param_name → type_name),
                 constants     (dict: param_name → value),
+                run_options   (str: the distribute/as_table set this variant
+                               ran under — provenance_query.run_options_label),
                 output_num    (int | None: 0-based position in the fn signature),
                 record_count  (int: distinct records for this variant)
         """
