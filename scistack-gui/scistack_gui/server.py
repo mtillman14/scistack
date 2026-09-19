@@ -1142,6 +1142,13 @@ def _h_plot_save_start(params):
         # leaves — a fast save can finish before the response arrives, and a
         # panel that learns the id from the response drops those messages.
         job_id=params.get("job_id"),
+        # "image" (default) or "data" — the plot's long table as CSV, at
+        # `depth` (a key from the capability report's data_export.depths).
+        what=params.get("what", "image"),
+        depth=params.get("depth"),
+        # "One column per field" for a struct variable; the panel's checkbox
+        # defaults to on.
+        fields_as_columns=params.get("fields_as_columns", True),
     )
 
 

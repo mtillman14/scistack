@@ -530,7 +530,9 @@ var DagPanel = class {
             const folder = vscode3.workspace.workspaceFolders?.[0]?.uri;
             const uri = await vscode3.window.showSaveDialog({
               defaultUri: folder ? vscode3.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
-              filters: { Images: ["png", "svg", "pdf"] }
+              filters: {
+                [params.filterName ?? "Images"]: params.formats ?? ["png", "svg", "pdf"]
+              }
             });
             this.panel.webview.postMessage({
               id: msg.id,
@@ -1147,7 +1149,7 @@ var PlotPanel = class _PlotPanel {
               // The panel sends the ONE format its dropdown selected, so the
               // dialog cannot offer a second answer to a question already
               // asked — the backend honours the dropdown either way.
-              filters: { Images: params.formats ?? ["png"] }
+              filters: { [params.filterName ?? "Images"]: params.formats ?? ["png"] }
             });
             this.panel.webview.postMessage({
               id: msg.id,

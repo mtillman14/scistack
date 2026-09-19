@@ -71,11 +71,13 @@ def test_narrated_resolve_names_every_phase_of_every_figure(
 
 
 def test_a_collapsed_line_narrates_the_collapse(series_table, caplog):
-    """A collapse sends a 1-D line through `collapse_series` instead of
-    `explode` — that phase must announce itself the same way."""
+    """A pre-collapse sends a 1-D line through `collapse_series` instead of
+    `explode` — that phase must announce itself the same way. Two collapsed
+    keys: with only one, it is the sample and the line draws it unaveraged
+    (one line per trial), which is the explode path."""
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        roles={"subject": Role.COLLAPSE, "session": Role.GROUP, "trial": Role.COLLAPSE},
         color="session",
         kind=PlotKind.LINE,
     )

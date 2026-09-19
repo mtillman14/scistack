@@ -316,6 +316,35 @@ function shapeBadge(capabilities?: Capabilities | null): string | undefined {
   return `${capabilities.raw_shape ?? '1d'} → ${capabilities.shape} (${collapse.statistic})`
 }
 
+/** One choice in the "Save data" depth picker (`scistackplot.export.DataDepth`):
+ *  the deepest key kept as a column (null = nothing collapsed, the rows as
+ *  plotted), what is averaged away first, and the header the file will have. */
+interface DataDepth {
+  key: string | null
+  label: string
+  averaged: string[]
+  columns: string[]
+  /** The header with one column per struct field, or null when this depth
+   *  has no field factor to spread. */
+  wide_columns: string[] | null
+}
+
+/** "Save data": the plot's long table as CSV — whether it can be written
+ *  (scalar plots only), why not, and the depths, default first. Decided by
+ *  `scistackplot.data_export_options`; the panel only displays it. */
+interface DataExport {
+  available: boolean
+  reason: string | null
+  depths: DataDepth[]
+  default: string | null
+  chain: string[]
+  sample: string[]
+  pooled: boolean
+  /** The struct field factor (`ColName`) the "one column per field"
+   *  checkbox spreads; null when no depth keeps one (no checkbox). */
+  field_factor: string | null
+}
+
 interface Capabilities {
   /** What the FIGURE is: `scalar` while a 1-D measure is being collapsed. The
    *  scalar-only controls key off this, and they apply to the collapsed value. */
@@ -334,6 +363,8 @@ interface Capabilities {
   sample_overlay?: SampleOverlay
   /** Whether any factor is collapsed, i.e. whether there is a sample. */
   has_sample: boolean
+  /** "Save data (CSV)": availability and the depth picker's choices. */
+  data_export?: DataExport
   default: string
   available: string[]
   kinds: KindInfo[]
@@ -1468,6 +1499,15 @@ export default function PlotStudio({
   // The same fact as state, purely to re-render the button. The ref is the
   // one the handler reads; this only ever follows it.
   const [saving, setSaving] = useState(false)
+  // Which kind of save the running job is — the progress wording differs
+  // ("Resolving figure 1 of 2…" means nothing for a CSV).
+  const saveKind = useRef<'image' | 'data'>('image')
+  // "Save data": the inline depth chooser, and the depth picked in it.
+  const [dataChooser, setDataChooser] = useState(false)
+  const [dataDepth, setDataDepth] = useState<string | null>(null)
+  // "One column per field" for a struct variable — on by default (user,
+  // 2026-09-19); applies to the field factor (ColName) only.
+  const [dataWide, setDataWide] = useState(true)
   const [imageFormat, setImageFormat] = useState('png')
   // What the backend says it can write. A short, ordered shortlist first —
   // these are the ones a paper needs — then whatever else is available.
@@ -1564,6 +1604,7 @@ export default function PlotStudio({
         // would drop those messages and leave the panel saving forever.
         const job = `ps-${Math.random().toString(36).slice(2, 10)}`
         saveJob.current = job
+        saveKind.current = 'image'
         setSaving(true)
         setNotice(
           savingAll
@@ -1593,6 +1634,68 @@ export default function PlotStudio({
     [spec, sourceParams, title, figureIndex, figureCount, imageFormat]
   )
 
+  /** Save the plot's long table as CSV — the rows the figure is drawn from
+   *  (`scistackplot.plot_data`), every figure of the fan-out in one file.
+   *  `depth` is a key from `capabilities.data_export.depths`; null is the
+   *  default (the plotted sample). Same job path and messages as an image
+   *  save: the load alone can outlast the transport timeout. */
+  const saveData = useCallback(
+    async (depth: string | null, fieldsAsColumns: boolean) => {
+      if (!spec) return
+      setDataChooser(false)
+      setNotice('')
+      const defaultName = `${title || 'plot'}_data.csv`.replace(/[^\w.-]+/g, '_')
+      try {
+        let path: string | null = null
+        if (isVSCodeMode) {
+          const picked = await callBackend('pick_save_path', {
+            defaultName,
+            formats: ['csv'],
+            filterName: 'CSV',
+          })
+          path = (picked as { path: string | null }).path
+          if (!path) return  // dialog cancelled
+        } else {
+          path = window.prompt('Save the plot data as:', defaultName)
+          if (!path) return
+        }
+        const job = `ps-${Math.random().toString(36).slice(2, 10)}`
+        saveJob.current = job
+        saveKind.current = 'data'
+        setSaving(true)
+        setNotice("Collecting the plot's data…")
+        await callBackend('plot_save_start', {
+          spec,
+          path,
+          job_id: job,
+          what: 'data',
+          // null, not omitted, for the same reason as figure_index above.
+          depth,
+          fields_as_columns: fieldsAsColumns,
+          ...sourceParams,
+        })
+      } catch (err) {
+        saveJob.current = null
+        setSaving(false)
+        setNotice(`Could not save the data: ${(err as Error).message}`)
+      }
+    },
+    [spec, sourceParams, title]
+  )
+
+  const openDataSave = useCallback(() => {
+    const info = capabilities?.data_export
+    if (!info?.available) return
+    // Nothing to ask — one depth and no struct fields to spread — so go
+    // straight to the file dialog.
+    if (info.depths.length <= 1 && !info.field_factor) {
+      void saveData(info.default, true)
+      return
+    }
+    setDataDepth(info.default)
+    setDataChooser(open => !open)
+  }, [capabilities, saveData])
+
   useBackendMessage(
     useCallback((msg) => {
       // Both transports, one handler: the WebSocket path delivers the dict as
@@ -1609,6 +1712,12 @@ export default function PlotStudio({
         // resolving a figure at full resolution is minutes and writing it is
         // seconds. A panel that said "0 of 2 saved" for twelve minutes was
         // counting the cheap half and looked hung.
+        if (saveKind.current === 'data') {
+          setNotice(
+            params.stage === 'resolving' ? "Collecting the plot's data…" : 'Writing the CSV…'
+          )
+          return
+        }
         setNotice(
           params.stage === 'resolving'
             ? `Resolving figure ${params.done} of ${params.total} at full resolution…`
@@ -1627,8 +1736,11 @@ export default function PlotStudio({
           files.length === 1
             ? files[0]
             : `${files.length} files in ${directory ?? 'the chosen folder'}`
+        const rows = params.rows as number | undefined
         setNotice(
-          `Saved ${where}` + (elapsed ? ` in ${elapsed.toFixed(1)}s` : '')
+          `Saved ${where}` +
+            (typeof rows === 'number' ? ` — ${rows} row(s)` : '') +
+            (elapsed ? ` in ${elapsed.toFixed(1)}s` : '')
         )
       } else if (kind === 'plot_save_failed') {
         saveJob.current = null
@@ -2261,6 +2373,25 @@ export default function PlotStudio({
                 {saving ? 'Saving…' : `Save all ${figureCount} figures`}
               </button>
             )}
+            {/* The rows the figure is drawn from, for statistics that must
+                match the plot. Disabled with the backend's reason for a raw
+                1-D / 2-D measure (scalar plots only). */}
+            <button
+              type="button"
+              style={styles.button}
+              onClick={openDataSave}
+              disabled={saving || !capabilities?.data_export?.available}
+              title={
+                saving
+                  ? 'A save is already running'
+                  : capabilities?.data_export?.available
+                    ? 'Save the long table this plot is drawn from as CSV — every ' +
+                      'figure in one file, the figure keys as columns'
+                    : capabilities?.data_export?.reason ?? 'Not available for this plot'
+              }
+            >
+              Save data (CSV)
+            </button>
             <button type="button" style={styles.button} onClick={handleExport}>
               Export code
             </button>
@@ -2268,6 +2399,71 @@ export default function PlotStudio({
               Add to pipeline
             </button>
           </div>
+          {dataChooser && capabilities?.data_export?.available && (
+            <div style={styles.dataChooser}>
+              {capabilities.data_export.depths.length > 1 && (
+                <div style={styles.hint}>
+                  Which rows? The default is exactly what the plot is drawn from;
+                  deeper choices keep the lower levels instead of averaging them.
+                </div>
+              )}
+              {capabilities.data_export.depths.length > 1 &&
+                capabilities.data_export.depths.map(depth => (
+                <label key={depth.key ?? '__plotted'} style={styles.dataDepthOption}>
+                  <input
+                    type="radio"
+                    name="data-depth"
+                    checked={dataDepth === depth.key}
+                    onChange={() => setDataDepth(depth.key)}
+                  />
+                  <span>
+                    {depth.label}
+                    {depth.key === capabilities.data_export?.default ? ' (default)' : ''}
+                    <span style={styles.dataColumns}>
+                      {(dataWide && depth.wide_columns
+                        ? depth.wide_columns
+                        : depth.columns
+                      ).join(', ')}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {(() => {
+                // The checkbox only means something at a depth that keeps the
+                // struct's fields; elsewhere it is hidden, not greyed out.
+                const chosen = capabilities.data_export.depths.find(d => d.key === dataDepth)
+                if (!capabilities.data_export.field_factor || !chosen?.wide_columns) return null
+                return (
+                  <label style={styles.dataDepthOption}>
+                    <input
+                      type="checkbox"
+                      checked={dataWide}
+                      onChange={e => setDataWide(e.target.checked)}
+                    />
+                    <span>
+                      One column per field ({capabilities.data_export.field_factor})
+                      <span style={styles.dataColumns}>
+                        {(dataWide ? chosen.wide_columns : chosen.columns).join(', ')}
+                      </span>
+                    </span>
+                  </label>
+                )
+              })()}
+              <div style={styles.actions}>
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={() => void saveData(dataDepth, dataWide)}
+                  disabled={saving}
+                >
+                  Save CSV…
+                </button>
+                <button type="button" style={styles.button} onClick={() => setDataChooser(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {notice && <div style={styles.notice}>{notice}</div>}
         </div>
       }
@@ -3555,6 +3751,21 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600,
   },
   notice: { fontSize: 10, color: '#67e8f9', marginTop: 6 },
+  dataChooser: {
+    marginTop: 8,
+    padding: 8,
+    border: '1px solid #3a3a3a',
+    borderRadius: 4,
+  },
+  dataDepthOption: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 6,
+    fontSize: 11,
+    marginBottom: 6,
+    cursor: 'pointer',
+  },
+  dataColumns: { display: 'block', fontSize: 10, color: '#888', fontFamily: 'monospace' },
   note: { fontSize: 12, color: '#777', fontStyle: 'italic', padding: 8 },
   error: { fontSize: 12, color: '#f87171', padding: 12 },
   specError: {

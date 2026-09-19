@@ -575,43 +575,45 @@ def _preamble(spec, table, roles, shape) -> list[str]:
 
     # The collapse chain (roles.collapse_steps): one groupby-mean per collapsed
     # key, deepest first, each grouping on every other factor the frame still
-    # holds — trial within subject, then subject. `pre` runs for every kind;
-    # `final` (the sample's own mean) only for the kinds that draw one value
-    # per mark. Bar and band leave the sample rows to seaborn's estimator and
-    # errorbar, which then compute exactly what the preview's `_summarize`
-    # did. Pooled specs collapse nothing here for the same reason.
+    # holds — trial within subject, then subject. Only `pre` is emitted: the
+    # SAMPLE is what every kind draws (schema-level parity, 2026-09-19). Bar
+    # and band leave the sample rows to seaborn's estimator and errorbar,
+    # which then compute exactly what the preview's `_summarize` did; the
+    # other kinds draw the rows themselves. Pooled specs collapse nothing here
+    # for the same reason.
     steps = collapse_steps(spec, roles, table)
     kept = [
         name
         for name, role in roles.items()
         if role is not Role.ITERATE and table.has_factor(name)
     ]
-    for stage, keys in (("pre", steps.pre), ("final", steps.final)):
-        for key in keys:
-            if key not in kept:
-                continue
-            kept = [name for name in kept if name != key]
-            keep = list(kept)
-            if shape is Shape.SERIES_1D:
-                keep.append(index_column)
-            if layers:
-                # The composed nested-x column is built above from layer
-                # columns that are all kept, so it is constant within each
-                # group — but pandas drops any column not named here, and the
-                # plot call then asked for an `_x` that no longer existed.
-                keep.append(_X_NESTED)
-            elif _x_expression(spec, table, roles, shape) == _X_CONSTANT:
-                keep.append(_X_CONSTANT)
-            measures = [spec.y_measure, *([spec.x_measure] if spec.x_measure else [])]
-            what = "the sample's mean" if stage == "final" else "averaged away"
-            within = f" within {', '.join(kept)}" if kept else ""
-            lines.extend(
-                [
-                    f"# collapse {key}{within} — {what}",
-                    f"df = df.groupby({keep!r}, as_index=False)[{measures!r}].mean()",
-                    "",
-                ]
-            )
+    # `final` is non-empty only for a spaghetti whose sample cannot be joined
+    # across x (roles.spaghetti_sample_repeats): each line is its mean.
+    for key in [*steps.pre, *steps.final]:
+        if key not in kept:
+            continue
+        kept = [name for name in kept if name != key]
+        keep = list(kept)
+        if shape is Shape.SERIES_1D:
+            keep.append(index_column)
+        if layers:
+            # The composed nested-x column is built above from layer
+            # columns that are all kept, so it is constant within each
+            # group — but pandas drops any column not named here, and the
+            # plot call then asked for an `_x` that no longer existed.
+            keep.append(_X_NESTED)
+        elif _x_expression(spec, table, roles, shape) == _X_CONSTANT:
+            keep.append(_X_CONSTANT)
+        measures = [spec.y_measure, *([spec.x_measure] if spec.x_measure else [])]
+        within = f" within {', '.join(kept)}" if kept else ""
+        what = "each line's mean" if key in steps.final else "averaged away"
+        lines.extend(
+            [
+                f"# collapse {key}{within} — {what}",
+                f"df = df.groupby({keep!r}, as_index=False)[{measures!r}].mean()",
+                "",
+            ]
+        )
     if steps.sample and spec.kind in (PlotKind.BAR, PlotKind.BAND):
         lines.append(
             f"# the sample: {' x '.join(steps.sample)} — seaborn's estimator and "
@@ -621,7 +623,11 @@ def _preamble(spec, table, roles, shape) -> list[str]:
 
     grouping = grouping_layers(spec, table, roles, spec.kind, shape=shape)
     series_layers = [name for name in grouping.series if table.has_factor(name)]
-    if spec.kind in (PlotKind.LINE, PlotKind.SPAGHETTI, PlotKind.BAND) and series_layers:
+    # The series id is the units (one line per sample level, line and
+    # spaghetti only) inside the grouping's series layers — the same
+    # `GroupingLayers.identity` the preview composes.
+    identity_layers = [name for name in grouping.identity if table.has_factor(name)]
+    if spec.kind in (PlotKind.LINE, PlotKind.SPAGHETTI, PlotKind.BAND) and identity_layers:
         # One line / band per leaf group. Composed OUTERMOST FIRST, exactly as
         # `reduce._series_key` composes the preview's series ids.
         #
@@ -631,8 +637,13 @@ def _preamble(spec, table, roles, shape) -> list[str]:
         # exploded, and the join alone ran for minutes (scidb.log 2026-09-11).
         lines.extend(
             [
-                "# one line per leaf group of the grouping",
-                f"df[{_SERIES_COLUMN!r}] = {_composed(list(reversed(series_layers)))}",
+                (
+                    f"# one line per {' x '.join(reversed(grouping.units))} within each "
+                    "leaf group of the grouping"
+                    if grouping.units
+                    else "# one line per leaf group of the grouping"
+                ),
+                f"df[{_SERIES_COLUMN!r}] = {_composed(list(reversed(identity_layers)))}",
                 "",
             ]
         )
@@ -1117,7 +1128,7 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
         args.append('kind="line"')
         args.append("estimator=None")
         grouping = grouping_layers(spec, table, roles, kind, shape=shape)
-        if any(table.has_factor(name) for name in grouping.series):
+        if any(table.has_factor(name) for name in grouping.identity):
             args.append(f"units={_SERIES_COLUMN!r}")
         if dashes:
             args.extend([f"style={_DASH_COLUMN!r}", "dashes=_dashes"])

@@ -5,8 +5,9 @@ spaghetti idea to every summative categorical kind.
 
 ## What it is
 
-A bar, box or violin (and scatter / strip, which draw the sample's mean)
-averages its collapsed keys away through the collapse chain
+A bar, box or violin (and scatter / strip, which draw the sample itself since
+2026-09-19, so showing the sample key adds nothing and showing a deeper key
+does) averages its collapsed keys away through the collapse chain
 (`roles.collapse_order`, deepest first, nested — see
 `grouping-and-collapse.md`). "Show sample" **stops that chain early** and
 draws what is left as small points inside each mark — the distribution behind

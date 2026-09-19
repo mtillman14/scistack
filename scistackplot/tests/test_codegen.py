@@ -80,11 +80,11 @@ def test_generated_band_plot_runs(series_table, series_frame):
 
 
 def test_generated_collapse_emits_a_groupby(scalar_table, scalar_frame):
+    # trial averages away within subject; subject is the sample, drawn as it is.
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
-        groups=["session", "subject"],
-        color="session",
+        roles={"subject": Role.COLLAPSE, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session"],
         kind=PlotKind.SCATTER,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -540,12 +540,23 @@ def test_pooled_emits_no_chain(unbalanced):
     assert 3.75 in [round(h, 9) for h in heights], "mean of {1, 2, 3, 9}"
 
 
-def test_a_mean_drawing_kind_collapses_the_sample_too(unbalanced):
-    _, table = unbalanced
+def test_a_scatter_export_draws_the_sample_not_its_mean(unbalanced):
+    """Schema-level parity (2026-09-19): only the pre-collapse is emitted; the
+    subject rows reach seaborn as they are, one point each."""
+    frame, table = unbalanced
     source = generate_plot_function(_bar_spec(kind=PlotKind.SCATTER), table)
     assert "# collapse trial within subject, session — averaged away" in source
-    assert "# collapse subject within session — the sample's mean" in source
-    assert source.count("groupby(") == 2
+    assert "the sample's mean" not in source
+    assert source.count("groupby(") == 1
+    figure = _run(source, frame, "plot_m")
+    ys = sorted(
+        round(float(y), 9)
+        for ax in figure.axes
+        for collection in ax.collections
+        for _, y in collection.get_offsets()
+    )
+    matplotlib.pyplot.close(figure)
+    assert ys == pytest.approx(sorted([2.0, 9.0, 15.0, 30.0])), "one point per subject per session"
 
 
 def test_dashes_are_emitted_for_an_uncoloured_series_layer(series_table, series_frame):

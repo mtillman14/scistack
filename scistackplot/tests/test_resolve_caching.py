@@ -406,9 +406,14 @@ def test_one_figure_matches_the_same_figure_from_the_whole_fanout(series_table):
 def test_aggregating_still_averages_sample_by_sample(series_table):
     """A collapse on a 1-D measure has to run AFTER the explode — it averages
     each sample position across the collapsed factor's levels, which cannot
-    happen while the rows are still nested arrays."""
+    happen while the rows are still nested arrays.
+
+    Two collapsed keys, so there IS an average: trial within session (the
+    pre-collapse), leaving session as the sample, which a line draws one line
+    each of. With trial collapsed alone it would be the sample and be drawn
+    unaveraged (schema-level parity, 2026-09-19)."""
     spec = _spec(
-        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE}
+        roles={"subject": Role.GROUP, "session": Role.COLLAPSE, "trial": Role.COLLAPSE}
     )
 
     figure = resolve_one(spec, series_table, 0)[0]

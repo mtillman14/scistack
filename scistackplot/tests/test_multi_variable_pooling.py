@@ -179,9 +179,14 @@ def test_variable_accepts_every_separating_role(role):
 def test_aggregating_variants_collapses_WITHIN_each_variable():
     """The bug, stated as an assertion.
 
-    Two variables x two variants x two subjects. Averaging the VARIANT away
-    must leave one value per (variable, subject) — four rows, each still 1.0 or
-    100.0. An average that crossed ``Variable`` would land at 50.5.
+    Two variables x two variants x two subjects. Averaging the subjects away
+    must leave one value per (variable, variant) — four bars, each still 1.0
+    or 100.0. An average that crossed ``Variable`` would land at 50.5.
+
+    A BAR, because it is the kind that averages its sample: since 2026-09-19
+    a scatter draws the sample (one point per subject) and averages nothing,
+    so it could no longer exhibit the bug (docs/claude/grouping-and-collapse.md,
+    schema-level parity).
 
     ``resolve`` takes the RAW table: it folds the variants itself, and handing
     it a pre-folded one applies them twice (two ``Variant`` factors).
@@ -192,6 +197,7 @@ def test_aggregating_variants_collapses_WITHIN_each_variable():
             VARIANT_FACTOR: Role.GROUP,
             "subject": Role.COLLAPSE,
         },
+        kind=PlotKind.BAR,
     )
 
     resolved = resolve(spec, _stacked())[0]

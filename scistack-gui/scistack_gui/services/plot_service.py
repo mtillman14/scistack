@@ -986,6 +986,105 @@ def save_figure(
     }
 
 
+def save_plot_data(
+    db,
+    spec_payload: dict,
+    path: str,
+    *,
+    depth: str | None = None,
+    fields_as_columns: bool = True,
+    csv_path: str | None = None,
+    on_progress=None,
+) -> dict:
+    """Write the long table the plot is drawn from to a CSV file.
+
+    ``fields_as_columns`` (default on, as the panel's checkbox) writes a
+    struct variable's fields one column each instead of a ``ColName``
+    column; inert for a variable with no fields.
+
+    The rows are ``scistackplot.plot_data`` — the SAME plan and the same
+    sample frame the figure is built from, every figure of an ITERATE fan-out
+    in one file with the figure keys as columns — so the statistics run on
+    exactly what the plot shows (docs/claude/plot-data-export.md). ``depth``
+    is a key from the capability report's ``data_export.depths``; None is
+    the plotted sample.
+
+    ``path`` is the file to write. An existing folder gets
+    ``<measure>_data.csv`` inside it, and a path with no suffix gets
+    ``.csv`` — the same file-or-folder reading as :func:`save_figure`.
+
+    Returns ``{"ok", "error", "files", "directory", "rows", "columns"}``;
+    a spec that cannot be exported (a raw 1-D measure, an invalid role
+    assignment, an unknown depth) is ``ok: False`` with the reason, never
+    a raised exception — it is a user-correctable state.
+    """
+    import time
+    from pathlib import Path
+
+    from scidb.log import Log
+    from scistackplot import plot_data
+
+    def report(stage: str, done: int, total: int, detail: str | None = None) -> None:
+        if on_progress is not None:
+            on_progress(stage, done, total, detail)
+
+    # The destination FIRST, before the database is touched — the same order
+    # as save_figure, for the same reason: an unwritable folder found after
+    # the load is a wasted load.
+    target = Path(path)
+    if target.is_dir():
+        out = None  # named after the measure once the spec is parsed
+        directory = target
+    else:
+        out = target if target.suffix else target.with_suffix(".csv")
+        directory = out.parent
+
+    started = time.perf_counter()
+    with Log.timer("save_plot_data", layer="scistack_gui", extra=f"depth={depth or 'sample'}") as timing:
+        report("resolving", 0, 1, None)
+        with timing.phase("load"):
+            _, spec, table = _load(
+                db, spec_payload, csv_path=csv_path, label="plot_save_start"
+            )
+        with timing.phase("plot_data"):
+            try:
+                frame = plot_data(
+                    spec, table, depth=depth, fields_as_columns=fields_as_columns
+                )
+            except ValueError as exc:
+                # RoleError is a ValueError too: an invalid spec, a non-scalar
+                # measure, or a depth the spec does not offer.
+                logger.info("[plot] data save refused: %s", exc)
+                return {"ok": False, "error": str(exc), "files": []}
+        if out is None:
+            out = directory / f"{_slug(spec.y_measure) or 'plot'}_data.csv"
+        with timing.phase("write"):
+            directory.mkdir(parents=True, exist_ok=True)
+            frame.to_csv(out, index=False)
+
+    logger.info(
+        "[plot] saved data of %s to %s: %d row(s) x %d column(s) %s, depth=%s, "
+        "fields_as_columns=%s, %.3fs",
+        spec.y_measure,
+        out,
+        len(frame),
+        len(frame.columns),
+        list(frame.columns),
+        depth or "sample",
+        fields_as_columns,
+        time.perf_counter() - started,
+    )
+    report("writing", 1, 1, str(out))
+    return {
+        "ok": True,
+        "error": None,
+        "files": [str(out)],
+        "directory": str(directory),
+        "rows": len(frame),
+        "columns": [str(c) for c in frame.columns],
+    }
+
+
 def _slug(text: str) -> str:
     import re
 
@@ -1063,8 +1162,17 @@ def start_save_job(
     image_format: str | None = None,
     csv_path: str | None = None,
     job_id: str | None = None,
+    what: str = "image",
+    depth: str | None = None,
+    fields_as_columns: bool = True,
 ) -> dict:
-    """Save on a background thread — one figure of a fan-out, or all of them.
+    """Save on a background thread — one figure of a fan-out, or all of them;
+    or, with ``what="data"``, the plot's long table as CSV
+    (:func:`save_plot_data`, ``depth`` passed through).
+
+    The data save rides the same job and the same three messages: its load can
+    outlast the RPC clock just as a figure's resolve can, and one progress
+    readout in the panel is simpler than two.
 
     ``figure_index`` is passed straight through to :func:`save_figure`: an
     index saves that one figure, ``None`` saves every figure.
@@ -1119,30 +1227,47 @@ def start_save_job(
 
     from scistack_gui.api.ws import push_message
 
+    if what not in ("image", "data"):
+        raise ValueError(f"Unknown save kind {what!r}; expected 'image' or 'data'.")
     job = job_id or str(uuid.uuid4())[:8]
 
     def _worker() -> None:
         started = time.monotonic()
-        try:
-            result = save_figure(
-                db,
-                spec_payload,
-                path,
-                dpi=dpi,
-                figure_index=figure_index,
-                image_format=image_format,
-                csv_path=csv_path,
-                on_progress=lambda stage, done, total, detail: push_message(
-                    {
-                        "type": "plot_save_progress",
-                        "job_id": job,
-                        "stage": stage,
-                        "done": done,
-                        "total": total,
-                        "path": detail,
-                    }
-                ),
+
+        def progress(stage, done, total, detail) -> None:
+            push_message(
+                {
+                    "type": "plot_save_progress",
+                    "job_id": job,
+                    "stage": stage,
+                    "done": done,
+                    "total": total,
+                    "path": detail,
+                }
             )
+
+        try:
+            if what == "data":
+                result = save_plot_data(
+                    db,
+                    spec_payload,
+                    path,
+                    depth=depth,
+                    fields_as_columns=fields_as_columns,
+                    csv_path=csv_path,
+                    on_progress=progress,
+                )
+            else:
+                result = save_figure(
+                    db,
+                    spec_payload,
+                    path,
+                    dpi=dpi,
+                    figure_index=figure_index,
+                    image_format=image_format,
+                    csv_path=csv_path,
+                    on_progress=progress,
+                )
         except Exception as exc:  # noqa: BLE001 — a thread announces its own death
             # Without this the thread dies silently and the panel waits for a
             # completion that can never arrive. Same reasoning as
@@ -1181,13 +1306,18 @@ def start_save_job(
                 # message anyone reads.
                 "directory": result.get("directory"),
                 "elapsed": elapsed,
+                # A data save's row count, for "Saved … — 48 row(s)"; absent
+                # for an image save.
+                **({"rows": result["rows"]} if "rows" in result else {}),
             }
         )
 
     logger.info(
         "[plot] starting save job %s (%s) -> %s",
         job,
-        "every figure" if figure_index is None else f"figure {figure_index}",
+        f"data, depth={depth or 'sample'}"
+        if what == "data"
+        else ("every figure" if figure_index is None else f"figure {figure_index}"),
         path,
     )
     threading.Thread(target=_worker, daemon=True, name=f"plot-save-{job}").start()

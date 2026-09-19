@@ -307,36 +307,85 @@ def sample_key(roles: dict[str, Role], table: LongTable) -> str | None:
     return order[-1] if order else None
 
 
-#: Kinds that draw ONE value per leaf group — the sample's mean, when there
-#: is a sample. Everything else either summarises the sample (bar, band:
-#: centre ± spread) or draws its distribution (box, violin). A heatmap's
-#: panel is the elementwise mean of its matrices, which is the same idea.
-MEAN_DRAWING_KINDS = (
-    PlotKind.SCATTER,
-    PlotKind.STRIP,
-    PlotKind.LINE,
-    PlotKind.SPAGHETTI,
-    PlotKind.HEATMAP,
-)
+#: Kinds that draw each level of the SAMPLE as its own polyline — one line
+#: per subject, inside its colour / dash (seaborn's ``units=``). A line needs
+#: one y per x within a series, so without this the sample's rows would share
+#: one series id and the line would zigzag between subjects at every x.
+#: (Schema-level parity, user 2026-09-19: every kind draws the sample rows;
+#: none averages them further. The kinds that did — scatter, strip, line,
+#: spaghetti — were ``MEAN_DRAWING_KINDS``, deleted.)
+UNIT_KINDS = (PlotKind.LINE, PlotKind.SPAGHETTI)
 
 
-def draws_sample_mean(kind: PlotKind) -> bool:
-    return kind in MEAN_DRAWING_KINDS
+def spaghetti_sample_repeats(
+    spec: PlotSpec, roles: dict[str, Role], table: LongTable, sample: list[str]
+) -> tuple[bool, str]:
+    """Whether a spaghetti's SAMPLE recurs across its x ticks — so each sample
+    level can be its own joined line — and why, in words.
+
+    A spaghetti line joins one identity across the tick layers. A subject has
+    a value at every session, so "subject 01" is a real line; a trial belongs
+    to one session, so "trial 1" at pre and "trial 1" at post are different
+    trials and a line through them would be invented. The rule is the one
+    ``overlay_join`` uses for "Show sample": the deepest sample key must sit
+    ABOVE the deepest tick layer in the schema hierarchy. A key with no depth
+    on either side cannot be placed, and the answer is no.
+
+    When the answer is no, the sample cannot be drawn as lines and the kind
+    averages it into its line instead (``CollapseSteps.final``) — the one
+    exception to schema-level parity, logged where it is taken.
+    """
+    if not sample:
+        return False, "Nothing is collapsed."
+    depths = table.factor_depths
+    ticks = spec.ordered_groups(roles, depths)[1:]
+    sample_depths = [depths.get(name) for name in sample]
+    tick_depths = [depths[name] for name in ticks if name in depths]
+    if any(depth is None for depth in sample_depths):
+        return False, (
+            f"{' x '.join(sample)} has no place in the schema hierarchy, so whether "
+            f"it recurs across the x axis cannot be told — each line is its mean."
+        )
+    if not tick_depths:
+        return False, (
+            "No x layer is a schema key, so repeated measures cannot be told — "
+            "each line is the sample's mean."
+        )
+    deepest_tick = max(ticks, key=lambda name: depths.get(name, -1))
+    if max(sample_depths) < max(tick_depths):
+        return True, (
+            f"Each {' x '.join(sample)} has a value at every {deepest_tick}: "
+            f"one line each."
+        )
+    return False, (
+        f"A {sample[-1]} belongs to one {deepest_tick}, so no line can join it "
+        f"across the axis — each line is the mean of its {' x '.join(sample)}."
+    )
 
 
 @dataclass(frozen=True)
 class CollapseSteps:
-    """The collapse chain as a figure runs it, for one kind.
+    """The collapse chain as a figure runs it — the same for every kind.
 
     ``pre`` are averaged away first, deepest first, each one grouping on every
     other factor still present — the nested, unweighted means. What remains has
-    one row per level of the sample key(s). Then, per kind:
+    one row per level of the sample key(s): **the sample, which every kind
+    draws** (schema-level parity, 2026-09-19), each in its own geometry:
 
-    * ``final`` is averaged too — for a kind that draws one value per leaf
-      group (:data:`MEAN_DRAWING_KINDS`) the sample's mean IS the mark;
     * a summary kind (bar, band) computes centre ± spread over the sample rows
       in its own panel step (``reduce._summarize``);
-    * a distribution kind (box, violin) draws the sample rows as they are.
+    * a distribution kind (box, violin) draws the sample rows as they are;
+    * scatter and strip draw one point per sample row;
+    * line and spaghetti draw one polyline per sample level
+      (:data:`UNIT_KINDS`, ``GroupingLayers.units``).
+
+    There is no step after the sample — with ONE exception. The old
+    ``final`` (the sample's own mean, for scatter / strip / line /
+    spaghetti) now runs only for a **spaghetti whose sample does not recur
+    across its x ticks** (:func:`spaghetti_sample_repeats`: trials under a
+    session tick cannot be joined, so each line is their mean). Everywhere
+    else a bar of subjects and a scatter of subjects are drawn from the same
+    rows — and the "Save data" CSV (``export.plot_data``) is those rows.
 
     ``pooled`` (``Aggregation.pooled``) empties ``pre``: every collapsed key
     is the sample at once, one groupby, weighted by N.
@@ -347,7 +396,9 @@ class CollapseSteps:
 
     pre: list[str]
     sample: list[str]
-    final: list[str]
+    #: The sample averaged too — ONLY for a spaghetti whose sample cannot be
+    #: joined across its ticks (see above). Empty for every other figure.
+    final: list[str] = field(default_factory=list)
 
     @property
     def all(self) -> list[str]:
@@ -362,15 +413,22 @@ class CollapseSteps:
 def collapse_steps(
     spec: PlotSpec, roles: dict[str, Role], table: LongTable
 ) -> CollapseSteps:
-    """:class:`CollapseSteps` for ``spec.kind`` — see :func:`collapse_order`."""
+    """:class:`CollapseSteps` — see :func:`collapse_order`. The same for every
+    kind (every kind draws the same sample), except the spaghetti case
+    documented on the class."""
     order = collapse_order(roles, table)
     if not order:
-        return CollapseSteps(pre=[], sample=[], final=[])
+        return CollapseSteps(pre=[], sample=[])
     if spec.aggregate.pooled:
         pre, sample = [], list(order)
     else:
         pre, sample = list(order[:-1]), [order[-1]]
-    final = list(sample) if draws_sample_mean(spec.kind) else []
+    final: list[str] = []
+    if spec.kind is PlotKind.SPAGHETTI:
+        repeats, reason = spaghetti_sample_repeats(spec, roles, table, sample)
+        if not repeats:
+            final = list(sample)
+        Log.debug("spaghetti sample %s: %s", sample, reason, layer=LAYER)
     return CollapseSteps(pre=pre, sample=sample, final=final)
 
 
@@ -431,6 +489,20 @@ class OverlaySteps:
         return self.shown[-1]
 
 
+def chain_cut(order: list[str], key: str) -> tuple[list[str], list[str]]:
+    """``(averaged, kept)``: the collapse chain ``order`` (deepest first) cut
+    just before ``key`` — every key deeper than it averages away, ``key``
+    and everything shallower stays.
+
+    One rule shared by "Show sample" (:func:`overlay_steps`) and the "Save
+    data" depth (``export.plot_data``): checking ``trial`` in either means
+    "cycles averaged within each trial, every trial of every subject kept".
+    A deeper key implies the shallower ones, because they are its identity.
+    """
+    cut = order.index(key)
+    return list(order[:cut]), list(order[cut:])
+
+
 def overlay_steps(
     spec: PlotSpec, roles: dict[str, Role], table: LongTable
 ) -> OverlaySteps | None:
@@ -454,8 +526,8 @@ def overlay_steps(
         )
     if not checked:
         return None
-    cut = min(order.index(name) for name in checked)
-    steps = OverlaySteps(averaged=list(order[:cut]), shown=list(reversed(order[cut:])))
+    averaged, kept = chain_cut(order, min(checked, key=order.index))
+    steps = OverlaySteps(averaged=averaged, shown=list(reversed(kept)))
     Log.debug(
         "show_sample %s: average %s, one point per %s",
         spec.show_sample,
@@ -577,11 +649,25 @@ class GroupingLayers:
     panel frame), never by composing into the leaf key — so ``ticks`` is
     exactly what the axis labels, and what ``MAX_X_LAYERS`` caps. It IS part
     of a series id: one line per leaf group needs every layer.
+
+    ``units`` are the SAMPLE keys a line / spaghetti draws one polyline each
+    for (:data:`UNIT_KINDS`), innermost first like ``series``. They are part
+    of the series id (:attr:`identity`) and nothing else: never a dash style,
+    never a legend entry — thirty subjects' lines share their group's colour
+    and dash, exactly as seaborn's ``units=`` draws them.
     """
 
     ticks: list[str]
     series: list[str]
     color: str | None
+    units: list[str] = field(default_factory=list)
+
+    @property
+    def identity(self) -> list[str]:
+        """Every layer of one polyline's id, innermost first: the units inside
+        the grouping's series layers (``"groupA | 01"`` once composed
+        outermost-first)."""
+        return [*self.units, *self.series]
 
     @property
     def labelled_ticks(self) -> list[str]:
@@ -626,14 +712,26 @@ def grouping_layers(
 
     if shape is Shape.MATRIX_2D:
         return GroupingLayers(ticks=[], series=[], color=color)
+    # One polyline per sample level for the kinds that draw lines — see
+    # UNIT_KINDS. Read off the one collapse chain, so a pooled spec draws one
+    # line per (trial, subject) row, which is what its sample is.
+    units: list[str] = []
+    if kind in UNIT_KINDS:
+        sample = collapse_steps(spec, roles, table).sample
+        # A spaghetti joins its lines across the ticks: only a sample that
+        # recurs there can be a line (see spaghetti_sample_repeats).
+        if kind is not PlotKind.SPAGHETTI or spaghetti_sample_repeats(
+            spec, roles, table, sample
+        )[0]:
+            units = [name for name in sample if name not in groups]
     if spec.x_measure is not None or shape is Shape.SERIES_1D:
-        return GroupingLayers(ticks=[], series=list(groups), color=color)
+        return GroupingLayers(ticks=[], series=list(groups), color=color, units=units)
     if kind is PlotKind.SPAGHETTI:
         lines, rest = groups[:1], groups[1:]
         ticks = [name for name in reversed(rest) if name != color]
-        return GroupingLayers(ticks=ticks, series=list(lines), color=color)
+        return GroupingLayers(ticks=ticks, series=list(lines), color=color, units=units)
     ticks = [name for name in reversed(groups) if name != color]
-    return GroupingLayers(ticks=ticks, series=[], color=color)
+    return GroupingLayers(ticks=ticks, series=[], color=color, units=units)
 
 
 def tick_layers(

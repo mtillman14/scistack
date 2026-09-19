@@ -2368,3 +2368,139 @@ def test_the_shared_picker_shell_is_read_only():
     called = set(re.findall(r"callBackend\(\s*'([a-z_]+)'", source))
 
     assert called == {"get_pipeline", "get_layout"}, called
+
+
+# --- saving the plot's data (CSV) --------------------------------------------
+#
+# "Save data" writes scistackplot.plot_data — the rows the figure is drawn
+# from — so these check the adaptation: the file IS that frame, a spec that
+# cannot be exported is a message, and the job path reports like an image save.
+# The numbers themselves are pinned in scistackplot/tests/test_plot_data.py.
+
+
+def _scalar_box_spec(db) -> dict:
+    """RawSignal drawn as a box: the kind implies the per-record cell
+    collapse, so the drawn measure is scalar and its data can be saved.
+    subject grouped (coloured), session collapsed — the sample."""
+    spec = _pooled_spec(db)
+    spec["kind"] = "box"
+    return spec
+
+
+def test_save_plot_data_writes_what_plot_data_returns(populated_db, tmp_path):
+    import pandas as pd
+    from scistackplot import plot_data
+
+    spec = _scalar_box_spec(populated_db)
+    target = tmp_path / "data.csv"
+
+    result = plot_service.save_plot_data(populated_db, spec, str(target))
+
+    assert result["ok"] is True, result
+    assert result["files"] == [str(target)]
+    _, spec_obj, table = plot_service._load(
+        populated_db, spec, csv_path=None, label="test"
+    )
+    expected = plot_data(spec_obj, table)
+    written = pd.read_csv(target, dtype=str)
+    assert list(written.columns) == [str(c) for c in expected.columns]
+    assert result["columns"] == list(written.columns)
+    assert len(written) == len(expected) == result["rows"] == 4  # 2 subjects x 2 sessions
+    assert pd.to_numeric(written["RawSignal"]).to_numpy() == pytest.approx(
+        pd.to_numeric(expected["RawSignal"]).to_numpy()
+    )
+
+
+def test_save_plot_data_into_a_folder_names_the_file(populated_db, tmp_path):
+    result = plot_service.save_plot_data(
+        populated_db, _scalar_box_spec(populated_db), str(tmp_path)
+    )
+    assert result["ok"] is True, result
+    assert result["files"] == [str(tmp_path / "RawSignal_data.csv")]
+
+
+def test_save_plot_data_adds_the_csv_suffix(populated_db, tmp_path):
+    result = plot_service.save_plot_data(
+        populated_db, _scalar_box_spec(populated_db), str(tmp_path / "nested" / "stats")
+    )
+    assert result["ok"] is True, result
+    assert (tmp_path / "nested" / "stats.csv").exists()
+
+
+def test_a_1d_plot_cannot_save_its_data_and_says_why(populated_db, tmp_path):
+    target = tmp_path / "data.csv"
+    result = plot_service.save_plot_data(populated_db, _pooled_spec(populated_db), str(target))
+    assert result["ok"] is False
+    assert "scalar" in result["error"]
+    assert not target.exists()
+
+
+def test_an_unknown_depth_is_a_message(populated_db, tmp_path):
+    result = plot_service.save_plot_data(
+        populated_db, _scalar_box_spec(populated_db), str(tmp_path / "d.csv"), depth="nope"
+    )
+    assert result["ok"] is False
+    assert "nope" in result["error"]
+
+
+def test_the_capability_report_offers_data_export(populated_db):
+    report = plot_service.capabilities_for(populated_db, _scalar_box_spec(populated_db))
+    assert report["data_export"]["available"] is True
+    assert report["data_export"]["default"] == "session"
+    refused = plot_service.capabilities_for(populated_db, _pooled_spec(populated_db))
+    assert refused["data_export"]["available"] is False
+
+
+def test_a_data_save_job_reports_like_an_image_save(
+    populated_db, tmp_path, captured_pushes
+):
+    target = tmp_path / "data.csv"
+    started = plot_service.start_save_job(
+        populated_db, _scalar_box_spec(populated_db), str(target), what="data"
+    )
+    messages = _drain(captured_pushes, "plot_save_complete")
+    done = next(m for m in messages if m["type"] == "plot_save_complete")
+    assert done["files"] == [str(target)]
+    assert {m["job_id"] for m in messages} == {started["job_id"]}
+    stages = [m["stage"] for m in messages if m["type"] == "plot_save_progress"]
+    assert stages == ["resolving", "writing"]
+    assert target.exists()
+
+
+def test_a_refused_data_save_job_ends_with_a_failure(
+    populated_db, tmp_path, captured_pushes
+):
+    plot_service.start_save_job(
+        populated_db, _pooled_spec(populated_db), str(tmp_path / "d.csv"), what="data"
+    )
+    messages = _drain(captured_pushes, "plot_save_failed")
+    failed = next(m for m in messages if m["type"] == "plot_save_failed")
+    assert "scalar" in failed["error"]
+
+
+def test_an_unknown_save_kind_is_refused_before_a_thread_starts(populated_db, tmp_path):
+    with pytest.raises(ValueError, match="image"):
+        plot_service.start_save_job(
+            populated_db, _scalar_box_spec(populated_db), str(tmp_path / "x"), what="movie"
+        )
+
+
+def test_fields_as_columns_reaches_plot_data(populated_db, tmp_path, monkeypatch):
+    """The checkbox's value arrives at scistackplot.plot_data unchanged (the
+    reshape itself is pinned in test_plot_data.py's struct tests)."""
+    import scistackplot
+
+    seen = []
+    original = scistackplot.plot_data
+
+    def spy(spec, table, **kwargs):
+        seen.append(kwargs.get("fields_as_columns"))
+        return original(spec, table, **kwargs)
+
+    monkeypatch.setattr(scistackplot, "plot_data", spy)
+    spec = _scalar_box_spec(populated_db)
+    plot_service.save_plot_data(populated_db, spec, str(tmp_path / "a.csv"))
+    plot_service.save_plot_data(
+        populated_db, spec, str(tmp_path / "b.csv"), fields_as_columns=False
+    )
+    assert seen == [True, False], "default on, as the panel's checkbox"

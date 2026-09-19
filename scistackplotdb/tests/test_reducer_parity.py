@@ -275,7 +275,10 @@ class TestEveryKindRoutesThroughTheReducer:
             return
         if kind in (PlotKind.BAND, PlotKind.BAR):
             expected = "summarize_series"
-        elif Role.COLLAPSE in roles.values():
+        elif list(roles.values()).count(Role.COLLAPSE) > 1:
+            # A PRE-collapse: the last collapsed key is the sample, which
+            # every kind draws as it is (2026-09-19), so one collapsed key
+            # alone is an explode.
             expected = "collapse_series"
         else:
             expected = "explode_series"
@@ -309,11 +312,13 @@ class TestDownsampleRoutesThroughTheReducer:
 
     def test_a_collapsed_line_downsamples_after_collapsing(self, source):
         """With a collapse the exploded frame is the collapsed one, and
-        the transport stride runs over THAT — after the mean, never before."""
+        the transport stride runs over THAT — after the mean, never before.
+        Two collapsed keys, so trial is averaged (a pre-collapse); trial alone
+        would be the sample, drawn unaveraged (2026-09-19)."""
         table = source.get_table(["Series"])
         spy = _Spy()
         table.reducer = spy
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None)
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE}, None)
         resolve(spec, table, max_points=10)
         assert spy.calls.index("collapse_series") < spy.calls.index("downsample")
 
@@ -797,7 +802,9 @@ class TestNumpyCollapseEqualsPandas:
         a, ia = reducer_for(p).collapse_series(p.frame, spec, roles, "index", p)
         b, ib = reducer_for(n).collapse_series(n.frame, spec, roles, "index", n)
         assert ia == ib
-        key = [c for c in ("subject", "index") if c in a.columns]
+        # "trial" alone is the sample: nothing is averaged and both reducers
+        # return the plain explode, trials still rows — sort by them too.
+        key = [c for c in ("subject", "trial", "index") if c in a.columns]
         assert list(a.columns) == list(b.columns)
         pd.testing.assert_frame_equal(
             a.sort_values(key).reset_index(drop=True)[[*key, "Series"]],
@@ -807,10 +814,12 @@ class TestNumpyCollapseEqualsPandas:
 
     def test_a_position_only_some_trials_reach_is_the_mean_of_those(self, numpy_source):
         """s1's trials are 12, 9 and 15 samples long: position 13 is the mean
-        of ONE trial, position 10 of two — never NaN-poisoned, never padded."""
+        of ONE trial, position 10 of two — never NaN-poisoned, never padded.
+        trial AND subject collapsed: trial averages within each subject (the
+        pre-collapse this is about), subject is the sample and stays a column."""
         from scistackplot.roles import complete_roles
 
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None)
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE}, None)
         n = numpy_source.get_table(["Series"])
         roles = complete_roles(spec, n)
         b, _ = reducer_for(n).collapse_series(n.frame, spec, roles, "index", n)

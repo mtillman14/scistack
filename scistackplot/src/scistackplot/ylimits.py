@@ -18,8 +18,8 @@ reduction happens, in one pass:
   so for those it is a min/max over the unexploded arrays — 48 rows of numpy
   work for a figure set that would otherwise be 17 million;
 * a band or a bar draws ``centre ± spread`` over the sample, and a collapse
-  chain draws means (the sample's own for scatter/line, the pre-collapsed rows
-  for box/violin); both genuinely need the reduction — but only its extremes,
+  chain draws the pre-collapsed rows (the sample, for every kind); both
+  genuinely need the reduction — but only its extremes,
   so it is one grouped pass with no panel frames and no sorting.
 
 Both cover the whole fan-out at once, which is the point: paging through thirty
@@ -81,11 +81,6 @@ class ExtentMode:
     #: so the drawn values are means, not the observations. Raw extents would
     #: only be loose, but it is one path.
     collapse: bool
-    #: The kind draws the SAMPLE's mean too (``roles.draws_sample_mean``):
-    #: scatter, strip, line. A box or violin draws the sample rows; a bar or
-    #: band summarises them. Part of the key because the same rows give
-    #: different extents per kind.
-    final_mean: bool
     #: BAR on a linear axis: bars rise from zero, so zero is always in view.
     #: Never on a log axis — there is no zero to rise from, and folding it in
     #: would put log10(0) on the axis.
@@ -100,14 +95,13 @@ class ExtentMode:
 
     @classmethod
     def for_spec(cls, spec: PlotSpec, roles: dict[str, Role]) -> "ExtentMode":
-        from .roles import draws_sample_mean, has_sample, overlay_unavailable
+        from .roles import has_sample, overlay_unavailable
 
         sample = has_sample(roles)
         return cls(
             summary=spec.kind in (PlotKind.BAND, PlotKind.BAR)
             and spec.aggregate.error is not ErrorBand.NONE,
             collapse=sample,
-            final_mean=sample and draws_sample_mean(spec.kind),
             from_zero=spec.kind is PlotKind.BAR and not spec.style.log_y,
             log=bool(spec.style.log_y),
             # The shape is not known here; `_reduced_extents` skips a 1-D
@@ -129,7 +123,7 @@ class ExtentMode:
     def describe(self) -> str:
         parts = ["summary" if self.summary else "raw"]
         if self.collapse:
-            parts.append("collapsed" + (" to the mean" if self.final_mean else ""))
+            parts.append("collapsed")
         if self.from_zero:
             parts.append("from zero")
         if self.log:
@@ -512,8 +506,7 @@ def _reduced_extents(
     """Extents of what a reducing plot draws, at the granularity it draws it.
 
     Mirrors the figure path step for step — explode, the collapse chain
-    (``roles.collapse_steps``: the pre-collapse, then the sample's mean for the
-    kinds that draw it), then ``centre ± spread`` per panel, per mark — and
+    (``roles.collapse_steps``: the pre-collapse, leaving the sample), then ``centre ± spread`` per panel, per mark — and
     only then folds the result into scope groups. The panel factors are ALWAYS
     in the grouping whether or not the scope names them: the scope decides
     which panels share a range, never what statistic each panel draws.
@@ -559,8 +552,8 @@ def _reduced_extents(
 
     panels = panel_factors(roles, working)
     if not mode.summary:
-        # What the chain left is drawn as it is — the sample rows (box,
-        # violin) or their mean (scatter, line): the extent is the values',
+        # What the chain left is drawn as it is — the sample rows, by every
+        # kind that does not summarise them: the extent is the values',
         # folded by scope. `scope` ⊆ `panels` ⊆ the chain's kept columns.
         return _union_extents(_raw_extents(working, measure, scope, mode), overlay_extents)
 

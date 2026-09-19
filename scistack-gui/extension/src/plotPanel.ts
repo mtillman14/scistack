@@ -139,6 +139,8 @@ export class PlotPanel {
             const params = (msg.params ?? {}) as {
               defaultName?: string;
               formats?: string[];
+              // "CSV" for "Save data"; images otherwise.
+              filterName?: string;
             };
             const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
             const uri = await vscode.window.showSaveDialog({
@@ -148,7 +150,7 @@ export class PlotPanel {
               // The panel sends the ONE format its dropdown selected, so the
               // dialog cannot offer a second answer to a question already
               // asked — the backend honours the dropdown either way.
-              filters: { Images: params.formats ?? ['png'] },
+              filters: { [params.filterName ?? 'Images']: params.formats ?? ['png'] },
             });
             this.panel.webview.postMessage({
               id: msg.id,

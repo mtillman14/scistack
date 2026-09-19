@@ -124,11 +124,19 @@ def test_pooled_box_distribution_is_every_trial(unbalanced):
     assert pre == pytest.approx([1.0, 2.0, 3.0, 9.0])
 
 
-def test_scatter_draws_the_sample_mean(unbalanced):
-    """A kind that draws one value per mark draws the sample's mean."""
+def test_scatter_draws_the_sample_itself(unbalanced):
+    """Schema-level parity (2026-09-19): a scatter draws the sample — one
+    point per subject, each its trial mean — exactly the rows the bar's
+    5.5 ± SD is computed over. It never averages the subjects too."""
     frame = _panel(_spec(PlotKind.SCATTER), unbalanced)
-    assert len(frame[frame[X] == "pre"]) == 1
-    assert _row(frame, "pre")[Y] == pytest.approx(5.5)
+    pre = sorted(frame[frame[X] == "pre"][Y].tolist())
+    assert pre == pytest.approx([2.0, 9.0])
+
+
+def test_strip_and_box_draw_the_same_sample(unbalanced):
+    strip = _panel(_spec(PlotKind.STRIP), unbalanced)
+    box = _panel(_spec(PlotKind.BOX), unbalanced)
+    assert sorted(strip[Y]) == pytest.approx(sorted(box[Y]))
 
 
 def test_dict_order_does_not_change_the_numbers(unbalanced):
@@ -226,3 +234,84 @@ def test_band_per_uncoloured_series_layer():
     one = frame[frame[SERIES] == "01"].sort_values(X)
     expected = np.mean([r["S"] for r in rows if r["subject"] == "01"], axis=0)
     assert one[Y].to_numpy() == pytest.approx(expected)
+
+
+# --- line kinds: one line per sample level --------------------------------------
+
+
+@pytest.fixture
+def series_by_subject() -> tuple[LongTable, list[dict]]:
+    rows = []
+    rng = np.random.default_rng(3)
+    for group in ["A", "B"]:
+        for subject in (["01", "02"] if group == "A" else ["03"]):
+            for trial in ["1", "2"]:
+                rows.append(
+                    {
+                        "group": group,
+                        "subject": subject,
+                        "trial": trial,
+                        "S": list(rng.normal(size=4)),
+                    }
+                )
+    table = LongTable.from_frame(
+        pd.DataFrame(rows),
+        factors=["group", "subject", "trial"],
+        measures=["S"],
+        schema_levels=["subject", "trial"],
+        name="S",
+    )
+    return table, rows
+
+
+def test_a_line_draws_one_line_per_subject(series_by_subject):
+    """subject + trial collapsed, group coloured: trials average within each
+    subject and each SUBJECT is its own line inside its group's colour — not
+    one mean line per group (the deleted `final` step)."""
+    table, rows = series_by_subject
+    spec = PlotSpec(
+        measures=["S"],
+        roles={"group": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        groups=["group"],
+        color="group",
+        kind=PlotKind.LINE,
+    )
+    (figure,) = resolve(spec, table)
+    frame = figure.panels[0].frame
+    assert set(frame[SERIES]) == {"A | 01", "A | 02", "B | 03"}
+    one = frame[frame[SERIES] == "A | 01"].sort_values(X)
+    expected = np.mean([r["S"] for r in rows if r["subject"] == "01"], axis=0)
+    assert one[Y].to_numpy() == pytest.approx(expected)
+    assert set(one[COLOR]) == {"A"}
+
+
+def test_subject_lines_are_never_dashed(series_by_subject):
+    """Units are part of the series id and nothing else: thirty subjects
+    must not cycle through six dash styles or fill the legend."""
+    table, _ = series_by_subject
+    spec = PlotSpec(
+        measures=["S"],
+        roles={"group": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        groups=["group"],
+        color="group",
+        kind=PlotKind.LINE,
+    )
+    (figure,) = resolve(spec, table)
+    assert figure.dash_styles == {}
+    assert figure.encoding.dash is None
+
+
+def test_a_pooled_line_draws_one_line_per_sample_row(series_by_subject):
+    """Pooled: every collapsed key is the sample, so each (subject, trial)
+    record is its own line."""
+    table, _ = series_by_subject
+    spec = PlotSpec(
+        measures=["S"],
+        roles={"group": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        groups=["group"],
+        kind=PlotKind.LINE,
+        aggregate=Aggregation(pooled=True),
+    )
+    (figure,) = resolve(spec, table)
+    assert figure.panels[0].frame[SERIES].nunique() == 6
+

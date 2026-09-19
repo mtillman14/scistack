@@ -345,16 +345,35 @@ def test_generated_code_keeps_the_nested_axis_through_an_aggregate(grouped_table
 
     from scistackplot import generate_plot_function
 
+    # Two trials per subject, so the chain has a PRE-collapse (trial within
+    # subject) — the averaging groupby this guards. With subject alone
+    # collapsed it is the sample and nothing is averaged (schema-level
+    # parity, 2026-09-19).
+    frame = pd.concat(
+        [grouped_table.frame.assign(trial=t) for t in ("1", "2")], ignore_index=True
+    )
+    table = LongTable.from_frame(
+        frame,
+        factors=["group", "session", "subject", "trial"],
+        measures=["StepLength"],
+        level_order={"group": ["stim", "sham"], "session": ["pre", "post"]},
+        schema_levels=["subject", "trial"],
+    )
     spec = _nested_spec(
-        roles={"group": Role.GROUP, "session": Role.GROUP, "subject": Role.COLLAPSE},
+        roles={
+            "group": Role.GROUP,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
+        },
         kind=PlotKind.SCATTER,
     )
-    source = generate_plot_function(spec, grouped_table)
+    source = generate_plot_function(spec, table)
     assert "'_x'" in source.split("groupby(")[1].split(")")[0]
 
     namespace: dict = {}
     exec(compile(source, "<generated>", "exec"), namespace)  # noqa: S102
-    figure = namespace["plot_steplength"](grouped_table.frame.copy(), "figure.png")
+    figure = namespace["plot_steplength"](frame.copy(), "figure.png")
     ticks = [t.get_text() for t in figure.axes[0].get_xticklabels()]
     assert ticks == ["stim · pre", "stim · post", "sham · pre", "sham · post"]
     matplotlib.pyplot.close(figure)

@@ -72,12 +72,39 @@ that into:
 * `pre` — averaged away first, each grouping on every other factor still
   present (`reduce._collapse_levels`, one groupby-mean per key);
 * `sample` — the last key (or **all** of them when `pooled`);
-* `final` — the sample averaged too, for the kinds that draw one value per
-  mark (`MEAN_DRAWING_KINDS`: scatter, strip, line, spaghetti, heatmap).
+* `final` — empty, except for one spaghetti case (below).
 
-Then, per kind: bar and band compute centre ± spread over the sample rows
-(`_summarize`; `Aggregation.statistic` / `.error`); box and violin draw the
-sample rows as a distribution; the mean-drawing kinds draw the mean.
+**Schema-level parity (user decision, 2026-09-19): every kind draws the
+sample.** The collapsed keys mean the same thing whatever the kind; only
+the geometry changes. Before this, scatter, strip, line and spaghetti also
+averaged the sample (`MEAN_DRAWING_KINDS`, now deleted), so a bar of
+subjects and a scatter of subjects were drawn from different rows.
+
+| kind | the sample rows are drawn as |
+|---|---|
+| bar / band | centre ± spread (`_summarize`; `Aggregation.statistic` / `.error`) |
+| box / violin | a distribution |
+| scatter / strip | one point per row |
+| line | **one polyline per sample level** (`GroupingLayers.units`, seaborn `units=`) inside its colour / dash |
+| spaghetti | one polyline per sample level inside its line group, **if the sample recurs across the x ticks**; otherwise each line is the sample's mean (`final`) |
+| heatmap | a 2-D measure skips the chain; the panel is the matrix mean |
+
+`GroupingLayers.units` are part of the series id (`identity = units +
+series`, composed outermost first: `"groupA | 01"`) and nothing else. They
+never get a dash style and never appear in the legend.
+
+**The spaghetti exception** (`roles.spaghetti_sample_repeats`, the same
+depth rule as `overlay_join`). A spaghetti line joins one identity across
+the ticks. A subject has a value at every session, so collapsed subjects
+under session ticks become one line each. A trial belongs to ONE session,
+so "trial 1 at pre" and "trial 1 at post" are different trials, and a line
+through them would be invented. In that case (the classic "subject lines,
+trial collapsed") `collapse_steps` sets `final = sample`, and each line
+is drawn through the trial mean. An INFO line says so:
+`spaghetti draws the mean of trial per line: A trial belongs to one session…`.
+
+"Save data" (`export.plot_data`, `plot-data-export.md`) writes the sample
+rows by default, so the file is the same for every kind.
 
 **Worked example** (unbalanced on purpose — on a balanced design nested and
 pooled coincide): subject 01 has trials {1, 2, 3}, subject 02 has {9};
@@ -122,15 +149,23 @@ multi-level variant factor and on `Variable`.
 | question | owner |
 |---|---|
 | collapse order / sample / steps | `scistackplot/roles.py` — `collapse_order`, `sample_key`, `collapse_steps` |
-| how a kind reads the grouping list | `roles.grouping_layers` → `GroupingLayers(ticks, series, color)` |
+| how a kind reads the grouping list | `roles.grouping_layers` → `GroupingLayers(ticks, series, color, units)` |
+| one line per sample level (line, spaghetti) | `roles.UNIT_KINDS`, `GroupingLayers.units` / `.identity`, `roles.spaghetti_sample_repeats` |
+| the sample rows, one call for figure and CSV | `reduce._sample_frame` (figure) = `export.plot_data` default |
 | what each kind needs | `roles.kind_requirement` |
 | the chain, run | `reduce._collapse_levels` (pandas), `reducer._chain` (numpy), `codegen._preamble` (emitted), `ylimits._reduced_extents` (limits) |
 | dash styles | `resolved.DASH_CYCLE` / `MPL_DASHES`, `reduce._dash_styles`, `codegen._SEABORN_DASHES` |
 | grouping placement in the GUI | `scistack-gui/frontend/.../groups.ts` (mirror of `PlotSpec.ordered_groups`) |
-| capability report | `kinds[].assignment` (roles + groups + colour), `cell_collapse`, `collapse {order, sample, pooled}`, `has_sample`, `grouping {layers, color, ticks, series, labelled_layers, max_labelled_layers, hint}` |
+| capability report | `kinds[].assignment` (roles + groups + colour), `cell_collapse`, `collapse {order, sample, pooled}`, `has_sample`, `grouping {layers, color, ticks, series, units, labelled_layers, max_labelled_layers, hint}`, `data_export` |
 | the collapsed keys drawn as points ("Show sample") | `roles.overlay_steps` / `overlay_join` — see `show-sample-overlay.md` |
+| cutting the chain at a key (overlay + CSV depth) | `roles.chain_cut` |
 
 ## Traps
+
+* **Numbers changed on 2026-09-19** for scatter / strip / line / spaghetti
+  with a collapsed key. They now draw the sample rows (one point or one line
+  per subject), not the sample's mean. Only the spaghetti exception above
+  still averages.
 
 * **Two things called "collapse".** The *cell* collapse (`cell.py`,
   `cell_statistic`) reduces each 1-D record to one value when a scalar kind

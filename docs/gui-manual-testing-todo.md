@@ -36,7 +36,86 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
-## 1. Declared schema level order (`[schema_keys]`) — added 2026-09-19
+## 1. Save data (CSV) — the rows a plot is drawn from — added 2026-09-19
+
+**What changed:** a **Save data (CSV)** button in the Plot Studio writes the
+long table the current plot is drawn from. Every figure of a
+separate-figures fan-out goes into one file, with the figure key (for
+example `speed`) as a column. By default it holds the **plotted sample**, so
+the file is exactly what the bars / boxes / points are computed from. A depth
+chooser can keep lower collapsed levels (for example trials, cycles)
+unaveraged instead. Scalar plots only: a raw 1-D (line/band) or 2-D plot
+greys the button out with the reason. Uncommitted. Doc:
+`docs/claude/plot-data-export.md`.
+
+**Backend**
+1. Restart the GUI (**Restart**) so the new Python code is loaded. The
+   bundles and `extension/dist/extension.js` were rebuilt 2026-09-19. If
+   you pulled instead, rebuild all three (see the common setup, plus
+   `npm run build` in `scistack-gui/extension`).
+2. After a save, run `grep "plot-data\|saved data of" scidb.log`. Expect
+   `[plot-data] <measure>: N figure(s), chain … -> subject (sample),
+   depth=subject -> R row(s) x C column(s) [...]` and
+   `[plot] saved data of <measure> to <path>: R row(s) …`.
+
+**Frontend**
+1. Open a scalar variable in the Plot Studio. Group `session`, set
+   `speed` (or any key) to Separate figures, and collapse `subject`,
+   `trial` and `cycle`. Choose Bar.
+2. Click **Save data (CSV)**. A chooser should open, listing
+   "subject — the plotted sample (cycle, trial averaged) (default)",
+   "down to trial (cycle averaged)" and "down to cycle (raw — nothing
+   averaged)". Each option shows the column header underneath.
+3. Keep the default and click **Save CSV…**. The file dialog should filter on
+   CSV. Save, and the notice should say
+   `Saved <path> — N row(s) in …s`.
+4. Open the file. Expect columns `subject, session, speed, <measure>`, one
+   row per subject × session × speed, and subject IDs like `01` written as
+   `01`. The mean of each session's rows should equal the bar height.
+5. Save again with "down to trial". Expect a `trial` column and more rows.
+6. With nothing collapsed, the button saves straight away with no chooser.
+   With **Weight by N** ticked, there's also no chooser, and the file has
+   every collapsed level.
+7. Switch a 1-D variable to a line or band. The button should be greyed out,
+   and hovering it should explain why (scalar plots only).
+8. **Struct / table variable** (for example a per-muscle peak table). Open it
+   with the fields as panels, then click **Save data (CSV)**. The chooser
+   should show a **One column per field (ColName)** checkbox, checked by
+   default, and the header preview should list the field names as columns.
+   Save and open the file. Expect one column per field (`subject, session,
+   RTA, RMG, …`). Uncheck the box and save again: expect a `ColName`
+   column and one row per field instead. Set `ColName` to Collapse: the
+   checkbox should disappear at the default depth and come back at the
+   deepest ("raw") depth.
+   In `scidb.log`, expect `[plot-data] one column per ColName: … field
+   column(s) [...]`.
+
+## 2. Every plot kind draws the sample (schema-level parity) — added 2026-09-19
+
+**What changed:** scatter and strip no longer average the sample (for
+example subjects) into one point. They draw one point per subject, the same
+rows a bar summarises and a box draws. Line plots draw one line per subject.
+Spaghetti plots draw one line per subject inside each line group when the
+subject recurs across the x ticks. When it doesn't (for example trials
+under a session tick), each line is the mean, and `scidb.log` says so.
+Uncommitted. Doc: `docs/claude/grouping-and-collapse.md`.
+
+**Backend**
+1. Restart the GUI.
+2. For the spaghetti fallback, run `grep "spaghetti draws the mean" scidb.log`.
+
+**Frontend**
+1. Scalar variable: group `session`, collapse `subject` (and `trial`),
+   choose Scatter. Expect one point per subject at each session, not one
+   point. Switch to Box: the box should be built from those same points.
+2. 1-D variable: colour a group layer, collapse `subject` and `trial`,
+   choose Line. Expect one thin line per subject in its group's colour.
+   Subjects should not get dash styles, and the legend should not list them.
+3. Spaghetti with an intervention group as the first grouping layer and
+   session second, subject collapsed: expect one line per subject, inside the
+   group's colour.
+
+## 3. Declared schema level order (`[schema_keys]`) — added 2026-09-19
 
 **What changed:** levels follow `[schema_keys]` in `scistack.toml` everywhere:
 - loaded tables
@@ -80,7 +159,7 @@ Edits to the file now apply **without a restart**. Commit `72a7b938`. Doc:
 
 ---
 
-## 2. "Show sample" overlay — added 2026-09-19
+## 4. "Show sample" overlay — added 2026-09-19
 
 **What changed:** on bar, box, violin, scatter and strip plots, collapsed keys
 can be drawn as points inside each mark. Points join into lines automatically
@@ -107,7 +186,7 @@ when they are repeated measures. Doc: `docs/claude/show-sample-overlay.md`.
 
 ---
 
-## 3. Grouping + Collapse roles (new plot role model) — added 2026-09-19
+## 5. Grouping + Collapse roles (new plot role model) — added 2026-09-19
 
 **What changed:**
 - The old X / COLOR / AGGREGATE / FREE roles are replaced. The **Grouping** list
@@ -144,7 +223,7 @@ the old role strings now raise `LegacySpecError`. Re-open and re-save them.
 
 ---
 
-## 4. Spaghetti plot kind — added 2026-09-16
+## 6. Spaghetti plot kind — added 2026-09-16
 
 **What changed:** `PlotKind.SPAGHETTI` draws markers plus one line per subject
 across a categorical (possibly nested) x. Each line is offset by a fixed amount
@@ -162,7 +241,7 @@ so it ends on its own markers. Doc: `docs/claude/spaghetti-plot.md`.
 
 ---
 
-## 5. Variable-column factors (group by one column of a wide table) — added 2026-09-15
+## 7. Variable-column factors (group by one column of a wide table) — added 2026-09-15
 
 **What changed:** you can group, filter or scope by one column of a wide
 variable, for example `Demographics.InterventionGroup`. Subjects missing from
@@ -188,7 +267,7 @@ variable. The old bare-string spelling now raises a `ValueError`.
 
 ---
 
-## 6. Grouping picker (DAG popup), step two — added 2026-09-15
+## 8. Grouping picker (DAG popup), step two — added 2026-09-15
 
 **What changed:** you can pin grouping variables to a variant (default: latest)
 through a DAG picker. Step one was checked on 2026-09-15; it blanked the tab,
@@ -204,7 +283,7 @@ and that was fixed. **Step two has never been checked.**
 
 ---
 
-## 7. Variant provenance panel (🔍 Provenance) — added 2026-09-15
+## 9. Variant provenance panel (🔍 Provenance) — added 2026-09-15
 
 **What changed:** a toolbar panel shows which functions, versions and runs
 produced a variable at a chosen variant. It gives the same answer as
@@ -227,7 +306,7 @@ scidb trace <Variable> --variant <label> --runs
 
 ---
 
-## 8. Manual edges on already-run (history) nodes — added 2026-09-15
+## 10. Manual edges on already-run (history) nodes — added 2026-09-15
 
 **What changed:** edges visible in the DAG are the ground truth for execution.
 - A new edge drawn onto an already-run function input is used on the next run.
@@ -255,7 +334,7 @@ a new parameter (for example `side`) to its signature, then click
 
 ---
 
-## 9. Column selection in the GUI — added 2026-09-15
+## 11. Column selection in the GUI — added 2026-09-15
 
 **What changed:** per-input column picking on a function node: one column,
 several columns, or iterate over columns (`for_columns`). It is stored per node.
@@ -277,7 +356,7 @@ Doc: `docs/claude/column-selection.md` (§From the GUI).
 
 ---
 
-## 10. Schema location picker (🗂 View Schema Locations) — added 2026-09-13
+## 12. Schema location picker (🗂 View Schema Locations) — added 2026-09-13
 
 **What changed:** a nested, status-coloured tree of every schema location for
 one variable and one variant:
@@ -312,7 +391,7 @@ scidb locations <Variable> --problems
 
 ---
 
-## 11. Hypothesis tabs: duplicate an already-run hypothesis — added 2026-08-08
+## 13. Hypothesis tabs: duplicate an already-run hypothesis — added 2026-08-08
 
 **What changed:** placement-qualified node ids let a pipeline that has already
 been run be duplicated into a new hypothesis tab. Each copy can be edited on

@@ -73,11 +73,12 @@ def test_iterate_fanout_follows_declared_level_order(wide_subject_table):
 
 
 def test_collapse_role_collapses_its_factor(scalar_table):
+    """Two collapsed keys: trial averages away within each subject; subject —
+    the last — is the sample, and the scatter draws one point per subject."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
-        groups=["session", "subject"],
-        color="session",
+        roles={"subject": Role.COLLAPSE, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session"],
         kind=PlotKind.SCATTER,
     )
     resolved = resolve(spec, scalar_table)[0]
@@ -86,7 +87,10 @@ def test_collapse_role_collapses_its_factor(scalar_table):
     assert resolved.row_count == 6
 
 
-def test_a_mean_drawing_kind_draws_the_sample_mean(scalar_table):
+def test_a_scatter_draws_every_sample_row(scalar_table):
+    """Schema-level parity (2026-09-19): a scatter draws the SAMPLE, as a box
+    does — one point per trial here, since trial is the only collapsed key —
+    never the sample's mean."""
     spec = PlotSpec(
         measures=["StepLength"],
         roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
@@ -97,12 +101,25 @@ def test_a_mean_drawing_kind_draws_the_sample_mean(scalar_table):
     resolved = resolve(spec, scalar_table)[0]
     frame = resolved.panels[0].frame
 
-    expected = (
+    assert resolved.row_count == 24, "3 subjects x 2 sessions x 4 trials"
+    expected = sorted(
         scalar_table.frame.query("subject == '01' and session == 'pre'")["StepLength"]
-        .mean()
     )
-    got = frame[(frame[X] == "01") & (frame[COLOR] == "pre")][Y].iloc[0]
+    got = sorted(frame[(frame[X] == "01") & (frame[COLOR] == "pre")][Y])
     assert got == pytest.approx(expected)
+
+
+def test_scatter_and_box_draw_the_same_rows(scalar_table):
+    """The parity rule itself: every non-summarising kind draws the same
+    sample rows for the same roles."""
+    roles = {"subject": Role.COLLAPSE, "session": Role.GROUP, "trial": Role.COLLAPSE}
+
+    def drawn(kind):
+        spec = PlotSpec(measures=["StepLength"], roles=roles, groups=["session"], kind=kind)
+        frame = resolve(spec, scalar_table)[0].panels[0].frame
+        return sorted(zip(frame[X], frame[Y].round(12)))
+
+    assert drawn(PlotKind.SCATTER) == drawn(PlotKind.BOX) == drawn(PlotKind.STRIP)
 
 
 # --- summarizing into a centre + error band --------------------------------

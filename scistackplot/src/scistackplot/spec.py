@@ -102,7 +102,7 @@ SCALAR_KINDS = (
 
 #: Kinds that can carry a "Show sample" overlay (:attr:`PlotSpec.show_sample`):
 #: the summative categorical kinds — a bar, box or violin summarises its
-#: sample, and scatter / strip draw the sample's mean — all of which leave
+#: sample, and scatter / strip draw one point per sample row — all of which leave
 #: room inside each mark's dodge slot for the underlying points. SPAGHETTI is
 #: already the sample; LINE / BAND have a numeric x (no slot to place a point
 #: in) and HEATMAP has no marks.
@@ -827,8 +827,9 @@ class PlotSpec:
     cell_statistic: Statistic = Statistic.MEAN
     index_column: str | None = None
     #: "Show sample": the collapsed keys whose data is overlaid as points on a
-    #: summative kind (bar, box, violin; scatter / strip, which draw the
-    #: sample's mean). The collapse chain (``roles.collapse_order``, deepest
+    #: categorical kind (bar, box, violin, scatter, strip — which draw the
+    #: sample, so showing the sample key itself repeats the marks; a deeper key
+    #: adds information). The collapse chain (``roles.collapse_order``, deepest
     #: first) is cut BEFORE the deepest key named here and what is left is
     #: drawn as one point per row inside its mark — ``["trial"]`` shows every
     #: trial of every subject with cycles averaged within it; ``["cycle"]``

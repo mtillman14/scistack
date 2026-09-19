@@ -32,7 +32,7 @@ from scistackplot import (
     resolve,
 )
 from scistackplot.capability import why_unavailable
-from scistackplot.resolved import SERIES, X
+from scistackplot.resolved import SERIES, X, Y
 from scistackplot.spaghetti import SPAGHETTI_SPREAD, series_offsets
 
 GROUPS = ["Digitimer", "Sham", "Onward"]
@@ -476,3 +476,85 @@ def test_generated_code_imports_re_only_for_spaghetti(study_table):
     assert "import re" not in generate_plot_function(
         _study_spec(kind=PlotKind.BOX), study_table
     )
+
+
+# --- schema-level parity: a collapsed sample is drawn, not averaged ----------
+
+
+def _group_lines_spec(**kwargs) -> PlotSpec:
+    """One line per intervention joining the sessions, subject and trial
+    collapsed — subject is the sample."""
+    base = dict(
+        measures=["StepLength"],
+        roles={
+            "Intervention": Role.GROUP,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
+        },
+        groups=["Intervention", "session"],
+        kind=PlotKind.SPAGHETTI,
+    )
+    base.update(kwargs)
+    return PlotSpec(**base)
+
+
+def test_a_collapsed_subject_is_its_own_line_inside_its_group(study_table, study_frame):
+    """A subject has a value at every session, so each one is drawn as its own
+    line inside its intervention (2026-09-19) — not one averaged line per
+    intervention."""
+    figure = resolve(_group_lines_spec(), study_table)[0]
+    frame = figure.panels[0].frame
+    expected_ids = {
+        f"{group} | {subject}"
+        for group, subjects in SUBJECTS_BY_GROUP.items()
+        for subject in subjects
+    }
+    assert set(frame[SERIES]) == expected_ids
+    assert (frame.groupby(SERIES).size() == len(SESSIONS)).all(), "one point per session"
+    line = frame[frame[SERIES] == "Sham | 03"]
+    trial_means = (
+        study_frame[study_frame["subject"] == "03"].groupby("session")["StepLength"].mean()
+    )
+    assert sorted(line[Y]) == pytest.approx(sorted(trial_means))
+
+
+def test_the_sample_repeats_rule(study_table):
+    from scistackplot.roles import complete_roles, spaghetti_sample_repeats
+
+    spec = _group_lines_spec()
+    roles = complete_roles(spec, study_table)
+    repeats, reason = spaghetti_sample_repeats(spec, roles, study_table, ["subject"])
+    assert repeats, reason
+    repeats, reason = spaghetti_sample_repeats(spec, roles, study_table, ["trial"])
+    assert not repeats
+    assert "belongs to one session" in reason
+
+
+def test_a_sample_that_cannot_be_joined_is_averaged_into_its_line(study_table, caplog):
+    """Subject lines with trial collapsed: a trial belongs to ONE session, so
+    "trial 1 at pre" and "trial 1 at post" are different trials and no line
+    can join them. The one exception to parity — each line is the mean, and
+    the log says so."""
+    import logging
+
+    from scistackplot.roles import collapse_steps, complete_roles
+
+    spec = _study_spec()
+    steps = collapse_steps(spec, complete_roles(spec, study_table), study_table)
+    assert steps.final == ["trial"]
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        figure = resolve(spec, study_table)[0]
+    assert set(figure.panels[0].frame[SERIES]) == {
+        s for subjects in SUBJECTS_BY_GROUP.values() for s in subjects
+    }
+    assert any("spaghetti draws the mean of trial" in r.getMessage() for r in caplog.records)
+
+
+def test_no_other_kind_averages_the_sample(study_table):
+    from scistackplot.roles import collapse_steps, complete_roles
+
+    for kind in (PlotKind.SCATTER, PlotKind.STRIP, PlotKind.BOX, PlotKind.BAR):
+        spec = _study_spec(kind=kind)
+        steps = collapse_steps(spec, complete_roles(spec, study_table), study_table)
+        assert steps.final == [], kind

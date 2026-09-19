@@ -38,7 +38,7 @@ from scistackplot import (
     resolve_one,
 )
 from scistackplot.render.base import shares_y_axis
-from scistackplot.resolved import Y, Y_HIGH, Y_LOW
+from scistackplot.resolved import SERIES, Y, Y_HIGH, Y_LOW
 
 matplotlib = pytest.importorskip("matplotlib")
 
@@ -545,22 +545,22 @@ def test_a_bar_chart_keeps_zero_in_view(three_level_table):
             assert low <= 0.0 <= high, panel.key
 
 
-def test_an_aggregated_line_is_scaled_to_the_means_it_draws(three_level_table):
-    """AGGREGATE over trials draws per-position means; limits that bracket the
-    raw trials are merely loose, but they are not what is drawn."""
+def test_a_collapsed_line_is_scaled_to_the_sample_lines_it_draws(three_level_table):
+    """trial is the only collapsed key, so it is the SAMPLE: the line draws one
+    line per trial (schema-level parity, 2026-09-19), and the limits bracket
+    those lines — not the per-position means the deleted `final` step drew."""
     spec = _spec(
         ["subject", "muscle"],
         kind=PlotKind.LINE,
         roles={"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.COLLAPSE},
     )
     figures = resolve(spec, three_level_table)
-    _assert_within_limits(figures, label="aggregated line")
-    # Subject 01, TA: per-position means 10.0, 10.1, 10.2 over trials that
-    # individually reach 10.4. The ceiling is padded off the MEAN series (5 %
-    # of its 0.2 range), not off the highest trial.
+    _assert_within_limits(figures, label="collapsed line")
+    # Subject 01, TA: five trial lines reaching 10.2 x 1.02 ... + 0.2 = 10.4.
     top = next(p for p in figures[0].panels if p.key["muscle"] == "TA")
+    assert top.frame[SERIES].nunique() == 5, "one line per trial"
     drawn = _drawn_extent(top)
-    assert drawn[1] == pytest.approx(10.2)
+    assert drawn[1] == pytest.approx(10.4)
     assert top.y_limits[1] == pytest.approx(drawn[1] + 0.05 * (drawn[1] - drawn[0]))
 
 

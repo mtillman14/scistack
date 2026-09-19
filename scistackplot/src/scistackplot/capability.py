@@ -322,6 +322,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     would be for the current role assignment.
     """
     from .cell import apply_cell_collapse, cell_collapses
+    from .export import data_export_options
     from .groups import apply_level_groups
     from .variants import apply_variant_sets, strip_answered_roles
 
@@ -431,6 +432,10 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # decision with its reason — all decided in `roles`, so the panel
         # displays and never re-derives.
         "sample_overlay": sample_overlay_summary(spec, roles, collapsed, shape),
+        # "Save data": whether the plot's long table can be written, why not,
+        # and the depth picker's choices with the header each would write —
+        # the same answer `export.plot_data` validates against.
+        "data_export": data_export_options(spec, roles, collapsed, shape).to_dict(),
         "default": str(
             default_plot(
                 shape, roles, has_x_measure=has_x_measure, n_groups=len(assignment.groups)
@@ -535,6 +540,9 @@ def grouping_summary(spec: PlotSpec, table: LongTable) -> dict:
         "color": assignment.color,
         "ticks": layers.ticks,
         "series": layers.series,
+        # The sample keys a line / spaghetti draws one polyline each for
+        # (`GroupingLayers.units`) — "one line per subject" in the panel.
+        "units": layers.units,
         "labelled_layers": len(layers.labelled_ticks),
         "max_labelled_layers": MAX_X_LAYERS,
         "hint": grouping_hint(spec.kind, shape, spec.x_measure is not None),

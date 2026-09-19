@@ -54,6 +54,13 @@ from .codegen import (
     generate_plot_function,
     generate_script,
 )
+from .export import (
+    DataDepth,
+    DataExportOptions,
+    data_export_options,
+    data_unavailable,
+    plot_data,
+)
 from .reduce import MAX_TRANSPORT_POINTS, resolve, resolve_one
 from .render import render_matplotlib, render_plotly
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
@@ -145,6 +152,12 @@ from .variants import (
 )
 
 __all__ = [
+    # "Save data": the long table behind a plot
+    "plot_data",
+    "data_export_options",
+    "data_unavailable",
+    "DataDepth",
+    "DataExportOptions",
     # spec
     "PlotSpec",
     "Role",

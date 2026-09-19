@@ -48,8 +48,11 @@ one role, in one of two panes (`docs/claude/grouping-and-collapse.md`).
 Collapsed keys average away deepest first, nested and unweighted — "trial
 within subject, then subject" — so each subject counts once however many
 trials it has (`Aggregation(pooled=True)` is the deliberate alternative). What
-remains at each mark is the sample: bar and band draw its centre ± spread,
-box and violin its distribution, scatter and line its mean.
+remains at each mark is the sample, and **every kind draws the sample**:
+bar and band draw its centre ± spread, box and violin its distribution,
+scatter and strip one point per sample row, line one line per sample level.
+(A spaghetti whose sample cannot be joined across its x axis, such as trials
+under session ticks, draws each line through their mean.)
 
 Which plot kinds are available follows from that assignment plus the measure's
 shape, through one pure function:
@@ -94,6 +97,28 @@ the x axis's key in the schema, so each subject has a value at every session
 — and left as points otherwise; `join_sample=True/False` overrides the rule.
 The marks never change, the y axis grows to hold the points, and the exported
 code draws the same overlay.
+
+## Save the data behind a figure
+
+The rows a plot is drawn from are available as a long table, so the
+statistics run on exactly what the figure shows:
+
+```python
+from scistackplot import plot_data
+
+data = plot_data(spec, table)                  # the plotted sample
+data.to_csv("step_length.csv", index=False)
+deeper = plot_data(spec, table, depth="trial")  # keep trials, average cycles only
+```
+
+Every figure of a Separate-figures fan-out is in one frame, with the figure
+keys as columns. The rows come from the same plan and the same sample step
+the figure uses: filters, variants and the cell statistic are all applied
+already. `data_export_options` lists the depths and the header each one
+writes. A struct variable's fields (`ColName`) are written one column per
+field by default; pass `fields_as_columns=False` for one row per field.
+Scalar plots only; a raw 1-D or 2-D plot is refused with the reason.
+See `docs/claude/plot-data-export.md`.
 
 ## Arranging the subplots
 

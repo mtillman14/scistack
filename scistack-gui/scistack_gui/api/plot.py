@@ -233,6 +233,13 @@ class SaveRequest(BaseModel):
     #: Client-chosen job id, so the panel can adopt it before the request
     #: leaves; None lets the server mint one.
     job_id: str | None = None
+    #: "image" (the figure) or "data" (the plot's long table as CSV).
+    what: str = "image"
+    #: For "data": a key from the capability report's `data_export.depths`;
+    #: None is the plotted sample.
+    depth: str | None = None
+    #: For "data": one column per struct field (default) or a ColName column.
+    fields_as_columns: bool = True
 
 
 @router.post("/plot/save")
@@ -256,6 +263,9 @@ def plot_save(req: SaveRequest, db: DatabaseManager = Depends(get_db)) -> dict:
             image_format=req.image_format,
             csv_path=req.csv_path,
             job_id=req.job_id,
+            what=req.what,
+            depth=req.depth,
+            fields_as_columns=req.fields_as_columns,
         )
     except (ValueError, KeyError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))

@@ -102,10 +102,10 @@ class Reducer(Protocol):
         table: LongTable,
     ) -> tuple[pd.DataFrame, str]:
         """The collapse chain of a 1-D measure for a kind that draws the
-        sample's mean: ``steps.pre`` then ``steps.final``
+        sample itself (line, spaghetti): ``steps.pre``
         (``roles.collapse_steps``), mean per position at each step, returned
-        EXPLODED (one row per kept factor combination per position) —
-        ``_collapse_levels`` over the explode."""
+        EXPLODED (one row per sample level x kept factor combination x
+        position) — ``_collapse_levels`` over the explode."""
         ...
 
     def summarize_series(
@@ -294,7 +294,7 @@ class NumpyReducer(PandasReducer):
                                 merge_extent(bounds, group_key, *extent)
                     else:
                         # What the chain left is drawn as it is: the sample
-                        # rows (box, violin) or their mean (scatter, line).
+                        # rows, one line per sample level (UNIT_KINDS).
                         _, series = _chain(group, members, [*steps.pre, *steps.final], table)
                         for values in series:
                             extent = pair_extent(values, values, mode)
@@ -370,6 +370,15 @@ class NumpyReducer(PandasReducer):
             return super().collapse_series(frame, spec, roles, index_column, table)
         steps = collapse_steps(spec, roles, table)
         keys = [*steps.pre, *steps.final]
+        if not keys:
+            # Nothing to average — the sample is drawn as it is (schema-level
+            # parity, 2026-09-19). The reference's answer is then its plain
+            # explode, every column carried; `_chain` would keep only the
+            # factor columns, so the two reducers would disagree on shape.
+            exploded, column, _total = self.explode_series(
+                frame, measure, index_column, table
+            )
+            return exploded, column
         with Log.timer("collapse_series(numpy)", layer=LAYER, extra=measure) as timer:
             with timer.phase("cells"):
                 arrays = _cells(frame[measure])

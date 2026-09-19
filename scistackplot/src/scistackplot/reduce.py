@@ -16,7 +16,9 @@ Two reductions are easy to confuse, so they are named apart deliberately
   runs it.
 * **Summarizing (a plot kind)** turns the sample rows at each mark into a
   centre and an error band. This is what BAR and BAND do. Box and violin draw
-  the sample rows as a distribution; scatter, strip and line draw their mean.
+  the sample rows as a distribution; scatter and strip draw one point per
+  sample row; line and spaghetti one polyline per sample level. No kind
+  averages the sample further (schema-level parity, 2026-09-19).
 
 You can have either, both, or neither: a bar with nothing collapsed is a bar
 of single values with no error bar.
@@ -47,6 +49,7 @@ from .roles import (
     overlay_join,
     overlay_steps,
     overlay_unavailable,
+    spaghetti_sample_repeats,
     validate,
 )
 from .shape import Shape
@@ -1022,6 +1025,24 @@ def _collapse_levels(
     return frame
 
 
+def _sample_frame(
+    frame: pd.DataFrame,
+    steps: CollapseSteps,
+    spec: PlotSpec,
+    table: LongTable,
+    index_column: str | None,
+) -> pd.DataFrame:
+    """The SAMPLE rows of one figure: its frame with the pre-collapse run
+    (``steps.pre``, deepest first, nested and unweighted).
+
+    What every kind draws (schema-level parity, 2026-09-19) and what "Save
+    data" writes by default. One function so the two cannot drift: the
+    figure path (``_build_figure``) and the export (``export.plot_data``)
+    both call this, never ``_collapse_levels`` with a chain of their own.
+    """
+    return _collapse_levels(frame, steps.pre, spec, table, index_column)
+
+
 # ---------------------------------------------------------------------------
 # Figure construction
 # ---------------------------------------------------------------------------
@@ -1034,7 +1055,7 @@ def _describe_steps(steps: CollapseSteps) -> str:
     parts = [*steps.pre, " x ".join(steps.sample) + " (sample)"]
     text = " -> ".join(parts)
     if steps.final:
-        text += ", mean drawn"
+        text += ", averaged into each spaghetti line (not repeated across x)"
     return text
 
 
@@ -1075,9 +1096,8 @@ def _build_figure(
         # This figure's own rows, expanded and collapsed here rather than once
         # over the whole fan-out (see `_Plan.explode`). The collapse chain
         # (`roles.collapse_steps`): `pre` keys average away first, deepest
-        # first; what remains is the SAMPLE; `final` is the sample averaged
-        # too, for the kinds that draw one value per leaf group. Three routes
-        # for a 1-D measure that is still nested one cell per row:
+        # first; what remains is the SAMPLE, which every kind draws. Three
+        # routes for a 1-D measure that is still nested one cell per row:
         #
         # * BAND / BAR: never exploded. Each panel is summarised straight from
         #   its cells (`reducer.summarize_series`) — the pre-collapse, then
@@ -1085,13 +1105,22 @@ def _build_figure(
         #   transport stride is applied to the SUMMARY afterwards. The old
         #   order (explode, stride, summarise) drew a band over 1/8707th of
         #   the samples at scale, and built 174 M rows to do it.
-        # * a collapse chain, any other kind: `reducer.collapse_series` gives
-        #   the per-position means, already exploded and small (kept factor
-        #   combinations x positions).
+        # * a pre-collapse, any other kind: `reducer.collapse_series` gives
+        #   the per-position means, already exploded (sample levels x kept
+        #   factor combinations x positions).
         # * otherwise: `reducer.explode_series`, which may apply the transport
         #   stride itself so only the kept rows' labels are ever gathered.
         reducer = reducer_for(table)
         steps = collapse_steps(spec, roles, table)
+        if steps.final:
+            # The one exception to schema-level parity — said at INFO, because
+            # the figure then draws means where every other kind draws rows.
+            Log.info(
+                "spaghetti draws the mean of %s per line: %s",
+                " x ".join(steps.final),
+                spaghetti_sample_repeats(spec, roles, table, steps.sample)[1],
+                layer=LAYER,
+            )
         # "Show sample" (PlotSpec.show_sample): the same chain cut before the
         # deepest shown key, run on THIS figure's rows before the marks' own
         # chain consumes them, and drawn as points on top of the marks.
@@ -1132,7 +1161,11 @@ def _build_figure(
                     )
                     timing.note("%d overlay row(s)", len(overlay_frame))
             with timing.phase("collapse_levels", extra=_describe_steps(steps)):
-                frame = _collapse_levels(frame, steps.pre, spec, table, index_column)
+                # The sample rows — the SAME call "Save data" makes
+                # (`export.plot_data`), so the CSV is what the marks see.
+                frame = _sample_frame(frame, steps, spec, table, index_column)
+                # Only a spaghetti whose sample cannot be joined across x
+                # (roles.spaghetti_sample_repeats); empty for every other kind.
                 frame = _collapse_levels(frame, steps.final, spec, table, index_column)
                 if steps.sample:
                     timing.note(
@@ -1149,6 +1182,11 @@ def _build_figure(
         color = layers.color if layers.color in frame.columns else None
         x_layers = [name for name in layers.ticks if name in frame.columns]
         series_layers = [name for name in layers.series if name in frame.columns]
+        # The sample keys a line / spaghetti draws one polyline each for
+        # (`GroupingLayers.units`): part of the series id, never a dash.
+        unit_layers = [name for name in layers.units if name in frame.columns]
+        if unit_layers:
+            timing.note("one line per %s", " x ".join(reversed(unit_layers)))
         x_factor = x_layers[0] if x_layers else None
         # Several factors may be faceted at once; their combined levels are the
         # panels, and FacetOptions decides how those panels are arranged.
@@ -1202,6 +1240,7 @@ def _build_figure(
                         color,
                         index_column,
                         series_layers=series_layers,
+                        unit_layers=unit_layers,
                     )
                 panels.append(
                     Panel(
@@ -1253,7 +1292,7 @@ def _build_figure(
                 _dash_styles(panels) if spec.kind in (PlotKind.LINE, PlotKind.BAND) else {}
             )
             encoding = _encoding_for(
-                spec.kind, color, shape, bool(series_layers), bool(dash_styles)
+                spec.kind, color, shape, bool(series_layers or unit_layers), bool(dash_styles)
             )
             labels = _labels_for(
                 spec, table, x_layers, color, index_column, figure_key,
@@ -1480,13 +1519,16 @@ def _panel_frame(
     color: str | None,
     index_column: str | None,
     series_layers: list[str] = (),
+    unit_layers: list[str] = (),
 ) -> pd.DataFrame:
     """Build the canonical ``__x``/``__y``/… frame the renderers consume.
 
     ``x_layers`` are the tick layers in drawing order (outermost first) and
     ``series_layers`` the series-identity layers — both already read off the
-    grouping list by ``roles.grouping_layers`` for this kind. The rows
-    arriving here are what the collapse chain left: the sample, or its mean.
+    grouping list by ``roles.grouping_layers`` for this kind; ``unit_layers``
+    the sample keys a line kind draws one polyline each for
+    (``GroupingLayers.units``). The rows arriving here are what the collapse
+    chain left: the sample.
     """
     y_measure = spec.y_measure
     x_factor = x_layers[0] if x_layers else None
@@ -1527,7 +1569,9 @@ def _panel_frame(
     # so a subject must carry the same id in every facet — which this gives
     # for free, where the old "every non-x factor" key did not.)
     if spec.kind in (PlotKind.LINE, PlotKind.SPAGHETTI, PlotKind.BAND):
-        out[SERIES] = _series_key(group, series_layers)
+        # Units inside the grouping layers (`GroupingLayers.identity`): one
+        # polyline per subject, within its group's colour and dash.
+        out[SERIES] = _series_key(group, [*unit_layers, *series_layers])
     # The uncoloured part of that identity gets a dash style (D4). Spaghetti
     # is left out: its lines are already one per level, joined by markers.
     if spec.kind in (PlotKind.LINE, PlotKind.BAND):

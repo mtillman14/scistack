@@ -98,13 +98,20 @@ export class DagPanel {
           // Only the host can show a file dialog; a webview cannot save a file
           // at all, which is why plotly's own camera button fails here.
           try {
-            const params = (msg.params ?? {}) as { defaultName?: string };
+            const params = (msg.params ?? {}) as {
+              defaultName?: string;
+              formats?: string[];
+              // "CSV" for the Plot Studio's "Save data"; images otherwise.
+              filterName?: string;
+            };
             const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
             const uri = await vscode.window.showSaveDialog({
               defaultUri: folder
                 ? vscode.Uri.joinPath(folder, params.defaultName ?? 'figure.png')
                 : undefined,
-              filters: { Images: ['png', 'svg', 'pdf'] },
+              filters: {
+                [params.filterName ?? 'Images']: params.formats ?? ['png', 'svg', 'pdf'],
+              },
             });
             this.panel.webview.postMessage({
               id: msg.id,
