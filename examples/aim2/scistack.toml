@@ -17,3 +17,10 @@
 functions = ["src/"]
 variables = ["src/vars/"]
 variable_dir = "src/vars/"
+
+# Declared level order for the per-cycle gait symmetry dataset (src/cycles).
+# Without this, levels fall back to a natural sort, which puts "fast" before
+# "slow" and has no way to know a follow-up comes after a baseline.
+[schema_keys]
+session = ["baseline", "week04", "week12", "week24"]
+speed = ["slow", "fast"]
