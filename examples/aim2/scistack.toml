@@ -13,6 +13,9 @@
 # File where 'create_variable' writes new variable classes
 # variable_file = "src/vars.py"
 
+# Python pipeline for the per-cycle gait symmetry dataset (src/cycles).
+modules = ["src/cycles/pipeline.py"]
+
 [matlab]
 functions = ["src/"]
 variables = ["src/vars/"]
