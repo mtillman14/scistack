@@ -162,24 +162,12 @@ def get_schema(db) -> dict:
 
     ``[schema_keys]`` in the project config says a key's levels are
     chronological rather than alphabetical (``session = ["BL","POST","FU"]``).
-    Applied here so every list the GUI draws from this call agrees with the
-    figures and tables, which read the same declaration through
-    ``scidb.schema_order``. Undeclared keys and undeclared levels keep the
-    order the database returns them in.
+    ``DatabaseManager.distinct_schema_values`` applies it (scidb owns the
+    declaration, CLAUDE.md NOTE 3), so every list the GUI draws from this call
+    agrees with the figures, the tables and for_each's iteration order.
     """
-    from scidb.schema_order import order_levels
-
     keys = db.dataset_schema_keys
-    declared = getattr(db, "dataset_schema_key_order", None) or {}
-    values = {
-        key: order_levels(
-            key,
-            db.distinct_schema_values(key),
-            declared=declared,
-            fallback=lambda vals: vals,
-        )
-        for key in keys
-    }
+    values = {key: db.distinct_schema_values(key) for key in keys}
     return {"keys": keys, "values": values}
 
 

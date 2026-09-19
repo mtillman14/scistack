@@ -115,7 +115,8 @@ class FactorInfo:
     #: place in the hierarchy.
     #:
     #: One use, and it is the reason the two cases had to end up on the same
-    #: scale: it orders a nested x axis (:meth:`PlotSpec.ordered_x_layers`).
+    #: scale: it orders the grouping layers (:meth:`PlotSpec.ordered_groups`)
+    #: and the collapse chain (``roles.collapse_order``).
     #: "One cluster per intervention group, one bar per session inside it" is
     #: the data's own nesting read outward-in, and deriving it beats making the
     #: user press ↑ every time — which is what the plain append did, always
@@ -165,11 +166,12 @@ class LongTable:
     #: (``["subject", "session", "trial"]``). Empty for sources with no
     #: hierarchy, which is the honest answer for a CSV.
     #:
-    #: Two things need it and neither can derive it from the frame. Nesting:
-    #: ``trial`` is meaningless without the ``subject`` it belongs to, so
-    #: iterating it iterates that subject too (``roles.iterate_ancestors``).
-    #: And ordering: a fan-out has to run subject-major so that stepping past
-    #: the last trial of subject 1 rolls over to subject 2's first trial.
+    #: Two things need it and neither can derive it from the frame. Depth:
+    #: each key's place in the hierarchy (``FactorInfo.depth``) is derived from
+    #: this list, and it is what puts ``trial`` inside ``subject`` in the
+    #: collapse chain and the default grouping. And ordering: a fan-out has to
+    #: run subject-major so that stepping past the last trial of subject 1
+    #: rolls over to subject 2's first trial.
     schema_levels: list[str] = field(default_factory=list)
     #: Name of the per-row "my whole code chain is the newest at my own schema
     #: location" flag, when the source attaches one (scidb's ``CodeIsLatest``).

@@ -41,7 +41,7 @@ GROUP = [FactorVariable("Demographics", "InterventionGroup")]
 def _spec(**kwargs) -> PlotSpec:
     base = dict(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         factor_variables=CONDITION,
     )
@@ -68,11 +68,13 @@ def test_the_grouping_variable_takes_a_role(seeded):
     table = ScidbSource(seeded).get_table(["StepLength"], factor_variables=CONDITION)
     spec = _spec(
         roles={
-            "Condition": Role.COLOR,
-            "session": Role.X,
-            "subject": Role.FREE,
-            "trial": Role.FREE,
-        }
+            "Condition": Role.GROUP,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
+        },
+        groups=["Condition", "session"],
+        color="Condition",
     )
 
     figures = resolve(spec, table)
@@ -194,10 +196,10 @@ def test_the_column_takes_a_role_like_any_factor(with_demographics):
         factor_variables=GROUP,
         kind=PlotKind.BAR,
         roles={
-            "InterventionGroup": Role.X,
-            "subject": Role.FREE,
-            "session": Role.FREE,
-            "trial": Role.FREE,
+            "InterventionGroup": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
     )
 
@@ -224,10 +226,10 @@ def test_the_column_can_be_filtered_to_one_group(with_demographics):
         factor_variables=GROUP,
         filters=[Filter(column="InterventionGroup", include=["Onward"])],
         roles={
-            "InterventionGroup": Role.X,
-            "subject": Role.FREE,
-            "session": Role.FREE,
-            "trial": Role.FREE,
+            "InterventionGroup": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
         kind=PlotKind.BAR,
     )
@@ -392,10 +394,10 @@ def test_generated_code_reproduces_the_join(seeded):
     table = source.get_table(["StepLength"], factor_variables=CONDITION)
     spec = _spec(
         roles={
-            "Condition": Role.X,
-            "subject": Role.FREE,
-            "session": Role.FREE,
-            "trial": Role.FREE,
+            "Condition": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         }
     )
     generated = generate_plot_function(spec, table)
@@ -430,10 +432,10 @@ def test_generated_code_reproduces_the_column_join_and_the_missing_level(
         factor_variables=GROUP,
         kind=PlotKind.BAR,
         roles={
-            "InterventionGroup": Role.X,
-            "subject": Role.FREE,
-            "session": Role.FREE,
-            "trial": Role.FREE,
+            "InterventionGroup": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
     )
     generated = generate_plot_function(spec, table)

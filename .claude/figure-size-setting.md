@@ -29,3 +29,11 @@ ratio from Plot Studio. The GUI preview keeps filling the pane.
   InchInput, setStyle; figureSize.ts + figureSize.test.ts (node --test, 86 pass);
   both vite bundles rebuilt.
 - Not yet: Python tests run (user runs them); visual check in the panel.
+
+## Follow-on 2026-09-16 — font size
+- StyleOptions.font_size = 14.0 (pt). mpl render under plt.rc_context; group
+  labels fontsize="small"; log line names the font. plotly layout.font.size =
+  font_size; annotations 0.8x. codegen wraps the body in rc_context (body indent
+  is now 8). tests/test_fontsize.py (save-then-inspect for lazy ticks; no leak).
+- GUI: "Font (pt)" PositiveNumberInput (InchInput renamed); the preview's
+  font override keeps colour only. Both bundles rebuilt. Python tests unrun.

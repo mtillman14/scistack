@@ -1,4 +1,11 @@
-"""Collapsing a 1-D measure to a scalar, so the scalar plot kinds apply to it.
+"""Collapsing each CELL of a 1-D measure to a scalar, so the scalar plot kinds apply to it.
+
+Named ``cell`` rather than ``collapse`` since 2026-09-17: *Collapse* is now the
+ROLE that averages a factor's levels away (``Role.COLLAPSE``, the chain in
+``roles.collapse_order``), and this module answers a different question —
+one value per record, before any factor is touched. Two words for two
+reductions, so neither the code nor the user confuses "median within each
+trial" with "mean across trials".
 
 A per-trial vector of step lengths is a scalar question wearing a vector: the
 comparison the scientist wants is *across trials*, and the samples inside one
@@ -19,12 +26,12 @@ exported another.
 
 **The kind decides.** There is no collapse toggle, so ``collapse=on`` with
 ``kind=line`` — a state a checkbox would allow and then have to adjudicate —
-cannot be expressed. Only the statistic is a field (``PlotSpec.collapse_statistic``).
+cannot be expressed. Only the statistic is a field (``PlotSpec.cell_statistic``).
 
 **Order matters** and is fixed in ``reduce._build_plan_timed``: variants, level
 groups, THIS, then ``validate`` / ``complete_roles`` / ``apply_filters``.
-Before ``validate`` so that the rules refusing a factor on X (a 1-D measure's x
-axis is its own index) permit one once the measure is genuinely scalar, without
+Before ``validate`` so that the rules refusing tick layers (a 1-D measure's x
+axis is its own index) permit them once the measure is genuinely scalar, without
 being touched; before the filters so a range filter on the measure filters the
 collapsed value, which is the only thing it could mean; before the y-limit pass
 so extents are taken over one float per record instead of every sample.
@@ -48,7 +55,7 @@ from .table import LongTable
 LAYER = "scistackplot"
 
 
-def collapses(spec: PlotSpec, table: LongTable) -> bool:
+def cell_collapses(spec: PlotSpec, table: LongTable) -> bool:
     """Whether ``spec`` asks for this table's y measure to be collapsed.
 
     True when a scalar kind has been selected for a 1-D measure. A relational
@@ -73,22 +80,22 @@ def effective_shape(spec: PlotSpec, table: LongTable) -> Shape:
     report deliberately carries both (the kind list is computed from the raw
     shape, or LINE and BAND would vanish the moment a violin was selected).
     """
-    if collapses(spec, table):
+    if cell_collapses(spec, table):
         return Shape.SCALAR
     return table.shape_of(spec.y_measure) if spec.measures else Shape.UNKNOWN
 
 
-def apply_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
+def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
     """Reduce the y measure's 1-D cells to one value each, or return ``table``.
 
     Returns the table untouched unless :func:`collapses` — a project that never
     puts a vector on a violin pays nothing.
     """
-    if not collapses(spec, table):
+    if not cell_collapses(spec, table):
         return table
 
     measure = spec.y_measure
-    statistic = spec.collapse_statistic
+    statistic = spec.cell_statistic
     started = time.perf_counter()
     frame = table.frame
 
@@ -187,16 +194,16 @@ def _collapse_exploded(
     return out, len(out), len(frame)
 
 
-def collapse_note(spec: PlotSpec, table: LongTable) -> str | None:
+def cell_collapse_note(spec: PlotSpec, table: LongTable) -> str | None:
     """One line naming the collapse, for a figure's notes, or None.
 
     The figure must say that its points are summaries — a violin of trial means
     and a violin of raw samples look identical and mean entirely different
     things.
     """
-    if not collapses(spec, table):
+    if not cell_collapses(spec, table):
         return None
     return (
         f"Each {spec.y_measure} vector collapsed to its "
-        f"{spec.collapse_statistic} before plotting."
+        f"{spec.cell_statistic} before plotting."
     )

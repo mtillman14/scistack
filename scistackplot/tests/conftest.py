@@ -44,8 +44,9 @@ def scalar_table(scalar_frame) -> LongTable:
         measures=["StepLength"],
         name="StepLength",
         # Every scidb-backed table carries its schema depth, so the shared
-        # fixtures do too: nesting decides which keys a fan-out iterates
-        # together (roles.iterate_ancestors) and in which order.
+        # fixtures do too: depth orders the collapse chain and the default
+        # grouping (roles.collapse_order, PlotSpec.ordered_groups), and the
+        # fan-out runs in this order.
         schema_levels=["subject", "session", "trial"],
     )
 
@@ -178,4 +179,23 @@ def struct_table() -> LongTable:
         field_factors=["ColName"],
         name="RawEMG",
         schema_levels=["subject", "trial"],
+    )
+
+
+@pytest.fixture
+def matrix_table() -> LongTable:
+    """A 2-D measure: one matrix per subject. A heatmap's axes come from the
+    matrix, so nothing may group it."""
+    frame = pd.DataFrame(
+        {
+            "subject": SUBJECTS,
+            "Coherence": [np.zeros((3, 3)) + i for i in range(len(SUBJECTS))],
+        }
+    )
+    return LongTable.from_frame(
+        frame,
+        factors=["subject"],
+        measures=["Coherence"],
+        name="Coherence",
+        schema_levels=["subject"],
     )

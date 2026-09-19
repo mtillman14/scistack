@@ -67,10 +67,12 @@ def two_variable_spec():
         measures=["FilteredEMG"],
         variant_sets=[VariantSet(), VariantSet(variable="RawEMG")],
         roles={
-            "subject": Role.X,
-            VARIANT_FACTOR: Role.COLOR,
-            "bandpass.low_hz": Role.FREE,
+            "subject": Role.GROUP,
+            VARIANT_FACTOR: Role.GROUP,
+            "bandpass.low_hz": Role.GROUP,
         },
+        groups=["bandpass.low_hz", VARIANT_FACTOR, "subject"],
+        color=VARIANT_FACTOR,
         kind=PlotKind.SCATTER,
     )
 
@@ -120,10 +122,12 @@ def test_a_renamed_variant_reaches_both_legends(stacked_table):
             VariantSet(name="Raw", variable="RawEMG"),
         ],
         roles={
-            "subject": Role.X,
-            VARIANT_FACTOR: Role.COLOR,
-            "bandpass.low_hz": Role.FREE,
+            "subject": Role.GROUP,
+            VARIANT_FACTOR: Role.GROUP,
+            "bandpass.low_hz": Role.GROUP,
         },
+        groups=["bandpass.low_hz", VARIANT_FACTOR, "subject"],
+        color=VARIANT_FACTOR,
         kind=PlotKind.SCATTER,
     )
 

@@ -1,5 +1,7 @@
 # The plotting layer: `scistackplot` / `scistackplotdb`
 
+> **Roles changed 2026-09-17.** `X / COLOR / AGGREGATE / FREE` are gone; the model is now a Grouping list (innermost first, one coloured layer) plus `FACET / ITERATE / COLLAPSE`, with a nested collapse chain. Read `docs/claude/grouping-and-collapse.md` first; role names below are historical.
+
 > **Status: IMPLEMENTED, TESTS PASSING (2026-09-06).** All six stages exist:
 > `scistackplot/` and `scistackplotdb/` (new sibling packages), the
 > `plot_service` + `api/plot.py` + JSON-RPC handlers in scistack-gui, the Plot

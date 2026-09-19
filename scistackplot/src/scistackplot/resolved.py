@@ -32,7 +32,34 @@ Y_LOW = "__y_low"
 Y_HIGH = "__y_high"
 COLOR = "__color"
 SERIES = "__series"
+#: The UNCOLOURED part of a series identity — the grouping layers that are
+#: neither the colour nor the sample. A line or band per level of these is
+#: told apart by a dash style (docs/claude/grouping-and-collapse.md, D4),
+#: which is what a scientist reads off a printed figure without hovering.
+DASH = "__dash"
 Z = "__z"
+
+#: The dash cycle, in plotly's names; :data:`MPL_DASHES` is the matplotlib
+#: spelling of the same six. One owner for both renderers and for the
+#: generated seaborn code (``codegen``), which restates it as ``dashes=``.
+#: Six is what stays distinguishable; past that the figure warns and
+#: suggests Separate panels (``reduce._dash_styles``).
+DASH_CYCLE: tuple[str, ...] = (
+    "solid",
+    "dash",
+    "dot",
+    "dashdot",
+    "longdash",
+    "longdashdot",
+)
+MPL_DASHES: dict[str, Any] = {
+    "solid": "-",
+    "dash": "--",
+    "dot": ":",
+    "dashdot": "-.",
+    "longdash": (0, (8, 3)),
+    "longdashdot": (0, (8, 3, 2, 3)),
+}
 
 
 @dataclass(frozen=True)
@@ -45,6 +72,9 @@ class Encoding:
     y_low: str | None = None
     y_high: str | None = None
     series: str | None = None
+    #: The dash-style key column (:data:`DASH`), when uncoloured grouping
+    #: layers split a line or a band.
+    dash: str | None = None
     z: str | None = None
 
     @property
@@ -57,6 +87,9 @@ class Labels:
     x: str = ""
     y: str = ""
     color: str | None = None
+    #: What the dash styles tell apart — the uncoloured series layers'
+    #: display names, outermost first — for the legend's second block.
+    dash: str | None = None
     title: str | None = None
 
 
@@ -78,6 +111,12 @@ class Panel:
     #: figure because ``PlotSpec.y_axis.scope`` may separate limits by a FACET
     #: factor, which is what "autoscale each panel" means.
     y_limits: tuple[float, float] | None = None
+    #: "Show sample" overlay rows for this panel, or None: ``__x`` (the
+    #: same leaf key the marks use), ``__y``, ``__color`` when coloured,
+    #: ``__series`` (the shown keys composed, outermost first — one line's
+    #: identity when joined) and the shown key columns themselves, for hover.
+    #: Built by ``reduce._overlay_frame``; drawn after the marks.
+    sample: pd.DataFrame | None = None
 
     @property
     def title(self) -> str:
@@ -154,6 +193,28 @@ class ResolvedPlot:
     #: Identical on every figure of a fan-out (it describes the fan-out), which
     #: is why the GUI reads it from the first one.
     fanout_notes: list[str] = field(default_factory=list)
+    #: SPAGHETTI only: the horizontal shift each series (subject) keeps at every
+    #: x position, keyed by its ``SERIES`` id. Decided once per FIGURE, not per
+    #: panel, so a subject sits at the same offset in every facet — and by one
+    #: function (:func:`scistackplot.spaghetti.series_offsets`) so both
+    #: renderers and the generated code place the same marker in the same spot.
+    series_offsets: dict[str, float] = field(default_factory=dict)
+    #: ``{dash id: dash name}`` for the whole figure (:data:`DASH_CYCLE`),
+    #: decided once in ``reduce`` so every panel and both renderers draw the
+    #: same level in the same style, and the legend can list them.
+    dash_styles: dict[str, str] = field(default_factory=dict)
+    #: "Show sample" (``PlotSpec.show_sample``): the shown keys, outermost
+    #: first — the identity of one overlay point — empty when no overlay is
+    #: drawn. ``sample_join`` says whether the points sharing that identity
+    #: are joined across x, ``sample_join_reason`` why (``roles.overlay_join``),
+    #: and ``sample_offsets`` the per-identity horizontal shift inside its
+    #: mark's slot (``spaghetti.overlay_offsets``), decided once per figure
+    #: like ``series_offsets`` so a subject sits in the same place in every
+    #: panel and both renderers and the generated code agree.
+    sample_shown: list[str] = field(default_factory=list)
+    sample_join: bool = False
+    sample_join_reason: str = ""
+    sample_offsets: dict[str, float] = field(default_factory=dict)
 
     @property
     def figure_label(self) -> str:
@@ -179,12 +240,14 @@ class ResolvedPlot:
                 "y_low": self.encoding.y_low,
                 "y_high": self.encoding.y_high,
                 "series": self.encoding.series,
+                "dash": self.encoding.dash,
                 "z": self.encoding.z,
             },
             "labels": {
                 "x": self.labels.x,
                 "y": self.labels.y,
                 "color": self.labels.color,
+                "dash": self.labels.dash,
                 "title": self.labels.title,
             },
             "grid": {
@@ -210,6 +273,14 @@ class ResolvedPlot:
             "panel_factors": list(self.panel_factors),
             "downsampled_from": self.downsampled_from,
             "fanout_notes": list(self.fanout_notes),
+            "series_offsets": dict(self.series_offsets),
+            "dash_styles": dict(self.dash_styles),
+            "sample": {
+                "shown": list(self.sample_shown),
+                "join": self.sample_join,
+                "join_reason": self.sample_join_reason,
+                "offsets": dict(self.sample_offsets),
+            },
             "panels": [
                 {
                     "key": {k: _jsonable(v) for k, v in panel.key.items()},
@@ -221,6 +292,9 @@ class ResolvedPlot:
                     # interactive view most needs to draw correctly.
                     "y_limits": list(panel.y_limits) if panel.y_limits else None,
                     "rows": _frame_records(panel.frame),
+                    "sample": (
+                        _frame_records(panel.sample) if panel.sample is not None else None
+                    ),
                 }
                 for panel in self.panels
             ],

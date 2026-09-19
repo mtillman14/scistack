@@ -15,7 +15,7 @@ from typing import Any, Protocol
 import numpy as np
 import pandas as pd
 
-from ..resolved import ResolvedPlot
+from ..resolved import DASH_CYCLE, SERIES, ResolvedPlot
 
 
 class Renderer(Protocol):
@@ -251,16 +251,46 @@ def axis_range(
     return (math.log10(drawable[0]), math.log10(drawable[1]))
 
 
+def dash_levels(resolved: ResolvedPlot) -> list[str]:
+    """The dash ids a legend would list, in drawn order — the figure-wide
+    ``dash_styles`` (``reduce._dash_styles``), restricted to what the panels
+    actually draw, for the same reason :func:`legend_levels` reads the
+    panels."""
+    column = resolved.encoding.dash
+    if not column or not resolved.dash_styles:
+        return []
+    if len(resolved.dash_styles) > len(DASH_CYCLE):
+        # Past the cycle the styles repeat, so a list of them names nothing a
+        # reader could match to a line; `reduce._dash_styles` has already
+        # warned and pointed at Separate panels. The lines still dash.
+        return []
+    present: set[str] = set()
+    for panel in resolved.panels:
+        if column in panel.frame.columns:
+            present.update(str(v) for v in panel.frame[column].dropna().unique())
+    return [sid for sid in resolved.dash_styles if sid in present]
+
+
+def dash_style(resolved: ResolvedPlot, rows: pd.DataFrame) -> str:
+    """The dash name for a run of rows (one series), ``"solid"`` when the
+    figure has no dash layer."""
+    column = resolved.encoding.dash
+    if not column or column not in rows.columns or rows.empty:
+        return "solid"
+    return resolved.dash_styles.get(str(rows[column].iloc[0]), "solid")
+
+
 def shows_legend(resolved: ResolvedPlot) -> bool:
     """
     Whether this figure gets a legend at all.
 
     ONE rule, shared by both renderers and mirrored by the generated seaborn
-    code (``codegen``): the legend exists only to tell colour series apart, so
-    a single level makes it pure noise — it restates the one thing every mark
-    on the figure already has in common, and it costs the panels width.
+    code (``codegen``): the legend exists only to tell series apart — by
+    colour, or by dash style — so a single level of each makes it pure noise:
+    it restates the one thing every mark on the figure already has in common,
+    and it costs the panels width.
     """
-    return len(legend_levels(resolved)) > 1
+    return len(legend_levels(resolved)) > 1 or len(dash_levels(resolved)) > 1
 
 
 #: A colour-blind-safe qualitative palette, used when the spec names none.
@@ -299,3 +329,78 @@ def palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
         if str(candidate) == str(level):
             return palette_color(position)
     return palette_color(fallback)
+
+
+# ---------------------------------------------------------------------------
+# Dodging, and the "Show sample" overlay — one arithmetic for both renderers
+# ---------------------------------------------------------------------------
+
+#: The fraction of the gap between two categorical positions that the marks
+#: at one position occupy, split evenly between the colour levels. plotly's
+#: ``bargap`` / ``boxgap`` of 0.2 is the same statement (``plotly_.render``).
+DODGE_SPAN = 0.8
+
+#: How the overlay's points draw against the marks they sit on: the mark's
+#: colour with a dark edge so they read on top of a bar of the same hue, a
+#: little more transparent, and smaller — the marks are the figure, the
+#: points are the evidence behind it.
+SAMPLE_ALPHA = 0.7
+SAMPLE_MARKER_FRACTION = 0.45
+SAMPLE_EDGE_COLOR = "#333333"
+SAMPLE_LINE_WIDTH = 1.0
+
+
+def dodge_width(n_levels: int) -> float:
+    """The slot one colour level's mark occupies at a categorical position."""
+    return DODGE_SPAN / max(int(n_levels), 1)
+
+
+def dodge_offset(index: int, n_levels: int) -> float:
+    """Where colour level ``index`` of ``n_levels`` sits relative to its tick —
+    the centre of its slot. One owner: the bars, the boxes and the overlay's
+    points all have to land in the same place, and plotly's ``group`` modes
+    are pinned to the same numbers (``plotly_.render``)."""
+    return (index - (n_levels - 1) / 2) * dodge_width(n_levels)
+
+
+def dodge_slots(frame: pd.DataFrame, resolved: ResolvedPlot) -> dict[str, tuple[int, int]]:
+    """``{colour level: (index, n)}`` — the dodge slot each level's MARKS took
+    in this panel (:func:`color_groups` order and count), so an overlay
+    point lands inside the mark it belongs to."""
+    groups = color_groups(frame, resolved)
+    return {str(level): (index, len(groups)) for index, (level, _) in enumerate(groups)}
+
+
+def sample_series(subset: pd.DataFrame, resolved: ResolvedPlot) -> list[tuple[Any, pd.DataFrame]]:
+    """``(identity, rows)`` per overlay identity (``__series``, the shown keys
+    composed) — one polyline when joined, one offset either way — or a single
+    unnamed group when the frame carries no identity column."""
+    column = SERIES
+    if column in subset.columns:
+        return list(subset.groupby(column, sort=False))
+    return [(None, subset)]
+
+
+def sample_positions(
+    rows: pd.DataFrame,
+    resolved: ResolvedPlot,
+    slot: tuple[int, int],
+    identity: Any,
+) -> np.ndarray:
+    """x positions of overlay rows: the tick, plus the mark's dodge, plus the
+    identity's own offset inside the slot (``ResolvedPlot.sample_offsets``,
+    already scaled to the slot by ``spaghetti.overlay_offsets``)."""
+    positions, _ = x_positions(rows[resolved.encoding.x], resolved)
+    index, n_levels = slot
+    return positions + dodge_offset(index, n_levels) + resolved.sample_offsets.get(str(identity), 0.0)
+
+
+def sample_hover(rows: pd.DataFrame, resolved: ResolvedPlot) -> list[str]:
+    """One label per overlay row naming its shown keys — ``subject=01 · trial=2``."""
+    shown = [name for name in resolved.sample_shown if name in rows.columns]
+    if not shown:
+        return [""] * len(rows)
+    return [
+        " · ".join(f"{name}={record[name]}" for name in shown)
+        for record in rows[shown].astype(str).to_dict(orient="records")
+    ]

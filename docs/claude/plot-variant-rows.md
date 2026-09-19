@@ -1,5 +1,7 @@
 # Named Variant Rows, and the Variant-Selection DAG
 
+> **Roles changed 2026-09-17.** `X / COLOR / AGGREGATE / FREE` are gone; the model is now a Grouping list (innermost first, one coloured layer) plus `FACET / ITERATE / COLLAPSE`, with a nested collapse chain. Read `docs/claude/grouping-and-collapse.md` first; role names below are historical.
+
 > Status: **built 2026-09-08; substantially revised 2026-09-11 (stages 1-8 of
 > `.claude/plan-default-variant-selection.md` and
 > `.claude/plan-plot-studio-variant-axis-fixes.md`), tests passing, uncommitted.**

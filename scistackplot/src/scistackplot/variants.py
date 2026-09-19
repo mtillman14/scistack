@@ -658,13 +658,19 @@ def strip_answered_roles(
     stale — and ``validate`` would call it an unknown factor and refuse to draw
     anything. Two ways in, both ordinary:
 
-    * ``default_roles`` puts a multi-level ``Code:<fn>`` on COLOUR, and the
-      table then opens on the "current" variant, which answers it;
+    * ``default_assignment`` makes a multi-level ``Code:<fn>`` the coloured
+      grouping layer, and the table then opens on the "current" variant, which
+      answers it;
     * the user assigns a code axis to a facet, then adds a variant that pins it.
 
     Only names that WERE factors of the undecided table are dropped. A role
     naming something that was never a factor at all is still a typo, and
     ``validate`` should still say so.
+
+    The grouping order and the colour go with the role: a stale name left in
+    ``groups`` is harmless (``ordered_groups`` ignores non-holders) but a stale
+    ``color`` would fail ``validate``'s "colour names a grouping layer" rule
+    for a factor the user never un-coloured.
     """
     stale = [
         name
@@ -679,7 +685,10 @@ def strip_answered_roles(
         layer=LAYER,
     )
     return replace(
-        spec, roles={k: v for k, v in spec.roles.items() if k not in stale}
+        spec,
+        roles={k: v for k, v in spec.roles.items() if k not in stale},
+        groups=[g for g in spec.groups if g not in stale],
+        color=None if spec.color in stale else spec.color,
     )
 
 

@@ -2,15 +2,15 @@
 
 Every plot over a 1-D measure has a handful of steps that touch every sample
 rather than every record — the y extents, one row per sample for a line, the
-mean across an AGGREGATE factor at each position, mean ± error across replicates
-at each position. Everything else in a resolve is per record or per drawn point
+collapse chain's means at each position, mean ± error over the sample at each
+position. Everything else in a resolve is per record or per drawn point
 and is cheap. Those steps live behind this protocol so that HOW they are done
 can change without the rest of ``reduce`` knowing.
 
 Two implementations:
 
 * :class:`PandasReducer` — the reference. It *calls* the functions the reduce
-  path has always used (``_explode_1d``, ``_collapse_aggregates``,
+  path has always used (``_explode_1d``, ``_collapse_levels``,
   ``_summarize``, ``ylimits``), so its answers are the original answers by
   construction. It is the oracle every other reducer is tested against
   (``scistackplotdb/tests/test_reducer_parity.py``) and the reducer an
@@ -101,9 +101,11 @@ class Reducer(Protocol):
         index_column: str,
         table: LongTable,
     ) -> tuple[pd.DataFrame, str]:
-        """The AGGREGATE collapse of a 1-D measure: mean per position across
-        every AGGREGATE factor, returned EXPLODED (one row per kept factor
-        combination per position) — ``_collapse_aggregates`` over the explode."""
+        """The collapse chain of a 1-D measure for a kind that draws the
+        sample's mean: ``steps.pre`` then ``steps.final``
+        (``roles.collapse_steps``), mean per position at each step, returned
+        EXPLODED (one row per kept factor combination per position) —
+        ``_collapse_levels`` over the explode."""
         ...
 
     def summarize_series(
@@ -115,10 +117,10 @@ class Reducer(Protocol):
         table: LongTable,
     ) -> pd.DataFrame:
         """A BAND/BAR panel frame for one panel's rows of a 1-D measure:
-        ``X`` (position), ``COLOR`` if any, ``Y``, ``Y_LOW``, ``Y_HIGH`` —
-        centre ± spread across replicates at every position, computed over ALL
-        samples. The AGGREGATE collapse is applied first, as the drawing path
-        always has."""
+        ``X`` (position), ``COLOR`` and ``SERIES`` if any, ``Y``, ``Y_LOW``,
+        ``Y_HIGH`` — centre ± spread over the SAMPLE at every position,
+        computed over ALL samples. The pre-collapse (``steps.pre``) is applied
+        first, as the drawing path always has."""
         ...
 
     def downsample(
@@ -180,10 +182,14 @@ class PandasReducer:
         index_column: str,
         table: LongTable,
     ) -> tuple[pd.DataFrame, str]:
-        from .reduce import _collapse_aggregates, _explode_1d
+        from .reduce import _collapse_levels, _explode_1d
+        from .roles import collapse_steps
 
+        steps = collapse_steps(spec, roles, table)
         exploded, column = _explode_1d(frame, spec.y_measure, index_column)
-        return _collapse_aggregates(exploded, spec, roles, column), column
+        collapsed = _collapse_levels(exploded, steps.pre, spec, table, column)
+        collapsed = _collapse_levels(collapsed, steps.final, spec, table, column)
+        return collapsed, column
 
     def summarize_series(
         self,
@@ -193,12 +199,16 @@ class PandasReducer:
         index_column: str,
         table: LongTable,
     ) -> pd.DataFrame:
-        from .reduce import _collapse_aggregates, _explode_1d, _summarize_exploded
+        from .reduce import _collapse_levels, _explode_1d, _summarize_exploded
+        from .roles import collapse_steps, grouping_layers
 
+        steps = collapse_steps(spec, roles, table)
+        layers = grouping_layers(spec, table, roles, spec.kind)
         exploded, column = _explode_1d(group, spec.y_measure, index_column)
-        collapsed = _collapse_aggregates(exploded, spec, roles, column)
-        color = next((n for n, r in roles.items() if r is Role.COLOR), None)
-        return _summarize_exploded(collapsed, spec, color, column)
+        collapsed = _collapse_levels(exploded, steps.pre, spec, table, column)
+        return _summarize_exploded(
+            collapsed, spec, layers.color, column, series_layers=layers.series
+        )
 
     def downsample(
         self, frame: pd.DataFrame, max_points: int, index_column: str | None
@@ -233,6 +243,7 @@ class NumpyReducer(PandasReducer):
         scope: list[str],
         roles: dict[str, Role],
     ) -> dict[tuple, tuple[float, float]]:
+        from .roles import collapse_steps, grouping_layers
         from .ylimits import (
             ExtentMode,
             finish_extents,
@@ -249,13 +260,14 @@ class NumpyReducer(PandasReducer):
 
         # Computed at the granularity it is DRAWN at — per panel (every
         # ITERATE and FACET factor, whether or not the scope names it), per
-        # colour, per position — through the SAME two stages `summarize_series`
-        # runs for a panel, and only then folded into the scope groups. The
-        # scope decides which panels share a range, never what a panel draws
-        # (ylimits module docstring, 2026-09-14).
+        # mark (colour and series), per position — through the SAME chain
+        # `summarize_series` runs for a panel, and only then folded into the
+        # scope groups. The scope decides which panels share a range, never
+        # what a panel draws (ylimits module docstring, 2026-09-14).
         present = [s for s in scope if s in frame.columns]
         panels = panel_factors(roles, frame)
-        color = next((n for n, r in roles.items() if r is Role.COLOR and n in frame.columns), None)
+        steps = collapse_steps(spec, roles, table)
+        layers = grouping_layers(spec, table, roles, spec.kind)
         with Log.timer("y_extents(numpy)", layer=LAYER, extra=f"{measure}, {mode.describe()}") as timer:
             with timer.phase("cells"):
                 arrays = _cells(frame[measure])
@@ -264,13 +276,14 @@ class NumpyReducer(PandasReducer):
                 panel_count = 0
                 for key, rows in _group_rows(frame, panels):
                     panel_count += 1
-                    group = frame.iloc[rows]
-                    series, series_color = self._panel_series(
-                        group, [arrays[i] for i in rows], roles, color
-                    )
+                    group = frame.iloc[rows].reset_index(drop=True)
+                    members = [arrays[i] for i in rows]
                     group_key = scope_key(dict(zip(panels, key, strict=True)), present)
                     if mode.summary:
-                        for _, centre, low, high, count in _series_stats(series, series_color, spec):
+                        kept, series = _chain(group, members, steps.pre, table)
+                        for _, centre, low, high, count in _stats_by_mark(
+                            kept, series, layers, spec
+                        ):
                             ok = count > 0
                             # The centre line is drawn too (MEAN + IQR can put
                             # it outside its own quartiles).
@@ -280,10 +293,11 @@ class NumpyReducer(PandasReducer):
                             if extent:
                                 merge_extent(bounds, group_key, *extent)
                     else:
-                        # AGGREGATE on a non-summary kind: the collapsed means
-                        # are drawn as they are.
-                        for mean in series:
-                            extent = pair_extent(mean, mean, mode)
+                        # What the chain left is drawn as it is: the sample
+                        # rows (box, violin) or their mean (scatter, line).
+                        _, series = _chain(group, members, [*steps.pre, *steps.final], table)
+                        for values in series:
+                            extent = pair_extent(values, values, mode)
                             if extent:
                                 merge_extent(bounds, group_key, *extent)
         return finish_extents(bounds, present, mode, source="numpy", panels=panel_count)
@@ -339,7 +353,7 @@ class NumpyReducer(PandasReducer):
             )
         return exploded, index_column, total
 
-    # ---- AGGREGATE collapse ---------------------------------------------
+    # ---- the collapse chain ----------------------------------------------
 
     def collapse_series(
         self,
@@ -349,36 +363,40 @@ class NumpyReducer(PandasReducer):
         index_column: str,
         table: LongTable,
     ) -> tuple[pd.DataFrame, str]:
-        from .series_stats import position_mean
+        from .roles import collapse_steps
 
         measure = spec.y_measure
         if index_column in frame.columns or not _nested_series(frame, table, measure):
             return super().collapse_series(frame, spec, roles, index_column, table)
-        keep = [
-            name
-            for name, role in roles.items()
-            if role is not Role.AGGREGATE and name in frame.columns
-        ]
+        steps = collapse_steps(spec, roles, table)
+        keys = [*steps.pre, *steps.final]
         with Log.timer("collapse_series(numpy)", layer=LAYER, extra=measure) as timer:
             with timer.phase("cells"):
                 arrays = _cells(frame[measure])
             with timer.phase("means"):
+                kept, series = _chain(frame.reset_index(drop=True), arrays, keys, table)
                 pieces = []
-                for key, rows in _group_rows(frame, keep):
-                    mean, count = position_mean([arrays[i] for i in rows])
-                    ok = count > 0
-                    piece = pd.DataFrame({name: value for name, value in zip(keep, key)}, index=range(int(ok.sum())))
+                assert len(kept) == len(series), "one kept row per collapsed cell"
+                # By position, not `itertuples`: with every factor collapsed
+                # the kept frame has one row and NO columns, and itertuples
+                # (which zips over columns) yields nothing for it.
+                for position, values in enumerate(series):
+                    ok = ~np.isnan(values)
+                    piece = pd.DataFrame(
+                        {name: kept[name].iloc[position] for name in kept.columns},
+                        index=range(int(ok.sum())),
+                    )
                     piece[index_column] = np.flatnonzero(ok)
-                    piece[measure] = mean[ok]
+                    piece[measure] = values[ok]
                     pieces.append(piece)
             collapsed = (
                 pd.concat(pieces, ignore_index=True)
                 if pieces
-                else pd.DataFrame(columns=[*keep, index_column, measure])
+                else pd.DataFrame(columns=[*kept.columns, index_column, measure])
             )
         Log.debug(
-            "aggregate over %s: %d row(s) -> %d row(s) [numpy]",
-            [n for n, r in roles.items() if r is Role.AGGREGATE],
+            "collapse %s: %d row(s) -> %d row(s) [numpy]",
+            keys,
             len(frame),
             len(collapsed),
             layer=LAYER,
@@ -395,29 +413,50 @@ class NumpyReducer(PandasReducer):
         index_column: str,
         table: LongTable,
     ) -> pd.DataFrame:
-        from .resolved import COLOR, X, Y, Y_HIGH, Y_LOW
+        from .resolved import COLOR, DASH, SERIES, X, Y, Y_HIGH, Y_LOW
+        from .roles import collapse_steps, grouping_layers
 
         measure = spec.y_measure
         if index_column in group.columns or not _nested_series(group, table, measure):
             return super().summarize_series(group, spec, roles, index_column, table)
-        color = next((n for n, r in roles.items() if r is Role.COLOR and n in group.columns), None)
+        steps = collapse_steps(spec, roles, table)
+        layers = grouping_layers(spec, table, roles, spec.kind)
+        color = layers.color if layers.color in group.columns else None
+        has_series = any(name in group.columns for name in layers.series)
+        has_dash = any(
+            name in group.columns for name in layers.series if name != color
+        )
         with Log.timer("summarize_series(numpy)", layer=LAYER, extra=measure) as timer:
             with timer.phase("cells"):
                 arrays = _cells(group[measure])
             with timer.phase("collapse"):
-                series, series_color = self._panel_series(group, arrays, roles, color)
+                kept, series = _chain(group.reset_index(drop=True), arrays, steps.pre, table)
             with timer.phase("stats"):
                 pieces = []
-                for level, centre, low, high, count in _series_stats(series, series_color, spec):
+                for (level, sid, did), centre, low, high, count in _stats_by_mark(
+                    kept, series, layers, spec
+                ):
                     ok = count > 0
                     piece = pd.DataFrame({X: np.flatnonzero(ok)})
                     if color:
                         piece[COLOR] = level
+                    if has_series:
+                        piece[SERIES] = sid
+                    if has_dash:
+                        piece[DASH] = did
                     piece[Y] = centre[ok]
                     piece[Y_LOW] = low[ok]
                     piece[Y_HIGH] = high[ok]
                     pieces.append(piece)
-                columns = [X, *([COLOR] if color else []), Y, Y_LOW, Y_HIGH]
+                columns = [
+                    X,
+                    *([COLOR] if color else []),
+                    *([SERIES] if has_series else []),
+                    *([DASH] if has_dash else []),
+                    Y,
+                    Y_LOW,
+                    Y_HIGH,
+                ]
                 out = (
                     pd.concat(pieces, ignore_index=True)
                     if pieces
@@ -427,47 +466,62 @@ class NumpyReducer(PandasReducer):
                     out = out.sort_values(X, kind="stable")
         return out.reset_index(drop=True)
 
-    def _panel_series(
-        self,
-        group: pd.DataFrame,
-        arrays: list[np.ndarray],
-        roles: dict[str, Role],
-        color: str | None,
-    ) -> tuple[list[np.ndarray], list[Any]]:
-        """Stage 1 of a BAND/BAR panel — the AGGREGATE collapse.
 
-        One mean series per kept factor combination, each tagged with its
-        colour level. Without AGGREGATE roles every row is its own series.
-        Shared by ``summarize_series`` (the drawing) and ``y_extents`` (the
-        limits) so the two cannot collapse differently.
-        """
-        from .series_stats import position_mean
+def _chain(
+    frame: pd.DataFrame,
+    arrays: list[np.ndarray],
+    keys: list[str],
+    table: LongTable,
+) -> tuple[pd.DataFrame, list[np.ndarray]]:
+    """``reduce._collapse_levels`` over ndarray cells: average ``keys`` away
+    one at a time, each grouping on every other factor still present, mean
+    per position. Returns the surviving factor columns (one row per cell)
+    and the cells. ``frame`` must have a fresh RangeIndex (positions index
+    ``arrays``). The pandas reference is what ``test_reducer_parity`` holds
+    this to."""
+    from .series_stats import position_mean
 
-        aggregated = [n for n, r in roles.items() if r is Role.AGGREGATE and n in group.columns]
-        if not aggregated:
-            return arrays, (list(group[color].to_numpy()) if color else [None] * len(arrays))
-        keep = [
-            name
-            for name, role in roles.items()
-            if role is not Role.AGGREGATE and name in group.columns
-        ]
-        series: list[np.ndarray] = []
-        series_color: list[Any] = []
-        for key, rows in _group_rows(group, keep):
-            mean, count = position_mean([arrays[i] for i in rows])
-            series.append(np.where(count > 0, mean, np.nan))
-            series_color.append(key[keep.index(color)] if color else None)
-        return series, series_color
+    factor_columns = [name for name in table.factor_names if name in frame.columns]
+    kept = frame[factor_columns]
+    for key in keys:
+        if key not in kept.columns:
+            continue
+        keep = [name for name in kept.columns if name != key]
+        rows_out: list[tuple] = []
+        arrays_out: list[np.ndarray] = []
+        for group_key, rows in _group_rows(kept, keep):
+            mean, _count = position_mean([arrays[i] for i in rows])
+            rows_out.append(group_key)
+            arrays_out.append(mean)
+        # An explicit index: with every factor collapsed `keep` is empty and
+        # `DataFrame([()], columns=[])` would be zero rows, not one.
+        kept = pd.DataFrame(rows_out, columns=keep, index=range(len(rows_out)))
+        arrays = arrays_out
+    return kept, arrays
 
 
-def _series_stats(series: list[np.ndarray], series_color: list[Any], spec: PlotSpec):
-    """Stage 2 of a BAND/BAR panel — centre ± spread across the replicates of
-    each colour level, in first-seen order. Yields
-    ``(level, centre, low, high, count)`` per level."""
-    for level in dict.fromkeys(series_color):
-        members = [s for s, c in zip(series, series_color, strict=True) if c == level]
+def _stats_by_mark(kept: pd.DataFrame, series: list[np.ndarray], layers, spec: PlotSpec):
+    """Centre ± spread across the sample at each position, per MARK — one
+    (colour level, series id) pair — in first-seen order, the order pandas'
+    ``groupby(sort=False)`` gives the reference. Yields
+    ``((level, sid, dash id), centre, low, high, count)``; the dash id is the
+    series id over the UNCOLOURED layers (``reduce._series_key``)."""
+    color = layers.color if layers.color in kept.columns else None
+    series_layers = [name for name in layers.series if name in kept.columns]
+    dash_layers = [name for name in series_layers if name != color]
+    marks: dict[tuple, list[np.ndarray]] = {}
+    levels = kept[color].to_numpy() if color else None
+    # Outermost first, as `reduce._series_key` composes it.
+    id_columns = [kept[name].to_numpy() for name in reversed(series_layers)]
+    dash_columns = [kept[name].to_numpy() for name in reversed(dash_layers)]
+    for position, values in enumerate(series):
+        level = hashable(levels[position]) if color else None
+        sid = " | ".join(str(column[position]) for column in id_columns) if id_columns else None
+        did = " | ".join(str(column[position]) for column in dash_columns) if dash_columns else None
+        marks.setdefault((level, sid, did), []).append(values)
+    for key, members in marks.items():
         centre, low, high, count = _stats(members, spec)
-        yield level, centre, low, high, count
+        yield key, centre, low, high, count
 
 
 # ---- helpers --------------------------------------------------------------

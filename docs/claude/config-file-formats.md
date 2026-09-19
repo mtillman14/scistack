@@ -165,10 +165,38 @@ Values are matched as text, so `"01"` stays `"01"` — which spelling is identit
 is `schema_key_types`' decision (`docs/claude/schema-key-types.md`), never this
 table's.
 
-One reader owns it, `scidb.schema_order`, and every display surface asks it:
-DataFrame row order, plot factor levels, the GUI's level lists, the location
-picker's tree. A key named here that is not a schema key of the dataset is
-WARNED about when the database opens — otherwise a typo is completely silent.
+One reader owns it, `scidb.schema_order`. Nothing keeps a copy: a
+`DatabaseManager`'s `dataset_schema_key_order` is a **property** that asks
+`schema_order.project_level_order` on every access, so an edit to
+scistack.toml reaches the next table and the next figure without a restart. (It
+used to be snapshotted when the database opened, which is why edits "did
+nothing" until the GUI was restarted.) Cheap: the config's location is cached
+for `LOCATE_TTL` (2 s) and its content on the file's mtime.
+
+**Which config.** The first project config found walking up from, in order:
+the root pinned with `scifor.set_project_root` (MATLAB bridge, generated
+commands), the cwd (scripts; the GUI server, which the extension spawns in the
+workspace folder), then the database file's folder.
+
+**Every consumer**, and what it orders:
+
+| Consumer | Orders |
+|---|---|
+| `DatabaseManager._sort_by_schema_keys` | every loaded DataFrame (`load(as_df=True)`, `load_all_as_df`, CSV export) |
+| `DatabaseManager.distinct_schema_values` | `for_each(key=[])` iteration, hence for_each result frames; GUI `get_schema` level lists |
+| `scidb.locations._build_tree` | the location picker's tree |
+| `ScidbSource._ordered` → `LongTable.level_order` | plot x axis, colour/legend, facet panels, nested-x plan (plotly + matplotlib) |
+| `ScidbSource._cache_generation` | drops built plot tables when the declaration changes |
+| `scistackplot.codegen._level_order_lines` | exported seaborn code: `order=`, `hue_order=`, `col_order=`, `row_order=` (filtered to the levels each figure's `df` holds) |
+
+**Diagnosing "my levels are alphabetical".** `grep schema_order scidb.log`:
+`[schema_order] using <config> (found from the …)` names the config in use;
+`no project config found from …` lists where it looked; `<config> has no
+[schema_keys] table` and `declares level order for …` say what was read; and
+`table cache: declared [schema_keys] level order changed` shows a plot panel
+picking up an edit. A key named here that is not a schema key of the dataset
+is WARNED about when the database opens and whenever the declaration changes —
+otherwise a typo is completely silent.
 
 **The GUI round-trips this table without understanding it.** `add_path` and
 friends rewrite the whole file from the fields they know, so the table is

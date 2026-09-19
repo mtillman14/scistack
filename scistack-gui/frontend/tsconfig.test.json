@@ -24,8 +24,10 @@
   "include": [
     "src/components/PlotStudio/locationSelection.ts",
     "src/components/PlotStudio/locationSelection.test.ts",
-    "src/components/PlotStudio/xLayers.ts",
-    "src/components/PlotStudio/xLayers.test.ts",
+    "src/components/PlotStudio/groups.ts",
+    "src/components/PlotStudio/groups.test.ts",
+    "src/components/PlotStudio/showSample.ts",
+    "src/components/PlotStudio/showSample.test.ts",
     "src/components/PlotStudio/figureSize.ts",
     "src/components/PlotStudio/figureSize.test.ts",
     "src/components/PlotStudio/pickerCanvas.test.ts"

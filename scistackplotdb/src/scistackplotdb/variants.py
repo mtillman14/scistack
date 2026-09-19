@@ -90,7 +90,8 @@ def variant_set(
                 variant_set("baseline",   Variant(StepLength, code_version="v1"), table),
                 variant_set("new filter", Variant(StepLength, fn="bandpass", low_hz=20), table),
             ],
-            roles={"Variant": Role.COLOR, "session": Role.X},
+            roles={"Variant": Role.GROUP, "session": Role.GROUP},
+            groups=["Variant", "session"], color="Variant",
         )
 
     ``table`` is what resolves the *abbreviations* scidb allows — a bare

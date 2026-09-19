@@ -72,7 +72,9 @@ def test_presets_payload_is_json_shaped_and_ordered():
 def wide_spec():
     return PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
         style=StyleOptions(width=7.2, height=height_for(7.2, "16:9")),
     )

@@ -80,15 +80,24 @@ def spread_table() -> LongTable:
     )
 
 
+#: Kinds that draw the sample (a distribution or a summary of it) rather
+#: than one mark per row — for these the default spec collapses `trial`.
+SAMPLE_KINDS = (PlotKind.BAND, PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN)
+
+
 def _spec(scope=None, **overrides) -> PlotSpec:
+    """A figure per subject, a panel per muscle. `trial` is one line per
+    trial for a line plot and the SAMPLE (collapsed) for the kinds that need
+    one — the two readings the old FREE role used to fold together."""
+    kind = overrides.get("kind", PlotKind.LINE)
     base = dict(
         measures=["EMG"],
         roles={
             "subject": Role.ITERATE,
             "muscle": Role.FACET,
-            "trial": Role.FREE,
+            "trial": Role.COLLAPSE if kind in SAMPLE_KINDS else Role.GROUP,
         },
-        kind=PlotKind.LINE,
+        kind=kind,
         y_axis=YAxis(scope=list(scope or [])),
     )
     base.update(overrides)
@@ -199,15 +208,16 @@ def test_an_inverted_manual_range_is_ordered_not_obeyed(spread_table):
 
 
 def test_a_within_panel_factor_is_dropped_from_the_scope(spread_table, caplog):
-    """A COLOR or FREE factor lives inside one panel, so separating limits by
-    it asks one axis for two ranges — there is no figure that satisfies it."""
+    """A GROUP or COLLAPSE factor lives inside one panel, so separating limits
+    by it asks one axis for two ranges — there is no figure that satisfies it."""
     spec = _spec(
         ["trial"],
         roles={
             "subject": Role.ITERATE,
             "muscle": Role.FACET,
-            "trial": Role.COLOR,
+            "trial": Role.GROUP,
         },
+        color="trial",
     )
 
     with caplog.at_level(logging.WARNING, logger=LAYER):
@@ -513,7 +523,7 @@ def test_the_centre_line_is_inside_the_limits_when_it_leaves_its_iqr():
     )
     spec = PlotSpec(
         measures=["EMG"],
-        roles={"subject": Role.ITERATE, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "trial": Role.COLLAPSE},
         kind=PlotKind.BAND,
         aggregate=Aggregation(statistic=Statistic.MEAN, error=ErrorBand.IQR),
     )
@@ -541,7 +551,7 @@ def test_an_aggregated_line_is_scaled_to_the_means_it_draws(three_level_table):
     spec = _spec(
         ["subject", "muscle"],
         kind=PlotKind.LINE,
-        roles={"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.AGGREGATE},
+        roles={"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.COLLAPSE},
     )
     figures = resolve(spec, three_level_table)
     _assert_within_limits(figures, label="aggregated line")
@@ -564,8 +574,11 @@ def test_switching_kind_on_a_cached_plan_recomputes_the_limits(three_level_table
     from scistackplot import reduce as reduce_mod
 
     reduce_mod._plan_cache.clear()
-    line = _spec([], kind=PlotKind.LINE)
-    band = _spec([], kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SD))
+    # The same roles for both — the plan is keyed by them — so the line is
+    # the mean over trials and the band is that mean ± SD.
+    collapsed = {"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.COLLAPSE}
+    line = _spec([], kind=PlotKind.LINE, roles=collapsed)
+    band = _spec([], kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SD), roles=collapsed)
 
     resolve_one(line, three_level_table, 0)
     figure, _, _ = resolve_one(band, three_level_table, 0)
@@ -581,8 +594,9 @@ def test_each_extent_mode_is_computed_once(three_level_table, caplog):
     from scistackplot import reduce as reduce_mod
 
     reduce_mod._plan_cache.clear()
-    line = _spec([], kind=PlotKind.LINE)
-    band = _spec([], kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SD))
+    collapsed = {"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.COLLAPSE}
+    line = _spec([], kind=PlotKind.LINE, roles=collapsed)
+    band = _spec([], kind=PlotKind.BAND, aggregate=Aggregation(error=ErrorBand.SD), roles=collapsed)
     with caplog.at_level(logging.INFO, logger=LAYER):
         for spec in (line, band, line, band):
             resolve_one(spec, three_level_table, 0)
@@ -660,12 +674,12 @@ def test_a_missing_level_finds_its_own_group():
 
 
 def test_the_figure_reports_the_panel_factors_the_scope_may_name(spread_table):
-    """A schema key promoted to ITERATE (`iterate_ancestors`) is a panel
-    factor the spec never mentions. The GUI builds its checkboxes from this
-    list, not from `spec.roles`, or the promoted key never gets one."""
+    """A schema key the spec never mentions defaults to ITERATE and is a
+    panel factor. The GUI builds its checkboxes from this list, not from
+    `spec.roles`, or the defaulted key never gets one."""
     spec = _spec(
         ["trial"],
-        roles={"subject": Role.FREE, "muscle": Role.FACET, "trial": Role.ITERATE},
+        roles={"muscle": Role.FACET, "trial": Role.ITERATE},
     )
     figure = resolve(spec, spread_table)[0]
     assert figure.panel_factors == ["subject", "trial", "muscle"]

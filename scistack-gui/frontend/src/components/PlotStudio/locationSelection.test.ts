@@ -380,32 +380,32 @@ test('excluded is not a problem', () => {
 
 const KEYS = ['subject', 'trial']
 
-test('an unanswered key moves off aggregate onto free', () => {
-  const roles = rolesAfterPick({ trial: 'aggregate' }, S01, KEYS)
-  assert.equal(roles.trial, 'free', 'a mean would hide what the picker was opened for')
+test('an unanswered key moves off collapse onto separate figures', () => {
+  const roles = rolesAfterPick({ trial: 'collapse' }, S01, KEYS)
+  assert.equal(roles.trial, 'iterate', 'a mean would hide what the picker was opened for')
 })
 
-test('an unanswered key with no role gets free', () => {
-  assert.equal(rolesAfterPick({}, S01, KEYS).trial, 'free')
+test('an unanswered key with no role separates figures', () => {
+  assert.equal(rolesAfterPick({}, S01, KEYS).trial, 'iterate')
 })
 
-test('a chosen x axis is never stamped over', () => {
+test('a chosen grouping is never stamped over', () => {
   // The refinement that keeps "as granular as possible" from becoming "reset
-  // my figure": X, COLOR and FACET already draw every level.
-  for (const role of ['x', 'color', 'facet'] as const) {
+  // my figure": a grouped or faceted key already draws every level.
+  for (const role of ['group', 'facet'] as const) {
     assert.equal(rolesAfterPick({ trial: role }, S01, KEYS).trial, role)
   }
 })
 
 test('a key the selection NAMES is left alone entirely', () => {
-  const roles = rolesAfterPick({ subject: 'aggregate' }, S01, KEYS)
-  assert.equal(roles.subject, 'aggregate', 'the selection answered it; it is one level')
+  const roles = rolesAfterPick({ subject: 'collapse' }, S01, KEYS)
+  assert.equal(roles.subject, 'collapse', 'the selection answered it; it is one level')
 })
 
 test('it does not mutate the roles it was given', () => {
-  const before = { trial: 'aggregate' as const }
+  const before = { trial: 'collapse' as const }
   rolesAfterPick(before, S01, KEYS)
-  assert.equal(before.trial, 'aggregate')
+  assert.equal(before.trial, 'collapse')
 })
 
 // --- the button label -------------------------------------------------------

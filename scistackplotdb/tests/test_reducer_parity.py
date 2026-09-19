@@ -143,36 +143,46 @@ class TestContract:
 #: that is a real combination. Heatmap is the only 2-D kind; box/violin/strip
 #: are observation kinds; band/bar summarise.
 KIND_CASES = [
-    ("line-1d", PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None),
-    ("scatter-scalar", PlotKind.SCATTER, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None),
-    ("band-1d-sd", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("line-1d", PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.GROUP}, None),
+    ("scatter-scalar", PlotKind.SCATTER, "Scalar", {"subject": Role.GROUP, "trial": Role.GROUP}, None),
+    ("band-1d-sd", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
-    ("band-1d-sem", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("band-1d-sem", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SEM)),
-    ("band-1d-ci95", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("band-1d-ci95", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.CI95)),
-    ("band-1d-iqr-median", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("band-1d-iqr-median", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR)),
-    ("bar-scalar-sd", PlotKind.BAR, "Scalar", {"subject": Role.X, "trial": Role.AGGREGATE},
+    ("bar-scalar-sd", PlotKind.BAR, "Scalar", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
-    ("box-scalar", PlotKind.BOX, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None),
-    # A 1-D measure's x axis IS its sample index (roles.py:265), so no factor may
-    # hold X; the distribution is across samples, per colour.
-    ("box-1d", PlotKind.BOX, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None),
-    ("violin-scalar", PlotKind.VIOLIN, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None),
-    ("strip-scalar", PlotKind.STRIP, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None),
-    # FREE, not AGGREGATE: `_matrix_frame` is where matrices are averaged, and
-    # it is only reached when no factor is AGGREGATE — an AGGREGATE role sends 2-D
-    # cells into `_collapse_aggregates`, whose pandas `.mean()` cannot average
-    # object cells and raises. A real gap, pre-existing, surfaced by this
-    # fixture; recorded for Stage 4 (plan §10). Every existing heatmap test
-    # uses FREE for the same reason.
-    ("heatmap-2d", PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.FREE}, None),
+    ("box-scalar", PlotKind.BOX, "Scalar", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None),
+    # A scalar kind on a 1-D measure collapses each cell first; the box is then
+    # the distribution over the sample (trials), per coloured subject.
+    ("box-1d", PlotKind.BOX, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None),
+    ("violin-scalar", PlotKind.VIOLIN, "Scalar", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None),
+    ("strip-scalar", PlotKind.STRIP, "Scalar", {"subject": Role.GROUP, "trial": Role.GROUP}, None),
+    # Two grouping layers: the trials are the lines, joined across subjects.
+    ("spaghetti-scalar", PlotKind.SPAGHETTI, "Scalar", {"subject": Role.GROUP, "trial": Role.GROUP}, None),
+    # A 2-D measure never runs the collapse chain (`matrix_mean` pools the
+    # panel's matrices); COLLAPSE here says "average the trials", which it does.
+    ("heatmap-2d", PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.COLLAPSE}, None),
 ]
 
 
+class Uncoloured(dict):
+    """A roles dict whose grouped `subject` is a plain series layer — one band
+    per subject told apart by series id, not by colour."""
+
+
 def _spec(kind, measure, roles, aggregate) -> PlotSpec:
-    kwargs = dict(measures=[measure], roles=roles, kind=kind)
+    """A grouped `subject` is the COLOUR (what `subject=COLOR` used to say)
+    unless the roles are :class:`Uncoloured`; a grouped `trial` is the
+    innermost layer — one line / point per trial."""
+    kwargs = dict(measures=[measure], roles=dict(roles), kind=kind)
+    if roles.get("subject") is Role.GROUP:
+        kwargs["groups"] = [n for n in ("trial", "subject") if roles.get(n) is Role.GROUP]
+        if not isinstance(roles, Uncoloured):
+            kwargs["color"] = "subject"
     if aggregate is not None:
         kwargs["aggregate"] = aggregate
     return PlotSpec(**kwargs)
@@ -228,16 +238,16 @@ class TestEveryKindRoutesThroughTheReducer:
     def test_1d_kinds_reduce_through_the_reducer(self, source, label, kind, measure, roles, aggregate):
         """Which per-sample operation a 1-D kind takes is part of the contract:
         a SCALAR kind collapses each vector to one value first, BAND/BAR
-        summarise from the cells, an AGGREGATE role collapses, and everything
+        summarise from the cells, a collapse chain collapses, and everything
         else explodes.
 
         A SCALAR kind is the exception, and it is not a reducer operation at
-        all: ``collapse.apply_collapse`` turns each vector into ONE value over
+        all: ``cell.apply_cell_collapse`` turns each vector into ONE value over
         the cells, before any panel work, so the measure the panel path sees is
         scalar and there is no per-sample work left to route. That is a
         different operation from ``Reducer.collapse_series``, which is the
-        AGGREGATE collapse — a mean per sample POSITION across aggregated
-        factors, whose result is still 1-D. Confusing the two is easy: they
+        collapse chain — a mean per sample POSITION across collapsed factors,
+        whose result is still 1-D. Confusing the two is easy: they
         share a word and neither name says which.
 
         This branch used to demand ``explode_series`` for every non-BAND/BAR
@@ -246,7 +256,7 @@ class TestEveryKindRoutesThroughTheReducer:
         """
         if measure != "Series":
             pytest.skip("only 1-D measures have per-sample work")
-        from scistackplot.collapse import collapses
+        from scistackplot.cell import cell_collapses as collapses
 
         table = source.get_table([measure])
         spec = _spec(kind, measure, roles, aggregate)
@@ -265,7 +275,7 @@ class TestEveryKindRoutesThroughTheReducer:
             return
         if kind in (PlotKind.BAND, PlotKind.BAR):
             expected = "summarize_series"
-        elif Role.AGGREGATE in roles.values():
+        elif Role.COLLAPSE in roles.values():
             expected = "collapse_series"
         else:
             expected = "explode_series"
@@ -291,19 +301,19 @@ class TestDownsampleRoutesThroughTheReducer:
         table = source.get_table(["Series"])
         spy = _Spy()
         table.reducer = spy
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None)
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.GROUP}, None)
         figures = resolve(spec, table, max_points=10)
         assert "explode_series" in spy.calls
         assert "downsample" not in spy.calls
         assert figures[0].downsampled_from and figures[0].row_count <= 10 + 1
 
     def test_a_collapsed_line_downsamples_after_collapsing(self, source):
-        """With an AGGREGATE role the exploded frame is the collapsed one, and
+        """With a collapse the exploded frame is the collapsed one, and
         the transport stride runs over THAT — after the mean, never before."""
         table = source.get_table(["Series"])
         spy = _Spy()
         table.reducer = spy
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None)
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None)
         resolve(spec, table, max_points=10)
         assert spy.calls.index("collapse_series") < spy.calls.index("downsample")
 
@@ -311,7 +321,7 @@ class TestDownsampleRoutesThroughTheReducer:
         table = source.get_table(["Series"])
         spy = _Spy()
         table.reducer = spy
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None)
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.GROUP}, None)
         resolve(spec, table, max_points=None)
         assert "downsample" not in spy.calls
 
@@ -334,7 +344,7 @@ class TestReferenceEqualsTheOriginals:
         from scistackplot.ylimits import limits_by_scope
 
         table = source.get_table(["Series"])
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.FREE}, None)
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.GROUP}, None)
         roles = complete_roles(spec, table)
         expected = limits_by_scope(table, spec, ["subject"], roles)
         assert PandasReducer().y_extents(table.frame, spec, table, ["subject"], roles) == expected
@@ -347,7 +357,7 @@ class TestReferenceEqualsTheOriginals:
         table = source.get_table(["Series"])
         stat = Statistic.MEDIAN if error is ErrorBand.IQR else Statistic.MEAN
         spec = _spec(
-            PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.AGGREGATE},
+            PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.COLLAPSE},
             Aggregation(statistic=stat, error=error),
         )
         roles = complete_roles(spec, table)
@@ -362,7 +372,7 @@ class TestReferenceEqualsTheOriginals:
         from scistackplot.ylimits import limits_by_scope
 
         table = source.get_table(["Scalar"])
-        spec = _spec(PlotKind.SCATTER, "Scalar", {"subject": Role.FACET, "trial": Role.FREE}, None)
+        spec = _spec(PlotKind.SCATTER, "Scalar", {"subject": Role.FACET, "trial": Role.GROUP}, None)
         roles = complete_roles(spec, table)
         expected = limits_by_scope(table, spec, ["subject"], roles)
         assert PandasReducer().y_extents(table.frame, spec, table, ["subject"], roles) == expected
@@ -457,7 +467,7 @@ class TestAggregateOnA2DMeasure:
 
         table = source.get_table(["Matrix"])
         spec = _spec(
-            PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.AGGREGATE}, None
+            PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.COLLAPSE}, None
         )
         figures = resolve(spec, table)
         assert [f.figure_key["subject"] for f in figures] == ["s1", "s2"]
@@ -521,9 +531,9 @@ def _sorted_panel(frame: pd.DataFrame) -> pd.DataFrame:
     BAR panels are not sorted by either reducer (only BAND sorts by X), and the
     reference's groupby(sort=False) order depends on record order in a way the
     numpy path does not reproduce; the VALUES are the contract."""
-    from scistackplot.resolved import COLOR, X
+    from scistackplot.resolved import COLOR, SERIES, X
 
-    keys = [c for c in (X, COLOR) if c in frame.columns]
+    keys = [c for c in (X, COLOR, SERIES) if c in frame.columns]
     return frame.sort_values(keys, kind="stable").reset_index(drop=True) if keys else frame
 
 
@@ -553,44 +563,50 @@ class TestScidbSourceAttachesTheReducer:
 #: n=1 subject and the all-NaN cell.
 EXTENT_CASES = [
     # ---- raw, 1-D --------------------------------------------------------
-    ("raw-1d-global", PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.FREE}, None, []),
-    ("raw-1d-by-subject", PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.FREE}, None, ["subject"]),
+    ("raw-1d-global", PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.GROUP}, None, []),
+    ("raw-1d-by-subject", PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.GROUP}, None, ["subject"]),
     # ---- raw, scalar -----------------------------------------------------
-    ("raw-scalar-global", PlotKind.SCATTER, "Scalar", {"subject": Role.X, "trial": Role.FREE}, None, []),
-    ("raw-scalar-by-subject", PlotKind.SCATTER, "Scalar", {"subject": Role.FACET, "trial": Role.FREE}, None, ["subject"]),
+    ("raw-scalar-global", PlotKind.SCATTER, "Scalar", {"subject": Role.GROUP, "trial": Role.GROUP}, None, []),
+    ("raw-scalar-by-subject", PlotKind.SCATTER, "Scalar", {"subject": Role.FACET, "trial": Role.GROUP}, None, ["subject"]),
     # ---- raw, 2-D --------------------------------------------------------
-    ("raw-2d-global", PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.FREE}, None, []),
-    ("raw-2d-by-subject", PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.FREE}, None, ["subject"]),
+    ("raw-2d-global", PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.COLLAPSE}, None, []),
+    ("raw-2d-by-subject", PlotKind.HEATMAP, "Matrix", {"subject": Role.ITERATE, "trial": Role.COLLAPSE}, None, ["subject"]),
     # ---- aggregated, 1-D, every band, global and scoped -------------------
-    ("agg-1d-sd", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("agg-1d-sd", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
-    ("agg-1d-sd-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.AGGREGATE},
+    ("agg-1d-sd-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), ["subject"]),
-    ("agg-1d-sem", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("agg-1d-sem", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SEM), []),
-    ("agg-1d-ci95", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("agg-1d-ci95", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.CI95), []),
-    ("agg-1d-iqr-median", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("agg-1d-iqr-median", PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), []),
-    ("agg-1d-iqr-median-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.AGGREGATE},
+    ("agg-1d-iqr-median-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), ["subject"]),
-    # ---- aggregated, 1-D, replicates FREE (a band across trials) ----------
-    ("agg-1d-free-sd", PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+    # ---- the chain: trial within subject, then subject (the sample) ---------
+    ("nested-1d-sd", PlotKind.BAND, "Series", {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
-    ("agg-1d-free-iqr-by-subject", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.FREE},
-     Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), ["subject"]),
+    ("nested-1d-iqr-median", PlotKind.BAND, "Series", {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+     Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), []),
+    ("pooled-1d-sd", PlotKind.BAND, "Series", {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD, pooled=True), []),
+    ("nested-1d-line", PlotKind.LINE, "Series", {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE}, None, []),
+    # ---- an uncoloured series layer: one band per subject ------------------
+    ("series-1d-sd", PlotKind.BAND, "Series", Uncoloured({"subject": Role.GROUP, "trial": Role.COLLAPSE}),
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
     # ---- collapsed, 1-D, non-summary kind (means drawn as they are) --------
-    ("collapsed-1d-line", PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None, []),
-    ("collapsed-1d-line-by-subject", PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.AGGREGATE}, None, ["subject"]),
+    ("collapsed-1d-line", PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None, []),
+    ("collapsed-1d-line-by-subject", PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.COLLAPSE}, None, ["subject"]),
     # ---- panel factor NOT in the scope: computed per panel, folded globally --
-    ("agg-1d-sem-facet-unscoped", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.FREE},
+    ("agg-1d-sem-facet-unscoped", PlotKind.BAND, "Series", {"subject": Role.FACET, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SEM), []),
     # ---- aggregated, scalar (bar), incl. the n=1 subject ------------------
-    ("agg-scalar-sd", PlotKind.BAR, "Scalar", {"subject": Role.X, "trial": Role.AGGREGATE},
+    ("agg-scalar-sd", PlotKind.BAR, "Scalar", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), []),
-    ("agg-scalar-sem-by-subject", PlotKind.BAR, "Scalar", {"subject": Role.FACET, "trial": Role.AGGREGATE},
+    ("agg-scalar-sem-by-subject", PlotKind.BAR, "Scalar", {"subject": Role.FACET, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SEM), ["subject"]),
-    ("agg-scalar-iqr-median", PlotKind.BAR, "Scalar", {"subject": Role.X, "trial": Role.AGGREGATE},
+    ("agg-scalar-iqr-median", PlotKind.BAR, "Scalar", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR), []),
 ]
 
@@ -615,7 +631,7 @@ class TestNumpyExtentsActuallyRanInNumpy:
 
         with caplog.at_level(logging.INFO, logger="scistackplot"):
             _extents(numpy_source, PlotKind.BAND, "Series",
-                     {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+                     {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD), [])
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "[timing] y_extents(numpy)" in text
@@ -629,7 +645,7 @@ class TestNumpyExtentsActuallyRanInNumpy:
 
         with caplog.at_level(logging.INFO, logger="scistackplot"):
             _extents(numpy_source, PlotKind.LINE, "Series",
-                     {"subject": Role.COLOR, "trial": Role.FREE}, None, [])
+                     {"subject": Role.GROUP, "trial": Role.GROUP}, None, [])
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "y_extents(numpy)" not in text
         assert "exploded 1-D measure" not in text
@@ -645,7 +661,7 @@ class TestNumpyExtentsDeferHonestly:
         table = numpy_source.get_table(["Series"])
         frame, idx = _explode_1d(table.frame, "Series", "index")
         exploded = replace(table, frame=frame, index_column=idx)
-        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
         from scistackplot.roles import complete_roles
 
@@ -765,20 +781,24 @@ class TestNumpyExplodeEqualsPandas:
 
 
 class TestNumpyCollapseEqualsPandas:
-    """The AGGREGATE collapse of a 1-D measure: mean per position over the
-    aggregated factors, one exploded row per kept combination per position."""
+    """The collapse chain of a 1-D measure: mean per position, key by key,
+    one exploded row per kept combination per position."""
 
-    def test_collapsed_frames_agree(self, pandas_source, numpy_source):
+    @pytest.mark.parametrize(
+        "roles", [{"subject": Role.GROUP, "trial": Role.COLLAPSE}, {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE}], ids=["trial", "trial-then-subject"]
+    )
+    def test_collapsed_frames_agree(self, pandas_source, numpy_source, roles):
         from scistackplot.roles import complete_roles
 
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None)
+        spec = _spec(PlotKind.LINE, "Series", roles, None)
         p = pandas_source.get_table(["Series"])
         n = numpy_source.get_table(["Series"])
         roles = complete_roles(spec, p)
         a, ia = reducer_for(p).collapse_series(p.frame, spec, roles, "index", p)
         b, ib = reducer_for(n).collapse_series(n.frame, spec, roles, "index", n)
         assert ia == ib
-        key = ["subject", "index"]
+        key = [c for c in ("subject", "index") if c in a.columns]
+        assert list(a.columns) == list(b.columns)
         pd.testing.assert_frame_equal(
             a.sort_values(key).reset_index(drop=True)[[*key, "Series"]],
             b.sort_values(key).reset_index(drop=True)[[*key, "Series"]],
@@ -790,7 +810,7 @@ class TestNumpyCollapseEqualsPandas:
         of ONE trial, position 10 of two — never NaN-poisoned, never padded."""
         from scistackplot.roles import complete_roles
 
-        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLOR, "trial": Role.AGGREGATE}, None)
+        spec = _spec(PlotKind.LINE, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE}, None)
         n = numpy_source.get_table(["Series"])
         roles = complete_roles(spec, n)
         b, _ = reducer_for(n).collapse_series(n.frame, spec, roles, "index", n)
@@ -801,22 +821,28 @@ class TestNumpyCollapseEqualsPandas:
         assert s1.loc[10] == pytest.approx(np.mean([cells["1"][10], cells["3"][10]]))
 
 
+#: `_spec` colours `subject` whenever it groups (see below), so a GROUP
+#: subject here is the colour and the trials are the sample.
 SUMMARY_CASES = [
-    ("band-sd-agg", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("band-sd", PlotKind.BAND, {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
-    ("band-sd-free", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.FREE},
+    ("band-sd-nested", PlotKind.BAND, {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
-    ("band-sem-free-nocolor", PlotKind.BAND, {"subject": Role.FREE, "trial": Role.FREE},
+    ("band-sd-pooled", PlotKind.BAND, {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD, pooled=True)),
+    ("band-sem-nested", PlotKind.BAND, {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SEM)),
-    ("band-ci95-agg", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.AGGREGATE},
+    ("band-ci95", PlotKind.BAND, {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.CI95)),
-    ("band-iqr-median-free", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.FREE},
+    ("band-iqr-median", PlotKind.BAND, {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.IQR)),
-    ("band-none-free", PlotKind.BAND, {"subject": Role.COLOR, "trial": Role.FREE},
+    ("band-none", PlotKind.BAND, {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.NONE)),
-    ("bar-sd-free", PlotKind.BAR, {"subject": Role.COLOR, "trial": Role.FREE},
+    ("bar-sd", PlotKind.BAR, {"subject": Role.GROUP, "trial": Role.COLLAPSE},
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
-    ("band-facet-agg", PlotKind.BAND, {"subject": Role.FACET, "trial": Role.AGGREGATE},
+    ("band-facet", PlotKind.BAND, {"subject": Role.FACET, "trial": Role.COLLAPSE},
+     Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
+    ("band-series", PlotKind.BAND, Uncoloured({"subject": Role.GROUP, "trial": Role.COLLAPSE}),
      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD)),
 ]
 
@@ -857,7 +883,7 @@ class TestNumpySummarizeEdges:
         from scistackplot.resolved import COLOR, Y, Y_HIGH, Y_LOW
         from scistackplot.roles import complete_roles
 
-        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
         n = numpy_source.get_table(["Series"])
         out = reducer_for(n).summarize_series(n.frame, spec, complete_roles(spec, n), "index", n)
@@ -871,7 +897,7 @@ class TestNumpySummarizeEdges:
         from scistackplot.resolved import COLOR, X, Y
         from scistackplot.roles import complete_roles
 
-        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+        spec = _spec(PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
         n = numpy_source.get_table(["Series"])
         out = reducer_for(n).summarize_series(n.frame, spec, complete_roles(spec, n), "index", n)
@@ -893,7 +919,7 @@ class TestBandThroughResolveIsSummarisedBeforeStriding:
 
     @pytest.fixture
     def band(self):
-        return _spec(PlotKind.BAND, "Series", {"subject": Role.COLOR, "trial": Role.FREE},
+        return _spec(PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
 
     def test_a_budget_thins_the_summary_not_the_samples(self, numpy_source, band):

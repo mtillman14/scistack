@@ -25,7 +25,9 @@ from scistackplot import DataFrameSource, PlotSpec, Role, PlotKind, render
 source = DataFrameSource(pd.read_csv("gait.csv"))
 spec = PlotSpec(
     measures=["StepLength"],
-    roles={"session": Role.X, "limb": Role.COLOR, "subject": Role.FREE},
+    roles={"session": Role.GROUP, "limb": Role.GROUP, "subject": Role.COLLAPSE},
+    groups=["limb", "session"],   # innermost first: limbs inside each session tick
+    color="limb",
     kind=PlotKind.BOX,
 )
 figure = render(source, spec)
@@ -34,16 +36,20 @@ figure = render(source, spec)
 ## Every factor does exactly one thing
 
 The whole control surface is one rule: each categorical column carries exactly
-one role.
+one role, in one of two panes (`docs/claude/grouping-and-collapse.md`).
 
 | Role | Meaning |
 |---|---|
-| `X` | x-axis position |
-| `COLOR` | one coloured series per level |
+| `GROUP` | one **mark** per level — a bar, a box, a line. Ordered by `PlotSpec.groups`, innermost first; one layer may be the `color` |
 | `FACET` | one subplot per level (arranged by `FacetOptions`) |
-| `ITERATE` | a separate **figure** per level |
-| `AGGREGATE` | collapse — average over this factor |
-| `FREE` | keep as replicate rows |
+| `ITERATE` | a separate **figure** per level — the default for an unmentioned factor |
+| `COLLAPSE` | averaged away. The **last** collapsed key is the *sample* |
+
+Collapsed keys average away deepest first, nested and unweighted — "trial
+within subject, then subject" — so each subject counts once however many
+trials it has (`Aggregation(pooled=True)` is the deliberate alternative). What
+remains at each mark is the sample: bar and band draw its centre ± spread,
+box and violin its distribution, scatter and line its mean.
 
 Which plot kinds are available follows from that assignment plus the measure's
 shape, through one pure function:
@@ -51,22 +57,43 @@ shape, through one pure function:
 ```python
 from scistackplot import available_plots, default_plot, Shape
 
-available_plots(Shape.SCALAR, {"session": Role.X})                    # scatter, strip
-available_plots(Shape.SCALAR, {"session": Role.X, "trial": Role.FREE})  # + box, violin, bar
+available_plots(Shape.SCALAR, {"session": Role.GROUP})                          # scatter, strip, bar
+available_plots(Shape.SCALAR, {"session": Role.GROUP, "trial": Role.COLLAPSE})  # + box, violin
 ```
 
-A distribution needs replicates, and replicates exist only when some factor is
-left `FREE`. That single rule produces both defaults and availability:
+A distribution needs a sample, and a sample exists only when some factor is
+collapsed. That single rule produces both defaults and availability:
 
-| Measure shape | no replicates | with replicates |
+| Measure shape | no sample | with a sample |
 |---|---|---|
-| scalar | scatter | box / violin / bar + CI |
-| 1-D array | one line per observation | mean line + shaded error band |
+| scalar | scatter, or a bar with no error bar | box / violin / bar + CI |
+| 1-D array | one line per leaf group | mean line + shaded error band |
 | 2-D | heatmap | mean heatmap |
 
-`AGGREGATE` deliberately does *not* count as replicates: it averages its factor
-away before anything is drawn. "Average over trials, then show the spread
-across subjects" is `trial=AGGREGATE, subject=FREE`.
+"Average over trials, then show the spread across subjects" is
+`trial=COLLAPSE, subject=COLLAPSE`: trial averages within each subject
+first, and subject — the last — is the sample the error bars are drawn over.
+
+**Spaghetti** is the repeated-measures view: one marker per level of the
+**first** grouping layer at each x position, joined by a line — `groups =
+["subject", "session", "Intervention"]` draws every subject's line across
+sessions inside their group. It needs two grouping layers, and the same list
+read as a bar plot nests subject bars inside session ticks inside Intervention
+brackets. Each subject keeps one small deterministic offset at every x
+position (never a random jitter — a line must end on its own markers),
+decided once per figure by `scistackplot.spaghetti.series_offsets` and read by
+both renderers and the generated code.
+
+**Show sample** puts the data behind a summary on top of it. `show_sample =
+["trial"]` on that box plot cuts the collapse chain before `trial`: every
+trial of every subject is drawn as a small point inside its box (a deeper
+key implies the shallower ones — a trial is a trial *of* a subject), and
+`["subject"]` shows one point per subject, the sample itself. Points are
+joined into lines when they are repeated measures — the shown key sits above
+the x axis's key in the schema, so each subject has a value at every session
+— and left as points otherwise; `join_sample=True/False` overrides the rule.
+The marks never change, the y axis grows to hold the points, and the exported
+code draws the same overlay.
 
 ## Arranging the subplots
 
@@ -78,7 +105,8 @@ from scistackplot import FacetOptions, MatchOp, Matcher, PlotSpec, Role
 
 spec = PlotSpec(
     measures=["RawEMG"],
-    roles={"ColName": Role.FACET, "subject": Role.COLOR},
+    roles={"ColName": Role.FACET, "subject": Role.GROUP},
+    color="subject",
     facet=FacetOptions(
         rows=[Matcher(op=MatchOp.STARTS_WITH, value="R"),
               Matcher(op=MatchOp.STARTS_WITH, value="L")],
@@ -134,6 +162,11 @@ ratio, name a width — a journal column is 3.5 in, a double column 7.2 in — a
 spec reports the ratio it was saved with, and `render_matplotlib` logs the
 size it drew at INFO. The Plot Studio panel's "Figure size" section is this
 module with a dropdown on it.
+
+`StyleOptions.font_size` (points, default 14) is matplotlib's `font.size`:
+ticks, axis labels, legend and title all scale from it, applied under
+`rc_context` so nothing leaks into the next figure. The plotly preview reads
+the same number as px, so the change is visible before a save.
 
 ## Export: real code, not a call back into this library
 

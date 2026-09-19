@@ -28,39 +28,44 @@ class Role(str, Enum):
     reason this enum exists: the R/Shiny proof of concept spread the same
     information across four independent widgets and spent most of its length
     keeping them consistent with each other via ``setdiff``.
+
+    Four roles, in two panes (docs/claude/grouping-and-collapse.md):
+
+    * **Grouping pane** — ``GROUP``: one *mark* per level combination, where a
+      mark is whatever the kind draws (a bar, a box, a line). The grouped
+      factors are ORDERED by :attr:`PlotSpec.groups`, innermost first, and one
+      of them may be tagged as the colour (:attr:`PlotSpec.color`). Colour is
+      not a role: it never split data, it labelled a split that a grouping
+      layer had already made.
+    * **Factors pane** — ``FACET`` (one subplot per level), ``ITERATE`` (one
+      figure per level) and ``COLLAPSE`` (averaged away). The outermost
+      collapsed key is the *sample* the kind's statistic is computed over.
+
+    The old ``X`` / ``COLOR`` / ``AGGREGATE`` / ``FREE`` vocabulary is gone
+    outright (2026-09-17): ``FREE`` meant "let the kind decide", which is the
+    ambiguity the two-pane model removes, and a saved spec carrying it is
+    refused by :meth:`PlotSpec.from_dict` rather than guessed at.
     """
 
-    ITERATE = "iterate"          # separate FIGURE per level (fan-out)
-    X = "x"                      # x-axis position
-    COLOR = "color"              # one series/hue per level
+    GROUP = "group"              # one mark per level; ordered by PlotSpec.groups
     FACET = "facet"              # one subplot per level
-    AGGREGATE = "aggregate"      # collapse: average across this factor's levels
-    FREE = "free"                # keep as replicate rows -> distributions
+    ITERATE = "iterate"          # separate FIGURE per level (fan-out)
+    COLLAPSE = "collapse"        # averaged away; outermost collapsed key = sample
 
     def __str__(self) -> str:
         return self.value
 
 
-#: Roles that accept at most ONE factor. FACET is deliberately absent: several
-#: factors may be faceted at once, and how their combined levels are arranged
-#: into rows and columns is a layout decision (FacetOptions.rows/cols), not a
-#: property of which factor was assigned where. The old FACET_ROW/FACET_COL
-#: pair forced that decision into the role and still could not express
-#: "arrange these 13 muscles as left/right x muscle group".
-#:
-#: X left for the same reason: "stim and sham side by side, each split by
-#: session" is one axis carrying two factors, nested. Which factor is the outer
-#: grouping is an ORDER (``PlotSpec.x_layers``), not a different role.
-SINGLE_ASSIGNMENT_ROLES = (Role.COLOR,)
+#: Role strings this version no longer reads. Listed so ``from_dict`` can
+#: refuse them by name instead of failing with a bare ``ValueError`` from the
+#: enum — and so the message can say what replaced them.
+LEGACY_ROLE_VALUES = ("x", "color", "aggregate", "free")
 
-#: How many factors may share the x axis. Three is not arbitrary: a fourth
-#: level of nesting cannot be read off an axis, and the label stack below the
-#: plot grows taller than the plot.
+#: How many LABELLED tick layers a categorical x axis may carry — grouping
+#: layers minus the coloured one, which is labelled by the legend instead.
+#: Three is not arbitrary: a fourth level of nesting cannot be read off an
+#: axis, and the label stack below the plot grows taller than the plot.
 MAX_X_LAYERS = 3
-
-#: Roles that leave a factor's levels as multiple rows in one cell, i.e. that
-#: can produce a distribution. AGGREGATE is NOT here: it collapses first.
-REPLICATE_ROLES = (Role.FREE,)
 
 
 class PlotKind(str, Enum):
@@ -68,6 +73,7 @@ class PlotKind(str, Enum):
 
     SCATTER = "scatter"      # one marker per row
     STRIP = "strip"          # scatter with categorical jitter
+    SPAGHETTI = "spaghetti"  # markers + one polyline per replicate (scalar, categorical x)
     LINE = "line"            # one polyline per series (1-D measures)
     BOX = "box"              # distribution per x position
     VIOLIN = "violin"        # distribution per x position, density
@@ -83,14 +89,29 @@ class PlotKind(str, Enum):
 #:
 #: Membership is what makes a kind imply a collapse: selected on a 1-D measure,
 #: any of these means "reduce each vector to one value first"
-#: (:mod:`scistackplot.collapse`). LINE and BAND are the kinds that read the
+#: (:mod:`scistackplot.cell`). LINE and BAND are the kinds that read the
 #: samples, and HEATMAP wants a matrix, so none of the three appear here.
 SCALAR_KINDS = (
     PlotKind.SCATTER,
     PlotKind.STRIP,
+    PlotKind.SPAGHETTI,
     PlotKind.BOX,
     PlotKind.VIOLIN,
     PlotKind.BAR,
+)
+
+#: Kinds that can carry a "Show sample" overlay (:attr:`PlotSpec.show_sample`):
+#: the summative categorical kinds — a bar, box or violin summarises its
+#: sample, and scatter / strip draw the sample's mean — all of which leave
+#: room inside each mark's dodge slot for the underlying points. SPAGHETTI is
+#: already the sample; LINE / BAND have a numeric x (no slot to place a point
+#: in) and HEATMAP has no marks.
+OVERLAY_KINDS = (
+    PlotKind.BAR,
+    PlotKind.BOX,
+    PlotKind.VIOLIN,
+    PlotKind.SCATTER,
+    PlotKind.STRIP,
 )
 
 
@@ -531,8 +552,21 @@ def _factor_variable_from_raw(raw: Any) -> FactorVariable:
 
 @dataclass(frozen=True)
 class Aggregation:
+    """Centre and spread over the SAMPLE — the outermost collapsed key's
+    levels, after every inner collapse (docs/claude/grouping-and-collapse.md).
+
+    ``pooled`` switches the collapse chain off: every collapsed key is dropped
+    in ONE groupby and the sample is every pooled row, so a subject with more
+    trials weighs more ("weight by N"). Off by default because the nested,
+    unweighted mean is what a methods section means by "mean across
+    subjects"; on is the deliberate alternative, and the checkbox says which.
+    A property of the whole chain, not of one key, which is why it lives here
+    and not on a role.
+    """
+
     statistic: Statistic = Statistic.MEAN
     error: ErrorBand = ErrorBand.SD
+    pooled: bool = False
 
 
 @dataclass(frozen=True)
@@ -599,7 +633,7 @@ class YAxis:
     ================================ ==========================================
 
     Only factors that **separate panels** may appear: ITERATE (a factor per
-    figure) and FACET (a factor per subplot). A COLOR or FREE factor lives
+    figure) and FACET (a factor per subplot). A GROUP or COLLAPSE factor lives
     *within* a panel, so splitting on it would ask one axis to have two ranges;
     :func:`~scistackplot.ylimits.eligible_scope` drops those and says so rather
     than failing or silently obeying.
@@ -718,8 +752,17 @@ class VariantSet:
 @dataclass(frozen=True)
 class StyleOptions:
     palette: str | None = None
+    #: Inches — the SAVED figure and the generated code. The interactive preview
+    #: fills its pane and does not read these (see docs/claude/figure-size.md).
     width: float = 8.0
     height: float = 6.0
+    #: Points, matplotlib's ``font.size``; every other text size (axis labels,
+    #: ticks, legend, title) is relative to it, so one number scales them all.
+    #: 14 rather than matplotlib's 10: at 8 x 6 in the default was unreadable
+    #: once the figure sat in a slide or a two-column page (user, 2026-09-16).
+    #: The plotly preview uses the same number as px, so the setting is visible
+    #: before anything is saved.
+    font_size: float = 14.0
     log_x: bool = False
     log_y: bool = False
     title: str | None = None
@@ -747,34 +790,64 @@ class PlotSpec:
     #: measure is a **wide join** — one x value per row of y — while overlaid
     #: variables **stack long** into one value column. Conflating them meant
     #: "the second measure" silently meant one or the other depending on
-    #: context. When set, no factor may hold ``Role.X``.
+    #: context. When set, grouping layers are series, never ticks.
     x_measure: str | None = None
     roles: dict[str, Role] = field(default_factory=dict)
-    #: Order of the factors sharing the x axis, **outermost first**.
+    #: Order of the ``GROUP`` factors, **innermost first**: the first entry is
+    #: the mark's own identity, each later one wraps around it. What that
+    #: means per kind — nested x ticks, a series id, the spaghetti lines — is
+    #: ``roles.tick_layers`` / ``roles.series_layers``' business.
     #:
-    #: Membership is the roles dict (who holds ``Role.X``); this is only the
-    #: order they nest in, so assigning a role can never produce an invalid
-    #: spec — a name here that no longer holds X is ignored, and an X-holder
-    #: missing from here is placed by the data's own nesting (shallower
-    #: outside deeper). :meth:`ordered_x_layers` is the one place those two are
-    #: reconciled, and the only place either rule is written down.
-    x_layers: list[str] = field(default_factory=list)
+    #: Membership is the roles dict (who holds ``Role.GROUP``); this is only
+    #: the order, so assigning a role can never produce an invalid spec — a
+    #: name here that no longer holds GROUP is ignored, and a GROUP-holder
+    #: missing from here is placed by the data's own nesting.
+    #: :meth:`ordered_groups` is the one place those two are reconciled.
+    groups: list[str] = field(default_factory=list)
+    #: The grouping layer labelled by a legend instead of by tick / series
+    #: label — any entry of :attr:`groups`, or None. ``validate`` refuses a
+    #: name that is not a grouping layer.
+    color: str | None = None
     kind: PlotKind = PlotKind.SCATTER
     aggregate: Aggregation = field(default_factory=Aggregation)
-    #: How a 1-D measure's cells are reduced to one value each when a scalar
+    #: How a 1-D measure's CELLS are reduced to one value each when a scalar
     #: kind is selected for it — the "measure of centre" a violin of per-trial
-    #: vectors is drawn from. See :mod:`scistackplot.collapse`.
+    #: vectors is drawn from. See :mod:`scistackplot.cell`.
     #:
-    #: There is deliberately no "collapse on/off" field: the KIND decides
-    #: (:data:`SCALAR_KINDS`), so ``collapse_statistic=median`` with
-    #: ``kind=line`` — a state a checkbox would allow and then have to
-    #: adjudicate — simply means nothing and does nothing.
+    #: There is deliberately no "on/off" field: the KIND decides
+    #: (:data:`SCALAR_KINDS`), so ``cell_statistic=median`` with ``kind=line``
+    #: — a state a checkbox would allow and then have to adjudicate — simply
+    #: means nothing and does nothing.
     #:
-    #: Separate from ``aggregate.statistic``, which is the centre across
-    #: REPLICATES. Same two words, different question: median within each trial,
-    #: mean across trials is a perfectly ordinary thing to ask for.
-    collapse_statistic: Statistic = Statistic.MEAN
+    #: Named for the cell, not "collapse", because *Collapse* is the role that
+    #: averages a factor's LEVELS away (``Role.COLLAPSE``) and the two are
+    #: different questions: median within each trial, mean across trials is a
+    #: perfectly ordinary thing to ask for. Separate from
+    #: ``aggregate.statistic`` for the same reason.
+    cell_statistic: Statistic = Statistic.MEAN
     index_column: str | None = None
+    #: "Show sample": the collapsed keys whose data is overlaid as points on a
+    #: summative kind (bar, box, violin; scatter / strip, which draw the
+    #: sample's mean). The collapse chain (``roles.collapse_order``, deepest
+    #: first) is cut BEFORE the deepest key named here and what is left is
+    #: drawn as one point per row inside its mark — ``["trial"]`` shows every
+    #: trial of every subject with cycles averaged within it; ``["cycle"]``
+    #: shows the raw data. A deeper key implies the shallower collapsed keys
+    #: (they are its identity), so ``["trial"]`` and ``["subject", "trial"]``
+    #: draw the same overlay. ``roles.overlay_steps`` is the one reader.
+    #:
+    #: Inert, like :attr:`cell_statistic`, on a kind that cannot carry an
+    #: overlay (line, band, heatmap, spaghetti) or when nothing is collapsed:
+    #: the names are kept, the capability report says why nothing is drawn.
+    show_sample: list[str] = field(default_factory=list)
+    #: Whether the overlay points sharing every shown key's value are joined
+    #: across the x positions of a panel. ``None`` (the default) is
+    #: AUTOMATIC: joined when the deepest shown key sits above the grouping
+    #: layers in the hierarchy — a subject recurs at every session, so its
+    #: points are repeated measures; a trial belongs to one session, so they
+    #: are not. ``roles.overlay_join`` is the one statement of that rule;
+    #: ``True`` / ``False`` override it.
+    join_sample: bool | None = None
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
@@ -824,49 +897,48 @@ class PlotSpec:
                 names.append(variant.variable)
         return names
 
-    def ordered_x_layers(
+    def ordered_groups(
         self,
         roles: dict[str, Role] | None = None,
         depths: dict[str, int] | None = None,
     ) -> list[str]:
-        """The factors on x, outermost first.
+        """The grouping layers, innermost first.
 
         Reconciles two sources that are edited independently — which factors
-        hold ``Role.X`` (a dropdown per factor) and what order they nest in (a
-        list the user reorders). Names that no longer hold X are dropped, and
-        X-holders the order never mentioned are placed after the ones it did,
-        so neither widget can put the spec in a state the other rejects.
+        hold ``Role.GROUP`` (moving a factor between the panes) and what order
+        they nest in (a list the user reorders). Names that no longer hold
+        GROUP are dropped, and GROUP-holders the order never mentioned are
+        placed after the ones it did, so neither widget can put the spec in a
+        state the other rejects.
 
         ``roles`` defaults to the spec's own; pass completed roles when the
         table may have defaulted some.
 
-        ``depths`` (``LongTable.factor_depths``) orders the holders this spec
-        never placed: **shallower nests outside deeper**, so a subject-level
-        ``InterventionGroup`` clusters the sessions inside it rather than the
-        other way round. Without it they fall in declaration order, which put
-        every newly added layer innermost — the transpose of the figure people
-        ask for, reachable only by finding the ↑ button. A factor with no depth
-        (a variant axis, a derived bucket) is not in the hierarchy at all and
-        sorts after the ones that are.
+        ``depths`` (``LongTable.factor_depths``) places the holders this spec
+        never ordered by the data's own nesting: **deeper keys inside
+        shallower**, which in an innermost-first list means deeper first — a
+        subject-level ``InterventionGroup`` wraps the sessions rather than the
+        other way round. A factor with no depth (a variant axis, a derived
+        bucket) is not in the hierarchy at all; it goes innermost, which keeps
+        the derived thing inside the recorded ones — the readable arrangement
+        for "v1 against v2 inside each session".
 
-        An explicit :attr:`x_layers` always wins: depth is where to *start*,
-        not an order the user cannot override.
+        An explicit :attr:`groups` always wins: depth is where to *start*, not
+        an order the user cannot override.
         """
         holders = [
             name
             for name, role in (roles if roles is not None else self.roles).items()
-            if role is Role.X
+            if role is Role.GROUP
         ]
-        def depth_rank(depth: int | None) -> tuple[int, int]:
-            """``None`` is not "depth zero" — a variant axis or a derived
-            bucket is not a place in the hierarchy at all, so it cannot be
-            claimed to sit outside a subject. Ranking it after everything with
-            a real depth keeps the derived thing inside the recorded ones,
-            which is the readable arrangement. Mirrored by `depthRank` in
-            `scistack-gui/frontend/.../xLayers.ts`."""
-            return (1, 0) if depth is None else (0, depth)
 
-        ordered = [name for name in self.x_layers if name in holders]
+        def depth_rank(depth: int | None) -> tuple[int, int]:
+            """Innermost-first rank. ``None`` (not in the hierarchy) sorts
+            first — innermost; then deeper before shallower. Mirrored by
+            `depthRank` in `scistack-gui/frontend/.../xLayers.ts`."""
+            return (0, 0) if depth is None else (1, -depth)
+
+        ordered = [name for name in self.groups if name in holders]
         rest = [name for name in holders if name not in ordered]
         if depths:
             # Stable: equal depths (a schema key and a factor variable recorded
@@ -889,9 +961,10 @@ class PlotSpec:
         return self.factors_with_role(Role.ITERATE)
 
     @property
-    def replicate_factors(self) -> list[str]:
-        """Factors whose levels survive as multiple rows per cell."""
-        return [n for n, r in self.roles.items() if r in REPLICATE_ROLES]
+    def collapse_factors(self) -> list[str]:
+        """Factors averaged away, in the spec's declared order — NOT the
+        collapse order, which is ``roles.collapse_order``'s to decide."""
+        return self.factors_with_role(Role.COLLAPSE)
 
     def with_roles(self, **roles: Role) -> "PlotSpec":
         """Return a copy with role assignments merged in (for tests/GUI edits)."""
@@ -905,10 +978,11 @@ class PlotSpec:
         raw = asdict(self)
         raw["roles"] = {k: str(v) for k, v in self.roles.items()}
         raw["kind"] = str(self.kind)
-        raw["collapse_statistic"] = str(self.collapse_statistic)
+        raw["cell_statistic"] = str(self.cell_statistic)
         raw["aggregate"] = {
             "statistic": str(self.aggregate.statistic),
             "error": str(self.aggregate.error),
+            "pooled": self.aggregate.pooled,
         }
         raw["facet"] = {
             "n_rows": self.facet.n_rows,
@@ -922,27 +996,31 @@ class PlotSpec:
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
         raw["level_groups"] = [g.to_dict() for g in self.level_groups]
         raw["factor_variables"] = [f.to_dict() for f in self.factor_variables]
-        raw["x_layers"] = list(self.x_layers)
+        raw["groups"] = list(self.groups)
+        raw["show_sample"] = list(self.show_sample)
         # TOML has no null; drop empty optionals so a round trip is stable.
         return _drop_nulls(raw)
 
     @classmethod
     def from_dict(cls, raw: dict) -> "PlotSpec":
+        _refuse_legacy_spec(raw)
         agg = raw.get("aggregate") or {}
         return cls(
             measures=list(raw["measures"]),
             x_measure=raw.get("x_measure"),
             roles={k: Role(v) for k, v in (raw.get("roles") or {}).items()},
-            x_layers=list(raw.get("x_layers") or []),
+            groups=list(raw.get("groups") or []),
+            color=raw.get("color"),
             kind=PlotKind(raw.get("kind", PlotKind.SCATTER)),
-            collapse_statistic=Statistic(
-                raw.get("collapse_statistic", Statistic.MEAN)
-            ),
+            cell_statistic=Statistic(raw.get("cell_statistic", Statistic.MEAN)),
             aggregate=Aggregation(
                 statistic=Statistic(agg.get("statistic", Statistic.MEAN)),
                 error=ErrorBand(agg.get("error", ErrorBand.SD)),
+                pooled=bool(agg.get("pooled", False)),
             ),
             index_column=raw.get("index_column"),
+            show_sample=[str(n) for n in (raw.get("show_sample") or [])],
+            join_sample=_optional_bool(raw.get("join_sample")),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions(**(raw.get("style") or {})),
@@ -991,6 +1069,44 @@ class PlotSpec:
                     "(tomllib) or the 'tomli' package."
                 ) from exc
         return cls.from_dict(tomllib.loads(text))
+
+
+class LegacySpecError(ValueError):
+    """A saved spec written in the pre-2026-09-17 role vocabulary.
+
+    Refused rather than translated, on purpose. ``free`` on a bar meant "the
+    sample" — which is now ``collapse`` — and ``x_layers`` ran outermost-first
+    where ``groups`` runs innermost-first, so any mapping would be wrong in
+    exactly the common cases. The message names the doc that says how to
+    re-express the figure (feedback_beta_no_deprecation: renames are clean
+    breaks).
+    """
+
+
+def _refuse_legacy_spec(raw: dict) -> None:
+    legacy_keys = [key for key in ("x_layers", "collapse_statistic") if key in raw]
+    legacy_roles = {
+        name: value
+        for name, value in (raw.get("roles") or {}).items()
+        if value in LEGACY_ROLE_VALUES
+    }
+    if not legacy_keys and not legacy_roles:
+        return
+    parts = []
+    if legacy_roles:
+        parts.append(
+            "role(s) " + ", ".join(f"{n}={v!r}" for n, v in legacy_roles.items())
+        )
+    if legacy_keys:
+        parts.append("key(s) " + ", ".join(repr(k) for k in legacy_keys))
+    raise LegacySpecError(
+        f"This plot spec uses the old role vocabulary ({'; '.join(parts)}), "
+        f"which this version no longer reads. Roles are now 'group' (ordered "
+        f"by 'groups', innermost first, one of them optionally 'color'), "
+        f"'facet', 'iterate' and 'collapse'; 'collapse_statistic' is "
+        f"'cell_statistic'. Re-express the figure in Plot Studio or edit the "
+        f"spec by hand — see docs/claude/grouping-and-collapse.md."
+    )
 
 
 def grid_shape_for(
@@ -1054,3 +1170,9 @@ def _drop_nulls(obj: Any) -> Any:
     if isinstance(obj, list):
         return [_drop_nulls(v) for v in obj]
     return obj
+
+
+def _optional_bool(value: Any) -> bool | None:
+    """``join_sample`` as saved: absent (TOML has no null, so ``to_dict``
+    drops the automatic setting) is None; anything else is its truth."""
+    return None if value is None else bool(value)

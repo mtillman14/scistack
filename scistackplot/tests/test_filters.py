@@ -99,7 +99,7 @@ def test_a_filter_that_keeps_nothing_yields_an_empty_figure(scalar_table):
     """Deselecting everything is a legitimate state to be in while clicking."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         filters=[Filter("subject", include=[])],
     )
@@ -116,7 +116,7 @@ def test_a_filter_that_keeps_nothing_yields_an_empty_figure(scalar_table):
 def test_capabilities_report_which_levels_survive(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X},
+        roles={"session": Role.GROUP},
         filters=[Filter("subject", include=["01", "03"])],
     )
 
@@ -132,7 +132,7 @@ def test_the_readout_matches_the_figure(scalar_table):
     """The panel's count and the rendered figure come from one function."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.FREE, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         filters=[Filter("subject", include=["02"])],
     )
@@ -148,7 +148,7 @@ def test_the_readout_matches_the_figure(scalar_table):
 
 
 def test_with_no_filters_everything_reads_as_selected(scalar_table):
-    spec = PlotSpec(measures=["StepLength"], roles={"session": Role.X})
+    spec = PlotSpec(measures=["StepLength"], roles={"session": Role.GROUP})
 
     for factor in capabilities(spec, scalar_table)["factors"]:
         assert factor["selected"] == factor["levels"]
@@ -190,7 +190,7 @@ def test_a_filter_that_keeps_nothing_under_a_fanout_still_yields_one_empty_figur
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.ITERATE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.ITERATE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         filters=[Filter("trial", include=[])],
     )

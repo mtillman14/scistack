@@ -21,8 +21,8 @@ source = ScidbSource(db)
 table = source.get_table(["StepLength"])
 spec = PlotSpec(
     measures=["StepLength"],
-    roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
-    kind=PlotKind.BOX,
+    roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+    kind=PlotKind.BOX,   # trial averaged within subject; the box is over subjects
 )
 figure = render(table, spec)
 ```
@@ -55,13 +55,13 @@ branch params as ordinary columns silently plots two pipelines' results as if
 they were replicates of one:
 
 ```python
-spec = PlotSpec(measures=["Scaled"], roles={"session": Role.X})
-validate(spec, table)
-# RoleError: Variant factor(s) ['scale.factor'] would be pooled: their levels
-# are different pipeline variants, not replicates... Assign them
-# 'color'/'facet'/'iterate', select the variants you want with
-# PlotSpec.variant_sets, or — to pool them deliberately — set them to
-# 'aggregate' or 'free' yourself.
+spec = PlotSpec(measures=["Scaled"], roles={"session": Role.GROUP})
+complete_roles(spec, table)["scale.factor"]   # Role.ITERATE — one figure per variant, never pooled
+validate(spec.with_roles(**{"scale.factor": Role.COLLAPSE}), table)
+# RoleError: Variant factor(s) ['scale.factor'] cannot be collapsed: their
+# levels are different pipeline variants, not replicates... Give them a
+# grouping layer, 'facet' or 'iterate', or select the variant you want with
+# PlotSpec.variant_sets.
 ```
 
 **A transport budget.** 1-D data across hundreds of trials is megabytes.
@@ -113,4 +113,14 @@ pandas' default: a key declared `numeric` sorts numerically, and everything
 else goes through a natural sort so zero-padded IDs land as
 `01, 02, … 10` instead of `01, 10, 02`.
 
-See [`docs/claude/plotting-library-design.md`](../docs/claude/plotting-library-design.md).
+A project that declares its levels (`[schema_keys]` in scistack.toml, read by
+`scidb.schema_order`) wins over both: declared levels first, in that order,
+the rest after them by the rule above. The declaration is read live, and a
+change drops the source's built tables, so an edit shows on the next plot
+request. Exported seaborn code states every order it relies on (`order=`,
+`hue_order=`, `col_order=`, `row_order=`) rather than leaving seaborn to use
+the frame's row order.
+
+See [`docs/claude/plotting-library-design.md`](../docs/claude/plotting-library-design.md)
+and the `[schema_keys]` section of
+[`docs/claude/config-file-formats.md`](../docs/claude/config-file-formats.md).

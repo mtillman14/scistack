@@ -34,7 +34,9 @@ def _run(source: str, frame, function_name: str):
 def test_generated_box_plot_runs(scalar_table, scalar_frame):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -48,7 +50,9 @@ def test_generated_box_plot_runs(scalar_table, scalar_frame):
 def test_generated_code_uses_seaborn_not_this_package(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -61,7 +65,8 @@ def test_generated_code_uses_seaborn_not_this_package(scalar_table):
 def test_generated_band_plot_runs(series_table, series_frame):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        color="session",
         kind=PlotKind.BAND,
         aggregate=Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD),
     )
@@ -74,15 +79,17 @@ def test_generated_band_plot_runs(series_table, series_frame):
     matplotlib.pyplot.close(figure)
 
 
-def test_generated_aggregate_emits_a_groupby(scalar_table, scalar_frame):
+def test_generated_collapse_emits_a_groupby(scalar_table, scalar_frame):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.AGGREGATE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.SCATTER,
     )
     source = generate_plot_function(spec, scalar_table)
 
-    assert "# average over trial" in source
+    assert "# collapse trial within subject, session" in source
     assert ".groupby(" in source
     figure = _run(source, scalar_frame, "plot_steplength")
     matplotlib.pyplot.close(figure)
@@ -91,7 +98,7 @@ def test_generated_aggregate_emits_a_groupby(scalar_table, scalar_frame):
 def test_generated_filters_are_applied(scalar_table, scalar_frame):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "trial": Role.FREE, "session": Role.FREE},
+        roles={"subject": Role.GROUP, "trial": Role.COLLAPSE, "session": Role.COLLAPSE},
         kind=PlotKind.BOX,
         filters=[Filter(column="session", include=["pre"])],
     )
@@ -105,7 +112,9 @@ def test_generated_filters_are_applied(scalar_table, scalar_frame):
 def test_generated_code_keeps_the_legend_for_several_colour_levels(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -120,7 +129,9 @@ def test_generated_code_drops_the_legend_for_one_colour_level(
     """Same rule as the renderers: one level, no legend — preview and export agree."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
         filters=[Filter(column="session", include=["pre"])],
     )
@@ -135,7 +146,7 @@ def test_generated_code_drops_the_legend_for_one_colour_level(
 def test_iterate_factors_are_documented_as_foreach_keys(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.ITERATE, "session": Role.X, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -147,12 +158,15 @@ def test_a_spec_with_no_x_factor_builds_its_own_x_column(scalar_table, scalar_fr
     """Regression: the x fallback named a column the endpoint does not have.
 
     `reduce._panel_frame` puts every point at ONE categorical position when no
-    factor holds Role.X. Codegen used to fall back to `table.factor_names[0]`
-    instead — a different figure from the preview, and a hard failure once a
-    nested ITERATE key promotes its ancestors, because that first factor is then
-    an iteration key and so is NOT a column of the frame the function receives.
+    grouping layer is a tick. Codegen used to fall back to `table.factor_names[0]`
+    instead — a different figure from the preview, and a hard failure because
+    that first factor is an iteration key here and so is NOT a column of the
+    frame the function receives.
     """
-    spec = PlotSpec(measures=["StepLength"], roles={"trial": Role.ITERATE})
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.ITERATE, "session": Role.ITERATE, "trial": Role.ITERATE},
+    )
     source = generate_plot_function(spec, scalar_table)
 
     assert "df['Observation'] = \"\"" in source
@@ -172,7 +186,9 @@ def test_a_spec_with_no_x_factor_builds_its_own_x_column(scalar_table, scalar_fr
 def test_embedded_spec_round_trips_out_of_generated_source(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -186,7 +202,9 @@ def test_extract_spec_returns_none_for_handwritten_code():
 def test_generated_script_is_runnable_source(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     script = generate_script(spec, scalar_table)
@@ -206,7 +224,7 @@ def test_generated_heatmap_runs():
     )
     table = LongTable.from_frame(frame, factors=["subject"], measures=["Map"])
     spec = PlotSpec(
-        measures=["Map"], roles={"subject": Role.FREE}, kind=PlotKind.HEATMAP
+        measures=["Map"], roles={"subject": Role.COLLAPSE}, kind=PlotKind.HEATMAP
     )
 
     figure = _run(generate_plot_function(spec, table), frame, "plot_map")
@@ -242,7 +260,8 @@ def test_a_ruled_column_layout_is_exported_as_col_order(bilateral_table):
 
     spec = PlotSpec(
         measures=["RawEMG"],
-        roles={"ColName": Role.FACET, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"ColName": Role.FACET, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        color="subject",
         kind=PlotKind.BAND,
         facet=FacetOptions(
             n_cols=2,
@@ -275,7 +294,7 @@ def test_facet_names_are_exported_as_y_labels_not_titles(
     """
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.FACET, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.FACET, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -295,7 +314,9 @@ def test_an_unfaceted_export_keeps_the_measure_on_the_y_axis(scalar_table):
     """No facets, nothing to rename the axis after — and no titles to suppress."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     source = generate_plot_function(spec, scalar_table)
@@ -315,7 +336,8 @@ def test_a_layout_with_holes_says_seaborn_cannot_express_it(struct_table):
 
     spec = PlotSpec(
         measures=["RawEMG"],
-        roles={"ColName": Role.FACET, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"ColName": Role.FACET, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        color="subject",
         kind=PlotKind.BAND,
         facet=FacetOptions(
             # RHAM (0,0), RTA (0,1), LMG (1,2) — cell (1,0) stays empty.
@@ -347,7 +369,9 @@ def _collapsed_spec(**kwargs) -> PlotSpec:
     return PlotSpec(
         measures=["Signal"],
         kind=PlotKind.VIOLIN,
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         **kwargs,
     )
 
@@ -380,7 +404,8 @@ def test_the_generated_collapse_matches_the_preview(series_table, series_frame):
     spec = PlotSpec(
         measures=["Signal"],
         kind=PlotKind.SCATTER,
-        roles={"subject": Role.X, "session": Role.FREE, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session", "subject"],
     )
 
     figure = _run(generate_plot_function(spec, series_table), series_frame, "plot_signal")
@@ -403,7 +428,7 @@ def test_the_generated_collapse_matches_the_preview(series_table, series_frame):
 
 def test_the_generated_median_collapse_uses_the_median(series_table, series_frame):
     source = generate_plot_function(
-        _collapsed_spec(collapse_statistic=Statistic.MEDIAN), series_table
+        _collapsed_spec(cell_statistic=Statistic.MEDIAN), series_table
     )
     assert "np.median(_samples)" in source
     figure = _run(source, series_frame, "plot_signal")
@@ -416,9 +441,9 @@ def test_the_docstring_says_the_points_are_summaries(series_table):
 
 
 def test_the_embedded_spec_round_trips_with_the_statistic(series_table):
-    spec = _collapsed_spec(collapse_statistic=Statistic.MEDIAN)
+    spec = _collapsed_spec(cell_statistic=Statistic.MEDIAN)
     recovered = extract_spec(generate_plot_function(spec, series_table))
-    assert recovered.collapse_statistic is Statistic.MEDIAN
+    assert recovered.cell_statistic is Statistic.MEDIAN
     assert recovered.kind is PlotKind.VIOLIN
 
 
@@ -427,8 +452,130 @@ def test_a_line_of_the_same_measure_still_explodes(series_table, series_frame):
     spec = PlotSpec(
         measures=["Signal"],
         kind=PlotKind.LINE,
-        roles={"subject": Role.COLOR, "session": Role.FREE, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session", "subject"],
+        color="subject",
     )
     source = generate_plot_function(spec, series_table)
     assert ".explode(" in source
     assert "_collapse_signal" not in source
+
+
+# --- the collapse chain, exported ------------------------------------------
+#
+# The endpoint receives the raw frame, so the chain has to be EMITTED — one
+# groupby-mean per collapsed key, deepest first — and the sample left to
+# seaborn's estimator/errorbar, which then compute what the preview's
+# `_summarize` did. Checked on the unbalanced fixture from
+# test_nested_collapse, where nested and pooled provably differ.
+
+
+@pytest.fixture
+def unbalanced():
+    import pandas as pd
+
+    from scistackplot import LongTable
+
+    rows = [
+        ("01", "pre", "1", 1.0), ("01", "pre", "2", 2.0), ("01", "pre", "3", 3.0),
+        ("02", "pre", "1", 9.0),
+        ("01", "post", "1", 10.0), ("01", "post", "2", 20.0), ("02", "post", "1", 30.0),
+    ]
+    frame = pd.DataFrame(rows, columns=["subject", "session", "trial", "M"])
+    return frame, LongTable.from_frame(
+        frame, factors=["subject", "session", "trial"], measures=["M"], name="M",
+        schema_levels=["subject", "session", "trial"],
+    )
+
+
+def _bar_spec(**kwargs) -> PlotSpec:
+    base = dict(
+        measures=["M"],
+        roles={"subject": Role.COLLAPSE, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session"],
+        kind=PlotKind.BAR,
+        aggregate=Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD),
+    )
+    base.update(kwargs)
+    return PlotSpec(**base)
+
+
+def test_the_chain_is_emitted_deepest_first_and_the_sample_is_left(unbalanced):
+    _, table = unbalanced
+    source = generate_plot_function(_bar_spec(), table)
+    assert "# collapse trial within subject, session" in source
+    assert "# the sample: subject" in source
+    assert source.count("groupby(") == 1, "the sample is seaborn's, not a second groupby"
+    assert 'estimator="mean"' in source and "errorbar=" in source
+    assert "Collapsed trial -> subject" in source, "the docstring names the chain"
+    assert "error bars: sd across subject" in source
+
+
+def test_exported_bar_heights_are_the_nested_means(unbalanced):
+    frame, table = unbalanced
+    from scistackplot import resolve
+    from scistackplot.resolved import X, Y
+
+    figure = _run(generate_plot_function(_bar_spec(), table), frame, "plot_m")
+    heights = sorted(
+        round(p.get_height(), 9) for ax in figure.axes for p in ax.patches if p.get_height()
+    )
+    matplotlib.pyplot.close(figure)
+
+    (preview,) = resolve(_bar_spec(), table)
+    drawn = preview.panels[0].frame
+    assert heights == pytest.approx(sorted(drawn[Y].tolist()))
+    assert drawn.set_index(X)[Y]["pre"] == pytest.approx(5.5), "not the pooled 3.75"
+
+
+def test_pooled_emits_no_chain(unbalanced):
+    frame, table = unbalanced
+    spec = _bar_spec(aggregate=Aggregation(error=ErrorBand.SD, pooled=True))
+    source = generate_plot_function(spec, table)
+    assert "# collapse" not in source
+    assert "(pooled)" in source
+    figure = _run(source, frame, "plot_m")
+    heights = sorted(p.get_height() for ax in figure.axes for p in ax.patches if p.get_height())
+    matplotlib.pyplot.close(figure)
+    assert 3.75 in [round(h, 9) for h in heights], "mean of {1, 2, 3, 9}"
+
+
+def test_a_mean_drawing_kind_collapses_the_sample_too(unbalanced):
+    _, table = unbalanced
+    source = generate_plot_function(_bar_spec(kind=PlotKind.SCATTER), table)
+    assert "# collapse trial within subject, session — averaged away" in source
+    assert "# collapse subject within session — the sample's mean" in source
+    assert source.count("groupby(") == 2
+
+
+def test_dashes_are_emitted_for_an_uncoloured_series_layer(series_table, series_frame):
+    """An uncoloured grouping layer on a band is told apart by dash style in
+    the preview (D4); the export says the same with seaborn's `style=` and
+    `dashes=`, using the same cycle."""
+    spec = PlotSpec(
+        measures=["Signal"],
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["subject", "session"],
+        color="session",
+        kind=PlotKind.BAND,
+    )
+    source = generate_plot_function(spec, series_table)
+    assert "df['_dash'] = df['subject'].astype(str)" in source
+    assert "style='_dash'" in source and "dashes=_dashes" in source
+    assert "df['_series'] = df['session'].astype(str).str.cat(df[['subject']]" in source, (
+        "series ids compose outermost first, as reduce._series_key does"
+    )
+    figure = _run(source, series_frame, "plot_signal")
+    matplotlib.pyplot.close(figure)
+
+
+def test_no_dashes_without_an_uncoloured_layer(series_table):
+    spec = PlotSpec(
+        measures=["Signal"],
+        roles={"subject": Role.GROUP, "session": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        groups=["subject"],
+        color="subject",
+        kind=PlotKind.BAND,
+    )
+    source = generate_plot_function(spec, series_table)
+    assert "_dash" not in source

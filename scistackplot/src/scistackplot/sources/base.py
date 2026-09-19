@@ -11,7 +11,7 @@ full scidb project. Everything above this line is pure long-table logic.
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Hashable, Protocol, runtime_checkable
 
 from scistacklog import Log
 
@@ -28,6 +28,9 @@ LAYER = "scistackplot"
 #: ``SingleFlight`` and then let the builds race — defeating the deduplication
 #: entirely, silently, and only under load.
 _LAZY_LOCK = threading.Lock()
+
+#: "No generation recorded yet" — distinct from a generation of None.
+_UNSET = object()
 
 
 def _lazy_attr(obj: Any, name: str, factory: Callable[[], Any]) -> Any:
@@ -183,7 +186,7 @@ class BaseSource:
         underneath: a run that writes records drops the whole source
         (``plot_service.invalidate``), and this cache goes with it.
         """
-        memo = self._table_cache()
+        memo = self._current_table_cache()
         key = (
             tuple(measures),
             x_measure,
@@ -244,6 +247,43 @@ class BaseSource:
                 "%s: build already in flight — waiting for it", label, layer=LAYER
             ),
         )
+
+    def _cache_generation(self) -> Hashable:
+        """What else, besides the rows, a built table depends on.
+
+        ``None`` here: a flat source's tables depend on its rows alone. A
+        source whose tables also bake in outside configuration overrides this —
+        ``ScidbSource`` returns the project's declared ``[schema_keys]`` level
+        order, which every table carries as its factors' level order. A change
+        drops every built table (:meth:`_current_table_cache`); without it an
+        edit to scistack.toml reached no figure until the panel was reopened.
+        """
+        return None
+
+    def _current_table_cache(self) -> dict:
+        """The memo, emptied first if :meth:`_cache_generation` has moved.
+
+        Every reader of the memo goes through here, never
+        :meth:`_table_cache` directly, or a stale table would be served by
+        whichever path forgot to check.
+        """
+        memo = self._table_cache()
+        generation = self._cache_generation()
+        previous = getattr(self, "_built_generation", _UNSET)
+        if previous is not _UNSET and previous != generation and memo:
+            Log.info(
+                "table cache: %s changed — dropping %d built table(s)",
+                self._generation_label(),
+                len(memo),
+                layer=LAYER,
+            )
+            memo.clear()
+        self._built_generation = generation
+        return memo
+
+    def _generation_label(self) -> str:
+        """How :meth:`_current_table_cache` names a change in its log line."""
+        return "cache generation"
 
     def _table_cache(self) -> dict:
         """The memo, created on first use.

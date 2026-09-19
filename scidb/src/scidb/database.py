@@ -983,17 +983,12 @@ class DatabaseManager:
             )
         self.dataset_schema_key_types = key_types
 
-        # Declared level order, from the project config's `[schema_keys]`
-        # table. Read once here and validated against THIS dataset's keys, so
-        # a typo is reported when the database opens rather than silently
-        # ordering nothing (see scidb.schema_order).
-        from . import schema_order as _schema_order
-
-        self.dataset_schema_key_order = _schema_order.declared_level_order()
-        if self.dataset_schema_key_order:
-            _schema_order.validate(
-                self.dataset_schema_key_order, self.dataset_schema_keys
-            )
+        # Declared level order (`[schema_keys]`) is NOT snapshotted here: see
+        # the `dataset_schema_key_order` property. Asked once now so the
+        # config it came from is logged, and a typo reported, when the
+        # database opens.
+        self._validated_key_order: "dict | None" = None
+        _ = self.dataset_schema_key_order
 
         self.read_only = bool(read_only)
         self._registered_types: dict[str, type[BaseVariable]] = {}
@@ -1905,6 +1900,30 @@ class DatabaseManager:
             "to_db" in variable_class.__dict__ or "from_db" in variable_class.__dict__
         )
 
+    @property
+    def dataset_schema_key_order(self) -> dict[str, list[str]]:
+        """``{schema key: [levels]}`` from the project's ``[schema_keys]``, LIVE.
+
+        Read through :func:`scidb.schema_order.project_level_order` on every
+        access rather than once at open: this used to be a snapshot, so an
+        edit to scistack.toml changed no table and no figure until the GUI (or
+        the session) was restarted. The reader caches the config's location
+        for a couple of seconds and its content on the file's mtime, so an
+        access is a ``stat``.
+
+        Each time the declaration CHANGES it is validated against this
+        dataset's keys, so a typo is reported when it is written, not just
+        when the database opens.
+        """
+        from . import schema_order as _schema_order
+
+        order = _schema_order.project_level_order(self.dataset_db_path.parent)
+        if order is not self._validated_key_order:
+            self._validated_key_order = order
+            if order:
+                _schema_order.validate(order, self.dataset_schema_keys)
+        return order
+
     def _sort_by_schema_keys(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort DataFrame by schema keys with numeric sorting for numeric-only columns.
 
@@ -1922,6 +1941,8 @@ class DatabaseManager:
         sort_cols = []
         sort_ascending = []
         temp_col_names = []
+        # Asked once per sort: the property re-reads the project config.
+        key_order = self.dataset_schema_key_order or {}
 
         for key in self.dataset_schema_keys:
             if key not in df.columns:
@@ -1937,7 +1958,7 @@ class DatabaseManager:
             # out. Undeclared levels rank after every declared one and then
             # sort among themselves by the rules below — which is also what
             # every other consumer of the declaration does (scidb.schema_order).
-            declared = (self.dataset_schema_key_order or {}).get(key)
+            declared = key_order.get(key)
             if declared:
                 df[temp_col_name] = _declared_rank_column(col, declared)
                 sort_cols.append(temp_col_name)
@@ -4808,9 +4829,23 @@ class DatabaseManager:
             key: A schema key name (e.g. "subject", "session")
 
         Returns:
-            Sorted list of distinct non-null values for that key
+            Distinct non-null values for that key: the levels declared in the
+            project's ``[schema_keys]`` first, in that order, then the rest in
+            the database's own (sorted) order.
+
+        The declared order applies here, and not only to loaded frames,
+        because this is where ``for_each(subject=[], session=[])`` gets its
+        levels — so it decides the iteration order, and therefore the row
+        order of every table ``for_each`` hands back, and the GUI's level lists.
         """
-        return self._duck.distinct_schema_values(key)
+        from .schema_order import order_levels
+
+        return order_levels(
+            key,
+            self._duck.distinct_schema_values(key),
+            declared=self.dataset_schema_key_order or {},
+            fallback=lambda values: values,
+        )
 
     def distinct_schema_combinations(self, keys: list[str]) -> list[tuple]:
         """Return all distinct combinations for multiple schema keys.

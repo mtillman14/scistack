@@ -213,6 +213,20 @@ class ScidbSource(BaseSource):
         values = [str(row[0]) for row in rows]
         return self._ordered(key, values)
 
+    def _cache_generation(self):
+        """The declared ``[schema_keys]`` level order, as a hashable value.
+
+        Every table this source builds bakes it in (``_ordered`` ->
+        ``LongTable.level_order``), and the table cache is keyed on content
+        fingerprints that an edit to scistack.toml does not move. Read live from
+        the DatabaseManager, which re-reads the config itself.
+        """
+        order = getattr(self._db, "dataset_schema_key_order", None) or {}
+        return tuple((key, tuple(levels)) for key, levels in sorted(order.items()))
+
+    def _generation_label(self) -> str:
+        return "declared [schema_keys] level order"
+
     def _ordered(self, key: str, values: list[str]) -> list[str]:
         """
         Order a factor's levels.
@@ -276,7 +290,7 @@ class ScidbSource(BaseSource):
         picker opening twice costs one query.
         """
         key = ("__variants__", variable)
-        memo = self._table_cache()
+        memo = self._current_table_cache()
         label = f"variant_table({variable})"
         if key in memo:
             Log.info("%s: table cache HIT", label, layer=LAYER)
@@ -598,7 +612,7 @@ class ScidbSource(BaseSource):
             factor_depths=group_depths,
             # The variable's own schema depth, outermost first — the nesting
             # that decides which keys a fan-out has to iterate together and in
-            # which order (roles.iterate_ancestors / roles.fanout_keys).
+            # which order (roles.fanout_keys).
             schema_levels=levels,
         )
         Log.debug(

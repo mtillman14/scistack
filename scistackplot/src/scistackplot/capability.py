@@ -2,10 +2,12 @@
 Which plot kinds are available, and which one to pick by default.
 
 This is the single rule behind two of the requirements that look separate:
-"different data types get different default plots", and "iterating over a
-higher schema level unlocks more summative plot types". Both fall out of one
-observation — a distribution needs replicates, and replicates exist only when
-some factor is left FREE (not mapped to a channel, not collapsed).
+"different data types get different default plots", and "collapsing a factor
+unlocks the summative plot types". Both fall out of one observation — a
+distribution needs a SAMPLE, and a sample exists only when some factor is
+collapsed: the outermost collapsed key's levels, after every inner collapse,
+are what a box, a violin or an error band is drawn over
+(docs/claude/grouping-and-collapse.md).
 
 The GUI must render only what ``available_plots`` returns. Plot policy lives
 here, not in TypeScript (CLAUDE.md NOTE 3).
@@ -15,113 +17,109 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from .roles import (
+    collapse_order,
+    complete_assignment,
+    grouping_layers,
+    has_sample,
+    overlay_granularity,
+    overlay_join,
+    overlay_steps,
+    overlay_unavailable,
+    kind_requirement,
+    role_for_new_grouping,
+    roles_for_kind,
+    sample_key,
+)
 from .shape import Shape
-from .spec import SCALAR_KINDS, PlotKind, PlotSpec, Role
+from .spec import MAX_X_LAYERS, SCALAR_KINDS, PlotKind, PlotSpec, Role
 from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, LongTable
 
 #: Kinds that summarize several rows per x position into one mark.
 DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.BAND)
 
-#: What each role is CALLED, per measure shape.
-#:
-#: The role names are the library's vocabulary; these are the user's — and the
-#: two are kept the SAME wherever a user has to search for one (see the FREE
-#: entry in _ROLE_LABELS). What varies by shape is what a role DOES: "Average
-#: over" describes a table, and a user looking at 1-D data is looking at
-#: traces, so AGGREGATE is renamed for them. Reported by the backend rather
-#: than hardcoded in the panel so the words and the behaviour stay together
-#: (CLAUDE.md NOTE 3); the per-shape explanation is _ROLE_HINTS_BY_SHAPE.
-#:
-#: Only the entries that differ from :data:`_ROLE_LABELS` need listing.
-_ROLE_LABELS_BY_SHAPE: dict[Shape, dict[Role, str]] = {
-    Shape.SERIES_1D: {
-        Role.AGGREGATE: "Average into one line",
-    },
-}
+#: Kinds that cannot be drawn without a sample — see ``roles.kind_requirement``,
+#: which is the one statement of what each kind needs. BAR is deliberately NOT
+#: here: a bar of single values (no error bar) is a legitimate figure, and the
+#: opening state of a scalar measure.
+SAMPLE_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAND)
 
-#: The order the dropdown lists roles in — NOT ``Role``'s declaration order,
-#: which is grouped by what each role does to the data and puts "Separate
-#: figures" first. This is the order a user reaches for: the channels that
-#: place data on the page, then the two that reduce it.
+#: The order the Factors dropdown lists roles in: the same verb at decreasing
+#: granularity — figure, panel — then the one option that removes levels
+#: instead of placing them. GROUP is absent on purpose: a factor is moved into
+#: the Grouping section, not assigned "group" from a dropdown (see
+#: ``factors_menu``).
 ROLE_ORDER: tuple[Role, ...] = (
-    Role.X,
-    Role.COLOR,
-    Role.FACET,
     Role.ITERATE,
-    Role.AGGREGATE,
-    Role.FREE,
+    Role.FACET,
+    Role.COLLAPSE,
 )
 
-#: The roles the **Factors** control offers. X is absent on purpose.
-#:
-#: "Which factors group the x axis, and in what order" is one question with two
-#: halves, and it used to be asked in two places that could not see each other:
-#: a per-factor dropdown for membership, and a separate "X grouping" list for
-#: the order — which only appeared once two factors already held X, so it was
-#: unreachable until the user had found the dropdown first. Both halves now live
-#: in the Grouping section, and the x axis is chosen in exactly one place.
-FACTOR_ROLE_ORDER: tuple[Role, ...] = tuple(r for r in ROLE_ORDER if r is not Role.X)
-
+#: What each role is CALLED. The role names are the library's vocabulary;
+#: these are the user's — reported by the backend rather than hardcoded in the
+#: panel so the words and the behaviour stay together (CLAUDE.md NOTE 3).
+#: "Separate figures" / "Separate panels" read as a family with the Grouping
+#: section's "one bar per…"; "Collapse" says what happens to the levels.
 _ROLE_LABELS: dict[Role, str] = {
-    Role.X: "X axis",
-    Role.COLOR: "Color",
-    Role.FACET: "Facet",
+    Role.GROUP: "Group",
+    Role.FACET: "Separate panels",
     Role.ITERATE: "Separate figures",
-    Role.AGGREGATE: "Average over",
-    # "Free", not "Replicates" / "One line each". The role's own name, kept the
-    # same for every shape, because a user hunting for it in the dropdown has
-    # read it in the docs, in a saved spec's TOML and in an exported `roles=`
-    # argument — and found nothing matching (user, 2026-09-13). It is also the
-    # role whose meaning a noun cannot carry on its own: what a FREE factor
-    # does depends on the plot kind (one line each, a bar's error bars, a box's
-    # distribution), which is what the HINT is for, per shape.
-    Role.FREE: "Free",
+    Role.COLLAPSE: "Collapse (average)",
 }
 
 _ROLE_HINTS: dict[Role, str] = {
-    Role.X: "Position along the x axis",
-    Role.COLOR: "One coloured series per level",
+    Role.GROUP: "One mark per level — set in the Grouping section",
     Role.FACET: "One subplot per level — arrange them under Layout",
     Role.ITERATE: "One whole figure per level",
-    Role.AGGREGATE: "Collapse to the mean first, so this factor does NOT "
-    "widen the error bars",
-    Role.FREE: "Keep each level as its own observation, so this factor DOES "
-    "widen the error bars",
+    Role.COLLAPSE: "Averaged away. The LAST collapsed key (outermost) is the "
+    "sample: its levels are what error bars, boxes and bands are drawn over",
 }
 
-#: Stated as a CONTRAST, and deliberately in the same terms on both sides.
-#:
-#: These are the two roles a user cannot tell apart from the labels alone —
-#: "Average over" and "Free" both sound like "not on an axis", and the earlier
-#: hints described each one on its own, both using the word "average" (user,
-#: 2026-09-13). The thing that actually distinguishes them is what they do to
-#: the ERROR BARS: with schema [subject, trial] and a band, trial=AGGREGATE
-#: averages each subject's trials into one trace and the band is then the
-#: spread across SUBJECTS; trial=FREE pools every subject-trial trace, so the
-#: band mixes within- and between-subject variability and a subject with more
-#: trials weighs more. Same plot kind, same data, different published numbers —
-#: which is why the plot-kind control cannot express this and both roles exist
-#: (`reduce._collapse_aggregates` runs before `_summarize`; `has_replicates`
-#: is true only when something is FREE, which is the part the kind list DOES
-#: express — collapse everything and the summary kinds disappear).
+#: Only the entries that differ from the defaults need listing. A user looking
+#: at 1-D data is looking at traces, so the collapse is described as one.
 _ROLE_HINTS_BY_SHAPE: dict[Shape, dict[Role, str]] = {
     Shape.SERIES_1D: {
-        Role.AGGREGATE: "Average these traces together sample by sample "
-        "first, so this factor does NOT widen the error band",
-        Role.FREE: "One trace per level, each its own observation — so this "
-        "factor DOES widen the error band",
+        Role.COLLAPSE: "Traces averaged together sample by sample. The LAST "
+        "collapsed key (outermost) is the sample the error band is drawn over",
     },
+}
+
+#: What the Grouping section's list MEANS for each kind, in the words the
+#: figure shows. The list is the user's (innermost first); the reading is the
+#: kind's (``roles.grouping_layers``); this is the reading, said out loud.
+_GROUPING_HINTS: dict[PlotKind, str] = {
+    PlotKind.BAR: "One bar per combination — first entry innermost",
+    PlotKind.BOX: "One box per combination — first entry innermost",
+    PlotKind.VIOLIN: "One violin per combination — first entry innermost",
+    PlotKind.STRIP: "One point per combination — first entry innermost",
+    PlotKind.SCATTER: "One point per combination — first entry innermost",
+    PlotKind.SPAGHETTI: "First entry = the lines (one per level); the rest are "
+    "the x positions each line joins across",
+    PlotKind.LINE: "One line per combination",
+    PlotKind.BAND: "One band per combination",
+    PlotKind.HEATMAP: "A heatmap cannot be grouped — separate panels or figures",
 }
 
 
 def role_label(role: Role, shape: Shape) -> str:
     """What to call this role for a measure of this shape."""
-    return _ROLE_LABELS_BY_SHAPE.get(shape, {}).get(role) or _ROLE_LABELS[role]
+    return _ROLE_LABELS[role]
 
 
 def role_hint(role: Role, shape: Shape) -> str:
     """The one-line explanation under the label."""
     return _ROLE_HINTS_BY_SHAPE.get(shape, {}).get(role) or _ROLE_HINTS[role]
+
+
+def grouping_hint(kind: PlotKind, shape: Shape, has_x_measure: bool = False) -> str:
+    """What the grouping list means for this kind, for the section header."""
+    if shape is Shape.MATRIX_2D:
+        return _GROUPING_HINTS[PlotKind.HEATMAP]
+    if has_x_measure and kind is not PlotKind.LINE:
+        return "One point set per combination (x comes from the x measure)"
+    if shape is Shape.SERIES_1D and kind in (PlotKind.LINE, PlotKind.BAND):
+        return _GROUPING_HINTS[kind]
+    return _GROUPING_HINTS.get(kind, "One mark per combination — first entry innermost")
 
 
 def _validation_error(spec: PlotSpec, table: LongTable) -> str | None:
@@ -135,6 +133,17 @@ def _validation_error(spec: PlotSpec, table: LongTable) -> str | None:
     return None
 
 
+def _candidate(spec: PlotSpec, factor: str, role: Role) -> PlotSpec:
+    """``spec`` with ``factor`` moved to ``role`` — and the colour dropped if
+    the factor was the coloured layer and is leaving the grouping, so the
+    candidate is judged on the role and not on a colour that no longer names
+    a layer."""
+    color = spec.color
+    if role is not Role.GROUP and color == factor:
+        color = None
+    return replace(spec, roles={**spec.roles, factor: role}, color=color)
+
+
 def role_options(
     spec: PlotSpec,
     table: LongTable,
@@ -146,13 +155,11 @@ def role_options(
 
     **Derived by asking** :func:`~scistackplot.roles.validate`, one candidate
     spec per role, rather than by restating its rules. That is the whole design:
-    the panel used to offer all six roles unconditionally while ``validate``
+    the panel used to offer every role unconditionally while ``validate``
     refused several of them, so a user could pick an option and be told it was
-    impossible — X on a 1-D measure, a second factor on COLOR, X when an
-    ``x_measure`` already supplies the axis. Any rule expressed here in parallel
-    would be a second copy free to drift from the one that actually decides.
-    Asking cannot drift, and a new rule in ``validate`` reaches the panel for
-    free.
+    impossible. Any rule expressed here in parallel would be a second copy free
+    to drift from the one that actually decides. Asking cannot drift, and a
+    new rule in ``validate`` reaches the panel for free.
 
     Cheap enough to do per factor: ``validate`` compares names, shapes and
     roles and never touches the frame.
@@ -170,8 +177,7 @@ def role_options(
 
     options = []
     for role in roles if roles is not None else ROLE_ORDER:
-        candidate = replace(spec, roles={**spec.roles, factor: role})
-        error = _validation_error(candidate, table)
+        error = _validation_error(_candidate(spec, factor, role), table)
         blocked = error is not None and error != base_error
         options.append(
             {
@@ -186,34 +192,27 @@ def role_options(
     return options
 
 
-def has_replicates(roles: dict[str, Role]) -> bool:
-    """
-    True when some factor's levels survive as multiple rows per plotted cell.
-
-    AGGREGATE deliberately does not count: it collapses its factor to a mean
-    *before* plotting, so it removes replicates rather than providing them.
-    Its purpose is noise reduction ("average over trials"), after which a
-    remaining FREE factor (e.g. subject) is what supplies the distribution.
-    """
-    return any(role is Role.FREE for role in roles.values())
-
-
 def available_plots(
     shape: Shape,
     roles: dict[str, Role],
     *,
     has_x_measure: bool = False,
     collapsible: bool = False,
+    n_groups: int = 0,
 ) -> list[PlotKind]:
     """Plot kinds that can be rendered for this shape and role assignment.
 
     ``collapsible`` says a 1-D measure may be reduced to one value per record
-    first (:mod:`scistackplot.collapse`), which makes the scalar kinds
-    selectable for it — picking one IS the request to collapse.
+    first (:mod:`scistackplot.cell`), which makes the scalar kinds selectable
+    for it — picking one IS the request to collapse the cells.
 
     ``shape`` must then be the **raw** shape, not the effective one. Computing
-    this from a table whose measure has already been collapsed would drop LINE
-    and BAND the moment a violin was selected, leaving no way back to a line.
+    this from a table whose measure has already been cell-collapsed would drop
+    LINE and BAND the moment a violin was selected, leaving no way back to a
+    line.
+
+    ``n_groups`` is how many grouping layers the spec has — spaghetti needs
+    two (the lines, and the positions they join across).
     """
     if shape is Shape.MATRIX_2D:
         return [PlotKind.HEATMAP]
@@ -223,17 +222,23 @@ def available_plots(
         # a connecting line when the x measure is ordered.
         return [PlotKind.SCATTER, PlotKind.LINE]
 
-    replicates = has_replicates(roles)
-
     def scalar_kinds() -> list[PlotKind]:
-        kinds = [PlotKind.SCATTER, PlotKind.STRIP]
-        if replicates:
-            kinds.extend([PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR])
-        return kinds
+        return [
+            kind
+            for kind in (
+                PlotKind.SCATTER,
+                PlotKind.STRIP,
+                PlotKind.BAR,
+                PlotKind.SPAGHETTI,
+                PlotKind.BOX,
+                PlotKind.VIOLIN,
+            )
+            if kind_requirement(kind, Shape.SCALAR, roles, n_groups) is None
+        ]
 
     if shape is Shape.SERIES_1D:
         kinds = [PlotKind.LINE]
-        if replicates:
+        if kind_requirement(PlotKind.BAND, shape, roles, n_groups) is None:
             kinds.append(PlotKind.BAND)
         # The union, not a switch: the 1-D kinds draw the samples and the
         # scalar ones draw a summary of them, and both are legitimate views of
@@ -253,25 +258,26 @@ def default_plot(
     roles: dict[str, Role],
     *,
     has_x_measure: bool = False,
+    n_groups: int = 0,
 ) -> PlotKind | None:
     """
     The kind to select when a table is first opened.
 
-    scalar → scatter, or box once there are replicates to distribute;
+    scalar → scatter, or box once there is a sample to distribute;
     1-D → one line per observation, or a mean line with a shaded error region
-    once there are replicates; 2-D → heatmap.
+    once there is a sample; 2-D → heatmap.
     """
-    kinds = available_plots(shape, roles, has_x_measure=has_x_measure)
+    kinds = available_plots(shape, roles, has_x_measure=has_x_measure, n_groups=n_groups)
     if not kinds:
         return None
 
-    replicates = has_replicates(roles)
+    sample = has_sample(roles)
     if has_x_measure:
         return PlotKind.SCATTER
     if shape is Shape.SERIES_1D:
-        return PlotKind.BAND if replicates else PlotKind.LINE
+        return PlotKind.BAND if sample else PlotKind.LINE
     if shape is Shape.SCALAR:
-        return PlotKind.BOX if replicates else PlotKind.SCATTER
+        return PlotKind.BOX if sample else PlotKind.SCATTER
     return kinds[0]
 
 
@@ -281,27 +287,29 @@ def why_unavailable(
     roles: dict[str, Role],
     *,
     collapsible: bool = False,
+    n_groups: int = 0,
 ) -> str | None:
     """
     Explain a kind's absence, for GUI tooltips on disabled options.
 
-    Returns None when the kind IS available. ``collapsible`` carries the same
-    meaning as in :func:`available_plots` and must be passed the same way, or a
-    kind the panel offers would come with a reason it is refused.
+    Returns None when the kind IS available. ``collapsible`` and ``n_groups``
+    carry the same meaning as in :func:`available_plots` and must be passed
+    the same way, or a kind the panel offers would come with a reason it is
+    refused.
     """
-    if kind in available_plots(shape, roles, collapsible=collapsible):
+    if kind in available_plots(shape, roles, collapsible=collapsible, n_groups=n_groups):
         return None
     if shape is Shape.MATRIX_2D:
         return "2-D measures render as a heatmap."
-    if kind in DISTRIBUTION_KINDS and not has_replicates(roles):
-        return (
-            "Needs replicates: leave at least one factor 'free' (unassigned) so "
-            "each x position has several values to summarize."
-        )
+    # Shape mismatches first: a scalar band is refused for being a band on a
+    # scalar, not for lacking a sample it could never use.
     if kind is PlotKind.BAND and shape is not Shape.SERIES_1D:
         return "Error bands apply to 1-D measures."
     if kind is PlotKind.LINE and shape is Shape.SCALAR:
         return "Lines need a 1-D measure or a second measure for the x axis."
+    requirement = kind_requirement(kind, shape, roles, n_groups)
+    if requirement is not None:
+        return requirement
     return f"Not available for a {shape} measure."
 
 
@@ -313,9 +321,8 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     which kinds are selectable, why the others are not, and what the default
     would be for the current role assignment.
     """
-    from .collapse import apply_collapse, collapses
+    from .cell import apply_cell_collapse, cell_collapses
     from .groups import apply_level_groups
-    from .roles import complete_roles
     from .variants import apply_variant_sets, strip_answered_roles
 
     # The kinds and roles reported must be the ones the figure will actually be
@@ -333,49 +340,59 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     # raw shape. Computing the kind list from ``collapsed`` would drop LINE and
     # BAND as soon as a violin was selected, stranding the user on the scalar
     # kinds with no way back (docs/claude/measure-shape-and-collapse.md).
-    collapsed = apply_collapse(spec, derived)
-    roles = complete_roles(spec, collapsed)
+    collapsed = apply_cell_collapse(spec, derived)
+    assignment = complete_assignment(spec, collapsed)
+    roles = assignment.roles
     raw_shape = derived.shape_of(spec.y_measure)
     shape = collapsed.shape_of(spec.y_measure)
-    collapsing = collapses(spec, derived)
+    collapsing = cell_collapses(spec, derived)
     collapsible = raw_shape is Shape.SERIES_1D and spec.x_measure is None
     has_x_measure = spec.x_measure is not None
 
-    # Each kind is judged against THE ROLES IT WOULD BE APPLIED WITH, which is
-    # its own suggestion when it has one and the current roles otherwise.
+    # Each kind is judged against THE ASSIGNMENT IT WOULD BE APPLIED WITH,
+    # which is its own suggestion when it has one and the current one
+    # otherwise.
     #
     # Without this the re-roll is unreachable from the state it was written for.
-    # A 1-D measure opens with every key iterated, so there are no replicates,
-    # so box/violin/bar are refused — and the user cannot click the kind whose
-    # selection would have supplied the replicates. Judging a kind by the roles
-    # it brings with it closes that loop: clicking Violin both frees a factor
-    # and draws the distribution, in one click.
+    # A 1-D measure opens with every key iterated, so there is no sample, so
+    # box/violin are refused — and the user cannot click the kind whose
+    # selection would have supplied the sample. Judging a kind by the
+    # assignment it brings with it closes that loop: clicking Violin both
+    # collapses a factor and draws the distribution, in one click.
     entries = []
     for kind in PlotKind:
-        suggested = _suggested_role_map(spec, derived, kind)
-        kind_roles = suggested or roles
+        suggested = roles_for_kind(spec, derived, kind)
+        kind_roles = suggested.roles if suggested else roles
+        kind_groups = suggested.groups if suggested else assignment.groups
         allowed_here = available_plots(
-            raw_shape, kind_roles, has_x_measure=has_x_measure, collapsible=collapsible
+            raw_shape,
+            kind_roles,
+            has_x_measure=has_x_measure,
+            collapsible=collapsible,
+            n_groups=len(kind_groups),
         )
         entries.append(
             {
                 "kind": str(kind),
                 "available": kind in allowed_here,
                 "reason": why_unavailable(
-                    kind, raw_shape, kind_roles, collapsible=collapsible
+                    kind,
+                    raw_shape,
+                    kind_roles,
+                    collapsible=collapsible,
+                    n_groups=len(kind_groups),
                 ),
-                # Whether picking this kind collapses the measure, so the panel
-                # can say so on the option rather than only after the click.
+                # Whether picking this kind collapses the measure's CELLS, so
+                # the panel can say so on the option rather than only after
+                # the click.
                 "collapses": collapsible and kind in SCALAR_KINDS,
-                # The roles this kind would open with, when selecting it should
-                # re-default them (``roles_for_kind``). Carried on the option so
-                # the GUI applies it SYNCHRONOUSLY with the click: an RPC would
-                # race the panel's resolve queue and could land after the user
-                # had set a role, overwriting the one decision the rule
-                # promises never to touch.
-                "roles": None
-                if suggested is None
-                else {name: str(role) for name, role in suggested.items()},
+                # The assignment this kind would open with, when selecting it
+                # should re-default it (``roles_for_kind``). Carried on the
+                # option so the GUI applies it SYNCHRONOUSLY with the click: an
+                # RPC would race the panel's resolve queue and could land after
+                # the user had set a role, overwriting the one decision the
+                # rule promises never to touch.
+                "assignment": None if suggested is None else suggested.to_dict(),
             }
         )
     # Derived from the entries rather than computed a second time: two lists
@@ -383,23 +400,43 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     allowed = [PlotKind(entry["kind"]) for entry in entries if entry["available"]]
 
     return {
-        # What the FIGURE is — scalar while a collapse is in effect. The panel
-        # keys its scalar-only controls (the measure range filter) off this,
-        # and they apply to the collapsed value, which is the only thing they
-        # could mean.
+        # What the FIGURE is — scalar while a cell collapse is in effect. The
+        # panel keys its scalar-only controls (the measure range filter) off
+        # this, and they apply to the collapsed value, which is the only thing
+        # they could mean.
         "shape": str(shape),
-        # What the DATA is. The two differ only during a collapse, and the badge
-        # shows both so a figure never silently claims to be drawing samples.
+        # What the DATA is. The two differ only during a cell collapse, and the
+        # badge shows both so a figure never silently claims to be drawing
+        # samples.
         "raw_shape": str(raw_shape),
-        "collapse": {
-            # Whether this variable can be collapsed at all — i.e. whether the
-            # statistic dropdown has anything to control.
+        "cell_collapse": {
+            # Whether this variable can be cell-collapsed at all — i.e. whether
+            # the statistic dropdown has anything to control.
             "applies": collapsible,
             "active": collapsing,
-            "statistic": str(spec.collapse_statistic),
+            "statistic": str(spec.cell_statistic),
         },
-        "has_replicates": has_replicates(roles),
-        "default": str(default_plot(shape, roles, has_x_measure=has_x_measure) or ""),
+        # The collapse chain as the figure will run it, and its sample — so
+        # the panel can say "error bars: SD across subject" next to the
+        # statistic controls instead of leaving the user to work it out.
+        "collapse": {
+            "order": collapse_order(roles, collapsed),
+            "sample": sample_key(roles, collapsed),
+            "pooled": spec.aggregate.pooled,
+        },
+        "has_sample": has_sample(roles),
+        # "Show sample": what the checkboxes can offer (the collapsed keys, in
+        # chain order, deepest first), what is ticked and what the ticks
+        # imply, the sentence saying what one point is, and the join
+        # decision with its reason — all decided in `roles`, so the panel
+        # displays and never re-derives.
+        "sample_overlay": sample_overlay_summary(spec, roles, collapsed, shape),
+        "default": str(
+            default_plot(
+                shape, roles, has_x_measure=has_x_measure, n_groups=len(assignment.groups)
+            )
+            or ""
+        ),
         "available": [str(k) for k in allowed],
         "kinds": entries,
         "roles": {name: str(role) for name, role in roles.items()},
@@ -409,107 +446,120 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     }
 
 
-def _suggested_role_map(spec, table, kind) -> "dict[str, Role] | None":
-    """The role assignment selecting ``kind`` should apply.
+def sample_overlay_summary(
+    spec: PlotSpec, roles: dict[str, Role], table: LongTable, shape: Shape
+) -> dict:
+    """The "Show sample" section of the capability report.
 
-    None means "keep the current roles", which is the common answer — see
-    :func:`~scistackplot.roles.roles_for_kind` for when it is not.
+    ``factors`` lists every collapsed key in collapse order (deepest first —
+    the order the checkboxes read best in, raw data at the top), each with
+    ``checked`` (named in ``spec.show_sample``) and ``shown`` (drawn as part
+    of a point's identity, which a deeper tick implies for every shallower
+    key). ``ignored`` are ticked names that are not collapsed right now.
     """
-    from .roles import roles_for_kind
-
-    return roles_for_kind(spec, table, kind)
+    reason = overlay_unavailable(spec, roles, shape)
+    order = collapse_order(roles, table)
+    steps = overlay_steps(spec, roles, table) if reason is None else None
+    join = overlay_join(spec, roles, table, steps) if steps is not None else None
+    shown = set(steps.shown) if steps is not None else set()
+    return {
+        "available": reason is None,
+        "reason": reason,
+        "factors": [
+            {
+                "name": name,
+                "checked": name in spec.show_sample,
+                "shown": name in shown,
+            }
+            for name in order
+        ],
+        "ignored": [
+            name for name in spec.show_sample if name not in order and table.has_factor(name)
+        ],
+        "shown": list(steps.shown) if steps is not None else [],
+        "averaged": list(steps.averaged) if steps is not None else [],
+        "join": {
+            "join": join.join if join is not None else False,
+            "automatic": join.automatic if join is not None else True,
+            "reason": join.reason if join is not None else "",
+            "setting": spec.join_sample,
+        },
+        "granularity": overlay_granularity(steps, join) if steps is not None else "",
+    }
 
 
 def factors_menu(spec: PlotSpec, table: LongTable, factor: str) -> list[dict]:
     """What the **Factors** dropdown lists for one factor.
 
-    :func:`role_options` restricted to :data:`FACTOR_ROLE_ORDER`, plus X **only
-    when this factor already holds it**. A ``<select>`` whose value is not among
-    its options renders blank, and a scalar table opens with one factor on X by
-    default (``roles.default_roles``) — so dropping X unconditionally would
-    empty the control for exactly the factor the user is most likely to look at
-    first.
-
-    That X is then reported **unavailable even though it is perfectly legal**,
-    which is the one place this report says something ``validate`` does not.
-    The difference is deliberate and is presentation, not validity: X is listed
-    here so the control can display its own value, while *setting* it belongs
-    to the Grouping section. Keeping it selectable in both places is how the
-    two controls would start disagreeing — the thing merging them was meant to
-    stop.
+    :func:`role_options` over :data:`ROLE_ORDER`, plus GROUP **only when this
+    factor already holds it**. A ``<select>`` whose value is not among its
+    options renders blank, and a factor the Grouping section holds still
+    appears in this list (greyed, with the reason) so the control can display
+    its own value — while *setting* GROUP belongs to the Grouping section.
+    Keeping it selectable in both places is how the two controls would start
+    disagreeing.
     """
     roles = (
-        (Role.X, *FACTOR_ROLE_ORDER)
-        if spec.roles.get(factor) is Role.X
-        else FACTOR_ROLE_ORDER
+        (Role.GROUP, *ROLE_ORDER) if spec.roles.get(factor) is Role.GROUP else ROLE_ORDER
     )
     options = role_options(spec, table, factor, roles=roles)
     for option in options:
-        if option["role"] == str(Role.X):
+        if option["role"] == str(Role.GROUP):
             option["available"] = False
             option["reason"] = (
-                "The x axis is grouped in the Grouping section — untick this "
-                "factor there to take it off the axis."
+                "This factor groups the marks — it is managed in the Grouping "
+                "section; remove it there to give it another role."
             )
     return options
 
 
 def grouping_summary(spec: PlotSpec, table: LongTable) -> dict:
-    """Whether the x axis can be grouped by factors, and how it is grouped now.
+    """The Grouping section's whole data model.
 
-    A factor on the x axis IS a categorical grouping: ``xaxis.plan_x_axis``
-    turns the observed level combinations into leaf positions with spacer
-    categories between groups, which is what lets box, violin, bar and strip
-    place themselves exactly as they already do. A continuous x never comes
-    from a factor — it comes from ``x_measure``, or for 1-D data from the
-    within-observation index — which is why this is offered for SCALAR measures
-    and refused, with a reason, for everything else.
+    ``layers`` is the user's list, innermost first, membership and order
+    reconciled the same way the figure does it (``PlotSpec.ordered_groups``)
+    so the control cannot show an order the renderer disagrees with.
+    ``ticks`` / ``series`` are how the current kind READS that list
+    (``roles.grouping_layers``: nested x ticks, outermost first, or series
+    ids), and ``hint`` says so in words. ``labelled_layers`` counts against
+    ``max_labelled_layers`` — the tick layers minus the coloured one.
     """
-    from .roles import role_for_new_grouping
-    from .spec import MAX_X_LAYERS
-
-    reason = x_axis_refusal(spec, table)
+    shape = table.shape_of(spec.y_measure)
+    assignment = complete_assignment(spec, table)
+    layers = grouping_layers(spec, table, assignment.roles)
+    reason = grouping_refusal(spec, table)
     return {
         "available": reason is None,
         "reason": reason,
-        # Membership and order reconciled the same way the figure does it, so
-        # the control cannot show an order the renderer disagrees with.
-        "layers": spec.ordered_x_layers(depths=table.factor_depths),
-        "max_layers": MAX_X_LAYERS,
+        "layers": list(assignment.groups),
+        "color": assignment.color,
+        "ticks": layers.ticks,
+        "series": layers.series,
+        "labelled_layers": len(layers.labelled_ticks),
+        "max_labelled_layers": MAX_X_LAYERS,
+        "hint": grouping_hint(spec.kind, shape, spec.x_measure is not None),
         # The role a grouping ticked RIGHT NOW would take, so the panel applies
         # one rule rather than inventing a second (`roles.role_for_new_grouping`
-        # says why a tick takes a role at all). It does not depend on which
-        # grouping: the factor is not in the table yet, so the answer is a
-        # property of the spec — which is why it is published once here instead
-        # of costing a round trip per checkbox.
+        # says why). It does not depend on which grouping: the factor is not in
+        # the table yet, so the answer is a property of the spec — which is why
+        # it is published once here instead of costing a round trip per
+        # checkbox.
         "new_grouping_role": str(role_for_new_grouping(spec, table)),
     }
 
 
-def x_axis_refusal(spec: PlotSpec, table: LongTable) -> str | None:
-    """Why factors may not group the x axis, or None when they may.
+def grouping_refusal(spec: PlotSpec, table: LongTable) -> str | None:
+    """Why factors may not group this measure at all, or None when they may.
 
-    Its own function because :func:`~scistackplot.roles.role_for_new_grouping`
-    asks the same question, and having it ask ``grouping_summary`` made the two
-    call each other without end — that summary now REPORTS the new grouping's
-    role. One predicate, two callers, no cycle.
+    Only a 2-D measure refuses: a heatmap's axes come from the matrix. A 1-D
+    measure and an x-y plot group happily — each layer is a series rather than
+    a tick, which ``grouping_summary.hint`` says.
     """
     shape = table.shape_of(spec.y_measure)
-    if spec.x_measure is not None:
-        return (
-            f"{spec.x_measure!r} already supplies the x axis, so it is a "
-            f"measured value rather than groups of records."
-        )
-    if shape is Shape.SERIES_1D:
-        return (
-            "This measure is 1-D: its x axis is the within-observation index "
-            "(time, or percent of cycle). Separate the groups with colour or "
-            "facets instead."
-        )
     if shape is Shape.MATRIX_2D:
         return "This measure is 2-D: a heatmap's axes come from the matrix."
-    if shape is not Shape.SCALAR:
-        return f"Grouping the x axis needs a scalar measure; this one is {shape}."
+    if shape not in (Shape.SCALAR, Shape.SERIES_1D):
+        return f"Grouping needs a scalar or 1-D measure; this one is {shape}."
     return None
 
 
@@ -528,10 +578,10 @@ def factor_summary(spec: PlotSpec, derived: LongTable) -> list[dict]:
 
     ``roles`` is what the panel's Factors dropdown renders: each role labelled
     for this measure's shape, flagged available or not, and carrying
-    ``validate``'s own message when not (:func:`role_options`). X is not among
-    them — see :data:`FACTOR_ROLE_ORDER` — so ``x_available``/``x_reason``
-    report separately whether this factor may group the x axis, which is the
-    Grouping section's question.
+    ``validate``'s own message when not (:func:`role_options`). GROUP is not
+    among them — see :data:`ROLE_ORDER` — so ``group_available`` /
+    ``group_reason`` report separately whether this factor may join the
+    grouping, which is the Grouping section's question.
     """
     from .reduce import apply_filters
 
@@ -539,9 +589,9 @@ def factor_summary(spec: PlotSpec, derived: LongTable) -> list[dict]:
     for entry in factors:
         name = entry["name"]
         entry["roles"] = factors_menu(spec, derived, name)
-        on_x = role_options(spec, derived, name, roles=(Role.X,))[0]
-        entry["x_available"] = on_x["available"]
-        entry["x_reason"] = on_x["reason"]
+        as_group = role_options(spec, derived, name, roles=(Role.GROUP,))[0]
+        entry["group_available"] = as_group["available"]
+        entry["group_reason"] = as_group["reason"]
 
     if not spec.filters and spec.location_filter.is_empty():
         # Nothing filtered: everything is selected, and no frame scan is needed

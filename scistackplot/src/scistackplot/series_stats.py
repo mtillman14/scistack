@@ -209,7 +209,7 @@ def collapse_cells(arrays: list[np.ndarray], statistic: Statistic) -> np.ndarray
 
     The reduction behind "plot this 1-D variable as a violin" — a per-trial
     vector of step lengths becomes one step length per trial, after which the
-    measure is an ordinary scalar (``collapse.apply_collapse``,
+    measure is an ordinary scalar (``cell.apply_cell_collapse``,
     ``docs/claude/measure-shape-and-collapse.md``).
 
     Unlike everything else in this module this reduces ALONG each cell rather

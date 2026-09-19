@@ -180,7 +180,9 @@ def test_series_keys_are_built_per_combination_not_per_row():
     )
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "subject"],
+        color="subject",
         kind=PlotKind.LINE,
     )
 

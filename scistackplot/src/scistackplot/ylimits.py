@@ -17,10 +17,10 @@ reduction happens, in one pass:
 * the drawn extent of a line/scatter/box/violin is the raw extent of the data,
   so for those it is a min/max over the unexploded arrays — 48 rows of numpy
   work for a figure set that would otherwise be 17 million;
-* a band or a bar draws ``centre ± spread``, and an AGGREGATE role draws
-  per-position means; both genuinely need the reduction — but only its
-  extremes, so it is one grouped pass with no panel frames, no series keys and
-  no sorting.
+* a band or a bar draws ``centre ± spread`` over the sample, and a collapse
+  chain draws means (the sample's own for scatter/line, the pre-collapsed rows
+  for box/violin); both genuinely need the reduction — but only its extremes,
+  so it is one grouped pass with no panel frames and no sorting.
 
 Both cover the whole fan-out at once, which is the point: paging through thirty
 subjects must not recompute anything.
@@ -77,24 +77,48 @@ class ExtentMode:
 
     #: BAND/BAR with an error band: the drawn extent is ``centre ± spread``.
     summary: bool
-    #: Any AGGREGATE role: the drawn values are per-position means, not the
-    #: observations. Raw extents would only be loose, but it is one path.
+    #: Any COLLAPSE role: the collapse chain runs before anything is drawn,
+    #: so the drawn values are means, not the observations. Raw extents would
+    #: only be loose, but it is one path.
     collapse: bool
+    #: The kind draws the SAMPLE's mean too (``roles.draws_sample_mean``):
+    #: scatter, strip, line. A box or violin draws the sample rows; a bar or
+    #: band summarises them. Part of the key because the same rows give
+    #: different extents per kind.
+    final_mean: bool
     #: BAR on a linear axis: bars rise from zero, so zero is always in view.
     #: Never on a log axis — there is no zero to rise from, and folding it in
     #: would put log10(0) on the axis.
     from_zero: bool
     #: Log y axis: only positive values can be drawn, and padding is geometric.
     log: bool
+    #: "Show sample" (``PlotSpec.show_sample``): the overlay's points are drawn
+    #: too, at a granularity the marks' chain never reaches (raw cycles over a
+    #: bar of subject means), so the limits must include them. The checked
+    #: names, when the kind can carry an overlay at all; ``()`` otherwise.
+    overlay: tuple[str, ...] = ()
 
     @classmethod
     def for_spec(cls, spec: PlotSpec, roles: dict[str, Role]) -> "ExtentMode":
+        from .roles import draws_sample_mean, has_sample, overlay_unavailable
+
+        sample = has_sample(roles)
         return cls(
             summary=spec.kind in (PlotKind.BAND, PlotKind.BAR)
             and spec.aggregate.error is not ErrorBand.NONE,
-            collapse=any(role is Role.AGGREGATE for role in roles.values()),
+            collapse=sample,
+            final_mean=sample and draws_sample_mean(spec.kind),
             from_zero=spec.kind is PlotKind.BAR and not spec.style.log_y,
             log=bool(spec.style.log_y),
+            # The shape is not known here; `_reduced_extents` skips a 1-D
+            # measure itself. A key that only misses the memo is cheap — a
+            # figure drawn inside limits that ignore its points is not.
+            overlay=(
+                tuple(spec.show_sample)
+                if spec.show_sample
+                and overlay_unavailable(spec, roles, Shape.SCALAR) is None
+                else ()
+            ),
         )
 
     @property
@@ -105,11 +129,13 @@ class ExtentMode:
     def describe(self) -> str:
         parts = ["summary" if self.summary else "raw"]
         if self.collapse:
-            parts.append("collapsed")
+            parts.append("collapsed" + (" to the mean" if self.final_mean else ""))
         if self.from_zero:
             parts.append("from zero")
         if self.log:
             parts.append("log")
+        if self.overlay:
+            parts.append("sample overlay " + ", ".join(self.overlay))
         return ", ".join(parts)
 
 
@@ -121,9 +147,9 @@ def eligible_scope(
     """The requested scope, less anything that cannot separate a y axis.
 
     Only ITERATE (one figure per level) and FACET (one panel per level) split
-    panels apart. A COLOR or FREE factor lives *inside* a panel, so asking to
-    separate limits by it asks one axis for two ranges — there is no figure that
-    could satisfy it.
+    panels apart. A GROUP or COLLAPSE factor lives *inside* a panel, so asking
+    to separate limits by it asks one axis for two ranges — there is no figure
+    that could satisfy it.
 
     Dropped entries are logged rather than raised on: a scope is a user's
     checkbox state, and a factor that was FACET a moment ago and is COLOR now
@@ -202,7 +228,11 @@ def limits_by_scope(
 
     mode = ExtentMode.for_spec(spec, roles)
     present = [name for name in scope if name in frame.columns]
-    if mode.reduces:
+    # A 2-D measure never runs the collapse chain (its panel is `matrix_mean`,
+    # which pools), so a collapsed factor on a heatmap leaves the raw extents
+    # — loose, but the matrices' own — rather than a chain that cannot average
+    # object cells.
+    if mode.reduces and table.shape_of(measure) is not Shape.MATRIX_2D:
         extents = _reduced_extents(frame, spec, table, roles, present, mode)
     else:
         extents = _raw_extents(frame, measure, present, mode)
@@ -481,17 +511,19 @@ def _reduced_extents(
 ) -> dict[tuple, tuple[float, float]]:
     """Extents of what a reducing plot draws, at the granularity it draws it.
 
-    Mirrors the figure path step for step — explode, the AGGREGATE collapse,
-    then ``centre ± spread`` per panel, per x position, per colour — and only
-    then folds the result into scope groups. The panel factors are ALWAYS in
-    the grouping whether or not the scope names them: the scope decides which
-    panels share a range, never what statistic each panel draws.
+    Mirrors the figure path step for step — explode, the collapse chain
+    (``roles.collapse_steps``: the pre-collapse, then the sample's mean for the
+    kinds that draw it), then ``centre ± spread`` per panel, per mark — and
+    only then folds the result into scope groups. The panel factors are ALWAYS
+    in the grouping whether or not the scope names them: the scope decides
+    which panels share a range, never what statistic each panel draws.
 
-    Deliberately narrow all the same: no panel frames, no series keys, no
+    Deliberately narrow all the same: no panel frames, no composed keys, no
     sorting, and one pass for the whole fan-out rather than one per figure.
     """
     # Imported here: `reduce` imports this module.
-    from .reduce import _collapse_aggregates
+    from .reduce import _collapse_levels
+    from .roles import collapse_steps, overlay_steps
 
     measure = spec.y_measure
     working = frame
@@ -504,23 +536,43 @@ def _reduced_extents(
     working = working.assign(**{measure: values}).dropna(subset=[measure])
     if working.empty:
         return {}
+    # The "Show sample" points, from the rows BEFORE the marks' chain — the
+    # same cut `reduce._build_figure` draws — folded by scope like any raw
+    # extent and unioned into whatever the marks' own extent comes to below.
+    overlay_extents: dict[tuple, tuple[float, float]] = {}
+    if mode.overlay and table.shape_of(measure) is Shape.SCALAR:
+        overlay = overlay_steps(spec, roles, table)
+        if overlay is not None:
+            shown = _collapse_levels(
+                working, overlay.averaged, spec, table, index_column,
+                pooled=spec.aggregate.pooled,
+            )
+            overlay_extents = _raw_extents(shown, measure, scope, mode)
+            Log.debug(
+                "y limits: sample overlay (%s) over %d row(s) -> %s",
+                " x ".join(overlay.shown), len(shown), overlay_extents, layer=LAYER,
+            )
     if mode.collapse:
-        working = _collapse_aggregates(working, spec, roles, index_column)
+        steps = collapse_steps(spec, roles, table)
+        working = _collapse_levels(working, steps.pre, spec, table, index_column)
+        working = _collapse_levels(working, steps.final, spec, table, index_column)
 
     panels = panel_factors(roles, working)
     if not mode.summary:
-        # Collapsed means drawn as they are: the extent is the values', folded
-        # by scope. `scope` ⊆ `panels` ⊆ the collapse's kept columns.
-        return _raw_extents(working, measure, scope, mode)
+        # What the chain left is drawn as it is — the sample rows (box,
+        # violin) or their mean (scatter, line): the extent is the values',
+        # folded by scope. `scope` ⊆ `panels` ⊆ the chain's kept columns.
+        return _union_extents(_raw_extents(working, measure, scope, mode), overlay_extents)
 
-    # What separates one drawn point from another: the panel, plus the x
-    # position and the colour within it.
+    # What separates one drawn mark from another: the panel, plus every
+    # grouping layer within it (tick, series and colour alike), plus the
+    # position of a 1-D measure. The rows sharing all of those are the sample.
     grouping = [
         name
         for name in dict.fromkeys(
             [
                 *panels,
-                *[n for n, r in roles.items() if r in (Role.X, Role.COLOR)],
+                *[n for n, r in roles.items() if r is Role.GROUP],
                 *([index_column] if index_column else []),
             ]
         )
@@ -531,7 +583,7 @@ def _reduced_extents(
         extent = pair_extent(
             np.asarray([min(low, centre)]), np.asarray([max(high, centre)]), mode
         )
-        return {GLOBAL_KEY: extent} if extent else {}
+        return _union_extents({GLOBAL_KEY: extent} if extent else {}, overlay_extents)
 
     grouped = working.groupby(grouping, dropna=False, sort=False)[measure]
     centre = grouped.median() if spec.aggregate.statistic is Statistic.MEDIAN else grouped.mean()
@@ -541,7 +593,19 @@ def _reduced_extents(
     bounds = pd.DataFrame(
         {"low": np.minimum(low, centre), "high": np.maximum(high, centre)}
     ).reset_index()
-    return _fold(bounds, scope, mode)
+    return _union_extents(_fold(bounds, scope, mode), overlay_extents)
+
+
+def _union_extents(
+    base: dict[tuple, tuple[float, float]], extra: dict[tuple, tuple[float, float]]
+) -> dict[tuple, tuple[float, float]]:
+    """``base`` widened by ``extra`` per scope key (``merge_extent``)."""
+    if not extra:
+        return base
+    merged = dict(base)
+    for key, (low, high) in extra.items():
+        merge_extent(merged, key, low, high)
+    return merged
 
 
 def _fold(

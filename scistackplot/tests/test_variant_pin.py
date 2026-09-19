@@ -376,7 +376,7 @@ def test_an_unfilled_variant_does_not_make_the_figure_unrenderable():
     table = _two_version_table()
     spec = PlotSpec(
         measures=["value"],
-        roles={"session": Role.X},
+        roles={"session": Role.GROUP},
         variant_sets=[
             VariantSet("baseline", {"Code:filter": "v1"}),
             VariantSet(None, {}),
@@ -547,7 +547,7 @@ def test_a_stale_role_from_a_saved_spec_is_dropped_not_fatal():
     table = _two_version_table()
     spec = PlotSpec(
         measures=["value"],
-        roles={"Code:filter": Role.FACET, "session": Role.X},
+        roles={"Code:filter": Role.FACET, "session": Role.GROUP},
         variant_sets=[VariantSet("v1 only", {"Code:filter": "v1"})],
     )
     derived = apply_variant_sets(spec, table)
@@ -555,7 +555,7 @@ def test_a_stale_role_from_a_saved_spec_is_dropped_not_fatal():
     cleaned = strip_answered_roles(spec, table, derived)
 
     assert "Code:filter" not in cleaned.roles
-    assert cleaned.roles["session"] is Role.X
+    assert cleaned.roles["session"] is Role.GROUP
 
 
 def test_a_role_naming_nothing_at_all_is_still_an_error():
@@ -563,7 +563,7 @@ def test_a_role_naming_nothing_at_all_is_still_an_error():
     from scistackplot.roles import validate
 
     table = _two_version_table()
-    spec = PlotSpec(measures=["value"], roles={"sesion": Role.X})
+    spec = PlotSpec(measures=["value"], roles={"sesion": Role.GROUP})
 
     with pytest.raises(RoleError, match="unknown factor"):
         validate(spec, table)
@@ -666,21 +666,20 @@ def test_a_multi_level_variant_factor_defaults_to_colour_not_pooling():
     )
     derived = apply_variant_sets(spec, table)
 
-    assert complete_roles(spec, derived)[VARIANT_FACTOR] is Role.COLOR
+    from scistackplot.roles import complete_assignment
+
+    assignment = complete_assignment(spec, derived)
+    assert assignment.roles[VARIANT_FACTOR] is Role.GROUP
+    assert assignment.color == VARIANT_FACTOR
 
 
-def test_pooling_still_has_to_be_asked_for():
-    """Asked for means ASSIGNED — the Stage 8 rule, and the first time this
-    test matches its own name.
-
-    It used to refuse a variant factor on FREE unconditionally, which also
-    refused the figures the user wanted: five variants of a measure averaged
-    into one line, or left as replicates for a mean ± error band. The property
-    worth keeping is not "never pool" but "never pool SILENTLY", and the spec
-    already records the difference — a role the user chose is in ``spec.roles``,
-    a role nobody chose is filled in by ``complete_roles``.
+def test_variants_are_never_pooled():
+    """Two versions of a function are not replicates of one condition. An
+    unassigned variant factor separates figures like any other unmentioned
+    factor (nothing is silent), and collapsing one is refused outright — the
+    old 'free'/'aggregate' opt-in went with those roles (2026-09-17).
     """
-    from scistackplot.roles import validate
+    from scistackplot.roles import complete_roles, validate
 
     table = _table(
         pd.DataFrame(
@@ -689,17 +688,14 @@ def test_pooling_still_has_to_be_asked_for():
         ["Code:filter"],
     )
 
-    # Nobody assigned it: pooling would be silent, so it is refused.
-    with pytest.raises(RoleError, match="pooled"):
-        validate(PlotSpec(measures=["value"], roles={}), table)
+    spec = PlotSpec(measures=["value"], roles={})
+    validate(spec, table)
+    assert complete_roles(spec, table)["Code:filter"] is Role.ITERATE
 
-    # Assigned on purpose: allowed, and `reduce` logs that it happened.
-    validate(
-        PlotSpec(measures=["value"], roles={"Code:filter": Role.FREE}), table
-    )
-    validate(
-        PlotSpec(measures=["value"], roles={"Code:filter": Role.AGGREGATE}), table
-    )
+    with pytest.raises(RoleError, match="cannot be collapsed"):
+        validate(
+            PlotSpec(measures=["value"], roles={"Code:filter": Role.COLLAPSE}), table
+        )
 
 
 # --- labels ----------------------------------------------------------------
@@ -870,7 +866,7 @@ def test_a_table_without_variants_summarises_to_nothing():
     table = _table(
         pd.DataFrame({"subject": ["01", "02"], "value": [1.0, 2.0]}), []
     )
-    spec = PlotSpec(measures=["value"], roles={"subject": Role.X})
+    spec = PlotSpec(measures=["value"], roles={"subject": Role.GROUP})
 
     summary = variant_summary(spec, table)
 

@@ -105,7 +105,9 @@ def test_scalar_variable_resolves_to_a_box_plot(seeded):
     table = source.get_table(["StepLength"])
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["subject", "session"],
+        color="subject",
         kind=PlotKind.BOX,
     )
 
@@ -119,7 +121,8 @@ def test_1d_variable_explodes_into_samples(seeded):
     table = source.get_table(["Signal"])
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        color="session",
         kind=PlotKind.BAND,
     )
 
@@ -219,17 +222,24 @@ def test_variants_arrive_as_factor_columns(two_variants):
     assert len(loaded.frame) == 2 * 3 * 2 * 2
 
 
-def test_unassigned_variant_is_refused_not_pooled(two_variants):
-    """The correctness trap: two pipelines' results must not overplot as one."""
+def test_unassigned_variant_separates_figures_and_cannot_be_collapsed(two_variants):
+    """The correctness trap: two pipelines' results must not overplot as one.
+    Unassigned, the variant axis fans out like any unmentioned factor;
+    collapsing it is refused outright."""
+    from scistackplot.roles import complete_roles
+
     table = ScidbSource(two_variants).get_table(["Scaled"])
+    variant = table.variant_factors[0].name
     spec = PlotSpec(
         measures=["Scaled"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
+    validate(spec, table)
+    assert complete_roles(spec, table)[variant] is Role.ITERATE
 
-    with pytest.raises(RoleError, match="would be pooled"):
-        validate(spec, table)
+    with pytest.raises(RoleError, match="cannot be collapsed"):
+        validate(spec.with_roles(**{variant: Role.COLLAPSE}), table)
 
 
 def test_variant_assigned_to_colour_resolves(two_variants):
@@ -238,11 +248,13 @@ def test_variant_assigned_to_colour_resolves(two_variants):
     spec = PlotSpec(
         measures=["Scaled"],
         roles={
-            "session": Role.X,
-            variant: Role.COLOR,
-            "subject": Role.FREE,
-            "trial": Role.FREE,
+            "session": Role.GROUP,
+            variant: Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
+        groups=[variant, "session"],
+        color=variant,
         kind=PlotKind.BOX,
     )
 
@@ -314,23 +326,26 @@ def test_single_code_version_attaches_no_column(two_variants):
 def test_two_code_versions_are_refused_not_pooled(two_code_versions):
     """The reported bug: these two silently overplotted as one line.
 
-    The code axis is left UNASSIGNED, which is what makes the pooling silent —
-    since Stage 8 the refusal is specifically about roles nobody chose, and
-    naming it FREE here would be asking for the pooling this guards against.
+    The code axis is left UNASSIGNED: it separates figures (nothing pools
+    silently), and collapsing it deliberately is refused.
     """
+    from scistackplot.roles import complete_roles
+
     table = ScidbSource(two_code_versions).get_table(["Scaled"])
     spec = PlotSpec(
         measures=["Scaled"],
         roles={
-            "session": Role.X,
-            "subject": Role.FREE,
-            "trial": Role.FREE,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
         kind=PlotKind.BOX,
     )
+    validate(spec, table)
+    assert complete_roles(spec, table)["Code:scale_signal"] is Role.ITERATE
 
-    with pytest.raises(RoleError, match="would be pooled"):
-        validate(spec, table)
+    with pytest.raises(RoleError, match="cannot be collapsed"):
+        validate(spec.with_roles(**{"Code:scale_signal": Role.COLLAPSE}), table)
 
 
 def test_code_version_assigned_to_colour_resolves(two_code_versions):
@@ -338,11 +353,13 @@ def test_code_version_assigned_to_colour_resolves(two_code_versions):
     spec = PlotSpec(
         measures=["Scaled"],
         roles={
-            "session": Role.X,
-            "Code:scale_signal": Role.COLOR,
-            "subject": Role.FREE,
-            "trial": Role.FREE,
+            "session": Role.GROUP,
+            "Code:scale_signal": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
+        groups=["Code:scale_signal", "session"],
+        color="Code:scale_signal",
         kind=PlotKind.BOX,
     )
 
@@ -382,28 +399,42 @@ def constants_and_code_versions(seeded):
 def test_default_roles_separate_both_variant_kinds(constants_and_code_versions):
     """A constant sweep AND a code edit on one variable must both stay visible.
 
-    default_roles used to hand extra variants Role.FREE, which validate then
-    refused — so the user got an error instead of a figure. Adding the code
-    version is what made a two-variant table common enough to hit.
+    default_roles used to hand extra variants a pooling role, which validate
+    then refused — so the user got an error instead of a figure. Adding the
+    code version is what made a two-variant table common enough to hit.
     """
-    from scistackplot import default_roles
 
     table = ScidbSource(constants_and_code_versions).get_table(["Scaled"])
     multi = [f for f in table.variant_factors if len(f.levels) > 1]
     assert len(multi) == 2, "a constant variant and a code version, both live"
 
-    roles = default_roles(table, "Scaled")
-    assert Role.FREE not in {roles[f.name] for f in multi}, (
+    from scistackplot.roles import default_assignment
+
+    opened = default_assignment(table, "Scaled")
+    assert Role.COLLAPSE not in {opened.roles[f.name] for f in multi}, (
         "neither variant may be left pooled"
     )
 
-    spec = PlotSpec(
-        measures=["Scaled"], roles=roles, kind=PlotKind.BOX
-    )
+    spec = opened.apply(PlotSpec(measures=["Scaled"], kind=PlotKind.SCATTER))
     validate(spec, table)  # must not raise
 
 
 # --- pinning the current code version (Stage 4) -----------------------------
+
+
+def _one_figure(spec, table, *, color=None):
+    """``spec`` with every plain schema key grouped — one point per record,
+    all in ONE figure — so a row count is a record count.
+
+    The opening state (2026-09-17) groups the deepest key and separates
+    figures by the rest; these tests are about which RECORDS survive a pin,
+    not about the opening figure, so they flatten the fan-out first."""
+    from dataclasses import replace
+
+    plain = [f.name for f in table.factors if not f.is_variant and not f.is_field]
+    roles = {**spec.roles, **{name: Role.GROUP for name in plain}}
+    groups = [*([color] if color else []), *reversed(plain)]
+    return replace(spec, roles=roles, groups=groups, color=color, kind=PlotKind.SCATTER)
 
 
 def _rows(resolved):
@@ -489,7 +520,7 @@ def test_default_spec_pins_a_swept_param_with_no_code_versions(two_variants):
     validate(spec, derived)  # must not raise
 
     # One record per location, not two.
-    assert resolve(spec, table)[0].row_count == 3 * 2 * 2
+    assert resolve(_one_figure(spec, table), table)[0].row_count == 3 * 2 * 2
 
 
 def test_pinned_render_keeps_only_the_newest_rows(two_code_versions):
@@ -497,7 +528,7 @@ def test_pinned_render_keeps_only_the_newest_rows(two_code_versions):
 
     source = ScidbSource(two_code_versions)
     table = source.get_table(["Scaled"])
-    spec = default_spec(table, "Scaled")
+    spec = _one_figure(default_spec(table, "Scaled"), table)
 
     resolved = resolve(spec, table)[0]
     # 3 subjects x 2 sessions x 2 trials, one row each — not two.
@@ -527,13 +558,11 @@ def test_clearing_the_variant_brings_every_version_back(two_code_versions):
     spec = default_spec(table, "Scaled")
 
     # Deleting the row brings the code axis back as an ordinary factor needing a
-    # role. `session` has to give up colour to take it: with the variant
-    # answering the code axis, the opening defaults put session there, and two
-    # factors cannot share one channel.
-    unpinned = replace(
-        spec,
-        variant_sets=[],
-        roles={**spec.roles, "session": Role.FREE, "Code:scale_signal": Role.COLOR},
+    # role: the coloured grouping layer, innermost, one point per record.
+    unpinned = _one_figure(
+        replace(spec, variant_sets=[], roles={**spec.roles, "Code:scale_signal": Role.GROUP}),
+        table,
+        color="Code:scale_signal",
     )
     resolved = resolve(unpinned, table)[0]
 
@@ -578,7 +607,7 @@ def test_pin_keeps_locations_never_rerun_under_the_newest_code(seeded):
 
     source = ScidbSource(seeded)
     table = source.get_table(["Scaled"])
-    resolved = resolve(default_spec(table, "Scaled"), table)[0]
+    resolved = resolve(_one_figure(default_spec(table, "Scaled"), table), table)[0]
     rows = _rows(resolved)
 
     # The load-bearing number. One row per location: 3 subjects x 2 sessions x
@@ -587,8 +616,8 @@ def test_pin_keeps_locations_never_rerun_under_the_newest_code(seeded):
     assert resolved.row_count == 3 * 2 * 2, (
         "pinning the latest must not delete the subjects that were never re-run"
     )
-    # default_roles puts subject on x for a scalar measure.
-    assert set(rows[resolved.encoding.x]) == set(SUBJECTS)
+    # Every subject is drawn (the nested-x panel frame carries each layer).
+    assert set(rows["subject"]) == set(SUBJECTS)
 
     # Subject 01 contributes the new code, the others still contribute what they
     # have. Checked against the frame rather than a colour channel: "current"

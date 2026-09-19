@@ -501,20 +501,21 @@ export function hasProblem(node: LocationNode): boolean {
 
 // --- role adjustment on pick ------------------------------------------------
 
-export type Role = 'iterate' | 'x' | 'color' | 'facet' | 'aggregate' | 'free'
+export type Role = 'group' | 'facet' | 'iterate' | 'collapse'
 
 /**
  * The roles a spec should hold once one location has been picked.
  *
  * Picking `subject=01` leaves `trial` unanswered, and a trial factor sitting on
- * AGGREGATE would collapse the very thing the picker was opened to look at —
+ * COLLAPSE would average the very thing the picker was opened to look at —
  * every trial's own values. So any schema key the selection does NOT name is
- * moved off AGGREGATE onto FREE (replicates), and one with no role at all gets
- * FREE too.
+ * moved off COLLAPSE onto ITERATE (separate figures — the visible default for
+ * an unassigned factor), and one with no role at all gets ITERATE too.
  *
- * Deliberately NOT a blanket reassignment: a key already on X, COLOR or FACET
- * is drawing its levels individually, which is what was asked for, and stamping
- * over a chosen x axis because a location was clicked would be astonishing.
+ * Deliberately NOT a blanket reassignment: a key already grouping or faceting
+ * is drawing its levels individually, which is what was asked for, and
+ * stamping over a chosen grouping because a location was clicked would be
+ * astonishing.
  */
 export function rolesAfterPick(
   roles: Record<string, Role>,
@@ -526,7 +527,7 @@ export function rolesAfterPick(
   for (const key of schemaKeys) {
     if (named.has(key)) continue
     const current = next[key]
-    if (current === undefined || current === 'aggregate') next[key] = 'free'
+    if (current === undefined || current === 'collapse') next[key] = 'iterate'
   }
   return next
 }

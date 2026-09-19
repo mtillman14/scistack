@@ -146,8 +146,9 @@ def grouped_table() -> LongTable:
 def _nested_spec(**kwargs) -> PlotSpec:
     base = dict(
         measures=["StepLength"],
-        roles={"group": Role.X, "session": Role.X, "subject": Role.FREE},
-        x_layers=["group", "session"],
+        roles={"group": Role.GROUP, "session": Role.GROUP, "subject": Role.COLLAPSE},
+        # Innermost first: session ticks inside group brackets.
+        groups=["session", "group"],
         kind=PlotKind.BOX,
     )
     base.update(kwargs)
@@ -164,23 +165,24 @@ def test_resolve_composes_the_axis(grouped_table):
 
 
 def test_the_outer_layer_is_the_declared_order_not_the_role_order(grouped_table):
-    """Membership is roles; ORDER is x_layers. Swapping the list swaps the axis
+    """Membership is roles; ORDER is `groups`. Swapping the list swaps the axis
     without touching a single role."""
-    figure = resolve(_nested_spec(x_layers=["session", "group"]), grouped_table)[0]
+    figure = resolve(_nested_spec(groups=["group", "session"]), grouped_table)[0]
 
     assert [g.label for g in figure.x_plan.groups] == ["pre", "post"]
 
 
-def test_an_x_holder_missing_from_the_order_is_appended(grouped_table):
-    """Neither control can put the spec in a state the other rejects."""
-    figure = resolve(_nested_spec(x_layers=["group"]), grouped_table)[0]
+def test_a_group_holder_missing_from_the_order_is_appended(grouped_table):
+    """Neither control can put the spec in a state the other rejects. The
+    unordered holder lands OUTERMOST (appended to an innermost-first list)."""
+    figure = resolve(_nested_spec(groups=["session"]), grouped_table)[0]
 
     assert [g.label for g in figure.x_plan.groups] == ["stim", "sham"]
     assert figure.x_plan.n_layers == 2
 
 
 def test_a_stale_name_in_the_order_is_ignored(grouped_table):
-    spec = _nested_spec(x_layers=["gone", "group", "session"])
+    spec = _nested_spec(groups=["gone", "session", "group"])
 
     figure = resolve(spec, grouped_table)[0]
 
@@ -202,7 +204,7 @@ def test_panel_rows_carry_the_composed_key(grouped_table):
 def test_one_x_factor_still_takes_the_simple_path(grouped_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"group": Role.X, "session": Role.FREE, "subject": Role.FREE},
+        roles={"group": Role.GROUP, "session": Role.COLLAPSE, "subject": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
 
@@ -216,7 +218,8 @@ def test_facets_share_one_composed_axis(grouped_table):
     """A panel missing a combination gets a gap where its neighbours do, not a
     differently-shaped axis."""
     spec = _nested_spec(
-        roles={"group": Role.X, "session": Role.X, "subject": Role.FACET}
+        roles={"group": Role.GROUP, "session": Role.GROUP, "subject": Role.FACET},
+        kind=PlotKind.STRIP,  # nothing collapsed, so no distribution to box
     )
 
     figure = resolve(spec, grouped_table)[0]
@@ -253,12 +256,12 @@ def test_group_brackets_stay_out_of_the_row_below():
     spec = PlotSpec(
         measures=["StepLength"],
         roles={
-            "group": Role.X,
-            "session": Role.X,
+            "group": Role.GROUP,
+            "session": Role.GROUP,
             "site": Role.FACET,
-            "subject": Role.FREE,
+            "subject": Role.COLLAPSE,
         },
-        x_layers=["group", "session"],
+        groups=["session", "group"],
         kind=PlotKind.BOX,
         facet=FacetOptions(n_cols=2),
     )
@@ -278,16 +281,9 @@ def test_group_brackets_stay_out_of_the_row_below():
 # --- refusals --------------------------------------------------------------
 
 
-def test_more_than_three_layers_is_refused(grouped_table):
-    spec = PlotSpec(
-        measures=["StepLength"],
-        roles={
-            "group": Role.X,
-            "session": Role.X,
-            "subject": Role.X,
-            "extra": Role.X,
-        },
-    )
+def test_more_than_three_labelled_layers_is_refused(grouped_table):
+    roles = {name: Role.GROUP for name in ["group", "session", "subject", "extra"]}
+    spec = PlotSpec(measures=["StepLength"], roles=roles)
     frame = grouped_table.frame.assign(extra="e")
     table = LongTable.from_frame(
         frame,
@@ -295,18 +291,21 @@ def test_more_than_three_layers_is_refused(grouped_table):
         measures=["StepLength"],
     )
 
-    with pytest.raises(RoleError, match="At most 3 factors"):
+    with pytest.raises(RoleError, match="At most 3 labelled"):
         validate(spec, table)
+    # The coloured layer is labelled by the legend, not the axis.
+    validate(PlotSpec(measures=["StepLength"], roles=roles, color="extra"), table)
 
 
-def test_nesting_is_refused_for_a_1d_measure(series_table):
+def test_grouping_a_1d_measure_makes_series_not_ticks(series_table):
+    from scistackplot.roles import grouping_layers
+
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.X, "session": Role.X},
+        roles={"subject": Role.GROUP, "session": Role.GROUP},
     )
-
-    with pytest.raises(RoleError, match="needs a categorical axis"):
-        validate(spec, series_table)
+    validate(spec, series_table)
+    assert grouping_layers(spec, series_table).ticks == []
 
 
 # --- export ----------------------------------------------------------------
@@ -326,6 +325,32 @@ def test_generated_code_builds_the_same_axis(grouped_table):
     assert "stim · pre" in source
     # Groups are separated by ordering; seaborn has no empty category.
     assert "seaborn has no" in source
+
+    namespace: dict = {}
+    exec(compile(source, "<generated>", "exec"), namespace)  # noqa: S102
+    figure = namespace["plot_steplength"](grouped_table.frame.copy(), "figure.png")
+    ticks = [t.get_text() for t in figure.axes[0].get_xticklabels()]
+    assert ticks == ["stim · pre", "stim · post", "sham · pre", "sham · post"]
+    matplotlib.pyplot.close(figure)
+
+
+def test_generated_code_keeps_the_nested_axis_through_an_aggregate(grouped_table):
+    """Nested x + a collapse: the composed `_x` column is built BEFORE the
+    averaging groupby, and pandas drops every column the groupby does not
+    name — so the plot call asked for an `_x` that no longer existed
+    (KeyError). Pre-existing for every nested + aggregate export; found by the
+    spaghetti tests, which aggregate trials under a nested axis."""
+    pytest.importorskip("seaborn")
+    matplotlib = pytest.importorskip("matplotlib")
+
+    from scistackplot import generate_plot_function
+
+    spec = _nested_spec(
+        roles={"group": Role.GROUP, "session": Role.GROUP, "subject": Role.COLLAPSE},
+        kind=PlotKind.SCATTER,
+    )
+    source = generate_plot_function(spec, grouped_table)
+    assert "'_x'" in source.split("groupby(")[1].split(")")[0]
 
     namespace: dict = {}
     exec(compile(source, "<generated>", "exec"), namespace)  # noqa: S102
@@ -390,7 +415,7 @@ def test_zero_padded_levels_keep_their_declared_order_in_plotly():
     )
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE},
         kind=PlotKind.BAR,
     )
 
@@ -406,7 +431,7 @@ def test_a_flat_categorical_axis_is_ordered_too(grouped_table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"group": Role.X, "session": Role.FREE, "subject": Role.FREE},
+        roles={"group": Role.GROUP, "session": Role.COLLAPSE, "subject": Role.COLLAPSE},
         kind=PlotKind.BAR,
     )
 
@@ -422,7 +447,8 @@ def test_a_numeric_axis_is_left_alone(series_table):
 
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.GROUP},
+        color="session",
         kind=PlotKind.LINE,
     )
 
@@ -597,18 +623,19 @@ def test_a_variant_axis_has_no_depth(depth_table):
 def test_a_new_layer_is_placed_by_depth_not_appended(depth_table):
     """The defect this fixes: appending put `InterventionGroup` INSIDE
     `session`, giving one bar per group within each session — the transpose of
-    "one cluster per group, one bar per session"."""
+    "one cluster per group, one bar per session". Innermost first, so the
+    deeper `session` comes first and the subject-level grouping wraps it."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "InterventionGroup": Role.X, "subject": Role.FREE},
+        roles={"session": Role.GROUP, "InterventionGroup": Role.GROUP, "subject": Role.COLLAPSE},
         # Nothing declared: this is a spec that never went through the arrows.
-        x_layers=[],
+        groups=[],
         kind=PlotKind.BAR,
     )
 
-    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
-        "InterventionGroup",
+    assert spec.ordered_groups(depths=depth_table.factor_depths) == [
         "session",
+        "InterventionGroup",
     ]
     figure = resolve(spec, depth_table)[0]
     assert [g.label for g in figure.x_plan.groups] == ["onward", "usual"]
@@ -618,14 +645,14 @@ def test_an_explicit_order_still_wins(depth_table):
     """Depth is where to start, not an order the user cannot override."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "InterventionGroup": Role.X, "subject": Role.FREE},
-        x_layers=["session", "InterventionGroup"],
+        roles={"session": Role.GROUP, "InterventionGroup": Role.GROUP, "subject": Role.COLLAPSE},
+        groups=["InterventionGroup", "session"],
         kind=PlotKind.BAR,
     )
 
-    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
-        "session",
+    assert spec.ordered_groups(depths=depth_table.factor_depths) == [
         "InterventionGroup",
+        "session",
     ]
 
 
@@ -633,16 +660,16 @@ def test_a_depthless_factor_sorts_innermost(depth_table):
     spec = PlotSpec(
         measures=["StepLength"],
         roles={
-            "bandpass.low_hz": Role.X,
-            "session": Role.X,
-            "subject": Role.FREE,
-            "InterventionGroup": Role.FREE,
+            "bandpass.low_hz": Role.GROUP,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "InterventionGroup": Role.COLLAPSE,
         },
     )
 
-    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
-        "session",
+    assert spec.ordered_groups(depths=depth_table.factor_depths) == [
         "bandpass.low_hz",
+        "session",
     ]
 
 
@@ -652,18 +679,18 @@ def test_equal_depths_keep_declaration_order(depth_table):
     complaint this package keeps answering."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "InterventionGroup": Role.X},
+        roles={"subject": Role.GROUP, "InterventionGroup": Role.GROUP},
     )
-    assert spec.ordered_x_layers(depths=depth_table.factor_depths) == [
+    assert spec.ordered_groups(depths=depth_table.factor_depths) == [
         "subject",
         "InterventionGroup",
     ]
 
     reversed_spec = PlotSpec(
         measures=["StepLength"],
-        roles={"InterventionGroup": Role.X, "subject": Role.X},
+        roles={"InterventionGroup": Role.GROUP, "subject": Role.GROUP},
     )
-    assert reversed_spec.ordered_x_layers(depths=depth_table.factor_depths) == [
+    assert reversed_spec.ordered_groups(depths=depth_table.factor_depths) == [
         "InterventionGroup",
         "subject",
     ]
@@ -677,76 +704,73 @@ def test_the_control_and_the_figure_read_the_same_order(depth_table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "InterventionGroup": Role.X, "subject": Role.FREE},
+        roles={"session": Role.GROUP, "InterventionGroup": Role.GROUP, "subject": Role.COLLAPSE},
         kind=PlotKind.BAR,
     )
 
-    reported = capabilities(spec, depth_table)["grouping"]["layers"]
+    grouping = capabilities(spec, depth_table)["grouping"]
     figure = resolve(spec, depth_table)[0]
 
-    assert reported == ["InterventionGroup", "session"]
-    # The leaves are composed outer-to-inner, so the first layer's levels are
-    # the bracket labels.
+    assert grouping["layers"] == ["session", "InterventionGroup"], "innermost first"
+    assert grouping["ticks"] == ["InterventionGroup", "session"], "drawing order"
+    # The leaves are composed outer-to-inner, so the first tick layer's
+    # levels are the bracket labels.
     assert [g.label for g in figure.x_plan.groups] == ["onward", "usual"]
 
 
 # --- the role a new grouping takes -----------------------------------------
 
 
-def test_a_new_grouping_goes_on_the_x_axis_when_there_is_room(depth_table):
-    """FREE would pool it into the bar means — the figure would not change at
-    all, and `validate`'s pooling guard is armed only for variant factors."""
+def test_a_new_grouping_groups(depth_table):
+    """A grouping ticked in the Grouping section is a request for one mark
+    per level; anything else would quietly do nothing."""
     from scistackplot import role_for_new_grouping
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE},
         kind=PlotKind.BAR,
     )
 
-    assert role_for_new_grouping(spec, depth_table) is Role.X
+    assert role_for_new_grouping(spec, depth_table) is Role.GROUP
 
 
-def test_a_new_grouping_takes_colour_when_the_x_axis_is_full(depth_table):
+def test_a_new_grouping_facets_when_the_labelled_ticks_are_full(depth_table):
     from scistackplot import role_for_new_grouping
     from scistackplot.spec import MAX_X_LAYERS
 
     roles = {
-        name: Role.X
+        name: Role.GROUP
         for name in ["subject", "session", "InterventionGroup"][:MAX_X_LAYERS]
     }
     spec = PlotSpec(measures=["StepLength"], roles=roles, kind=PlotKind.BAR)
 
-    assert role_for_new_grouping(spec, depth_table) is Role.COLOR
+    assert role_for_new_grouping(spec, depth_table) is Role.FACET
 
 
-def test_a_new_grouping_takes_colour_for_a_1d_measure(series_table):
-    """A 1-D measure's x is its sample index, so there is no axis to group."""
+def test_colouring_a_layer_makes_room_for_another(depth_table):
+    """The coloured layer is labelled by the legend, so it does not count."""
+    from scistackplot import role_for_new_grouping
+
+    roles = {name: Role.GROUP for name in ["subject", "session", "InterventionGroup"]}
+    spec = PlotSpec(
+        measures=["StepLength"], roles=roles, color="subject", kind=PlotKind.BAR
+    )
+
+    assert role_for_new_grouping(spec, depth_table) is Role.GROUP
+
+
+def test_a_new_grouping_groups_a_1d_measure_as_a_series(series_table):
+    """A 1-D measure's x is its sample index; a group is a line per level."""
     from scistackplot import role_for_new_grouping
 
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.FREE, "session": Role.FREE, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "session": Role.ITERATE, "trial": Role.ITERATE},
         kind=PlotKind.LINE,
     )
 
-    assert role_for_new_grouping(spec, series_table) is Role.COLOR
-
-
-def test_a_new_grouping_falls_back_to_free_when_both_are_taken(depth_table):
-    """FREE really does pool, so the caller has to SAY so on the row. Returning
-    a role that quietly does nothing is the bug this function exists to fix."""
-    from scistackplot import role_for_new_grouping
-    from scistackplot.spec import MAX_X_LAYERS
-
-    roles = {
-        name: Role.X
-        for name in ["subject", "session", "InterventionGroup"][:MAX_X_LAYERS]
-    }
-    roles["bandpass.low_hz"] = Role.COLOR
-    spec = PlotSpec(measures=["StepLength"], roles=roles, kind=PlotKind.BAR)
-
-    assert role_for_new_grouping(spec, depth_table) is Role.FREE
+    assert role_for_new_grouping(spec, series_table) is Role.GROUP
 
 
 def test_a_role_already_chosen_is_never_overwritten(depth_table):
@@ -755,7 +779,7 @@ def test_a_role_already_chosen_is_never_overwritten(depth_table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"InterventionGroup": Role.FACET, "session": Role.X},
+        roles={"InterventionGroup": Role.FACET, "session": Role.GROUP},
         kind=PlotKind.BAR,
     )
 
@@ -764,17 +788,12 @@ def test_a_role_already_chosen_is_never_overwritten(depth_table):
 
 def test_the_capability_report_publishes_the_same_answer(depth_table):
     """The panel applies this rather than inventing a second rule, and it is
-    published per SPEC because the factor is not in the table yet.
-
-    Also the guard against a cycle: `grouping_summary` reports the role and
-    `role_for_new_grouping` needs the summary's availability, so the two called
-    each other without end until the predicate (`capability.x_axis_refusal`)
-    was split out. This test fails with RecursionError if it comes back."""
+    published per SPEC because the factor is not in the table yet."""
     from scistackplot import capabilities, role_for_new_grouping
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE},
         kind=PlotKind.BAR,
     )
 

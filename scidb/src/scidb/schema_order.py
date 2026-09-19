@@ -35,8 +35,12 @@ two never fight.
 Why scidb owns it
 -----------------
 Schema keys are scidb's concept, and the consumers span three layers — row
-order in ``database._sort_by_schema``, factor levels in
-``scistackplotdb.source``, the GUI's level lists. One reader here means one
+order in ``database._sort_by_schema_keys``, for_each iteration through
+``DatabaseManager.distinct_schema_values``, factor levels in
+``scistackplotdb.source``, the exported seaborn code, the GUI's level lists
+(full table: docs/claude/config-file-formats.md). Long-lived consumers ask
+:func:`project_level_order` on every use rather than keeping a copy, so an
+edit to the file needs no restart. One reader here means one
 answer everywhere (CLAUDE.md NOTE 3), reading the project config through
 ``scifor.discovery``, which is the pure parser every layer already shares.
 """
@@ -96,6 +100,11 @@ def declared_level_order(start: "Path | str | None" = None) -> dict[str, list[st
     config = find_project_config(Path(start) if start is not None else Path.cwd())
     if config is None:
         return {}
+    return _order_of(config)
+
+
+def _order_of(config: Path) -> dict[str, list[str]]:
+    """The declarations in *config*, cached on its mtime."""
     key = str(config)
     try:
         mtime = config.stat().st_mtime
@@ -106,7 +115,16 @@ def declared_level_order(start: "Path | str | None" = None) -> dict[str, list[st
         return cached[1]
 
     order = _read(config)
-    if order:
+    if not order:
+        # Said once per read (i.e. once per edit of the file), so "why are my
+        # levels alphabetical?" has an answer in scidb.log.
+        Log.info(
+            "[schema_order] %s has no [%s] table — schema levels use the "
+            "default order",
+            config,
+            SECTION,
+        )
+    else:
         Log.info(
             "[schema_order] %s declares level order for %s",
             config,
@@ -116,9 +134,101 @@ def declared_level_order(start: "Path | str | None" = None) -> dict[str, list[st
     return order
 
 
+#: How long a "which config belongs to this process" answer is trusted. The
+#: walk up the tree parses every candidate TOML, and a DatabaseManager asks on
+#: every sort, so it is not repeated per call — but it IS repeated, so a
+#: scistack.toml created mid-session is found within this many seconds.
+LOCATE_TTL = 2.0
+
+#: ``{candidate starts: (monotonic time, config or None)}``.
+_locate_cache: dict[tuple[str, ...], tuple[float, "Path | None"]] = {}
+
+#: The last answer logged per candidate set, so the INFO line is written when
+#: the answer CHANGES (the first time, or a project switch), never per call.
+_located_logged: dict[tuple[str, ...], "str | None"] = {}
+
+
+def _starts(fallback: "Path | str | None") -> list[tuple[str, Path]]:
+    """Where to look for the project, most specific first.
+
+    * the project root pinned through ``scifor.set_project_root`` — what the
+      MATLAB bridge and generated commands set, because an embedded
+      interpreter's cwd says nothing about the project;
+    * the cwd — a script run from inside its project, and the GUI server
+      (the extension spawns it in the workspace folder);
+    * *fallback* — the database file's folder, for a database kept inside
+      the project it belongs to.
+    """
+    from scifor.pathinput import get_project_root
+
+    starts: list[tuple[str, Path]] = []
+    pinned = get_project_root()
+    if pinned is not None:
+        starts.append(("pinned project root", Path(pinned)))
+    starts.append(("working directory", Path.cwd()))
+    if fallback is not None:
+        starts.append(("database folder", Path(fallback)))
+    return starts
+
+
+def locate_config(fallback: "Path | str | None" = None) -> "Path | None":
+    """The project config whose ``[schema_keys]`` applies to this process.
+
+    See :func:`_starts` for the search order. Cached for :data:`LOCATE_TTL`
+    seconds; the result is logged at INFO whenever it changes, including
+    "none found", which is otherwise indistinguishable from "no declaration".
+    """
+    import time
+
+    starts = _starts(fallback)
+    cache_key = tuple(str(path) for _, path in starts)
+    now = time.monotonic()
+    cached = _locate_cache.get(cache_key)
+    if cached is not None and now - cached[0] < LOCATE_TTL:
+        return cached[1]
+
+    found: "Path | None" = None
+    found_from = ""
+    for label, start in starts:
+        found = find_project_config(start)
+        if found is not None:
+            found_from = f"{label} {start}"
+            break
+    _locate_cache[cache_key] = (now, found)
+
+    answer = str(found) if found is not None else None
+    if _located_logged.get(cache_key, "<unset>") != answer:
+        _located_logged[cache_key] = answer
+        if found is not None:
+            Log.info("[schema_order] using %s (found from the %s)", found, found_from)
+        else:
+            Log.info(
+                "[schema_order] no project config found from %s — schema "
+                "levels use the default order",
+                ", ".join(f"{label} {start}" for label, start in starts),
+            )
+    return found
+
+
+def project_level_order(fallback: "Path | str | None" = None) -> dict[str, list[str]]:
+    """The declared level order for THIS process's project, read live.
+
+    What a long-lived consumer (a ``DatabaseManager``, the GUI) asks on every
+    use instead of keeping a copy: an edit to ``scistack.toml`` then reaches
+    the next table and the next figure without a restart. Cheap — the config
+    location is cached for :data:`LOCATE_TTL` and the parse on the file's mtime.
+    """
+    config = locate_config(fallback)
+    if config is None:
+        return {}
+    return _order_of(config)
+
+
 def clear_cache() -> None:
     """Forget every parsed config. For tests, and for a project switch."""
     _cache.clear()
+    _locate_cache.clear()
+    _located_logged.clear()
 
 
 def validate(order: dict[str, list[str]], schema_keys) -> None:

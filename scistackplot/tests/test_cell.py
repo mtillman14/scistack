@@ -1,4 +1,4 @@
-"""Collapsing a 1-D measure to a scalar.
+"""Collapsing each CELL of a 1-D measure to a scalar (``scistackplot.cell``).
 
 The rule under test: a scalar-only kind selected for a vector-valued measure
 means "reduce each cell to one value first", after which the measure is an
@@ -19,9 +19,9 @@ from scistackplot import (
     Role,
     Shape,
     Statistic,
-    apply_collapse,
-    collapse_note,
-    collapses,
+    apply_cell_collapse,
+    cell_collapse_note,
+    cell_collapses,
     effective_shape,
 )
 from scistackplot.series_stats import cell_arrays, collapse_cells
@@ -67,34 +67,34 @@ def test_an_empty_or_all_nan_cell_is_nan_not_an_error():
 
 
 def test_a_scalar_kind_on_a_1d_measure_collapses(series_table):
-    assert collapses(violin("Signal"), series_table)
+    assert cell_collapses(violin("Signal"), series_table)
     assert effective_shape(violin("Signal"), series_table) is Shape.SCALAR
 
 
 @pytest.mark.parametrize("kind", [PlotKind.LINE, PlotKind.BAND])
 def test_the_1d_kinds_do_not_collapse(series_table, kind):
     spec = PlotSpec(measures=["Signal"], kind=kind)
-    assert not collapses(spec, series_table)
+    assert not cell_collapses(spec, series_table)
     assert effective_shape(spec, series_table) is Shape.SERIES_1D
-    assert apply_collapse(spec, series_table) is series_table
+    assert apply_cell_collapse(spec, series_table) is series_table
 
 
 def test_a_scalar_measure_is_never_collapsed(scalar_table):
     spec = violin("StepLength")
-    assert not collapses(spec, scalar_table)
-    assert apply_collapse(spec, scalar_table) is scalar_table
+    assert not cell_collapses(spec, scalar_table)
+    assert apply_cell_collapse(spec, scalar_table) is scalar_table
 
 
 def test_a_relational_plot_does_not_collapse(series_table):
     """``x_measure`` pairs samples; collapsing both measures is a different
     feature and must not happen behind the user's back."""
     spec = PlotSpec(measures=["Signal"], x_measure="Signal", kind=PlotKind.SCATTER)
-    assert not collapses(spec, series_table)
+    assert not cell_collapses(spec, series_table)
 
 
 def test_a_spec_naming_a_missing_measure_does_not_raise(series_table):
     """A spec outlives the table it was written against."""
-    assert not collapses(violin("Gone"), series_table)
+    assert not cell_collapses(violin("Gone"), series_table)
 
 
 # --- the derived table ------------------------------------------------------
@@ -103,7 +103,7 @@ def test_a_spec_naming_a_missing_measure_does_not_raise(series_table):
 def test_the_collapsed_table_holds_one_value_per_record(series_table):
     expected = [float(np.mean(cell)) for cell in series_table.frame["Signal"]]
 
-    collapsed = apply_collapse(violin("Signal"), series_table)
+    collapsed = apply_cell_collapse(violin("Signal"), series_table)
 
     assert collapsed.frame["Signal"].tolist() == pytest.approx(expected)
     assert len(collapsed.frame) == len(series_table.frame)
@@ -112,15 +112,15 @@ def test_the_collapsed_table_holds_one_value_per_record(series_table):
 
 
 def test_the_median_statistic_is_honoured(series_table):
-    spec = violin("Signal", collapse_statistic=Statistic.MEDIAN)
+    spec = violin("Signal", cell_statistic=Statistic.MEDIAN)
     expected = [float(np.median(cell)) for cell in series_table.frame["Signal"]]
-    assert apply_collapse(spec, series_table).frame["Signal"].tolist() == pytest.approx(
+    assert apply_cell_collapse(spec, series_table).frame["Signal"].tolist() == pytest.approx(
         expected
     )
 
 
 def test_factors_and_their_levels_are_untouched(series_table):
-    collapsed = apply_collapse(violin("Signal"), series_table)
+    collapsed = apply_cell_collapse(violin("Signal"), series_table)
     assert collapsed.factor_names == series_table.factor_names
     assert collapsed.factor("subject").levels == series_table.factor("subject").levels
     assert collapsed.schema_levels == series_table.schema_levels
@@ -128,7 +128,7 @@ def test_factors_and_their_levels_are_untouched(series_table):
 
 def test_the_source_table_is_not_mutated(series_table):
     before = series_table.frame["Signal"].iloc[0]
-    apply_collapse(violin("Signal"), series_table)
+    apply_cell_collapse(violin("Signal"), series_table)
     assert series_table.shape_of("Signal") is Shape.SERIES_1D
     assert np.asarray(series_table.frame["Signal"].iloc[0]).size == np.asarray(
         before
@@ -145,7 +145,7 @@ def test_the_index_column_goes_away_with_the_samples():
         frame, factors=["trial"], measures=["Signal"], name="Signal"
     )
     table.index_column = "time"
-    assert apply_collapse(violin("Signal"), table).index_column is None
+    assert apply_cell_collapse(violin("Signal"), table).index_column is None
 
 
 def test_an_empty_record_stays_as_a_nan_row():
@@ -158,7 +158,7 @@ def test_an_empty_record_stays_as_a_nan_row():
         frame, factors=["trial"], measures=["Signal"], name="Signal"
     )
 
-    collapsed = apply_collapse(violin("Signal"), table)
+    collapsed = apply_cell_collapse(violin("Signal"), table)
 
     assert len(collapsed.frame) == 3
     assert collapsed.frame["trial"].tolist() == ["1", "2", "3"]
@@ -185,7 +185,7 @@ def test_a_stacked_frame_collapses_every_variant_row():
         schema_levels=["subject"],
     )
 
-    collapsed = apply_collapse(violin("Signal"), table)
+    collapsed = apply_cell_collapse(violin("Signal"), table)
 
     assert collapsed.frame["Signal"].tolist() == pytest.approx([2.0, 20.0])
 
@@ -213,7 +213,7 @@ def test_a_pre_exploded_table_collapses_by_grouping():
     table.measures[0].shape = Shape.SERIES_1D
     table.measures[0].exploded = True
 
-    collapsed = apply_collapse(violin("Signal"), table)
+    collapsed = apply_cell_collapse(violin("Signal"), table)
 
     assert collapsed.frame["trial"].tolist() == ["1", "2"]
     assert collapsed.frame["Signal"].tolist() == pytest.approx([2.0, 15.0])
@@ -225,18 +225,18 @@ def test_a_pre_exploded_table_collapses_by_grouping():
 
 def test_the_figure_says_its_points_are_summaries(series_table):
     """A violin of trial means and a violin of raw samples look identical."""
-    note = collapse_note(violin("Signal"), series_table)
+    note = cell_collapse_note(violin("Signal"), series_table)
     assert note and "mean" in note and "Signal" in note
-    assert collapse_note(PlotSpec(measures=["Signal"], kind=PlotKind.LINE), series_table) is None
+    assert cell_collapse_note(PlotSpec(measures=["Signal"], kind=PlotKind.LINE), series_table) is None
 
 
 def test_collapse_is_logged(series_table, caplog):
     import logging
 
-    from scistackplot.collapse import LAYER
+    from scistackplot.cell import LAYER
 
     with caplog.at_level(logging.INFO, logger=LAYER):
-        apply_collapse(violin("Signal"), series_table)
+        apply_cell_collapse(violin("Signal"), series_table)
     assert any("collapsed 1-D measure" in record.getMessage() for record in caplog.records)
 
 
@@ -245,13 +245,13 @@ def test_cell_arrays_and_collapse_agree_on_the_frame(series_table):
     ``cell_arrays`` reads is what ``collapse_cells`` reduces."""
     arrays = cell_arrays(series_table.frame["Signal"])
     values = collapse_cells(arrays, Statistic.MEAN)
-    collapsed = apply_collapse(violin("Signal"), series_table)
+    collapsed = apply_cell_collapse(violin("Signal"), series_table)
     assert collapsed.frame["Signal"].tolist() == pytest.approx(values.tolist())
 
 
 def test_roles_survive_the_collapse(series_table):
     """The derived table is only about the measure — a spec's role assignment
     passes through it untouched."""
-    spec = violin("Signal", roles={"trial": Role.FREE, "subject": Role.X})
-    collapsed = apply_collapse(spec, series_table)
+    spec = violin("Signal", roles={"trial": Role.COLLAPSE, "subject": Role.GROUP})
+    collapsed = apply_cell_collapse(spec, series_table)
     assert all(name in collapsed.frame.columns for name in spec.roles)

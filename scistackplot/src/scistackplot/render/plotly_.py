@@ -23,8 +23,16 @@ from scistacklog import Log
 from ..figsize import describe_size
 from ..resolved import ResolvedPlot
 from ..spec import PlotKind
+from ..xaxis import LEAF_SEPARATOR
 from .base import (
+    SAMPLE_ALPHA,
+    SAMPLE_EDGE_COLOR,
+    SAMPLE_LINE_WIDTH,
+    SAMPLE_MARKER_FRACTION,
     color_groups,
+    dodge_slots,
+    dash_levels,
+    dash_style,
     grid_shape,
     is_categorical_x,
     legend_levels,
@@ -37,6 +45,10 @@ from .base import (
     shows_legend,
     shows_x_labels,
     shows_y_labels,
+    sample_hover,
+    sample_positions,
+    sample_series,
+    x_positions,
 )
 
 LAYER = "scistackplot"
@@ -83,6 +95,10 @@ def render(resolved: ResolvedPlot) -> dict:
             },
             "hovermode": "closest",
             "annotations": [],
+            # The same number as the export's font.size, read as px here. The
+            # GUI adds the colour; it must not add a size, or the setting would
+            # only be visible after a save.
+            "font": {"size": style.font_size},
             # The grid shape travels with the figure so the panel can size it:
             # 4 rows of subplots need more height than 1, and only the renderer
             # knows how the panels were laid out. The GUI also reads `rows`/
@@ -149,6 +165,7 @@ def render(resolved: ResolvedPlot) -> dict:
                     panel.frame, resolved, x_axis, y_axis, seen_legend, legend_on
                 )
             )
+            traces.extend(_sample_traces(panel, resolved, x_axis, y_axis))
             _add_axes(
                 layout,
                 resolved,
@@ -165,6 +182,9 @@ def render(resolved: ResolvedPlot) -> dict:
             # No panel-title annotation: a facet is named by its y-axis title
             # (base.panel_y_title), which costs the grid no vertical room.
             _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot)
+
+        if legend_on and len(dash_levels(resolved)) > 1:
+            traces.extend(_dash_legend_traces(resolved))
 
         return {"data": traces, "layout": layout}
 
@@ -210,7 +230,9 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
                 "xref": "paper",
                 "yref": "paper",
                 "showarrow": False,
-                "font": {"size": 10},
+                # "small" relative to the figure font, as the matplotlib side
+                # draws the same label.
+                "font": {"size": round(resolved.spec.style.font_size * 0.8)},
                 "xanchor": "center",
                 "yanchor": "top",
             }
@@ -287,7 +309,16 @@ def _panel_traces(
             "xaxis": x_axis,
             "yaxis": y_axis,
         }
-        x_values = _values(subset[encoding.x])
+        if _positional_x(resolved):
+            # A linear axis of level indices (see `_positional_x`): every mark
+            # is placed by index so the overlay can shift beside it, and the
+            # hover names the level the index stands for.
+            positions, _ = x_positions(subset[encoding.x], resolved)
+            x_values = [None if np.isnan(v) else float(v) for v in positions]
+            hover = _level_hover(subset, resolved, base)
+        else:
+            x_values = _values(subset[encoding.x])
+            hover = {}
 
         if kind in (PlotKind.SCATTER, PlotKind.STRIP):
             traces.append(
@@ -298,8 +329,11 @@ def _panel_traces(
                     "x": x_values,
                     "y": _values(subset[encoding.y]),
                     "marker": {"color": color, "size": 8, "opacity": resolved.spec.style.alpha},
+                    **hover,
                 }
             )
+        elif kind is PlotKind.SPAGHETTI:
+            traces.extend(_spaghetti_traces(subset, resolved, base, color))
         elif kind is PlotKind.LINE:
             traces.extend(_line_traces(subset, resolved, base, color))
         elif kind is PlotKind.BAND:
@@ -330,6 +364,7 @@ def _panel_traces(
                     "y": _values(subset[encoding.y]),
                     "marker": {"color": color},
                     **({"error_y": error} if error else {}),
+                    **hover,
                 }
             )
         elif kind in (PlotKind.BOX, PlotKind.VIOLIN):
@@ -354,10 +389,129 @@ def _panel_traces(
     return traces
 
 
-def _line_traces(subset, resolved, base, color) -> list[dict]:
-    """One trace per polyline; only the first carries the legend entry."""
+def _positional_x(resolved: ResolvedPlot) -> bool:
+    """Whether this figure's x axis is drawn as NUMERIC positions of its levels.
+
+    SPAGHETTI shifts each series a fraction of a tick sideways
+    (``ResolvedPlot.series_offsets``), and a "Show sample" overlay shifts its
+    points into the marks' dodge slots (``sample_offsets``) and may join them
+    with lines. plotly's category axis cannot take either: a number in a
+    category trace is stringified and becomes a NEW category, so ``1.15``
+    would draw as its own tick. The axis is therefore linear, with the levels'
+    indices as ``tickvals`` and their labels as ``ticktext``, and an explicit
+    ``range`` of ``[-0.5, n - 0.5]`` — the range a category axis has by
+    default, which is also the geometry :func:`_add_x_groups` assumes when it
+    places brackets at ``i / n``. The marks (bars, boxes) are placed by index
+    too; the ``group`` modes dodge by trace exactly as on a category axis.
+    """
+    return (
+        resolved.kind is PlotKind.SPAGHETTI or bool(resolved.sample_shown)
+    ) and is_categorical_x(resolved)
+
+
+def _level_hover(subset, resolved: ResolvedPlot, base: dict) -> dict:
+    """Hover text naming the LEVEL for a mark drawn at an index position —
+    a nested leaf as ``stim · pre`` — so the hover never shows the index."""
+    labels = [
+        str(v).replace(LEAF_SEPARATOR, " · ") for v in subset[resolved.encoding.x].to_numpy()
+    ]
+    return {
+        "text": labels,
+        "hovertemplate": "%{text}<br>%{y}<extra>" + str(base["name"]) + "</extra>",
+    }
+
+
+def _sample_traces(panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> list[dict]:
+    """The "Show sample" overlay for one panel: markers, or lines+markers when
+    joined, placed by ``base.sample_positions`` inside the marks' dodge slots
+    (the same arithmetic ``mpl._draw_sample`` uses). Never in the legend;
+    ``legendgroup`` ties each point set to its colour level so hiding a level
+    from the legend hides its points too.
+    """
+    sample = getattr(panel, "sample", None)
+    if sample is None or sample.empty or not _positional_x(resolved):
+        return []
+    slots = dodge_slots(panel.frame, resolved)
+    size = 8.0 * float(np.sqrt(SAMPLE_MARKER_FRACTION))  # the marks draw at 8
+    traces: list[dict] = []
+    for index, (level, subset) in enumerate(color_groups(sample, resolved)):
+        color = palette_for(resolved, level, index)
+        label = str(level) if level is not None else resolved.labels.y
+        slot = slots.get(str(level), (0, 1))
+        for identity, rows in sample_series(subset, resolved):
+            positions = sample_positions(rows, resolved, slot, identity)
+            order = np.argsort(positions, kind="stable")
+            hover = sample_hover(rows, resolved)
+            levels = [
+                str(v).replace(LEAF_SEPARATOR, " · ") for v in rows[resolved.encoding.x].to_numpy()
+            ]
+            traces.append(
+                {
+                    "type": "scatter",
+                    "mode": "lines+markers" if resolved.sample_join and len(rows) > 1 else "markers",
+                    "name": str(identity) if identity is not None else label,
+                    "legendgroup": label,
+                    "showlegend": False,
+                    "xaxis": x_axis,
+                    "yaxis": y_axis,
+                    "x": [None if np.isnan(v) else float(v) for v in positions[order]],
+                    "y": _values(rows[resolved.encoding.y].iloc[order]),
+                    "marker": {
+                        "color": color,
+                        "size": size,
+                        "line": {"color": SAMPLE_EDGE_COLOR, "width": 0.5},
+                    },
+                    "line": {"color": color, "width": SAMPLE_LINE_WIDTH},
+                    "opacity": SAMPLE_ALPHA,
+                    "text": [
+                        f"{levels[i]}<br>{hover[i]}" if hover[i] else levels[i] for i in order
+                    ],
+                    "hovertemplate": "%{text}<br>%{y}<extra>" + label + "</extra>",
+                }
+            )
+    return traces
+
+
+def _x_ticks(resolved: ResolvedPlot) -> dict:
+    """Explicit tick placement for an x axis that needs it (else nothing).
+
+    A nested axis is keyed by composed leaf keys the user must never see; the
+    ticks show the innermost layer's value, with the layers above it drawn as
+    brackets (see :func:`_add_x_groups`). Spacer positions get no tick.
+
+    A positional axis (:func:`_positional_x`) places the same ticks at the
+    levels' integer indices and pins the range a category axis would have had,
+    so the brackets' ``i / n`` arithmetic still lands under the right leaves.
+    """
+    plan = resolved.x_plan
+    if _positional_x(resolved):
+        order = list(plan.order) if plan else [str(v) for v in resolved.x_order or []]
+        labels = list(plan.tick_labels) if plan else order
+        return {
+            "tickmode": "array",
+            "tickvals": list(range(len(order))),
+            "ticktext": labels,
+            "range": [-0.5, len(order) - 0.5],
+        }
+    if plan:
+        return {
+            "tickmode": "array",
+            "tickvals": list(plan.order),
+            "ticktext": list(plan.tick_labels),
+        }
+    return {}
+
+
+def _spaghetti_traces(subset, resolved, base, color) -> list[dict]:
+    """Markers + one polyline per series, at index-plus-offset positions.
+
+    Same placement as ``mpl._draw_spaghetti``: tick index from ``x_order``,
+    plus the figure-wide per-series offset, sorted by position so a line runs
+    left to right whatever order the rows arrived in.
+    """
     encoding = resolved.encoding
     series_column = encoding.series
+    offsets = resolved.series_offsets or {}
     if series_column and series_column in subset.columns:
         groups = list(subset.groupby(series_column, sort=False))
     else:
@@ -365,6 +519,52 @@ def _line_traces(subset, resolved, base, color) -> list[dict]:
 
     traces = []
     for position, (series_id, rows) in enumerate(groups):
+        positions, _ = x_positions(rows[encoding.x], resolved)
+        positions = positions + offsets.get(str(series_id), 0.0)
+        order = np.argsort(positions, kind="stable")
+        # A nested axis keys rows by a composed leaf; show it as "stim · pre".
+        labels = [
+            str(v).replace(LEAF_SEPARATOR, " · ")
+            for v in rows[encoding.x].to_numpy()[order]
+        ]
+        traces.append(
+            {
+                **base,
+                "showlegend": base["showlegend"] and position == 0,
+                "type": "scatter",
+                "mode": "lines+markers",
+                "x": [None if np.isnan(v) else float(v) for v in positions[order]],
+                "y": _values(rows[encoding.y].iloc[order]),
+                "line": {"color": color, "width": 1.2},
+                "marker": {"color": color, "size": 8},
+                "opacity": resolved.spec.style.alpha,
+                # The axis shows level labels, but the x values are indices;
+                # hover names the level and the series so neither is lost.
+                "text": [
+                    f"{label}<br>{series_id}" if series_id is not None else label
+                    for label in labels
+                ],
+                "hovertemplate": "%{text}<br>%{y}<extra>" + str(base["name"]) + "</extra>",
+            }
+        )
+    return traces
+
+
+def _series_groups(subset, resolved) -> list[tuple]:
+    """``(series id, rows)`` per polyline / band, or one group for the lot."""
+    series_column = resolved.encoding.series
+    if series_column and series_column in subset.columns:
+        return list(subset.groupby(series_column, sort=False))
+    return [(None, subset)]
+
+
+def _line_traces(subset, resolved, base, color) -> list[dict]:
+    """One trace per polyline; only the first carries the legend entry. An
+    uncoloured grouping layer is told apart by dash style (``dash_style``),
+    the same style in every panel and colour."""
+    encoding = resolved.encoding
+    traces = []
+    for position, (series_id, rows) in enumerate(_series_groups(subset, resolved)):
         traces.append(
             {
                 **base,
@@ -373,7 +573,7 @@ def _line_traces(subset, resolved, base, color) -> list[dict]:
                 "mode": "lines",
                 "x": _values(rows[encoding.x]),
                 "y": _values(rows[encoding.y]),
-                "line": {"color": color, "width": 1.5},
+                "line": {"color": color, "width": 1.5, "dash": dash_style(resolved, rows)},
                 "opacity": resolved.spec.style.alpha,
                 "hovertext": str(series_id) if series_id is not None else None,
             }
@@ -382,35 +582,61 @@ def _line_traces(subset, resolved, base, color) -> list[dict]:
 
 
 def _band_traces(subset, resolved, base, color) -> list[dict]:
+    """One band per series (an uncoloured grouping layer), each its own fill
+    and a centre line in that series' dash style; the first carries the
+    legend entry."""
     encoding = resolved.encoding
-    x_values = _values(subset[encoding.x])
     traces = []
-    if encoding.has_error:
+    for position, (series_id, rows) in enumerate(_series_groups(subset, resolved)):
+        x_values = _values(rows[encoding.x])
+        if encoding.has_error:
+            traces.append(
+                {
+                    **base,
+                    "showlegend": False,
+                    "type": "scatter",
+                    "mode": "lines",
+                    "x": x_values + x_values[::-1],
+                    "y": _values(rows[encoding.y_high]) + _values(rows[encoding.y_low])[::-1],
+                    "fill": "toself",
+                    "fillcolor": _rgba(color, 0.22),
+                    "line": {"width": 0},
+                    "hoverinfo": "skip",
+                }
+            )
         traces.append(
             {
                 **base,
-                "showlegend": False,
+                "showlegend": base["showlegend"] and position == 0,
                 "type": "scatter",
                 "mode": "lines",
-                "x": x_values + x_values[::-1],
-                "y": _values(subset[encoding.y_high]) + _values(subset[encoding.y_low])[::-1],
-                "fill": "toself",
-                "fillcolor": _rgba(color, 0.22),
-                "line": {"width": 0},
-                "hoverinfo": "skip",
+                "x": x_values,
+                "y": _values(rows[encoding.y]),
+                "line": {"color": color, "width": 2, "dash": dash_style(resolved, rows)},
+                "hovertext": str(series_id) if series_id is not None else None,
             }
         )
-    traces.append(
+    return traces
+
+
+def _dash_legend_traces(resolved) -> list[dict]:
+    """One empty trace per dash id so the legend lists the dash styles — in
+    neutral grey, since the style is what they tell apart. Their own legend
+    group, after the colour entries."""
+    return [
         {
-            **base,
+            "name": sid,
+            "legendgroup": f"dash:{sid}",
+            "showlegend": True,
             "type": "scatter",
             "mode": "lines",
-            "x": x_values,
-            "y": _values(subset[encoding.y]),
-            "line": {"color": color, "width": 2},
+            "x": [None],
+            "y": [None],
+            "hoverinfo": "skip",
+            "line": {"color": "#555555", "width": 2, "dash": resolved.dash_styles[sid]},
         }
-    )
-    return traces
+        for sid in dash_levels(resolved)
+    ]
 
 
 def _add_axes(
@@ -445,15 +671,10 @@ def _add_axes(
         # A nested axis is keyed by composed leaf keys the user must never see;
         # the ticks show the innermost layer's value, with the layers above it
         # drawn as brackets (see _add_x_groups). Spacer positions get no tick.
-        **(
-            {
-                "tickmode": "array",
-                "tickvals": list(resolved.x_plan.order),
-                "ticktext": list(resolved.x_plan.tick_labels),
-            }
-            if resolved.x_plan
-            else {}
-        ),
+        # A positional axis (_positional_x) says the same thing in indices:
+        # its traces carry level INDICES plus a fractional offset, so the ticks
+        # are placed at the integers and named from the plan or the order.
+        **_x_ticks(resolved),
         # The category order, STATED. Left unsaid, plotly orders a categorical
         # axis by first appearance in the traces, and the trace order is
         # whatever `_summarize(..., sort=False)` left behind — i.e. database row
@@ -478,7 +699,7 @@ def _add_axes(
                 "categoryorder": "array",
                 "categoryarray": [str(v) for v in resolved.x_order],
             }
-            if is_categorical_x(resolved)
+            if is_categorical_x(resolved) and not _positional_x(resolved)
             else {}
         ),
         # "category", stated, whenever the axis holds levels — and not left to
@@ -491,7 +712,11 @@ def _add_axes(
         "type": (
             "log"
             if resolved.spec.style.log_x
-            else ("category" if is_categorical_x(resolved) else "-")
+            else (
+                "category"
+                if is_categorical_x(resolved) and not _positional_x(resolved)
+                else "-"
+            )
         ),
         # Upright, always. Plotly rotates category tick labels towards vertical
         # once a cell is too narrow for them, so the same figure reads
@@ -545,7 +770,9 @@ MAX_LEGEND_PX = 320
 def _right_margin(resolved: ResolvedPlot) -> int:
     """Room on the right for the legend, sized from the longest entry."""
     entries = [str(level) for level in legend_levels(resolved)]
+    entries.extend(dash_levels(resolved))
     entries.append(resolved.labels.color or "")
+    entries.append(resolved.labels.dash or "")
     longest = max((len(text) for text in entries), default=0)
     return int(min(MAX_LEGEND_PX, LEGEND_FIXED_PX + LEGEND_CHAR_PX * longest))
 

@@ -209,7 +209,7 @@ class TestNonContiguousLocations:
 def test_a_selection_matching_nothing_yields_an_empty_figure(scalar_table):
     spec = _spec(
         _loc(("99",)),
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
 
@@ -276,7 +276,7 @@ class TestRoundTrip:
     def test_through_generated_source(self, scalar_table):
         spec = _spec(
             _loc(("01",), ("02", "pre", "3")),
-            roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+            roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
             kind=PlotKind.BOX,
         )
 
@@ -341,7 +341,7 @@ def test_generated_code_guards_absent_keys(scalar_frame):
 
 
 def test_capabilities_report_which_levels_survive(scalar_table):
-    spec = _spec(_loc(("01",), ("03",)), roles={"session": Role.X})
+    spec = _spec(_loc(("01",), ("03",)), roles={"session": Role.GROUP})
 
     report = capabilities(spec, scalar_table)
     by_name = {f["name"]: f for f in report["factors"]}
@@ -357,7 +357,7 @@ def test_the_no_filter_fast_path_still_sees_a_location_filter(scalar_table):
     selected" beside a figure drawing 1 — the precise failure the shared-rule
     readout exists to prevent.
     """
-    spec = _spec(_loc(("02",)), roles={"session": Role.X})
+    spec = _spec(_loc(("02",)), roles={"session": Role.GROUP})
     assert not spec.filters  # the condition the old fast path tested
 
     report = capabilities(spec, scalar_table)

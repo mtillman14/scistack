@@ -45,7 +45,9 @@ def _lines(caplog) -> list[str]:
 def fanout_spec() -> PlotSpec:
     return PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.ITERATE, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session"],
+        color="session",
         kind=PlotKind.LINE,
     )
 
@@ -100,7 +102,9 @@ def test_filtering_to_one_location_shows_in_the_extent(series_table, caplog):
     """
     everything = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.COLOR, "session": Role.FREE, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session", "subject"],
+        color="subject",
         kind=PlotKind.LINE,
     )
     with caplog.at_level(logging.INFO, logger=LAYER):
@@ -110,7 +114,9 @@ def test_filtering_to_one_location_shows_in_the_extent(series_table, caplog):
 
     one = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.COLOR, "session": Role.FREE, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session", "subject"],
+        color="subject",
         kind=PlotKind.LINE,
         filters=[Filter("subject", include=["01"])],
     )

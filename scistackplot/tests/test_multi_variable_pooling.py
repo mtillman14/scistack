@@ -158,18 +158,15 @@ def test_variable_defaults_to_facet():
     assert roles[VARIABLE_COLUMN] is Role.FACET
 
 
-@pytest.mark.parametrize("role", [Role.FREE, Role.AGGREGATE])
-def test_variable_cannot_be_pooled(role):
-    """Unlike a variant factor, this is a flat refusal with no opt-in: averaging
-    EMG with force, or overplotting them as replicates of each other, is not a
-    figure anyone wants."""
-    spec = _variants_within_each_spec(roles={VARIABLE_COLUMN: role})
+def test_variable_cannot_be_collapsed():
+    """Averaging EMG with force is not a figure anyone wants."""
+    spec = _variants_within_each_spec(roles={VARIABLE_COLUMN: Role.COLLAPSE})
 
     with pytest.raises(RoleError, match="different variables"):
         validate(spec, apply_variant_sets(spec, _stacked()))
 
 
-@pytest.mark.parametrize("role", [Role.COLOR, Role.FACET, Role.ITERATE])
+@pytest.mark.parametrize("role", [Role.GROUP, Role.FACET, Role.ITERATE])
 def test_variable_accepts_every_separating_role(role):
     spec = _variants_within_each_spec(roles={VARIABLE_COLUMN: role})
 
@@ -192,8 +189,8 @@ def test_aggregating_variants_collapses_WITHIN_each_variable():
     spec = _variants_within_each_spec(
         roles={
             VARIABLE_COLUMN: Role.FACET,
-            VARIANT_FACTOR: Role.AGGREGATE,
-            "subject": Role.X,
+            VARIANT_FACTOR: Role.GROUP,
+            "subject": Role.COLLAPSE,
         },
     )
 
@@ -205,15 +202,15 @@ def test_aggregating_variants_collapses_WITHIN_each_variable():
     assert values == [1.0, 1.0, 100.0, 100.0]
 
 
-def test_free_variants_keep_each_variable_apart():
-    """The other renderer, same failure: a distribution summarizes whatever
-    replicate rows remain, so a ``Variable`` with no role would put EMG and
-    force into one box."""
+def test_boxed_variants_keep_each_variable_apart():
+    """The other renderer, same failure: a distribution draws whatever sample
+    rows remain, so a ``Variable`` with no role would put EMG and force into
+    one box."""
     spec = _variants_within_each_spec(
         roles={
             VARIABLE_COLUMN: Role.FACET,
-            VARIANT_FACTOR: Role.FREE,
-            "subject": Role.X,
+            VARIANT_FACTOR: Role.GROUP,
+            "subject": Role.COLLAPSE,
         },
         kind=PlotKind.BOX,
     )

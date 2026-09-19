@@ -150,11 +150,13 @@ def test_the_derived_factor_takes_a_role(phased_table):
     spec = PlotSpec(
         measures=["StepLength"],
         roles={
-            "Phase": Role.COLOR,
-            "session": Role.X,
-            "subject": Role.FREE,
-            "trial": Role.FREE,
+            "Phase": Role.GROUP,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
+        groups=["Phase", "session"],
+        color="Phase",
         kind=PlotKind.BOX,
         level_groups=[_group()],
     )
@@ -169,7 +171,7 @@ def test_the_derived_factor_takes_a_role(phased_table):
 def test_the_derived_factor_can_iterate(phased_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"Phase": Role.ITERATE, "session": Role.X},
+        roles={"Phase": Role.ITERATE, "session": Role.GROUP, "subject": Role.COLLAPSE},
         kind=PlotKind.BOX,
         level_groups=[_group()],
     )
@@ -183,7 +185,7 @@ def test_capabilities_offer_the_derived_factor(phased_table):
     """The panel builds its role dropdowns from this; a factor missing here
     cannot be assigned at all."""
     spec = PlotSpec(
-        measures=["StepLength"], roles={"session": Role.X}, level_groups=[_group()]
+        measures=["StepLength"], roles={"session": Role.GROUP}, level_groups=[_group()]
     )
 
     names = [f["name"] for f in capabilities(spec, phased_table)["factors"]]
@@ -204,7 +206,7 @@ def test_generated_code_reproduces_the_bucketing(phased_table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"Phase": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"Phase": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         level_groups=[_group()],
     )

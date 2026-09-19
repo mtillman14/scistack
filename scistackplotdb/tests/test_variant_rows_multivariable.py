@@ -31,7 +31,7 @@ pytest.importorskip("seaborn")
 def _spec(**kwargs) -> PlotSpec:
     base = dict(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
     base.update(kwargs)
@@ -120,7 +120,11 @@ def test_the_variant_factor_takes_a_role_like_any_other(scaled):
     table = ScidbSource(scaled).get_table(["StepLength", "Scaled"])
     spec = _two_variable_spec()
 
-    coloured = resolve(spec.with_roles(**{VARIANT_FACTOR: Role.COLOR}), table)
+    from dataclasses import replace
+
+    coloured = resolve(
+        replace(spec.with_roles(**{VARIANT_FACTOR: Role.GROUP}), color=VARIANT_FACTOR), table
+    )
     assert len(coloured) == 1
 
     separate = resolve(spec.with_roles(**{VARIANT_FACTOR: Role.ITERATE}), table)
@@ -174,7 +178,17 @@ def test_a_row_naming_only_a_variable_is_not_inert(scaled):
 def _emg_spec() -> PlotSpec:
     return PlotSpec(
         measures=["Emg"],
-        roles={"ColName": Role.FACET, "Variant": Role.COLOR},
+        # One line per record per variant, all in one figure: the schema keys
+        # are series layers, the variant the coloured one.
+        roles={
+            "ColName": Role.FACET,
+            "Variant": Role.GROUP,
+            "subject": Role.GROUP,
+            "session": Role.GROUP,
+            "trial": Role.GROUP,
+        },
+        groups=["Variant", "trial", "session", "subject"],
+        color="Variant",
         kind=PlotKind.LINE,
         variant_sets=[
             VariantSet(name="Raw", variable="Emg"),

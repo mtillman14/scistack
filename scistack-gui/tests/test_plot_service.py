@@ -28,17 +28,39 @@ def _clear_source_cache():
 
 
 def _pooled_spec(db, variable: str = "RawSignal") -> dict:
-    """`describe()`'s spec with the schema keys POOLED — subject on colour,
-    session free, a band over the replicates, one range of y limits — which is
-    how the panel opened before 2026-09-13 and the shape most tests here were
-    written against (one figure, two colours). The opening default is now one
-    figure per record with per-panel limits (`default_roles`), and has its own
-    tests (`TestTheOpeningDefault`)."""
+    """`describe()`'s spec with the schema keys in ONE figure — subject the
+    coloured grouping layer, session collapsed (the sample), a band over it,
+    one range of y limits — the shape most tests here were written against
+    (one figure, two colours). The opening default is one figure per record
+    with per-panel limits (`default_assignment`), and has its own tests
+    (`TestTheOpeningDefault`)."""
     spec = plot_service.describe(db, variable)["spec"]
-    spec["roles"] = {**spec["roles"], "subject": "color", "session": "free"}
+    spec = _with_roles(spec, color="subject", subject="group", session="collapse")
     spec["kind"] = "band"
     spec["y_axis"] = {**(spec.get("y_axis") or {}), "scope": []}
     return spec
+
+
+def _with_roles(spec: dict, color: str | None = "keep", **roles: str) -> dict:
+    """``spec`` with ``roles`` merged in, the grouping order and colour kept
+    consistent: a factor leaving the grouping leaves `groups` and drops the
+    colour if it held it — what the panel's `setRole` does."""
+    merged = {**spec["roles"], **roles}
+    groups = [n for n in (spec.get("groups") or []) if merged.get(n) == "group"]
+    for name, role in roles.items():
+        if role == "group" and name not in groups:
+            groups.insert(0, name)
+    if color == "keep":
+        color = spec.get("color")
+    if color is not None and merged.get(color) != "group":
+        color = None
+    return {**spec, "roles": merged, "groups": groups, "color": color}
+
+
+def _invalid_spec(spec: dict) -> dict:
+    """A spec `validate` refuses: a colour naming a factor that is not a
+    grouping layer — the role conflict the panel shows as a message."""
+    return {**spec, "color": "session", "roles": {**spec["roles"], "session": "collapse"}}
 
 
 class TestTheOpeningDefault:
@@ -122,7 +144,7 @@ def test_resolve_returns_plotly_payloads(populated_db):
 
 def test_iterate_role_produces_one_payload_per_level(populated_db):
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
     result = plot_service.resolve_figures(populated_db, spec)
 
     assert len(result["figures"]) == 2  # subjects 1 and 2
@@ -132,28 +154,27 @@ def test_iterate_role_produces_one_payload_per_level(populated_db):
 def test_invalid_spec_returns_a_message_not_an_exception(populated_db):
     """A role conflict is user-correctable state, so the panel shows it.
 
-    Two factors on COLOUR, not on x: x became multi-assignment when nested
-    grouping landed, and colour is where single-assignment still means
-    something.
+    A colour naming a factor that does not group: colour is a tag on a
+    grouping layer, and a stale one is the conflict a saved spec can carry.
     """
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
+    spec = _invalid_spec(spec)
     result = plot_service.resolve_figures(populated_db, spec)
 
     assert result["ok"] is False
-    assert "one factor" in result["error"]
+    assert "not a grouping layer" in result["error"]
     assert result["figures"] == []
 
 
-def test_nesting_a_1d_measures_x_axis_is_refused_with_a_message(populated_db):
-    """RawSignal is 1-D: its x axis is the sample index, so it has no
-    categorical axis to nest groups on. Still a message, not an exception."""
+def test_a_kind_without_its_sample_is_refused_with_a_message(populated_db):
+    """A band needs a sample; with nothing collapsed there is none. Still a
+    message, not an exception."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+    spec = _with_roles(spec, session="iterate")
     result = plot_service.resolve_figures(populated_db, spec)
 
     assert result["ok"] is False
-    assert "categorical axis" in result["error"]
+    assert "Needs a sample" in result["error"]
     assert result["figures"] == []
 
 
@@ -256,10 +277,9 @@ def test_two_series_over_two_variables_resolve_together(populated_db):
         {"name": "Raw", "selection": {}, "variable": "RawSignal"},
         {"name": "Filtered", "selection": {}, "variable": "FilteredSignal"},
     ]
-    # RawSignal is 1-D, so `default_roles` already put `subject` on colour —
-    # the comparison is what this figure is about, so it takes the channel and
-    # subjects become replicates.
-    spec["roles"] = {**spec["roles"], "subject": "free", "Variant": "color"}
+    # The comparison is what this figure is about, so the variant takes the
+    # colour and the subjects become the sample.
+    spec = _with_roles(spec, color="Variant", subject="collapse", Variant="group")
 
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -285,7 +305,7 @@ def test_resolve_describes_the_whole_fanout_it_did_not_send(populated_db):
     megabytes per figure, crossing the webview boundary on every interaction.
     """
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
     result = plot_service.resolve_figures(populated_db, spec, figure_index=1)
 
     assert result["figure_count"] == 2
@@ -299,7 +319,7 @@ def test_resolve_describes_the_whole_fanout_it_did_not_send(populated_db):
 def test_resolve_without_an_index_still_returns_every_figure(populated_db):
     """None is the library/test caller's answer, and stays the default."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
     result = plot_service.resolve_figures(populated_db, spec)
 
     assert len(result["figures"]) == result["figure_count"] == 2
@@ -312,7 +332,7 @@ def test_an_out_of_range_index_clamps(populated_db):
     a moment behind, so this is a normal transient — not a bad request.
     """
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     assert plot_service.resolve_figures(populated_db, spec, figure_index=99)[
         "figure_index"
@@ -322,21 +342,20 @@ def test_an_out_of_range_index_clamps(populated_db):
     ] == 0
 
 
-def test_iterating_a_nested_key_iterates_its_ancestors(populated_db):
-    """Schema is [subject, session]: one figure per session is really four.
-
-    And the panel is told, because a user who asked for two figures and
-    received four would think something was broken.
-    """
-    # `subject` must be FREE for promotion to apply: an ancestor the user
-    # assigned a channel (or a fan-out) is deliberately left alone.
+def test_iterating_a_nested_key_does_not_drag_its_ancestors_along(populated_db):
+    """Schema is [subject, session]: one figure per session IS two figures,
+    every subject's session side by side. The old model promoted an unassigned
+    ancestor to a fan-out; every role is explicit now, so nothing is silent
+    and nothing is promoted."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "session": "iterate", "subject": "free"}
+    spec = _with_roles(spec, session="iterate", subject="group")
+    spec["kind"] = "line"  # a band needs a sample; nothing is collapsed here
     result = plot_service.resolve_figures(populated_db, spec)
 
-    assert result["figure_count"] == 4
-    assert all("subject=" in label for label in result["figure_labels"])
-    assert result["notes"] and "subject" in result["notes"][0]
+    assert result["ok"] is True, result["error"]
+    assert result["figure_count"] == 2
+    assert all(label.startswith("session=") for label in result["figure_labels"])
+    assert result["notes"] == []
 
 
 def test_an_ancestor_on_a_channel_is_not_promoted(populated_db):
@@ -346,10 +365,12 @@ def test_an_ancestor_on_a_channel_is_not_promoted(populated_db):
     one click from it: promotion must not quietly turn two figures into four.
     """
     spec = _pooled_spec(populated_db)
-    assert spec["roles"]["subject"] == "color"
-    spec["roles"] = {**spec["roles"], "session": "iterate"}
+    assert spec["color"] == "subject"
+    spec = _with_roles(spec, session="iterate")
+    spec["kind"] = "line"  # a band needs a sample; with session iterated there is none
     result = plot_service.resolve_figures(populated_db, spec)
 
+    assert result["ok"] is True, result["error"]
     assert result["figure_count"] == 2
     assert result["notes"] == []
 
@@ -357,7 +378,8 @@ def test_an_ancestor_on_a_channel_is_not_promoted(populated_db):
 def test_the_fanout_rolls_over_at_a_subject_boundary(populated_db):
     """Subject-major order: after subject 1's last session comes subject 2's first."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "session": "iterate", "subject": "free"}
+    spec = _with_roles(spec, session="iterate", subject="iterate")
+    spec["kind"] = "line"
     labels = plot_service.resolve_figures(populated_db, spec)["figure_labels"]
 
     assert [label.split(",")[0] for label in labels] == [
@@ -371,7 +393,7 @@ def test_the_fanout_rolls_over_at_a_subject_boundary(populated_db):
 def test_a_failed_resolve_still_answers_the_navigator(populated_db):
     """The panel reads these keys unconditionally; a role error must not KeyError it."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+    spec = _invalid_spec(spec)
     result = plot_service.resolve_figures(populated_db, spec, figure_index=3)
 
     assert result["ok"] is False
@@ -393,15 +415,14 @@ def test_max_points_downsamples_for_transport(populated_db):
 def test_capabilities_track_role_changes(populated_db):
     spec = _pooled_spec(populated_db)
 
-    with_replicates = plot_service.capabilities_for(populated_db, spec)
-    assert with_replicates["has_replicates"] is True
-    assert "band" in with_replicates["available"]
+    with_sample = plot_service.capabilities_for(populated_db, spec)
+    assert with_sample["has_sample"] is True
+    assert "band" in with_sample["available"]
 
-    spec["roles"] = {key: "color" if key == "session" else "aggregate"
-                     for key in spec["roles"]}
-    collapsed = plot_service.capabilities_for(populated_db, spec)
-    assert collapsed["has_replicates"] is False
-    assert "band" not in collapsed["available"]
+    spec = _with_roles(spec, **{key: "group" for key in spec["roles"]})
+    no_sample = plot_service.capabilities_for(populated_db, spec)
+    assert no_sample["has_sample"] is False
+    assert "band" not in no_sample["available"]
 
 
 # --- export ----------------------------------------------------------------
@@ -500,7 +521,7 @@ def test_save_figure_honours_the_suffix(populated_db, tmp_path):
 def test_save_figure_writes_one_file_per_iterated_figure(populated_db, tmp_path):
     """A fanned-out spec must not silently save only the first figure."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     result = plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
 
@@ -518,7 +539,7 @@ def test_save_figure_saves_only_the_requested_figure(populated_db, tmp_path):
     timeout — a save is more work than the interactive resolve beside it, and
     that was already taking 25-27s on the user's data."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     result = plot_service.save_figure(
         populated_db, spec, str(tmp_path / "emg.png"), figure_index=1
@@ -537,7 +558,7 @@ def test_saving_one_figure_builds_only_that_figure(populated_db, tmp_path, monke
     import scistackplot
 
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     calls = []
     original = scistackplot.resolve
@@ -559,7 +580,7 @@ def test_an_out_of_range_figure_index_clamps(populated_db, tmp_path):
     """The panel's cursor can be a moment behind a fan-out that just shrank;
     `resolve_one` clamps rather than rejecting, and saving inherits that."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     result = plot_service.save_figure(
         populated_db, spec, str(tmp_path / "emg.png"), figure_index=99
@@ -571,7 +592,7 @@ def test_an_out_of_range_figure_index_clamps(populated_db, tmp_path):
 
 def test_save_reports_progress_per_file(populated_db, tmp_path):
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     seen = []
     plot_service.save_figure(
@@ -597,7 +618,7 @@ def test_save_reports_the_resolve_before_any_file_exists(populated_db, tmp_path)
     PNG existed. The panel was indistinguishable from a hung one.
     """
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     seen = []
     plot_service.save_figure(
@@ -620,7 +641,7 @@ def test_save_reports_the_resolve_before_any_file_exists(populated_db, tmp_path)
 
 def test_an_indexed_save_reports_its_one_figure_too(populated_db, tmp_path):
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     seen = []
     plot_service.save_figure(
@@ -639,7 +660,7 @@ def test_an_indexed_save_reports_its_one_figure_too(populated_db, tmp_path):
 def test_a_bad_spec_is_a_message_on_the_indexed_save_too(populated_db, tmp_path):
     """Both save paths share the refusal, like both resolve paths do."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+    spec = _invalid_spec(spec)
 
     result = plot_service.save_figure(
         populated_db, spec, str(tmp_path / "x.png"), figure_index=0
@@ -651,7 +672,7 @@ def test_a_bad_spec_is_a_message_on_the_indexed_save_too(populated_db, tmp_path)
 
 def test_save_figure_reports_a_bad_spec_instead_of_raising(populated_db, tmp_path):
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "x", "session": "x"}
+    spec = _invalid_spec(spec)
 
     result = plot_service.save_figure(populated_db, spec, str(tmp_path / "x.png"))
     assert result["ok"] is False
@@ -669,7 +690,7 @@ def test_saving_into_a_folder_names_the_files_after_the_figures(
     the filename-plus-suffix scheme produced.
     """
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
     folder = tmp_path / "figures"
     folder.mkdir()
 
@@ -912,7 +933,7 @@ def test_a_save_job_writes_every_figure_and_reports_each(
     populated_db, tmp_path, captured_pushes
 ):
     spec = _pooled_spec(populated_db)
-    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+    spec = _with_roles(spec, subject="iterate")
 
     started = plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
     assert "job_id" in started
@@ -956,7 +977,7 @@ def test_a_save_job_does_not_hold_the_database_while_rendering(
     monkeypatch.setattr(scistackplot, "render_matplotlib", spy)
 
     spec = _pooled_spec(populated_db)
-    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+    spec = _with_roles(spec, subject="iterate")
 
     plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
     _drain(captured_pushes, "plot_save_complete")
@@ -1015,7 +1036,7 @@ def test_an_invalid_spec_ends_the_job_rather_than_hanging(
     """A refusal is not a crash, but it still has to END the job — the panel
     cannot tell a refusal from silence."""
     spec = _pooled_spec(populated_db)
-    spec = {**spec, "roles": {**spec["roles"], "subject": "x", "session": "x"}}
+    spec = _invalid_spec(spec)
 
     plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
 
@@ -1093,7 +1114,7 @@ def test_saving_one_figure_is_a_job_too(
     every other save, and reports one file when that figure is on disk.
     """
     spec = _pooled_spec(populated_db)
-    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+    spec = _with_roles(spec, subject="iterate")
 
     started = plot_service.start_save_job(
         populated_db, spec, str(tmp_path / "emg.png"), figure_index=1
@@ -1121,7 +1142,7 @@ def test_a_save_job_reports_the_folder_it_filled(
     printing them pushed the one fact that matters — it finished — off the end.
     """
     spec = _pooled_spec(populated_db)
-    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+    spec = _with_roles(spec, subject="iterate")
     folder = tmp_path / "out"
     folder.mkdir()
 
@@ -1180,7 +1201,7 @@ def test_figure_index_reaches_the_service_over_both_transports(
     from scistack_gui.server import METHODS
 
     spec = _pooled_spec(populated_db)
-    spec = {**spec, "roles": {**spec["roles"], "subject": "iterate"}}
+    spec = _with_roles(spec, subject="iterate")
 
     client.post(
         "/api/plot/save",
@@ -1583,7 +1604,7 @@ def test_figure_index_builds_one_figure_and_labels_them_all(populated_db):
     required the figures.
     """
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     result = plot_service.resolve_figures(populated_db, spec, figure_index=1)
 
@@ -1601,7 +1622,7 @@ def test_an_out_of_range_figure_index_is_clamped_not_rejected(populated_db):
     """The fan-out shrinks whenever a filter narrows the data, and the panel's
     cursor is a moment behind the spec it is already re-resolving."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     result = plot_service.resolve_figures(populated_db, spec, figure_index=99)
 
@@ -1614,7 +1635,7 @@ def test_one_figure_matches_what_resolving_all_of_them_gives(populated_db):
     """The deferred path must not be a second implementation. Same spec, same
     figure — otherwise the panel and an export disagree about what it drew."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "iterate"}
+    spec = _with_roles(spec, subject="iterate")
 
     one = plot_service.resolve_figures(populated_db, spec, figure_index=1)
     every = plot_service.resolve_figures(populated_db, spec)
@@ -1628,12 +1649,12 @@ def test_an_invalid_spec_is_a_message_on_the_deferred_path_too(populated_db):
     """Both resolve paths share `_invalid_spec`, so a role conflict cannot come
     back as a message on one and an exception on the other."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
+    spec = _invalid_spec(spec)
 
     result = plot_service.resolve_figures(populated_db, spec, figure_index=0)
 
     assert result["ok"] is False
-    assert "one factor" in result["error"]
+    assert "not a grouping layer" in result["error"]
     assert result["figures"] == []
 
 
@@ -2048,7 +2069,7 @@ def test_save_reduces_and_renders_with_the_connection_released(
 def test_an_invalid_spec_releases_the_hold(populated_db, per_request_policy):
     """The early return inside the hold must still release it."""
     spec = _pooled_spec(populated_db)
-    spec["roles"] = {**spec["roles"], "subject": "color", "session": "color"}
+    spec = _invalid_spec(spec)
 
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -2068,8 +2089,8 @@ def test_capabilities_offer_the_scalar_kinds_for_a_1d_variable(populated_db):
 
     report = plot_service.capabilities_for(populated_db, spec)
 
-    assert report["collapse"]["applies"] is True
-    assert report["collapse"]["active"] is False, "a band draws the samples"
+    assert report["cell_collapse"]["applies"] is True
+    assert report["cell_collapse"]["active"] is False, "a band draws the samples"
     assert "violin" in report["available"]
     assert "band" in report["available"], "and the 1-D kinds stay available"
 
@@ -2082,7 +2103,7 @@ def test_selecting_a_scalar_kind_reports_a_scalar_figure(populated_db):
 
     assert report["shape"] == "scalar", "what the figure is"
     assert report["raw_shape"] == "1d", "what the data is"
-    assert report["collapse"]["active"] is True
+    assert report["cell_collapse"]["active"] is True
     # The panel must still be able to go back.
     assert "line" in report["available"]
 
@@ -2090,7 +2111,7 @@ def test_selecting_a_scalar_kind_reports_a_scalar_figure(populated_db):
 def test_a_collapsed_1d_variable_resolves_to_one_point_per_record(populated_db):
     spec = _pooled_spec(populated_db)
     spec["kind"] = "violin"
-    spec["collapse_statistic"] = "median"
+    spec["cell_statistic"] = "median"
 
     result = plot_service.resolve_figures(populated_db, spec)
 
@@ -2104,14 +2125,14 @@ def test_a_collapsed_1d_variable_resolves_to_one_point_per_record(populated_db):
 
 
 def test_the_kind_list_carries_the_roles_a_scalar_kind_would_open_with(populated_db):
-    """The opening spec iterates every schema key, which leaves no replicates.
+    """The opening spec iterates every schema key, which leaves no sample.
     The panel applies these synchronously when the user picks a violin, so the
     first click draws a distribution instead of doing nothing visible.
 
-    This fixture has exactly TWO factors, which is the case that caught the
-    first version: the plain scalar default is ``subject=x, session=color`` —
-    one point per combination, nothing to distribute — so a distribution kind
-    also frees the innermost key.
+    This fixture has exactly TWO factors: the scalar default groups `session`
+    (the deepest key) and iterates `subject` — one point per figure, nothing
+    to distribute — so a distribution kind also collapses the key just
+    outside the grouped one.
     """
     spec = plot_service.describe(populated_db, "RawSignal")["spec"]
 
@@ -2119,9 +2140,12 @@ def test_the_kind_list_carries_the_roles_a_scalar_kind_would_open_with(populated
     kinds = {info["kind"]: info for info in report["kinds"]}
 
     assert kinds["violin"]["collapses"] is True
-    assert kinds["violin"]["roles"], "a shape change, so a suggestion"
-    assert kinds["violin"]["roles"]["session"] == "free"
-    assert kinds["band"]["roles"] is None, "no shape change, no suggestion"
+    assignment = kinds["violin"]["assignment"]
+    assert assignment, "a shape change, so a suggestion"
+    assert assignment["roles"]["session"] == "group"
+    assert assignment["roles"]["subject"] == "collapse"
+    assert assignment["groups"] == ["session"]
+    assert kinds["band"]["assignment"] is None, "no shape change, no suggestion"
 
 
 def test_a_violin_is_clickable_from_the_opening_state(populated_db):
@@ -2132,7 +2156,7 @@ def test_a_violin_is_clickable_from_the_opening_state(populated_db):
 
     report = plot_service.capabilities_for(populated_db, spec)
 
-    assert report["has_replicates"] is False
+    assert report["has_sample"] is False
     assert "violin" in report["available"]
     assert "band" not in report["available"], "BAND brings no roles of its own"
 

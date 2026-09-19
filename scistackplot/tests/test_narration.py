@@ -29,9 +29,9 @@ LAYER = "scistackplot"
 #: across figures this function never sees (`scistackplot.ylimits`). What is
 #: left per figure is reading the panels' own limits back, which is not work.
 #:
-#: No `collapse_aggregates` for this spec: a nested 1-D measure takes ONE of
+#: No `collapse_levels` for this spec: a nested 1-D measure takes ONE of
 #: three per-sample routes (`explode`, `collapse_series` when a factor is
-#: AGGREGATE, `summarize_series` inside `panel_frames` for BAND/BAR), and the
+#: collapsed, `summarize_series` inside `panel_frames` for BAND/BAR), and the
 #: pandas collapse phase only runs for measures that were never nested.
 #: `test_a_collapsed_line_narrates_the_collapse` pins the second route.
 BUILD_PHASES = [
@@ -51,7 +51,9 @@ def fanout_spec() -> PlotSpec:
     """A fan-out of a 1-D measure — the shape that gets slow."""
     return PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.ITERATE, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session"],
+        color="session",
         kind=PlotKind.LINE,
     )
 
@@ -69,11 +71,12 @@ def test_narrated_resolve_names_every_phase_of_every_figure(
 
 
 def test_a_collapsed_line_narrates_the_collapse(series_table, caplog):
-    """An AGGREGATE role sends a 1-D line through `collapse_series` instead of
+    """A collapse sends a 1-D line through `collapse_series` instead of
     `explode` — that phase must announce itself the same way."""
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.ITERATE, "session": Role.COLOR, "trial": Role.AGGREGATE},
+        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        color="session",
         kind=PlotKind.LINE,
     )
     with caplog.at_level(logging.INFO, logger=LAYER):
@@ -110,7 +113,9 @@ def test_narration_counts_panels_within_the_slow_phase(
     which. `panel_frames` is where a full-resolution figure spends its time."""
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.FACET, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"session": Role.FACET, "subject": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "subject"],
+        color="subject",
         kind=PlotKind.LINE,
     )
     with caplog.at_level(logging.INFO, logger=LAYER):

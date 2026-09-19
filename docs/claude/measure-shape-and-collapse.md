@@ -43,7 +43,7 @@ scalar.** Nothing about the scalar path changes, which is the entire point.
 
 ## The mechanism: a derived table that rewrites the measure
 
-`collapse.apply_collapse(spec, table) -> LongTable` returns a table in which the
+`cell.apply_cell_collapse(spec, table) -> LongTable` returns a table in which the
 y measure's column holds one float per row and whose `MeasureInfo.shape` is
 `SCALAR`. It is the third member of the derived-table family:
 
@@ -51,7 +51,7 @@ y measure's column holds one float per row and whose `MeasureInfo.shape` is
 |---|---|---|
 | `apply_variant_sets` | `variants.py` | adds the `Variant` factor, consumes variant columns |
 | `apply_level_groups` | `groups.py` | adds a bucketed factor, keeps the source factor |
-| `apply_collapse` | `collapse.py` | rewrites the **measure**: 1-D cells → scalars |
+| `apply_cell_collapse` | `cell.py` | rewrites the **measure**: 1-D cells → scalars |
 
 It obeys the same test as the others (*does the spec decide?* — yes, the plot
 kind does), so it is recomputed wherever the spec is read, and a project that
@@ -76,7 +76,7 @@ asks the table what shape the measure is and gets a true answer.
 In `reduce._build_plan_timed`:
 
 ```
-apply_variant_sets  ->  apply_level_groups  ->  apply_collapse
+apply_variant_sets  ->  apply_level_groups  ->  apply_cell_collapse
    ->  strip_answered_roles / validate / complete_roles  ->  apply_filters
 ```
 
@@ -98,7 +98,7 @@ Three consequences that are load-bearing, not incidental:
 There is **no collapse toggle**. A scalar-only kind (`SCATTER`, `STRIP`, `BOX`,
 `VIOLIN`, `BAR`) selected on a 1-D measure *is* the request to collapse; `LINE`
 and `BAND` are the request not to. Only the statistic is a separate field
-(`PlotSpec.collapse_statistic`, mean or median).
+(`PlotSpec.cell_statistic`, mean or median — renamed from `collapse_statistic` on 2026-09-17, when *Collapse* became the role that averages a factor's levels away; see `grouping-and-collapse.md`).
 
 This is a deliberate rejection of the more obvious design — a "reduce each vector
 to one value" checkbox that unlocks the scalar kinds. A checkbox creates states
@@ -127,7 +127,7 @@ and the statistic dropdown.
 
 A 1-D measure opens with every schema key on `ITERATE` — one record per figure,
 decided 2026-09-13 for the opening cost. A scalar measure opens with the leading
-factor on X, the next on COLOR, the rest FREE.
+factor on X, the next on COLOR, the rest FREE. (Since 2026-09-17: the deepest key grouped, the rest ITERATE, nothing collapsed — `grouping-and-collapse.md`.)
 
 Those two are incompatible in a way the user feels immediately: with everything
 iterated there are no replicates, so box and violin are greyed out with "needs
@@ -153,7 +153,7 @@ replicates. `capabilities.available` is derived from the per-kind entries rather
 than computed a second time — two lists that can disagree about one kind is the
 bug, not the saving.
 
-**A distribution kind is guaranteed a FREE factor** (`roles._with_replicates_for`).
+**A distribution kind is guaranteed a sample** (`roles.with_requirements_for`; was `_with_replicates_for` / a FREE factor before 2026-09-17).
 The plain defaults do not always leave one: with two factors the scalar default
 is `subject=X, session=COLOR` (one point per combination) and with one it is
 `subject=X` (one point per violin) — the same "the click does nothing visible"
@@ -191,7 +191,7 @@ answer a greyed-out kind with an error message.
    lines. A test executes the generated function and compares against the preview;
    asserting on the generated text alone would pass while the figures differed.
 
-5. **The collapse is announced.** `apply_collapse` logs one INFO line per resolve
+5. **The collapse is announced.** `apply_cell_collapse` logs one INFO line per resolve
    (measure, statistic, rows, samples consumed, elapsed) and a `collapse_1d`
    phase in the existing build-plan timer. An empty violin has two very different
    causes — the vectors were empty, or the filter removed everything — and this

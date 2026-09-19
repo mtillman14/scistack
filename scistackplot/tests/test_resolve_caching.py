@@ -156,7 +156,8 @@ def test_a_cached_table_is_not_mutated_by_use(series_frame):
 
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"subject": Role.COLOR, "session": Role.AGGREGATE},
+        roles={"subject": Role.GROUP, "session": Role.COLLAPSE},
+        color="subject",
         kind=PlotKind.LINE,
     )
     resolve(spec, table)
@@ -204,13 +205,21 @@ def _count_plans(monkeypatch) -> list:
 
 
 def _spec(**overrides) -> PlotSpec:
+    """One line per subject, coloured — the colour follows `subject` out of
+    the grouping when an override moves it."""
     base = dict(
         measures=["Signal"],
-        roles={"subject": Role.COLOR},
+        roles={"subject": Role.GROUP},
         kind=PlotKind.LINE,
     )
     base.update(overrides)
+    grouped = base["roles"].get("subject") is Role.GROUP
+    base.setdefault("color", "subject" if grouped else None)
     return PlotSpec(**base)
+
+
+#: One figure per subject, one line per (session, trial) inside it.
+PER_SUBJECT = {"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.GROUP}
 
 
 def test_an_identical_spec_reuses_the_plan(series_table, monkeypatch):
@@ -229,7 +238,7 @@ def test_changing_only_the_plot_kind_reuses_the_plan(series_table, monkeypatch):
 
     resolve_one(_spec(kind=PlotKind.LINE), series_table, 0)
     resolve_one(
-        _spec(kind=PlotKind.BAND, roles={"subject": Role.FREE}), series_table, 0
+        _spec(kind=PlotKind.BAND, roles={"subject": Role.COLLAPSE}, color=None), series_table, 0
     )
     resolve_one(
         _spec(kind=PlotKind.LINE, facet=FacetOptions(n_cols=2)), series_table, 0
@@ -329,10 +338,10 @@ def test_an_invalid_spec_still_raises_on_a_warm_cache(series_table):
     resolve_one(_spec(), series_table, 0)
 
     with pytest.raises(RoleError):
-        # Two factors on COLOR: a role conflict, and one the cache must not
-        # paper over by serving the valid plan beside it.
+        # A colour naming no grouping layer: a role conflict, and one the
+        # cache must not paper over by serving the valid plan beside it.
         resolve_one(
-            _spec(roles={"subject": Role.COLOR, "session": Role.COLOR}),
+            _spec(roles={"subject": Role.COLLAPSE}, color="subject"),
             series_table,
             0,
         )
@@ -353,7 +362,7 @@ def test_only_the_requested_figure_is_exploded(series_table, monkeypatch):
 
     monkeypatch.setattr(reduce_mod, "_explode_1d", spy)
 
-    spec = _spec(roles={"subject": Role.ITERATE})
+    spec = _spec(roles=PER_SUBJECT)
     figure, labels, _ = resolve_one(spec, series_table, 0)
 
     assert len(labels) == 3, "three subjects should fan out to three figures"
@@ -372,7 +381,7 @@ def test_resolving_every_figure_still_explodes_every_group(series_table, monkeyp
 
     monkeypatch.setattr(reduce_mod, "_explode_1d", spy)
 
-    figures = resolve(_spec(roles={"subject": Role.ITERATE}), series_table)
+    figures = resolve(_spec(roles=PER_SUBJECT), series_table)
 
     assert len(figures) == 3
     assert exploded == [8, 8, 8]
@@ -381,7 +390,7 @@ def test_resolving_every_figure_still_explodes_every_group(series_table, monkeyp
 def test_one_figure_matches_the_same_figure_from_the_whole_fanout(series_table):
     """The property the reordering must not break: grouping before the explode
     has to produce exactly what exploding before the grouping did."""
-    spec = _spec(roles={"subject": Role.ITERATE})
+    spec = _spec(roles=PER_SUBJECT)
 
     every = resolve(spec, series_table)
     for index, expected in enumerate(every):
@@ -395,10 +404,12 @@ def test_one_figure_matches_the_same_figure_from_the_whole_fanout(series_table):
 
 
 def test_aggregating_still_averages_sample_by_sample(series_table):
-    """AGGREGATE on a 1-D measure has to run AFTER the explode — it averages
+    """A collapse on a 1-D measure has to run AFTER the explode — it averages
     each sample position across the collapsed factor's levels, which cannot
     happen while the rows are still nested arrays."""
-    spec = _spec(roles={"subject": Role.COLOR, "trial": Role.AGGREGATE})
+    spec = _spec(
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE}
+    )
 
     figure = resolve_one(spec, series_table, 0)[0]
 
@@ -418,7 +429,8 @@ def test_a_scalar_measure_is_never_exploded(scalar_table, monkeypatch):
     resolve_one(
         PlotSpec(
             measures=["StepLength"],
-            roles={"subject": Role.X, "session": Role.COLOR},
+            roles={"subject": Role.GROUP, "session": Role.GROUP},
+            color="session",
             kind=PlotKind.SCATTER,
         ),
         scalar_table,
@@ -493,7 +505,8 @@ def test_a_miss_names_every_differing_field_up_to_a_cap(series_table, caplog):
         caplog.clear()
         resolve_one(
             _spec(
-                roles={"subject": Role.FREE},
+                roles={"subject": Role.COLLAPSE},
+                color=None,
                 filters=[Filter(column="subject", include=["01"])],
                 aggregate=Aggregation(statistic=Statistic.MEDIAN, error=ErrorBand.SEM),
                 y_axis=YAxis(minimum=0.0),

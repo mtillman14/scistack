@@ -73,7 +73,7 @@ def test_interactive_fanout_matches_pipeline_fanout(seeded, tmp_path):
     table = source.get_table(["StepLength"])
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.ITERATE, "session": Role.X, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
 
@@ -100,7 +100,7 @@ def test_two_iterate_keys_fan_out_the_same_both_ways(seeded, tmp_path):
         roles={
             "subject": Role.ITERATE,
             "session": Role.ITERATE,
-            "trial": Role.X,
+            "trial": Role.GROUP,
         },
         kind=PlotKind.SCATTER,
     )
@@ -157,7 +157,9 @@ def test_no_iterate_produces_exactly_one_figure_both_ways(seeded, tmp_path):
     table = source.get_table(["StepLength"])
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["subject", "session"],
+        color="subject",
         kind=PlotKind.BOX,
     )
 
@@ -196,10 +198,10 @@ def test_a_grouping_column_reaches_the_pipeline_the_same_way(
         measures=["StepLength"],
         factor_variables=groups,
         roles={
-            "InterventionGroup": Role.X,
-            "subject": Role.FREE,
-            "session": Role.FREE,
-            "trial": Role.FREE,
+            "InterventionGroup": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
         kind=PlotKind.BAR,
     )
@@ -262,10 +264,10 @@ def test_a_pinned_grouping_reaches_the_pipeline_the_same_way(
             measures=["StepLength"],
             factor_variables=groups,
             roles={
-                "GroupLabel": Role.X,
-                "subject": Role.FREE,
-                "session": Role.FREE,
-                "trial": Role.FREE,
+                "GroupLabel": Role.GROUP,
+                "subject": Role.COLLAPSE,
+                "session": Role.COLLAPSE,
+                "trial": Role.COLLAPSE,
             },
             kind=PlotKind.BAR,
         )
@@ -341,10 +343,10 @@ def test_an_unpinned_grouping_exports_the_variable_bare(seeded, tmp_path):
         measures=["StepLength"],
         factor_variables=groups,
         roles={
-            "Condition": Role.X,
-            "subject": Role.FREE,
-            "session": Role.FREE,
-            "trial": Role.FREE,
+            "Condition": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
         kind=PlotKind.BAR,
     )

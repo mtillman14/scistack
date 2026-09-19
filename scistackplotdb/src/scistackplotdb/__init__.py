@@ -18,7 +18,7 @@ from a finished spec.
     table = source.get_table(["StepLength"])
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
     figure = render(table, spec)

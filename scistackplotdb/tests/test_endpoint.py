@@ -19,7 +19,7 @@ def table(seeded):
 def iterating_spec():
     return PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.ITERATE, "session": Role.X, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
 
@@ -57,7 +57,7 @@ def test_for_each_keys_run_in_schema_order_not_role_order(table):
     """Dict order is click order; the PathOutput template must not inherit it."""
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"trial": Role.ITERATE, "subject": Role.ITERATE, "session": Role.X},
+        roles={"trial": Role.ITERATE, "subject": Role.ITERATE, "session": Role.GROUP},
     )
     code = generate_endpoint(spec, table, input_variable="StepLength")
 
@@ -107,7 +107,9 @@ def test_second_measure_is_passed_as_a_second_input(seeded):
     spec = PlotSpec(
         measures=["StepLength"],
         x_measure="Mass",
-        roles={"subject": Role.COLOR, "session": Role.FREE, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session", "subject"],
+        color="subject",
         kind=PlotKind.SCATTER,
     )
 
@@ -135,7 +137,7 @@ def comparison_spec():
 
     return PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         variant_sets=[
             VariantSet("baseline", {"Code:bandpass": "v1"}),
@@ -149,7 +151,7 @@ def test_one_variant_pins_the_single_input(table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         variant_sets=[VariantSet("current", {"CodeIsLatest": True})],
     )
@@ -186,7 +188,7 @@ def test_variant_input_names_are_identifiers(table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         variant_sets=[
             VariantSet("20 Hz + latest", {"bandpass.low_hz": "20"}),
@@ -208,7 +210,7 @@ def test_a_multi_function_selection_nests_variants(table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         variant_sets=[
             VariantSet("old load, 20 Hz", {"Code:loadEMG": "v1", "bandpass.low_hz": "20"})

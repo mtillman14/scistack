@@ -2,18 +2,24 @@
 ``resolve(spec, table)`` — turn a spec plus data into renderer-ready panels.
 
 Everything semantic happens here: filtering, variant handling, exploding 1-D
-measures, collapsing AGGREGATE factors, fanning out ITERATE factors into
-separate figures, faceting, and summarizing replicates into a statistic with an
-error band. Renderers below this line only translate.
+measures, the collapse chain, fanning out ITERATE factors into separate
+figures, faceting, and summarizing the sample into a statistic with an error
+band. Renderers below this line only translate.
 
-Two reductions are easy to confuse, so they are named apart deliberately:
+Two reductions are easy to confuse, so they are named apart deliberately
+(docs/claude/grouping-and-collapse.md):
 
-* **AGGREGATE (a role)** collapses a factor — "average over trials" — and
-  removes it from the data before anything is drawn.
-* **Summarizing (a plot kind)** turns whatever replicate rows remain at each x
-  position into a centre and an error band. This is what BAR and BAND do.
+* **The collapse chain (roles)** averages COLLAPSE factors away, deepest
+  first — "trial within subject, then subject" — and removes them from the
+  data. The LAST collapsed key is the **sample**: its levels are what is left
+  at each mark. ``roles.collapse_steps`` owns the order; ``_collapse_levels``
+  runs it.
+* **Summarizing (a plot kind)** turns the sample rows at each mark into a
+  centre and an error band. This is what BAR and BAND do. Box and violin draw
+  the sample rows as a distribution; scatter, strip and line draw their mean.
 
-You can have either, both, or neither.
+You can have either, both, or neither: a bar with nothing collapsed is a bar
+of single values with no error bar.
 """
 
 from __future__ import annotations
@@ -29,9 +35,20 @@ from scistacklog import Log
 
 from .framesize import format_extent, frame_extent
 from .numeric import coerce_numeric
-from .resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW, Z
+from .resolved import COLOR, DASH, DASH_CYCLE, SERIES, X, Y, Y_HIGH, Y_LOW, Z
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
-from .roles import complete_roles, fanout_keys, iterate_ancestors, validate
+from .roles import (
+    CollapseSteps,
+    OverlaySteps,
+    collapse_steps,
+    complete_roles,
+    fanout_keys,
+    grouping_layers,
+    overlay_join,
+    overlay_steps,
+    overlay_unavailable,
+    validate,
+)
 from .shape import Shape
 from .spec import (
     Matcher,
@@ -44,10 +61,11 @@ from .spec import (
 )
 from .table import LongTable, natural_sort_key
 from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
+from .spaghetti import overlay_offsets, series_offsets
 from .reducer import reducer_for
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
-from .collapse import apply_collapse, collapse_note, collapses
+from .cell import apply_cell_collapse, cell_collapse_note, cell_collapses
 from .variants import apply_variant_sets, strip_answered_roles
 
 LAYER = "scistackplot"
@@ -124,11 +142,11 @@ def _plan_cache_key(spec: PlotSpec, table: LongTable) -> "tuple | None":
         # rather than the kind: box and violin still share one plan, and a line
         # and a violin of the same 1-D measure — different frames, different
         # roles, different y limits — can never share one.
-        collapsing = collapses(spec, table)
+        collapsing = cell_collapses(spec, table)
         if not collapsing:
             # Only meaningful while collapsing; in the key unconditionally it
             # would invalidate a line's plan when the statistic dropdown moved.
-            raw.pop("collapse_statistic", None)
+            raw.pop("cell_statistic", None)
         return (
             id(table),
             json.dumps(raw, sort_keys=True, default=str),
@@ -410,7 +428,12 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
                 len(_plan_cache),
                 layer=LAYER,
             )
-            return _with_y_limits(_with_presentation(hit[1], spec), spec)
+            plan = _with_presentation(hit[1], spec)
+            # The kind is not in the key, and `validate` has a kind rule (a
+            # box needs a sample, a spaghetti two layers): a plan built for a
+            # bar must not quietly serve a box that could not have been built.
+            validate(plan.spec, plan.table)
+            return _with_y_limits(plan, spec)
         Log.info("plan cache: MISS — %s", _plan_cache_miss_reason(key, table), layer=LAYER)
     else:
         Log.info(
@@ -533,8 +556,8 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         # table can no longer say it was ever anything else. The figure has to
         # carry it: a violin of trial means and a violin of raw samples look
         # identical and mean entirely different things.
-        collapsed_note = collapse_note(spec, table)
-        table = apply_collapse(spec, table)
+        collapsed_note = cell_collapse_note(spec, table)
+        table = apply_cell_collapse(spec, table)
     with timer.phase("roles"):
         spec = strip_answered_roles(spec, base, table)
         validate(spec, table)
@@ -543,7 +566,6 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
     frame = table.frame
     with timer.phase("apply_filters"):
         frame = apply_filters(frame, spec)
-    _warn_if_pooling_variants(spec, table, roles)
 
     y_measure = spec.y_measure
     shape = table.shape_of(y_measure)
@@ -620,7 +642,7 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         index_column=index_column,
         explode=explode,
         iterate=iterate,
-        notes=[*([collapsed_note] if collapsed_note else []), *_fanout_notes(spec, table)],
+        notes=[collapsed_note] if collapsed_note else [],
         groups=groups,
         frame=frame,
         y_scope=eligible_scope(spec.y_axis.scope, roles, table),
@@ -707,32 +729,6 @@ def resolve_one(
             layer=LAYER,
         )
         return figure, plan.labels, position
-
-
-def _fanout_notes(spec: PlotSpec, table: LongTable) -> list[str]:
-    """What the fan-out did that the user did not literally ask for.
-
-    Only the ancestor promotion, for now. It must be *said*: a user who asked
-    for one figure per trial and silently received one per subject-and-trial
-    would count the figures and think something was broken.
-
-    Computed from the roles **as declared** — ``complete_roles`` has already
-    applied the promotion, so asking the promoted roles what was promoted
-    returns nothing at all.
-    """
-    declared = complete_roles(spec, table, promote=False)
-    promoted = iterate_ancestors(declared, table)
-    if not promoted:
-        return []
-    asked = [name for name, role in declared.items() if role is Role.ITERATE]
-    note = (
-        f"Also showing one figure per {', '.join(promoted)}: "
-        f"{', '.join(asked)} is nested under {'them' if len(promoted) > 1 else 'it'}, "
-        f"so a figure per {asked[-1] if asked else 'key'} alone would pool "
-        f"unrelated observations."
-    )
-    Log.info("fan-out promoted %s to ITERATE", promoted, layer=LAYER)
-    return [note]
 
 
 # ---------------------------------------------------------------------------
@@ -905,33 +901,6 @@ def apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
     return filtered
 
 
-def _warn_if_pooling_variants(
-    spec: PlotSpec, table: LongTable, roles: dict[str, Role]
-) -> None:
-    """Say so, loudly, when a figure combines pipeline variants.
-
-    Pooling is now something the user asks for by assigning the factor
-    'aggregate' or 'free' in Factors (``roles.validate`` refuses it by
-    accident, never on purpose) — but a pooled figure looks EXACTLY like an
-    unpooled one, so the request still has to leave a trace. This is the
-    warning the deleted ``variant_policy='pool'`` branch used to emit; the
-    switch moved, the trace did not.
-    """
-    pooled = [
-        f.name
-        for f in table.variant_factors
-        if len(f.levels) > 1
-        and roles.get(f.name, Role.FREE) in (Role.FREE, Role.AGGREGATE)
-    ]
-    if pooled:
-        Log.warn(
-            "pooling variant factor(s) %s — results from different pipeline "
-            "variants are being combined, as this spec asks",
-            pooled,
-            layer=LAYER,
-        )
-
-
 def _explode_1d(
     frame: pd.DataFrame, measure: str, index_column: str
 ) -> tuple[pd.DataFrame, str]:
@@ -986,49 +955,87 @@ def _is_sequence(value: Any) -> bool:
     return isinstance(value, (list, tuple, np.ndarray))
 
 
-def _collapse_aggregates(
+def _collapse_levels(
     frame: pd.DataFrame,
+    keys: list[str],
     spec: PlotSpec,
-    roles: dict[str, Role],
+    table: LongTable,
     index_column: str | None,
+    *,
+    pooled: bool = False,
 ) -> pd.DataFrame:
-    """Average the measures over every AGGREGATE factor's levels."""
-    aggregated = [name for name, role in roles.items() if role is Role.AGGREGATE]
-    if not aggregated:
+    """Average the measures over each of ``keys`` in turn — the collapse chain.
+
+    Each step groups on EVERY other factor still in the frame (plus the
+    sample index of a 1-D measure), so a key averages away *within* every
+    combination of the keys outside it: trial within subject, then subject.
+    That is the nested, unweighted mean — each subject counts once however
+    many trials it has. ``keys`` comes from ``roles.collapse_steps`` (deepest
+    first), never from the roles dict's order.
+
+    ``pooled`` drops every key in ONE step instead — the "weight by N"
+    reading, one groupby over everything else. The marks' own chain never
+    needs it (``collapse_steps`` empties ``pre`` and lets ``_summarize`` pool),
+    but the "Show sample" overlay averages its cut-off keys explicitly and has
+    to pool them the same way the marks did, or the points would sit around a
+    centre they were not averaged into.
+
+    A step that finds its key already absent (filtered away, or a variable
+    saved above that level) is a no-op, logged.
+    """
+    if not keys:
         return frame
-
-    keep = [
-        name
-        for name, role in roles.items()
-        if role is not Role.AGGREGATE and name in frame.columns
+    measures = [
+        m for m in dict.fromkeys([*spec.measures, spec.x_measure]) if m and m in frame.columns
     ]
-    if index_column and index_column in frame.columns:
-        keep.append(index_column)
-
-    measures = [m for m in spec.measures if m in frame.columns]
-    if not keep:
-        # Everything collapses to a single value.
-        collapsed = frame[measures].mean().to_frame().T
-    else:
-        collapsed = (
-            frame.groupby(keep, dropna=False, sort=False)[measures]
-            .mean()
-            .reset_index()
+    factor_columns = [name for name in table.factor_names if name in frame.columns]
+    present = [key for key in keys if key in frame.columns]
+    for key in keys:
+        if key not in present:
+            Log.debug("collapse %s: not in the frame, nothing to do", key, layer=LAYER)
+    if not present:
+        return frame
+    # One pass per key (nested), or one pass dropping them all (pooled).
+    passes = [[key] for key in present] if not pooled else [present]
+    for dropped in passes:
+        keep = [name for name in factor_columns if name not in dropped and name in frame.columns]
+        if index_column and index_column in frame.columns:
+            keep.append(index_column)
+        before = len(frame)
+        if keep:
+            frame = (
+                frame.groupby(keep, dropna=False, sort=False)[measures]
+                .mean()
+                .reset_index()
+            )
+        else:
+            # Everything collapses to a single value.
+            frame = frame[measures].mean().to_frame().T
+        Log.debug(
+            "collapse %s within %s: %d -> %d row(s)",
+            " x ".join(dropped) + (" (pooled)" if pooled else ""),
+            keep or "nothing",
+            before,
+            len(frame),
+            layer=LAYER,
         )
-
-    Log.debug(
-        "aggregate over %s: %d -> %d row(s)",
-        aggregated,
-        len(frame),
-        len(collapsed),
-        layer=LAYER,
-    )
-    return collapsed
+    return frame
 
 
 # ---------------------------------------------------------------------------
 # Figure construction
 # ---------------------------------------------------------------------------
+
+
+def _describe_steps(steps: CollapseSteps) -> str:
+    """``trial -> subject (sample)`` — the chain, for a timing line."""
+    if not steps.all:
+        return "nothing collapsed"
+    parts = [*steps.pre, " x ".join(steps.sample) + " (sample)"]
+    text = " -> ".join(parts)
+    if steps.final:
+        text += ", mean drawn"
+    return text
 
 
 def _figure_label(figure_key: dict[str, Any]) -> str:
@@ -1066,26 +1073,34 @@ def _build_figure(
         live=narrate,
     ) as timing:
         # This figure's own rows, expanded and collapsed here rather than once
-        # over the whole fan-out (see `_Plan.explode`). Three routes for a
-        # 1-D measure that is still nested one cell per row:
+        # over the whole fan-out (see `_Plan.explode`). The collapse chain
+        # (`roles.collapse_steps`): `pre` keys average away first, deepest
+        # first; what remains is the SAMPLE; `final` is the sample averaged
+        # too, for the kinds that draw one value per leaf group. Three routes
+        # for a 1-D measure that is still nested one cell per row:
         #
         # * BAND / BAR: never exploded. Each panel is summarised straight from
-        #   its cells (`reducer.summarize_series`) — centre ± spread at every
-        #   position over ALL samples — and the transport stride is applied to
-        #   the SUMMARY afterwards. The old order (explode, stride, summarise)
-        #   drew a band over 1/8707th of the samples at scale, and built 174 M
-        #   rows to do it.
-        # * AGGREGATE roles, any other kind: `reducer.collapse_series` gives the
-        #   per-position mean over the aggregated factors, already exploded and
-        #   small (kept factor combinations x positions).
+        #   its cells (`reducer.summarize_series`) — the pre-collapse, then
+        #   centre ± spread at every position over the sample — and the
+        #   transport stride is applied to the SUMMARY afterwards. The old
+        #   order (explode, stride, summarise) drew a band over 1/8707th of
+        #   the samples at scale, and built 174 M rows to do it.
+        # * a collapse chain, any other kind: `reducer.collapse_series` gives
+        #   the per-position means, already exploded and small (kept factor
+        #   combinations x positions).
         # * otherwise: `reducer.explode_series`, which may apply the transport
         #   stride itself so only the kept rows' labels are ever gathered.
         reducer = reducer_for(table)
-        aggregated = any(role is Role.AGGREGATE for role in roles.values())
+        steps = collapse_steps(spec, roles, table)
+        # "Show sample" (PlotSpec.show_sample): the same chain cut before the
+        # deepest shown key, run on THIS figure's rows before the marks' own
+        # chain consumes them, and drawn as points on top of the marks.
+        overlay = _plan_overlay(spec, roles, table, shape, explode)
+        overlay_frame: pd.DataFrame | None = None
         summarize_nested = explode and spec.kind in (PlotKind.BAND, PlotKind.BAR)
         pre_strided_from: int | None = None
         if explode and not summarize_nested:
-            if aggregated:
+            if steps.pre or steps.final:
                 with timing.phase("collapse_series", extra=f"{len(frame)} row(s)"):
                     frame, index_column = reducer.collapse_series(
                         frame, spec, roles, index_column, table
@@ -1097,19 +1112,43 @@ def _build_figure(
                     )
                     if len(frame) < total:
                         pre_strided_from = total  # the reducer logged the stride
-        elif not explode:
-            with timing.phase("collapse_aggregates"):
-                frame = _collapse_aggregates(frame, spec, roles, index_column)
+        elif not explode and shape is not Shape.MATRIX_2D:
+            # (A 2-D measure's panel is the elementwise mean of its matrices —
+            # `matrix_mean` — which pools; the chain has nothing to add there.)
+            if overlay is not None:
+                # From the rows the marks' chain is about to consume — the same
+                # filtered, faceted figure — so a point and its mark agree.
+                with timing.phase(
+                    "sample_overlay",
+                    extra=f"average {overlay.averaged or 'nothing'}, show {overlay.shown}",
+                ):
+                    overlay_frame = _collapse_levels(
+                        frame,
+                        overlay.averaged,
+                        spec,
+                        table,
+                        index_column,
+                        pooled=spec.aggregate.pooled,
+                    )
+                    timing.note("%d overlay row(s)", len(overlay_frame))
+            with timing.phase("collapse_levels", extra=_describe_steps(steps)):
+                frame = _collapse_levels(frame, steps.pre, spec, table, index_column)
+                frame = _collapse_levels(frame, steps.final, spec, table, index_column)
+                if steps.sample:
+                    timing.note(
+                        "sample = %s%s",
+                        " x ".join(steps.sample),
+                        " (pooled)" if len(steps.sample) > 1 else "",
+                    )
 
-        color = _role_holder(roles, Role.COLOR)
-        # Several factors may share the x axis, nested. `x_layers` is only the
-        # ORDER; membership is the roles dict, and `ordered_x_layers` reconciles
-        # them so neither control can produce a spec the other rejects.
-        x_layers = [
-            name
-            for name in spec.ordered_x_layers(roles, table.factor_depths)
-            if name in frame.columns
-        ]
+        # The grouping list as THIS kind reads it (`roles.grouping_layers`):
+        # ticks in drawing order (outermost first), series ids, the colour.
+        # Never reversed here — the spec is innermost-first, and the one place
+        # the two orders meet is that function.
+        layers = grouping_layers(spec, table, roles, spec.kind)
+        color = layers.color if layers.color in frame.columns else None
+        x_layers = [name for name in layers.ticks if name in frame.columns]
+        series_layers = [name for name in layers.series if name in frame.columns]
         x_factor = x_layers[0] if x_layers else None
         # Several factors may be faceted at once; their combined levels are the
         # panels, and FacetOptions decides how those panels are arranged.
@@ -1155,7 +1194,14 @@ def _build_figure(
                     )
                 else:
                     panel_frame = _panel_frame(
-                        group, spec, table, shape, x_layers, color, index_column
+                        group,
+                        spec,
+                        table,
+                        shape,
+                        x_layers,
+                        color,
+                        index_column,
+                        series_layers=series_layers,
                     )
                 panels.append(
                     Panel(
@@ -1171,6 +1217,12 @@ def _build_figure(
                             spec.y_axis,
                         ),
                     )
+                )
+
+        if overlay_frame is not None:
+            with timing.phase("sample_panels", extra=f"{len(panels)} panel(s)"):
+                _attach_overlay(
+                    panels, overlay_frame, facet_names, table, spec, x_layers, color, overlay.shown
                 )
 
         if summarize_nested:
@@ -1196,8 +1248,17 @@ def _build_figure(
                 panels, spec.facet
             )
 
-            encoding = _encoding_for(spec.kind, color, shape)
-            labels = _labels_for(spec, table, x_layers, color, index_column, figure_key)
+            dash_layers = [name for name in series_layers if name != color]
+            dash_styles = (
+                _dash_styles(panels) if spec.kind in (PlotKind.LINE, PlotKind.BAND) else {}
+            )
+            encoding = _encoding_for(
+                spec.kind, color, shape, bool(series_layers), bool(dash_styles)
+            )
+            labels = _labels_for(
+                spec, table, x_layers, color, index_column, figure_key,
+                dash_layers=dash_layers if dash_styles else [],
+            )
 
             # A nested axis is composed once, here, from labels only — so both
             # renderers draw the same brackets and codegen can replay the result
@@ -1212,6 +1273,16 @@ def _build_figure(
         # the panels got, and `None` here now means "the panels differ", which
         # is exactly when a renderer must stop sharing an axis.
         figure_limits = _figure_limits(panels)
+        color_order = _level_order(table, color, panels, COLOR) if color else None
+
+        # The overlay's join decision and offsets, once per FIGURE (see
+        # ResolvedPlot.sample_offsets): a subject keeps its place in every panel.
+        join = overlay_join(spec, roles, table, overlay) if overlay_frame is not None else None
+        sample_offsets = (
+            _overlay_offsets(panels, len(color_order) if color_order else 1)
+            if overlay_frame is not None
+            else {}
+        )
 
         return ResolvedPlot(
             kind=spec.kind,
@@ -1226,7 +1297,7 @@ def _build_figure(
                 else (_level_order(table, x_factor, panels, X) if x_factor else None)
             ),
             x_plan=x_plan,
-            color_order=_level_order(table, color, panels, COLOR) if color else None,
+            color_order=color_order,
             grid_rows=n_rows,
             grid_cols=n_cols,
             row_labels=row_labels,
@@ -1235,13 +1306,169 @@ def _build_figure(
             y_limits=figure_limits,
             y_scope=list(y_scope or []),
             # The figure's own ITERATE keys (fan-out order) then its facets:
-            # the factors a y-limit scope may name, as RESOLVED — a promoted
-            # ancestor or a defaulted facet is in here and not in `spec.roles`.
+            # the factors a y-limit scope may name, as RESOLVED — a defaulted
+            # iterate or facet is in here and not in `spec.roles`.
             panel_factors=[*figure_key.keys(), *facet_names],
             downsampled_from=(
                 original_rows if max_points and original_rows > max_points else None
             ),
+            series_offsets=(
+                _spaghetti_offsets(panels) if spec.kind is PlotKind.SPAGHETTI else {}
+            ),
+            dash_styles=dash_styles,
+            sample_shown=list(overlay.shown) if overlay_frame is not None else [],
+            sample_join=bool(join.join) if join is not None else False,
+            sample_join_reason=join.reason if join is not None else "",
+            sample_offsets=sample_offsets,
         )
+
+
+def _dash_styles(panels: list[Panel]) -> dict[str, str]:
+    """One dash style per uncoloured series id across the WHOLE figure, in
+    natural order of the ids, cycling through ``DASH_CYCLE``. Figure-wide so
+    a subject keeps its dash in every panel and every colour. Warns past the
+    cycle: seven dashed lines are not distinguishable, and Separate panels is
+    the honest fix."""
+    ids: set[str] = set()
+    for panel in panels:
+        if DASH in panel.frame.columns and not panel.frame.empty:
+            ids.update(str(v) for v in panel.frame[DASH].dropna().unique())
+    ordered = sorted(ids, key=natural_sort_key)
+    styles = {sid: DASH_CYCLE[i % len(DASH_CYCLE)] for i, sid in enumerate(ordered)}
+    if len(ordered) > len(DASH_CYCLE):
+        Log.warn(
+            "%d uncoloured series share %d dash styles — lines will repeat a "
+            "style; give the layer Separate panels or a colour to tell them apart",
+            len(ordered),
+            len(DASH_CYCLE),
+            layer=LAYER,
+        )
+    return styles
+
+
+def _spaghetti_offsets(panels: list[Panel]) -> dict[str, float]:
+    """One offset per series across the WHOLE figure (see ResolvedPlot)."""
+    ids: set[str] = set()
+    for panel in panels:
+        if SERIES in panel.frame.columns and not panel.frame.empty:
+            ids.update(str(v) for v in panel.frame[SERIES].unique())
+    offsets = series_offsets(ids)
+    Log.debug(
+        f"[spaghetti] {len(offsets)} series offset across "
+        f"{len(panels)} panel(s): "
+        + ", ".join(f"{k}={v:+.3f}" for k, v in list(offsets.items())[:8])
+        + (" …" if len(offsets) > 8 else "")
+    )
+    return offsets
+
+
+# ---------------------------------------------------------------------------
+# "Show sample": the overlay
+# ---------------------------------------------------------------------------
+
+
+def _plan_overlay(
+    spec: PlotSpec,
+    roles: dict[str, Role],
+    table: LongTable,
+    shape: Shape,
+    explode: bool,
+) -> OverlaySteps | None:
+    """The overlay chain for this figure, or None when none is drawn.
+
+    ``roles.overlay_unavailable`` is the one statement of what an overlay
+    needs; an exploded 1-D figure never qualifies (its shape is not scalar),
+    and the check is repeated here only so the figure path cannot drift from
+    the capability report's answer.
+    """
+    if not spec.show_sample or explode:
+        return None
+    reason = overlay_unavailable(spec, roles, shape)
+    if reason is not None:
+        Log.debug("show_sample %s: no overlay — %s", spec.show_sample, reason, layer=LAYER)
+        return None
+    return overlay_steps(spec, roles, table)
+
+
+def _attach_overlay(
+    panels: list[Panel],
+    overlay_frame: pd.DataFrame,
+    facet_names: list[str],
+    table: LongTable,
+    spec: PlotSpec,
+    x_layers: list[str],
+    color: str | None,
+    shown: list[str],
+) -> None:
+    """Split the overlay rows into the panels the marks were split into and
+    give each panel its ``sample`` frame (:func:`_overlay_frame`)."""
+    if facet_names:
+        by_key = {
+            tuple(key_values): group
+            for key_values, group in _ordered_groups(overlay_frame, facet_names, table)
+        }
+    else:
+        by_key = {(): overlay_frame}
+    for panel in panels:
+        group = by_key.get(tuple(panel.key.get(name) for name in facet_names))
+        if group is None or group.empty:
+            # A panel whose overlay rows all filtered to nothing: no points,
+            # not an error — the marks are still drawn.
+            panel.sample = _overlay_frame(overlay_frame.iloc[:0], spec, x_layers, color, shown)
+            continue
+        panel.sample = _overlay_frame(group, spec, x_layers, color, shown)
+        Log.debug(
+            "sample overlay: %d point(s) in panel %s",
+            len(panel.sample),
+            panel.title or "unfaceted",
+            layer=LAYER,
+        )
+
+
+def _overlay_frame(
+    group: pd.DataFrame,
+    spec: PlotSpec,
+    x_layers: list[str],
+    color: str | None,
+    shown: list[str],
+) -> pd.DataFrame:
+    """The overlay's tidy frame: the SAME ``__x`` / ``__color`` the marks use
+    (so a renderer places a point by the mark's own position and dodge), the
+    value, a ``__series`` id from the shown keys (outermost first, like every
+    other composed id) and the shown key columns themselves for hover."""
+    out = pd.DataFrame(index=group.index)
+    if len(x_layers) > 1:
+        out[X] = _composed_key(group, x_layers, LEAF_SEPARATOR)
+    elif x_layers:
+        out[X] = group[x_layers[0]].values
+    else:
+        out[X] = ""
+    out[Y] = coerce_numeric(group[spec.y_measure])
+    if color:
+        out[COLOR] = group[color].values
+    present = [name for name in shown if name in group.columns]
+    out[SERIES] = _composed_key(group, present, SERIES_SEPARATOR) if present else ""
+    for name in present:
+        out[name] = group[name].values
+    return out.dropna(subset=[Y]).reset_index(drop=True)
+
+
+def _overlay_offsets(panels: list[Panel], n_colors: int) -> dict[str, float]:
+    """One offset per overlay identity across the WHOLE figure, inside its
+    mark's slot (``spaghetti.overlay_offsets``)."""
+    ids: set[str] = set()
+    for panel in panels:
+        if panel.sample is not None and not panel.sample.empty:
+            ids.update(str(v) for v in panel.sample[SERIES].unique())
+    offsets = overlay_offsets(ids, n_colors)
+    Log.debug(
+        "sample overlay: %d identity offset(s) across %d panel(s), %d colour slot(s)",
+        len(offsets),
+        len(panels),
+        n_colors,
+        layer=LAYER,
+    )
+    return offsets
 
 
 def _panel_frame(
@@ -1252,8 +1479,15 @@ def _panel_frame(
     x_layers: list[str],
     color: str | None,
     index_column: str | None,
+    series_layers: list[str] = (),
 ) -> pd.DataFrame:
-    """Build the canonical ``__x``/``__y``/… frame the renderers consume."""
+    """Build the canonical ``__x``/``__y``/… frame the renderers consume.
+
+    ``x_layers`` are the tick layers in drawing order (outermost first) and
+    ``series_layers`` the series-identity layers — both already read off the
+    grouping list by ``roles.grouping_layers`` for this kind. The rows
+    arriving here are what the collapse chain left: the sample, or its mean.
+    """
     y_measure = spec.y_measure
     x_factor = x_layers[0] if x_layers else None
 
@@ -1286,21 +1520,24 @@ def _panel_frame(
     if color:
         out[COLOR] = group[color].values
 
-    # --- one polyline per replicate combination --------------------------
-    if spec.kind is PlotKind.LINE:
-        series_cols = [
-            name
-            for name in table.factor_names
-            if name in group.columns and name != x_factor
-        ]
-        if series_cols:
-            out[SERIES] = _composed_key(group, series_cols, SERIES_SEPARATOR)
-        else:
-            out[SERIES] = ""
+    # --- one polyline / band / point set per leaf group -------------------
+    # The series identity is the grouping's series layers and nothing else:
+    # a factor that separates figures or panels is constant here, and one
+    # that is collapsed is gone. (Spaghetti's offsets are computed per figure,
+    # so a subject must carry the same id in every facet — which this gives
+    # for free, where the old "every non-x factor" key did not.)
+    if spec.kind in (PlotKind.LINE, PlotKind.SPAGHETTI, PlotKind.BAND):
+        out[SERIES] = _series_key(group, series_layers)
+    # The uncoloured part of that identity gets a dash style (D4). Spaghetti
+    # is left out: its lines are already one per level, joined by markers.
+    if spec.kind in (PlotKind.LINE, PlotKind.BAND):
+        uncoloured = [name for name in series_layers if name != color and name in group.columns]
+        if uncoloured:
+            out[DASH] = _series_key(group, uncoloured)
 
     out = out.dropna(subset=[Y])
 
-    # --- summarize replicates into centre + error ------------------------
+    # --- summarize the sample into centre + error ------------------------
     if spec.kind in (PlotKind.BAR, PlotKind.BAND):
         # Carry the nested axis's LAYER columns through the summary. They are a
         # function of the composed key, so grouping by them as well changes no
@@ -1313,13 +1550,28 @@ def _panel_frame(
         # kind — bar — which is the kind people group bars with. Every existing
         # nested test used box, which does not summarize, so nothing caught it.
         out = _summarize(
-            out, spec, color, carry=[n for n in x_layers if n in out.columns]
+            out,
+            spec,
+            color,
+            carry=[n for n in x_layers if n in out.columns],
+            series=SERIES in out.columns,
         )
 
     if spec.kind is PlotKind.LINE or spec.kind is PlotKind.BAND:
         out = out.sort_values(X, kind="stable")
 
     return out.reset_index(drop=True)
+
+
+def _series_key(frame: pd.DataFrame, series_layers: list[str]) -> "np.ndarray | str":
+    """The series id, composed **outermost first** — ``"01 | 1"``, subject
+    then trial — so it reads like a path in a hover and a legend. The layers
+    arrive innermost-first (the spec's order); this is the one reversal, and
+    ``codegen`` composes ``_series`` the same way."""
+    present = [name for name in series_layers if name in frame.columns]
+    if not present:
+        return ""
+    return _composed_key(frame, list(reversed(present)), SERIES_SEPARATOR)
 
 
 def _composed_key(
@@ -1418,17 +1670,32 @@ def _summarize(
     spec: PlotSpec,
     color: str | None,
     carry: list[str] | None = None,
+    series: bool = False,
 ) -> pd.DataFrame:
-    """Collapse replicate rows at each x (and colour) into centre + error.
+    """Collapse the sample rows at each mark into centre + error.
 
-    ``carry`` names columns to keep alongside the result — the nested axis's
-    layer columns. They are functionally determined by ``__x`` (the composed
-    leaf key IS their combination), so grouping by them splits nothing that was
-    not already split; it only keeps them from being dropped by the
-    ``reset_index`` below, which is what the renderers and ``_plan_nested_x``
-    read the group labels from.
+    A mark is an x position, a colour and — for a band — a series: the rows
+    that share all three are the sample (the outermost collapsed key's levels,
+    after the inner collapses; or every pooled row). ``carry`` names columns
+    to keep alongside the result — the nested axis's layer columns. They are
+    functionally determined by ``__x`` (the composed leaf key IS their
+    combination), so grouping by them splits nothing that was not already
+    split; it only keeps them from being dropped by the ``reset_index`` below,
+    which is what the renderers and ``_plan_nested_x`` read the group labels
+    from.
+
+    With no sample (nothing collapsed) every group holds one row: the centre
+    is the value and the spread is zero — a bar with no error bar.
     """
-    group_cols = [X, *(carry or [])] + ([COLOR] if color else [])
+    group_cols = [X, *(carry or [])]
+    if color:
+        group_cols.append(COLOR)
+    if series and SERIES in frame.columns:
+        group_cols.append(SERIES)
+        if DASH in frame.columns:
+            # A function of the series id — grouping by it splits nothing;
+            # it only survives the reset_index for the renderers.
+            group_cols.append(DASH)
     grouped = frame.groupby(group_cols, dropna=False, sort=False)[Y]
 
     statistic = spec.aggregate.statistic
@@ -1446,9 +1713,13 @@ def _summarize(
 
 
 def _summarize_exploded(
-    frame: pd.DataFrame, spec: PlotSpec, color: str | None, index_column: str
+    frame: pd.DataFrame,
+    spec: PlotSpec,
+    color: str | None,
+    index_column: str,
+    series_layers: list[str] = (),
 ) -> pd.DataFrame:
-    """A BAND/BAR panel frame from an exploded, collapsed 1-D frame — the
+    """A BAND/BAR panel frame from an exploded, pre-collapsed 1-D frame — the
     summary tail of ``_panel_frame`` at full resolution. The pandas reference
     for ``Reducer.summarize_series``."""
     if color is not None and color not in frame.columns:
@@ -1458,8 +1729,13 @@ def _summarize_exploded(
     out[Y] = coerce_numeric(frame[spec.y_measure])
     if color:
         out[COLOR] = frame[color].values
+    if any(name in frame.columns for name in series_layers):
+        out[SERIES] = _series_key(frame, series_layers)
+        uncoloured = [name for name in series_layers if name != color and name in frame.columns]
+        if uncoloured:
+            out[DASH] = _series_key(frame, uncoloured)
     out = out.dropna(subset=[Y])
-    out = _summarize(out, spec, color)
+    out = _summarize(out, spec, color, series=SERIES in out.columns)
     if spec.kind is PlotKind.BAND:
         out = out.sort_values(X, kind="stable")
     return out.reset_index(drop=True)
@@ -1490,13 +1766,6 @@ def _downsample(
 # ---------------------------------------------------------------------------
 # Ordering, encoding, labels
 # ---------------------------------------------------------------------------
-
-
-def _role_holder(roles: dict[str, Role], role: Role) -> str | None:
-    for name, assigned in roles.items():
-        if assigned is role:
-            return name
-    return None
 
 
 def _ordered_groups(
@@ -1833,16 +2102,28 @@ def _rule_labels(rules: list[Matcher]) -> list[str]:
     return [rule.display for rule in rules]
 
 
-def _encoding_for(kind: PlotKind, color: str | None, shape: Shape) -> Encoding:
+def _encoding_for(
+    kind: PlotKind,
+    color: str | None,
+    shape: Shape,
+    has_series: bool = False,
+    has_dash: bool = False,
+) -> Encoding:
     if shape is Shape.MATRIX_2D:
         return Encoding(x=None, y=None, z=Z)
+    # A band carries a series column whenever an uncoloured grouping layer
+    # splits it (one band per leaf group); a line or spaghetti always does.
+    series = kind in (PlotKind.LINE, PlotKind.SPAGHETTI) or (
+        kind is PlotKind.BAND and has_series
+    )
     return Encoding(
         x=X,
         y=Y,
         color=COLOR if color else None,
         y_low=Y_LOW if kind in (PlotKind.BAR, PlotKind.BAND) else None,
         y_high=Y_HIGH if kind in (PlotKind.BAR, PlotKind.BAND) else None,
-        series=SERIES if kind is PlotKind.LINE else None,
+        series=SERIES if series else None,
+        dash=DASH if has_dash else None,
     )
 
 
@@ -1853,6 +2134,7 @@ def _labels_for(
     color: str | None,
     index_column: str | None,
     figure_key: dict[str, Any],
+    dash_layers: list[str] = (),
 ) -> Labels:
     style = spec.style
     if style.x_label:
@@ -1882,6 +2164,11 @@ def _labels_for(
         x=x_label,
         y=y_label,
         color=table.factor(color).display if color else None,
+        # Outermost first, as the dash ids themselves are composed.
+        dash=(
+            " / ".join(table.factor(name).display for name in reversed(list(dash_layers)))
+            or None
+        ),
         title=title,
     )
 

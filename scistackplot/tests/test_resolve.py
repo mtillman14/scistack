@@ -24,7 +24,7 @@ from scistackplot.spec import Aggregation
 def test_iterate_fans_out_one_figure_per_level(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.ITERATE, "session": Role.X, "trial": Role.FREE},
+        roles={"subject": Role.ITERATE, "session": Role.GROUP, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
     figures = resolve(spec, scalar_table)
@@ -37,7 +37,9 @@ def test_iterate_fans_out_one_figure_per_level(scalar_table):
 def test_no_iterate_gives_exactly_one_figure(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     figures = resolve(spec, scalar_table)
@@ -50,7 +52,7 @@ def test_no_iterate_gives_exactly_one_figure(scalar_table):
 
 def test_x_order_is_numeric_not_lexicographic(wide_subject_table):
     spec = PlotSpec(
-        measures=["Mass"], roles={"subject": Role.X}, kind=PlotKind.SCATTER
+        measures=["Mass"], roles={"subject": Role.GROUP}, kind=PlotKind.SCATTER
     )
     resolved = resolve(spec, wide_subject_table)[0]
 
@@ -67,13 +69,15 @@ def test_iterate_fanout_follows_declared_level_order(wide_subject_table):
     ]
 
 
-# --- AGGREGATE role vs. summarizing ----------------------------------------
+# --- the collapse chain vs. summarizing ------------------------------------
 
 
-def test_aggregate_role_collapses_its_factor(scalar_table):
+def test_collapse_role_collapses_its_factor(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.AGGREGATE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.SCATTER,
     )
     resolved = resolve(spec, scalar_table)[0]
@@ -82,10 +86,12 @@ def test_aggregate_role_collapses_its_factor(scalar_table):
     assert resolved.row_count == 6
 
 
-def test_aggregate_uses_the_mean_of_the_collapsed_levels(scalar_table):
+def test_a_mean_drawing_kind_draws_the_sample_mean(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.AGGREGATE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.SCATTER,
     )
     resolved = resolve(spec, scalar_table)[0]
@@ -105,25 +111,30 @@ def test_aggregate_uses_the_mean_of_the_collapsed_levels(scalar_table):
 def test_band_summarizes_replicates_at_each_index(series_table):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        color="session",
         kind=PlotKind.BAND,
         aggregate=Aggregation(error=ErrorBand.SD),
     )
     resolved = resolve(spec, series_table)[0]
     frame = resolved.panels[0].frame
 
-    # 10 samples x 2 sessions, each summarizing 3 subjects x 4 trials.
+    # 10 samples x 2 sessions, each summarizing 3 subjects (trials averaged
+    # within each subject first).
     assert len(frame) == 20
     assert {Y, Y_LOW, Y_HIGH} <= set(frame.columns)
     assert resolved.encoding.has_error
 
 
 def test_band_error_is_the_standard_deviation(series_table):
+    """Pooled, so the reference is the plain SD over every subject-trial
+    trace; the nested default is checked in test_nested_collapse."""
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        color="session",
         kind=PlotKind.BAND,
-        aggregate=Aggregation(error=ErrorBand.SD),
+        aggregate=Aggregation(error=ErrorBand.SD, pooled=True),
     )
     frame = resolve(spec, series_table)[0].panels[0].frame
     row = frame[(frame[X] == 0) & (frame[COLOR] == "pre")].iloc[0]
@@ -137,7 +148,8 @@ def test_sem_is_narrower_than_sd(series_table):
     def spread(error):
         spec = PlotSpec(
             measures=["Signal"],
-            roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+            roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+            color="session",
             kind=PlotKind.BAND,
             aggregate=Aggregation(error=error),
         )
@@ -150,7 +162,8 @@ def test_sem_is_narrower_than_sd(series_table):
 def test_iqr_band_is_asymmetric_around_the_centre(series_table):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        color="session",
         kind=PlotKind.BAND,
         aggregate=Aggregation(error=ErrorBand.IQR),
     )
@@ -165,7 +178,9 @@ def test_iqr_band_is_asymmetric_around_the_centre(series_table):
 def test_1d_measure_is_exploded_into_samples(series_table):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "subject", "session"],
+        color="session",
         kind=PlotKind.LINE,
     )
     resolved = resolve(spec, series_table)[0]
@@ -177,7 +192,9 @@ def test_1d_measure_is_exploded_into_samples(series_table):
 def test_line_gets_one_series_per_observation(series_table):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "subject", "session"],
+        color="session",
         kind=PlotKind.LINE,
     )
     frame = resolve(spec, series_table)[0].panels[0].frame
@@ -191,9 +208,9 @@ def test_facet_produces_one_panel_per_level(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
         roles={
-            "subject": Role.X,
+            "subject": Role.GROUP,
             "session": Role.FACET,
-            "trial": Role.FREE,
+            "trial": Role.COLLAPSE,
         },
         kind=PlotKind.BOX,
     )
@@ -206,7 +223,7 @@ def test_facet_produces_one_panel_per_level(scalar_table):
 def test_shared_y_limits_span_every_panel(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.FACET, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.FACET, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
     resolved = resolve(spec, scalar_table)[0]
@@ -222,8 +239,8 @@ def test_shared_y_limits_span_every_panel(scalar_table):
 def test_include_filter_drops_other_levels(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "trial": Role.FREE, "session": Role.FREE},
-        kind=PlotKind.BOX,
+        roles={"subject": Role.GROUP, "trial": Role.GROUP, "session": Role.GROUP},
+        kind=PlotKind.SCATTER,
         filters=[Filter(column="session", include=["pre"])],
     )
     assert resolve(spec, scalar_table)[0].row_count == 12
@@ -233,8 +250,8 @@ def test_numeric_range_filter(scalar_table):
     threshold = scalar_table.frame["StepLength"].median()
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "trial": Role.FREE, "session": Role.FREE},
-        kind=PlotKind.BOX,
+        roles={"subject": Role.GROUP, "trial": Role.GROUP, "session": Role.GROUP},
+        kind=PlotKind.SCATTER,
         filters=[Filter(column="StepLength", minimum=float(threshold))],
     )
     assert resolve(spec, scalar_table)[0].row_count == 12
@@ -246,7 +263,8 @@ def test_numeric_range_filter(scalar_table):
 def test_variant_on_colour_keeps_both_variants_separate(variant_table):
     spec = PlotSpec(
         measures=["Peak"],
-        roles={"subject": Role.X, "bandpass.low_hz": Role.COLOR},
+        roles={"subject": Role.GROUP, "bandpass.low_hz": Role.GROUP},
+        color="bandpass.low_hz",
         kind=PlotKind.SCATTER,
     )
     resolved = resolve(spec, variant_table)[0]
@@ -255,16 +273,18 @@ def test_variant_on_colour_keeps_both_variants_separate(variant_table):
     assert resolved.color_order == ["20", "40"]
 
 
-def test_explicit_pool_averages_variants_together(variant_table):
-    """Assigning the variant factor AGGREGATE is the new spelling of the
-    deleted ``variant_policy='pool'`` — one switch instead of two."""
+def test_variants_cannot_be_collapsed(variant_table):
+    """Two pipelines' results averaged into one number is not a figure anyone
+    asked for; the old 'aggregate' opt-in is gone with the role."""
+    from scistackplot import RoleError
+
     spec = PlotSpec(
         measures=["Peak"],
-        roles={"subject": Role.X, "bandpass.low_hz": Role.AGGREGATE},
+        roles={"subject": Role.GROUP, "bandpass.low_hz": Role.COLLAPSE},
         kind=PlotKind.SCATTER,
     )
-    resolved = resolve(spec, variant_table)[0]
-    assert resolved.row_count == 3
+    with pytest.raises(RoleError, match="cannot be collapsed"):
+        resolve(spec, variant_table)
 
 
 def test_one_named_variant_keeps_only_its_rows(variant_table):
@@ -272,7 +292,7 @@ def test_one_named_variant_keeps_only_its_rows(variant_table):
 
     spec = PlotSpec(
         measures=["Peak"],
-        roles={"subject": Role.X},
+        roles={"subject": Role.GROUP},
         kind=PlotKind.SCATTER,
         variant_sets=[VariantSet("20 Hz", {"bandpass.low_hz": "20"})],
     )
@@ -288,7 +308,7 @@ def test_two_named_variants_become_one_coloured_factor(variant_table):
 
     spec = PlotSpec(
         measures=["Peak"],
-        roles={"subject": Role.X},
+        roles={"subject": Role.GROUP},
         kind=PlotKind.SCATTER,
         variant_sets=[
             VariantSet("narrow", {"bandpass.low_hz": "20"}),
@@ -310,7 +330,9 @@ def test_two_named_variants_become_one_coloured_factor(variant_table):
 def test_downsampling_records_the_original_size(series_table):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "subject", "session"],
+        color="session",
         kind=PlotKind.LINE,
     )
     resolved = resolve(spec, series_table, max_points=50)[0]
@@ -322,7 +344,9 @@ def test_downsampling_records_the_original_size(series_table):
 def test_export_path_never_downsamples(series_table):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "subject", "session"],
+        color="session",
         kind=PlotKind.LINE,
     )
     resolved = resolve(spec, series_table)[0]
@@ -338,7 +362,9 @@ def test_resolved_plot_is_json_serializable(scalar_table):
 
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
     payload = resolve(spec, scalar_table)[0].to_dict()
@@ -364,7 +390,8 @@ def test_struct_fields_become_one_panel_each(struct_table):
 def test_struct_fields_can_be_moved_to_separate_figures(struct_table):
     spec = PlotSpec(
         measures=["RawEMG"],
-        roles={"ColName": Role.ITERATE, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"ColName": Role.ITERATE, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        color="subject",
         kind=PlotKind.BAND,
     )
     figures = resolve(spec, struct_table)

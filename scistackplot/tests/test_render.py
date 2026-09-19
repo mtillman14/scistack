@@ -22,7 +22,9 @@ matplotlib = pytest.importorskip("matplotlib")
 def box_spec():
     return PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
     )
 
@@ -31,7 +33,8 @@ def box_spec():
 def band_spec():
     return PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+        color="session",
         kind=PlotKind.BAND,
     )
 
@@ -49,12 +52,22 @@ def test_matplotlib_returns_a_figure(scalar_table, box_spec):
 
 @pytest.mark.parametrize(
     "kind",
-    [PlotKind.SCATTER, PlotKind.STRIP, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR],
+    [
+        PlotKind.SCATTER,
+        PlotKind.STRIP,
+        PlotKind.SPAGHETTI,
+        PlotKind.BOX,
+        PlotKind.VIOLIN,
+        PlotKind.BAR,
+    ],
 )
 def test_every_scalar_kind_renders(scalar_table, kind):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        # subject first: the spaghetti lines, and bars inside session ticks.
+        groups=["subject", "session"],
+        color="session",
         kind=kind,
     )
     figure = render_matplotlib(resolve(spec, scalar_table)[0])
@@ -66,7 +79,9 @@ def test_every_scalar_kind_renders(scalar_table, kind):
 def test_every_series_kind_renders(series_table, kind):
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["subject", "session"],
+        color="session",
         kind=kind,
     )
     figure = render_matplotlib(resolve(spec, series_table)[0])
@@ -78,9 +93,9 @@ def test_facets_become_subplots(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
         roles={
-            "subject": Role.X,
+            "subject": Role.GROUP,
             "session": Role.FACET,
-            "trial": Role.FREE,
+            "trial": Role.COLLAPSE,
         },
         kind=PlotKind.BOX,
     )
@@ -92,7 +107,7 @@ def test_facets_become_subplots(scalar_table):
 
 def test_categorical_axis_ticks_are_in_declared_order(wide_subject_table):
     spec = PlotSpec(
-        measures=["Mass"], roles={"subject": Role.X}, kind=PlotKind.SCATTER
+        measures=["Mass"], roles={"subject": Role.GROUP}, kind=PlotKind.SCATTER
     )
     figure = render_matplotlib(resolve(spec, wide_subject_table)[0])
     labels = [t.get_text() for t in figure.axes[0].get_xticklabels()]
@@ -111,7 +126,7 @@ def test_heatmap_renders_a_2d_measure():
         {"subject": ["01", "02"], "Map": [np.zeros((4, 5)), np.ones((4, 5))]}
     )
     table = LongTable.from_frame(frame, factors=["subject"], measures=["Map"])
-    spec = PlotSpec(measures=["Map"], roles={"subject": Role.FREE}, kind=PlotKind.HEATMAP)
+    spec = PlotSpec(measures=["Map"], roles={"subject": Role.COLLAPSE}, kind=PlotKind.HEATMAP)
 
     figure = render_matplotlib(resolve(spec, table)[0])
     assert figure.axes
@@ -147,7 +162,7 @@ def test_plotly_band_emits_fill_and_line(series_table, band_spec):
 def test_plotly_facets_get_their_own_axes(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.FACET, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.FACET, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
     payload = render_plotly(resolve(spec, scalar_table)[0])
@@ -159,7 +174,9 @@ def test_plotly_legend_entry_appears_once_per_level(series_table):
     """A 24-trial line plot must not produce a 24-entry legend."""
     spec = PlotSpec(
         measures=["Signal"],
-        roles={"session": Role.COLOR, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "subject", "session"],
+        color="session",
         kind=PlotKind.LINE,
     )
     payload = render_plotly(resolve(spec, series_table)[0])
@@ -191,8 +208,10 @@ def test_a_colour_level_keeps_its_colour_in_every_panel(scalar_frame):
     )
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"trial": Role.X, "session": Role.COLOR, "subject": Role.FACET},
-        kind=PlotKind.BOX,
+        roles={"trial": Role.GROUP, "session": Role.GROUP, "subject": Role.FACET},
+        groups=["session", "trial"],
+        color="session",
+        kind=PlotKind.STRIP,  # one row per (trial, session): nothing to box
     )
 
     payload = render_plotly(resolve(spec, table)[0])
@@ -221,8 +240,13 @@ def test_both_backends_draw_the_same_x_group_spans(scalar_frame):
     )
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"group": Role.X, "session": Role.X, "trial": Role.FREE},
-        x_layers=["group", "session"],
+        roles={
+            "group": Role.GROUP,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
+        },
+        groups=["session", "group"],
         kind=PlotKind.BOX,
     )
     figure = resolve(spec, table)[0]
@@ -256,7 +280,9 @@ def one_colour_level_spec():
 
     return PlotSpec(
         measures=["StepLength"],
-        roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BOX,
         filters=[Filter(column="session", include=["pre"])],
     )
@@ -288,10 +314,12 @@ def test_matplotlib_legend_sits_right_of_every_panel(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],
         roles={
-            "subject": Role.X,
-            "session": Role.COLOR,
+            "subject": Role.GROUP,
+            "session": Role.GROUP,
             "trial": Role.FACET,
         },
+        groups=["session", "subject"],
+        color="session",
         kind=PlotKind.BAR,
     )
     figure = render_matplotlib(resolve(spec, scalar_table)[0])
@@ -325,7 +353,9 @@ def test_matplotlib_legend_covers_levels_missing_from_the_first_panel(scalar_tab
     )
     spec = PlotSpec(
         measures=["StepLength"],
-        roles={"trial": Role.X, "session": Role.COLOR, "subject": Role.FACET},
+        roles={"trial": Role.GROUP, "session": Role.GROUP, "subject": Role.FACET},
+        groups=["session", "trial"],
+        color="session",
         kind=PlotKind.BAR,
     )
     figure = render_matplotlib(resolve(spec, table)[0])
@@ -354,7 +384,8 @@ def wrapped_grid(struct_table):
 
     return PlotSpec(
         measures=["RawEMG"],
-        roles={"ColName": Role.FACET, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"ColName": Role.FACET, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        color="subject",
         kind=PlotKind.BAND,
         facet=FacetOptions(n_cols=2),
     )
@@ -493,7 +524,8 @@ def _layout_spec(rows=(), cols=(), n_rows=None, n_cols=None):
 
     return PlotSpec(
         measures=["RawEMG"],
-        roles={"ColName": Role.FACET, "subject": Role.COLOR, "trial": Role.FREE},
+        roles={"ColName": Role.FACET, "subject": Role.GROUP, "trial": Role.COLLAPSE},
+        color="subject",
         kind=PlotKind.BAND,
         facet=FacetOptions(
             n_rows=n_rows,
@@ -773,7 +805,9 @@ def test_plotly_distributions_are_drawn_vertically(scalar_table):
     for kind in (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR):
         spec = PlotSpec(
             measures=["StepLength"],
-            roles={"subject": Role.X, "session": Role.COLOR, "trial": Role.FREE},
+            roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+            groups=["session", "subject"],
+            color="session",
             kind=kind,
         )
         payload = render_plotly(resolve(spec, scalar_table)[0])

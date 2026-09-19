@@ -19,10 +19,19 @@ import keyword
 import re
 from typing import NamedTuple
 
-from .collapse import apply_collapse, collapses, effective_shape
+from .cell import apply_cell_collapse, cell_collapses, effective_shape
 from .groups import apply_level_groups
 from .reduce import plan_layout
-from .roles import complete_roles, fanout_keys
+from .resolved import DASH_CYCLE
+from .roles import (
+    collapse_steps,
+    complete_roles,
+    fanout_keys,
+    grouping_layers,
+    overlay_join,
+    overlay_steps,
+    overlay_unavailable,
+)
 from .shape import Shape
 from .spec import (
     ErrorBand,
@@ -55,16 +64,28 @@ _SEABORN_ERRORBAR = {
 }
 
 _SERIES_COLUMN = "_series"
+#: Column the generated code builds for the UNCOLOURED series layers — what
+#: seaborn's ``style=`` splits on, with ``dashes=`` mapping each level to the
+#: same style the preview drew (``resolved.DASH_CYCLE``, restated below in
+#: seaborn's (segment, gap) spelling; ``""`` is solid).
+_DASH_COLUMN = "_dash"
+_SEABORN_DASHES: dict[str, tuple | str] = {
+    "solid": "",
+    "dash": (4, 1.5),
+    "dot": (1, 1),
+    "dashdot": (3, 1.25, 1.5, 1.25),
+    "longdash": (8, 3),
+    "longdashdot": (8, 3, 2, 3),
+}
 
-#: Column the generated code creates when NO factor holds ``Role.X`` and the
+#: Column the generated code creates when NO grouping layer is a tick and the
 #: measure is not 1-D: every point sits at one categorical position, which is
 #: exactly what ``reduce._panel_frame`` does (``out[X] = ""``).
 #:
 #: This used to fall back to ``table.factor_names[0]``, which was wrong two ways.
 #: It drew a different figure from the preview for any scalar spec with no x
-#: factor, and — once a nested ITERATE key promotes its ancestors — that first
-#: factor is an iteration key, so it is NOT a column of the frame the endpoint
-#: receives and every combo raised.
+#: factor, and that first factor is usually an iteration key, so it is NOT a
+#: column of the frame the endpoint receives and every combo raised.
 _X_CONSTANT = "Observation"
 
 #: Separator joining a nested axis's layer values in generated code. Readable on
@@ -97,7 +118,7 @@ def generate_plot_function(
     # exported figure is the previewed figure.
     roles = complete_roles(spec, table)
     shape = effective_shape(spec, table)
-    collapsing = collapses(spec, table)
+    collapsing = cell_collapses(spec, table)
 
     body: list[str] = []
     body.extend(_variant_preamble(spec, table))
@@ -109,11 +130,28 @@ def generate_plot_function(
         f'    """{_docstring(spec, table, roles)}"""',
         "    import matplotlib.pyplot as plt",
         *(["    import numpy as np"] if collapsing else []),
+        *(
+            ["    import re"]
+            if spec.kind is PlotKind.SPAGHETTI
+            or _uses_dashes(spec, table, roles, shape)
+            or _overlay_of(spec, table, roles, shape) is not None
+            else []
+        ),
         "    import pandas as pd",
         "    import seaborn as sns",
         "",
+        # The body runs under rc_context rather than setting plt.rcParams: this
+        # function runs inside a pipeline, and a global font.size would leak
+        # into every figure drawn after it. One key scales every text size
+        # (ticks, labels, legend, title), matching render_matplotlib.
+        f'    with plt.rc_context({{"font.size": {spec.style.font_size}}}):',
     ]
-    lines.extend(f"    {line}" if line else "" for line in body)
+    # A body line that carries its own newline continues at the body indent,
+    # so the extra level has to be applied to the continuation too.
+    lines.extend(
+        "        " + line.replace("\n    ", "\n        ") if line else ""
+        for line in body
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -309,8 +347,8 @@ def extract_spec(source: str) -> PlotSpec | None:
 
 
 def _docstring(spec: PlotSpec, table: LongTable, roles: dict) -> str:
-    # The keys the for_each will actually carry — promoted ancestors included,
-    # in schema order — not the ones the spec literally names.
+    # The keys the for_each will actually carry — defaulted ones included, in
+    # schema order — not the ones the spec literally names.
     iterate = fanout_keys(spec, table)
     note = ""
     if iterate:
@@ -323,10 +361,10 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict) -> str:
     # table would describe the data instead of the plot — nested-x groups would
     # go unmentioned and the y-limit plan would be computed for a line.
     shape_of_y = effective_shape(spec, table)
-    if collapses(spec, table):
+    if cell_collapses(spec, table):
         note += (
             f"\n\n    Each {spec.y_measure} vector is reduced to its "
-            f"{spec.collapse_statistic} first, one value per record — so every "
+            f"{spec.cell_statistic} first, one value per record — so every "
             f"point\n    below is a summary of a whole observation, not a sample."
         )
     if _nested_x_layers(spec, table, roles, shape_of_y):
@@ -343,6 +381,19 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict) -> str:
             "express — this code\n    wraps them in order instead. The spec "
             "below still carries the rules."
         )
+    steps = collapse_steps(spec, roles, table)
+    if steps.all:
+        chain = " -> ".join([*steps.pre, " x ".join(steps.sample)])
+        if spec.kind in (PlotKind.BAR, PlotKind.BAND):
+            what = (
+                f"error bars: {spec.aggregate.error} across "
+                f"{' x '.join(steps.sample)}{' (pooled)' if len(steps.sample) > 1 else ''}"
+            )
+        elif spec.kind in (PlotKind.BOX, PlotKind.VIOLIN):
+            what = f"the distribution is over {' x '.join(steps.sample)}"
+        else:
+            what = "each mark is the mean over the whole chain"
+        note += f"\n\n    Collapsed {chain}, deepest first, each within the rest; {what}."
     if shape_of_y is not Shape.MATRIX_2D:
         note += _y_limit_plan(spec, table, roles)[2]
     return (
@@ -417,16 +468,16 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     # is noise nobody can act on), and the export is meant to READ as what it
     # does. The semantics are pandas' `Series.mean()` — NaN samples skipped —
     # which is what `series_stats.collapse_cells` computes.
-    if collapses(spec, table):
+    if cell_collapses(spec, table):
         y = spec.y_measure
         reduction = (
             "np.median(_samples)"
-            if spec.collapse_statistic is Statistic.MEDIAN
+            if spec.cell_statistic is Statistic.MEDIAN
             else "_samples.mean()"
         )
         lines.extend(
             [
-                f"# {y}: one value per record, the {spec.collapse_statistic} of "
+                f"# {y}: one value per record, the {spec.cell_statistic} of "
                 f"each vector",
                 f"def _collapse_{_slug(y)}(_cell):",
                 '    _samples = np.asarray(_cell, dtype="float64").ravel()',
@@ -516,49 +567,342 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             ]
         )
 
-    aggregated = [name for name, role in roles.items() if role is Role.AGGREGATE]
-    if aggregated:
-        keep = [
-            name
-            for name, role in roles.items()
-            if role not in (Role.AGGREGATE, Role.ITERATE)
-        ]
-        if shape is Shape.SERIES_1D:
-            keep.append(index_column)
+    # "Show sample" (PlotSpec.show_sample): the overlay's rows come from the
+    # frame BEFORE the marks' chain consumes it — the same cut
+    # `reduce._build_figure` draws — so `_sample` is built here, and drawn
+    # after the plot call (`_sample_draw_lines`).
+    lines.extend(_sample_preamble_lines(spec, table, roles, shape, layers))
+
+    # The collapse chain (roles.collapse_steps): one groupby-mean per collapsed
+    # key, deepest first, each grouping on every other factor the frame still
+    # holds — trial within subject, then subject. `pre` runs for every kind;
+    # `final` (the sample's own mean) only for the kinds that draw one value
+    # per mark. Bar and band leave the sample rows to seaborn's estimator and
+    # errorbar, which then compute exactly what the preview's `_summarize`
+    # did. Pooled specs collapse nothing here for the same reason.
+    steps = collapse_steps(spec, roles, table)
+    kept = [
+        name
+        for name, role in roles.items()
+        if role is not Role.ITERATE and table.has_factor(name)
+    ]
+    for stage, keys in (("pre", steps.pre), ("final", steps.final)):
+        for key in keys:
+            if key not in kept:
+                continue
+            kept = [name for name in kept if name != key]
+            keep = list(kept)
+            if shape is Shape.SERIES_1D:
+                keep.append(index_column)
+            if layers:
+                # The composed nested-x column is built above from layer
+                # columns that are all kept, so it is constant within each
+                # group — but pandas drops any column not named here, and the
+                # plot call then asked for an `_x` that no longer existed.
+                keep.append(_X_NESTED)
+            elif _x_expression(spec, table, roles, shape) == _X_CONSTANT:
+                keep.append(_X_CONSTANT)
+            measures = [spec.y_measure, *([spec.x_measure] if spec.x_measure else [])]
+            what = "the sample's mean" if stage == "final" else "averaged away"
+            within = f" within {', '.join(kept)}" if kept else ""
+            lines.extend(
+                [
+                    f"# collapse {key}{within} — {what}",
+                    f"df = df.groupby({keep!r}, as_index=False)[{measures!r}].mean()",
+                    "",
+                ]
+            )
+    if steps.sample and spec.kind in (PlotKind.BAR, PlotKind.BAND):
+        lines.append(
+            f"# the sample: {' x '.join(steps.sample)} — seaborn's estimator and "
+            f"errorbar run over its levels{' (pooled)' if len(steps.sample) > 1 else ''}"
+        )
+        lines.append("")
+
+    grouping = grouping_layers(spec, table, roles, spec.kind, shape=shape)
+    series_layers = [name for name in grouping.series if table.has_factor(name)]
+    if spec.kind in (PlotKind.LINE, PlotKind.SPAGHETTI, PlotKind.BAND) and series_layers:
+        # One line / band per leaf group. Composed OUTERMOST FIRST, exactly as
+        # `reduce._series_key` composes the preview's series ids.
+        #
+        # Vectorized, not `.agg(' | '.join, axis=1)`. That form reads better
+        # and costs a Python call PER ROW, which for a 1-D measure is per
+        # sample: a 24-row frame of EMG traces is 8.9 million rows once
+        # exploded, and the join alone ran for minutes (scidb.log 2026-09-11).
         lines.extend(
             [
-                f"# average over {', '.join(aggregated)}",
-                f"df = df.groupby({keep!r}, as_index=False)[{spec.y_measure!r}].mean()",
+                "# one line per leaf group of the grouping",
+                f"df[{_SERIES_COLUMN!r}] = {_composed(list(reversed(series_layers)))}",
+                "",
+            ]
+        )
+    elif spec.kind is PlotKind.SPAGHETTI:
+        # Nothing left to join by (reduce emits an empty series id too).
+        lines.extend([f"df[{_SERIES_COLUMN!r}] = \"\"", ""])
+
+    dash_layers = [name for name in series_layers if name != grouping.color]
+    if spec.kind in (PlotKind.LINE, PlotKind.BAND) and dash_layers:
+        # The uncoloured part of the identity, told apart by dash style — the
+        # rule is restated (natural-sorted ids, cycling) rather than frozen as
+        # a literal, because under ITERATE the endpoint sees one figure's ids
+        # and the preview assigns styles per figure (`reduce._dash_styles`).
+        cycle = [_SEABORN_DASHES[name] for name in DASH_CYCLE]
+        lines.extend(
+            [
+                f"# dash style per {', '.join(reversed(dash_layers))} (uncoloured series layer)",
+                f"df[{_DASH_COLUMN!r}] = {_composed(list(reversed(dash_layers)))}",
+                "_natural = lambda s: [(0, int(c)) if c.isdigit() else (1, c) "
+                'for c in re.split(r"(\\d+)", s) if c]',
+                f"_dash_ids = sorted(df[{_DASH_COLUMN!r}].astype(str).unique(), key=_natural)",
+                f"_cycle = {cycle!r}",
+                "_dashes = {s: _cycle[i % len(_cycle)] for i, s in enumerate(_dash_ids)}",
                 "",
             ]
         )
 
-    if spec.kind is PlotKind.LINE:
-        series_cols = [
-            name
-            for name, role in roles.items()
-            if role not in (Role.ITERATE, Role.AGGREGATE)
-            and name != _role_holder(roles, Role.X)
-        ]
-        if series_cols:
-            # Vectorized, not `.agg(' | '.join, axis=1)`. That form reads
-            # better and costs a Python call PER ROW, which for a 1-D measure is
-            # per sample: a 24-row frame of EMG traces is 8.9 million rows once
-            # exploded, and the join alone ran for minutes (scidb.log
-            # 2026-09-11). Generated endpoints run on exactly that data.
-            head, *rest = series_cols
-            composed = f"df[{head!r}].astype(str)"
-            if rest:
-                composed += f".str.cat(df[{rest!r}].astype(str), sep=' | ')"
-            lines.extend(
-                [
-                    "# one line per observation",
-                    f"df[{_SERIES_COLUMN!r}] = {composed}",
-                    "",
-                ]
-            )
+    if spec.kind is PlotKind.SPAGHETTI:
+        lines.extend(_spaghetti_position_lines(spec, table, roles, shape))
 
     return lines
+
+
+def _composed(columns: list[str], frame: str = "df") -> str:
+    """Generated pandas composing ``columns`` of ``frame`` into one
+    ``" | "``-joined id."""
+    head, *rest = columns
+    composed = f"{frame}[{head!r}].astype(str)"
+    if rest:
+        composed += f".str.cat({frame}[{rest!r}].astype(str), sep=' | ')"
+    return composed
+
+
+def _uses_dashes(spec, table, roles, shape) -> bool:
+    if spec.kind not in (PlotKind.LINE, PlotKind.BAND):
+        return False
+    grouping = grouping_layers(spec, table, roles, spec.kind, shape=shape)
+    return any(
+        name != grouping.color and table.has_factor(name) for name in grouping.series
+    )
+
+
+def _spaghetti_position_lines(spec, table: LongTable, roles, shape) -> list[str]:
+    """Generated pandas that places each series at ``level index + offset``.
+
+    The offset rule is restated here in five lines of plain Python rather than
+    frozen as a literal (as the y limits are) or imported from this package
+    (which an exported endpoint must not depend on). A literal would be keyed
+    by series id, and under ``Role.ITERATE`` the endpoint sees ONE figure's
+    subjects — the preview spreads those across the band, and a set-wide
+    literal would bunch them in one part of it. Computing per frame is what
+    the preview does (``reduce._spaghetti_offsets`` runs per figure), so the
+    export matches it; ``test_spaghetti`` pins the two against
+    :func:`scistackplot.spaghetti.series_offsets`.
+    """
+    from .spaghetti import SPAGHETTI_SPREAD
+
+    x = _x_expression(spec, table, roles, shape)
+    layers = _nested_x_layers(spec, table, roles, shape)
+    if layers:
+        # The composed, spacer-free order the nested axis is exported with.
+        declared = _nested_x_order(spec, table, roles, shape)
+    elif x == _X_CONSTANT:
+        declared = [""]
+    else:
+        declared = [str(level) for level in table.factor(x).levels]
+    return [
+        "# spaghetti: each level at its index, each series shifted a fixed",
+        "# fraction of a tick so every line ends on its own markers",
+        f"_declared = {declared!r}",
+        f"_present = set(df[{x!r}].astype(str))",
+        "_order = [v for v in _declared if v in _present]",
+        "_natural = lambda s: [(0, int(c)) if c.isdigit() else (1, c) "
+        'for c in re.split(r"(\\d+)", s) if c]',
+        f"_ids = sorted(df[{_SERIES_COLUMN!r}].astype(str).unique(), key=_natural)",
+        f"_step = {2.0 * SPAGHETTI_SPREAD} / (len(_ids) - 1) if len(_ids) > 1 else 0.0",
+        f"_offset = {{s: round({-SPAGHETTI_SPREAD} + i * _step, 6) "
+        "for i, s in enumerate(_ids)}",
+        f"df[{_X_POSITION!r}] = df[{x!r}].astype(str).map("
+        "{v: i for i, v in enumerate(_order)}) "
+        f"+ df[{_SERIES_COLUMN!r}].astype(str).map(_offset)",
+        "",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# "Show sample": the overlay, emitted
+# ---------------------------------------------------------------------------
+
+#: Column the generated code builds for the overlay's identity (the shown keys
+#: composed outermost first) and its numeric position.
+_SAMPLE_FRAME = "_sample"
+
+
+def _overlay_of(spec, table: LongTable, roles, shape):
+    """``(OverlaySteps, OverlayJoin)`` for the export, or None — the same
+    availability rule the figure path applies (``roles.overlay_unavailable``),
+    so the export carries an overlay exactly when the preview did."""
+    if not spec.show_sample or overlay_unavailable(spec, roles, shape) is not None:
+        return None
+    steps = overlay_steps(spec, roles, table)
+    if steps is None:
+        return None
+    return steps, overlay_join(spec, roles, table, steps)
+
+
+def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list[str]:
+    """``_sample``: the overlay chain restated as groupby means, mirroring the
+    marks' chain emitted just below it — nested (one groupby per averaged
+    key, deepest first, on every other factor still present) or pooled (one
+    groupby dropping them all) — then the identity column."""
+    found = _overlay_of(spec, table, roles, shape)
+    if found is None:
+        return []
+    steps, join = found
+    y = spec.y_measure
+    kept = [
+        name
+        for name, role in roles.items()
+        if role is not Role.ITERATE and table.has_factor(name)
+    ]
+    extra = [_X_NESTED] if layers else (
+        [_X_CONSTANT] if _x_expression(spec, table, roles, shape) == _X_CONSTANT else []
+    )
+    averaged = [key for key in steps.averaged if key in kept]
+    what = f"one point per {' · '.join(steps.shown)}"
+    if averaged:
+        what += f"; {', '.join(averaged)} averaged within it"
+    lines = [f"# show sample: {what}"]
+    if not averaged:
+        lines.append(f"{_SAMPLE_FRAME} = df.copy()")
+    elif spec.aggregate.pooled:
+        keep = [name for name in kept if name not in averaged] + extra
+        lines.append(
+            f"{_SAMPLE_FRAME} = df.groupby({keep!r}, as_index=False)[[{y!r}]].mean()"
+            f"  # pooled (weight by N)"
+        )
+    else:
+        source = "df"
+        for key in averaged:
+            kept = [name for name in kept if name != key]
+            keep = [*kept, *extra]
+            lines.append(
+                f"{_SAMPLE_FRAME} = {source}.groupby({keep!r}, as_index=False)[[{y!r}]].mean()"
+            )
+            source = _SAMPLE_FRAME
+    shown = [name for name in steps.shown if table.has_factor(name)]
+    lines.append(
+        f"{_SAMPLE_FRAME}[{_SERIES_COLUMN!r}] = "
+        + (_composed(shown, _SAMPLE_FRAME) if shown else '""')
+    )
+    lines.append("")
+    return lines
+
+
+def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
+    """Draw ``_sample`` on the seaborn grid: each point at its level's index
+    plus its hue's dodge slot plus its identity's offset — the arithmetic of
+    ``render.base.sample_positions`` restated in plain pandas — joined into a
+    line per identity when ``roles.overlay_join`` said so.
+
+    The offset rule is restated rather than frozen (see
+    ``_spaghetti_position_lines`` for why: under ITERATE the endpoint sees one
+    figure's identities). The dodge is seaborn's own: ``width=0.8`` split
+    evenly over the hue levels, in their order of appearance — which is what
+    ``catplot`` draws, and what ``render.base.dodge_offset`` draws.
+    """
+    from .render.base import (
+        SAMPLE_ALPHA,
+        SAMPLE_EDGE_COLOR,
+        SAMPLE_LINE_WIDTH,
+        SAMPLE_MARKER_FRACTION,
+    )
+    from .spaghetti import SPAGHETTI_SPREAD
+
+    found = _overlay_of(spec, table, roles, shape)
+    if found is None:
+        return []
+    steps, join = found
+    y = spec.y_measure
+    x = _x_expression(spec, table, roles, shape)
+    hue = _color_of(spec, table, roles, shape)
+    facets = [name for name, role in roles.items() if role is Role.FACET]
+    # seaborn keys `axes_dict` by (row, col) when both are set, else by the one.
+    facet_names = [facets[1], facets[0]] if len(facets) > 1 else facets[:1]
+    nested = _nested_x_order(spec, table, roles, shape)
+    palette = spec.style.palette
+    marker = float(spec.style.marker_size * SAMPLE_MARKER_FRACTION) ** 0.5
+    linestyle = "-" if join.join else "none"
+
+    lines = [
+        f"# show sample: {'lines join each ' + steps.deepest_shown if join.join else 'points only'}"
+        f" — {join.reason}",
+        # The x positions catplot used: the nested order it was given, the
+        # declared order it was given (`_level_order_lines`), or — with neither
+        # — the order of appearance seaborn infers.
+        f"_x_levels = {nested!r}" if nested else (
+            "_x_levels = [str(v) for v in _x_order]"
+            if _emits_x_order(spec, table, roles, shape, _seaborn_call(spec, table, roles, shape))
+            else f"_x_levels = list(dict.fromkeys(df[{x!r}].astype(str)))"
+        ),
+    ]
+    if hue:
+        lines.extend(
+            [
+                # hue_order was stated on the call, so the dodge slots and the
+                # palette follow it too.
+                "_hue_levels = [str(v) for v in _hue_order]",
+                "_slot = 0.8 / len(_hue_levels)",
+                "_dodge = {h: (i - (len(_hue_levels) - 1) / 2) * _slot "
+                "for i, h in enumerate(_hue_levels)}",
+                f"_palette = dict(zip(_hue_levels, sns.color_palette({palette!r}, len(_hue_levels))))",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "_hue_levels = [None]",
+                f"_color = sns.color_palette({palette!r})[0]",
+            ]
+        )
+    lines.extend(
+        [
+            "_natural = lambda s: [(0, int(c)) if c.isdigit() else (1, c) "
+            'for c in re.split(r"(\\d+)", s) if c]',
+            f"_ids = sorted({_SAMPLE_FRAME}[{_SERIES_COLUMN!r}].astype(str).unique(), key=_natural)",
+            f"_step = {2.0 * SPAGHETTI_SPREAD} / (len(_ids) - 1) if len(_ids) > 1 else 0.0",
+            f"_offset = {{s: round(round({-SPAGHETTI_SPREAD} + i * _step, 6) * (1.0 / len(_hue_levels)), 6) "
+            "for i, s in enumerate(_ids)}",
+            f"{_SAMPLE_FRAME}[{_X_POSITION!r}] = ("
+            f"{_SAMPLE_FRAME}[{x!r}].astype(str).map({{v: i for i, v in enumerate(_x_levels)}})",
+            f"    + {_SAMPLE_FRAME}[{_SERIES_COLUMN!r}].astype(str).map(_offset)",
+            *(
+                [f"    + {_SAMPLE_FRAME}[{hue!r}].astype(str).map(_dodge)"] if hue else []
+            ),
+            ")",
+            "_axes = list(g.axes_dict.items()) if g.axes_dict else [((), g.ax)]",
+            f"_facets = {facet_names!r}",
+            "for _key, _ax in _axes:",
+            f"    _rows = {_SAMPLE_FRAME}",
+            "    for _name, _value in zip(_facets, _key if isinstance(_key, tuple) else (_key,)):",
+            "        _rows = _rows[_rows[_name].astype(str) == str(_value)]",
+            f"    for _id, _part in _rows.groupby({[_SERIES_COLUMN, *([hue] if hue else [])]!r}):",
+            f"        _part = _part.sort_values({_X_POSITION!r})",
+            "        _ax.plot(",
+            f"            _part[{_X_POSITION!r}], _part[{y!r}],",
+            f"            linestyle={linestyle!r}, marker='o', markersize={marker:.3f},",
+            f"            markeredgecolor={SAMPLE_EDGE_COLOR!r}, markeredgewidth=0.5,",
+            (
+                f"            color=_palette[str(_id[1])], alpha={SAMPLE_ALPHA}, "
+                f"linewidth={SAMPLE_LINE_WIDTH}, zorder=3,"
+                if hue else
+                f"            color=_color, alpha={SAMPLE_ALPHA}, linewidth={SAMPLE_LINE_WIDTH}, zorder=3,"
+            ),
+            "        )",
+        ]
+    )
+    return lines
+
+
 
 
 def _location_lines(spec: PlotSpec) -> list[str]:
@@ -657,6 +1001,12 @@ def _nested_x_args(spec, table: LongTable, roles, shape) -> list[str]:
     exported figure groups by ordering alone. The docstring says so — the
     interactive view's gaps are the one thing the export cannot reproduce.
     """
+    order = _nested_x_order(spec, table, roles, shape)
+    return [f"order={order!r}"] if order else []
+
+
+def _nested_x_order(spec, table: LongTable, roles, shape) -> list[str]:
+    """The composed nested-axis order, spacers dropped (see ``_nested_x_args``)."""
     layers = _nested_x_layers(spec, table, roles, shape)
     if not layers:
         return []
@@ -674,12 +1024,11 @@ def _nested_x_args(spec, table: LongTable, roles, shape) -> list[str]:
         combinations,
         [[str(level) for level in table.factor(name).levels] for name in layers],
     )
-    order = [
+    return [
         key.replace(LEAF_SEPARATOR, _NESTED_JOIN)
         for key in plan.order
         if not is_spacer(key)
     ]
-    return [f"order={order!r}"] if order else []
 
 
 def _seaborn_can_express_layout(spec, table: LongTable, roles) -> bool:
@@ -700,10 +1049,15 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
 
     kind = spec.kind
     x = _x_expression(spec, table, roles, shape)
-    color = _role_holder(roles, Role.COLOR)
+    color = _color_of(spec, table, roles, shape)
     facets = [name for name, role in roles.items() if role is Role.FACET]
+    dashes = _uses_dashes(spec, table, roles, shape)
 
-    args = [f"data=df", f"x={x!r}", f"y={spec.y_measure!r}"]
+    # A spaghetti plot is drawn on the numeric POSITION column the preamble
+    # built (level index + per-series offset); `x` stays the factor, which is
+    # what the axis is labelled with and what the ticks are named from.
+    x_column = _X_POSITION if kind is PlotKind.SPAGHETTI else x
+    args = [f"data=df", f"x={x_column!r}", f"y={spec.y_measure!r}"]
     if color:
         args.append(f"hue={color!r}")
         if _color_level_count(spec, table, color) < 2:
@@ -719,7 +1073,9 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     if len(facets) > 1:
         args.append(f"row={facets[1]!r}")
     args.extend(_facet_layout_args(spec, table, facets))
-    args.extend(_nested_x_args(spec, table, roles, shape))
+    if kind is not PlotKind.SPAGHETTI:
+        # relplot has no `order=`; the spaghetti preamble applies it itself.
+        args.extend(_nested_x_args(spec, table, roles, shape))
 
     estimator = (
         '"median"' if spec.aggregate.statistic is Statistic.MEDIAN else '"mean"'
@@ -738,6 +1094,18 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
             args.append(f"estimator={estimator}")
             args.append(f"errorbar={errorbar}")
         call = "sns.catplot"
+    elif kind is PlotKind.SPAGHETTI:
+        # Markers and lines in one call: one polyline per series, no estimator,
+        # on the numeric position axis. The tick labels are restored below.
+        args.extend(
+            [
+                'kind="line"',
+                "estimator=None",
+                f"units={_SERIES_COLUMN!r}",
+                'marker="o"',
+            ]
+        )
+        call = "sns.relplot"
     elif kind is PlotKind.SCATTER:
         if _x_is_categorical(spec, table, roles, shape):
             args.extend(['kind="strip"', "jitter=False"])
@@ -748,15 +1116,27 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     elif kind is PlotKind.LINE:
         args.append('kind="line"')
         args.append("estimator=None")
-        if any(role is Role.FREE for role in roles.values()):
+        grouping = grouping_layers(spec, table, roles, kind, shape=shape)
+        if any(table.has_factor(name) for name in grouping.series):
             args.append(f"units={_SERIES_COLUMN!r}")
+        if dashes:
+            args.extend([f"style={_DASH_COLUMN!r}", "dashes=_dashes"])
         call = "sns.relplot"
     elif kind is PlotKind.BAND:
         args.extend([f'kind="line"', f"estimator={estimator}", f"errorbar={errorbar}"])
+        if dashes:
+            # `style=` is a semantic grouping: seaborn estimates one band per
+            # (hue, style) — one per uncoloured series layer, as the preview.
+            args.extend([f"style={_DASH_COLUMN!r}", "dashes=_dashes"])
         call = "sns.relplot"
     else:  # pragma: no cover - every kind is covered above
         args.append('kind="scatter"')
         call = "sns.relplot"
+
+    order_lines, order_args = _level_order_lines(
+        spec, table, roles, shape, call, x, color, facets
+    )
+    args.extend(order_args)
 
     style = spec.style
     if style.palette:
@@ -770,7 +1150,14 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     if not share_y:
         args.append('facet_kws={"sharey": False}')
 
-    lines = [f"g = {call}(", *[f"    {arg}," for arg in args], ")"]
+    lines = [*order_lines, f"g = {call}(", *[f"    {arg}," for arg in args], ")"]
+    if kind is PlotKind.SPAGHETTI:
+        # Positions back to level names, and the range a categorical axis
+        # would have had — the same geometry the preview draws.
+        lines.append(
+            "g.set(xticks=list(range(len(_order))), xticklabels=_order, "
+            "xlim=(-0.5, len(_order) - 0.5))"
+        )
     if ylim is not None:
         lines.append(f"g.set(ylim={(float(ylim[0]), float(ylim[1]))!r})")
     # The constant-x column is scaffolding, not a variable anyone measured —
@@ -795,6 +1182,7 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
                 '    _ax.set_ylabel(" · ".join(str(v) for v in reversed(_values)))',
             ]
         )
+    lines.extend(_sample_draw_lines(spec, table, roles, shape))
     if style.log_x:
         lines.append('g.set(xscale="log")')
     if style.log_y:
@@ -804,6 +1192,99 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     lines.append(f"g.figure.set_size_inches({style.width}, {style.height})")
     lines.append("return g.figure")
     return lines
+
+
+#: The generated helper that orders a column's levels. Emitted into the
+#: function body (an exported endpoint must not import this package).
+_IN_ORDER = "_in_order"
+
+#: seaborn calls that take ``order=`` for a categorical x. relplot has none.
+_ORDERED_X_CALLS = {"sns.catplot"}
+
+
+def _in_order_lines() -> list[str]:
+    """The helper every emitted ``*_order`` goes through.
+
+    Takes the DECLARED levels (the table's factor order: ``[schema_keys]``
+    first, then the source's natural sort) and keeps the ones this frame
+    holds. Filtering at run time, not here, is what makes it right under
+    ITERATE: each figure sees its own subset, and the preview orders exactly
+    that subset (``reduce._level_order`` reads the figure's panels). It
+    returns the frame's OWN values, so a numeric column is ordered by numbers
+    seaborn will recognise rather than by their text.
+    """
+    return [
+        f"def {_IN_ORDER}(values, declared):",
+        "    # Declared order first; a level it never named goes last.",
+        "    rank = {level: i for i, level in enumerate(declared)}",
+        "    present = list(dict.fromkeys(values.dropna()))",
+        "    return sorted(present, key=lambda v: rank.get(str(v), len(rank)))",
+    ]
+
+
+def _declared_levels(table: LongTable, name: str) -> list[str]:
+    try:
+        return [str(level) for level in table.factor(name).levels]
+    except KeyError:
+        return []
+
+
+def _seaborn_call(spec, table, roles, shape) -> str:
+    """Which seaborn function ``_plot_call`` draws with (heatmaps aside)."""
+    if spec.kind in (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.STRIP):
+        return "sns.catplot"
+    if spec.kind is PlotKind.SCATTER and _x_is_categorical(spec, table, roles, shape):
+        return "sns.catplot"
+    return "sns.relplot"
+
+
+def _emits_x_order(spec, table, roles, shape, call: str) -> bool:
+    """Whether the call gets ``order=_x_order`` — a flat categorical x.
+
+    Nested x has its own composed ``order=`` (``_nested_x_args``) and the
+    constant x has one level; spaghetti places levels itself.
+    """
+    if call not in _ORDERED_X_CALLS or _nested_x_layers(spec, table, roles, shape):
+        return False
+    x = _x_expression(spec, table, roles, shape)
+    return x != _X_CONSTANT and table.has_factor(x)
+
+
+def _level_order_lines(
+    spec, table, roles, shape, call: str, x: str, color, facets
+) -> tuple[list[str], list[str]]:
+    """``order=`` / ``hue_order=`` / ``col_order=`` / ``row_order=``, STATED.
+
+    Left unsaid, seaborn orders every one of them by first appearance in
+    ``df`` — the database's row order — so the exported figure drew
+    ``post, pre`` beside a preview drawing the project's declared
+    ``pre, post``. Returns the lines computing each order (before the
+    call, so the "Show sample" overlay reuses the same ``_x_order`` /
+    ``_hue_order``) and the call arguments naming them.
+    """
+    lines: list[str] = []
+    call_args: list[str] = []
+
+    def order(variable: str, column: str, arg: str) -> None:
+        declared = _declared_levels(table, column)
+        lines.append(f"{variable} = {_IN_ORDER}(df[{column!r}], {declared!r})")
+        call_args.append(f"{arg}={variable}")
+
+    if _emits_x_order(spec, table, roles, shape, call):
+        order("_x_order", x, "order")
+    if color:
+        order("_hue_order", color, "hue_order")
+    # A RULED layout is `_facet_layout_args`' business: it emits its own
+    # col_order when seaborn can express the arrangement, and says so in the
+    # docstring when it cannot — a declared-order col_order there would claim
+    # a layout the preview does not draw.
+    if facets and not spec.facet.has_rules:
+        order("_col_order", facets[0], "col_order")
+    if len(facets) > 1:
+        order("_row_order", facets[1], "row_order")
+    if not lines:
+        return [], []
+    return [*_in_order_lines(), *lines], call_args
 
 
 def _heatmap_call(spec) -> list[str]:
@@ -859,7 +1340,7 @@ def _y_limit_plan(spec: PlotSpec, table: LongTable, roles: dict) -> tuple:
     # off by the whole within-record spread, which is the bulk of it. The
     # collapse is recomputed here rather than passed in because this is the only
     # step of generation that touches values at all.
-    table = apply_collapse(spec, table)
+    table = apply_cell_collapse(spec, table)
 
     scope = eligible_scope(y_axis.scope, roles, table)
     iterate = fanout_keys(spec, table)
@@ -963,18 +1444,30 @@ def _levels_after_location(spec: PlotSpec, column: str, levels: list[str]) -> li
 
 #: Column the generated code builds for a nested x axis.
 _X_NESTED = "_x"
+#: Column the generated code builds for a spaghetti plot: numeric position
+#: (level index + per-series offset) on what is otherwise a categorical axis.
+_X_POSITION = "_xpos"
+
+
+def _tick_layers(spec, table, roles, shape) -> list[str]:
+    """The tick layers in drawing order (outermost first) — the grouping
+    list as this kind reads it (``roles.grouping_layers``), minus the
+    coloured layer, which seaborn dodges by ``hue``."""
+    if spec.x_measure or shape is not Shape.SCALAR:
+        return []
+    layers = grouping_layers(spec, table, roles, spec.kind, shape=shape)
+    return [name for name in layers.ticks if table.has_factor(name)]
 
 
 def _nested_x_layers(spec, table, roles, shape) -> list[str]:
     """The factors sharing the x axis, when there is more than one."""
-    if spec.x_measure or shape is not Shape.SCALAR:
-        return []
-    layers = [
-        name
-        for name in spec.ordered_x_layers(roles, table.factor_depths)
-        if table.has_factor(name)
-    ]
+    layers = _tick_layers(spec, table, roles, shape)
     return layers if len(layers) > 1 else []
+
+
+def _color_of(spec, table, roles, shape) -> str | None:
+    color = grouping_layers(spec, table, roles, spec.kind, shape=shape).color
+    return color if color and table.has_factor(color) else None
 
 
 def _x_expression(spec, table, roles, shape) -> str:
@@ -982,9 +1475,10 @@ def _x_expression(spec, table, roles, shape) -> str:
         return spec.x_measure
     if shape is Shape.SERIES_1D:
         return spec.index_column or table.index_column or "index"
-    if _nested_x_layers(spec, table, roles, shape):
+    ticks = _tick_layers(spec, table, roles, shape)
+    if len(ticks) > 1:
         return _X_NESTED
-    return _role_holder(roles, Role.X) or _X_CONSTANT
+    return ticks[0] if ticks else _X_CONSTANT
 
 
 def _x_is_categorical(spec, table, roles, shape) -> bool:
@@ -993,13 +1487,6 @@ def _x_is_categorical(spec, table, roles, shape) -> bool:
     # The constant fallback is a single categorical position, so it is
     # categorical too — the interactive renderers draw it that way.
     return True
-
-
-def _role_holder(roles: dict[str, Role], role: Role) -> str | None:
-    for name, assigned in roles.items():
-        if assigned is role:
-            return name
-    return None
 
 
 def generate_script(

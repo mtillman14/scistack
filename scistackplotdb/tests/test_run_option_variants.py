@@ -148,17 +148,22 @@ def test_default_selection_opens_on_the_current_run_only(both_runs):
     assert set(kept["Run:measure"]) == {TABLED}
 
 
-def test_pooling_the_two_runs_is_refused(both_runs):
+def test_the_two_runs_are_never_pooled(both_runs):
     """The guard that exists for exactly this — armed only once the axis exists."""
+    from scistackplot.roles import complete_roles
+
     table = ScidbSource(both_runs).get_table(["RunLoaded"])
     spec = PlotSpec(
         measures=["RunLoaded"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
     )
+    # Unassigned, the run axis separates figures — nothing pools silently.
+    validate(spec, table)
+    assert complete_roles(spec, table)["Run:measure"] is Role.ITERATE
 
-    with pytest.raises(RoleError, match="would be pooled"):
-        validate(spec, table)
+    with pytest.raises(RoleError, match="cannot be collapsed"):
+        validate(spec.with_roles(**{"Run:measure": Role.COLLAPSE}), table)
 
 
 def test_a_variant_row_can_name_the_superseded_run(both_runs):

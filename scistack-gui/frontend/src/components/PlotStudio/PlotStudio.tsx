@@ -29,7 +29,16 @@ import {
   describeSelection,
   rolesAfterPick,
 } from './locationSelection'
-import { orderXLayers, placeXLayer } from './xLayers'
+import { orderGroups, placeGroupLayer } from './groups'
+import {
+  isLocked,
+  isTicked,
+  joinChoice,
+  joinSetting,
+  toggleShowSample,
+  type JoinChoice,
+  type SampleOverlay,
+} from './showSample'
 import {
   type AspectPreset,
   CUSTOM_ASPECT,
@@ -46,19 +55,18 @@ const SAVE_DPI = 200
 
 const Plot = createPlotlyComponent(Plotly)
 
-type Role = 'iterate' | 'x' | 'color' | 'facet' | 'aggregate' | 'free'
+/** Four roles, two panes (docs/claude/grouping-and-collapse.md):
+ *  `group` is the Grouping section's — an ordered list, innermost first, one
+ *  entry optionally coloured — and the Factors dropdown offers the other
+ *  three: Separate figures, Separate panels, Collapse. */
+type Role = 'group' | 'facet' | 'iterate' | 'collapse'
 
 /** One entry of a factor's role dropdown, as the backend reports it.
  *
- *  There is deliberately no constant list here any more. The panel used to
- *  offer all six roles for every factor while `roles.validate` refused several
- *  of them, so picking one could produce an error instead of a plot: X on a 1-D
- *  measure (its x axis is the sample index), X when an `x_measure` already
- *  supplies the axis, a second factor on COLOR. The labels were wrong too —
- *  "Average over" and "Replicates" describe a table, not the traces a 1-D user
- *  is looking at.
- *
- *  Both are now answered by `capability.role_options`, which derives them by
+ *  There is deliberately no constant list here. The panel used to offer every
+ *  role for every factor while `roles.validate` refused several of them, so
+ *  picking one could produce an error instead of a plot. Both label and
+ *  legality are answered by `capability.role_options`, which derives them by
  *  asking `validate` itself, so this component renders whatever it is given
  *  (CLAUDE.md NOTE 3). */
 interface RoleOption {
@@ -76,13 +84,14 @@ interface RoleOption {
  *  Never a guess at what else is legal: that is exactly the question this
  *  stage moved to the backend. */
 function fallbackRoles(current: Role | undefined): RoleOption[] {
-  const role = current ?? 'free'
+  const role = current ?? 'iterate'
   return [{ role, label: role, hint: '', available: true, reason: null }]
 }
 
 const KIND_LABELS: Record<string, string> = {
   scatter: 'Scatter',
   strip: 'Strip (jittered)',
+  spaghetti: 'Spaghetti (paired lines)',
   line: 'Lines',
   box: 'Box',
   violin: 'Violin',
@@ -108,14 +117,15 @@ interface FactorInfo {
   selected?: (string | number)[]
   /** What this factor's dropdown offers, and what it refuses. */
   roles?: RoleOption[]
-  /** Whether this factor may group the x axis — the Grouping section's
-   *  question, reported apart from `roles` because X is not in that menu. */
-  x_available?: boolean
-  x_reason?: string | null
+  /** Whether this factor may join the grouping — the Grouping section's
+   *  question, reported apart from `roles` because `group` is not in that
+   *  menu. */
+  group_available?: boolean
+  group_reason?: string | null
   /** How many schema keys pin one of this factor's values — 1 for `subject`
    *  and for a subject-level grouping column, 2 for `session`. Null for a
    *  variant axis or a derived bucket, which are not places in the hierarchy.
-   *  The sort key for a nested x axis; see `xLayers.ts`. */
+   *  The sort key for the grouping list; see `groups.ts`. */
   depth?: number | null
 }
 
@@ -200,12 +210,13 @@ interface KindInfo {
   /** Whether picking this kind reduces a 1-D measure to one value per record
    *  first. The kind IS the request to collapse; there is no separate toggle. */
   collapses?: boolean
-  /** The roles this kind should open with, when selecting it should re-default
-   *  them (untouched defaults only — `roles.roles_for_kind`). Carried on the
-   *  option so `setKind` can apply it SYNCHRONOUSLY with the click: an RPC
-   *  would race the resolve queue and could land after the user had set a role,
-   *  overwriting the one thing the rule promises not to touch. */
-  roles?: Record<string, Role> | null
+  /** The assignment (roles, grouping order, colour) this kind should open
+   *  with, when selecting it should re-default them (untouched defaults only —
+   *  `roles.roles_for_kind`). Carried on the option so `setKind` can apply it
+   *  SYNCHRONOUSLY with the click: an RPC would race the resolve queue and
+   *  could land after the user had set a role, overwriting the one thing the
+   *  rule promises not to touch. */
+  assignment?: { roles: Record<string, Role>; groups: string[]; color: string | null } | null
 }
 
 /** One variant factor as the picker renders it. Built entirely by
@@ -300,7 +311,7 @@ interface VariantSummary {
  *  figure must never claim to be drawing the samples it summarized. */
 function shapeBadge(capabilities?: Capabilities | null): string | undefined {
   if (!capabilities) return undefined
-  const collapse = capabilities.collapse
+  const collapse = capabilities.cell_collapse
   if (!collapse?.active) return capabilities.shape
   return `${capabilities.raw_shape ?? '1d'} → ${capabilities.shape} (${collapse.statistic})`
 }
@@ -311,10 +322,18 @@ interface Capabilities {
   shape: string
   /** What the DATA is. Differs from `shape` only during a collapse. */
   raw_shape?: string
-  /** Whether this measure can be collapsed at all, whether it is being, and by
-   *  which statistic. */
-  collapse?: { applies: boolean; active: boolean; statistic: string }
-  has_replicates: boolean
+  /** Whether this 1-D measure's CELLS can be collapsed to one value each,
+   *  whether they are being, and by which statistic. Not the collapse chain. */
+  cell_collapse?: { applies: boolean; active: boolean; statistic: string }
+  /** The collapse chain as the figure runs it: `order` deepest first, the
+   *  last one the `sample` — what error bars, boxes and bands are drawn over
+   *  — and whether the spec pools instead. */
+  collapse?: { order: string[]; sample: string | null; pooled: boolean }
+  /** "Show sample": the collapsed keys as checkboxes, what one point is, and
+   *  the join decision — all decided by `roles`, displayed here. */
+  sample_overlay?: SampleOverlay
+  /** Whether any factor is collapsed, i.e. whether there is a sample. */
+  has_sample: boolean
   default: string
   available: string[]
   kinds: KindInfo[]
@@ -326,21 +345,31 @@ interface Capabilities {
   variants?: VariantSummary
 }
 
-/** Whether factors may group the x axis, and how they group it now.
+/** The Grouping section's data model: which factors get one mark per level
+ *  combination, in what order, and how the current kind reads that list.
  *
- *  A factor on x IS a categorical grouping — the nested axis is composed from
- *  the observed level combinations, with spacers between groups. Continuous x
- *  comes from `x_measure`, or from the sample index for 1-D data, so this is
- *  offered for scalar measures and refused with a reason otherwise. The
- *  backend decides; this panel renders the answer. */
+ *  The list is innermost first. For a categorical-x kind the layers are
+ *  nested ticks (the coloured one dodges, labelled by the legend); for a 1-D
+ *  measure or an x-y plot they are series; for a spaghetti the first entry is
+ *  the lines. The backend decides; this panel renders the answer. */
 interface GroupingInfo {
   available: boolean
-  /** Why the x axis cannot be grouped. Null when it can. */
+  /** Why nothing may group (a 2-D measure). Null when it may. */
   reason: string | null
-  /** Factors on x, outermost first — membership and order already reconciled
-   *  the same way the figure does it. */
+  /** The grouping layers, innermost first — membership and order already
+   *  reconciled the same way the figure does it. */
   layers: string[]
-  max_layers: number
+  /** The layer labelled by the legend, or null. */
+  color?: string | null
+  /** How this kind reads the list: tick layers in drawing order, series ids. */
+  ticks?: string[]
+  series?: string[]
+  /** Tick layers labelled below the axis (the coloured one is not), and the
+   *  cap on them. */
+  labelled_layers?: number
+  max_labelled_layers: number
+  /** What the list means for this kind, in the figure's own words. */
+  hint?: string
   /** The role a grouping ticked right now would take (`roles.role_for_new_
    *  grouping`). Published per SPEC, not per grouping: the factor is not in
    *  the table yet, so the answer does not depend on which one — which is what
@@ -427,19 +456,27 @@ interface Spec {
    *  `measures` because it JOINS (one x per y) where extra series STACK. */
   x_measure?: string | null
   roles: Record<string, Role>
+  /* The grouping layers, INNERMOST FIRST. Membership is `roles`; this is only
+     the order, so assigning a role can never make the spec invalid. */
+  groups?: string[]
+  /* The grouping layer labelled by the legend, or null. */
+  color?: string | null
   kind: string
-  aggregate?: { statistic: string; error: string }
-  /* How a 1-D measure's vectors are reduced to one value each when a scalar
+  /* Centre and spread over the SAMPLE — the outermost collapsed key's levels
+     after the inner collapses. `pooled` drops every collapsed key in one
+     groupby instead ("weight by N"). */
+  aggregate?: { statistic: string; error: string; pooled?: boolean }
+  /* How a 1-D measure's CELLS are reduced to one value each when a scalar
      kind is selected for it. Only meaningful while that is true — there is no
      "collapse on/off", the kind decides. */
-  collapse_statistic?: string
+  cell_statistic?: string
+  /* "Show sample": the collapsed keys whose data is overlaid as points; a
+     deeper key implies the shallower ones. `join_sample` null = automatic. */
+  show_sample?: string[]
+  join_sample?: boolean | null
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
-  /* Order the x-axis factors nest in, outermost first. Membership is `roles`;
-     this is only the order, so assigning a role can never make the spec
-     invalid. */
-  x_layers?: string[]
   /* Variables — or single columns of them — joined in as FACTORS rather than
      plotted: a subject-level Condition holding stim/sham, or the
      InterventionGroup column of a wide demographics table. They take a role
@@ -464,7 +501,7 @@ interface Spec {
   variant_sets?: VariantSet[]
   /* Cosmetics. `width`/`height` are INCHES and size the SAVED figure (and
      the exported code); the preview fills its pane regardless. */
-  style?: { width?: number; height?: number; [key: string]: unknown }
+  style?: { width?: number; height?: number; font_size?: number; [key: string]: unknown }
 }
 
 /**
@@ -612,7 +649,7 @@ export default function PlotStudio({
 
   // Depth per factor, from the backend (`FactorInfo.depth`). Nothing here works
   // out what "outer" means — it reads the number scistackplot publishes, so the
-  // control and the figure nest a new layer the same way. See `xLayers.ts`.
+  // control and the figure nest a new layer the same way. See `groups.ts`.
   const factorDepths = useMemo(() => {
     const depths: Record<string, number | null | undefined> = {}
     for (const factor of factors) depths[factor.name] = factor.depth
@@ -876,37 +913,43 @@ export default function PlotStudio({
     setSpec(prev => {
       if (!prev) return prev
       const roles = { ...prev.roles, [factor]: role }
-      // Keep the x order in step with membership: a factor newly on x is placed
-      // by the data's own nesting, one leaving drops out.
+      // Keep the grouping order in step with membership: a factor newly
+      // grouped is placed by the data's own nesting, one leaving drops out —
+      // and takes the colour with it, since colour names a grouping layer.
       //
-      // PLACED, not appended. Appending put every new layer innermost, so
-      // ticking a subject-level grouping beside `session` drew one bar per
-      // group inside each session — the transpose of the usual request, and
-      // undoable only by finding the ↑ button. And because this writes
-      // `x_layers` on every toggle, the backend's own depth rule
-      // (`ordered_x_layers`) never sees an unplaced holder to place: this is
-      // the copy that decides what the user gets, which is why it lives in a
-      // tested module rather than inline here.
-      const current = prev.x_layers ?? []
-      const x_layers =
-        role === 'x'
-          ? placeXLayer(current, factor, factorDepths)
+      // PLACED, not appended. And because this writes `groups` on every
+      // toggle, the backend's own depth rule (`ordered_groups`) never sees an
+      // unplaced holder to place: this is the copy that decides what the user
+      // gets, which is why it lives in a tested module (`groups.ts`) rather
+      // than inline here.
+      const current = prev.groups ?? []
+      const groups =
+        role === 'group'
+          ? placeGroupLayer(current, factor, factorDepths)
           : current.filter(name => name !== factor)
-      return { ...prev, roles, x_layers }
+      const color = role !== 'group' && prev.color === factor ? null : prev.color
+      return { ...prev, roles, groups, color }
     })
   }, [factorDepths])
 
-  /** Move an x layer one step outward (-1) or inward (+1). */
-  const moveXLayer = useCallback((factor: string, delta: number) => {
+  /** Move a grouping layer one step inward (-1, towards the first entry) or
+   *  outward (+1). */
+  const moveGroupLayer = useCallback((factor: string, delta: number) => {
     setSpec(prev => {
       if (!prev) return prev
-      const layers = [...(prev.x_layers ?? [])]
+      const layers = [...(prev.groups ?? [])]
       const from = layers.indexOf(factor)
       const to = from + delta
       if (from < 0 || to < 0 || to >= layers.length) return prev
       layers.splice(to, 0, ...layers.splice(from, 1))
-      return { ...prev, x_layers: layers }
+      return { ...prev, groups: layers }
     })
+  }, [])
+
+  /** Colour one grouping layer (null: none). Colour is a tag on a layer,
+   *  not a role — it never splits data, it labels a split by legend. */
+  const setColor = useCallback((factor: string | null) => {
+    setSpec(prev => (prev ? { ...prev, color: factor } : prev))
   }, [])
 
   const setKind = useCallback((kind: string) => {
@@ -923,22 +966,38 @@ export default function PlotStudio({
     // never to do.
     const reportIsForThisSpec = capsSpecRef.current === specKey
     const suggested = reportIsForThisSpec
-      ? (capabilities?.kinds ?? []).find(info => info.kind === kind)?.roles ?? null
+      ? (capabilities?.kinds ?? []).find(info => info.kind === kind)?.assignment ?? null
       : null
     setSpec(prev =>
-      prev ? { ...prev, kind, ...(suggested ? { roles: suggested } : {}) } : prev
+      prev
+        ? {
+            ...prev,
+            kind,
+            ...(suggested
+              ? { roles: suggested.roles, groups: suggested.groups, color: suggested.color }
+              : {}),
+          }
+        : prev
     )
   }, [capabilities, specKey])
 
-  const setCollapseStatistic = useCallback((statistic: string) => {
-    setSpec(prev => (prev ? { ...prev, collapse_statistic: statistic } : prev))
+  const setCellStatistic = useCallback((statistic: string) => {
+    setSpec(prev => (prev ? { ...prev, cell_statistic: statistic } : prev))
   }, [])
 
-  const setAggregate = useCallback((patch: { statistic?: string; error?: string }) => {
+  const setAggregate = useCallback((patch: { statistic?: string; error?: string; pooled?: boolean }) => {
     setSpec(prev => prev && ({
       ...prev,
       aggregate: { statistic: 'mean', error: 'sd', ...(prev.aggregate ?? {}), ...patch },
     }))
+  }, [])
+
+  const setShowSample = useCallback((name: string, on: boolean) => {
+    setSpec(prev => (prev ? { ...prev, show_sample: toggleShowSample(prev.show_sample, name, on) } : prev))
+  }, [])
+
+  const setJoinSample = useCallback((choice: JoinChoice) => {
+    setSpec(prev => (prev ? { ...prev, join_sample: joinSetting(choice) } : prev))
   }, [])
 
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
@@ -949,7 +1008,7 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, y_axis: { ...(prev.y_axis ?? {}), ...patch } } : prev))
   }, [])
 
-  const setStyle = useCallback((patch: { width?: number; height?: number }) => {
+  const setStyle = useCallback((patch: { width?: number; height?: number; font_size?: number }) => {
     setSpec(prev => (prev ? { ...prev, style: { ...(prev.style ?? {}), ...patch } } : prev))
   }, [])
 
@@ -1216,21 +1275,21 @@ export default function PlotStudio({
     const sets = spec?.variant_sets ?? []
     return sets.length === 1 ? (sets[0].selection ?? null) : null
   }, [spec?.variant_sets])
-  // Membership from roles, order from x_layers — the same reconciliation the
+  // Membership from roles, order from `groups` — the same reconciliation the
   // backend does, so the control shows what the figure will draw.
   //
   // Derived from the SPEC rather than read off `capabilities.grouping.layers`,
   // for the reason the Variants rows are: the spec updates on the click and
   // the capability report is a debounced echo, so a checkbox reading the echo
   // would visibly lag the tick. The backend's copy is what the FIGURE uses;
-  // this one only has to agree with it, and `ordered_x_layers` is the shared
+  // this one only has to agree with it, and `ordered_groups` is the shared
   // definition both are written from.
-  const xLayers = useMemo(() => {
+  const groupLayers = useMemo(() => {
     const holders = Object.entries(spec?.roles ?? {})
-      .filter(([, role]) => role === 'x')
+      .filter(([, role]) => role === 'group')
       .map(([name]) => name)
-    return orderXLayers(spec?.x_layers ?? [], holders, factorDepths)
-  }, [spec?.roles, spec?.x_layers, factorDepths])
+    return orderGroups(spec?.groups ?? [], holders, factorDepths)
+  }, [spec?.roles, spec?.groups, factorDepths])
 
   const groupableVariables = describe?.groupable_variables ?? []
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
@@ -1242,9 +1301,9 @@ export default function PlotStudio({
    *  included. Merging would make unticking impossible.
    *
    *  Each grouping still arrives with a role (`roles.role_for_new_grouping`,
-   *  published on the capability report): left unassigned it would default to
-   *  FREE, which on a bar or box figure means pooled into the means — the
-   *  figure would not change at all, silently. */
+   *  published on the capability report): a grouping ticked is a request for
+   *  one mark per level, so it joins the grouping list — or becomes a facet
+   *  when the tick layers are full. Never left to default. */
   const applyGroupings = useCallback(
     (groups: { variable: string; column: string | null; variant: Record<string, unknown> }[]) => {
       setGroupPickerOpen(false)
@@ -1254,17 +1313,18 @@ export default function PlotStudio({
         const gone = (prev.factor_variables ?? [])
           .map(f => f.column ?? f.variable)
           .filter(name => !names.has(name))
-        const fresh = (capsSpecRef.current === specKey && grouping?.new_grouping_role) || 'free'
+        const fresh = (capsSpecRef.current === specKey && grouping?.new_grouping_role) || 'group'
         const roles = { ...prev.roles }
         for (const name of gone) delete roles[name]
-        let layers = (prev.x_layers ?? []).filter(name => !gone.includes(name))
+        let layers = (prev.groups ?? []).filter(name => !gone.includes(name))
+        const color = prev.color && gone.includes(prev.color) ? null : prev.color
         for (const group of groups) {
           const name = group.column ?? group.variable
           if (roles[name]) continue // a decision already made is never overwritten
           roles[name] = fresh
-          if (fresh === 'x') layers = placeXLayer(layers, name, factorDepths)
+          if (fresh === 'group') layers = placeGroupLayer(layers, name, factorDepths)
         }
-        return { ...prev, factor_variables: groups, roles, x_layers: layers }
+        return { ...prev, factor_variables: groups, roles, groups: layers, color }
       })
     },
     [factorDepths, grouping?.new_grouping_role, specKey]
@@ -1423,6 +1483,9 @@ export default function PlotStudio({
   const presets = describe?.figure_presets ?? FALLBACK_PRESETS
   const figWidth = typeof spec?.style?.width === 'number' ? spec.style.width : 8
   const figHeight = typeof spec?.style?.height === 'number' ? spec.style.height : 6
+  // Points in the export, px in the preview — one number, so a change is
+  // visible before anything is saved. 14 is `StyleOptions.font_size`.
+  const fontSize = typeof spec?.style?.font_size === 'number' ? spec.style.font_size : 14
   const aspect = aspectChoice ?? aspectName(figWidth, figHeight, presets)
   const onAspect = useCallback(
     (name: string) => {
@@ -1755,7 +1818,7 @@ export default function PlotStudio({
                     <div key={name} style={styles.kindRow}>
                       <span style={styles.factorName}>{name}</span>
                       <span style={styles.groupRole}>
-                        {groupingPlacement(spec, xLayers, factors, name)}
+                        {groupingPlacement(spec, groupLayers, factors, name)}
                       </span>
                     </div>
                   )
@@ -1782,29 +1845,38 @@ export default function PlotStudio({
               </>
             )}
 
-            {/* The x axis itself. Scalar-only, and the backend says so —
-                a 1-D measure's x is its sample index, and a joined x_measure
-                is a measured value, neither of which is a grouping. */}
+            {/* The grouping list: one mark per level combination, innermost
+                first, one layer optionally coloured. What a "mark" is — a
+                bar, a line, a spaghetti line — is the kind's reading, and the
+                backend says it in `hint`. A 2-D measure refuses with a reason. */}
             {grouping?.available ? (
-              <XGrouping
+              <GroupingList
                 factors={factors}
-                layers={xLayers}
-                maxLayers={grouping.max_layers}
-                onToggle={(name, on) => setRole(name, on ? 'x' : 'free')}
-                onMove={moveXLayer}
+                layers={groupLayers}
+                color={spec?.color ?? null}
+                hint={grouping.hint}
+                labelled={grouping.labelled_layers ?? groupLayers.length}
+                maxLabelled={grouping.max_labelled_layers}
+                onToggle={(name, on) => setRole(name, on ? 'group' : 'iterate')}
+                onMove={moveGroupLayer}
+                onColor={setColor}
               />
             ) : (
               grouping?.reason && (
                 <div style={styles.hint}>
-                  <strong>X axis:</strong> {grouping.reason}
+                  <strong>Grouping:</strong> {grouping.reason}
                 </div>
               )
             )}
           </Section>
 
           <Section title="Factors">
-            <div style={styles.hint}>Each factor does exactly one thing.</div>
-            {factors.map(factor => (
+            <div style={styles.hint}>
+              Everything not grouped: separate figures, separate panels, or
+              collapsed (averaged). The last collapsed key is the sample the
+              error bars are drawn over.
+            </div>
+            {factors.filter(factor => spec?.roles?.[factor.name] !== 'group').map(factor => (
               <label key={factor.name} style={styles.factorRow}>
                 <span style={styles.factorName}>
                   {factor.display}
@@ -1813,7 +1885,7 @@ export default function PlotStudio({
                   <span style={styles.levelCount}>{factor.level_count}</span>
                 </span>
                 <select
-                  value={spec?.roles?.[factor.name] ?? 'free'}
+                  value={spec?.roles?.[factor.name] ?? 'iterate'}
                   onChange={e => setRole(factor.name, e.target.value as Role)}
                   style={styles.select}
                 >
@@ -1863,13 +1935,13 @@ export default function PlotStudio({
                 whether the vectors are drawn or summarized, so "collapse on,
                 kind = line" is a state that cannot be expressed rather than one
                 the panel has to adjudicate. */}
-            {capabilities?.collapse?.applies && (
+            {capabilities?.cell_collapse?.applies && (
               <>
                 <label style={styles.factorRow}>
-                  <span style={styles.factorName}>Collapse 1-D</span>
+                  <span style={styles.factorName}>Per-record value</span>
                   <select
-                    value={spec?.collapse_statistic ?? 'mean'}
-                    onChange={e => setCollapseStatistic(e.target.value)}
+                    value={spec?.cell_statistic ?? 'mean'}
+                    onChange={e => setCellStatistic(e.target.value)}
                     style={styles.select}
                   >
                     <option value="mean">Mean</option>
@@ -1877,11 +1949,11 @@ export default function PlotStudio({
                   </select>
                 </label>
                 <div style={styles.hint}>
-                  {capabilities.collapse.active
+                  {capabilities.cell_collapse.active
                     ? `Each vector is reduced to its ${
-                        spec?.collapse_statistic ?? 'mean'
+                        spec?.cell_statistic ?? 'mean'
                       } — one value per record — and plotted like any scalar.`
-                    : 'Applies to scatter, strip, box, violin and bar: each vector becomes one value per record.'}
+                    : 'Applies to scatter, strip, spaghetti, box, violin and bar: each vector becomes one value per record.'}
                 </div>
               </>
             )}
@@ -2005,6 +2077,82 @@ export default function PlotStudio({
                   <option value="none">None</option>
                 </select>
               </label>
+              {/* The chain, as the figure runs it: nested and unweighted by
+                  default, each subject counting once however many trials it
+                  has; pooled is the deliberate alternative (weight by N). */}
+              <label style={styles.factorRow} title="Drop every collapsed factor in one step, so a subject with more trials weighs more">
+                <span style={styles.factorName}>Weight by N</span>
+                <input
+                  type="checkbox"
+                  checked={spec?.aggregate?.pooled ?? false}
+                  onChange={e => setAggregate({ pooled: e.target.checked })}
+                />
+              </label>
+              <div style={styles.hint}>{sampleNote(capabilities, spec)}</div>
+            </Section>
+          )}
+
+          {capabilities?.sample_overlay && (
+            <Section title="Show sample">
+              {/* The collapsed keys' data drawn on top of the marks — for the
+                  distribution behind a bar, and for the raw data behind it.
+                  Python decides what a tick means (a deeper key implies the
+                  shallower ones: a trial is a trial OF a subject), whether the
+                  points are joined and why; this section displays the answer. */}
+              {!capabilities.sample_overlay.available ? (
+                <div style={styles.hint}>{capabilities.sample_overlay.reason}</div>
+              ) : (
+                <>
+                  <div style={styles.hint}>
+                    Overlay the collapsed keys' data as points: tick a key to see one
+                    point per level of it. Deeper keys imply the shallower ones.
+                  </div>
+                  {capabilities.sample_overlay.factors.map(factor => (
+                    <label
+                      key={factor.name}
+                      style={styles.factorRow}
+                      title={isLocked(factor) ? `Implied by a deeper key — part of every point's identity` : undefined}
+                    >
+                      <span style={styles.factorName}>{factor.name}</span>
+                      <input
+                        type="checkbox"
+                        checked={isTicked(factor)}
+                        disabled={isLocked(factor)}
+                        onChange={e => setShowSample(factor.name, e.target.checked)}
+                      />
+                    </label>
+                  ))}
+                  {capabilities.sample_overlay.shown.length > 0 && (
+                    <>
+                      <label
+                        style={styles.factorRow}
+                        title="Auto joins the points when they are repeated measures: the shown key sits above the x axis's key in the schema, so each has a value at every position"
+                      >
+                        <span style={styles.factorName}>Join points</span>
+                        <select
+                          value={joinChoice(spec?.join_sample)}
+                          onChange={e => setJoinSample(e.target.value as JoinChoice)}
+                          style={styles.select}
+                        >
+                          <option value="auto">
+                            Auto ({capabilities.sample_overlay.join.automatic
+                              ? capabilities.sample_overlay.join.join ? 'lines' : 'points'
+                              : '…'})
+                          </option>
+                          <option value="lines">Lines</option>
+                          <option value="points">Points</option>
+                        </select>
+                      </label>
+                      <div style={styles.hint}>{capabilities.sample_overlay.granularity}</div>
+                    </>
+                  )}
+                  {capabilities.sample_overlay.ignored.length > 0 && (
+                    <div style={styles.hint}>
+                      Not collapsed right now, so not shown: {capabilities.sample_overlay.ignored.join(', ')}
+                    </div>
+                  )}
+                </>
+              )}
             </Section>
           )}
 
@@ -2029,8 +2177,8 @@ export default function PlotStudio({
               </select>
             </label>
             <div style={styles.gridSizeRow}>
-              <InchInput label="Width (in)" value={figWidth} onChange={onWidth} />
-              <InchInput
+              <PositiveNumberInput label="Width (in)" value={figWidth} onChange={onWidth} />
+              <PositiveNumberInput
                 label="Height (in)"
                 value={figHeight}
                 onChange={onHeight}
@@ -2039,6 +2187,12 @@ export default function PlotStudio({
                     ? 'Custom: width and height are independent'
                     : 'Typing a height here switches the ratio to whatever it makes'
                 }
+              />
+              <PositiveNumberInput
+                label="Font (pt)"
+                value={fontSize}
+                onChange={font_size => setStyle({ font_size })}
+                title="matplotlib font.size: ticks, labels, legend and title all scale with it"
               />
             </div>
             <div style={styles.layoutNote}>
@@ -2237,7 +2391,9 @@ export default function PlotStudio({
                 height: figureHeight,
                 paper_bgcolor: 'transparent',
                 plot_bgcolor: 'transparent',
-                font: { color: '#ccc', size: 11 },
+                // Colour only. The size is the renderer's (`layout.font.size` =
+                // `StyleOptions.font_size`), so the setting shows before a save.
+                font: { ...(figure.figure.layout.font as object), color: '#ccc' },
               }}
               config={{
                 displaylogo: false,
@@ -2482,7 +2638,7 @@ function LimitInput({ label, value, onChange }: LimitInputProps) {
   )
 }
 
-interface InchInputProps {
+interface PositiveNumberInputProps {
   label: string
   value: number
   onChange: (value: number) => void
@@ -2490,14 +2646,14 @@ interface InchInputProps {
 }
 
 /**
- * One dimension of the saved figure, in inches.
+ * One dimension of the saved figure (inches) or its font size (points).
  *
  * Same typing discipline as `LimitInput`: the text is held while it is being
  * typed and only a positive, finite number is committed — `Number('')` is 0,
- * and a 0-inch figure is a matplotlib error, not a size. Unlike the limit,
- * blank means nothing here: the field falls back to the value it had.
+ * and a 0-inch figure (or 0 pt font) is a matplotlib error, not a size. Unlike
+ * the limit, blank means nothing here: the field falls back to the value it had.
  */
-function InchInput({ label, value, onChange, title }: InchInputProps) {
+function PositiveNumberInput({ label, value, onChange, title }: PositiveNumberInputProps) {
   const [text, setText] = useState<string | null>(null)
   return (
     <label style={styles.gridSizeField}>
@@ -3026,68 +3182,92 @@ function RangeFilter({
  * What ticking a grouping did to the figure, in three words.
  *
  * Reads the spec, never decides anything: the role itself came from
- * `roles.role_for_new_grouping` and the nesting position from `xLayers.ts`.
+ * `roles.role_for_new_grouping` and the nesting position from `groups.ts`.
  * The one that matters is "pooled" — a grouping that landed on FREE because
  * both channels were taken really does average its levels together, and a row
  * that looks applied while doing nothing is what this work set out to remove.
  */
 function groupingPlacement(
   spec: Spec | null,
-  xLayers: string[],
+  layers: string[],
   factors: FactorInfo[],
   name: string
 ): string {
   const role = spec?.roles?.[name]
-  if (role === 'x') {
-    const at = xLayers.indexOf(name)
-    const inside = xLayers[at + 1]
+  if (role === 'group') {
+    const at = layers.indexOf(name)
+    const inside = layers[at - 1]
     const display = (n: string) => factors.find(f => f.name === n)?.display ?? n
-    return inside ? `x axis, outside ${display(inside)}` : 'x axis'
+    const where = inside ? `grouped, around ${display(inside)}` : 'grouped'
+    return spec?.color === name ? `${where}, coloured` : where
   }
-  if (role === 'color') return 'colour'
-  if (role === 'facet') return 'subplots'
+  if (role === 'facet') return 'separate panels'
   if (role === 'iterate') return 'separate figures'
-  if (role === 'aggregate') return 'averaged away'
-  return 'pooled — give it a role in Factors'
+  if (role === 'collapse') return 'collapsed'
+  return 'separate figures'
+}
+
+/** What the Summary section says the error bars are over — the chain and
+ *  its sample, read off the capability report (`collapse`), never derived. */
+function sampleNote(capabilities: Capabilities | null | undefined, spec: Spec | null): string {
+  const chain = capabilities?.collapse
+  if (!chain || chain.order.length === 0) {
+    return 'Nothing is collapsed, so there is no sample: each mark is one value and has no error bar.'
+  }
+  const error = spec?.aggregate?.error ?? 'sd'
+  if (chain.pooled) {
+    return `Pooled: every level of ${chain.order.join(' × ')} is one observation; ${error} across all of them.`
+  }
+  const inner = chain.order.slice(0, -1)
+  const within = inner.length ? `${inner.join(', then ')} averaged within ${chain.sample} first; ` : ''
+  return `${within}${error} across ${chain.sample}.`
 }
 
 /**
- * Which factors group the x axis, and how they nest.
+ * The grouping list: which factors get one mark per level combination, in
+ * what order, and which one is coloured.
  *
- * Both halves of one question, in one control. Membership used to be a value
- * in each factor's role dropdown and the order a separate section that only
- * appeared once two factors already held X — so the ordering UI was
- * unreachable until you had found the dropdown, and nothing said the two were
- * related.
+ * Innermost first — the first row is the mark's own identity, each row below
+ * wraps around it. The ↑ arrow moves a layer inward (towards the first row),
+ * ↓ outward. One radio column tags the coloured layer: colour never splits
+ * data, it labels a split by legend, which is why it is a tag on a row here
+ * and not a role in the Factors dropdown.
  *
- * Checked rows carry a depth number and move with the arrows; unchecked ones
- * sit below. `maxLayers` is the backend's limit (a fourth level of nesting
- * cannot be read off an axis), enforced here by disabling the rest rather than
- * letting the user pick one and be refused.
+ * `maxLabelled` is the backend's cap on LABELLED tick layers (a fourth level
+ * of nesting cannot be read off an axis); the coloured layer is labelled by
+ * the legend and does not count, so colouring one makes room for another.
  */
-function XGrouping({
+function GroupingList({
   factors,
   layers,
-  maxLayers,
+  color,
+  hint,
+  labelled,
+  maxLabelled,
   onToggle,
   onMove,
+  onColor,
 }: {
   factors: FactorInfo[]
   layers: string[]
-  maxLayers: number
+  color: string | null
+  hint?: string
+  labelled: number
+  maxLabelled: number
   onToggle: (factor: string, on: boolean) => void
   onMove: (factor: string, delta: number) => void
+  onColor: (factor: string | null) => void
 }) {
-  const groupable = factors.filter(f => f.x_available || layers.includes(f.name))
-  const full = layers.length >= maxLayers
+  const groupable = factors.filter(f => f.group_available || layers.includes(f.name))
+  const full = labelled >= maxLabelled
   const display = (name: string) =>
     factors.find(f => f.name === name)?.display ?? name
 
   return (
     <>
       <div style={styles.hint}>
-        Group the x axis by one or more factors. Outermost first: the top
-        factor's groups sit side by side, each split by the one below it.
+        {hint ?? 'One mark per combination of these — first entry innermost.'}
+        {' '}Tick the colour to label a layer by legend instead.
       </div>
       {layers.map((name, index) => (
         <div key={name} style={styles.xLayerRow}>
@@ -3096,10 +3276,21 @@ function XGrouping({
             type="checkbox"
             checked
             onChange={() => onToggle(name, false)}
-            title="Stop grouping by this factor"
+            title="Stop grouping by this factor (it separates figures instead)"
             style={{ marginRight: 6 }}
           />
           <span style={styles.factorName}>{display(name)}</span>
+          <label style={styles.colorTag} title="Label this layer by legend colour">
+            <input
+              type="radio"
+              name="grouping-colour"
+              checked={color === name}
+              onChange={() => onColor(name)}
+              onClick={() => { if (color === name) onColor(null) }}
+              style={{ marginRight: 3 }}
+            />
+            colour
+          </label>
           <button
             type="button"
             style={{
@@ -3108,7 +3299,7 @@ function XGrouping({
             }}
             disabled={index === 0}
             onClick={() => onMove(name, -1)}
-            title="Move outward"
+            title="Move inward"
           >
             ↑
           </button>
@@ -3120,7 +3311,7 @@ function XGrouping({
             }}
             disabled={index === layers.length - 1}
             onClick={() => onMove(name, 1)}
-            title="Move inward"
+            title="Move outward"
           >
             ↓
           </button>
@@ -3134,14 +3325,14 @@ function XGrouping({
             style={{ ...styles.kindRow, opacity: full ? 0.45 : 1 }}
             title={
               full
-                ? `At most ${maxLayers} factors can share the x axis.`
-                : factor.x_reason ?? 'Group the x axis by this factor'
+                ? `At most ${maxLabelled} labelled tick layers fit on the x axis — colour one, or separate panels.`
+                : factor.group_reason ?? 'One mark per level of this factor'
             }
           >
             <input
               type="checkbox"
               checked={false}
-              disabled={full || !factor.x_available}
+              disabled={full || !factor.group_available}
               onChange={e => onToggle(factor.name, e.target.checked)}
               style={{ marginRight: 6 }}
             />
@@ -3149,7 +3340,7 @@ function XGrouping({
           </label>
         ))}
       {layers.length === 0 && groupable.length === 0 && (
-        <div style={styles.hint}>No factor here can group the x axis.</div>
+        <div style={styles.hint}>No factor here can group the marks.</div>
       )}
     </>
   )
@@ -3277,6 +3468,7 @@ const styles: Record<string, React.CSSProperties> = {
   // Where a ticked grouping ended up. Muted: it is a confirmation, not a
   // warning — the one reading that IS a warning ("pooled") says so in words.
   groupRole: { fontSize: 9, color: '#7c7ca0', marginLeft: 6 },
+  colorTag: { fontSize: 10, color: '#7c7ca0', marginLeft: 6, marginRight: 4, whiteSpace: 'nowrap' as const },
   // A wide variable, collapsed. Reads as a row rather than a button so the
   // section still scans as one list of groupings.
   variantTag: {

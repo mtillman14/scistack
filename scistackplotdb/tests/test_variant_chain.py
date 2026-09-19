@@ -151,22 +151,26 @@ def test_downstream_pooling_is_refused(upstream_code_versions):
     """The guard that exists for exactly this, previously never armed one hop out.
 
     Mirrors ``test_two_code_versions_are_refused_not_pooled`` in test_source.py
-    — same assertion, one layer downstream. The spec deliberately leaves the code
-    column unassigned so it defaults to FREE, which is what pooling means here.
+    — same assertion, one layer downstream. Unassigned, the code column
+    separates figures (nothing pools silently); collapsing it is refused.
     """
+    from scistackplot.roles import complete_roles
+
     table = ScidbSource(upstream_code_versions).get_table(["Summarized"])
     spec = PlotSpec(
         measures=["Summarized"],
         roles={
-            "session": Role.X,
-            "subject": Role.FREE,
-            "trial": Role.FREE,
+            "session": Role.GROUP,
+            "subject": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
         },
         kind=PlotKind.BOX,
     )
+    validate(spec, table)
+    assert complete_roles(spec, table)["Code:scale_signal"] is Role.ITERATE
 
-    with pytest.raises(RoleError, match="would be pooled"):
-        validate(spec, table)
+    with pytest.raises(RoleError, match="cannot be collapsed"):
+        validate(spec.with_roles(**{"Code:scale_signal": Role.COLLAPSE}), table)
 
 
 # --- the picker's data model ----------------------------------------------
@@ -307,7 +311,7 @@ def test_a_named_variant_selects_the_same_rows_the_figure_will_show(
     table = source.get_table(["Summarized"])
     spec = PlotSpec(
         measures=["Summarized"],
-        roles={"session": Role.X, "subject": Role.FREE, "trial": Role.FREE},
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
         kind=PlotKind.BOX,
         variant_sets=[
             variant_set("old code", Variant(Summarized, code_version="v1"), table)

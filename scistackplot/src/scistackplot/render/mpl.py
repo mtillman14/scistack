@@ -16,10 +16,20 @@ import pandas as pd
 from scistacklog import Log
 
 from ..figsize import aspect_name
-from ..resolved import ResolvedPlot
+from ..resolved import MPL_DASHES, ResolvedPlot
 from ..spec import PlotKind
+from ..table import natural_sort_key
 from .base import (
+    SAMPLE_ALPHA,
+    SAMPLE_EDGE_COLOR,
+    SAMPLE_LINE_WIDTH,
+    SAMPLE_MARKER_FRACTION,
     color_groups,
+    dodge_offset,
+    dodge_slots,
+    dodge_width,
+    dash_levels,
+    dash_style,
     grid_shape,
     is_categorical_x,
     legend_levels,
@@ -32,6 +42,9 @@ from .base import (
     shows_legend,
     shows_x_labels,
     shows_y_labels,
+    sample_hover,
+    sample_positions,
+    sample_series,
     x_positions,
 )
 
@@ -49,84 +62,93 @@ def render(resolved: ResolvedPlot):
     import matplotlib.pyplot as plt
 
     with Log.timer("render_mpl", layer=LAYER, extra=str(resolved.kind)):
-        n_rows, n_cols = grid_shape(resolved)
         style = resolved.spec.style
-        # The size the file will have (before bbox_inches="tight" trims the
-        # margins). Stated in the log because the preview never shows it: a
-        # figure that "came out squashed" is diagnosed here, not in the GUI.
-        Log.info(
-            "figure size %.2f x %.2f in (%s), %d x %d panel grid",
-            style.width,
-            style.height,
-            aspect_name(style.width, style.height),
-            n_rows,
-            n_cols,
-            layer=LAYER,
-        )
-        fig, axes = plt.subplots(
-            n_rows,
-            n_cols,
-            figsize=(style.width, style.height),
-            squeeze=False,
-            sharex=resolved.spec.facet.share_x,
-            # DERIVED, not configured. matplotlib's sharey ties the axes
-            # together, so one panel's autoscale drags every other panel with
-            # it — exactly wrong once `y_axis.scope` asks for per-panel ranges,
-            # and the set_ylim below would be silently overruled by whichever
-            # panel was drawn last.
-            sharey=shares_y_axis(resolved),
-        )
+        # rc_context, not rcParams: text reads the size at CREATION, so this
+        # has to be open while every label, tick and legend entry is made —
+        # and it must close afterwards, because this runs inside a server and
+        # inside for_each, where a leaked rcParam would resize someone else's
+        # figure. One key: every other text size in matplotlib is relative to
+        # font.size, so this scales ticks, labels, legend and title together.
+        with plt.rc_context({"font.size": style.font_size}):
+            n_rows, n_cols = grid_shape(resolved)
+            # The size the file will have (before bbox_inches="tight" trims the
+            # margins). Stated in the log because the preview never shows it: a
+            # figure that "came out squashed" is diagnosed here, not in the GUI.
+            Log.info(
+                "figure size %.2f x %.2f in (%s), font %gpt, %d x %d panel grid",
+                style.width,
+                style.height,
+                aspect_name(style.width, style.height),
+                style.font_size,
+                n_rows,
+                n_cols,
+                layer=LAYER,
+            )
+            fig, axes = plt.subplots(
+                n_rows,
+                n_cols,
+                figsize=(style.width, style.height),
+                squeeze=False,
+                sharex=resolved.spec.facet.share_x,
+                # DERIVED, not configured. matplotlib's sharey ties the axes
+                # together, so one panel's autoscale drags every other panel with
+                # it — exactly wrong once `y_axis.scope` asks for per-panel ranges,
+                # and the set_ylim below would be silently overruled by whichever
+                # panel was drawn last.
+                sharey=shares_y_axis(resolved),
+            )
 
-        used: set[tuple[int, int]] = set()
-        # (row, col) -> panel, so the cosmetics pass can ask a CELL for its
-        # panel's limits. It walks the grid rather than the panel list (blank
-        # cells need hiding too), and the two orders are not the same.
-        at_cell: dict[tuple[int, int], Any] = {}
-        for index, panel in enumerate(resolved.panels):
-            row, col = panel_position(resolved, index)
-            if (row, col) in used or not (0 <= row < n_rows and 0 <= col < n_cols):
-                # reduce._assign_grid guarantees one panel per cell inside the
-                # reported grid. If that ever breaks, say so — the old silent
-                # clamp drew two panels onto one axes, which looks like bad data
-                # rather than a layout bug.
-                Log.warn(
-                    "panel %r wants cell (%d,%d) in a %dx%d grid, which is "
-                    "occupied or out of range — clamping",
-                    panel.title,
-                    row,
-                    col,
-                    n_rows,
-                    n_cols,
-                    layer=LAYER,
-                )
-            row = min(max(row, 0), n_rows - 1)
-            col = min(max(col, 0), n_cols - 1)
-            ax = axes[row][col]
-            used.add((row, col))
-            at_cell[(row, col)] = panel
-            _draw_panel(ax, panel.frame, resolved)
-            # No subplot caption: a faceted panel is named by its y-axis title
-            # instead (base.panel_y_title), which buys back the row of vertical
-            # space a title costs in every row of the grid.
+            used: set[tuple[int, int]] = set()
+            # (row, col) -> panel, so the cosmetics pass can ask a CELL for its
+            # panel's limits. It walks the grid rather than the panel list (blank
+            # cells need hiding too), and the two orders are not the same.
+            at_cell: dict[tuple[int, int], Any] = {}
+            for index, panel in enumerate(resolved.panels):
+                row, col = panel_position(resolved, index)
+                if (row, col) in used or not (0 <= row < n_rows and 0 <= col < n_cols):
+                    # reduce._assign_grid guarantees one panel per cell inside the
+                    # reported grid. If that ever breaks, say so — the old silent
+                    # clamp drew two panels onto one axes, which looks like bad data
+                    # rather than a layout bug.
+                    Log.warn(
+                        "panel %r wants cell (%d,%d) in a %dx%d grid, which is "
+                        "occupied or out of range — clamping",
+                        panel.title,
+                        row,
+                        col,
+                        n_rows,
+                        n_cols,
+                        layer=LAYER,
+                    )
+                row = min(max(row, 0), n_rows - 1)
+                col = min(max(col, 0), n_cols - 1)
+                ax = axes[row][col]
+                used.add((row, col))
+                at_cell[(row, col)] = panel
+                _draw_panel(ax, panel.frame, resolved)
+                _draw_sample(ax, panel, resolved)
+                # No subplot caption: a faceted panel is named by its y-axis title
+                # instead (base.panel_y_title), which buys back the row of vertical
+                # space a title costs in every row of the grid.
 
-        # Blank out grid cells no panel landed in (a wrapped grid's remainder).
-        for row in range(n_rows):
-            for col in range(n_cols):
-                if (row, col) not in used:
-                    axes[row][col].set_visible(False)
+            # Blank out grid cells no panel landed in (a wrapped grid's remainder).
+            for row in range(n_rows):
+                for col in range(n_cols):
+                    if (row, col) not in used:
+                        axes[row][col].set_visible(False)
 
-        _apply_axes_cosmetics(fig, axes, resolved, n_rows, n_cols, at_cell)
+            _apply_axes_cosmetics(fig, axes, resolved, n_rows, n_cols, at_cell)
 
-        if resolved.labels.title:
-            fig.suptitle(resolved.labels.title)
-        # tight_layout is told how much width the legend took. A FIGURE legend
-        # is invisible to tight_layout, so laying the axes out across the whole
-        # width put the legend on top of the rightmost panels in the exported
-        # PNG while the interactive plotly view kept it outside — the same
-        # figure reading two different ways depending on how you looked at it.
-        reserved = _apply_legend(fig, resolved)
-        fig.tight_layout(rect=(0.0, 0.0, 1.0 - reserved, 1.0))
-        return fig
+            if resolved.labels.title:
+                fig.suptitle(resolved.labels.title)
+            # tight_layout is told how much width the legend took. A FIGURE legend
+            # is invisible to tight_layout, so laying the axes out across the whole
+            # width put the legend on top of the rightmost panels in the exported
+            # PNG while the interactive plotly view kept it outside — the same
+            # figure reading two different ways depending on how you looked at it.
+            reserved = _apply_legend(fig, resolved)
+            fig.tight_layout(rect=(0.0, 0.0, 1.0 - reserved, 1.0))
+            return fig
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +172,8 @@ def _draw_panel(ax, frame: pd.DataFrame, resolved: ResolvedPlot) -> None:
         _draw_heatmap(ax, frame, resolved)
     elif kind in (PlotKind.SCATTER, PlotKind.STRIP):
         _draw_points(ax, frame, resolved, jitter=kind is PlotKind.STRIP)
+    elif kind is PlotKind.SPAGHETTI:
+        _draw_spaghetti(ax, frame, resolved)
     elif kind is PlotKind.LINE:
         _draw_lines(ax, frame, resolved)
     elif kind is PlotKind.BAND:
@@ -177,16 +201,61 @@ def _draw_points(ax, frame, resolved, *, jitter: bool) -> None:
         )
 
 
-def _draw_lines(ax, frame, resolved) -> None:
+def _draw_spaghetti(ax, frame, resolved) -> None:
+    """Markers plus one polyline per series (subject) across the x positions.
+
+    The x axis is categorical, so each series is placed at its tick INDEX plus
+    the figure-wide offset ``ResolvedPlot.series_offsets`` gave it — the same
+    number at every position, so the line stays parallel to its neighbours and
+    ends exactly on its own markers. Rows arrive in database order and are
+    sorted by position here, or a subject's "post" could be joined back to its
+    "pre" from the wrong side.
+    """
     style = resolved.spec.style
-    series_column = resolved.encoding.series
+    encoding = resolved.encoding
+    series_column = encoding.series
+    offsets = resolved.series_offsets or {}
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         color = palette_for(resolved, level, index)
         if series_column and series_column in subset.columns:
             series_groups = list(subset.groupby(series_column, sort=False))
         else:
             series_groups = [(None, subset)]
-        for position, (_, line_rows) in enumerate(series_groups):
+        for position, (series_id, rows) in enumerate(series_groups):
+            positions, _ = x_positions(rows[encoding.x], resolved)
+            positions = positions + offsets.get(str(series_id), 0.0)
+            order = np.argsort(positions, kind="stable")
+            ax.plot(
+                positions[order],
+                rows[encoding.y].to_numpy(dtype=float)[order],
+                color=color,
+                alpha=style.alpha,
+                linewidth=1.2,
+                marker="o",
+                # scatter's `s` is an area in pt²; plot's markersize is a
+                # diameter in pt. Same visual size as the scatter kinds.
+                markersize=float(np.sqrt(style.marker_size)),
+                label=str(level) if (level is not None and position == 0) else None,
+            )
+
+
+def _series_groups(subset, resolved) -> list[tuple]:
+    """``(series id, rows)`` per polyline / band, or one group for the lot."""
+    series_column = resolved.encoding.series
+    if series_column and series_column in subset.columns:
+        return list(subset.groupby(series_column, sort=False))
+    return [(None, subset)]
+
+
+def _linestyle(resolved, rows):
+    return MPL_DASHES[dash_style(resolved, rows)]
+
+
+def _draw_lines(ax, frame, resolved) -> None:
+    style = resolved.spec.style
+    for index, (level, subset) in enumerate(color_groups(frame, resolved)):
+        color = palette_for(resolved, level, index)
+        for position, (_, line_rows) in enumerate(_series_groups(subset, resolved)):
             positions, _ = x_positions(line_rows[resolved.encoding.x], resolved)
             ax.plot(
                 positions,
@@ -194,45 +263,65 @@ def _draw_lines(ax, frame, resolved) -> None:
                 color=color,
                 alpha=style.alpha,
                 linewidth=1.4,
+                # An uncoloured grouping layer is told apart by dash style —
+                # the same style in every panel and colour (`dash_styles`).
+                linestyle=_linestyle(resolved, line_rows),
                 # Only the first line of a colour group carries the legend entry,
                 # otherwise a 200-trial plot produces a 200-entry legend.
                 label=str(level) if (level is not None and position == 0) else None,
             )
+    _dash_legend_handles(ax, resolved)
 
 
 def _draw_band(ax, frame, resolved) -> None:
+    """One band per series (an uncoloured grouping layer), each its own fill
+    and a centre line in that series' dash style."""
     encoding = resolved.encoding
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         color = palette_for(resolved, level, index)
-        positions, _ = x_positions(subset[encoding.x], resolved)
-        centre = subset[encoding.y].to_numpy(dtype=float)
-        ax.plot(
-            positions,
-            centre,
-            color=color,
-            linewidth=1.8,
-            label=str(level) if level is not None else None,
-        )
-        if encoding.has_error:
-            ax.fill_between(
+        for position, (_, rows) in enumerate(_series_groups(subset, resolved)):
+            positions, _ = x_positions(rows[encoding.x], resolved)
+            centre = rows[encoding.y].to_numpy(dtype=float)
+            ax.plot(
                 positions,
-                subset[encoding.y_low].to_numpy(dtype=float),
-                subset[encoding.y_high].to_numpy(dtype=float),
+                centre,
                 color=color,
-                alpha=0.22,
-                linewidth=0,
+                linewidth=1.8,
+                linestyle=_linestyle(resolved, rows),
+                label=str(level) if (level is not None and position == 0) else None,
             )
+            if encoding.has_error:
+                ax.fill_between(
+                    positions,
+                    rows[encoding.y_low].to_numpy(dtype=float),
+                    rows[encoding.y_high].to_numpy(dtype=float),
+                    color=color,
+                    alpha=0.22,
+                    linewidth=0,
+                )
+    _dash_legend_handles(ax, resolved)
+
+
+def _dash_legend_handles(ax, resolved) -> None:
+    """Empty neutral-grey lines, one per dash id, so `_apply_legend` (which
+    gathers every axes' labelled handles) lists the dash styles after the
+    colours. Drawn on every panel; the legend de-duplicates by label."""
+    ids = dash_levels(resolved)
+    if len(ids) < 2:
+        return
+    for sid in ids:
+        ax.plot([], [], color="#555555", linewidth=2, linestyle=MPL_DASHES[resolved.dash_styles[sid]], label=sid)
 
 
 def _draw_bars(ax, frame, resolved) -> None:
     encoding = resolved.encoding
     groups = color_groups(frame, resolved)
     n_groups = max(len(groups), 1)
-    width = 0.8 / n_groups
+    width = dodge_width(n_groups)
 
     for index, (level, subset) in enumerate(groups):
         positions, ticks = x_positions(subset[encoding.x], resolved)
-        offset = (index - (n_groups - 1) / 2) * width
+        offset = dodge_offset(index, n_groups)
         centre = subset[encoding.y].to_numpy(dtype=float)
         error = None
         if encoding.has_error:
@@ -254,16 +343,31 @@ def _draw_bars(ax, frame, resolved) -> None:
             ax.set_xticklabels(ticks)
 
 
+def _x_levels(frame: pd.DataFrame, resolved: ResolvedPlot) -> list[Any]:
+    """The x slots a distribution is drawn at, in order.
+
+    ``x_order`` carries the table's level order (declared ``[schema_keys]``
+    first). Without one, natural sort — the same fallback
+    ``reduce._level_rank`` uses — so "1, 2, 10" never renders as
+    "1, 10, 2", which plain ``key=str`` did.
+    """
+    if resolved.x_order:
+        return list(resolved.x_order)
+    return sorted(
+        frame[resolved.encoding.x].dropna().unique().tolist(), key=natural_sort_key
+    )
+
+
 def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
     """Box or violin, dodged by colour level when one is assigned."""
     encoding = resolved.encoding
     groups = color_groups(frame, resolved)
     n_groups = max(len(groups), 1)
-    width = 0.8 / n_groups
-    order = resolved.x_order or sorted(frame[encoding.x].dropna().unique().tolist(), key=str)
+    width = dodge_width(n_groups)
+    order = _x_levels(frame, resolved)
 
     for index, (level, subset) in enumerate(groups):
-        offset = (index - (n_groups - 1) / 2) * width
+        offset = dodge_offset(index, n_groups)
         datasets: list[np.ndarray] = []
         positions: list[float] = []
         for slot, level_value in enumerate(order):
@@ -302,6 +406,56 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
 
     ax.set_xticks(range(len(order)))
     ax.set_xticklabels([str(v) for v in order])
+
+
+def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
+    """The "Show sample" overlay: one point per row of ``panel.sample`` inside
+    the mark it belongs to, joined into a line per identity when
+    ``ResolvedPlot.sample_join`` says so.
+
+    Placement is ``base.sample_positions`` — tick index, the mark's own dodge
+    slot (as this panel's marks took them), the identity's offset — so the
+    points sit in the bar or box they were averaged into. Drawn after the
+    marks, on top; never in the legend (the marks' colours already name the
+    levels, and a point is not a level).
+    """
+    sample = getattr(panel, "sample", None)
+    if sample is None or sample.empty or not is_categorical_x(resolved):
+        return
+    style = resolved.spec.style
+    slots = dodge_slots(panel.frame, resolved)
+    size = style.marker_size * SAMPLE_MARKER_FRACTION
+    for index, (level, subset) in enumerate(color_groups(sample, resolved)):
+        color = palette_for(resolved, level, index)
+        slot = slots.get(str(level), (0, 1))
+        for identity, rows in sample_series(subset, resolved):
+            positions = sample_positions(rows, resolved, slot, identity)
+            order = np.argsort(positions, kind="stable")
+            values = rows[resolved.encoding.y].to_numpy(dtype=float)[order]
+            if resolved.sample_join and len(rows) > 1:
+                ax.plot(
+                    positions[order],
+                    values,
+                    color=color,
+                    alpha=SAMPLE_ALPHA,
+                    linewidth=SAMPLE_LINE_WIDTH,
+                    marker="o",
+                    markersize=float(np.sqrt(size)),
+                    markeredgecolor=SAMPLE_EDGE_COLOR,
+                    markeredgewidth=0.5,
+                    zorder=3,
+                )
+            else:
+                ax.scatter(
+                    positions[order],
+                    values,
+                    s=size,
+                    color=color,
+                    alpha=SAMPLE_ALPHA,
+                    edgecolors=SAMPLE_EDGE_COLOR,
+                    linewidths=0.5,
+                    zorder=3,
+                )
 
 
 def _draw_heatmap(ax, frame, resolved) -> None:
@@ -351,6 +505,7 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
             elif is_categorical_x(resolved) and resolved.kind in (
                 PlotKind.SCATTER,
                 PlotKind.STRIP,
+                PlotKind.SPAGHETTI,
             ):
                 order = [str(v) for v in (resolved.x_order or [])]
                 ax.set_xticks(range(len(order)))
@@ -402,7 +557,8 @@ def _draw_x_groups(ax, plan) -> None:
             transform=transform,
             ha="center",
             va="top",
-            fontsize=9,
+            # Relative, so it follows StyleOptions.font_size like every other label.
+            fontsize="small",
             clip_on=False,
         )
 
@@ -447,14 +603,16 @@ def _apply_legend(fig, resolved: ResolvedPlot) -> float:
     if not unique:
         return 0.0
 
+    # One title naming both blocks when the dash styles are listed too.
+    title = " / ".join(t for t in (resolved.labels.color, resolved.labels.dash) if t) or None
     legend = fig.legend(
         unique.values(),
         unique.keys(),
-        title=resolved.labels.color,
+        title=title,
         loc="center right",
         frameon=False,
     )
-    return _legend_width_fraction(fig, legend, unique.keys(), resolved.labels.color)
+    return _legend_width_fraction(fig, legend, unique.keys(), title)
 
 
 def _legend_width_fraction(fig, legend, labels, title) -> float:

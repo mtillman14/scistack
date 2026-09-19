@@ -1,5 +1,7 @@
 # Synthetic factors in scistackplot
 
+> **Roles changed 2026-09-17.** `X / COLOR / AGGREGATE / FREE` are gone; the model is now a Grouping list (innermost first, one coloured layer) plus `FACET / ITERATE / COLLAPSE`, with a nested collapse chain. Read `docs/claude/grouping-and-collapse.md` first; role names below are historical.
+
 *Written 2026-09-09, before the Plot Studio work in
 `.claude/plan-plot-studio-todos-26-09-09.md`. Concerns `scistackplot` and
 `scistackplotdb`.*
@@ -7,7 +9,7 @@
 ## The idea
 
 `scistackplot`'s whole control surface is one rule: **every categorical column
-carries exactly one role** (`Role.X/COLOR/FACET/ITERATE/AGGREGATE/FREE`). The
+carries exactly one role** (`Role.GROUP/FACET/ITERATE/COLLAPSE`, since 2026-09-17). The
 GUI is a `<select>` per factor and nothing else.
 
 That rule only pays off if *everything the user might want to split a figure by*
@@ -193,7 +195,7 @@ duplicating scidb's rule here would hide the regression instead of surfacing it.
 
 Everything above is about reshaping something into a **factor**. The same
 derived-table mechanism has since grown a member that reshapes the **measure**:
-`collapse.apply_collapse` rewrites a 1-D measure's cells to one value each and
+`cell.apply_cell_collapse` rewrites a 1-D measure's cells to one value each and
 flips its shape to `SCALAR`, which is what lets scatter/box/violin/bar be offered
 for a vector-valued variable (added 2026-09-14).
 

@@ -198,3 +198,221 @@ class TestRowOrder:
         tree = location_states(Ordered, db=db)
         subject = tree.roots[0]
         assert [child.value for child in subject.children] == ["BL", "POST", "FU"]
+
+
+# --- read live, not snapshotted at open --------------------------------------
+
+
+def _bump_mtime(path, seconds: float = 5.0):
+    """Move the file's mtime forward: two writes inside one filesystem tick
+    would otherwise look like one version of the file to the mtime cache."""
+    import os
+
+    stat = path.stat()
+    os.utime(path, (stat.st_atime + seconds, stat.st_mtime + seconds))
+
+
+class TestLiveReading:
+    """The declaration used to be copied onto the DatabaseManager when it
+    opened, so an edit to scistack.toml changed no table and no figure until
+    a restart. It is asked for on every use now."""
+
+    @pytest.fixture
+    def db(self, tmp_path, monkeypatch):
+        write_config(tmp_path, 'session = ["BL", "POST", "FU"]\n')
+        monkeypatch.chdir(tmp_path)
+        _scifor.set_schema([])
+        database = configure_database(tmp_path / "live.duckdb", SCHEMA)
+        for session in ["FU", "BL", "POST"]:
+            Ordered.save(np.array([1.0]), subject="01", session=session)
+        yield database
+        _scifor.set_schema([])
+        database.close()
+
+    def test_an_edit_reaches_the_next_load_without_reopening(self, db, tmp_path):
+        before = db.load_all_as_df(Ordered, stringify_schema=True)
+        assert before["session"].tolist() == ["BL", "POST", "FU"]
+
+        write_config(tmp_path, 'session = ["FU", "POST", "BL"]\n')
+        _bump_mtime(tmp_path / "scistack.toml")
+
+        after = db.load_all_as_df(Ordered, stringify_schema=True)
+        assert after["session"].tolist() == ["FU", "POST", "BL"]
+        assert db.dataset_schema_key_order == {"session": ["FU", "POST", "BL"]}
+
+    def test_removing_the_table_restores_the_default_order(self, db, tmp_path):
+        (tmp_path / "scistack.toml").write_text("modules = []\n", encoding="utf-8")
+        _bump_mtime(tmp_path / "scistack.toml")
+        frame = db.load_all_as_df(Ordered, stringify_schema=True)
+        assert frame["session"].tolist() == ["BL", "FU", "POST"]
+
+    def test_a_typo_added_mid_session_is_reported(self, db, tmp_path, caplog):
+        import logging
+
+        write_config(tmp_path, 'sesion = ["BL"]\n')
+        _bump_mtime(tmp_path / "scistack.toml")
+        with caplog.at_level(logging.WARNING, logger="scidb"):
+            _ = db.dataset_schema_key_order
+        assert "sesion" in caplog.text
+
+
+class TestLocatingTheProject:
+    """Which project's config applies: pinned root, then cwd, then the
+    database's own folder — and the answer is logged, including "none"."""
+
+    @pytest.fixture(autouse=True)
+    def _unpin(self):
+        from scifor.pathinput import clear_project_root
+
+        clear_project_root()
+        yield
+        clear_project_root()
+
+    def test_the_pinned_project_root_wins_over_the_cwd(self, tmp_path, monkeypatch):
+        from scifor.pathinput import set_project_root
+
+        pinned = tmp_path / "pinned"
+        elsewhere = tmp_path / "elsewhere"
+        pinned.mkdir()
+        elsewhere.mkdir()
+        write_config(pinned, 'session = ["POST", "BL"]\n')
+        write_config(elsewhere, 'session = ["BL", "POST"]\n')
+        monkeypatch.chdir(elsewhere)
+        set_project_root(pinned)
+        assert schema_order.project_level_order() == {"session": ["POST", "BL"]}
+
+    def test_the_database_folder_is_the_last_resort(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        outside = tmp_path / "outside"
+        project.mkdir()
+        outside.mkdir()
+        write_config(project, 'session = ["POST", "BL"]\n')
+        monkeypatch.chdir(outside)
+        assert schema_order.project_level_order() == {}
+        assert schema_order.project_level_order(project) == {
+            "session": ["POST", "BL"]
+        }
+
+    def test_no_config_found_is_logged_once(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level(logging.INFO, logger="scidb"):
+            schema_order.project_level_order()
+            schema_order.project_level_order()
+        assert caplog.text.count("no project config found") == 1
+
+    def test_the_config_in_use_is_logged(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        write_config(tmp_path, 'session = ["BL"]\n')
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level(logging.INFO, logger="scidb"):
+            schema_order.project_level_order()
+        assert "[schema_order] using" in caplog.text
+        assert "working directory" in caplog.text
+
+    def test_a_config_without_the_table_says_so(self, tmp_path, monkeypatch, caplog):
+        import logging
+
+        (tmp_path / "scistack.toml").write_text("modules = []\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level(logging.INFO, logger="scidb"):
+            assert schema_order.project_level_order() == {}
+        assert "has no [schema_keys] table" in caplog.text
+
+
+# --- for_each: iteration order and the tables it hands out -------------------
+
+
+class Summary(BaseVariable):
+    pass
+
+
+class TestForEachOrder:
+    """``for_each(session=[])`` gets its levels from
+    ``DatabaseManager.distinct_schema_values``, which used to be DuckDB's
+    ``ORDER BY`` — alphabetical — so iteration, and every table assembled from
+    it, ran BL, FU, POST whatever the project declared."""
+
+    CODE = {"BL": 1.0, "POST": 2.0, "FU": 3.0}
+
+    @pytest.fixture
+    def db(self, tmp_path, monkeypatch):
+        write_config(tmp_path, 'session = ["BL", "POST", "FU"]\n')
+        monkeypatch.chdir(tmp_path)
+        _scifor.set_schema([])
+        database = configure_database(tmp_path / "foreach.duckdb", SCHEMA)
+        # The value names the session, so the function can report which
+        # location it was called for without asking for metadata.
+        for session in ["FU", "BL", "POST"]:
+            Ordered.save(self.CODE[session], subject="01", session=session)
+        yield database
+        _scifor.set_schema([])
+        database.close()
+
+    def test_distinct_values_follow_the_declaration(self, db):
+        assert db.distinct_schema_values("session") == ["BL", "POST", "FU"]
+
+    def test_iteration_runs_in_the_declared_order(self, db):
+        from scidb import for_each
+
+        seen: list[float] = []
+
+        def record(value):
+            seen.append(float(value))
+            return value
+
+        for_each(
+            record,
+            inputs={"value": Ordered},
+            outputs=[Summary],
+            subject=[],
+            session=[],
+        )
+        assert seen == [1.0, 2.0, 3.0], "BL, POST, FU"
+
+    def test_an_as_table_input_arrives_in_the_declared_order(self, db):
+        from scidb import for_each
+
+        frames = []
+
+        def record(df):
+            frames.append(df)
+            return float(len(df))
+
+        for_each(
+            record,
+            inputs={"df": Ordered},
+            outputs=[Summary],
+            as_table=["df"],
+            subject=[],
+        )
+        assert len(frames) == 1
+        assert [str(s) for s in frames[0]["session"]] == ["BL", "POST", "FU"]
+
+
+class TestNewConfigMidSession:
+    """A lookup that found NO config is trusted for ``LOCATE_TTL`` seconds —
+    the walk up the tree parses every candidate TOML, and a DatabaseManager
+    asks on every sort. So a scistack.toml created after the database opened
+    is found once that window passes, not on the very next call."""
+
+    def test_a_new_config_is_found_after_the_ttl(self, tmp_path, monkeypatch):
+        from scifor.pathinput import clear_project_root
+
+        clear_project_root()
+        monkeypatch.chdir(tmp_path)
+        assert schema_order.project_level_order() == {}
+
+        write_config(tmp_path, 'session = ["POST", "BL"]\n')
+        # Within the window: still the cached "none found".
+        assert schema_order.project_level_order() == {}
+
+        import time as _time
+
+        real = _time.monotonic
+        monkeypatch.setattr(
+            _time, "monotonic", lambda: real() + schema_order.LOCATE_TTL + 1
+        )
+        assert schema_order.project_level_order() == {"session": ["POST", "BL"]}
