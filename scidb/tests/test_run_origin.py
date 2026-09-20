@@ -156,3 +156,30 @@ class TestRecordedSchemaKeys:
         from scidb.provenance_query import recorded_schema_keys
 
         assert recorded_schema_keys(db._duck, "never", ["subject", "trial"]) is None
+
+
+class TestInputSchemaKeys:
+    """A variable's inherent level, read off its records, and the union rule
+    for inputs at different levels."""
+
+    def test_variable_levels_are_read_off_records(self, db):
+        from scidb.provenance_query import variable_schema_keys
+
+        class Coarse(BaseVariable):
+            pass
+
+        class Fine(BaseVariable):
+            pass
+
+        Coarse.save(pd.DataFrame({"a": [1.0]}), subject="01")
+        Fine.save(pd.DataFrame({"a": [1.0]}), subject="01", trial="1")
+        levels = variable_schema_keys(db._duck, ["Coarse", "Fine", "Absent"], ["subject", "trial"])
+        assert levels == {"Coarse": ["subject"], "Fine": ["subject", "trial"]}
+
+    def test_the_finest_level_is_the_union_in_dataset_order(self):
+        from scidb.provenance_query import finest_schema_keys
+
+        keys = ["subject", "session", "trial"]
+        assert finest_schema_keys([["subject", "trial"], ["subject", "session"]], keys) == keys
+        assert finest_schema_keys([["subject"]], keys) == ["subject"]
+        assert finest_schema_keys([], keys) == []

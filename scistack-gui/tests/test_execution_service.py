@@ -401,3 +401,94 @@ class TestGraduatedPathInputNodeIsRunnable:
             ),
         )
         assert derive_target_for_node(db, other) == []
+
+
+class TestDefaultSchemaLevel:
+    """Which keys a run iterates when nobody said: the node's own level, else
+    where the function last ran, else what its inputs imply, else every key.
+    One owner for the run thread and the compiled pipeline
+    (``execution_service.default_schema_level``)."""
+
+    def _target(self, **bindings):
+        return {"constants": {}, "output_type": "X", "bindings": bindings}
+
+    def test_the_node_level_wins_outright(self, populated_db):
+        from scistack_gui.services.execution_service import default_schema_level
+
+        level, why = default_schema_level(
+            populated_db, "bandpass_filter", [], stated=["session", "subject"]
+        )
+        assert level == ["subject", "session"]  # dataset order, not stated order
+        assert why == "stated on the node"
+
+    def test_a_function_with_history_iterates_where_it_last_ran(self, populated_db):
+        from scistack_gui.services.execution_service import default_schema_level
+
+        level, why = default_schema_level(populated_db, "bandpass_filter", [])
+        assert level == ["subject", "session"]
+        assert "last ran" in why
+
+    def test_a_never_run_function_takes_its_inputs_level(self, populated_db):
+        """A subject-level input implies a subject-level run — not one call
+        per session with the subject's row broadcast into each."""
+        from scidb import BaseVariable
+
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        class SubjectOnly(BaseVariable):
+            pass
+
+        SubjectOnly.save(np.array([1.0]), subject="S01")
+        level, why = default_schema_level(
+            populated_db, "never_ran", [self._target(x=variable_binding(["SubjectOnly"]))]
+        )
+        assert level == ["subject"]
+        assert "inputs" in why
+
+    def test_inputs_at_different_levels_iterate_the_finer_union(self, populated_db):
+        """The coarser input broadcasts; the run iterates every key any input
+        carries (docs/claude/coarse-level-inputs.md)."""
+        from scidb import BaseVariable
+
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        class SubjectOnly2(BaseVariable):
+            pass
+
+        SubjectOnly2.save(np.array([1.0]), subject="S01")
+        level, _ = default_schema_level(
+            populated_db,
+            "never_ran",
+            [
+                self._target(
+                    coarse=variable_binding(["SubjectOnly2"]),
+                    fine=variable_binding(["RawSignal"]),
+                )
+            ],
+        )
+        assert level == ["subject", "session"]
+
+    def test_a_path_input_template_names_its_level(self, populated_db, monkeypatch):
+        from scistack_gui import registry
+        from scistack_gui.domain.edge_resolver import pathinput_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        class FakePathInput:
+            def placeholder_keys(self):
+                return ["subject", "not_a_key"]
+
+        monkeypatch.setattr(registry, "get_path_inputs_registry", lambda: {"files": FakePathInput()})
+        level, why = default_schema_level(
+            populated_db, "never_ran", [self._target(f=pathinput_binding("files"))]
+        )
+        assert level == ["subject"]
+        assert "inputs" in why
+
+    def test_nothing_to_go_on_means_every_key(self, populated_db):
+        from scistack_gui.services.execution_service import default_schema_level
+
+        level, why = default_schema_level(populated_db, "never_ran", [])
+        assert level == ["subject", "session"]
+        assert "no history" in why

@@ -368,44 +368,20 @@ def _run_in_thread(
     # pooled. A location selection says WHICH combos to run, never whether to
     # iterate, so the two are now independent.
     if schema_level is None and not opt_as_table:
-        # History as the floor (docs/claude/intent-and-fact.md rule 4): a
-        # call site that has run before runs WHERE it ran, unless the node
-        # says otherwise. "All keys" is the answer only when there is no
-        # history to ask — defaulting to it for a trial-level step fanned a
-        # GUI re-run out to cycle level, ten records per trial (2026-09-19).
-        from scidb import provenance_query as _pq
+        # One owner for the default (execution_service.default_schema_level):
+        # the node's own level, else where the function last ran, else the
+        # level its inputs imply, else every key. See
+        # docs/claude/intent-and-fact.md rule 4.
+        from scistack_gui.services.execution_service import default_schema_level
 
-        recorded = None
-        try:
-            recorded = _pq.recorded_schema_keys(
-                db._duck, function_name, db.dataset_schema_keys
-            )
-        except Exception:
-            logger.warning(
-                "[run_thread] recorded schema level lookup failed for '%s' "
-                "(run_id=%s)",
-                function_name,
-                run_id,
-                exc_info=True,
-            )
-        if recorded:
-            schema_level = recorded
-            logger.info(
-                "[run_thread] No schema iteration requested — using the level "
-                "'%s' last ran at: %s. Set Schema Level on the node to override "
-                "(run_id=%s)",
-                function_name,
-                schema_level,
-                run_id,
-            )
-        else:
-            schema_level = list(db.dataset_schema_keys)
-            logger.info(
-                "[run_thread] No schema iteration requested and no history to "
-                "read a level from — defaulting to all schema keys: %s (run_id=%s)",
-                schema_level,
-                run_id,
-            )
+        schema_level, why = default_schema_level(db, function_name, unique_targets)
+        logger.info(
+            "[run_thread] No schema iteration requested — iterating %s (%s) "
+            "(run_id=%s)",
+            schema_level,
+            why,
+            run_id,
+        )
     if schema_level:
         logger.debug("[run_thread] Schema level: %s (run_id=%s)", schema_level, run_id)
     if not is_empty(schema_selection):

@@ -241,7 +241,12 @@ Every stage of `.claude/plan-intent-and-fact.md` is built:
   REFLECTED note; `scidb intent <fn>` / `scidb trace --intent` from the CLI.
 * **One derivation:** the MATLAB route renders
   `execution_service.variable_inputs_view(targets)`; its own copy is gone.
-* **Schema level fact:** `provenance_query.recorded_schema_keys` — a GUI
-  re-run iterates where the function last ran unless the node says otherwise.
+* **Schema level default** (`execution_service.default_schema_level`, one
+  owner for the run thread and the compiled pipeline): the node's own level,
+  else where the function last ran (`provenance_query.recorded_schema_keys`),
+  else the level its inputs imply — every key any bound Variable's records or
+  PathInput template carries, in dataset order (`variable_schema_keys` +
+  `finest_schema_keys`); the coarser input broadcasts — else every key, only
+  when there is nothing to go on.
 
 Still `global` scope on every stored row until execution is scope-aware.

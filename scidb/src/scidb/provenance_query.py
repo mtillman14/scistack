@@ -2022,6 +2022,47 @@ def recorded_schema_keys(duck, fn_name: str, schema_keys) -> list[str] | None:
     return level
 
 
+def variable_schema_keys(duck, type_names, schema_keys) -> dict[str, list[str]]:
+    """``{type_name: [schema keys its records populate, in dataset order]}``
+    — a variable's inherent LEVEL, read off its records.
+
+    A subject-level variable answers ``["subject"]``; a cycle-level one every
+    key. A type with no records is absent. Batched over *type_names* in one
+    query, because a canvas render asks this for every input of every node.
+    """
+    keys = list(schema_keys or [])
+    names = sorted({n for n in (type_names or []) if n})
+    if not keys or not names:
+        return {}
+    cols = ", ".join(f'MAX(CASE WHEN s."{k}" IS NOT NULL THEN 1 ELSE 0 END)' for k in keys)
+    rows = _chunked_in(
+        duck,
+        f"SELECT r.type, {cols} "  # noqa: S608 - keys are the dataset's own
+        "FROM _record r JOIN _schema s ON s.schema_id = r.schema_id "
+        "WHERE r.type IN ({ph}) GROUP BY r.type",
+        names,
+    )
+    return {
+        type_name: [k for k, flag in zip(keys, flags) if flag]
+        for type_name, *flags in rows
+    }
+
+
+def finest_schema_keys(levels, schema_keys) -> list[str]:
+    """The iteration level a set of inputs implies: every key ANY of them
+    carries, in dataset order.
+
+    Two inputs at different levels do not conflict — the run iterates the
+    union, and an input without a key broadcasts across it
+    (``docs/claude/coarse-level-inputs.md``). ``[subject, trial]`` beside
+    ``[subject, session]`` iterates ``subject, session, trial``.
+    """
+    wanted: set[str] = set()
+    for level in levels or []:
+        wanted.update(k for k in (level or []) if k)
+    return [k for k in (schema_keys or []) if k in wanted]
+
+
 def config_call_id(fn_name: str, cfg: dict) -> str:
     """The call-site id a variant config reconstructs to.
 
