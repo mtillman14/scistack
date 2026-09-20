@@ -354,3 +354,19 @@ params. GUI: `variable_binding(pool_variants=)` set by
 Noted for Stage 3: `variant_resolver.compute_call_id` is a THIRD spelling
 of the call-id recipe (after `ForEachConfig.to_call_id` and
 `config_call_id`); every run option added now touches all three.
+
+### CallSite — the one assembly of the call-id payload — built 2026-09-20, tests unrun
+
+The "third spelling" noted above was really a FOURTH (`pipeline_variants`
+had an inline copy too); only the hash was shared. `scidb.foreach_config.
+CallSite(fn_name, inputs, constants, distribute, as_table, across_variants,
+glue)` now owns `version_keys()` and `call_id`; `ForEachConfig.call_site()`,
+`config_call_id`, `pipeline_variants` and the GUI's `compute_call_id` map
+their shape onto it and spell no rule. `ForEachConfig.to_version_keys` is
+the CallSite keys plus the version-only ones (`__inputs` with wrappers,
+`__fn_hash`, `__glue_hashes`, `__where`). The hash is private
+(`_hash_call_site`). Two drifts this removed: `as_table=True` hashed as the
+literal `True` forward and as the resolved names backward (that call site
+never matched its records — `test_as_table_true`), and the GUI id left glue
+chains out. GUI tests now compare against `ForEachConfig.to_call_id`, the
+real forward id, instead of a hand-built payload.

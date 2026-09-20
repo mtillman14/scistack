@@ -372,7 +372,7 @@ def check_node_state(
             no pipeline variants are registered in the DB.
         db: DatabaseManager instance.  Uses the global DB if omitted.
         call_id: Optional 16-hex-char identifier for a specific for_each call
-            site (see :func:`scidb.foreach_config.call_id_from_version_keys`).
+            site (see :class:`scidb.foreach_config.CallSite`).
             When provided, both actual and expected combos are restricted to
             records produced by that call site.  Allows the same function to
             be reused across multiple call sites without their states

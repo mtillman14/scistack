@@ -316,10 +316,14 @@ def compute_call_id(
     distribute: bool = False,
     as_table=None,
 ) -> str | None:
-    """Deterministic call_id for a target, matching scidb's real
-    ForEachConfig.to_version_keys() shape exactly (see
-    scidb.foreach_config), so a combo hidden before it's ever run lands on
-    the same id as the real record it eventually produces if it is run.
+    """Deterministic call_id for a target: the target's bindings mapped onto
+    ``scidb.foreach_config.CallSite`` — the ONE assembly of the call-id
+    payload, the same type ``ForEachConfig.to_call_id`` fills from live
+    inputs — so a combo hidden before it's ever run lands on the same id as
+    the real record it eventually produces. This function only says which
+    binding field is which; it spells no rule of its own (until 2026-09-20
+    it did, and had drifted: ``as_table=True`` hashed as ``True`` where scidb
+    resolves it to names, and glue chains were left out entirely).
 
     Returns None (fail-safe: "unknown, don't filter") for a target with an
     unresolved multi-type input (EachOf) — there's no single call site to
@@ -335,7 +339,8 @@ def compute_call_id(
     an id no record would ever carry. The key comes from the live PathInput
     object so there is exactly one spelling of the recipe, scidb's.
     """
-    from scidb.foreach_config import call_id_from_version_keys
+    from scidb.foreach_config import CallSite
+    from scidb.provenance import normalize_as_table
 
     from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, BINDING_VARIABLE
 
@@ -372,18 +377,17 @@ def compute_call_id(
         # BINDING_PARAMETER contributes nothing: its concrete values travel
         # in __constants, exactly as in scidb's ForEachConfig.
 
-    keys: dict = {
-        "__fn": function_name,
-        "__inputs": inputs,
-        "__constants": dict(target.get("constants", {})),
-    }
-    if distribute:
-        keys["__distribute"] = True
-    if as_table:
-        keys["__as_table"] = sorted(as_table) if isinstance(as_table, list) else True
-    if across_variants:
-        keys["__across_variants"] = sorted(across_variants)
-    return call_id_from_version_keys(keys)
+    return CallSite(
+        fn_name=function_name,
+        inputs=inputs,
+        constants=dict(target.get("constants", {})),
+        distribute=bool(distribute),
+        # `True` means every loadable input — the variable and PathInput
+        # bindings, which is exactly what `inputs` holds here.
+        as_table=normalize_as_table(as_table, list(inputs)),
+        across_variants=across_variants,
+        glue={p: list(names) for p, names in (target.get("glue_chains") or {}).items()},
+    ).call_id
 
 
 def hidden_call_ids_for_fn(hidden_node_ids: set[str], function_name: str) -> set[str]:

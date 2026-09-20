@@ -261,18 +261,24 @@ class TestComputeCallId:
             "constants": constants or {"hz": 10},
         }
 
-    def test_matches_real_call_id_from_version_keys(self):
-        from scidb.foreach_config import call_id_from_version_keys
+    @staticmethod
+    def _forward(**options):
+        """scidb's own forward id for the same call — the contract is
+        `compute_call_id == ForEachConfig.to_call_id`, not a hand-built
+        payload that could drift along with the code under test."""
+        from scidb import BaseVariable
+        from scidb.foreach_config import ForEachConfig
 
-        result = compute_call_id("bandpass_filter", self._target())
-        expected = call_id_from_version_keys(
-            {
-                "__fn": "bandpass_filter",
-                "__inputs": {"signal": "RawEMG"},
-                "__constants": {"hz": 10},
-            }
-        )
-        assert result == expected
+        class RawEMG(BaseVariable):
+            pass
+
+        def bandpass_filter(signal, hz):
+            return signal
+
+        return ForEachConfig(bandpass_filter, {"signal": RawEMG, "hz": 10}, **options).to_call_id()
+
+    def test_matches_real_call_id(self):
+        assert compute_call_id("bandpass_filter", self._target()) == self._forward()
 
     def test_distribute_false_matches_distribute_omitted(self):
         assert compute_call_id(
@@ -310,19 +316,21 @@ class TestComputeCallId:
             "fn", self._target(), as_table=["b", "a"]
         ) == compute_call_id("fn", self._target(), as_table=["a", "b"])
 
-    def test_as_table_matches_real_call_id_from_version_keys(self):
-        from scidb.foreach_config import call_id_from_version_keys
+    def test_as_table_matches_real_call_id(self):
+        result = compute_call_id("bandpass_filter", self._target(), as_table=["signal"])
+        assert result == self._forward(as_table=["signal"])
 
-        result = compute_call_id("fn", self._target(), as_table=["b", "a"])
-        expected = call_id_from_version_keys(
-            {
-                "__fn": "fn",
-                "__inputs": {"signal": "RawEMG"},
-                "__constants": {"hz": 10},
-                "__as_table": ["a", "b"],
-            }
-        )
-        assert result == expected
+    def test_as_table_true_matches_real_call_id(self):
+        """`True` resolves to every loadable input on BOTH sides. It hashed
+        as the literal `True` here and as the resolved names in scidb until
+        2026-09-20, so this call site never matched its own records."""
+        result = compute_call_id("bandpass_filter", self._target(), as_table=True)
+        assert result == self._forward(as_table=True)
+        assert result == self._forward(as_table=["signal"])
+
+    def test_distribute_matches_real_call_id(self):
+        result = compute_call_id("bandpass_filter", self._target(), distribute=True)
+        assert result == self._forward(distribute=True)
 
     def test_multi_type_input_returns_none(self):
         target = self._target(input_types={"signal": ["RawEMG", "RawEEG"]})

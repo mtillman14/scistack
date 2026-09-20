@@ -136,7 +136,7 @@ its comparison. Exactly one owner each, in the lowest layer that can host it:
 | `variant_selection` | a plot's named pins over variant space (`VariantSet`), keyed by name, about the plotted variable; no fact side | `scidb.intent` (shape), `scistackplot.spec.VariantSet` (payload) |
 
 The GUI imports all of them. The precedent that this works is `call_id`:
-scidb owns the recipe (`foreach_config.call_id_from_version_keys`), computes
+scidb owns the recipe (`foreach_config.CallSite`), computes
 it forward and reconstructs it backward (`provenance_query.config_call_id`),
 and the GUI calls it instead of hashing its own.
 

@@ -276,12 +276,12 @@ gap **on demand** (GUI right-click / programmatic), without the #6 identity drif
 - **`list_pipeline_variants`** → `provenance_query.pipeline_variants`: distinct
   `(output_type, function_name, input_types, constants, output_num)` config-level
   variants, with `record_count`, `output_num`, and `call_id`.
-- **`call_id`**: a stable for_each call-site hash over `(__fn, __inputs, __constants,
-  __where, __distribute, __as_table)`, computed by `call_id_from_version_keys` over a
-  config dict reconstructed from the graph (matches the forward
-  `ForEachConfig.to_call_id`). NOTE: `to_version_keys` / `call_id_from_version_keys`
-  still exist as **in-memory config carriers** (they build `save_metadata` and the
-  call_id) — they are NOT the removed storage column.
+- **`call_id`**: a stable for_each call-site hash — `scidb.foreach_config.CallSite`
+  filled from the graph (`(__fn, __inputs, __constants, __distribute, __as_table,
+  __across_variants, __glue)`), the same type the forward `ForEachConfig.to_call_id`
+  fills from live inputs, so the two agree by construction. NOTE: `to_version_keys`
+  still exists as an **in-memory config carrier** (it builds `save_metadata`) — it
+  is NOT the removed storage column.
 - **`get_aggregated_variants`** builds the GUI pipeline graph from
   `list_pipeline_variants`, parsing PathInput specs from `input_types`.
 

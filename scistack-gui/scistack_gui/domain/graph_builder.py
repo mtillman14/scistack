@@ -75,7 +75,7 @@ class AggregatedData:
 # DB-derived function nodes use composite IDs:
 #     fn__{fn_name}__{call_id}
 # where call_id is a 16-hex-char hash of the for_each call site's version
-# keys minus __fn_hash (see scidb.foreach_config.call_id_from_version_keys).
+# keys minus __fn_hash (scidb.foreach_config.CallSite, the one assembly).
 #
 # Manual function nodes (dragged in by the user) use a different suffix:
 #     fn__{fn_name}__{6-char-random}

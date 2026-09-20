@@ -18,7 +18,7 @@ consequences in `scimatlab` and `scifor`.*
 "Identity-bearing" is the part that makes these more than presentation.
 `distribute` and `as_table` are both folded into the `invocation_id` and the
 `call_id` (`docs/claude/graph-database-state.md` §Identity,
-`scidb.foreach_config.call_id_from_version_keys`). Flipping either one does not
+`scidb.foreach_config.CallSite`). Flipping either one does not
 modify a run — it names a *different* run. Any code that derives or filters
 targets must therefore use the same values the run will actually use, or it
 computes a call_id for a call nobody makes. This is why

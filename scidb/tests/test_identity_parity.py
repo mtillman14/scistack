@@ -266,6 +266,18 @@ class TestCallIdForwardEqualsBackward:
         _seed()
         self._check(db, pooled, {"value": Wide}, dict(subject=[], trial=[]), as_table=["value"])
 
+    def test_as_table_true(self, db):
+        """`as_table=True` — "every loadable input" — is resolved to names by
+        the ONE assembly (`CallSite`); the forward id hashed the literal
+        `True` and the backward id the names until 2026-09-20, so this call
+        site never matched its own records."""
+        _seed()
+        self._check(db, pooled, {"value": Wide}, dict(subject=[], trial=[]), as_table=True)
+        assert (
+            ForEachConfig(pooled, {"value": Wide}, as_table=True).to_call_id()
+            == ForEachConfig(pooled, {"value": Wide}, as_table=["value"]).to_call_id()
+        )
+
     def test_distribute(self, db):
         _seed()
 

@@ -355,19 +355,26 @@ branch_params accumulates; each step inherits everything upstream and adds its o
 
 ### call_id
 
-A 16-hex-char hash derived from a **subset** of version_keys. Computed by `call_id_from_version_keys()`:
+A 16-hex-char hash of what is unique to one call site. Since 2026-09-20 the payload has ONE assembly, `scidb.foreach_config.CallSite`:
 
 ```python
-_CALL_ID_INCLUDED_KEYS = ("__fn", "__inputs", "__constants", "__where", "__distribute", "__as_table")
+@dataclass(frozen=True)
+class CallSite:
+    fn_name: str
+    inputs: Mapping[str, str]          # param -> TYPE name (PathInput: its to_key())
+    constants: Mapping[str, Any]
+    distribute: bool = False
+    as_table: Sequence[str] = ()       # already resolved to parameter names
+    across_variants: Sequence[str] = ()
+    glue: Mapping[str, Sequence[str]] = {}   # param -> glue node NAMES
 
-def call_id_from_version_keys(version_keys: dict) -> str:
-    keys = {k: version_keys[k] for k in _CALL_ID_INCLUDED_KEYS if k in version_keys}
-    return SHA256(json.dumps(keys, sort_keys=True))[:16]
+    def version_keys(self) -> dict: ...   # __fn/__inputs/__constants/__distribute/__as_table/__across_variants/__glue
+    call_id = SHA256(json.dumps(version_keys(), sort_keys=True))[:16]
 ```
 
-Source: `/workspace/scidb/src/scidb/foreach_config.py`, lines 33-56.
+Four readers fill it from four shapes and spell no rule of their own: `ForEachConfig.call_site()` (live inputs, forward), `provenance_query.config_call_id` (a stored variant config), `pipeline_variants` (a row), and the GUI's `variant_resolver.compute_call_id` (binding dicts). Before, each assembled the payload by hand; the two scidb spellings were held equal by the parity suite, the GUI's was not in it, and `as_table=True` hashed as `True` forward and as the resolved names backward.
 
-**Intentionally excludes `__fn_hash`** so that cosmetic source edits don't change the call-site identity. Two for_each() calls with identical inputs/constants/where/distribute/as_table but different function body text produce the same call_id.
+**Intentionally excludes `__fn_hash`** (and `__glue_hashes`, `__where`) so that cosmetic source edits don't change the call-site identity. Two for_each() calls with identical input types/constants/distribute/as_table/across_variants/glue names but different function body text produce the same call_id.
 
 Used only in `_for_each_expected` to disambiguate rows when the same function name is invoked from multiple call sites.
 
@@ -867,7 +874,7 @@ The `version_keys` JSON in `_record_metadata` may contain:
 - **Config fields** (from `ForEachConfig`): `__fn`, `__fn_hash`, `__inputs`, `__constants`, `__where`, `__distribute`, `__as_table`
 - **Per-record fields**: `__upstream`, `__output_num`, and for direct saves, any non-schema metadata keys
 
-The `call_id_from_version_keys()` function uses a strict allow-list (`_CALL_ID_INCLUDED_KEYS`) to extract only the config fields, ignoring per-record fields. This ensures the call_id is stable even when per-record fields differ.
+`CallSite.version_keys()` emits only the call-site fields, and the hash keeps a strict allow-list (`_CALL_ID_INCLUDED_KEYS`) as a guard, so the call_id is stable even when per-record fields ride in the same dict.
 
 ### Direct saves vs for_each saves
 

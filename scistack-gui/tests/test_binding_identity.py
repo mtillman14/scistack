@@ -183,7 +183,8 @@ class TestComputeCallIdIncludesPathInputs:
         """The predicted id must be the id scidb writes: __inputs carries the
         PathInput under its parameter name, keyed by the PathInput's own
         to_key() (ForEachConfig._serialize_inputs)."""
-        from scidb.foreach_config import call_id_from_version_keys
+        from scidb import BaseVariable
+        from scidb.foreach_config import ForEachConfig
 
         target = {
             "bindings": {
@@ -194,16 +195,17 @@ class TestComputeCallIdIncludesPathInputs:
             "output_type": "Out",
         }
 
-        expected = call_id_from_version_keys(
-            {
-                "__fn": "read_csv",
-                "__inputs": {
-                    "filepath_or_buffer": declared_path_input.to_key(),
-                    "signal": "RawEMG",
-                },
-                "__constants": {"low_hz": 20},
-            }
-        )
+        class RawEMG(BaseVariable):
+            pass
+
+        def read_csv(filepath_or_buffer, signal, low_hz):
+            return None
+
+        # The REAL forward id, from live inputs — not a hand-built payload.
+        expected = ForEachConfig(
+            read_csv,
+            {"filepath_or_buffer": declared_path_input, "signal": RawEMG, "low_hz": 20},
+        ).to_call_id()
         assert compute_call_id("read_csv", target) == expected
 
     def test_different_templates_get_different_ids(self, monkeypatch, tmp_path):

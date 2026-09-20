@@ -2123,33 +2123,24 @@ def finest_schema_keys(levels, schema_keys) -> list[str]:
 def config_call_id(fn_name: str, cfg: dict) -> str:
     """The call-site id a variant config reconstructs to.
 
-    Rebuilds the same version-keys payload ``pipeline_variants`` uses
-    (``__fn``/``__inputs`` incl. PathInput to_key specs/``__constants``/
-    ``__distribute``/``__as_table``) so the result matches the forward
-    ``ForEachConfig.to_call_id`` for plain inputs — one recipe, both
-    directions.
+    The stored config mapped onto :class:`scidb.foreach_config.CallSite` —
+    the same type the forward ``ForEachConfig.to_call_id`` fills from live
+    inputs, so the two directions agree by construction (this function
+    only says which cfg field is which). PathInput specs ride in ``inputs``
+    as their ``to_key()``; glue contributes NAMES, not hashes (an edited
+    glue body is a new version at the same call site).
     """
-    from .foreach_config import call_id_from_version_keys
+    from .foreach_config import CallSite
 
-    merged_inputs = {**cfg.get("input_types", {}), **cfg.get("path_inputs", {})}
-    vk: dict = {"__fn": fn_name}
-    if merged_inputs:
-        vk["__inputs"] = merged_inputs
-    vk["__constants"] = cfg.get("constants", {})
-    if cfg.get("distribute"):
-        vk["__distribute"] = True
-    if cfg.get("as_table"):
-        vk["__as_table"] = cfg["as_table"]
-    if cfg.get("across_variants"):
-        vk["__across_variants"] = sorted(cfg["across_variants"])
-    # Glue NAMES (not hashes) are call-site identity — the same split the
-    # forward ForEachConfig.to_version_keys makes, so this reverse path keeps
-    # matching to_call_id for a glued call.
-    if cfg.get("glue_chains"):
-        vk["__glue"] = {
-            param: list(names) for param, (_h, names) in cfg["glue_chains"].items()
-        }
-    return call_id_from_version_keys(vk)
+    return CallSite(
+        fn_name=fn_name,
+        inputs={**cfg.get("input_types", {}), **cfg.get("path_inputs", {})},
+        constants=cfg.get("constants", {}),
+        distribute=bool(cfg.get("distribute")),
+        as_table=cfg.get("as_table") or (),
+        across_variants=cfg.get("across_variants") or (),
+        glue={p: names for p, (_h, names) in (cfg.get("glue_chains") or {}).items()},
+    ).call_id
 
 
 def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
@@ -2161,14 +2152,14 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     (fn-hash- and instance-independent). Synthetic ``__save__`` invocations are
     excluded (they are not pipeline steps).
 
-    Each dict: ``function_name``, ``output_type``, ``call_id`` (reusing
-    ``call_id_from_version_keys`` over the reconstructed config signature, so it
-    matches the forward ``ForEachConfig.to_call_id`` for plain inputs),
+    Each dict: ``function_name``, ``output_type``, ``call_id`` (the
+    reconstructed ``CallSite``'s id — the same type the forward
+    ``ForEachConfig.to_call_id`` fills, so they match by construction),
     ``input_types`` (param→type), ``constants`` (param→typed value),
     ``run_options`` (:func:`run_options_label`), ``output_num`` (int|None),
     ``record_count`` (distinct output records).
     """
-    from .foreach_config import call_id_from_version_keys
+    from .foreach_config import CallSite
 
     inv_rows = duck._fetchall(
         "SELECT invocation_id, function_name, as_table, distribute, across_variants "
@@ -2236,22 +2227,19 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                 tuple(pooled),
             )
             if gkey not in groups:
-                vk: dict = {"__fn": fn_name}
-                if input_types:
-                    vk["__inputs"] = input_types
-                vk["__constants"] = constants
-                if distribute:
-                    vk["__distribute"] = True
-                if at:
-                    vk["__as_table"] = at
-                if pooled:
-                    vk["__across_variants"] = pooled
-                if glue_names:
-                    vk["__glue"] = glue_names
+                site = CallSite(
+                    fn_name=fn_name,
+                    inputs=input_types,
+                    constants=constants,
+                    distribute=bool(distribute),
+                    as_table=at,
+                    across_variants=pooled,
+                    glue=glue_names,
+                )
                 groups[gkey] = {
                     "function_name": fn_name,
                     "output_type": out_type,
-                    "call_id": call_id_from_version_keys(vk),
+                    "call_id": site.call_id,
                     "input_types": input_types,
                     "constants": constants,
                     # The run-option set this variant ran under. Already part of

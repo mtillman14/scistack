@@ -2,7 +2,8 @@
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from scilineage.hashing import (
@@ -128,20 +129,75 @@ _CALL_ID_INCLUDED_KEYS = (
 )
 
 
-def call_id_from_version_keys(version_keys: dict) -> str:
-    """Compute a 16-hex-char call_id from any version_keys dict.
+def _hash_call_site(version_keys: dict) -> str:
+    """The 16-hex-char hash of a call site's keys.
 
-    Used by both ``ForEachConfig.to_call_id()`` (forward path, before save)
-    and ``list_pipeline_variants()`` (reverse path, reconstructing the config
-    from the bipartite graph) so the call_id of a freshly built config matches
-    the call_id derived from records it eventually wrote.
-
-    Uses a strict allow-list of canonical config keys, ignoring any
-    per-record fields that scidb/scihist may have stored alongside.
+    A strict allow-list of the canonical config keys, so per-record fields
+    that ride in the same dict never leak in. Private: the PAYLOAD is
+    assembled by :class:`CallSite` and nowhere else, so this is called from
+    exactly one place.
     """
     keys = {k: version_keys[k] for k in _CALL_ID_INCLUDED_KEYS if k in version_keys}
     payload = json.dumps(keys, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class CallSite:
+    """What is unique to ONE ``for_each`` call site, and the one assembly of
+    the payload its ``call_id`` hashes.
+
+    Four readers arrive here from four shapes — live inputs
+    (``ForEachConfig.call_site``), a stored variant config
+    (``provenance_query.config_call_id``), a ``pipeline_variants`` row, and
+    the GUI's binding dicts (``variant_resolver.compute_call_id``) — and
+    until 2026-09-20 each re-spelled the rules below by hand: which keys,
+    which are omitted when unset, that ``as_table`` is a sorted list. The
+    parity suite kept the two scidb spellings equal by TEST; the GUI's was
+    not in the suite, and ``as_table=True`` was written as ``True`` forward
+    and as the resolved list backward, so that call site never matched. Now
+    the spellings are equal by construction: a caller maps its shape onto
+    these fields and reads ``call_id``.
+
+    ``inputs`` is the call-site view of each loadable input — the TYPE it
+    binds (a ``PathInput`` contributes its ``to_key()``): what narrows WHICH
+    records (a Fixed pin, a column selection) is invocation identity, on the
+    edge, not here. ``as_table`` is already resolved to parameter names
+    (``provenance.normalize_as_table``). ``glue`` maps a parameter to its
+    glue node NAMES: a different chain is a different call site, an edited
+    body is a new version at the same one.
+    """
+
+    fn_name: str
+    inputs: Mapping[str, str] = field(default_factory=dict)
+    constants: Mapping[str, Any] = field(default_factory=dict)
+    distribute: bool = False
+    as_table: Sequence[str] = ()
+    across_variants: Sequence[str] = ()
+    glue: Mapping[str, Sequence[str]] = field(default_factory=dict)
+
+    def version_keys(self) -> dict:
+        """The call-site keys, spelled the one way ``call_id`` hashes them."""
+        keys: dict = {"__fn": self.fn_name}
+        if self.inputs:
+            keys["__inputs"] = {k: self.inputs[k] for k in sorted(self.inputs)}
+        # Always present, even when empty (a record's version keys carry it).
+        keys["__constants"] = dict(self.constants)
+        if self.distribute:
+            keys["__distribute"] = True
+        as_table = sorted(str(p) for p in self.as_table)
+        if as_table:
+            keys["__as_table"] = as_table
+        pooled = sorted(str(p) for p in self.across_variants)
+        if pooled:
+            keys["__across_variants"] = pooled
+        if self.glue:
+            keys["__glue"] = {p: list(self.glue[p]) for p in sorted(self.glue)}
+        return keys
+
+    @property
+    def call_id(self) -> str:
+        return _hash_call_site(self.version_keys())
 
 
 class ForEachConfig:
@@ -175,22 +231,48 @@ class ForEachConfig:
         # {param: [GlueSpec, ...]} — normalized glue chains (see scidb.glue).
         self.glue = glue or {}
 
+    def call_site(self) -> "CallSite":
+        """This call as a :class:`CallSite` — the ONE assembly of what is
+        unique to a call site. ``inputs`` is the call-site view
+        (:meth:`call_site_inputs`); ``as_table`` is resolved to names over
+        every loadable input, exactly as the save path resolves the
+        ``__as_table`` it records."""
+        from .glue import chain_names
+        from .provenance import normalize_as_table
+
+        return CallSite(
+            fn_name=getattr(self.fn, "__name__", repr(self.fn)),
+            inputs=self.call_site_inputs(),
+            constants=self._get_direct_constants(),
+            distribute=bool(self.distribute),
+            as_table=normalize_as_table(self.as_table, list(self._serialize_inputs())),
+            across_variants=self.across_variants,
+            glue={p: chain_names(c) for p, c in self.glue.items()},
+        )
+
     def to_version_keys(self) -> dict:
         """Return dict of config keys to merge into save_metadata.
+
+        The call-site keys come from :meth:`call_site` (so a version key can
+        never spell a run option differently from the call id), with three
+        version-only additions: ``__inputs`` as the LOADED view — wrappers
+        and all (``Fixed(X, subject=1)``, ``ColumnSelection(...)``), because a
+        pin or a column change must fork the record even though it does not
+        fork the call site — ``__fn_hash`` (an edit is a new version at the
+        same site) and ``__glue_hashes`` (likewise), plus ``__where`` for
+        display (``_run.where_clause``; not identity of either kind).
 
         All values are plain Python objects (dicts, strings, bools, lists).
         Consumed in-memory to build save_metadata / the call_id (no longer a
         stored column).
         """
-        keys = {}
-        keys["__fn"] = getattr(self.fn, "__name__", repr(self.fn))
+        keys = self.call_site().version_keys()
         keys["__fn_hash"] = _compute_fn_hash(self.fn)
         inputs_dict = self._serialize_inputs()
         if inputs_dict:
             keys["__inputs"] = inputs_dict
-        # Always include __constants, even if empty (for consistency)
-        direct = self._get_direct_constants()
-        keys["__constants"] = direct if direct else {}
+        else:
+            keys.pop("__inputs", None)
         if self.where is not None:
             # where can be a string or a Filter object
             # For RawFilter created from string, preserve original string format
@@ -207,69 +289,35 @@ class ForEachConfig:
                 keys["__where"] = self.where.to_key()
             else:
                 keys["__where"] = str(self.where)
-        if self.distribute:
-            keys["__distribute"] = True
-        # Which inputs pool every variant into the one call (AcrossVariants)
-        # instead of the default one-call-per-variant-group split. A run
-        # option like as_table/distribute: call-site identity, a version key,
-        # and recorded on `_invocation.across_variants` so the graph can
-        # rebuild both the call id and the expected invocations — until
-        # 2026-09-20 it was only in the wrapper's to_key() inside __inputs,
-        # which the backward reconstruction (edges name plain types) could
-        # never match, and the predictor split what the run had pooled.
-        if self.across_variants:
-            keys["__across_variants"] = self.across_variants
-        if self.as_table:
-            if isinstance(self.as_table, list):
-                keys["__as_table"] = sorted(self.as_table)
-            elif self.as_table is True:
-                keys["__as_table"] = True
         if self.glue:
-            # Split exactly like __fn / __fn_hash: the glue NAMES are call-site
-            # identity (a different chain is a different wiring), the glue
-            # HASHES are version identity (an edit is a new version at the same
-            # site). See _CALL_ID_INCLUDED_KEYS.
-            from .glue import chain_hashes, chain_names
+            from .glue import chain_hashes
 
-            keys["__glue"] = {p: chain_names(c) for p, c in sorted(self.glue.items())}
             keys["__glue_hashes"] = {
                 p: chain_hashes(c) for p, c in sorted(self.glue.items())
             }
         return keys
 
     def to_call_id(self) -> str:
-        """Stable identifier for this for_each() call site, 16 hex chars.
+        """Stable identifier for this for_each() call site, 16 hex chars —
+        :attr:`CallSite.call_id` of :meth:`call_site`.
 
-        Hashes the version keys minus ``__fn_hash`` (and other per-record
-        fields) so that cosmetic edits to the function source do not fork
-        the call site.  Two for_each() calls with the same loadable inputs,
-        constants, where, distribute, and as_table settings produce the
-        same call_id even if the function body was reformatted between runs.
+        Cosmetic edits to the function source do not fork the call site
+        (``__fn_hash`` is a version key, not a call-site key). Two for_each()
+        calls with the same loadable input TYPES, constants, distribute,
+        as_table, across_variants and glue names share an id even if the
+        function body was reformatted between runs.
 
-        Used to disambiguate records produced by the same function invoked
-        from multiple call sites — without this, function_name alone collides
-        when distinguishing one call site's output from another's.
-
-        **Forward must equal backward.** This id is compared against
-        ``provenance_query.config_call_id`` — the same recipe run over what
-        the graph RECORDED (``param -> record -> variable type``) — by
-        ``check_node_state`` when a pipeline step scopes its state to its own
-        call site. The graph keeps no trace of a column selection on an input
-        edge beyond the selector (which is invocation identity, not call-site
-        identity), so ``__inputs`` here is the CALL-SITE view: a
-        ``ColumnSelection`` contributes the type it wraps. Before 2026-09-20
-        it contributed ``to_key()`` (the columns), the forward id never
-        matched any recorded config, and a column-selected pipeline step
-        planned red forever. ``to_version_keys`` is unchanged — there the
-        columns MUST fork the version key so a column change re-runs.
+        **Forward must equal backward, by construction.** This id is compared
+        against ``provenance_query.config_call_id`` — the same ``CallSite``
+        filled from what the graph RECORDED (``param -> record -> variable
+        type``) — by ``check_node_state`` when a pipeline step scopes its
+        state to its own call site. The graph keeps no trace of a column
+        selection or a Fixed pin beyond the edge, so the call-site view of
+        an input is the type it binds (:meth:`call_site_inputs`);
+        ``to_version_keys`` keeps the wrapper, so a column change still
+        re-runs.
         """
-        keys = dict(self.to_version_keys())
-        call_site = self.call_site_inputs()
-        if call_site:
-            keys["__inputs"] = call_site
-        else:
-            keys.pop("__inputs", None)
-        return call_id_from_version_keys(keys)
+        return self.call_site().call_id
 
     @property
     def across_variants(self) -> list[str]:
