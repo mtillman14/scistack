@@ -557,6 +557,18 @@ class TestGraduationMovesNodeConfig:
         assert pipeline_store.get_node_config(db, self.NEW)["runOptions"] == {"as_table": True}
 
     def test_fresh_node_wins_and_previous_value_is_logged(self, populated_db, caplog):
+        """The fresh node's location statement REPLACES the graduated id's,
+        whole — not merged key by key as the old blob was.
+
+        Where a node runs is one decision with three parts
+        (``schemaSelection`` / ``schemaLevel`` / ``whereFilters``), and the
+        panel always writes all three together from the node's own state, so
+        the fresh node's statement is the complete intent and merging half of
+        an older one into it would produce a location the user never asked
+        for. (Contrast ``columnSelections``, which IS per-key: those are
+        authored one parameter at a time.) Nothing is lost silently — the
+        replaced value is logged verbatim.
+        """
         import logging
 
         db = populated_db
@@ -570,8 +582,13 @@ class TestGraduationMovesNodeConfig:
 
         cfg = pipeline_store.get_node_config(db, self.NEW)
         assert cfg["schemaLevel"] == ["subject"], "the fresh node's setting wins"
-        assert cfg["whereFilters"] == [{"old": 1}], "keys the fresh node never set stay"
+        assert "whereFilters" not in cfg, (
+            "the whole location statement is replaced, not merged per key"
+        )
         assert "['session']" in caplog.text, "the replaced value is in the log verbatim"
+        assert "'whereFilters': [{'old': 1}]" in caplog.text, (
+            "what the replacement dropped must be visible, not silent"
+        )
 
     def test_nothing_to_move_is_a_no_op(self, populated_db):
         db = populated_db

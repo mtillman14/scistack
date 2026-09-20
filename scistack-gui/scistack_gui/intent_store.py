@@ -547,7 +547,16 @@ def set_run_options(db, node_id: str, options: dict | None) -> None:
 
 def set_schema_location(db, node_id: str, location: dict | None) -> None:
     """Replace a call site's location settings — which locations it runs at,
-    which keys iterate, which where-filters apply — as one statement."""
+    which keys iterate, which where-filters apply — as ONE statement.
+
+    One, not one per key (the shape ``set_column_selections`` uses): where a
+    node runs is a single decision with three parts, and the panel always
+    writes all three together from the node's own state, so they are never
+    independently authored. A partial statement cannot arise, and merging an
+    older one into a newer one would produce a location nobody asked for —
+    which is why graduation replaces this aspect whole and logs what it
+    replaced (``rekey_subject``).
+    """
     from scistack_gui.domain.graph_builder import strip_placement
 
     bare = strip_placement(node_id)
