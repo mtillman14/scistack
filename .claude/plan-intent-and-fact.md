@@ -217,7 +217,7 @@ made batch-shaped, the model is wrong and Stage 5 should not start.
 
 ## Status — 2026-09-19, branch `refactor/intent-and-fact`
 
-Built and committed, **no Python test has been run** (the user runs tests):
+Built and committed; **all listed tests pass** (user-run, 2026-09-19) after three fix-up commits (Log.warn; one-subject-per-call-site; the GUI re-run now iterates where the function last ran — `recorded_schema_keys`, the schema_location fact). GUI manual check (docs/gui-manual-testing-todo.md item 0) still pending:
 
 | stage | commit | what | verification needed |
 |---|---|---|---|
