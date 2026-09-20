@@ -192,7 +192,7 @@ functions re-run. Old records remain (nothing is deleted).
 ### Follow-ups (tracked, not in this stage)
 
 - **MATLAB parity**: `+scifor/for_each.m` has its own flatten path
-  (`docs/claude/matlab-for-each-current-state.md:212`). Until ported, Python and
+  (`docs/claude/archive/matlab-for-each-current-state.md:212`). Until ported, Python and
   MATLAB disagree on record granularity. Should land before any MATLAB pipeline
   relies on it.
 - `examples/vo2max/vo2max.duckdb` holds the 1364 bad records. Per project ethos

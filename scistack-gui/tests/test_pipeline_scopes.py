@@ -382,7 +382,7 @@ class TestScopedPositions:
 
         # DB-derived ids also pick up the one-time placement-qualification
         # migration — root (their one existing scope) becomes their one
-        # existing placement (domain.graph_builder.placement_id).
+        # existing placement (ids.placement_id).
         assert result["positions"]["var__RawSignal::main"] == {"x": 10.0, "y": 20.0}
         # And the migration is scope-shaped on disk after the next write.
         layout_store.write_node_position("n_new", 1.0, 1.0)
@@ -749,7 +749,7 @@ class TestSweeps:
         node_id (sweep_a) GRADUATES to the canonical placement-qualified
         id (param__window_seconds::main) once the graph rebuilds — same
         mechanism PathInput/Constant nodes already use (see
-        _DB_DERIVED_PREFIXES) — so look it up by label, not by the raw id
+        ids.DB_DERIVED_PREFIXES) — so look it up by label, not by the raw id
         assigned at creation."""
         client = client_with_variable_file
         client.post(
@@ -1337,7 +1337,7 @@ class TestDuplicatePipeline:
         with the same label used to collide on the next graph build and
         STEAL the position away from the original (graduation matched by
         label only, scope-blind). Graduation is now scope-aware
-        (placement-qualified ids — see domain.graph_builder.placement_id):
+        (placement-qualified ids — see ids.placement_id):
         duplicate copies graduated content as an independent placement
         (own node_id, own run-state), and — the actual regression this
         whole rework exists to fix — the original is completely
@@ -2389,7 +2389,8 @@ class TestDeriveTargetForNode:
         resolve to ITS real DB history, not get confused by an unrelated
         manual node sharing the same label."""
         from scistack_gui.db import get_db
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import derive_target_for_node
 
         real_wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
@@ -2417,7 +2418,8 @@ class TestDeriveTargetForNode:
         from scistack_gui import layout as layout_store
         from scistack_gui import pipeline_store
         from scistack_gui.db import get_db
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import derive_target_for_node
 
         class OtherSignal7(BaseVariable):
@@ -2579,7 +2581,7 @@ class TestDeriveTargetForNode:
         plan-combo-hiding.md)."""
         from scistack_gui import pipeline_store
         from scistack_gui.db import get_db
-        from scistack_gui.domain.graph_builder import fn_node_id
+        from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,

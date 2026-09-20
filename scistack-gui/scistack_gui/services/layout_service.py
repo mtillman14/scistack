@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def _param_prefix() -> str:
     """The Parameter node-id prefix. Imported lazily so this module keeps
     its no-top-level-domain-imports shape."""
-    from scistack_gui.domain.graph_builder import PARAM_ID_PREFIX
+    from scistack_gui.ids import PARAM_ID_PREFIX
 
     return PARAM_ID_PREFIX
 
@@ -215,6 +215,7 @@ def delete_edge(
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store
     from scistack_gui.domain.scope_filter import node_scope
+    from scistack_gui.ids import ROOT_SCOPE
 
     logger.info("[layout_service] delete_edge called (edge_id=%r)", edge_id)
     # Whether an edge is "manual" is decided by ACTUAL membership in the
@@ -242,7 +243,7 @@ def delete_edge(
             if target
             else node_scope(source, manual_nodes, positions_by_scope)
             if source
-            else pipeline_store.ROOT_PIPELINE_ID
+            else ROOT_SCOPE
         )
         logger.info(
             "[layout_service] delete_edge: hiding DB-derived edge in scope=%r",
@@ -437,7 +438,8 @@ def deep_copy_path_input(node_id: str) -> dict:
     from scistack_gui import pipeline_store as ps
     from scistack_gui import registry
     from scistack_gui.db import get_db
-    from scistack_gui.domain.graph_builder import path_input_display, strip_placement
+    from scistack_gui.domain.graph_builder import path_input_display
+    from scistack_gui.ids import strip_placement
     from scistack_gui.domain.scope_filter import node_scope
     from scistack_gui.services.path_input_service import create_path_input
 
@@ -528,7 +530,7 @@ def hide_variant_combo(
     """Hide one row of a function's constant Cartesian product — never
     deletes data, only excludes it from display and future runs."""
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import fn_node_id
+    from scistack_gui.ids import fn_node_id
     from scistack_gui.services.execution_service import resolve_combo_call_ids
 
     logger.info(

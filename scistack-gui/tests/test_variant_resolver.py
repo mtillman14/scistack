@@ -619,7 +619,8 @@ class TestReconcileManualInputsHiddenEdges:
         # A manual edge onto the SAME handle a hidden inbound edge fed,
         # with a DIFFERENT source variable, must keep the target but with
         # its input_types substituted — and drop any stale call_id.
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
 
         target = self._target({"signal": "RawEMG"})
         target["call_id"] = "stale0000000000"
@@ -645,7 +646,8 @@ class TestReconcileManualInputsHiddenEdges:
         assert "call_id" not in result[0]
 
     def test_manual_reconnect_to_different_handle_still_drops(self):
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
 
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
@@ -662,7 +664,8 @@ class TestReconcileManualInputsHiddenEdges:
     def test_partial_reconnection_multi_handle_still_drops(self):
         # Hidden var input AND hidden constant; manual edge covers only the
         # var handle — the target must still be dropped entirely.
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
 
         target = self._target({"signal": "RawEMG"}, constants={"low_hz": 20})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
@@ -683,7 +686,8 @@ class TestReconcileManualInputsHiddenEdges:
         # visible, so the handle now reads EachOf [A, C] — not C alone, which
         # is what it meant before 2026-09-15 and which silently dropped a
         # wire the user could see.
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
 
         target = self._target({"signal": ["A", "B"]})
         wid = wiring_id("fn", {"signal": ["A", "B"]}, {"Out"}, {})
@@ -721,7 +725,7 @@ class TestReconcileManualInputsUnboundParams:
         }
 
     def _edge(self, wid, handle, source, fn="fn"):
-        from scistack_gui.domain.graph_builder import fn_node_id
+        from scistack_gui.ids import fn_node_id
 
         return {"target": fn_node_id(fn, wid), "targetHandle": handle, "source": source}
 
@@ -754,7 +758,8 @@ class TestReconcileManualInputsUnboundParams:
         ] == ["Demographics"]
 
     def test_placement_qualified_target_id_matches(self):
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
 
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})

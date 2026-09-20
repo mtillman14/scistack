@@ -21,7 +21,8 @@ from fastapi.testclient import TestClient
 from scidb.database import _local
 from scistack_gui import registry as _registry
 from scistack_gui.app import create_app
-from scistack_gui.domain.graph_builder import edge_dedup_key, fn_node_id, wiring_id
+from scistack_gui.domain.graph_builder import edge_dedup_key, wiring_id
+from scistack_gui.ids import fn_node_id
 
 from scidb import BaseVariable, configure_database, for_each
 

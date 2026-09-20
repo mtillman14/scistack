@@ -401,7 +401,7 @@ def hidden_call_ids_for_fn(hidden_node_ids: set[str], function_name: str) -> set
     """Hidden ``fn__{function_name}__{call_id}`` ids for one function, as
     bare call_ids (the id shape hiding a whole node already uses — see
     graph_builder.filter_hidden)."""
-    from scistack_gui.domain.graph_builder import parse_fn_node_id
+    from scistack_gui.ids import parse_fn_node_id
 
     out: set[str] = set()
     for nid in hidden_node_ids:

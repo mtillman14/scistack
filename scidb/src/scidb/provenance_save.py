@@ -32,7 +32,7 @@ from typing import Any
 
 from scicanonicalhash import canonical_hash
 
-from .bindings import Binding, param_of
+from .bindings import Binding
 from .provenance import (
     CONSTANT_TYPE,
     PATHINPUT_TYPE,

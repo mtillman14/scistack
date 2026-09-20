@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from scistack_gui import pipeline_store
+from scistack_gui.ids import ROOT_SCOPE
 from scistack_gui.db import get_db, get_db_path
 
 logger = logging.getLogger(__name__)
@@ -150,10 +151,10 @@ def _load() -> dict:
             "[layout] scoping migration: moving %d flat position(s) "
             "under root scope '%s'",
             len(raw["positions"]),
-            pipeline_store.ROOT_PIPELINE_ID,
+            ROOT_SCOPE,
         )
         raw["positions"] = (
-            {pipeline_store.ROOT_PIPELINE_ID: raw["positions"]}
+            {ROOT_SCOPE: raw["positions"]}
             if raw["positions"]
             else {}
         )
@@ -161,22 +162,18 @@ def _load() -> dict:
     # One-time migration: DB-derived position keys (var__/fn__/param__/
     # pathInput__) become placement-qualified (canonical_id::scope) so the
     # SAME wiring can be independently placed in more than one scope
-    # (see domain.graph_builder.placement_id). A bare id's current scope
+    # (see ids.placement_id). A bare id's current scope
     # bucket IS its one existing placement, so this preserves today's
     # behavior exactly for every pre-existing document.
     if not raw.get("placements_migrated"):
-        from scistack_gui.domain.graph_builder import (
-            PLACEMENT_SEP,
-            _DB_DERIVED_PREFIXES,
-            placement_id,
-        )
+        from scistack_gui.ids import DB_DERIVED_PREFIXES, PLACEMENT_SEP, placement_id
 
         n_migrated = 0
         for scope, positions in raw["positions"].items():
             for node_id in list(positions.keys()):
                 if PLACEMENT_SEP in node_id:
                     continue
-                if not node_id.startswith(_DB_DERIVED_PREFIXES):
+                if not node_id.startswith(DB_DERIVED_PREFIXES):
                     continue
                 positions[placement_id(node_id, scope)] = positions.pop(node_id)
                 n_migrated += 1
@@ -347,7 +344,7 @@ def move_node_position(
     return pos
 
 
-def read_layout(pipeline_id: str = pipeline_store.ROOT_PIPELINE_ID) -> dict:
+def read_layout(pipeline_id: str = ROOT_SCOPE) -> dict:
     """Return one SCOPE's layout (positions + manual nodes from DB).
 
     Defaults to the root scope, which is where every pre-scoping document
@@ -368,7 +365,7 @@ def read_layout(pipeline_id: str = pipeline_store.ROOT_PIPELINE_ID) -> dict:
 
 
 def write_node_position(
-    node_id: str, x: float, y: float, pipeline_id: str = pipeline_store.ROOT_PIPELINE_ID
+    node_id: str, x: float, y: float, pipeline_id: str = ROOT_SCOPE
 ) -> None:
     logger.info(
         "[layout] write_node_position called (node_id=%r, x=%.1f, y=%.1f, scope=%r)",
@@ -391,7 +388,7 @@ def write_manual_node(
     y: float,
     node_type: str,
     label: str,
-    pipeline_id: str = pipeline_store.ROOT_PIPELINE_ID,
+    pipeline_id: str = ROOT_SCOPE,
 ) -> None:
     # Position goes to JSON; structural info goes to DB.
     #
@@ -425,7 +422,7 @@ def write_manual_node(
         pipeline_id,
     )
     pipeline_store.unhide_node(db, node_id, pipeline_id)
-    from scistack_gui.domain.graph_builder import PARAM_ID_PREFIX
+    from scistack_gui.ids import PARAM_ID_PREFIX
 
     prefix_map = {
         "variableNode": "var__",
@@ -478,7 +475,7 @@ def delete_node(node_id: str) -> None:
     the bare canonical id before being stored/matched, since
     domain.graph_builder.filter_hidden checks bare prefixes.
     """
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
     from scistack_gui.domain.scope_filter import node_scope
 
     logger.info("[layout] delete_node called (node_id=%r)", node_id)
@@ -519,7 +516,7 @@ def read_all_constant_names() -> list[str]:
     - Canonical DB-derived Parameter IDs in positions (``param__name``,
       possibly placement-qualified as ``param__name::{pipeline_id}``).
     """
-    from scistack_gui.domain.graph_builder import PARAM_ID_PREFIX, strip_placement
+    from scistack_gui.ids import PARAM_ID_PREFIX, strip_placement
 
     data = _load()
     names: set[str] = set(data["constants"])

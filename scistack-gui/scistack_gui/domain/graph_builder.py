@@ -16,6 +16,17 @@ from scidb.provenance import compute_wiring_id as _compute_wiring_id
 from scidb.provenance import parse_path_input_spec as _parse_path_input_spec
 from scidb.provenance import strip_path_input_specs as _strip_path_input_specs
 
+from scistack_gui.ids import (
+    PARAM_ID_PREFIX,
+    PATH_INPUT_ID_PREFIX,
+    ROOT_SCOPE,
+    fn_node_id,
+    parse_fn_node_id,
+    parse_placement_id,
+    placement_id,
+    strip_placement,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,101 +77,6 @@ class AggregatedData:
     fn_variants_map: dict[FnKey, list] = field(
         default_factory=lambda: defaultdict(list)
     )
-
-
-# ---------------------------------------------------------------------------
-# Function-node ID conventions
-# ---------------------------------------------------------------------------
-#
-# DB-derived function nodes use composite IDs:
-#     fn__{fn_name}__{call_id}
-# where call_id is a 16-hex-char hash of the for_each call site's version
-# keys minus __fn_hash (scidb.foreach_config.CallSite, the one assembly).
-#
-# Manual function nodes (dragged in by the user) use a different suffix:
-#     fn__{fn_name}__{6-char-random}
-# These graduate to a canonical DB-derived id once a matching for_each call
-# has been recorded.
-
-
-def fn_node_id(fn_name: str, call_id: str) -> str:
-    """Compose a DB-derived function-node ID from (fn_name, call_id)."""
-    return f"fn__{fn_name}__{call_id}"
-
-
-# ---------------------------------------------------------------------------
-# Placement IDs — per-scope independent copies of a DB-derived canonical node
-# ---------------------------------------------------------------------------
-#
-# A canonical id (var__{Type}, fn__{fn}__{wiring_id}, param__{name},
-# pathInput__{name}) names a piece of real, shared DB data — but the SAME
-# wiring can be independently PLACED (graduated) on more than one pipeline
-# scope at once (e.g. a duplicated hypothesis re-running identical, unedited
-# wiring). ``{canonical_id}::{pipeline_id}`` is the placement-qualified id
-# for one such placement; ``::`` never appears in a pipeline_id (``main`` or
-# ``pipe_{hex}``) or in a function/variable/constant label, so it's a safe,
-# unambiguous separator.
-
-PLACEMENT_SEP = "::"
-
-PARAM_ID_PREFIX = "param__"
-"""Node-id prefix for every **Parameter** — Constants and Sweeps alike.
-
-Replaces the old ``const__`` and ``sweep__`` prefixes outright (clean break,
-beta — no migration). One prefix is what lets a Parameter keep its identity
-when a second value turns its declaration from a Constant into a Sweep: the
-id no longer encodes which form the source currently uses.
-
-The prefix is load-bearing beyond display — it appears in ``*.layout.json``
-positions, ``_pipeline_hidden_nodes`` rows, synthesised edge ids and
-``targetHandle``s, and ``edge_resolver``'s manual-edge resolution — so it is
-defined once here and referenced everywhere rather than spelled inline.
-
-See docs/claude/entity-editability-model.md (D6).
-"""
-
-PATH_INPUT_ID_PREFIX = "pathInput__"
-"""Node-id prefix for every **PathInput**.
-
-Named for the same reason as ``PARAM_ID_PREFIX``: ``edge_resolver`` has to
-recognise a PathInput source to bind it to the parameter its edge names, and
-that recognition should not be a bare string literal repeated across layers.
-"""
-
-# Every prefix a DB-derived (non-manual) canonical id can start with —
-# shared by the layout.json migration and anything else that needs to
-# distinguish "this id names real DB data" from a manual/opaque id.
-_DB_DERIVED_PREFIXES = ("var__", "fn__", PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX)
-
-# Matches domain.scope_filter.ROOT / pipeline_store.ROOT_PIPELINE_ID — kept
-# as a local literal since this module is pure (no DB/store imports).
-_ROOT_PIPELINE_ID = "main"
-
-
-def placement_id(canonical_id: str, pipeline_id: str) -> str:
-    """The id for one scope's independent placement of a canonical node."""
-    return f"{canonical_id}{PLACEMENT_SEP}{pipeline_id}"
-
-
-def parse_placement_id(node_id: str) -> tuple[str, str] | None:
-    """Split a placement-qualified id into (canonical_id, pipeline_id).
-
-    Returns None for a bare id with no placement suffix.
-    """
-    if PLACEMENT_SEP not in node_id:
-        return None
-    bare, _, scope = node_id.rpartition(PLACEMENT_SEP)
-    return (bare, scope) if bare else None
-
-
-def strip_placement(node_id: str) -> str:
-    """The bare canonical id, with any placement suffix removed (a no-op
-    if there wasn't one). For every ad-hoc ``var__``/``param__``/
-    ``pathInput__``/``fn__`` prefix-parser that only ever wants the bare
-    id (never the scope), call this FIRST.
-    """
-    bare, _ = parse_placement_id(node_id) or (node_id, None)
-    return bare
 
 
 def edge_dedup_key(
@@ -239,31 +155,6 @@ def drop_superseded_manual_edges(edges: list[dict]) -> tuple[list[dict], list[di
         else:
             kept.append(e)
     return kept, dropped
-
-
-def parse_fn_node_id(node_id: str) -> tuple[str, str] | None:
-    """Parse a composite fn node ID into (fn_name, call_id).
-
-    Returns None for legacy/manual IDs that don't match the composite
-    pattern (e.g. ``fn__bandpass`` or ``fn__bandpass__abc123`` where
-    ``abc123`` is a random 6-char manual suffix rather than a 16-hex
-    call_id). Strips a placement suffix (``::{pipeline_id}``) first, if
-    present — callers only ever want the bare (fn_name, call_id), never
-    the placement scope, so this is transparent to every consumer.
-    """
-    node_id, _scope = parse_placement_id(node_id) or (node_id, None)
-    if not node_id.startswith("fn__"):
-        return None
-    body = node_id[len("fn__") :]
-    # Split from the right: the last 16-hex segment is call_id, rest is fn_name.
-    if "__" not in body:
-        return None
-    fn_name, _, suffix = body.rpartition("__")
-    if not fn_name:
-        return None
-    if len(suffix) != 16 or not all(c in "0123456789abcdef" for c in suffix):
-        return None
-    return fn_name, suffix
 
 
 @dataclass
@@ -2568,7 +2459,7 @@ def merge_manual_nodes(
         if len(candidates) == 1:
             canonical_id = candidates[0]
             target_id = placement_id(
-                canonical_id, meta.get("pipeline_id") or _ROOT_PIPELINE_ID
+                canonical_id, meta.get("pipeline_id") or ROOT_SCOPE
             )
             if target_id not in saved_positions:
                 graduations.append(

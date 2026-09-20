@@ -78,4 +78,4 @@ prepare/loop contract; deferred.
 
 `docs/claude/matlab-bridge-transfer-paths.md` — all transfer routes, their
 crossing costs, the two invariants, and how to read the new log lines.
-`docs/claude/array-column-loading-optimization.md` marked historical.
+`docs/claude/archive/array-column-loading-optimization.md` marked historical.

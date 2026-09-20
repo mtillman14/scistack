@@ -35,8 +35,6 @@ from .bindings import (
     Selection,
     VariantGroup,
     merge_branch_params,
-    param_of,
-    rid_column,
     signature_conflicts_with,
     variant_signature,
 )
@@ -204,7 +202,7 @@ class _ForEachState:
     #
     # It REPLACED three fields that held slices of the same thing:
     # `rid_to_bp` (now `bindings.rid_to_bp`), `fixed_rid_values` (now
-    # `bindings.pinned_rids`) and `rid_keys` (now `bindings.tracked_columns`).
+    # `bindings.pinned_rids`) and `rid_keys` (now `bindings.tracked_params`).
     # Keeping them beside it is how the Fixed-on-aggregation edge went
     # missing: two containers, one fact, and the save read the wrong one.
     #
@@ -443,6 +441,20 @@ def for_each(
         # never reaches here and pools every row into one call. The two are
         # the whole-dataset operation and the full grid; nothing in between
         # is spelled by emptiness.
+        if isinstance(schema_keys, str):
+            # `list("subject")` is `["s", "u", ...]` — seven unknown keys and
+            # an empty grid, silently. The spelling is a list, always.
+            raise TypeError(
+                f"schema_keys must be a list of key names, not the string "
+                f"{schema_keys!r} — write schema_keys=[{schema_keys!r}]"
+            )
+        if schema_keys:
+            unknown = [k for k in schema_keys if k not in active_db.dataset_schema_keys]
+            if unknown:
+                raise ValueError(
+                    f"schema_keys {unknown} are not dataset schema keys "
+                    f"{list(active_db.dataset_schema_keys)}"
+                )
         iterate_keys = (
             list(schema_keys)
             if schema_keys is not None and len(list(schema_keys)) > 0
@@ -3141,11 +3153,11 @@ def _for_each_save_resolved(
             )
             if looked_up and state.glue_virtual:
                 looked_up = _remap_fixed_rids_through_glue(looked_up, state.glue_virtual)
-            for key, rid in looked_up.items():
-                bindings.pin(param_of(key), rid)
+            for param, rid in looked_up.items():
+                bindings.pin(param, rid)
             Log.debug(
                 f"Fixed input rid(s) resolved from the database for the graph: "
-                f"{[param_of(k) for k in looked_up]}"
+                f"{list(looked_up)}"
             )
 
         save_t0 = time.perf_counter()
@@ -3173,19 +3185,17 @@ def _for_each_save_resolved(
 def _remap_fixed_rids_through_glue(fixed_rids: dict, glue_virtual: dict) -> dict:
     """Rewrite Fixed-input rids to their virtual glue rids where a chain applies.
 
-    ``fixed_rids`` is keyed either by param name or by ``__rid_{param}``; both
-    spellings are handled because ``_row_bindings`` accepts both.
+    ``fixed_rids`` is ``{param: rid}``.
     """
     out = dict(fixed_rids)
-    for key, rid in fixed_rids.items():
-        param = param_of(key)
+    for param, rid in fixed_rids.items():
         entry = glue_virtual.get(param)
         if not entry or rid is None:
             continue
         _chain_hash, _sig, mapping = entry
         mapped = mapping.get(str(rid))
         if mapped:
-            out[key] = mapped
+            out[param] = mapped
             Log.debug(
                 f"[glue] '{param}': Fixed input rid {rid} -> virtual {mapped}"
             )
@@ -3949,7 +3959,9 @@ def _compute_fixed_input_rids(inputs: dict, db) -> dict:
         db: Database instance
 
     Returns:
-        Dict mapping "__rid_{param_name}" to record_id for each Fixed input
+        ``{param_name: record_id}`` for each Fixed input the database can
+        resolve. Keyed by the PARAM — the last ``__rid_`` spelling on this
+        path went with Stage 2c.
     """
     fixed_rids = {}
 
@@ -3977,7 +3989,7 @@ def _compute_fixed_input_rids(inputs: dict, db) -> dict:
         try:
             rid = db.find_record_id(inner, value.fixed_metadata)
             if rid:
-                fixed_rids[rid_column(name)] = rid
+                fixed_rids[name] = rid
         except Exception:
             # If lookup fails, skip this Fixed input
             pass

@@ -293,7 +293,7 @@ error.
   Parameter), the source of the `param__` prefix.
 - `docs/claude/each-of-variant-expansion.md` — what happens to a
   multi-valued Parameter *after* `build_run_inputs` hands it over.
-- `docs/claude/bipartite-provenance.md` — why a PathInput's identity is
+- `docs/claude/archive/bipartite-provenance.md` — why a PathInput's identity is
   content-addressed from its spec rather than its name, which is what makes
   `convert_scidb_path_inputs`' spec→name resolution necessary.
 - `.claude/plan-edge-based-inputs-26-08-25.md` — the change that established

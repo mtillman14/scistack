@@ -192,6 +192,7 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
     """
     import uuid
 
+    from scistack_gui import ids
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store as ps
     from scistack_gui.db import get_db
@@ -273,9 +274,9 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
         # holds the position, so simply re-writing the position under the
         # unchanged key would go stale. Re-key it for the new scope and
         # rewrite any internal edges that referenced the old key.
-        parsed = graph_builder.parse_placement_id(nid)
+        parsed = ids.parse_placement_id(nid)
         new_node_id = (
-            graph_builder.placement_id(parsed[0], new_pid) if parsed else None
+            ids.placement_id(parsed[0], new_pid) if parsed else None
         )
         layout_store.move_node_position(nid, new_pid, new_node_id=new_node_id)
         if new_node_id:
@@ -324,7 +325,7 @@ def _clone_nodes(
 
     Includes already-executed ("graduated") DB-derived nodes too, now that
     graduation is scope-aware (placement-qualified ids — see
-    domain.graph_builder.placement_id and plan-placement-qualified-node-
+    ids.placement_id and plan-placement-qualified-node-
     ids.md): a fresh manual copy of a graduated node safely graduates to
     its OWN independent placement in the new scope, rather than colliding
     with and stealing the original's.
@@ -353,6 +354,7 @@ def _clone_nodes(
     """
     import uuid
 
+    from scistack_gui import ids
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store as ps
     from scistack_gui.domain import graph_builder
@@ -423,13 +425,16 @@ def _clone_nodes(
         config = manual_nodes.get(old_id, {}).get("config")
         if config:
             ps.update_node_config(db, new_id, config)
-        # Statements about the original (column selections, and every aspect
-        # that graduates later) are COPIED, so the duplicate owns them and
-        # configuring it can never reach the original. The line above copies
-        # only the legacy config column, which never held them.
+        # Statements about the original (column selections, run options, the
+        # location) are COPIED — as resolved on the source canvas, written at
+        # the target's scope — so the duplicate owns them and configuring
+        # either can never reach the other. The line above copies only the
+        # legacy config column, which never held them.
         from scistack_gui import intent_store
 
-        intent_store.copy_subject(db, old_id, new_id)
+        intent_store.copy_subject(
+            db, old_id, new_id, src_scope=source_pid, dst_scope=target_pid
+        )
 
         real_pos = old_positions.get(old_id)
         pos = real_pos or {"x": 0.0, "y": 0.0}
@@ -448,8 +453,8 @@ def _clone_nodes(
         # default would silently disappear from its own canvas. Affirm the
         # source's own explicit placement now, before that ambiguity can
         # arise.
-        if old_id not in manual_nodes and graph_builder.parse_placement_id(old_id) is None:
-            solidified_id = graph_builder.placement_id(old_id, source_pid)
+        if old_id not in manual_nodes and ids.parse_placement_id(old_id) is None:
+            solidified_id = ids.placement_id(old_id, source_pid)
             if real_pos is not None:
                 solidify_pos = real_pos
             else:

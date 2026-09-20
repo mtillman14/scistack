@@ -357,7 +357,8 @@ class TestGraduatedPathInputNodeIsRunnable:
     def _canvas_node_id(self, placement: str | None = None) -> str:
         """The id the canvas gives this call site — hashed from the
         PARTITIONED view, exactly as group_call_sites_by_wiring does."""
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
 
         node_id = fn_node_id(
             "read_csv_like",
@@ -391,7 +392,8 @@ class TestGraduatedPathInputNodeIsRunnable:
     ):
         """The fix must not make the comparison match everything — a node
         whose wiring really isn't in history still resolves to no targets."""
-        from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
 
         db = self._db_with_history(populated_db, monkeypatch)
         other = fn_node_id(

@@ -108,7 +108,7 @@ def _fn_node_ids(function_name: str, manual_edges: list[dict], manual_nodes: dic
     edge endpoint whose bare id is ``fn__{name}`` or ``fn__{name}__{suffix}``
     (a wiring id, a manual suffix, or either with a ``::{scope}`` placement).
     """
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     prefix = f"fn__{function_name}"
     ids = {prefix}
@@ -672,7 +672,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     project_root: str | None = str(_root) if _root is not None else None
 
     pending_consts = pipeline_store.get_pending_constants(db)
-    hidden_ids = pipeline_store.get_hidden_node_ids(db)
+    hidden_ids = pipeline_store.get_hidden_node_ids(db, pipeline_id)
     saved_pis = {
         name: path_input_display(obj)
         for name, obj in _reg.get_path_inputs_registry().items()

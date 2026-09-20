@@ -24,7 +24,6 @@ from scistack_gui.domain.graph_builder import (
     edge_dedup_key,
     filter_hidden,
     find_cycle,
-    fn_node_id,
     hidden_wirings,
     inbound_edge_candidates,
     is_manual_edge,
@@ -39,6 +38,7 @@ from scistack_gui.domain.graph_builder import (
     wiring_id,
     wirings_downstream_of,
 )
+from scistack_gui.ids import fn_node_id
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -3034,7 +3034,8 @@ class TestManualInputOverrides:
         return wiring_id(self.FN, inputs, set(outputs), {})
 
     def _index(self, wid, *edges):
-        from scistack_gui.domain.graph_builder import fn_node_id, manual_edge_handle_index
+        from scistack_gui.domain.graph_builder import manual_edge_handle_index
+        from scistack_gui.ids import fn_node_id
 
         return manual_edge_handle_index(
             [
@@ -3144,9 +3145,9 @@ class TestOverlayManualInputs:
     def _graph(self, history, manual_edges, hidden=frozenset(), extra_nodes=()):
         from scistack_gui.domain.graph_builder import (
             collect_manual_input_overrides,
-            fn_node_id,
             wiring_id,
         )
+        from scistack_gui.ids import fn_node_id
 
         wid = wiring_id(self.FN, history, {"GRTable"}, {})
         node_id = fn_node_id(self.FN, wid)
@@ -3232,10 +3233,8 @@ class TestSupersededManualInputOverrides:
         return wiring_id(self.FN, inputs, {"GRTable"}, {})
 
     def test_overlay_whose_wiring_has_run_moves_the_edge(self):
-        from scistack_gui.domain.graph_builder import (
-            fn_node_id,
-            superseded_manual_input_overrides,
-        )
+        from scistack_gui.domain.graph_builder import superseded_manual_input_overrides
+        from scistack_gui.ids import fn_node_id
 
         old_wid = self._wid({"gr": "GAITRiteLoaded"})
         new_wid = self._wid({"gr": "GAITRiteLoaded", "side": "Demographics"})
@@ -3261,10 +3260,8 @@ class TestSupersededManualInputOverrides:
         )
 
     def test_overlay_whose_wiring_has_not_run_is_kept(self):
-        from scistack_gui.domain.graph_builder import (
-            fn_node_id,
-            superseded_manual_input_overrides,
-        )
+        from scistack_gui.domain.graph_builder import superseded_manual_input_overrides
+        from scistack_gui.ids import fn_node_id
 
         old_wid = self._wid({"gr": "GAITRiteLoaded"})
         old_id = fn_node_id(self.FN, old_wid)
@@ -3288,10 +3285,8 @@ class TestSupersededManualInputOverrides:
         # An EachOf run records one wiring per source; the history source's
         # wiring is this node already, so the wiring to look for is history
         # with the MANUAL edge's variable.
-        from scistack_gui.domain.graph_builder import (
-            fn_node_id,
-            superseded_manual_input_overrides,
-        )
+        from scistack_gui.domain.graph_builder import superseded_manual_input_overrides
+        from scistack_gui.ids import fn_node_id
 
         old_wid = self._wid({"gr": "GAITRiteLoaded"})
         new_wid = self._wid({"gr": "OtherGR"})

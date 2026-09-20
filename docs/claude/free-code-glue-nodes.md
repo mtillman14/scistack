@@ -420,7 +420,7 @@ trap in `code-discovery-categories.md`.
   tests and open risks.
 - `scidb-for-each-internals.md` — Steps 10/11/12/16/19, the fusion point and
   everything it must not disturb.
-- `database-model.md` — the canonical provenance schema (`bipartite-provenance.md`
+- `database-model.md` — the canonical provenance schema (`archive/bipartite-provenance.md`
   is the older as-built note and is partly stale).
 - `function-input-resolution.md` — the edges-only binding rule glue inherits.
 - `entity-editability-model.md` — the confinement rule this feature amends.

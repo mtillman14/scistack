@@ -11,7 +11,7 @@
 > `superseded_batch`.
 >
 > Prerequisite reading:
-> `bipartite-provenance.md` (the graph these all query),
+> `archive/bipartite-provenance.md` (the graph these all query),
 > `schema-hierarchy-contiguity.md` (what a location *is*).
 >
 > The system has **three different green/red answers** living in three modules,

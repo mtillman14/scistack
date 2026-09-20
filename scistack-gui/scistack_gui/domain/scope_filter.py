@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import logging
 
-from scistack_gui.domain.graph_builder import (
+from scistack_gui.ids import (
+    ROOT_SCOPE,
     parse_placement_id,
     placement_id,
     strip_placement,
@@ -29,7 +30,6 @@ from scistack_gui.domain.graph_builder import (
 
 logger = logging.getLogger(__name__)
 
-ROOT = "main"
 
 
 def node_scope(node_id: str, manual_nodes: dict, positions_by_scope: dict) -> str:
@@ -43,14 +43,14 @@ def node_scope(node_id: str, manual_nodes: dict, positions_by_scope: dict) -> st
     """
     meta = manual_nodes.get(node_id)
     if meta is not None:
-        return meta.get("pipeline_id") or ROOT
+        return meta.get("pipeline_id") or ROOT_SCOPE
     parsed = parse_placement_id(node_id)
     if parsed is not None:
         return parsed[1]
     for scope_id, positions in positions_by_scope.items():
         if node_id in positions:
             return scope_id
-    return ROOT
+    return ROOT_SCOPE
 
 
 def _resolve_in_scope(
@@ -63,7 +63,7 @@ def _resolve_in_scope(
     qualified) to its id WITHIN ``scope_id``, or None if not visible there.
 
     A DB-derived canonical id can have independent placements in more than
-    one scope (see domain.graph_builder.placement_id) — this is the one
+    one scope (see ids.placement_id) — this is the one
     shared "does X belong to scope Y" answer used by both
     :func:`resolve_scope_view` and :func:`document_interface`, so scope
     membership is judged identically everywhere.
@@ -80,7 +80,7 @@ def _resolve_in_scope(
     """
     meta = manual_nodes.get(node_id)
     if meta is not None:
-        return node_id if (meta.get("pipeline_id") or ROOT) == scope_id else None
+        return node_id if (meta.get("pipeline_id") or ROOT_SCOPE) == scope_id else None
 
     parsed = parse_placement_id(node_id)
     if parsed is not None:
@@ -101,7 +101,7 @@ def _resolve_in_scope(
             parsed_pid = parse_placement_id(pid)
             if parsed_pid is not None and parsed_pid[0] == node_id:
                 return None  # qualified placement, but in a DIFFERENT scope
-    return node_id if scope_id == ROOT else None
+    return node_id if scope_id == ROOT_SCOPE else None
 
 
 def resolve_scope_view(

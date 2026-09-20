@@ -10,11 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from scistack_gui.domain.graph_builder import (
-    PARAM_ID_PREFIX,
-    PATH_INPUT_ID_PREFIX,
-    strip_placement,
-)
+from scistack_gui.ids import PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX, strip_placement
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +254,7 @@ def bare_fn_node_ids(fn_node_ids) -> set[str]:
     """A function's node-id set reduced to bare canonical ids.
 
     Every ``fn_node_ids`` membership test in this module goes through this.
-    Callers assemble that set from mixed sources — ``graph_builder.fn_node_id``
+    Callers assemble that set from mixed sources — ``ids.fn_node_id``
     returns the BARE id (``fn__f__<call_id>``), while manual-node keys and edge
     endpoints may carry a ``::{scope}`` placement suffix — and an edge endpoint
     is rewritten from one form to the other by graduation
@@ -273,7 +269,7 @@ def bare_fn_node_ids(fn_node_ids) -> set[str]:
     does not exist, and the canvas showed the function disconnected from an
     output variable that was nonetheless green.
 
-    See ``graph_builder.strip_placement``: "For every ad-hoc prefix-parser
+    See ``ids.strip_placement``: "For every ad-hoc prefix-parser
     that only ever wants the bare id (never the scope), call this FIRST."
     """
     return {strip_placement(i) for i in fn_node_ids}

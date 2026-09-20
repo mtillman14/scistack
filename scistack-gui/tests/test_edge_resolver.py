@@ -836,7 +836,7 @@ class TestHandleIdsMatchTheFrontend:
     def test_parameter_handle_prefix_is_the_backend_constant(self):
         from pathlib import Path
 
-        from scistack_gui.domain.graph_builder import PARAM_ID_PREFIX
+        from scistack_gui.ids import PARAM_ID_PREFIX
 
         node = Path(__file__).parent.parent / "frontend/src/components/DAG/FunctionNode.tsx"
         source = node.read_text()

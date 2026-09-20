@@ -340,7 +340,13 @@ def _run_in_thread(
         hidden_call_ids_for_fn,
     )
 
-    hidden_ids = _ps.get_hidden_node_ids(db)
+    # The hides of the canvas the click came from; a run with no node id
+    # (the name-scoped fallback) still sees every scope's.
+    from scistack_gui import intent_store
+
+    hidden_ids = _ps.get_hidden_node_ids(
+        db, intent_store.scope_of_node(db, node_id) if node_id else None
+    )
     before_hidden_filter = len(unique_targets)
     unique_targets = filter_hidden_targets(
         unique_targets,
@@ -954,7 +960,7 @@ def _refuse_glue_node(node_id: "str | None", function_name: str, db) -> "str | N
     from scidb import function_role
     from scistack_gui import pipeline_store
     from scistack_gui.domain.edge_resolver import GLUE_NODE_TYPE
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     is_glue = function_role(function_name or "") == "glue"
     if not is_glue and node_id:

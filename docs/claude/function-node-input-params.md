@@ -201,7 +201,7 @@ honesty about `""` looks like in the UI.
   `build_run_inputs`.
 - `docs/claude/column-selection.md` §From the GUI — the first consumer of
   `input_params` that had to care about the `""` case.
-- `docs/claude/graph-database-state.md` §Identity — what `wiring_id` and
+- `docs/claude/archive/graph-database-state.md` §Identity — what `wiring_id` and
   `call_id` are built from.
 - `docs/claude/placement-qualified-ids.md` — the other id-shape trap in this
   area.

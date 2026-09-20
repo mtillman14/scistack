@@ -14,7 +14,7 @@ import pytest
 from scidb.bindings import (
     COMBO_KEY,
     EMPTY_SIGNATURE,
-    RID_PREFIX,
+    RECORD_ID_COLUMN,
     Binding,
     InputBinding,
     InputKind,
@@ -22,34 +22,23 @@ from scidb.bindings import (
     RunBindings,
     Selection,
     VariantGroup,
-    is_internal_column,
-    is_rid_column,
     merge_branch_params,
-    param_of,
-    param_of_vsig,
-    rid_column,
-    rid_columns,
     signature_conflicts_with,
     variant_signature,
-    vsig_column,
 )
 from scidb.provenance import compute_invocation_id
 
 
 class TestSpelling:
-    def test_the_prefix_is_spelled_here_and_nowhere_else(self):
-        assert rid_column("value") == f"{RID_PREFIX}value" == "__rid_value"
+    def test_the_one_reserved_frame_column(self):
+        """No per-parameter spelling exists any more: a loaded frame carries
+        ``__record_id`` and the combo carries ``__combo`` — nothing else is
+        reserved, so nothing else has a prefix to parse."""
+        assert RECORD_ID_COLUMN == "__record_id"
+        assert COMBO_KEY == "__combo"
+        import scidb.bindings as m
 
-    def test_param_of_reads_either_spelling(self):
-        assert param_of("__rid_value") == "value"
-        assert param_of("value") == "value"
-        assert param_of(None) == "None"  # str() of anything, never an error
-
-    def test_rid_columns_picks_the_rid_columns_in_order(self):
-        assert rid_columns(["subject", "__rid_b", "a", "__rid_a"]) == ["__rid_b", "__rid_a"]
-        assert not is_rid_column("__vsig_value")
-        assert is_internal_column("__vsig_value") and is_internal_column("__rid_value")
-        assert not is_internal_column("__record_id")
+        assert not [n for n in dir(m) if "rid_column" in n or "vsig" in n.lower()]
 
 
 class TestBinding:
@@ -157,10 +146,9 @@ class TestRunBindings:
     def test_kinds_are_queryable(self):
         run = self._run()
         assert [b.param for b in run.of_kind(InputKind.PINNED)] == ["ref"]
-        assert run["value"].column == "__rid_value"
         assert "cols" in run and "nope" not in run
         assert run.pinned_rids == {"ref": "fixed1"}
-        assert run.tracked_columns == ["__rid_value"]
+        assert run.tracked_params == ["value"]
 
     def test_pin_binds_a_late_resolved_fixed_input(self):
         """A Fixed pin Step 12 could not settle is looked up at save time,
@@ -209,10 +197,6 @@ class TestVariantSignature:
 
     def test_key_order_does_not_matter(self):
         assert variant_signature({"a": 1, "b": 2}) == variant_signature({"b": 2, "a": 1})
-
-    def test_vsig_column_spelling_has_one_owner(self):
-        assert vsig_column("value") == "__vsig_value"
-        assert param_of_vsig("__vsig_value") == "value" == param_of_vsig("value")
 
     def test_save_kwarg_alignment(self):
         sig = variant_signature({"__save__.side": "left", "bandpass.low_hz": 20})
@@ -357,3 +341,22 @@ class TestInputSpecUnwrap:
             Fixed,
         }
         assert wrappers_of(Wide) == []
+
+
+class TestInputBindingInvariants:
+    """The kind decides what the other fields may hold; a contradiction is
+    a Step 12 bug and fails at construction, not as a wrong edge set three
+    phases later."""
+
+    def test_only_a_pinned_binding_carries_a_pinned_rid(self):
+        InputBinding("ref", InputKind.PINNED, pinned_rid="r1")
+        with pytest.raises(ValueError, match="only a PINNED"):
+            InputBinding("value", InputKind.ITERATE, pinned_rid="r1")
+
+    def test_only_an_aggregated_binding_carries_a_pool(self):
+        pool = RecordPool(
+            ("subject",), {("01",): {EMPTY_SIGNATURE: VariantGroup(EMPTY_SIGNATURE, ("r1",))}}, split=False
+        )
+        InputBinding("value", InputKind.AGGREGATED, pool=pool)
+        with pytest.raises(ValueError, match="ColumnSelection never pools"):
+            InputBinding("cols", InputKind.LINEAGE_ONLY, pool=pool)

@@ -183,7 +183,7 @@ Engineer-facing internals doc covering:
 - How to extend (adding a new dtype mode requires updating dispatch + assembly).
 - Performance expectations (with the DummyMixed benchmark numbers as the reference data point).
 
-This sits next to the existing `matlab-load-performance.md`, `array-column-loading-optimization.md`, `dataframe-conversion-factoring.md` in `docs/claude/` — same audience, same depth.
+This sits next to the existing `matlab-load-performance.md`, `archive/array-column-loading-optimization.md`, `dataframe-conversion-factoring.md` in `docs/claude/` — same audience, same depth.
 
 ### 4. Light touch to `docs/guide/variables.md` (user-facing)
 

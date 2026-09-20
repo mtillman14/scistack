@@ -47,7 +47,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from scistack_gui.domain.graph_builder import PARAM_ID_PREFIX as _PARAM_PREFIX
+from scistack_gui.ids import PARAM_ID_PREFIX as _PARAM_PREFIX
 
 logger = logging.getLogger(__name__)
 

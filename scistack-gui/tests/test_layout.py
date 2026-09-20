@@ -45,7 +45,7 @@ class TestReadLayout:
         """Old format had node positions at the top level, no 'positions' key.
 
         A DB-derived id also picks up the one-time placement-qualification
-        migration (domain.graph_builder.placement_id) — its one existing
+        migration (ids.placement_id) — its one existing
         scope (root, from the flat->scoped migration) becomes its one
         existing placement.
         """

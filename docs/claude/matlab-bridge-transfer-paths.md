@@ -5,7 +5,7 @@ data takes, and what each route costs. Written after a `filterDelsys` run
 appeared to hang: it was not hung, it was converting 1.74e8 samples one element
 at a time.
 
-Supersedes the transfer half of `array-column-loading-optimization.md`, which
+Supersedes the transfer half of `archive/array-column-loading-optimization.md`, which
 describes an earlier round of this work and still points at the pre-rename
 `sci-matlab/sci_matlab` paths.
 

@@ -18,7 +18,7 @@ consequences in `scimatlab` and `scifor`.*
 
 "Identity-bearing" is the part that makes these more than presentation. All
 three are folded into the `invocation_id` and the `call_id`
-(`docs/claude/graph-database-state.md` §Identity). Flipping any of them does
+(`docs/claude/archive/graph-database-state.md` §Identity). Flipping any of them does
 not modify a run — it names a *different* run, which writes a second record
 at the same schema location. Any code that derives or filters targets must
 therefore use the same values the run will actually use, or it computes a
@@ -260,7 +260,7 @@ See `docs/claude/column-selection.md` §From the GUI.
 
 - `docs/claude/column-selection.md` — the second consumer of node config.
 - `docs/claude/for-each-kwargs.md` — the option semantics themselves.
-- `docs/claude/graph-database-state.md` §Identity — why `distribute`/`as_table`
+- `docs/claude/archive/graph-database-state.md` §Identity — why `distribute`/`as_table`
   are part of `invocation_id` and `call_id`.
 - `docs/claude/gui-vscode-extension.md` — the host/webview split that
   `generate_matlab_command` is dispatched across.

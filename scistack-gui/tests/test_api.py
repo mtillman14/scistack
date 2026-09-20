@@ -1095,7 +1095,7 @@ class TestRunEndpoint:
         and would never match."""
         from scistack_gui import pipeline_store
         from scistack_gui.api import run as run_api
-        from scistack_gui.domain.graph_builder import fn_node_id
+        from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import resolve_combo_call_ids
 
         call_ids = resolve_combo_call_ids(
@@ -1856,7 +1856,8 @@ class TestManualInputEdgesOnHistoryNodes:
         self, wide, side_var, bp_node_id
     ):
         from scistack_gui import pipeline_store
-        from scistack_gui.domain.graph_builder import fn_node_id, strip_placement, wiring_id
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id, strip_placement
 
         db = _gui_db.get_db()
         self._wire_side(wide, bp_node_id)

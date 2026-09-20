@@ -169,7 +169,7 @@ Port `scifor/foreach.py::_compute_shared_limits` to `+scifor/for_each.m`
 | `scimatlab/tests/matlab/scidb/TestAcrossVariants.m` | new |
 | `scimatlab/tests/matlab/scifor/TestShareLimits.m` | new |
 | `scimatlab/tests/test_bridge_endpoints.py` | new: Python-side bridge tests (no MATLAB needed) |
-| docs | plotting-leaf-nodes.md MATLAB section; design doc D7 → implemented; matlab-for-each-current-state.md update |
+| docs | plotting-leaf-nodes.md MATLAB section; design doc D7 → implemented; archive/matlab-for-each-current-state.md update |
 
 ## Tests
 

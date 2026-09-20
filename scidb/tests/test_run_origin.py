@@ -236,3 +236,32 @@ class TestDatasetLevel:
 
         for_each(echo, {"value": PerTrial}, [Echo], schema_keys=[])
         assert len(Echo.load(as_df=True, version="all")) == 2
+
+    def test_a_string_is_refused_not_iterated_by_character(self, db):
+        """`schema_keys="subject"` would have become `["s", "u", ...]` — seven
+        unknown keys and an empty grid, silently. The seam refuses it."""
+
+        class PerSubject(BaseVariable):
+            pass
+
+        class Out(BaseVariable):
+            pass
+
+        PerSubject.save(pd.DataFrame({"a": [1.0]}), subject="01")
+
+        with pytest.raises(TypeError, match="schema_keys=\\['subject'\\]"):
+            for_each(lambda value: 1.0, {"value": PerSubject}, [Out], schema_keys="subject")
+
+    def test_an_unknown_key_is_refused_by_name(self, db):
+        class PerSubject2(BaseVariable):
+            pass
+
+        class Out2(BaseVariable):
+            pass
+
+        PerSubject2.save(pd.DataFrame({"a": [1.0]}), subject="01")
+
+        with pytest.raises(ValueError, match="'subjcet'"):
+            for_each(
+                lambda value: 1.0, {"value": PerSubject2}, [Out2], schema_keys=["subjcet"]
+            )

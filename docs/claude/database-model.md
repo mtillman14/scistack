@@ -6,10 +6,10 @@
 >
 > It supersedes and consolidates:
 > - `lineage-simplification.md` — the original *design* doc (pre-implementation).
-> - `bipartite-provenance.md` — an earlier as-built note (now partly stale: it
+> - `archive/bipartite-provenance.md` — an earlier as-built note (now partly stale: it
 >   still describes `_record_metadata`/`version_keys`/`lineage_hash`, which were
 >   renamed/slimmed to `_record_save` — see §1).
-> - `graph-database-state.md` — the detailed current-state + remaining-TODOs doc;
+> - `archive/graph-database-state.md` — the detailed current-state + remaining-TODOs doc;
 >   still the place to read for the TODO list, design notes, and module map.
 >
 > Read those for history, rationale, and open decisions. Read **this** for "what
@@ -49,7 +49,7 @@ is a first-class node rather than a flat edge table.
 |---|---|
 | `_record` | Every entity. `record_id, created_at, type, schema_id, content_hash, schema_version, excluded`. Variables: `type` = class name, `schema_id` set. Constants: `type = '__constant__'`, `schema_id` NULL. PathInput specs: `type = '__pathinput__'`, `schema_id` NULL. Content-addressed, immutable, one row each (`ON CONFLICT DO NOTHING`). |
 | `_constant` | A constant/pathinput entity's value: `record_id, value_repr, value_type, content_hash`. |
-| `_invocation` | One row per unique function call: `invocation_id, function_name, function_hash, as_table (VARCHAR[]), distribute`. (`as_table`/`distribute` are identity-bearing, hence invariant per invocation, hence stored as queryable columns not JSON.) |
+| `_invocation` | One row per unique function call: `invocation_id, function_name, function_hash, as_table (VARCHAR[]), distribute, across_variants (VARCHAR[])`. (`as_table`/`distribute`/`across_variants` are identity-bearing run options, hence invariant per invocation, hence stored as queryable columns not JSON — `RunOptions` in `foreach_config`; `across_variants` added 2026-09-20 so an explicitly pooled input is a recorded fact, not a prediction.) |
 | `_invocation_input` | Edges call→input: `(invocation_id, param_name, input_record_id, selector)`, PK `(invocation_id, param_name, input_record_id)`. `selector` carries ColumnSelection JSON, else NULL. |
 | `_invocation_output` | Edges call→output: `(invocation_id, output_num, output_record_id)`, PK `(invocation_id, output_num)`. |
 | `_run` | Append-only audit, one row per `for_each` **execution**: `run_id, timestamp, user_id, function_name, where_clause`. |
@@ -86,7 +86,8 @@ is a first-class node rather than a flat edge table.
 ```
 constant record_id  = sha16("__constant__" | "content:" canonical_hash(value))
 pathinput record_id = sha16("__pathinput__" | "spec:" PathInput.to_key())
-invocation_id       = sha16(fn_hash | as_table(sorted) | distribute | sorted(bindings))
+invocation_id       = sha16(fn_hash | as_table(sorted) | distribute | sorted(bindings)
+                             [| across_variants(sorted), folded only when non-empty])
                       binding = (param_name, input_record_id, selector|"")
                       — PathInput-spec edges are EXCLUDED from this hash
 save_invocation_id  = sha16("__save__" | output_record_id)   # synthetic direct-save anchor

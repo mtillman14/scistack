@@ -45,7 +45,7 @@ Already-correct docs that *document the removal* (leave untouched):
 - `docs/claude/matlab-load-performance.md:25,33,74,76,82`
 - `docs/claude/scihist-for-each-internals.md:624`
 - `docs/claude/duckdb-column-types.md:117`
-- `docs/claude/matlab-for-each-current-state.md:54,90,119,398`
+- `docs/claude/archive/matlab-for-each-current-state.md:54,90,119,398`
 - `docs/claude/layer-friction-analysis.md:284`
 
 ### Tier D — scidb-net optional network layer

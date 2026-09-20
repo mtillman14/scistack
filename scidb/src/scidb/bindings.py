@@ -27,9 +27,9 @@ carries ONE key, :data:`COMBO_KEY`, its index. scifor selects rows by it
 through the ``_select_rows`` hook, the save writes edges from it
 (:meth:`RunBindings.edges_for`), the skip gate compares it. The frame keeps
 ``__record_id``; scifor's schema is never extended; nothing parses a
-prefix off a combo or a row. The per-input spellings
-(:func:`rid_column`, :func:`vsig_column`) survive only as the
-``introspect=True`` view's column names and ``RecordPool``'s internals.
+prefix off a combo or a row. The per-input ``__rid_{param}`` /
+``__vsig_{param}`` spellings are gone; ``introspect=True`` spells its
+user-facing columns ``_record_id_{param}`` in ``foreach``.
 
 This module is a LEAF: no scidb imports, so anything may import it.
 """
@@ -41,38 +41,14 @@ from enum import Enum
 from typing import Any, Iterable, Mapping
 
 # ---------------------------------------------------------------------------
-# The column spelling — the ONLY two functions that know the prefix
+# The one column a loaded frame carries
 # ---------------------------------------------------------------------------
 
-#: Prefix of the per-parameter record-id column / combo key.
-RID_PREFIX = "__rid_"
-
-#: The record-id column a loaded frame carries BEFORE it is attributed to a
-#: parameter (``load_all_as_df`` writes it; Step 12 renames it).
+#: The record-id column a loaded frame carries (``load_all_as_df`` writes it;
+#: scidb's ``_select_rows`` hook filters on it and drops it before the user
+#: function sees the frame). The ONLY reserved column: the per-parameter
+#: ``__rid_{param}`` / ``__vsig_{param}`` spellings went with Stage 2c.
 RECORD_ID_COLUMN = "__record_id"
-
-
-def rid_column(param: str) -> str:
-    """``__rid_{param}`` — the combo key / frame column carrying *param*'s
-    bound record id."""
-    return f"{RID_PREFIX}{param}"
-
-
-def param_of(column: Any) -> str:
-    """The parameter a rid column names; a bare parameter name passes
-    through unchanged, so callers holding either spelling can normalise
-    without first asking which they hold."""
-    s = str(column)
-    return s[len(RID_PREFIX) :] if s.startswith(RID_PREFIX) else s
-
-
-def is_rid_column(column: Any) -> bool:
-    return str(column).startswith(RID_PREFIX)
-
-
-def rid_columns(columns: Iterable[Any]) -> list[str]:
-    """The rid columns among *columns*, in order."""
-    return [str(c) for c in columns if is_rid_column(c)]
 
 
 # ---------------------------------------------------------------------------
@@ -147,47 +123,26 @@ class Binding:
 # ---------------------------------------------------------------------------
 # Variant groups — the aggregation-mode selection
 # ---------------------------------------------------------------------------
-# Full iteration selects ONE record per input per call and carries it as
-# ``__rid_{param}``. Aggregation selects a SET: every record of the input
+# Full iteration selects ONE record per input per call (its ``Selection``
+# names one rid). Aggregation selects a SET: every record of the input
 # below the iterated location — split by *variant group*, so cycles filtered
 # with ``low_hz=20`` and cycles filtered with ``low_hz=50`` never pool into one
 # aggregate (that double-counts and destroys variant identity; decision D1 in
 # ``endpoints-viz-and-stats-design.md``). A group is identified by its
 # SIGNATURE: the canonical JSON of the records' derived branch params
-# (``{"bandpass.low_hz": 20}``), and it rides on the frame and the combo as
-# ``__vsig_{param}`` exactly the way a rid rides as ``__rid_{param}`` — the
-# same transport, the same seam, and the same reason it is a column: scifor's
-# per-combo filter only knows how to filter on columns. ``AcrossVariants``
-# opts an input out of the split (pool everything, attach the branch params
-# as ordinary columns); a ``ColumnSelection`` input never splits.
+# (``{"bandpass.low_hz": 20}``). The group one combination reads is named in
+# its :class:`Selection` (``groups[param]``) and applied by record id through
+# scifor's ``_select_rows`` hook — nothing rides on the frame or the combo
+# (Stage 2c, 2026-09-20). ``AcrossVariants`` opts an input out of the split
+# (pool everything, attach the branch params as ordinary columns); a
+# ``ColumnSelection`` input never splits.
 #
 # ``__save__.<key>`` entries in a signature are save-time kwargs that are BOTH
 # a discriminator and a loaded data column scifor row-filters by when
 # ``<key>`` is iterated; a group whose value contradicts the combo's own is
 # not paired with it (:func:`signature_conflicts_with`).
 
-VSIG_PREFIX = "__vsig_"
 SAVE_KWARG_PREFIX = "__save__."
-
-
-def vsig_column(param: str) -> str:
-    """``__vsig_{param}`` — the variant-group signature column / combo key."""
-    return f"{VSIG_PREFIX}{param}"
-
-
-def is_vsig_column(column: Any) -> bool:
-    return str(column).startswith(VSIG_PREFIX)
-
-
-def param_of_vsig(column: Any) -> str:
-    s = str(column)
-    return s[len(VSIG_PREFIX) :] if s.startswith(VSIG_PREFIX) else s
-
-
-def is_internal_column(column: Any) -> bool:
-    """A ``__rid_*`` or ``__vsig_*`` column: scidb's own transport, filtered
-    on by scifor and hidden from the user function."""
-    return is_rid_column(column) or is_vsig_column(column)
 
 
 def variant_signature(branch_params: Mapping[str, Any] | None) -> str:
@@ -281,7 +236,8 @@ class RecordPool:
     input coarser than the iterated level (a subject-level table under a
     per-session aggregation) is keyed by the subset it has, so it is found
     at every location beneath it instead of at none. ``split`` says whether
-    the groups are separate calls (one ``__vsig_{param}`` value per call) or
+    the groups are separate calls (one signature per call, named in the
+    call's ``Selection.groups``) or
     pooled into one (``AcrossVariants``, ``ColumnSelection``).
     """
 
@@ -317,8 +273,8 @@ class InputBinding:
 
     ``pinned_rid`` is the one record a ``PINNED`` input reads; ``pool`` is
     what an ``AGGREGATED`` input reads (per location, per variant group);
-    an ``ITERATE`` / ``LINEAGE_ONLY`` input's record rides on the
-    combination itself as ``__rid_{param}``.
+    an ``ITERATE`` / ``LINEAGE_ONLY`` input's record is named in each
+    combination's :class:`Selection`.
     """
 
     param: str
@@ -328,9 +284,21 @@ class InputBinding:
     pinned_rid: str | None = None
     pool: RecordPool | None = None
 
-    @property
-    def column(self) -> str:
-        return rid_column(self.param)
+    def __post_init__(self) -> None:
+        # The kind decides what the other fields may hold; a binding that
+        # contradicts its kind is a Step 12 bug, and it should fail HERE, not
+        # as a wrong edge set three phases later.
+        if self.kind is not InputKind.PINNED and self.pinned_rid is not None:
+            raise ValueError(
+                f"{self.param}: only a PINNED binding carries a pinned rid "
+                f"(kind={self.kind.value}, pinned_rid={self.pinned_rid!r})"
+            )
+        if self.kind is not InputKind.AGGREGATED and self.pool is not None:
+            raise ValueError(
+                f"{self.param}: only an AGGREGATED binding carries a pool "
+                f"(kind={self.kind.value}) — a ColumnSelection never pools "
+                f"or splits outside aggregation"
+            )
 
     @property
     def splits(self) -> bool:
@@ -424,19 +392,18 @@ class RunBindings:
         return {p: b.pinned_rid for p, b in self.inputs.items() if b.pinned_rid}
 
     @property
-    def tracked_columns(self) -> list[str]:
-        """The ``__rid_{param}`` columns Step 12 registered on a loaded
-        frame — the plain variable inputs, whether they went on to be an
-        iteration axis (``ITERATE``) or to pool (``AGGREGATED``).
+    def tracked_params(self) -> list[str]:
+        """The plain variable inputs whose records Step 12 tracked, whether
+        they went on to be an iteration axis (``ITERATE``) or to pool
+        (``AGGREGATED``).
 
         Deliberately not "the axes": a ``LINEAGE_ONLY`` (ColumnSelection)
         input also carries a rid column but never expands, and a ``PINNED``
         one has no column at all. Telling those three apart is what
-        ``InputKind`` is for; this is the set the MATLAB bridge must rename
-        and the set the save-path diagnostic reports.
+        ``InputKind`` is for.
         """
         return [
-            b.column
+            b.param
             for b in self.inputs.values()
             if b.kind in (InputKind.ITERATE, InputKind.AGGREGATED)
         ]

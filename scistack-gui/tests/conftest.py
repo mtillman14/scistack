@@ -300,7 +300,8 @@ def bp_node_id(populated_db):
     bandpass node.  Canvas nodes group call sites by WIRING (fn + loadable
     inputs + outputs — constants excluded), so the node id suffix is the
     wiring_id, not any single call site's call_id."""
-    from scistack_gui.domain.graph_builder import fn_node_id, wiring_id
+    from scistack_gui.domain.graph_builder import wiring_id
+    from scistack_gui.ids import fn_node_id
 
     wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
     return fn_node_id("bandpass_filter", wid)
