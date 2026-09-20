@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .log import Log
+from .roles import endpoint_kind
 
 # Attribute names stamped onto a tagged function.
 SCISTACK_FLAG = "__scistack__"
@@ -292,12 +293,12 @@ def _constant_input_names(spec: StepSpec) -> set[str]:
 
     from scifor import ColName, PathOutput
 
-    from .foreach import _is_loadable
+    from .input_spec import is_loadable
 
     return {
         k
         for k, v in spec.inputs.items()
-        if not _is_loadable(v)
+        if not is_loadable(v)
         and not isinstance(v, (ColName, PathOutput, PathInput))
         and not isinstance(v, type)
     }
@@ -877,7 +878,6 @@ class Pipeline:
         else:
             order = self._topo_order(pairs)
 
-        from .foreach import _endpoint_kind
 
         entries: list[dict] = []
         for i in order:
@@ -885,7 +885,7 @@ class Pipeline:
             entry: dict[str, Any] = {
                 "step": spec.name,
                 "pipeline": owner.name,
-                "endpoint": _endpoint_kind(spec.name) is not None,
+                "endpoint": endpoint_kind(spec.name) is not None,
             }
             try:
                 from .state import check_node_state
@@ -940,14 +940,13 @@ class Pipeline:
         Each entry: ``{"step", "pipeline", "kind"}`` with kind
         "plot" | "stat".
         """
-        from .foreach import _endpoint_kind
 
         pairs = self._composed_steps()
         out = []
         for owner, spec in pairs:
             if not include_used and owner is not self:
                 continue
-            kind = _endpoint_kind(spec.name)
+            kind = endpoint_kind(spec.name)
             if kind is not None:
                 out.append({"step": spec.name, "pipeline": owner.name, "kind": kind})
         return out
@@ -994,7 +993,6 @@ class Pipeline:
         rendered outputs: artifact paths for ``plot_``, result payloads for
         ``stat_``. The caller opens the files.
         """
-        from .foreach import _endpoint_kind
 
         pairs = self._composed_steps()
         targets = self._resolve_target(pairs, target)
@@ -1002,7 +1000,7 @@ class Pipeline:
             {
                 pairs[i][1].name
                 for i in targets
-                if _endpoint_kind(pairs[i][1].name) is None
+                if endpoint_kind(pairs[i][1].name) is None
             }
         )
         if non_endpoints:
@@ -1093,7 +1091,6 @@ class Pipeline:
         """Shared step selection for run_*/execution_order: returns
         (pairs, topo order, target indices) for ``mode`` ∈
         {"all", "until", "endpoints"}."""
-        from .foreach import _endpoint_kind
 
         pairs = self._composed_steps()
         if mode == "until":
@@ -1102,7 +1099,7 @@ class Pipeline:
             targets = {
                 i
                 for i, (owner, spec) in enumerate(pairs)
-                if _endpoint_kind(spec.name) is not None
+                if endpoint_kind(spec.name) is not None
                 and (include_used or owner is self)
             }
         elif mode == "all":

@@ -15,7 +15,7 @@
 >
 > Entry points: `scidb/glue.py` (the contract and the fusion),
 > `scidb.provenance.compute_glue_record_id` (§2's virtual record),
-> `scidb.discover.function_role` (§0), `scistack_gui/services/glue_service.py`
+> `scidb.roles.function_role` (§0), `scistack_gui/services/glue_service.py`
 > and `frontend/src/components/Sidebar/GlueSettingsPanel.tsx` (the panel).
 
 ## The question this answers

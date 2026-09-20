@@ -48,16 +48,15 @@ from .column_selection import ColumnSelection
 from .parameter import Parameter
 from .database import configure_database, get_database, get_user_id
 from .discover import (
-    FUNCTION_ROLES,
     DiscoveryResult,
     ModuleError,
     ModuleExports,
     PackageResult,
     discover_module,
-    function_role,
     scan_package,
     scan_project,
 )
+from .roles import FUNCTION_ROLES, function_role
 from .exceptions import (
     AmbiguousParamError,
     AmbiguousVersionError,

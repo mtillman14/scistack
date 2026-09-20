@@ -3,7 +3,7 @@ A schema key's loaded values share ONE type.
 
 Found by the example integration suite (2026-09-19): cycles "01".."10" came
 back as "01".."09" plus the int 10, because the VARCHAR -> number restore
-(`_from_schema_str`) was decided per VALUE. "10" round-trips through int and
+(`from_schema_str`) was decided per VALUE. "10" round-trips through int and
 "01" does not, so one column held both types — and a `set(cycle) == {...}`
 comparison, a groupby, or a plot axis then saw ten levels that were not the
 ten that were saved.

@@ -25,6 +25,7 @@ from sciduckdb import (
     count_null_list_elements,
 )
 
+from . import provenance_query
 from .bindings import variant_signature
 from .exceptions import (
     AmbiguousVersionError,
@@ -34,6 +35,12 @@ from .exceptions import (
 )
 from .hashing import canonical_hash, generate_record_id
 from .log import Log
+from .schema_values import (
+    VALID_SCHEMA_KEY_TYPES,
+    canonical_numeric_value,
+    from_schema_str,
+    schema_str,
+)
 from .variable import BaseVariable
 
 if TYPE_CHECKING:
@@ -51,90 +58,6 @@ def _describe_data(val):
     if isinstance(val, dict):
         return f"dict keys={list(val.keys())}"
     return type(val).__name__
-
-
-def _schema_str(value):
-    """Stringify a schema key value, converting whole-number floats to int.
-
-    Schema keys are stored as VARCHAR in DuckDB.  str(1.0) → "1.0" but
-    str(1) → "1".  MATLAB sends all numbers as float, so without this
-    conversion, queries and cache lookups fail because "1.0" ≠ "1".
-    """
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
-
-
-def _canonical_numeric_value(key, value):
-    """Canonical value for a schema key declared ``"numeric"``.
-
-    Collapses every spelling of the same number to one identity: ints stay
-    ints, integral floats become ints (MATLAB doubles arrive as ``1.0``),
-    digit strings lose leading zeros (``"001"`` → 1), and float-like strings
-    normalize through ``float`` (``"1.50"`` → 1.5).  Values that cannot be
-    read as a number violate the declaration and raise SchemaKeyTypeError —
-    declared types are enforced, never guessed around.
-    """
-    from .exceptions import SchemaKeyTypeError
-
-    if isinstance(value, bool):
-        raise SchemaKeyTypeError(
-            f"Schema key '{key}' is declared numeric but got a bool: {value!r}"
-        )
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value) if value.is_integer() else value
-    if isinstance(value, str):
-        s = value.strip()
-        if s.isdigit():
-            return int(s)
-        try:
-            f = float(s)
-            return int(f) if f.is_integer() else f
-        except ValueError:
-            pass
-    raise SchemaKeyTypeError(
-        f"Schema key '{key}' is declared numeric but got a non-numeric value: {value!r}"
-    )
-
-
-_VALID_SCHEMA_KEY_TYPES = ("numeric", "string")
-
-
-def _from_schema_str(value):
-    """Convert ONE schema VARCHAR value back to a numeric type if possible.
-
-    Schema keys are stored as VARCHAR, so loaded values are always strings.
-    This restores the original type (int or float) so that user-facing
-    metadata has the same type as what was originally saved.
-
-    Only converts when the round-trip preserves the original string exactly.
-    This keeps zero-padded identifiers like "01" as strings (since str(1) ==
-    "1" ≠ "01"), which is critical for subject/trial IDs that must match
-    what the user passed into for_each.
-
-    **Never call this on a loaded value directly** — use
-    :meth:`DatabaseManager.restore_schema_value`, which decides per KEY. Per
-    value, cycles "01".."09" stayed strings while "10" became the int 10, so
-    one column held both (integration suite, 2026-09-19). Whether a key is
-    numeric is a property of the key, not of each of its values.
-    """
-    if not isinstance(value, str):
-        return value
-    try:
-        as_int = int(value)
-        if str(as_int) == value:
-            return as_int
-    except (ValueError, TypeError):
-        pass
-    try:
-        as_float = float(value)
-        if str(as_float) == value:
-            return as_float
-    except (ValueError, TypeError):
-        pass
-    return value
 
 
 def _match_branch_param(branch_params_dict: dict, key: str, value: Any) -> bool:
@@ -172,7 +95,6 @@ def _filter_records_by_branch_params(df, branch_params_filter: dict | None, duck
     """
     if not branch_params_filter or len(df) == 0:
         return df
-    from . import provenance_query
     from .variant import VariantAxes
 
     # The three variant dimensions. They travel in one dict on purpose
@@ -251,7 +173,6 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
       under the newest code keeps its own newest record instead of dropping out
       of the run entirely.
     """
-    from . import provenance_query
     from .exceptions import AmbiguousParamError
     from .variant import LATEST_VERSION
 
@@ -391,7 +312,6 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
     resolve against ``code_version_ordinals``: exactly one function that ran
     more than one way is unambiguous, several raise, none is a no-op.
     """
-    from . import provenance_query
     from .exceptions import AmbiguousParamError
     from .variant import LATEST_VERSION
 
@@ -955,12 +875,12 @@ class DatabaseManager:
                 f"{sorted(unknown_keys)}. Schema keys: {self.dataset_schema_keys}"
             )
         bad_types = {
-            k: t for k, t in key_types.items() if t not in _VALID_SCHEMA_KEY_TYPES
+            k: t for k, t in key_types.items() if t not in VALID_SCHEMA_KEY_TYPES
         }
         if bad_types:
             raise ValueError(
                 f"schema_key_types values must be one of "
-                f"{_VALID_SCHEMA_KEY_TYPES}, got: {bad_types}"
+                f"{VALID_SCHEMA_KEY_TYPES}, got: {bad_types}"
             )
         self.dataset_schema_key_types = key_types
 
@@ -1023,9 +943,9 @@ class DatabaseManager:
                 continue
             value = out[key]
             if isinstance(value, (list, tuple)):
-                out[key] = [_canonical_numeric_value(key, v) for v in value]
+                out[key] = [canonical_numeric_value(key, v) for v in value]
             else:
-                out[key] = _canonical_numeric_value(key, value)
+                out[key] = canonical_numeric_value(key, value)
         return out
 
     def _ensure_meta_tables(self):
@@ -1302,7 +1222,7 @@ class DatabaseManager:
         if schema_level is not None and schema_keys:
             self._forget_schema_key_kinds()
             schema_id = self._duck._get_or_create_schema_id(
-                schema_level, {k: _schema_str(v) for k, v in schema_keys.items()}
+                schema_level, {k: schema_str(v) for k, v in schema_keys.items()}
             )
         else:
             schema_id = 0
@@ -1561,7 +1481,7 @@ class DatabaseManager:
             schema_level = self._infer_schema_level(schema_keys)
             if schema_level is not None and schema_keys:
                 key_tuple = tuple(
-                    _schema_str(schema_keys.get(k, ""))
+                    schema_str(schema_keys.get(k, ""))
                     for k in self.dataset_schema_keys
                     if k in schema_keys
                 )
@@ -1576,7 +1496,7 @@ class DatabaseManager:
         self._forget_schema_key_kinds()
         schema_id_cache = self._duck.batch_get_or_create_schema_ids(
             {
-                k: {col: _schema_str(v) for col, v in vals.items()}
+                k: {col: schema_str(v) for col, v in vals.items()}
                 for k, vals in unique_schema_combos.items()
             }
         )
@@ -1607,7 +1527,7 @@ class DatabaseManager:
 
             if schema_level is not None and schema_keys:
                 key_tuple = tuple(
-                    _schema_str(schema_keys.get(k, ""))
+                    schema_str(schema_keys.get(k, ""))
                     for k in self.dataset_schema_keys
                     if k in schema_keys
                 )
@@ -2090,10 +2010,10 @@ class DatabaseManager:
             if isinstance(value, (list, tuple)):
                 placeholders = ", ".join(["?"] * len(value))
                 conditions.append(f's."{key}" IN ({placeholders})')
-                params.extend([_schema_str(v) for v in value])
+                params.extend([schema_str(v) for v in value])
             else:
                 conditions.append(f's."{key}" = ?')
-                params.append(_schema_str(value))
+                params.append(schema_str(value))
 
         # branch_params_filter is handled entirely in Python (lines below).
         # We do NOT push it to SQL because:
@@ -2147,8 +2067,6 @@ class DatabaseManager:
         if version_id == "latest" and len(df) > 0:
             _t_collapse = time.perf_counter()
             from collections import defaultdict
-
-            from . import provenance_query
 
             # Consumed input *schema locations* per record (schema-edit-stable:
             # a re-save keeps the same schema_id, a genuinely different input
@@ -2414,7 +2332,6 @@ class DatabaseManager:
         version = {}
         rid = row.get("record_id")
         if rid is not None:
-            from . import provenance_query
 
             for k, v in provenance_query.derived_branch_params(self._duck, rid).items():
                 if k.startswith("__save__."):
@@ -2581,7 +2498,6 @@ class DatabaseManager:
         # branch_params is the accumulated upstream constants (§6), derived from
         # the bipartite graph rather than read from a stored column.
         try:
-            from . import provenance_query
 
             instance.branch_params = provenance_query.derived_branch_params(
                 self._duck, record_id
@@ -2881,7 +2797,6 @@ class DatabaseManager:
         """
         type_name = variable_class.__name__
 
-        from . import provenance_query
         from .filters import Filter, split_schema_key_filters
 
         # Separate the variant role (variable-level filter → S_var) from the row
@@ -3223,14 +3138,13 @@ class DatabaseManager:
         # from the graph (the synthetic ``__save__`` invocation's constants).
         # Internal pipeline markers (__fn etc.) and fn sweep-constants are not
         # exposed here — the latter appear in the ``__branch_params`` column below.
-        from . import provenance_query as _pq
 
         # Batched: derive every record's branch params in one closure build,
         # reused for both the __save__ kwarg columns and the __branch_params
         # column (previously two per-record ancestry walks each — the dominant
         # cost when assembling large spread results).
         rec_id_values = records["record_id"].values
-        bp_map = _pq.branch_params_batch(self._duck, list(rec_id_values))
+        bp_map = provenance_query.branch_params_batch(self._duck, list(rec_id_values))
         per_row_kwargs: list[dict] = []
         kwarg_col_names: dict[str, list] = {}
         for rid in rec_id_values:
@@ -3882,7 +3796,6 @@ class DatabaseManager:
             # (§6), not a column. __save__.<kwarg> entries are the record's
             # non-schema save metadata.
             try:
-                from . import provenance_query
 
                 bp = provenance_query.derived_branch_params(self._duck, record_id)
             except Exception:
@@ -3950,7 +3863,6 @@ class DatabaseManager:
         except Exception:
             return []
 
-        from . import provenance_query
 
         results = []
         for _, row in records.iterrows():
@@ -4160,7 +4072,6 @@ class DatabaseManager:
             var = next(self.load(variable_class, metadata, version_id="latest"))
             record_id = var.record_id
 
-        from . import provenance_query
 
         return provenance_query.provenance(self._duck, record_id)
 
@@ -4177,13 +4088,12 @@ class DatabaseManager:
             ``function_hash``, ``inputs``, ``constants`` — sourced from the
             bipartite graph (records produced by an invocation at that location).
         """
-        from . import provenance_query
 
         conditions = []
         params: list[Any] = []
         for key, value in schema_keys.items():
             conditions.append(f's."{key}" = ?')
-            params.append(_schema_str(value))
+            params.append(schema_str(value))
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
         # Output records produced by an invocation at this schema location.
@@ -4225,7 +4135,6 @@ class DatabaseManager:
             List of dicts with keys: function_name, function_hash, output_type,
             input_types (list of type names)
         """
-        from . import provenance_query
 
         return provenance_query.pipeline_structure(self._duck)
 
@@ -4260,7 +4169,6 @@ class DatabaseManager:
                 output_num    (int | None: 0-based position in the fn signature),
                 record_count  (int: distinct records for this variant)
         """
-        from . import provenance_query
 
         return provenance_query.pipeline_variants(self._duck, output_type)
 
@@ -4608,7 +4516,6 @@ class DatabaseManager:
         Reimplemented over the bipartite provenance graph (every edge is a
         stored fact); the old branch_params-subset heuristic is gone.
         """
-        from . import provenance_query
 
         return provenance_query.upstream_provenance(self, record_id, max_depth)
 
@@ -4620,7 +4527,6 @@ class DatabaseManager:
         ``{from_record_id, to_record_id, param_name}``. Provably correct —
         every edge is a stored fact, terminating at raw data / constants.
         """
-        from . import provenance_query
 
         return provenance_query.pipeline(self, record_id, max_depth)
 
@@ -4630,7 +4536,6 @@ class DatabaseManager:
         Walks the invocation graph upward collecting constant inputs. This is
         the exact map the old ``branch_params`` column stored, now derived.
         """
-        from . import provenance_query
 
         return provenance_query.derived_branch_params(self._duck, record_id, max_depth)
 
@@ -4641,7 +4546,6 @@ class DatabaseManager:
         oldest first. Re-runs append rows, so a changed ``where=`` filter is
         preserved rather than lost to first-wins.
         """
-        from . import provenance_query
 
         return provenance_query.execution_audit(self._duck, record_id)
 
@@ -4665,7 +4569,6 @@ class DatabaseManager:
         bipartite graph (all computed records — including ``generates_file`` —
         now write an invocation). Raw / manually saved records return False.
         """
-        from . import provenance_query
 
         return provenance_query.has_producing_invocation(self._duck, record_id)
 
@@ -4712,7 +4615,6 @@ class DatabaseManager:
         (anchored as graph constants) distinguish variants too. Returns None if
         the record no longer exists.
         """
-        from . import provenance_query
 
         rows = self._duck._fetchall(
             "SELECT type, schema_id FROM _record WHERE record_id = ? LIMIT 1",
@@ -4791,7 +4693,7 @@ class DatabaseManager:
         1. a declared type (``schema_key_types``) wins — ``"numeric"`` or
            ``"string"``;
         2. otherwise the key is numeric only if EVERY value stored for it
-           round-trips through :func:`_from_schema_str` unchanged in spelling.
+           round-trips through :func:`from_schema_str` unchanged in spelling.
            One zero-padded ``"01"`` among the values makes the whole key a
            string key, so ``"10"`` beside it stays ``"10"`` rather than
            becoming 10 and giving the column two types.
@@ -4808,7 +4710,7 @@ class DatabaseManager:
             reason = f"declared {declared}"
         else:
             values = [v for v in self._duck.distinct_schema_values(key) if v is not None]
-            kept = [v for v in values if isinstance(_from_schema_str(v), str)]
+            kept = [v for v in values if isinstance(from_schema_str(v), str)]
             numeric = bool(values) and not kept
             reason = (
                 "no values stored yet"
@@ -4832,7 +4734,7 @@ class DatabaseManager:
         :meth:`schema_key_is_numeric`. The one restore every load path uses."""
         if value is None or not isinstance(value, str):
             return value
-        return _from_schema_str(value) if self.schema_key_is_numeric(key) else value
+        return from_schema_str(value) if self.schema_key_is_numeric(key) else value
 
     def _forget_schema_key_kinds(self) -> None:
         """Drop the per-key numeric/string cache — called after any save."""

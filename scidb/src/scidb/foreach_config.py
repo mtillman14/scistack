@@ -417,8 +417,7 @@ class ForEachConfig:
         """
         from scifor import PathInput
 
-        from .foreach import _is_loadable
-        from .input_spec import type_name
+        from .input_spec import is_loadable, type_name
 
         result = {}
         for name in sorted(self.inputs):
@@ -434,7 +433,7 @@ class ForEachConfig:
                 continue
             # Not a variable type: a PathInput (its template IS the call
             # site), or a Merge / DataFrame that spells itself.
-            if _is_loadable(spec) or isinstance(spec, PathInput):
+            if is_loadable(spec) or isinstance(spec, PathInput):
                 if hasattr(spec, "to_key"):
                     result[name] = spec.to_key()
                 else:
@@ -452,7 +451,7 @@ class ForEachConfig:
         bookkeeping rather than computation identity. Including either raw
         marker object would also break version-key hashing (they are not
         JSON-serializable). PathInput is excluded for the same
-        JSON-serializability reason -- despite _is_loadable now excluding it
+        JSON-serializability reason -- despite is_loadable now excluding it
         (its per-combo resolution moved to scifor's for_each loop), it still
         belongs in ``__inputs`` via its own ``to_key()``, not here.
 
@@ -472,7 +471,7 @@ class ForEachConfig:
         """
         from scifor import ColName, PathInput, PathOutput
 
-        from .foreach import _is_loadable
+        from .input_spec import is_loadable
         from .parameter import Parameter
 
         def _unwrap_parameter(v):
@@ -483,7 +482,7 @@ class ForEachConfig:
         return {
             k: _unwrap_parameter(v)
             for k, v in self.inputs.items()
-            if not _is_loadable(v) and not isinstance(v, (ColName, PathOutput, PathInput))
+            if not is_loadable(v) and not isinstance(v, (ColName, PathOutput, PathInput))
         }
 
     def _serialize_inputs(self) -> dict:
@@ -491,7 +490,7 @@ class ForEachConfig:
 
         Only includes loadable inputs (variable types, Fixed, ColumnSelection,
         Merge) — constants are already included in save_metadata directly.
-        PathInput is included too even though _is_loadable excludes it (its
+        PathInput is included too even though is_loadable excludes it (its
         resolution moved to scifor's for_each loop, not scidb's variable
         loader) -- it still needs a stable identity in ``__inputs`` via its
         own ``to_key()``, or two different templates would collapse into the
@@ -502,12 +501,12 @@ class ForEachConfig:
         """
         from scifor import PathInput
 
-        from .foreach import _is_loadable
+        from .input_spec import is_loadable
 
         result = {}
         for name in sorted(self.inputs):
             spec = self.inputs[name]
-            if _is_loadable(spec) or isinstance(spec, PathInput):
+            if is_loadable(spec) or isinstance(spec, PathInput):
                 if hasattr(spec, "to_key"):
                     result[name] = spec.to_key()
                 elif isinstance(spec, type):

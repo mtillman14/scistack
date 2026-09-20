@@ -18,6 +18,7 @@ import time
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from scidb.database import DatabaseManager
+from scidb.roles import endpoint_kind
 
 from scistack_gui import layout as layout_store
 from scistack_gui import registry
@@ -1363,14 +1364,13 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     nodes += build_pipeline_nodes(db, pipeline_id)
 
     # --- Endpoint classification (plot_/stat_ prefixes) ---
-    # Detection lives in scidb (_endpoint_kind — same source of truth as
+    # Detection lives in scidb (roles.endpoint_kind — same source of truth as
     # Pipeline.endpoints()/for_each's endpoint policy); the GUI only tags.
-    from scidb.foreach import _endpoint_kind
 
     endpoint_count = 0
     for n in nodes:
         if n["type"] == "functionNode":
-            kind = _endpoint_kind(n["data"]["label"])
+            kind = endpoint_kind(n["data"]["label"])
             if kind is not None:
                 n["data"]["endpoint_kind"] = kind
                 endpoint_count += 1

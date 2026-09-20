@@ -31,6 +31,9 @@ import time
 import logging
 from typing import Literal
 
+from .input_spec import find_pathinput
+from .schema_values import schema_str
+
 logger = logging.getLogger(__name__)
 
 ComboState = Literal["up_to_date", "stale", "missing"]
@@ -732,18 +735,16 @@ def check_pathinput_node_state(
         from scidb.database import get_database
 
         db = get_database()
-    from scidb.database import _schema_str
     from scidb.exclusions import filter_excluded_combos
 
     from . import provenance_query
-    from .foreach import _find_pathinput
     from .provenance import compute_constant_record_id
 
     fn_name = getattr(fn, "__name__", None) or type(fn).__name__
     schema_keys = list(db.dataset_schema_keys)
 
     def _norm(combo: dict) -> dict:
-        return {k: _schema_str(v) for k, v in combo.items() if v is not None}
+        return {k: schema_str(v) for k, v in combo.items() if v is not None}
 
     # --- should-run set: PathInput.discover() ∩ iteration grid, dedup, then exclude.
     # This is exactly what for_each would *produce output for* now: a discovered
@@ -761,9 +762,9 @@ def check_pathinput_node_state(
             should.append(c)
 
     grid_keys = [k for k, v in iteration.items() if v]
-    grid_sets = {k: {_schema_str(x) for x in iteration[k]} for k in grid_keys}
+    grid_sets = {k: {schema_str(x) for x in iteration[k]} for k in grid_keys}
 
-    pi = _find_pathinput(inputs)
+    pi = find_pathinput(inputs)
     if pi is not None:
         # Discovered combos that satisfy the grid (the intersection).
         for combo in pi.discover():

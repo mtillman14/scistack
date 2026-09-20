@@ -1,6 +1,6 @@
 """
 Function role — the four-way classification of a pipeline function by its
-name prefix (``scidb.discover.function_role``).
+name prefix (``scidb.roles.function_role``).
 
 One classifier for the whole stack: the prefixes already drive real execution
 behaviour inside scidb (endpoint policy, draft/record mode, artifact stamping),

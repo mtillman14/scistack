@@ -10,6 +10,8 @@ from __future__ import annotations
 import inspect
 import logging
 
+from scidb.roles import endpoint_kind
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,12 +56,10 @@ def get_function_full_info(fn_name: str) -> dict:
 
     Used when dropping a function node onto the canvas so the node is
     created with the correct number of output handles — and with its
-    endpoint classification (plot_/stat_, scidb's _endpoint_kind), so a
+    endpoint classification (plot_/stat_, scidb.roles.endpoint_kind), so a
     freshly dragged endpoint shows its badge/Show button BEFORE any run
     exists (the graph post-pass only tags nodes on a refetch).
     """
-    from scidb.foreach import _endpoint_kind
-
     from scistack_gui import matlab_registry
     from scistack_gui.api.pipeline import _fn_params_from_registry
 
@@ -69,13 +69,13 @@ def get_function_full_info(fn_name: str) -> dict:
             "params": list(info.params),
             "output_names": list(info.output_names),
             "language": "matlab",
-            "endpoint_kind": _endpoint_kind(fn_name),
+            "endpoint_kind": endpoint_kind(fn_name),
         }
     return {
         "params": _fn_params_from_registry(fn_name),
         "output_names": [],
         "language": "python",
-        "endpoint_kind": _endpoint_kind(fn_name),
+        "endpoint_kind": endpoint_kind(fn_name),
     }
 
 

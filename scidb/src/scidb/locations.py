@@ -32,6 +32,7 @@ from typing import Literal
 
 from . import provenance_query
 from .log import Log
+from .schema_values import schema_str
 from .provenance import SAVE_FUNCTION_NAME, constants_identity_key
 
 LocationState = Literal["green", "amber", "red", "grey"]
@@ -791,10 +792,8 @@ def _as_combo(values: dict, schema_keys) -> tuple:
     """A hashable location: ``(("subject","01"),("trial","03"))``, in schema
     order, NULL/absent keys omitted (so a non-contiguous save is a shorter
     tuple rather than one carrying holes)."""
-    from .database import _schema_str
-
     return tuple(
-        (k, _schema_str(values[k]))
+        (k, schema_str(values[k]))
         for k in schema_keys
         if values.get(k) is not None
     )

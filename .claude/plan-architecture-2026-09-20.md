@@ -524,3 +524,57 @@ suite (`test_identity_parity.py` must show byte-identical edges;
 `test_column_selection_combo_pruning.py` guards that `__record_id` never
 reaches a function), then `cd /workspace/scimatlab && pytest tests/ -q`,
 then the MATLAB suite (the `.m` loop changed), then `tests/integration`.
+
+Stage 2c: **green** 2026-09-20 (scidb, scimatlab Python tests, tests/integration — user-run).
+Two things surfaced by the first runs, both fixed: the bridge's row_selection
+must be aligned with full_combos AFTER the skip hook (f101aeaf), and a Fixed
+input's `__rid_ref` had been leaking into the function as a data column —
+every Fixed record arrived one column wider than a plain one (4c245d43).
+
+### Stage 3 — built 2026-09-20, tests unrun
+
+Classified every function-level sibling import in `scidb` by "would
+hoisting it create a cycle?" (a node script, then `scidb/tests/test_imports.py`
+which does the same with `ast`). The real cycle-dodges were four shared
+things living in a module above their readers, plus one asymmetry:
+
+* the function-role classifier (`function_role`, `endpoint_kind`,
+  `ROLE_PREFIX`, `FUNCTION_ROLES`) — `discover.py` and `foreach.py` each
+  held half → **`scidb/roles.py`**, a leaf. `discover`, `foreach`,
+  `pipeline`, `inspect/report` and the GUI import it at the top.
+* `_is_loadable` / `_input_type_name` / `_find_pathinput` in `foreach`,
+  imported lazily by `foreach_config` (×3), `glue`, `pipeline`,
+  `provenance_query`, `across_variants`, `variant`, `state` →
+  **`input_spec.is_loadable` / `spec_name` / `find_pathinput`**. For the
+  wrapper modules to import their display name at the top, `input_spec`
+  became a true leaf: the wrapper types are imported at call time (the one
+  allow-listed dodge, documented in the module).
+* `_schema_str` / `_from_schema_str` / `_canonical_numeric_value` in
+  `database`, which is why `provenance_query` top-imported `database` and
+  `database` imported `provenance_query` inside twenty functions →
+  **`scidb/schema_values.py`** (`schema_str`, `from_schema_str`,
+  `canonical_numeric_value`, `VALID_SCHEMA_KEY_TYPES`). `filters` had its
+  own copy of the write rule (`_to_schema_str`, "mirrors
+  database._schema_str") — one owner now. `database` imports
+  `provenance_query` at the top.
+* `PerComboLoader` / `PerComboLoaderMerge` in `foreach`, imported lazily by
+  `glue` and the MATLAB bridge → **`scidb/per_combo.py`**.
+
+What stays lazy, on purpose (`ALLOWED_CYCLE_DODGES` in the test, each with
+its reason): `variable → database` (a variable reaches the ambient database
+at call time), `pipeline → foreach` (a pipeline RUNS for_each; for_each
+consults the active pipeline at import time), `input_spec → variant /
+across_variants` (above). Top-level cycles: none, asserted.
+
+`test_imports.py` also imports every `scidb` module first in a fresh
+interpreter — the only honest probe for an order-dependent cycle, since
+`conftest` has already imported everything by the time a test runs.
+
+The GUI's id helpers (`strip_placement` / `parse_fn_node_id`) are in
+`domain/graph_builder`, which is already pure; their lazy importers are
+not cycle-dodges. They move in Stage 5, where `ids.py` gets the newtypes.
+
+Verify: `cd /workspace/scidb && pytest tests/test_imports.py -q` first
+(it is slow — one interpreter per module), then the whole scidb suite,
+then `cd /workspace/scimatlab && pytest tests/ -q` (the bridge import
+moved), then `cd /workspace/scistack-gui && pytest tests/ -q`.

@@ -20,16 +20,15 @@ problem: the copy in ``config_from_inputs`` did not know about ``Variant``,
 so a ``Variant``-pinned input vanished from the predicted config entirely
 (``scidb/tests/test_variant_pin_node_state.py``). One owner now.
 
-Deliberately a near-leaf: it imports the wrapper types and nothing else of
-scidb, so any module may import it at the top.
+Deliberately a LEAF: it imports nothing of scidb at module level (the
+wrapper types are imported inside the functions, like ``scifor`` is), so
+every module — the wrapper modules themselves included, for their display
+names — may import it at the top.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from .across_variants import AcrossVariants
-from .variant import Variant
 
 #: How to reach the inner spec of each wrapper, in one table. A wrapper added
 #: without an entry here is simply not unwrapped — and every identity path
@@ -47,6 +46,9 @@ def _wrapper_table() -> dict:
     """
     if not _INNER_ATTR:
         from scifor import ColumnSelection, Fixed
+
+        from .across_variants import AcrossVariants
+        from .variant import Variant
 
         _INNER_ATTR.update(
             {
@@ -128,7 +130,7 @@ def variable_type(spec: Any) -> Any:
     standalone/scifor use) but under scidb its per-combo resolution belongs
     to scifor's for_each loop, not the variable loader, and it is identified
     by its TEMPLATE (``to_key()``), not by a type name. The same exclusion,
-    for the same reason, as ``foreach._is_loadable``.
+    for the same reason, as ``is_loadable`` below.
 
     Returns ``None`` for a constant, a ``PathInput``, a ``Merge``, a marker
     or a bare DataFrame, so a caller can use it as the "does this input bind
@@ -150,3 +152,83 @@ def type_name(spec: Any) -> str | None:
     inner = variable_type(spec)
     name = getattr(inner, "__name__", None)
     return name if isinstance(name, str) else None
+
+
+def is_loadable(spec: Any) -> bool:
+    """Is *spec* something ``for_each`` LOADS — a variable type, a wrapper
+    around one, a ``Merge``, a bare DataFrame, or anything with ``.load()``?
+
+    ``PathInput`` is deliberately excluded before the ``hasattr(..., "load")``
+    fallback: it has a real ``.load()`` method (for standalone/scifor use),
+    but under scidb its per-combo resolution is owned by scifor's for_each
+    loop, not scidb's variable-loading machinery. Treating it as loadable
+    here would (re)route it through ``PerComboLoader`` and would also flip
+    ``ForEachConfig``'s classification of it for version-key hashing.
+
+    Lived in ``foreach`` as ``_is_loadable`` until 2026-09-20; five modules
+    imported it inside a function to dodge the cycle.
+    """
+    from scifor import ColumnSelection, Fixed, Merge
+    from scifor.pathinput import PathInput
+
+    from .across_variants import AcrossVariants
+    from .variant import Variant
+
+    if isinstance(spec, PathInput):
+        return False
+    try:
+        import pandas as pd
+
+        if isinstance(spec, pd.DataFrame):
+            return True
+    except ImportError:
+        pass
+    return isinstance(
+        spec, (type, Fixed, Variant, AcrossVariants, ColumnSelection, Merge)
+    ) or hasattr(spec, "load")
+
+
+def spec_name(spec: Any) -> str:
+    """A human-readable spelling of *spec* for logs and error messages —
+    ``Fixed(Wide, subject=01)``, ``Variant(Wide, bandpass.low_hz=20)``,
+    ``AcrossVariants(Wide)``, ``ColumnSelection(Wide, ['a'])``.
+
+    Display only. The IDENTITY spelling of a spec is its ``to_key()`` and
+    ``CallSite``; this one is free to be readable.
+    """
+    from scifor import ColumnSelection, Fixed, Merge
+
+    from .across_variants import AcrossVariants
+    from .variant import Variant
+
+    if isinstance(spec, Merge):
+        return spec.__name__
+    if isinstance(spec, Fixed):
+        fixed_str = ", ".join(f"{k}={v}" for k, v in spec.fixed_metadata.items())
+        return f"Fixed({spec_name(spec.data)}, {fixed_str})"
+    if isinstance(spec, Variant):
+        bp_str = ", ".join(f"{k}={v}" for k, v in sorted(spec.branch_params.items()))
+        return f"Variant({spec_name(spec.var_type)}, {bp_str})"
+    if isinstance(spec, AcrossVariants):
+        return f"AcrossVariants({spec_name(spec.var_type)})"
+    if isinstance(spec, ColumnSelection):
+        return f"ColumnSelection({spec_name(spec.data)}, {spec.columns})"
+    if isinstance(spec, type):
+        return spec.__name__
+    if hasattr(spec, "__name__"):
+        return spec.__name__
+    return type(spec).__name__
+
+
+def find_pathinput(inputs: dict):
+    """The first ``PathInput`` among *inputs*, unwrapping ``Fixed``, or
+    ``None``."""
+    from scifor import Fixed
+    from scifor.pathinput import PathInput
+
+    for v in inputs.values():
+        if isinstance(v, PathInput):
+            return v
+        if isinstance(v, Fixed) and isinstance(v.data, PathInput):
+            return v.data
+    return None

@@ -41,11 +41,14 @@ from .bindings import (
     variant_signature,
 )
 from .exceptions import AmbiguousParamError
-from .input_spec import type_name, variable_type
+from .input_spec import find_pathinput, is_loadable, spec_name, type_name, variable_type
+from .roles import endpoint_kind as _roles_endpoint_kind
+from .schema_values import canonical_numeric_value, schema_str
 from .variant import match_bare_name
 from .filters import Filter
 from .foreach_config import ForEachConfig
 from .log import Log
+from .per_combo import PerComboLoader, PerComboLoaderMerge
 from .pipeline import Pipeline as _Pipeline
 from .pipeline import Step, active_pipeline
 from .provenance_save import GraphRecord as _GraphRecord
@@ -56,41 +59,6 @@ logger = logging.getLogger(__name__)
 # Sentinel: distinguishes "pipeline= omitted" (use the ambient active
 # pipeline, if any) from an explicit pipeline=None (force eager execution).
 _PIPELINE_UNSET = object()
-
-# ---------------------------------------------------------------------------
-# Sentinel classes for per-combo loading
-# ---------------------------------------------------------------------------
-
-
-class PerComboLoader:
-    """Sentinel for inputs that need per-combo loading (class lacks bulk load support).
-
-    ``spec`` can be:
-    - A plain class (has .load())
-    - A ``Fixed`` wrapping a plain class (load with overridden metadata)
-    - A ``ColumnSelection`` wrapping a plain class (load, then select cols)
-    - A ``Fixed`` wrapping a ``ColumnSelection`` (both overrides)
-
-    ``for_each`` wraps fn so these are resolved per-combo via cls.load(**combo).
-    """
-
-    __slots__ = ("spec",)
-
-    def __init__(self, spec: Any):
-        self.spec = spec
-
-
-class PerComboLoaderMerge:
-    """Sentinel for Merge where some/all constituents lack bulk load support.
-
-    Holds the original ``scidb.Merge`` spec; ``for_each`` wraps fn to
-    resolve each constituent per-combo via cls.load(**combo_metadata).
-    """
-
-    __slots__ = ("merge_spec",)
-
-    def __init__(self, merge_spec: "Merge"):
-        self.merge_spec = merge_spec
 
 
 class _DryRunMerge(_scifor.Merge):
@@ -796,12 +764,12 @@ def _for_each_execute(
         for k, v in state.loaded_inputs.items()
         if isinstance(v, (PerComboLoader, PerComboLoaderMerge))
     }
-    _has_variable_inputs = any(_is_loadable(v) for v in inputs.values())
+    _has_variable_inputs = any(is_loadable(v) for v in inputs.values())
     # Params the caller asked to receive as whole DataFrames. Normalization must
     # leave these alone — see `_normalize_variable_inputs`. Same resolution rule
     # as scifor's `as_table_set` (True means every loadable input).
     _as_table_params = (
-        {name for name, spec in inputs.items() if _is_loadable(spec)}
+        {name for name, spec in inputs.items() if is_loadable(spec)}
         if as_table is True
         else set(as_table or ())
     )
@@ -1263,7 +1231,6 @@ def _find_skip_gate_record(
     cross-skip against another group's / the stale record.
     """
     from . import provenance_query
-    from .database import _schema_str
 
     schema_keys = set(db.dataset_schema_keys)
     conds = [
@@ -1275,7 +1242,7 @@ def _find_skip_gate_record(
     for k, v in schema_combo.items():
         if k in schema_keys:
             conds.append(f's."{k}" = ?')
-            params.append(_schema_str(v))
+            params.append(schema_str(v))
     # LEFT JOIN _schema: a grand-aggregation output (zero iterated schema keys)
     # is saved at the ROOT level with a NULL schema_id — an inner join would
     # silently drop it from the gate, forcing eternal recompute. With no
@@ -1417,7 +1384,7 @@ def _build_skip_hook(
     except ImportError:
         _PathOutput = None
     for name, value in inputs.items():
-        if _is_loadable(value):
+        if is_loadable(value):
             continue
         if _PathInput is not None and isinstance(value, _PathInput):
             continue
@@ -1442,7 +1409,7 @@ def _build_skip_hook(
     from .provenance import normalize_as_table
 
     _loadable_params = [
-        p for p, s in inputs.items() if _is_loadable(s) or isinstance(s, PathInput)
+        p for p, s in inputs.items() if is_loadable(s) or isinstance(s, PathInput)
     ]
     run_options_now = provenance_query.run_options_label(
         bool(distribute),
@@ -1748,7 +1715,7 @@ def _for_each_prepare(
     _discovered_combos = None
     if _has_pathinput(inputs):
         Log.debug("PathInput detected, running filesystem discovery")
-        pi = _find_pathinput(inputs)
+        pi = find_pathinput(inputs)
         if pi is not None:
             # Keys with provably NO source: the database could not fill them
             # (Step 2) and this template has no {key} placeholder, so discovery
@@ -1887,7 +1854,6 @@ def _for_each_prepare(
     if _resolved_db_for_str is not None and hasattr(
         _resolved_db_for_str, "dataset_schema_keys"
     ):
-        from scidb.database import _canonical_numeric_value, _schema_str
 
         _sk_set = set(_resolved_db_for_str.dataset_schema_keys)
         _sk_types = getattr(_resolved_db_for_str, "dataset_schema_key_types", {}) or {}
@@ -1901,9 +1867,9 @@ def _for_each_prepare(
                     # collapses to one identity before stringification.
                     # dict.fromkeys dedupes spellings that collapsed.
                     values = list(
-                        dict.fromkeys(_canonical_numeric_value(key, v) for v in values)
+                        dict.fromkeys(canonical_numeric_value(key, v) for v in values)
                     )
-                metadata_iterables[key] = [_schema_str(v) for v in values]
+                metadata_iterables[key] = [schema_str(v) for v in values]
                 stringify_count += 1
         Log.debug(f"stringified {stringify_count} schema key iterable(s)")
 
@@ -1915,7 +1881,7 @@ def _for_each_prepare(
             for combo in _discovered_combos:
                 for k in canon_keys:
                     if k in combo:
-                        combo[k] = _schema_str(_canonical_numeric_value(k, combo[k]))
+                        combo[k] = schema_str(canonical_numeric_value(k, combo[k]))
             if canon_keys:
                 # Canonicalization can collapse combos that differed only in
                 # spelling (both "6MWT-1.mat" and "6MWT-001.mat" on disk) —
@@ -1960,7 +1926,6 @@ def _for_each_prepare(
         # was DB-resolved AND no PathInput is present.
         _dryrun_all_combos = None
         if needs_resolve and not _has_pathinput(inputs):
-            from scidb.database import _schema_str
 
             filter_db = resolved_db
             if filter_db is not None and hasattr(filter_db, "dataset_schema_keys"):
@@ -1978,7 +1943,7 @@ def _for_each_prepare(
                     _dryrun_all_combos = [
                         dict(zip(keys, combo, strict=False))
                         for combo in raw_combos
-                        if tuple(_schema_str(combo[i]) for i in schema_indices)
+                        if tuple(schema_str(combo[i]) for i in schema_indices)
                         in existing_set
                     ]
 
@@ -2030,7 +1995,6 @@ def _for_each_prepare(
     all_combos = None
     if needs_resolve and not _has_pathinput(inputs):
         Log.debug("pre-filtering combos to only existing schema combinations")
-        from scidb.database import _schema_str
 
         filter_db = resolved_db
         schema_keys_set = set(filter_db.dataset_schema_keys)
@@ -2050,7 +2014,7 @@ def _for_each_prepare(
             filtered = [
                 dict(zip(keys, combo, strict=False))
                 for combo in raw_combos
-                if tuple(_schema_str(combo[i]) for i in schema_indices) in existing_set
+                if tuple(schema_str(combo[i]) for i in schema_indices) in existing_set
             ]
             removed = len(raw_combos) - len(filtered)
             if removed > 0:
@@ -3385,7 +3349,7 @@ def _convert_inputs(
                 Log.debug(f"input '{param_name}': deferred ColName() -> scifor marker")
             else:
                 result[param_name] = _resolve_colname_from_db(var_spec, db)
-        elif _is_loadable(var_spec):
+        elif is_loadable(var_spec):
             t0 = time.perf_counter()
             loaded = _load_input(var_spec, db, where, param_name=param_name)
             elapsed = time.perf_counter() - t0
@@ -3478,7 +3442,7 @@ def _log_loaded_input(
     """Log details about a loaded input."""
     import pandas as pd
 
-    type_name = _input_type_name(var_spec)
+    type_name = spec_name(var_spec)
 
     if isinstance(loaded, pd.DataFrame):
         Log.debug(
@@ -3491,33 +3455,6 @@ def _log_loaded_input(
         )
     else:
         Log.debug(f"input '{param_name}': loaded {type_name} in {elapsed:.3f}s")
-
-
-def _input_type_name(var_spec: Any) -> str:
-    """Get a human-readable type name for a var_spec."""
-    if isinstance(var_spec, Merge):
-        return var_spec.__name__
-    if isinstance(var_spec, Fixed):
-        inner = var_spec.data
-        inner_name = _input_type_name(inner)
-        fixed_str = ", ".join(f"{k}={v}" for k, v in var_spec.fixed_metadata.items())
-        return f"Fixed({inner_name}, {fixed_str})"
-    if isinstance(var_spec, Variant):
-        inner_name = _input_type_name(var_spec.var_type)
-        bp_str = ", ".join(
-            f"{k}={v}" for k, v in sorted(var_spec.branch_params.items())
-        )
-        return f"Variant({inner_name}, {bp_str})"
-    if isinstance(var_spec, AcrossVariants):
-        return f"AcrossVariants({_input_type_name(var_spec.var_type)})"
-    if isinstance(var_spec, ColumnSelection):
-        inner_name = _input_type_name(var_spec.data)
-        return f"ColumnSelection({inner_name}, {var_spec.columns})"
-    if isinstance(var_spec, type):
-        return var_spec.__name__
-    if hasattr(var_spec, "__name__"):
-        return var_spec.__name__
-    return type(var_spec).__name__
 
 
 def _convert_inputs_for_display(inputs: dict[str, Any]) -> dict[str, Any]:
@@ -3927,10 +3864,9 @@ def _load_input(
         fixed_meta = dict(var_spec.fixed_metadata)
         _sk = _get_schema_keys(db)
         if _sk:
-            from .database import _schema_str
-
+        
             fixed_meta = {
-                k: _schema_str(v) if k in _sk else v for k, v in fixed_meta.items()
+                k: schema_str(v) if k in _sk else v for k, v in fixed_meta.items()
             }
         return _scifor.Fixed(inner_loaded, **fixed_meta)
 
@@ -4239,22 +4175,6 @@ def _make_plot_wrapper(fn: Any, path_param: str) -> Any:
     return wrapped
 
 
-def _endpoint_kind(fn_name: str) -> "str | None":
-    """Endpoint detection only — "plot" | "stat" | None by name prefix.
-
-    Side-effect-free subset of :func:`_endpoint_policy` for callers that
-    need classification without the contract checks (Pipeline.endpoints()).
-
-    Delegates to the one shared classifier (``scidb.discover.function_role``)
-    so the prefix strings live in exactly one place; "endpoint" is just the
-    plot/stat subset of the four roles.
-    """
-    from .discover import function_role
-
-    role = function_role(fn_name)
-    return role if role in ("plot", "stat") else None
-
-
 def _endpoint_policy(fn_name: str, inputs: dict, finalized: bool, as_table):
     """Endpoint (plot_/stat_) policy shared by scidb.for_each AND the MATLAB
     bridge's for_each_prepare — one source of truth for detection, the
@@ -4268,7 +4188,7 @@ def _endpoint_policy(fn_name: str, inputs: dict, finalized: bool, as_table):
     """
     from scifor import PathOutput
 
-    endpoint_kind = _endpoint_kind(fn_name)
+    endpoint_kind = _roles_endpoint_kind(fn_name)
     path_param = None
     if endpoint_kind is not None:
         path_param = next(
@@ -4959,7 +4879,7 @@ def _resolve_per_combo_loader(
         return _apply_per_combo_col_selection(raw, spec.columns, cls_name)
 
     # Note: a bare PathInput never reaches this function anymore -- since
-    # _is_loadable excludes it, _convert_inputs passes it through as a
+    # input_spec.is_loadable excludes it, _convert_inputs passes it through as a
     # constant and its per-combo resolution happens inside scifor's
     # for_each loop (via _path_input_resolver), not here. Only
     # Fixed(PathInput(...)) still routes through PerComboLoader (the
@@ -5675,33 +5595,6 @@ def _save_results(
 # ---------------------------------------------------------------------------
 
 
-def _is_loadable(var_spec: Any) -> bool:
-    """Check if an input spec is loadable (var type, Fixed, Merge, ColumnSelection, etc.).
-
-    PathInput is deliberately excluded before the ``hasattr(..., "load")``
-    fallback: it has a real ``.load()`` method (for standalone/scifor use),
-    but under scidb its per-combo resolution is now owned by scifor's
-    for_each loop directly (see resolve_pathinput_discovery /
-    _resolve_path_inputs), not scidb's variable-loading machinery. Treating
-    it as loadable here would (re)route it through PerComboLoader and would
-    also flip _get_direct_constants/_serialize_inputs' classification of it
-    for version-key hashing.
-    """
-    if isinstance(var_spec, PathInput):
-        return False
-    try:
-        import pandas as pd
-
-        if isinstance(var_spec, pd.DataFrame):
-            return True
-    except ImportError:
-        pass
-    return isinstance(
-        var_spec,
-        (type, Fixed, Variant, AcrossVariants, ColumnSelection, Merge),
-    ) or hasattr(var_spec, "load")
-
-
 def _get_schema_keys(db: Any | None) -> set:
     """Return the set of dataset_schema_keys from db or the global database."""
     if db is not None and hasattr(db, "dataset_schema_keys"):
@@ -5725,16 +5618,6 @@ def _has_pathinput(inputs: dict) -> bool:
         if isinstance(v, Fixed) and isinstance(v.data, PathInput):
             return True
     return False
-
-
-def _find_pathinput(inputs: dict) -> PathInput | None:
-    """Find the first PathInput in inputs, unwrapping Fixed if needed."""
-    for v in inputs.values():
-        if isinstance(v, PathInput):
-            return v
-        if isinstance(v, Fixed) and isinstance(v.data, PathInput):
-            return v.data
-    return None
 
 
 def _describe_save_data(val) -> str:

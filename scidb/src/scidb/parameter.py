@@ -132,7 +132,7 @@ class Parameter(EachOf):
         # MUST raise AttributeError, never TypeError, for a multi-valued
         # Parameter: hasattr() only swallows AttributeError, so anything
         # else escapes as a crash. scidb probes exactly this way --
-        # foreach._is_loadable ends in hasattr(var_spec, "load") -- so a
+        # input_spec.is_loadable ends in hasattr(var_spec, "load") -- so a
         # TypeError here takes down every for_each carrying a multi-valued
         # Parameter.
         if not self.alternatives:

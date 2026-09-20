@@ -731,7 +731,7 @@ class TestPathInputIsItsTemplate:
     call-site identity becomes the display string ``PathInput('{s}/a.csv')``
     instead of ``to_key()``, and two templates differing only by
     ``root_folder`` collapse into ONE call site. The exclusion
-    ``foreach._is_loadable`` has always had, now in ``input_spec`` too."""
+    ``is_loadable`` has always had; both now live in ``input_spec``."""
 
     @staticmethod
     def _fn(path):

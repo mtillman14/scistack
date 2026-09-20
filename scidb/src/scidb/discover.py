@@ -56,55 +56,11 @@ from scifor.discovery import PathInsert, purge_module, read_project_name, walk_p
 
 from .parameter import Parameter
 from .pipeline import is_scistack_function
+from .roles import FunctionRole, function_role
 from .variable import BaseVariable
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Function role
-# ---------------------------------------------------------------------------
-# The name prefixes that mark a function's role, longest-match irrelevant
-# (they are disjoint). Checked on the *name*, which is what crosses the MATLAB
-# bridge unchanged — so a role needs no decorator (Python-only) and no classdef
-# (MATLAB-only).
-#
-# ``stat_`` is SINGULAR. ``stats_summary`` is an ordinary process function; the
-# sidebar may say "Stats", the prefix may not.
-_ROLE_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("plot_", "plot"),
-    ("stat_", "stat"),
-    ("glue_", "glue"),
-)
-
-FunctionRole = str  # Literal["process", "plot", "stat", "glue"]
-
-# ``{role: prefix}`` for the prefixed roles. Exported for the one caller that
-# cannot use :func:`function_role` — a SQL filter over ``_invocation`` names,
-# which must not fetch every invocation just to classify it in Python.
-ROLE_PREFIX: dict[str, str] = {role: prefix for prefix, role in _ROLE_PREFIXES}
-
-# Every role, in the order a UI should present them. Exported so the GUI can
-# build its filter without holding a second copy of the vocabulary.
-FUNCTION_ROLES: tuple[str, ...] = ("process", "plot", "stat", "glue")
-
-
-def function_role(name: str) -> FunctionRole:
-    """Classify a function by its name prefix.
-
-    ``"process"`` (no recognized prefix) is the default bucket — the ordinary
-    pipeline step. ``"plot"``, ``"stat"`` and ``"glue"`` are the prefixed roles.
-
-    This is the single classifier for the whole stack. The prefixes already
-    drive real execution behaviour inside scidb (endpoint policy, draft/record
-    mode, artifact stamping), so the GUI must not own a second copy of the
-    strings — the same choke-point reasoning as the discovery consolidation.
-    A fifth role later touches this function and nothing else.
-    """
-    for prefix, role in _ROLE_PREFIXES:
-        if name.startswith(prefix):
-            return role
-    return "process"
 
 
 def is_parameter(obj: Any) -> bool:

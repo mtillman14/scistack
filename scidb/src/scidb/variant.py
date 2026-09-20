@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from .input_spec import spec_name
+
 #: Reserved namespace marking a **code-version** pin inside an otherwise ordinary
 #: branch-params filter dict.
 #:
@@ -442,8 +444,6 @@ class Variant:
     @property
     def __name__(self) -> str:
         """Display name for format_inputs and error messages."""
-        from .foreach import _input_type_name
-
-        inner_name = _input_type_name(self.var_type)
+        inner_name = spec_name(self.var_type)
         kv = ", ".join(f"{k}={v}" for k, v in sorted(self.branch_params.items()))
         return f"Variant({inner_name}, {kv})"

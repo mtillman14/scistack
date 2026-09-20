@@ -14,7 +14,8 @@ The hybrid contract:
 
 import numpy as np
 import pytest
-from scidb.database import DatabaseManager, _canonical_numeric_value
+from scidb.database import DatabaseManager
+from scidb.schema_values import canonical_numeric_value
 from scidb.exceptions import SchemaKeyTypeError
 
 import scifor as _scifor
@@ -99,18 +100,18 @@ class TestDeclarationValidation:
 
 class TestCanonicalNumericValue:
     def test_spellings_collapse(self):
-        assert _canonical_numeric_value("trial", "001") == 1
-        assert _canonical_numeric_value("trial", 1) == 1
-        assert _canonical_numeric_value("trial", 1.0) == 1
-        assert _canonical_numeric_value("trial", "1.50") == 1.5
+        assert canonical_numeric_value("trial", "001") == 1
+        assert canonical_numeric_value("trial", 1) == 1
+        assert canonical_numeric_value("trial", 1.0) == 1
+        assert canonical_numeric_value("trial", "1.50") == 1.5
 
     def test_non_numeric_raises(self):
         with pytest.raises(SchemaKeyTypeError, match="non-numeric"):
-            _canonical_numeric_value("trial", "abc")
+            canonical_numeric_value("trial", "abc")
 
     def test_bool_raises(self):
         with pytest.raises(SchemaKeyTypeError, match="bool"):
-            _canonical_numeric_value("trial", True)
+            canonical_numeric_value("trial", True)
 
 
 class TestDirectSaveLoadIdentity:

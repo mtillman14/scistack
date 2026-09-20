@@ -17,7 +17,7 @@ import json
 import logging
 
 from .bindings import signature_conflicts_with, variant_signature
-from .database import _from_schema_str
+from .schema_values import from_schema_str
 from .provenance import (
     CONSTANT_TYPE,
     GLUE_TYPE,
@@ -1438,7 +1438,7 @@ def _fetch_record_node(duck, record_id: str, schema_keys: list[str], restore=Non
     (``DatabaseManager.restore_schema_value``); callers holding a manager
     pass it, so a trace shows ``cycle=10`` spelled as the record was saved.
     """
-    restore = restore or (lambda _key, value: _from_schema_str(value))
+    restore = restore or (lambda _key, value: from_schema_str(value))
     schema_cols = ", ".join(f's."{k}"' for k in schema_keys)
     select_extra = (", " + schema_cols) if schema_keys else ""
     rows = duck._fetchall(
@@ -2925,8 +2925,7 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
     from scifor import ColName
 
     from .across_variants import AcrossVariants
-    from .foreach import _is_loadable
-    from .input_spec import type_name
+    from .input_spec import is_loadable, type_name
     from .provenance_save import compute_input_selectors
 
     try:
@@ -2945,7 +2944,7 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
             continue
         if isinstance(spec, ColName):
             continue
-        if _is_loadable(spec):
+        if is_loadable(spec):
             if isinstance(spec, AcrossVariants):
                 across_variants.append(name)
             # ONE unwrap (`input_spec`), so this never again knows about a

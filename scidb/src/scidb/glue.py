@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from .exceptions import SciStackError
 from .log import Log
+from .per_combo import PerComboLoader, PerComboLoaderMerge
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pandas as pd
@@ -46,7 +47,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 HIDDEN_PREFIX = "__"
 
 # The name prefix that marks a function as glue. Kept here, next to the
-# machinery it governs; ``scidb.discover.function_role`` is the one public
+# machinery it governs; ``scidb.roles.function_role`` is the one public
 # classifier over it (and over ``plot_``/``stat_``).
 GLUE_PREFIX = "glue_"
 
@@ -436,20 +437,20 @@ def is_constant_input(spec: Any) -> bool:
     already expanded the ``EachOf`` into one recursive call per concrete value.
 
     ``PathInput`` and an unexpanded ``EachOf`` are excluded explicitly even
-    though ``_is_loadable`` also returns False for both. Neither is a *value*:
+    though ``input_spec.is_loadable`` also returns False for both. Neither is a *value*:
     a PathInput resolves per combo (glue on it is refused outright by
     ``refuse_pathinput_glue``, which runs first), and an EachOf is a fan-out
     axis — see :func:`is_constant_axis` for that case. Relying on
-    ``_is_loadable`` happening to say False for them would rest this
+    ``input_spec.is_loadable`` happening to say False for them would rest this
     correctness on a docstring about *loading*.
     """
     from scifor import ColName, EachOf, PathInput
 
-    from .foreach import _is_loadable
+    from .input_spec import is_loadable
 
     if isinstance(spec, (ColName, EachOf, PathInput)):
         return False
-    return not _is_loadable(spec)
+    return not is_loadable(spec)
 
 
 def is_constant_axis(spec: Any) -> bool:
@@ -832,8 +833,6 @@ def fuse_glue(
     """
     import pandas as pd
     import scifor as _scifor
-
-    from .foreach import PerComboLoader, PerComboLoaderMerge
 
     fusion = GlueFusion()
     for param, chain in chains.items():

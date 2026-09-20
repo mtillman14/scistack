@@ -20,6 +20,8 @@ import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
+from .schema_values import schema_str
+
 if TYPE_CHECKING:
     from .database import DatabaseManager
 
@@ -861,17 +863,6 @@ def raw_sql(sql: str) -> RawFilter:
 # ---------------------------------------------------------------------------
 
 
-def _to_schema_str(value) -> str:
-    """Convert a value to its VARCHAR representation as stored in _schema.
-
-    Mirrors database._schema_str: whole-number floats become integers, e.g.
-    1.0 → "1".  Used so equality / isin comparisons match the stored strings.
-    """
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
-
-
 class SchemaKey:
     """Builder for schema-key-based filters.
 
@@ -976,7 +967,7 @@ class SchemaKeyCompareFilter(Filter):
         else:
             # Equality/inequality: compare as the stored VARCHAR representation.
             col_expr = f'"{self.key}"'
-            param = _to_schema_str(self.value)
+            param = schema_str(self.value)
 
         try:
             rows = db._duck._fetchall(
@@ -993,7 +984,7 @@ class SchemaKeyInFilter(Filter):
     """Filter on a schema key using set membership (IN).
 
     Values are converted to their stored VARCHAR representation via
-    _to_schema_str so that e.g. isin([1, 2]) matches subject 1 and 2 even
+    schema_str so that e.g. isin([1, 2]) matches subject 1 and 2 even
     though subjects are stored as "1" and "2".
 
     Args:
@@ -1009,7 +1000,7 @@ class SchemaKeyInFilter(Filter):
         return f"SchemaKeyInFilter(schema:{self.key} IN {self.values!r})"
 
     def to_key(self) -> str:
-        return f"schema:{self.key} IN {sorted(_to_schema_str(v) for v in self.values)}"
+        return f"schema:{self.key} IN {sorted(schema_str(v) for v in self.values)}"
 
     def resolve(
         self,
@@ -1036,7 +1027,7 @@ class SchemaKeyInFilter(Filter):
         if 0 <= target_level_idx < filter_key_idx:
             return target_ids
 
-        str_values = [_to_schema_str(v) for v in self.values]
+        str_values = [schema_str(v) for v in self.values]
         placeholders = ", ".join(["?"] * len(str_values))
         try:
             rows = db._duck._fetchall(

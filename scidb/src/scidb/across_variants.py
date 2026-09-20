@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from .input_spec import spec_name
+
 
 class AcrossVariants:
     """
@@ -90,6 +92,4 @@ class AcrossVariants:
     @property
     def __name__(self) -> str:
         """Display name for format_inputs and error messages."""
-        from .foreach import _input_type_name
-
-        return f"AcrossVariants({_input_type_name(self.var_type)})"
+        return f"AcrossVariants({spec_name(self.var_type)})"

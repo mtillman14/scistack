@@ -584,13 +584,12 @@ def for_each_prepare(
     """
     from scidb.bindings import COMBO_KEY, RECORD_ID_COLUMN
     from scidb.foreach import (
-        PerComboLoader,
-        PerComboLoaderMerge,
         _build_skip_hook,
         _for_each_prepare,
         _resolve_for_columns,
     )
     from scidb.log import Log
+    from scidb.per_combo import PerComboLoader, PerComboLoaderMerge
 
     # Reconstruct Python wrappers from the kind-tagged spec
     inputs = {

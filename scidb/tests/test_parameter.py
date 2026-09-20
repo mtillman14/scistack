@@ -405,7 +405,7 @@ class TestNoValues:
             op(Parameter())
 
     def test_hasattr_is_false_and_does_not_raise_typeerror(self):
-        """scidb.foreach._is_loadable probes with hasattr(spec, "load"),
+        """scidb.input_spec.is_loadable probes with hasattr(spec, "load"),
         which swallows AttributeError and NOTHING else -- a TypeError here
         would take down every for_each carrying an unvalued Parameter."""
         assert hasattr(Parameter(), "load") is False
@@ -499,7 +499,7 @@ class TestVersionKeyIdentity:
 
     def test_multi_value_attribute_probe_raises_attribute_error(self):
         """hasattr() only swallows AttributeError -- a TypeError here would
-        crash foreach._is_loadable's hasattr(var_spec, "load") probe for
+        crash input_spec.is_loadable's hasattr(var_spec, "load") probe for
         every multi-valued Parameter."""
         p = Parameter(10, 20)
         assert not hasattr(p, "load")

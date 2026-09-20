@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..discover import ROLE_PREFIX, function_role
+from ..roles import ROLE_PREFIX, function_role
 from ..log import Log
 
 # Embedded images above this size fall back to file links (keeps index.html
