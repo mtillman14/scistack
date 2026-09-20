@@ -604,14 +604,6 @@ def for_each(
         _inject_combo_metadata = True
         Log.debug("generates_file=True → combo metadata injection + lineage-only save")
 
-    # Build the skip_computed pre-combo hook on the plain function (its
-    # function_hash + input bindings are the graph identity; no wrapper needed).
-    if skip_computed and not dry_run and outputs and active_db is not None:
-        _pre_combo_hook = _build_skip_hook(
-            fn, outputs, active_db, inputs, as_table=as_table, distribute=distribute
-        )
-        Log.debug(f"built skip_computed hook for {getattr(fn, '__name__', repr(fn))}")
-
     # --- Step 1.5: Resolve for_columns (iterate-mode ColumnSelection) inputs ---
     # Expand empty columns ([] / all) -> all data columns and validate the shared column
     # axis BEFORE version keys are built (Step 8) and before dry-run display,
@@ -620,6 +612,18 @@ def for_each(
     _has_for_columns = any(
         _iterate_column_selection(s) is not None for s in inputs.values()
     )
+
+    # Build the skip_computed pre-combo hook on the plain function (its
+    # function_hash + input bindings are the graph identity; no wrapper needed).
+    # AFTER for_columns resolution: the hook compares each input's selector
+    # against the recorded edge, and the edge carries the CONCRETE column
+    # list — built on the unresolved `for_columns()` it compared `[]` against
+    # `["a", "b"]` and recomputed every combo of a per-column step forever.
+    if skip_computed and not dry_run and outputs and active_db is not None:
+        _pre_combo_hook = _build_skip_hook(
+            fn, outputs, active_db, inputs, as_table=as_table, distribute=distribute
+        )
+        Log.debug(f"built skip_computed hook for {getattr(fn, '__name__', repr(fn))}")
 
     # No output wrapping: scifor spreads tuple returns across outputs natively and
     # flatten/distribute consume the raw return directly. (The former LineageFcn
@@ -1316,6 +1320,22 @@ def _build_skip_hook(
     # Plain function name (``.fcn`` peel kept only for any legacy wrapped input).
     fn_name = getattr(getattr(fn, "fcn", fn), "__name__", None) or repr(fn)
     selectors = compute_input_selectors(inputs)
+    # The run options THIS call runs under, spelled the way the graph spells
+    # them (`run_options_label`), so a record produced under other options —
+    # pooled where this call splits, distributed where it does not — is not
+    # taken as "already computed" merely because its edge set matches.
+    from .intent import parse_selector
+    from .provenance import normalize_as_table
+
+    _loadable_params = [
+        p for p, s in inputs.items() if _is_loadable(s) or isinstance(s, PathInput)
+    ]
+    run_options_now = provenance_query.run_options_label(
+        bool(distribute),
+        normalize_as_table(as_table, _loadable_params),
+        [p for p, s in selectors.items() if (parse_selector(s) or {}).get("iterate")],
+        [p for p, s in inputs.items() if isinstance(s, AcrossVariants)],
+    )
 
     def _combo_str(schema_combo: dict) -> str:
         return ", ".join(f"{k}={v}" for k, v in sorted(schema_combo.items()))
@@ -1390,6 +1410,11 @@ def _build_skip_hook(
             return _recompute(combo_str, "no provenance record")
         if sig["function_hash"] != fn_hash:
             return _recompute(combo_str, "function hash changed")
+        if sig.get("run_options", run_options_now) != run_options_now:
+            return _recompute(
+                combo_str,
+                f"run options changed ({sig['run_options']} -> {run_options_now})",
+            )
 
         stored_var = sig["var_inputs"]  # param -> [(record_id, selector), ...]
         for key, rid_val in combo.items():

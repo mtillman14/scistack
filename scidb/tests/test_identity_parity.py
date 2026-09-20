@@ -110,14 +110,23 @@ def _recompute_invocation_ids(db, type_name: str) -> list[tuple[str, str]]:
             continue
         inv_id, _fn, fn_hash = inv
         sig = pq.stored_invocation_signature(duck, rid)
-        as_table, distribute = duck._fetchone(
-            "SELECT as_table, distribute FROM _invocation WHERE invocation_id = ?", [inv_id]
+        as_table, distribute, across_variants = duck._fetchone(
+            "SELECT as_table, distribute, across_variants FROM _invocation "
+            "WHERE invocation_id = ?",
+            [inv_id],
         )
         bindings = [(p, r, s) for p, edges in sig["var_inputs"].items() for r, s in edges]
         bindings += [
             (p, constant_record_id_from_hash(h), None) for p, h in sig["const_hashes"].items()
         ]
-        out.append((inv_id, compute_invocation_id(fn_hash, as_table, distribute, bindings)))
+        out.append(
+            (
+                inv_id,
+                compute_invocation_id(
+                    fn_hash, as_table, distribute, bindings, across_variants=across_variants
+                ),
+            )
+        )
     return out
 
 
@@ -472,3 +481,133 @@ class TestVariantSplitIsPredicted:
         for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
         pairs = _recompute_invocation_ids(db, "Out")
         assert pairs and all(s == r for s, r in pairs)
+
+
+class TestAcrossVariantsIsAFact:
+    """`AcrossVariants(X)` pools every variant group into ONE call. Nothing
+    on the edges says so (a pooled call and a one-group split call write
+    the same edges), so it is recorded as a run option —
+    `_invocation.across_variants`, folded into the invocation id like
+    `as_table` — and both backward reconstructions read it: the call id
+    (forward `__across_variants` == backward) and the expected-invocation
+    predictor (pool, don't split). Until 2026-09-20 neither could see it and
+    a pooled step could never plan green."""
+
+    def _run(self):
+        from scidb import AcrossVariants
+
+        _seed_variants()
+        for_each(pooled, {"value": AcrossVariants(Scaled)}, [Out], subject=[], trial=[])
+
+    def test_the_run_writes_one_invocation_per_location(self, db):
+        self._run()
+        rows = db._duck._fetchall(
+            "SELECT across_variants FROM _invocation WHERE function_name = ?", ["pooled"]
+        )
+        assert len(rows) == 4, rows  # 2 subjects x 2 trials, both groups pooled
+        assert all(list(av) == ["value"] for (av,) in rows), rows
+
+    def test_call_id_forward_equals_backward(self, db):
+        from scidb import AcrossVariants
+
+        self._run()
+        forward = ForEachConfig(pooled, {"value": AcrossVariants(Scaled)}).to_call_id()
+        assert forward in _backward_call_ids(db, "pooled")
+        via_configs = {
+            pq.config_call_id("pooled", cfg)
+            for cfg in pq.function_variant_configs(db._duck, "pooled")
+        }
+        assert forward in via_configs
+        # ...and differs from the split call site's id: two different call sites.
+        assert forward != ForEachConfig(pooled, {"value": Scaled}).to_call_id()
+
+    def test_every_written_invocation_is_predicted(self, db):
+        from scilineage.hashing import compute_function_hash
+
+        self._run()
+        expected = pq.expected_invocations_for_function(
+            db, "pooled", compute_function_hash(pooled, truncate=16)
+        )
+        written = {
+            inv
+            for (inv,) in db._duck._fetchall(
+                "SELECT invocation_id FROM _invocation WHERE function_name = ?", ["pooled"]
+            )
+        }
+        predicted = {inv for inv, _sid in expected}
+        assert predicted == written, (
+            f"predicted-only: {sorted(predicted - written)}, "
+            f"written-only: {sorted(written - predicted)}"
+        )
+
+    def test_the_step_plans_green_after_its_run(self, db):
+        from scidb import AcrossVariants
+        from scidb.state import check_node_state
+
+        self._run()
+        inputs = {"value": AcrossVariants(Scaled)}
+        forward = ForEachConfig(pooled, inputs).to_call_id()
+        node = check_node_state(pooled, [Out], inputs=inputs, db=db, call_id=forward)
+        assert node["state"] == "green", node
+
+    def test_invocation_ids_rebuild_from_the_graph(self, db):
+        self._run()
+        pairs = _recompute_invocation_ids(db, "Out")
+        assert pairs and all(s == r for s, r in pairs)
+
+    def test_pooled_and_split_ids_differ_on_identical_edges(self):
+        """The identity term: the same edges, pooled, are a different call."""
+        edges = [("value", "r1", None), ("value", "r2", None)]
+        split = compute_invocation_id("h", None, False, edges)
+        pooled_id = compute_invocation_id("h", None, False, edges, across_variants=["value"])
+        assert split != pooled_id
+        # Empty pooling leaves every pre-existing id byte-identical.
+        assert compute_invocation_id("h", None, False, edges, across_variants=[]) == split
+
+
+class TestSkipGateReadsRunOptions:
+    """The skip gate compares a candidate's edges and constants; run options
+    were invisible to it. Two consequences, both closed 2026-09-20: a record
+    produced under OTHER options (pooled where this call splits) with the
+    same edge set counted as "already computed", and a `for_columns()` step
+    — whose hook was built BEFORE the empty column list was resolved —
+    compared `[]` against the concrete recorded columns and recomputed
+    forever."""
+
+    def test_for_columns_rerun_skips_every_combo(self, db, caplog):
+        import logging
+
+        _seed()
+        for_each(first_a, {"value": Wide.for_columns()}, [Out], subject=[], trial=[], cycle=[])
+        before = len(Out.load(as_df=True, version="all"))
+        with caplog.at_level(logging.INFO):
+            for_each(
+                first_a,
+                {"value": Wide.for_columns()},
+                [Out],
+                subject=[],
+                trial=[],
+                cycle=[],
+                skip_computed=True,
+            )
+        assert len(Out.load(as_df=True, version="all")) == before
+        import re
+
+        m = re.search(r"skip_computed: (\d+)/(\d+) combos skipped", caplog.text)
+        assert m and m.group(1) == m.group(2) != "0", caplog.text
+
+    def test_a_pooled_record_does_not_satisfy_a_split_call(self, db, caplog):
+        """One variant group only, so pooled and split consume the SAME edges;
+        only the recorded run option tells them apart."""
+        import logging
+
+        from scidb import AcrossVariants
+
+        _seed()
+        for_each(scaled, {"value": Wide, "factor": 2.0}, [Scaled], subject=[], trial=[], cycle=[])
+        for_each(pooled, {"value": AcrossVariants(Scaled)}, [Out], subject=[], trial=[])
+        before = len(Out.load(as_df=True, version="all"))
+        with caplog.at_level(logging.DEBUG, logger="scidb"):
+            for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[], skip_computed=True)
+        assert len(Out.load(as_df=True, version="all")) == before + 4
+        assert "run options changed" in caplog.text, caplog.text

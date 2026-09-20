@@ -109,3 +109,17 @@ class TestRecorded:
             f"records={db._duck._fetchall('SELECT type, count(*) FROM _record GROUP BY type')}"
         )
         assert "for_columns" not in variants[0]["run_options"]
+
+
+class TestAcrossVariantsInTheLabel:
+    def test_pooling_is_reported_like_its_siblings(self):
+        from scidb.provenance_query import run_options_label
+
+        assert run_options_label(False, None, None, ["value"]) == (
+            "distribute=false, across_variants=[value]"
+        )
+        assert run_options_label(True, ["cycles"], ["value"], ["b", "a"]) == (
+            "distribute=true, as_table=[cycles], for_columns=[value], "
+            "across_variants=[a, b]"
+        )
+        assert run_options_label(False, None, None, []) == "distribute=false"

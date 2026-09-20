@@ -390,7 +390,8 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
         inv_rows = _chunked_in(
             duck,
             "SELECT io.output_record_id, io.invocation_id, inv.function_name, "
-            "inv.function_hash, inv.distribute, inv.as_table, inv.for_columns "
+            "inv.function_hash, inv.distribute, inv.as_table, inv.for_columns, "
+            "inv.across_variants "
             "FROM _invocation_output io "
             "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
             "WHERE io.output_record_id IN ({ph})",
@@ -404,6 +405,7 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
             distribute,
             as_table,
             for_columns,
+            across_variants,
         ) in inv_rows:
             prev = rec_to_inv.get(out_rid)
             if prev is None or inv_id < prev[0]:
@@ -411,7 +413,7 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
             inv_fn_name[inv_id] = fn_name
             inv_fn_hash[inv_id] = fn_hash
             inv_run_options[inv_id] = run_options_label(
-                distribute, as_table, for_columns
+                distribute, as_table, for_columns, across_variants
             )
 
         # 2) inputs for the newly discovered invocations (skip ones already loaded).
@@ -500,7 +502,9 @@ def branch_params_batch(duck, record_ids, max_depth: int = 20) -> dict:
     return out
 
 
-def run_options_label(distribute, as_table, for_columns=None) -> str:
+def run_options_label(
+    distribute, as_table, for_columns=None, across_variants=None
+) -> str:
     """One string for an invocation's identity-bearing run options.
 
     ``distribute`` and ``as_table`` are the two ``for_each`` flags folded into
@@ -524,14 +528,24 @@ def run_options_label(distribute, as_table, for_columns=None) -> str:
     one fact twice. It IS in this label, because two records at one location
     — one per-column, one whole-table — are different runs a reader has to be
     able to tell apart.
+
+    ``across_variants=[param]`` (2026-09-20): the input pooled every variant
+    group into the one call (``AcrossVariants``) instead of one call per
+    group. Stored on ``_invocation.across_variants`` and folded into
+    ``invocation_id`` like its siblings — it cannot be derived from the
+    edges, since a pooled call and a one-group split call write the same
+    ones.
     """
     names = sorted(str(x) for x in (as_table or ()))
     per_col = sorted(str(x) for x in (for_columns or ()))
+    pooled = sorted(str(x) for x in (across_variants or ()))
     label = f"distribute={'true' if distribute else 'false'}"
     if names:
         label += f", as_table=[{', '.join(names)}]"
     if per_col:
         label += f", for_columns=[{', '.join(per_col)}]"
+    if pooled:
+        label += f", across_variants=[{', '.join(pooled)}]"
     return label
 
 
@@ -542,12 +556,12 @@ def invocation_run_options_batch(duck, invocation_ids) -> dict:
         return {}
     rows = _chunked_in(
         duck,
-        "SELECT invocation_id, distribute, as_table, for_columns FROM _invocation "
-        "WHERE invocation_id IN ({ph})",
+        "SELECT invocation_id, distribute, as_table, for_columns, across_variants "
+        "FROM _invocation WHERE invocation_id IN ({ph})",
         ids,
     )
     return {
-        inv_id: run_options_label(dist, at, fc) for inv_id, dist, at, fc in rows
+        inv_id: run_options_label(dist, at, fc, av) for inv_id, dist, at, fc, av in rows
     }
 
 
@@ -568,13 +582,13 @@ def run_option_axes(duck, fn_names) -> dict:
         return {}
     rows = _chunked_in(
         duck,
-        "SELECT DISTINCT function_name, distribute, as_table, for_columns "
-        "FROM _invocation WHERE function_name IN ({ph})",
+        "SELECT DISTINCT function_name, distribute, as_table, for_columns, "
+        "across_variants FROM _invocation WHERE function_name IN ({ph})",
         names,
     )
     labels: dict = {}
-    for fn_name, dist, at, fc in rows:
-        labels.setdefault(fn_name, set()).add(run_options_label(dist, at, fc))
+    for fn_name, dist, at, fc, av in rows:
+        labels.setdefault(fn_name, set()).add(run_options_label(dist, at, fc, av))
     out = {fn: sorted(levels) for fn, levels in labels.items() if len(levels) > 1}
     if out:
         logger.info(
@@ -612,17 +626,18 @@ def current_run_options(duck, fn_names) -> dict:
     rows = _chunked_in(
         duck,
         "SELECT inv.function_name, inv.distribute, inv.as_table, inv.for_columns, "
-        "MAX(rs.timestamp) "
+        "inv.across_variants, MAX(rs.timestamp) "
         "FROM _invocation inv "
         "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
         "JOIN _record_save rs ON rs.record_id = io.output_record_id "
         "WHERE inv.function_name IN ({ph}) "
-        "GROUP BY inv.function_name, inv.distribute, inv.as_table, inv.for_columns",
+        "GROUP BY inv.function_name, inv.distribute, inv.as_table, inv.for_columns, "
+        "inv.across_variants",
         names,
     )
     newest: dict = {}  # fn -> (timestamp, label)
-    for fn_name, dist, at, fc, ts in rows:
-        label = run_options_label(dist, at, fc)
+    for fn_name, dist, at, fc, av, ts in rows:
+        label = run_options_label(dist, at, fc, av)
         # Label breaks a timestamp tie deterministically, as `_order_versions`
         # does with the hash.
         candidate = (ts or "", label)
@@ -1369,7 +1384,10 @@ def stored_invocation_signature(duck, record_id: str):
     """Signature of the invocation that produced ``record_id``, for skip_computed.
 
     Returns ``None`` if the record has no producing invocation (raw/manual), else
-    ``{"function_hash", "var_inputs", "const_hashes"}`` where ``var_inputs`` maps
+    ``{"function_hash", "var_inputs", "const_hashes", "run_options"}`` —
+    ``run_options`` being :func:`run_options_label` of the invocation, so the
+    gate can refuse a record produced under other options (pooled vs split,
+    distributed vs not) that happens to share the edge set — where ``var_inputs`` maps
     ``param -> [(input_record_id, selector), ...]`` — a LIST, because an
     aggregating call consumes several records under one parameter and every
     one of them is an edge (since 2026-09-20 under the real parameter name;
@@ -1382,6 +1400,11 @@ def stored_invocation_signature(duck, record_id: str):
     if inv is None:
         return None
     inv_id, _fn_name, fn_hash = inv
+    opts = duck._fetchone(
+        "SELECT distribute, as_table, for_columns, across_variants FROM _invocation "
+        "WHERE invocation_id = ?",
+        [inv_id],
+    )
     rows = duck._fetchall(
         "SELECT ii.param_name, ii.input_record_id, ii.selector, r.type, c.content_hash "
         "FROM _invocation_input ii "
@@ -1403,6 +1426,7 @@ def stored_invocation_signature(duck, record_id: str):
         "function_hash": fn_hash,
         "var_inputs": var_inputs,
         "const_hashes": const_hashes,
+        "run_options": run_options_label(*opts) if opts else run_options_label(False, None),
     }
 
 
@@ -1790,6 +1814,7 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     """Distinct config "shapes" ``fn_name`` has been invoked with (from the graph).
 
     Each config: ``{input_types: {param: type}, selectors: {param: selector},
+    across_variants: [param, ...],
     constants: {param: value}, path_inputs: {param: to_key-json},
     as_table: [...], distribute: bool, invocation_ids: {inv_id, ...}}``.
     Deduped fn-hash-independently — a config is the call's wiring (which
@@ -1800,15 +1825,17 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     ``invocation_ids``) to scope node-state checks to one call site.
     """
     inv_rows = duck._fetchall(
-        "SELECT invocation_id, as_table, distribute FROM _invocation WHERE function_name = ?",
+        "SELECT invocation_id, as_table, distribute, across_variants FROM _invocation "
+        "WHERE function_name = ?",
         [fn_name],
     )
     configs: dict = {}
     glue_invs = glue_invocation_ids(duck)
-    for inv_id, as_table, distribute in inv_rows:
+    for inv_id, as_table, distribute, across_variants in inv_rows:
         if inv_id in glue_invs:
             continue  # a glue hop is not a pipeline step (D5)
         var_inputs, constants = invocation_inputs(duck, inv_id)
+        pooled = sorted(across_variants or [])
         # selectors per param from the edges
         sel_rows = duck._fetchall(
             "SELECT param_name, selector FROM _invocation_input "
@@ -1835,6 +1862,7 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
             tuple(sorted(glue_chains.items())),
             tuple(at),
             bool(distribute),
+            tuple(pooled),
         )
         if key not in configs:
             configs[key] = {
@@ -1845,6 +1873,10 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
                 "glue_chains": glue_chains,
                 "as_table": at,
                 "distribute": bool(distribute),
+                # The inputs this call pooled across every variant group
+                # (AcrossVariants) — the stored fact the predictor and the
+                # backward call id read; nothing on the edges says it.
+                "across_variants": pooled,
                 "invocation_ids": set(),
             }
         configs[key]["invocation_ids"].add(inv_id)
@@ -2108,6 +2140,8 @@ def config_call_id(fn_name: str, cfg: dict) -> str:
         vk["__distribute"] = True
     if cfg.get("as_table"):
         vk["__as_table"] = cfg["as_table"]
+    if cfg.get("across_variants"):
+        vk["__across_variants"] = sorted(cfg["across_variants"])
     # Glue NAMES (not hashes) are call-site identity — the same split the
     # forward ForEachConfig.to_version_keys makes, so this reverse path keeps
     # matching to_call_id for a glued call.
@@ -2137,8 +2171,8 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     from .foreach_config import call_id_from_version_keys
 
     inv_rows = duck._fetchall(
-        "SELECT invocation_id, function_name, as_table, distribute FROM _invocation "
-        "WHERE function_name != ?",
+        "SELECT invocation_id, function_name, as_table, distribute, across_variants "
+        "FROM _invocation WHERE function_name != ?",
         [SAVE_FUNCTION_NAME],
     )
 
@@ -2146,11 +2180,12 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     group_records: dict = {}  # group_key -> set(output_record_id)
     glue_invs = glue_invocation_ids(duck)
 
-    for inv_id, fn_name, as_table, distribute in inv_rows:
+    for inv_id, fn_name, as_table, distribute, across_variants in inv_rows:
         if inv_id in glue_invs:
             continue  # a glue hop is not a pipeline step (D5)
         var_inputs, constants = invocation_inputs(duck, inv_id)
         input_types = {i["param_name"]: i["variable_type"] for i in var_inputs}
+        pooled = sorted(across_variants or [])
         # The column selections the call used (`_invocation_input.selector`,
         # `{"columns": [...], "iterate": bool}`), so a target derived from
         # history re-runs with the columns it ran with — a Python
@@ -2198,6 +2233,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                 output_num,
                 tuple(at),
                 bool(distribute),
+                tuple(pooled),
             )
             if gkey not in groups:
                 vk: dict = {"__fn": fn_name}
@@ -2208,6 +2244,8 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     vk["__distribute"] = True
                 if at:
                     vk["__as_table"] = at
+                if pooled:
+                    vk["__across_variants"] = pooled
                 if glue_names:
                     vk["__glue"] = glue_names
                 groups[gkey] = {
@@ -2235,7 +2273,9 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                             for p, s in selectors.items()
                             if isinstance(s, dict) and s.get("iterate")
                         ),
+                        pooled,
                     ),
+                    "across_variants": pooled,
                     # {param: [glue node name, ...]} — the reshaping this call
                     # site interposed on its inputs. Part of the variant so a
                     # GUI target derived from history re-runs WITH its glue.
@@ -2723,11 +2763,11 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     params — one call per group, Cartesian across split inputs, exactly as
     the save path expands its combos), so the prediction is grouped the same
     way with the same recipe. A ``ColumnSelection`` input pools every group
-    (it never splits on the save side either).
-
-    Remaining gap: ``AcrossVariants`` is a call-site wrapper the graph does
-    not record, so an input the run pooled explicitly is predicted split;
-    such a config reads as missing (conservative: never falsely green).
+    (it never splits on the save side either), and so does an input the run
+    pooled explicitly — ``cfg["across_variants"]``, read back from
+    ``_invocation.across_variants``, the fact the save wrote for exactly this
+    reader (until 2026-09-20 it was not recorded, and such a config predicted
+    split invocations that were never written).
     """
     import itertools
 
@@ -2737,6 +2777,7 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     if not input_types:
         return  # PathInput/no-DB-input config — realized_inputless_invocations covers it
     selectors = cfg["selectors"]
+    across_variants = sorted(cfg.get("across_variants") or [])
     const_bindings = [
         (p, compute_constant_record_id(v)) for p, v in cfg["constants"].items()
     ]
@@ -2770,9 +2811,14 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
                 (p, rid, selectors.get(p)) for p, rids in combo for rid in rids
             ]
             bindings += [(p, crid, None) for p, crid in const_bindings]
-            into.add(
-                (compute_invocation_id(fn_hash, cfg["as_table"], cfg["distribute"], bindings), sid)
+            inv_id = compute_invocation_id(
+                fn_hash,
+                cfg["as_table"],
+                cfg["distribute"],
+                bindings,
+                across_variants=across_variants,
             )
+            into.add((inv_id, sid))
 
     iterated = cfg.get("iterated_keys")
     schema_keys = list(cfg.get("schema_keys") or [])
@@ -2832,7 +2878,7 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
                 choices_by_param[p] = [(p, [rid]) for rid in at_level[p][L]]
             elif p in pooled and L in pooled[p]:
                 rids = pooled[p][L]
-                if selectors.get(p):
+                if selectors.get(p) or p in across_variants:
                     choices_by_param[p] = [(p, sorted(rids))]
                     continue
                 groups: dict = {}
@@ -2881,6 +2927,7 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
     """
     from scifor import ColName, ColumnSelection, Fixed
 
+    from .across_variants import AcrossVariants
     from .foreach import _is_loadable
     from .provenance_save import compute_input_selectors
 
@@ -2892,6 +2939,7 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
 
     input_types: dict = {}
     constants: dict = {}
+    across_variants: list = []
     for name, spec in inputs.items():
         if _PathInput is not None and isinstance(spec, _PathInput):
             continue
@@ -2901,6 +2949,9 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
             continue
         if _is_loadable(spec):
             vt = spec
+            if isinstance(vt, AcrossVariants):
+                across_variants.append(name)
+                vt = vt.var_type
             if isinstance(vt, Fixed):
                 vt = vt.data
             if isinstance(vt, ColumnSelection):
@@ -2922,6 +2973,7 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
         "glue_chains": glue_chains,
         "as_table": [],
         "distribute": False,
+        "across_variants": sorted(across_variants),
     }
 
 

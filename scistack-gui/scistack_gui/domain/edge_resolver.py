@@ -44,6 +44,7 @@ def variable_binding(
     type_names: list[str],
     columns: "list[str] | None" = None,
     iterate: bool = False,
+    pool_variants: bool = False,
 ) -> dict:
     """A variable binding, optionally restricted to named columns.
 
@@ -63,6 +64,13 @@ def variable_binding(
     if columns or iterate:
         binding["columns"] = list(columns or [])
         binding["iterate"] = bool(iterate)
+    # ``pool_variants`` (``AcrossVariants``): every variant group of the
+    # input in ONE aggregating call instead of one call per group. Recorded
+    # on ``_invocation.across_variants`` by a run and carried back here by
+    # ``_attach_db_bindings`` so a history-derived re-run pools what the
+    # original pooled; same omit-when-false rule as ``columns``.
+    if pool_variants:
+        binding["pool_variants"] = True
     return binding
 
 

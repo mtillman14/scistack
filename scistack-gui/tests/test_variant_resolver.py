@@ -284,6 +284,27 @@ class TestComputeCallId:
             "fn", self._target(), distribute=True
         ) != compute_call_id("fn", self._target(), distribute=False)
 
+    def test_pooled_binding_matches_scidb_forward_call_id(self):
+        """`pool_variants` on a binding is scidb's `AcrossVariants(X)` at the
+        call site: the GUI's id must equal `ForEachConfig.to_call_id`, and
+        differ from the split call site's."""
+        from scidb import AcrossVariants, BaseVariable
+        from scidb.foreach_config import ForEachConfig
+
+        class RawEMG(BaseVariable):
+            pass
+
+        def bandpass_filter(signal, hz):
+            return signal
+
+        target = self._target()
+        target["bindings"]["signal"]["pool_variants"] = True
+        forward = ForEachConfig(
+            bandpass_filter, {"signal": AcrossVariants(RawEMG), "hz": 10}
+        ).to_call_id()
+        assert compute_call_id("bandpass_filter", target) == forward
+        assert compute_call_id("bandpass_filter", self._target()) != forward
+
     def test_as_table_list_is_order_independent(self):
         assert compute_call_id(
             "fn", self._target(), as_table=["b", "a"]

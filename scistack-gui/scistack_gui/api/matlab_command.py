@@ -496,14 +496,16 @@ def _order_inputs_by_signature(
     return ordered
 
 
-def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool]":
-    """``(type_names, columns, iterate)`` for one ``variable_inputs`` entry.
+def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool, bool]":
+    """``(type_names, columns, iterate, pool_variants)`` for one
+    ``variable_inputs`` entry.
 
     The ONE parser for the two shapes an entry may take:
 
     * ``"RawEMG"`` / ``["RawEMG", "RawVO2"]`` — the plain binding;
-    * ``{"types": [...], "columns": [...], "iterate": bool}`` — the same
-      binding with a GUI column selection on it.
+    * ``{"types": [...], "columns": [...], "iterate": bool, "pool_variants":
+      bool}`` — the same binding with a GUI column selection and/or
+      AcrossVariants pooling on it.
 
     Both :func:`_variable_input_items` (which renders expressions) and
     :func:`_variable_input_type_names` (which the unresolvable-classdef
@@ -524,12 +526,15 @@ def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool]":
             [str(t) for t in types if t],
             [str(c) for c in columns if c],
             bool(ref.get("iterate")),
+            bool(ref.get("pool_variants")),
         )
     names = [ref] if isinstance(ref, str) else [n for n in (ref or []) if n]
-    return [str(n) for n in names], [], False
+    return [str(n) for n in names], [], False, False
 
 
-def _format_variable_class(name: str, columns: list[str], iterate: bool) -> str:
+def _format_variable_class(
+    name: str, columns: list[str], iterate: bool, pool_variants: bool = False
+) -> str:
     """One variable type as the MATLAB expression ``for_each`` loads from.
 
     MATLAB has no separate ``ColumnSelection`` wrapper — the column names go
@@ -546,19 +551,28 @@ def _format_variable_class(name: str, columns: list[str], iterate: bool) -> str:
     iterate, ``["a", "b"]``               ``Trials().for_columns(["a", "b"])``
     iterate, all columns                  ``Trials().for_columns()``
     ====================================  =================================
+
+    ``pool_variants`` wraps the result in ``scidb.AcrossVariants(...)`` — the
+    input pools every variant group into one aggregating call, as the run
+    this binding was derived from recorded (``_invocation.across_variants``).
     """
     if iterate:
         if not columns:
-            return f"{name}().for_columns()"
-        return f"{name}().for_columns({_format_matlab_string_array(columns)})"
-    if not columns:
-        return f"{name}()"
-    if len(columns) == 1:
-        return f'{name}("{_escape_matlab_dq(columns[0])}")'
-    return f"{name}({_format_matlab_string_array(columns)})"
+            expr = f"{name}().for_columns()"
+        else:
+            expr = f"{name}().for_columns({_format_matlab_string_array(columns)})"
+    elif not columns:
+        expr = f"{name}()"
+    elif len(columns) == 1:
+        expr = f'{name}("{_escape_matlab_dq(columns[0])}")'
+    else:
+        expr = f"{name}({_format_matlab_string_array(columns)})"
+    return f"scidb.AcrossVariants({expr})" if pool_variants else expr
 
 
-def _format_variable_input(type_names, columns=None, iterate: bool = False) -> str:
+def _format_variable_input(
+    type_names, columns=None, iterate: bool = False, pool_variants: bool = False
+) -> str:
     """A variable binding as the MATLAB expression ``for_each`` loads from:
     ``RawEMG()`` for one type, ``scifor.EachOf(A(), B())`` for several
     (mirrors ``execution_service.build_run_inputs``, which builds ``EachOf``
@@ -570,8 +584,10 @@ def _format_variable_input(type_names, columns=None, iterate: bool = False) -> s
     names = [type_names] if isinstance(type_names, str) else list(type_names)
     cols = list(columns or [])
     if len(names) == 1:
-        return _format_variable_class(names[0], cols, iterate)
-    items = ", ".join(_format_variable_class(n, cols, iterate) for n in names)
+        return _format_variable_class(names[0], cols, iterate, pool_variants)
+    items = ", ".join(
+        _format_variable_class(n, cols, iterate, pool_variants) for n in names
+    )
     return f"scifor.EachOf({items})"
 
 
@@ -587,7 +603,7 @@ def _variable_input_items(variable_inputs: "dict | None"):
     one, which would be a failure at run time rather than here.)
     """
     for param, ref in (variable_inputs or {}).items():
-        names, columns, iterate = _variable_binding_parts(ref)
+        names, columns, iterate, pool_variants = _variable_binding_parts(ref)
         if not names:
             logger.warning(
                 "generate_matlab_command: variable binding for parameter %r "
@@ -603,7 +619,13 @@ def _variable_input_items(variable_inputs: "dict | None"):
                 columns or "<all data columns>",
                 iterate,
             )
-        yield param, _format_variable_input(names, columns, iterate)
+        if pool_variants:
+            logger.info(
+                "generate_matlab_command: parameter %r pools every variant group "
+                "(AcrossVariants)",
+                param,
+            )
+        yield param, _format_variable_input(names, columns, iterate, pool_variants)
 
 
 def _variable_input_type_names(variable_inputs: "dict | None") -> list[str]:

@@ -368,7 +368,25 @@ def invocation_identity(meta: dict, bindings) -> str:
     edges: list[Binding] = list(var_b)
     for param, value in const_b.items():
         edges.append(Binding(param, compute_constant_record_id(value), None))
-    return compute_invocation_id(meta.get("__fn_hash") or "", as_table, distribute, edges)
+    return compute_invocation_id(
+        meta.get("__fn_hash") or "",
+        as_table,
+        distribute,
+        edges,
+        across_variants=_across_variants(meta),
+    )
+
+
+def _across_variants(meta: dict) -> list[str]:
+    """The params ``__across_variants`` names (pooled across every variant
+    group), or ``[]``."""
+    raw = meta.get("__across_variants")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except (json.JSONDecodeError, TypeError):
+            raw = []
+    return sorted(str(p) for p in (raw or []))
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +513,7 @@ def record_run(
             repr(meta.get("__constants")),
             repr(meta.get("__as_table")),
             bool(meta.get("__distribute", False)),
+            tuple(_across_variants(meta)),
         )
         inv_id = inv_cache.get(cache_key)
         if inv_id is None:
@@ -508,6 +527,7 @@ def record_run(
             ]
             as_table = _normalize_as_table(meta, loadable_params)
             distribute = bool(meta.get("__distribute", False))
+            across_variants = _across_variants(meta)
 
             # Assemble the full binding set (variables + constants) and the
             # constant entity/value rows it implies; constants carry no selector.
@@ -536,7 +556,11 @@ def record_run(
             # bug of exactly the class this check exists to catch, so it is a
             # hard error rather than a warning.
             inv_id = compute_invocation_id(
-                meta.get("__fn_hash") or "", as_table, distribute, bindings
+                meta.get("__fn_hash") or "",
+                as_table,
+                distribute,
+                bindings,
+                across_variants=across_variants,
             )
             stamped = g.invocation_id or meta.get("__invocation_id")
             if stamped and stamped != inv_id:
@@ -570,6 +594,7 @@ def record_run(
                 as_table or None,
                 distribute,
                 for_columns or None,
+                across_variants or None,
             )
             for b in bindings:
                 input_edges[(inv_id, b.param, b.rid)] = b.selector
@@ -894,6 +919,7 @@ def _commit_graph(
                     "as_table",
                     "distribute",
                     "for_columns",
+                    "across_variants",
                 ),
                 invocation_rows.values(),
                 conflict_cols=["invocation_id"],

@@ -267,8 +267,11 @@ class TestExportRoundTrip:
 
         from scistack_gui.services import code_export_service
 
-        src = inspect.getsource(code_export_service)
-        assert "from scidb import EachOf, Parameter, PathInput" in src
+        # The header is a multi-line import; every name a literal can emit
+        # must be in it (AcrossVariants joined 2026-09-20).
+        header = code_export_service._py_header.__code__.co_consts
+        names = {c.strip(" ,") for c in header if isinstance(c, str)}
+        assert {"AcrossVariants", "EachOf", "Parameter", "PathInput"} <= names
 
 
 class TestMatlabEntitiesRoundTrip:

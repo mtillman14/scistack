@@ -123,6 +123,7 @@ _CALL_ID_INCLUDED_KEYS = (
     "__constants",
     "__distribute",
     "__as_table",
+    "__across_variants",
     "__glue",
 )
 
@@ -208,6 +209,16 @@ class ForEachConfig:
                 keys["__where"] = str(self.where)
         if self.distribute:
             keys["__distribute"] = True
+        # Which inputs pool every variant into the one call (AcrossVariants)
+        # instead of the default one-call-per-variant-group split. A run
+        # option like as_table/distribute: call-site identity, a version key,
+        # and recorded on `_invocation.across_variants` so the graph can
+        # rebuild both the call id and the expected invocations — until
+        # 2026-09-20 it was only in the wrapper's to_key() inside __inputs,
+        # which the backward reconstruction (edges name plain types) could
+        # never match, and the predictor split what the run had pooled.
+        if self.across_variants:
+            keys["__across_variants"] = self.across_variants
         if self.as_table:
             if isinstance(self.as_table, list):
                 keys["__as_table"] = sorted(self.as_table)
@@ -260,6 +271,13 @@ class ForEachConfig:
             keys.pop("__inputs", None)
         return call_id_from_version_keys(keys)
 
+    @property
+    def across_variants(self) -> list[str]:
+        """The parameters wrapped in ``AcrossVariants``, sorted."""
+        from .across_variants import AcrossVariants
+
+        return sorted(p for p, s in self.inputs.items() if isinstance(s, AcrossVariants))
+
     def call_site_inputs(self) -> dict:
         """``{param: identity}`` as the call SITE sees it — the shape
         ``provenance_query.config_from_inputs`` builds from live inputs and
@@ -277,6 +295,7 @@ class ForEachConfig:
         """
         from scifor import ColumnSelection, Fixed, PathInput
 
+        from .across_variants import AcrossVariants
         from .foreach import _is_loadable
 
         def _unwrap(spec):
@@ -286,6 +305,10 @@ class ForEachConfig:
                     spec = getattr(spec, "data", spec)
                 elif isinstance(spec, ColumnSelection):
                     spec = getattr(spec, "data", spec)
+                elif isinstance(spec, AcrossVariants):
+                    # Pooling is a run option (`__across_variants`), not a
+                    # different input type.
+                    spec = spec.var_type
                 else:
                     break
                 seen += 1

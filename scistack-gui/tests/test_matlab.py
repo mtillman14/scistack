@@ -3976,6 +3976,22 @@ class TestVariableInputColumnSelection:
             == 'scifor.EachOf(A("c"), B("c"))'
         )
 
+    def test_pooled_binding_wraps_in_across_variants(self):
+        """A history-derived binding whose run pooled every variant group
+        (``_invocation.across_variants``) re-runs pooled from MATLAB too."""
+        assert (
+            self._expr({"types": ["Trials"], "pool_variants": True})
+            == "scidb.AcrossVariants(Trials())"
+        )
+        assert (
+            self._expr({"types": ["Trials"], "columns": ["a"], "pool_variants": True})
+            == 'scidb.AcrossVariants(Trials("a"))'
+        )
+        assert (
+            self._expr({"types": ["A", "B"], "pool_variants": True})
+            == "scifor.EachOf(scidb.AcrossVariants(A()), scidb.AcrossVariants(B()))"
+        )
+
     def test_type_names_still_reach_the_classdef_preflight(self):
         """``_variable_input_type_names`` feeds the unresolvable-classdef
         warning; the dict shape must not hide the names from it."""

@@ -152,6 +152,16 @@ def _column_selection_parts(value):
     return value.data, list(value.columns or []), bool(value.iterate)
 
 
+def _pooled_inner(value):
+    """The spec a ``scidb.AcrossVariants`` wraps, or ``None`` for anything
+    else — both renderers spell the wrapper around the inner literal."""
+    try:
+        from scidb import AcrossVariants
+    except ImportError:  # pragma: no cover - scidb is a hard dependency
+        return None
+    return value.var_type if isinstance(value, AcrossVariants) else None
+
+
 def _py_literal(value) -> str:
     """A bare class (BaseVariable subclass) -> its name; everything else
     -> repr(). EachOf/PathInput's own __repr__ already produce valid,
@@ -163,6 +173,9 @@ def _py_literal(value) -> str:
     without this the exported script renders an object address where a
     subscript belongs — a file that looks fine until it is run.
     """
+    pooled = _pooled_inner(value)
+    if pooled is not None:
+        return f"AcrossVariants({_py_literal(pooled)})"
     parts = _column_selection_parts(value)
     if parts is not None:
         inner, columns, iterate = parts
@@ -257,7 +270,14 @@ def _py_header(db) -> str:
         "if this file has been moved).",
         '"""',
         "",
-        "from scidb import EachOf, Parameter, PathInput, configure_database, for_each",
+        "from scidb import (",
+        "    AcrossVariants,",
+        "    EachOf,",
+        "    Parameter,",
+        "    PathInput,",
+        "    configure_database,",
+        "    for_each,",
+        ")",
         "",
     ]
 
@@ -345,6 +365,9 @@ def _matlab_literal(value) -> str:
     ``api.matlab_command._format_variable_class`` exactly — two renderers, one
     syntax, and a test in each pins it.
     """
+    pooled = _pooled_inner(value)
+    if pooled is not None:
+        return f"scidb.AcrossVariants({_matlab_literal(pooled)})"
     parts = _column_selection_parts(value)
     if parts is not None:
         inner, columns, iterate = parts

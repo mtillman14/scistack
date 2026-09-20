@@ -274,11 +274,18 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
             # table and failed in the function (integration suite,
             # 2026-09-19).
             sel = selectors.get(param) or {}
+            pooled = param in (t.get("across_variants") or [])
             bindings[param] = variable_binding(
                 list(type_val) if isinstance(type_val, (list, tuple, set)) else [type_val],
                 columns=list(sel.get("columns") or []) if sel else None,
                 iterate=bool(sel.get("iterate", False)),
+                pool_variants=pooled,
             )
+            if pooled:
+                logger.info(
+                    "[execution] '%s': '%s' keeps its recorded AcrossVariants pooling",
+                    function_name, param,
+                )
             if sel:
                 logger.info(
                     "[execution] '%s': '%s' keeps its recorded column selection %s%s",
@@ -1179,6 +1186,17 @@ def _apply_column_selection(var_cls, sel: "dict | None"):
     return var_cls[columns]
 
 
+def _apply_pooling(spec, binding: dict):
+    """*spec*, wrapped in ``scidb.AcrossVariants`` when the binding says the
+    input pools every variant group into one call (a history-derived target
+    whose run recorded ``across_variants``)."""
+    if not binding.get("pool_variants"):
+        return spec
+    from scidb import AcrossVariants
+
+    return AcrossVariants(spec)
+
+
 def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     """The for_each ``inputs=`` dict for a derived target: variable-class
     inputs, scalar constants, and any remaining signature params resolved
@@ -1257,15 +1275,21 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
                 # load with scifor's KeyError naming the available columns.
                 inputs[param] = EachOf(
                     *(
-                        _apply_column_selection(
-                            registry.get_variable_class(t), sel
+                        _apply_pooling(
+                            _apply_column_selection(
+                                registry.get_variable_class(t), sel
+                            ),
+                            binding,
                         )
                         for t in type_names
                     )
                 )
             elif type_names:
-                inputs[param] = _apply_column_selection(
-                    registry.get_variable_class(type_names[0]), sel
+                inputs[param] = _apply_pooling(
+                    _apply_column_selection(
+                        registry.get_variable_class(type_names[0]), sel
+                    ),
+                    binding,
                 )
             if sel is not None and type_names:
                 logger.info(
@@ -1425,8 +1449,9 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
     bindings :func:`build_run_inputs` consumes.
 
     ``{param: [type_names]}`` for a whole-variable binding and
-    ``{param: {"types": [...], "columns": [...], "iterate": bool}}`` for one
-    with a column selection — the two shapes
+    ``{param: {"types": [...], "columns": [...], "iterate": bool,
+    "pool_variants": bool}}`` for one with a column selection or
+    AcrossVariants pooling — the two shapes
     ``api.matlab_command._variable_binding_parts`` parses. Until 2026-09-19
     the MATLAB route assembled this from canvas edges plus the node config
     on its own, so a selection recorded in HISTORY (a Python-authored
@@ -1451,9 +1476,15 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
             if not types:
                 continue
             sel = _cs.from_binding(binding)
+            pooled = bool(binding.get("pool_variants"))
             entry = (
-                {"types": types, "columns": list(sel["columns"]), "iterate": sel["iterate"]}
-                if sel
+                {
+                    "types": types,
+                    "columns": list(sel["columns"]) if sel else [],
+                    "iterate": bool(sel["iterate"]) if sel else False,
+                    "pool_variants": pooled,
+                }
+                if sel or pooled
                 else list(types)
             )
             previous = out.get(param)

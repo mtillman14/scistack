@@ -150,6 +150,7 @@ def compute_invocation_id(
     as_table: Iterable[str] | None,
     distribute: bool,
     input_bindings: Iterable[tuple],
+    across_variants: Iterable[str] | None = None,
 ) -> str:
     """Content-addressed id for a unique function call (an *activity*).
 
@@ -157,6 +158,13 @@ def compute_invocation_id(
         function_hash: AST hash of the function source (``compute_function_hash``).
         as_table: Resolved aggregated param names. Order-insensitive (sorted in).
         distribute: Post-call fan-out flag.
+        across_variants: Params whose records were pooled across every variant
+            group into the one call (``AcrossVariants``) instead of the
+            default split. Identity-bearing like ``as_table``: the same edge
+            set called pooled and called split are different computations
+            (the pooled frame carries the branch params as columns). Folded in
+            ONLY when non-empty, so every id computed before 2026-09-20 is
+            unchanged.
         input_bindings: Iterable of input edges, one per realized input (variable
             *and* constant): ``bindings.Binding`` objects, or the legacy
             ``(param_name, input_record_id)`` / ``(param_name, input_record_id,
@@ -185,6 +193,9 @@ def compute_invocation_id(
         f"distribute:{bool(distribute)}",
         f"inputs:{canonical_hash(bindings)}",
     ]
+    pooled = sorted(str(p) for p in (across_variants or []))
+    if pooled:
+        parts.append(f"across_variants:{canonical_hash(pooled)}")
     inv_id = _sha16(*parts)
     logger.debug(
         "compute_invocation_id(fn_hash=%s, as_table=%s, distribute=%s, %d bindings) = %s",
@@ -478,7 +489,8 @@ def ensure_provenance_tables(duck) -> None:
             function_hash VARCHAR NOT NULL,
             as_table      VARCHAR[],
             distribute    BOOLEAN DEFAULT FALSE,
-            for_columns   VARCHAR[]
+            for_columns   VARCHAR[],
+            across_variants VARCHAR[]
         )
     """)
 
@@ -591,6 +603,17 @@ def ensure_provenance_tables(duck) -> None:
             duck._execute("ALTER TABLE _invocation ADD COLUMN for_columns VARCHAR[]")
             logger.debug(
                 "ensure_provenance_tables: added for_columns column to _invocation"
+            )
+        # ``across_variants``: which params pooled every variant group into
+        # the one call. Unlike for_columns this is NOT derivable from the
+        # edges (a pooled call and a one-group split call write the same
+        # edges), so it is the stored fact the call id and the expected-
+        # invocation predictor rebuild from; it IS folded into invocation_id
+        # (only when non-empty).
+        if "across_variants" not in inv_cols:
+            duck._execute("ALTER TABLE _invocation ADD COLUMN across_variants VARCHAR[]")
+            logger.debug(
+                "ensure_provenance_tables: added across_variants column to _invocation"
             )
     except Exception:
         logger.debug(

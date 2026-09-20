@@ -340,6 +340,7 @@ def compute_call_id(
     from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, BINDING_VARIABLE
 
     inputs: dict = {}
+    across_variants: list = []
     for param, binding in (target.get("bindings") or {}).items():
         kind = binding.get("kind")
         if kind == BINDING_VARIABLE:
@@ -350,6 +351,10 @@ def compute_call_id(
                 inputs[param] = type_val[0]
             else:
                 inputs[param] = type_val
+            if binding.get("pool_variants"):
+                # scidb's ForEachConfig writes `__across_variants` beside
+                # `__as_table` (a run option, not an input type).
+                across_variants.append(param)
         elif kind == BINDING_PATHINPUT:
             pi_key = _path_input_version_key(binding["ref"])
             if pi_key is None:
@@ -376,6 +381,8 @@ def compute_call_id(
         keys["__distribute"] = True
     if as_table:
         keys["__as_table"] = sorted(as_table) if isinstance(as_table, list) else True
+    if across_variants:
+        keys["__across_variants"] = sorted(across_variants)
     return call_id_from_version_keys(keys)
 
 

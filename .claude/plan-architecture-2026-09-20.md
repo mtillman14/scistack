@@ -330,3 +330,27 @@ Verify (one package at a time):
 then `cd /workspace/scidb && pytest tests/ -q -x`, then
 `cd /workspace/tests/integration && pytest -q`, then
 `cd /workspace/scimatlab && pytest tests/ -q -x`.
+
+### AcrossVariants is a fact — built 2026-09-20, tests unrun
+
+The "remaining gap" above is closed: pooling is a recorded run option, not
+a call-site wrapper the graph forgets. `ForEachConfig.across_variants` →
+`__across_variants` version key (in `_CALL_ID_INCLUDED_KEYS`;
+`call_site_inputs` unwraps the wrapper to the type, as for Fixed /
+ColumnSelection) → `record_run` stores `_invocation.across_variants` and
+`compute_invocation_id(..., across_variants=)` folds it in only when
+non-empty (every pre-existing id unchanged; `run_options_label` shows it)
+→ `function_variant_configs` / `pipeline_variants` / `config_call_id` /
+`config_from_inputs` carry `across_variants` → the predictor pools those
+params. GUI: `variable_binding(pool_variants=)` set by
+`_attach_db_bindings` from the config, wrapped by `build_run_inputs`
+(`_apply_pooling`), rendered by `variable_inputs_view` /
+`_variable_binding_parts` (4-tuple) / `_format_variable_class`
+(`scidb.AcrossVariants(...)`), both code exports (`_pooled_inner`), and
+`variant_resolver.compute_call_id` (`__across_variants`). Parity:
+`TestAcrossVariantsIsAFact` (6 tests). Verify with the Stage 2a list plus
+`cd /workspace/scistack-gui && pytest tests/test_code_export.py tests/test_entity_round_trip.py tests/test_matlab.py tests/test_execution_service.py -q`.
+
+Noted for Stage 3: `variant_resolver.compute_call_id` is a THIRD spelling
+of the call-id recipe (after `ForEachConfig.to_call_id` and
+`config_call_id`); every run option added now touches all three.

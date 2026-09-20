@@ -576,3 +576,49 @@ class TestDatasetLevelDefault:
         )
         assert level == ["subject", "session"]
         assert "no history" in why
+
+
+class TestPooledBindingRoundTrip:
+    """A run that pooled an input across every variant group
+    (`AcrossVariants`) records `_invocation.across_variants`; a history-
+    derived target carries it as `pool_variants` on the binding, and the
+    run inputs the GUI builds wrap the class again — so a re-run from the
+    canvas pools what the original pooled (the fact round-trips)."""
+
+    def test_history_binding_carries_pooling_and_build_run_inputs_wraps_it(
+        self, populated_db, monkeypatch
+    ):
+        from scidb import AcrossVariants
+
+        from scistack_gui import registry
+        from scistack_gui.services.execution_service import (
+            _attach_db_path_inputs,
+            build_run_inputs,
+            variable_inputs_view,
+        )
+
+        monkeypatch.setattr(registry, "get_path_inputs_registry", lambda: {})
+        targets = [
+            {
+                "input_types": {"signal": "RawSignal"},
+                "selectors": {},
+                "across_variants": ["signal"],
+                "output_type": "FilteredSignal",
+                "constants": {"low_hz": 20},
+                "call_id": "c1",
+            }
+        ]
+        (target,) = _attach_db_path_inputs(populated_db, "bandpass_filter", targets)
+        assert target["bindings"]["signal"].get("pool_variants") is True
+
+        inputs = build_run_inputs(target, "bandpass_filter", populated_db)
+        assert isinstance(inputs["signal"], AcrossVariants)
+        assert inputs["signal"].var_type is registry.get_variable_class("RawSignal")
+
+        # ...and the MATLAB rendering of the same binding says so too.
+        assert variable_inputs_view([target], "bandpass_filter")["signal"] == {
+            "types": ["RawSignal"],
+            "columns": [],
+            "iterate": False,
+            "pool_variants": True,
+        }

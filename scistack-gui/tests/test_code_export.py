@@ -212,6 +212,18 @@ class TestSerializationHelpers:
 
         assert _matlab_literal(RawSignal) == "RawSignal()"
 
+    def test_across_variants_renders_in_both_languages(self):
+        """The pooling wrapper a history-derived target carries
+        (`pool_variants` → `scidb.AcrossVariants`) must survive export, or
+        the exported script silently re-runs split what the canvas pooled."""
+        from scidb import AcrossVariants, BaseVariable
+
+        class Filtered(BaseVariable):
+            pass
+
+        assert _py_literal(AcrossVariants(Filtered)) == "AcrossVariants(Filtered)"
+        assert _matlab_literal(AcrossVariants(Filtered)) == "scidb.AcrossVariants(Filtered())"
+
     def test_matlab_literal_scalar_and_string(self):
         assert _matlab_literal(20) == "20"
         assert _matlab_literal(2.5) == "2.5"
