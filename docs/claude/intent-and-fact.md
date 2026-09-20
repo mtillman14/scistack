@@ -249,4 +249,11 @@ Every stage of `.claude/plan-intent-and-fact.md` is built:
   `finest_schema_keys`); the coarser input broadcasts — else every key, only
   when there is nothing to go on.
 
-Still `global` scope on every stored row until execution is scope-aware.
+Execution is scope-aware since 2026-09-20 (plan Stage 6,
+`docs/claude/decisions.md` D-2026-09-20-9): a statement is made on a canvas
+and applies there — `intent_store.scope_of_node` reads the scope off the node
+id (placement suffix, manual row, else root `main`), reads resolve
+`scope -> global`, a duplicate copies the source as resolved into its own
+scope, and runs / compiled pipelines / both exports read the hides of the
+canvas they run from. `global` holds the rows written before that date;
+they apply everywhere until a canvas shadows them.

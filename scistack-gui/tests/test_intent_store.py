@@ -21,6 +21,7 @@ from scidb.intent import (
     resolve,
 )
 from scistack_gui import intent_store, pipeline_store
+from scistack_gui.ids import ROOT_SCOPE
 
 NODE = "fn__trial_mean_symmetry__0123456789abcdef"
 OTHER = "fn__trial_mean_symmetry__fedcba9876543210"
@@ -41,7 +42,9 @@ class TestRoundTrip:
         assert [s.key for s in statements] == ["cycles"]
         assert statements[0].value == _sel("ankle", "knee")
         assert statements[0].subject_kind == SUBJECT_CALL_SITE
-        assert statements[0].scope == GLOBAL_SCOPE
+        # A bare id with no manual row is on the root canvas; the statement
+        # is made THERE, not at `global` (which is the legacy layer only).
+        assert statements[0].scope == ROOT_SCOPE
 
     def test_two_parameters_are_two_statements(self, populated_db):
         intent_store.set_column_selections(
@@ -211,7 +214,9 @@ class TestResolution:
         assert plan.columns == {}
 
     def test_a_global_statement_applies_in_every_scope(self, populated_db):
-        intent_store.set_column_selections(populated_db, NODE, {"cycles": _sel("ankle")})
+        intent_store.set_column_selections(
+            populated_db, NODE, {"cycles": _sel("ankle")}, scope=GLOBAL_SCOPE
+        )
         statements = intent_store.load_statements(populated_db, subject_refs=[NODE])
         plan = resolve(statements, None, origin=ORIGIN_GUI, scope="pipe_mine")
         assert plan.columns == {"cycles": _sel("ankle")}
@@ -222,7 +227,7 @@ class TestImport:
         """The marker makes the import idempotent: a selection deleted after
         it ran must stay deleted on the next start."""
         intent_store.set_column_selections(populated_db, NODE, {"cycles": _sel("ankle")})
-        intent_store.clear_aspect(populated_db, NODE, ASPECT_COLUMNS)
+        intent_store.clear_aspect(populated_db, NODE, ASPECT_COLUMNS, ROOT_SCOPE)
         intent_store.ensure_tables(populated_db)
         assert intent_store.load_statements(populated_db, subject_refs=[NODE]) == []
 
@@ -376,3 +381,120 @@ class TestImports:
         pipeline_store.delete_manual_edge(populated_db, "old_e")
         intent_store.run_imports(populated_db)
         assert not any(e["id"] == "old_e" for e in pipeline_store.get_manual_edges(populated_db))
+
+
+class TestScopeAware:
+    """Stage 6 of `.claude/plan-architecture-2026-09-20.md`: a statement is
+    made ON a canvas and applies on that canvas. The scope comes from the
+    node id (`intent_store.scope_of_node`) — a placement suffix, a manual
+    node's row, or root — so no request has to carry it."""
+
+    PLACED = f"{NODE}::pipe_b"
+
+    def test_scope_of_node(self, populated_db):
+        manual = "fn__trial_mean_symmetry__a1b2c3d4"
+        pipeline_store.write_manual_node(
+            populated_db, manual, "functionNode", "trial_mean_symmetry", "pipe_c"
+        )
+        assert intent_store.scope_of_node(populated_db, NODE) == ROOT_SCOPE
+        assert intent_store.scope_of_node(populated_db, self.PLACED) == "pipe_b"
+        assert intent_store.scope_of_node(populated_db, manual) == "pipe_c"
+
+    def test_a_hypothesis_shadows_root_for_its_own_placement_only(self, populated_db):
+        pipeline_store.update_node_config(populated_db, NODE, {"runOptions": {"distribute": False}})
+        pipeline_store.update_node_config(
+            populated_db, self.PLACED, {"runOptions": {"distribute": True}}
+        )
+        assert pipeline_store.get_node_config(populated_db, NODE)["runOptions"] == {
+            "distribute": False
+        }
+        assert pipeline_store.get_node_config(populated_db, self.PLACED)["runOptions"] == {
+            "distribute": True
+        }
+        # Root is a canvas like any other: a hypothesis that never said
+        # anything about its placement does not read root's statement (a
+        # duplicate COPIES root's — see the copy test below).
+        assert "runOptions" not in pipeline_store.get_node_config(
+            populated_db, f"{NODE}::pipe_z"
+        )
+
+    def test_a_legacy_global_row_applies_everywhere_until_shadowed(self, populated_db):
+        intent_store.set_column_selections(
+            populated_db, NODE, {"cycles": _sel("ankle")}, scope=GLOBAL_SCOPE
+        )
+        assert pipeline_store.get_node_config(populated_db, self.PLACED)["columnSelections"] == {
+            "cycles": _sel("ankle")
+        }
+        intent_store.set_column_selections(populated_db, self.PLACED, {"cycles": _sel("knee")})
+        assert pipeline_store.get_node_config(populated_db, self.PLACED)["columnSelections"] == {
+            "cycles": _sel("knee")
+        }
+        assert pipeline_store.get_node_config(populated_db, NODE)["columnSelections"] == {
+            "cycles": _sel("ankle")
+        }
+
+    def test_columns_shadow_per_parameter_but_the_location_whole(self, populated_db):
+        """Over a legacy (global) row: `columns` is per parameter, so one
+        parameter's statement leaves the other's; the location is one
+        decision and is replaced whole."""
+        intent_store.set_column_selections(
+            populated_db, NODE, {"a": _sel("x"), "b": _sel("y")}, scope=GLOBAL_SCOPE
+        )
+        intent_store.set_column_selections(populated_db, self.PLACED, {"a": _sel("z")})
+        cfg = pipeline_store.get_node_config(populated_db, self.PLACED)
+        assert cfg["columnSelections"] == {"a": _sel("z"), "b": _sel("y")}
+
+        intent_store.set_schema_location(
+            populated_db,
+            NODE,
+            {"schemaLevel": ["subject"], "whereFilters": [{"k": 1}]},
+            scope=GLOBAL_SCOPE,
+        )
+        intent_store.set_schema_location(populated_db, self.PLACED, {"schemaLevel": ["trial"]})
+        cfg = pipeline_store.get_node_config(populated_db, self.PLACED)
+        assert cfg["schemaLevel"] == ["trial"]
+        assert "whereFilters" not in cfg, "the location is one decision, replaced whole"
+
+    def test_the_canvas_build_reads_its_own_scope(self, populated_db):
+        pipeline_store.update_node_config(populated_db, NODE, {"runOptions": {"distribute": False}})
+        pipeline_store.update_node_config(
+            populated_db, self.PLACED, {"runOptions": {"distribute": True}}
+        )
+        root_view = pipeline_store.get_node_configs(populated_db, ROOT_SCOPE)
+        b_view = pipeline_store.get_node_configs(populated_db, "pipe_b")
+        assert root_view[NODE]["runOptions"] == {"distribute": False}
+        assert b_view[NODE]["runOptions"] == {"distribute": True}
+        every = pipeline_store.get_node_configs(populated_db)
+        assert every[NODE]["runOptions"] == {"distribute": False}
+        assert every[self.PLACED]["runOptions"] == {"distribute": True}
+
+    def test_a_duplicate_carries_the_source_as_resolved_into_its_own_scope(self, populated_db):
+        intent_store.set_column_selections(
+            populated_db, NODE, {"cycles": _sel("ankle")}, scope=GLOBAL_SCOPE
+        )
+        intent_store.set_run_options(populated_db, self.PLACED, {"distribute": True})
+        copy = "fn__trial_mean_symmetry__c0c0c0c0"
+        pipeline_store.write_manual_node(
+            populated_db, copy, "functionNode", "trial_mean_symmetry", "pipe_c"
+        )
+        intent_store.copy_subject(
+            populated_db, self.PLACED, copy, src_scope="pipe_b", dst_scope="pipe_c"
+        )
+        cfg = pipeline_store.get_node_config(populated_db, copy)
+        assert cfg["columnSelections"] == {"cycles": _sel("ankle")}, "the legacy row, resolved"
+        assert cfg["runOptions"] == {"distribute": True}, "pipe_b's own"
+        rows = intent_store.load_statements(populated_db, subject_refs=[copy])
+        assert {s.scope for s in rows} == {"pipe_c"}
+        # And it is independent from here on.
+        intent_store.set_run_options(populated_db, self.PLACED, {"distribute": False})
+        assert pipeline_store.get_node_config(populated_db, copy)["runOptions"] == {
+            "distribute": True
+        }
+
+    def test_hidden_values_are_read_for_the_run_s_canvas(self, populated_db):
+        pipeline_store.hide_parameter_values(populated_db, "HZ", ["10"], "pipe_b")
+        from scistack_gui.services.execution_service import _hidden_constant_values
+
+        assert _hidden_constant_values(populated_db, "pipe_b") == {"HZ": {"10"}}
+        assert _hidden_constant_values(populated_db, ROOT_SCOPE) == {}
+        assert _hidden_constant_values(populated_db, None) == {"HZ": {"10"}}

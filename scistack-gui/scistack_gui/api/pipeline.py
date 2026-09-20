@@ -266,7 +266,7 @@ def _migrate_column_selections(
     stay where they were.
     """
     from scistack_gui import pipeline_store as _store
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     old_bare, new_bare = strip_placement(old_id), strip_placement(new_id)
     if any(
@@ -485,6 +485,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
 
     from scistack_gui import matlab_registry as _mr
     from scistack_gui import pipeline_store as _ps
+    from scistack_gui import ids
     from scistack_gui.domain import graph_builder as gb
     from scistack_gui.domain.edge_resolver import resolve_function_edges
 
@@ -656,7 +657,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     # can hold a setting for a node that has already run (a DB-derived node has
     # no _pipeline_nodes row at all). Passed alongside the fn_name-keyed map
     # below, which stays as the fallback for manual nodes.
-    node_configs = _ps.get_node_configs(db)
+    node_configs = _ps.get_node_configs(db, pipeline_id)
 
     saved_configs: dict[str, dict | None] = {}
     for fn in fn_names:
@@ -695,7 +696,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     }
 
     from scistack_gui.domain.edge_resolver import infer_manual_fn_param_to_class
-    from scistack_gui.domain.graph_builder import fn_node_id
+    from scistack_gui.ids import fn_node_id
 
     existing_node_labels_pre = {f"var__{t}": t for t in agg.all_var_types}
     for fn in matlab_functions:
@@ -743,7 +744,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     source_parameters = {
         name: p
         for name, p in registry.get_parameters_registry().items()
-        if f"{gb.PARAM_ID_PREFIX}{name}" not in hidden_ids
+        if f"{ids.PARAM_ID_PREFIX}{name}" not in hidden_ids
     }
     logger.debug(
         "[pipeline] loaded %d parameter(s) from registry", len(source_parameters)
@@ -877,7 +878,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         for node in nodes:
             if node["type"] != "functionNode":
                 continue
-            parsed = gb.parse_fn_node_id(node["id"])
+            parsed = ids.parse_fn_node_id(node["id"])
             if parsed is not None and parsed in disconnected_wirings:
                 node["data"]["disconnected"] = True
                 tagged += 1
@@ -961,7 +962,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
             validated_graduations.append(action)
             continue
         resolved, inferred_inputs = _resolve_manual_fn_wiring(action.old_id, meta["label"])
-        candidate_parsed = gb.parse_fn_node_id(action.new_id)
+        candidate_parsed = ids.parse_fn_node_id(action.new_id)
         candidate = (
             _find_db_fn_candidate(agg, meta["label"], candidate_parsed[1])
             if candidate_parsed is not None
@@ -1010,12 +1011,12 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
             for n in nodes
             if n["type"] == "functionNode"
             and n["data"]["label"] == meta["label"]
-            and (gb.parse_fn_node_id(n["id"]) or (None, None))[1] == my_wiring
+            and (ids.parse_fn_node_id(n["id"]) or (None, None))[1] == my_wiring
         ]
         if len(matches) != 1:
             still_to_add.append(node_id)
             continue
-        target_id = gb.placement_id(matches[0], meta.get("pipeline_id") or "main")
+        target_id = ids.placement_id(matches[0], meta.get("pipeline_id") or ids.ROOT_SCOPE)
         if target_id in saved_positions:
             still_to_add.append(node_id)
             continue
@@ -1106,8 +1107,8 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         # The snapshot must also FORGET the fresh id, or apply_placement_
         # configs' orphan check (which reads this dict, not the DB) names a
         # row that was just moved.
-        old_bare = gb.strip_placement(action.old_id)
-        for stale_key in [k for k in node_configs if gb.strip_placement(k) == old_bare]:
+        old_bare = ids.strip_placement(action.old_id)
+        for stale_key in [k for k in node_configs if ids.strip_placement(k) == old_bare]:
             node_configs.pop(stale_key, None)
         moved_cfg = _ps.get_node_config(db, action.new_id)
         if moved_cfg:
@@ -1115,7 +1116,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
             target_node = next(
                 (n for n in nodes if n["id"] == action.new_id), None
             ) or next(
-                (n for n in nodes if n["id"] == gb.strip_placement(action.new_id)),
+                (n for n in nodes if n["id"] == ids.strip_placement(action.new_id)),
                 None,
             )
             if target_node is not None:

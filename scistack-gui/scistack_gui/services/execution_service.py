@@ -27,7 +27,7 @@ from pathlib import Path
 
 from scidb.foreach_config import RunOptions
 
-from scistack_gui.domain.graph_builder import PARAM_ID_PREFIX as _PARAM_PREFIX
+from scistack_gui.ids import PARAM_ID_PREFIX as _PARAM_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,7 @@ def column_selections_for_nodes(
     """
     from scistack_gui import pipeline_store
     from scistack_gui.domain import column_selection as _cs
-    from scistack_gui.domain.graph_builder import parse_fn_node_id, strip_placement
+    from scistack_gui.ids import parse_fn_node_id, strip_placement
 
     wanted = {strip_placement(i) for i in (node_ids or set())}
     if not wanted and not function_name:
@@ -459,17 +459,18 @@ def _attach_column_selections(
     return targets
 
 
-def _hidden_constant_values(db) -> dict[str, set[str]]:
+def _hidden_constant_values(db, pipeline_id: "str | None" = None) -> dict[str, set[str]]:
     """{const_name: {hidden values}} from the ``ConstantNode.tsx`` checkbox
     state — grouped once per derivation call so ``filter_hidden_
     constant_value_targets`` (a pure content-match, no call_id hashing) can
-    check every target in one pass. ``pipeline_id=None`` unions every
-    scope's hides, matching ``get_hidden_node_ids``' fail-open convention —
-    execution is not yet scope-aware (see that function's docstring)."""
+    check every target in one pass. A run from a canvas passes that canvas
+    (``derive_target_for_node`` reads it off the node id); only the
+    name-scoped fallback (``derive_fn_targets``, no node) still unions every
+    scope's hides."""
     from scistack_gui import pipeline_store
 
     hidden: dict[str, set[str]] = {}
-    for row in pipeline_store.list_hidden_parameter_values(db, None):
+    for row in pipeline_store.list_hidden_parameter_values(db, pipeline_id):
         hidden.setdefault(row["const_name"], set()).add(row["value"])
     return hidden
 
@@ -536,7 +537,7 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
         infer_manual_fn_output_types,
         resolve_function_edges,
     )
-    from scistack_gui.domain.graph_builder import fn_node_id
+    from scistack_gui.ids import fn_node_id
     from scistack_gui.domain.variant_resolver import filter_hidden_constant_value_targets
 
     hidden_values = _hidden_constant_values(db)
@@ -569,7 +570,7 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
     # Manual edges may reference WIRING-GROUPED node ids (fn__{fn}__{wid} —
     # the canvas groups call sites since 2026-07-18) whose suffix is not any
     # call_id: adopt any edge endpoint whose parsed fn name matches.
-    from scistack_gui.domain.graph_builder import parse_fn_node_id
+    from scistack_gui.ids import parse_fn_node_id
 
     for edge in all_edges:
         for endpoint in (edge.get("source"), edge.get("target")):
@@ -697,10 +698,15 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     from scistack_gui import pipeline_store
     from scistack_gui.api.pipeline import _fn_params_from_registry
     from scistack_gui.domain.edge_resolver import resolve_function_edges
-    from scistack_gui.domain.graph_builder import parse_fn_node_id, wiring_id
+    from scistack_gui.domain.graph_builder import wiring_id
+    from scistack_gui.ids import parse_fn_node_id
     from scistack_gui.domain.variant_resolver import filter_hidden_constant_value_targets
 
-    hidden_values = _hidden_constant_values(db)
+    # The canvas this node is on decides which hides apply — a value
+    # unchecked in one hypothesis must not exclude it from another.
+    from scistack_gui import intent_store
+
+    hidden_values = _hidden_constant_values(db, intent_store.scope_of_node(db, node_id))
     manual_nodes = pipeline_store.get_manual_nodes(db)
     all_edges = pipeline_store.get_manual_edges(db)
 
@@ -864,11 +870,8 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     from "never run" and surface the right explicit error (see api/run.py).
     """
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import (
-        manual_edge_handle_index,
-        parse_fn_node_id,
-        wiring_id,
-    )
+    from scistack_gui.domain.graph_builder import manual_edge_handle_index, wiring_id
+    from scistack_gui.ids import parse_fn_node_id
 
     hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
     if not hidden_edge_ids:
@@ -1701,11 +1704,8 @@ def _scope_function_node_ids(db, pipeline_id: str) -> list[tuple[str, str]]:
     """
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import (
-        fn_node_id,
-        parse_fn_node_id,
-        wiring_id,
-    )
+    from scistack_gui.domain.graph_builder import wiring_id
+    from scistack_gui.ids import fn_node_id, parse_fn_node_id
     from scistack_gui.domain.scope_filter import node_scope
 
     manual_nodes = pipeline_store.get_manual_nodes(db)
@@ -1843,8 +1843,9 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
     # the same False/None it actually runs with, not a node's persisted
     # runOptions; a hidden pending combo hashed with a different
     # distribute/as_table simply won't match and fails safe (reappears)
-    # rather than mis-hiding a different combo.
-    hidden_ids = pipeline_store.get_hidden_node_ids(db)
+    # rather than mis-hiding a different combo. THIS scope's hides: the
+    # compiled pipeline runs one canvas's nodes (_scope_function_node_ids).
+    hidden_ids = pipeline_store.get_hidden_node_ids(db, pipeline_id)
 
     for node_id, fn_label in _scope_function_node_ids(db, pipeline_id):
         try:

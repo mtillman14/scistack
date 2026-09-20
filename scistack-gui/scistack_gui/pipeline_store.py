@@ -63,12 +63,13 @@ import logging
 import uuid
 from pathlib import Path
 
+from scistack_gui.ids import ROOT_SCOPE
+
 logger = logging.getLogger(__name__)
 
 _MIGRATION_SENTINEL = "pipeline_db_migrated"
 
-# The reserved root scope: pre-scoping documents live here after migration.
-ROOT_PIPELINE_ID = "main"
+# The reserved root scope is ``scistack_gui.ids.ROOT_SCOPE``.
 
 
 def _duck(db):
@@ -281,7 +282,7 @@ def _ensure_tables(db) -> None:
     _duck(db)._execute(
         "INSERT INTO _pipelines (pipeline_id, name) VALUES (?, ?) "
         "ON CONFLICT DO NOTHING",
-        [ROOT_PIPELINE_ID, ROOT_PIPELINE_ID],
+        [ROOT_SCOPE, ROOT_SCOPE],
     )
 
     # --- Hypothesis tabs (a hypothesis is a tagged top-level pipeline) ---
@@ -298,7 +299,7 @@ def _ensure_tables(db) -> None:
     # other (one-time, idempotent — existing DBs backfill on next access).
     _duck(db)._execute(
         "INSERT INTO _hypotheses (pipeline_id) VALUES (?) ON CONFLICT DO NOTHING",
-        [ROOT_PIPELINE_ID],
+        [ROOT_SCOPE],
     )
 
     # The intent store (`_intent`): one table, one shape, for statements
@@ -384,6 +385,27 @@ def migrate_from_json(db, layout_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def manual_node_scope(db, node_id: str) -> "str | None":
+    """The canvas a manual node was dragged onto, or ``None`` if *node_id*
+    is not a manual node. One row, not the whole manual-node map — this is
+    on the path of every config read (``intent_store.scope_of_node``).
+
+    Deliberately NOT ``_ensure_tables``: that runs the intent store's one-time
+    import, whose node-config importer asks this very question for each
+    legacy row — the import would re-enter itself. A database with no
+    ``_pipeline_nodes`` yet has no manual nodes, which is the ``None`` answer.
+    """
+    try:
+        row = _duck(db)._fetchone(
+            "SELECT pipeline_id FROM _pipeline_nodes WHERE node_id = ?", [node_id]
+        )
+    except Exception:  # the table does not exist yet
+        return None
+    if row is None:
+        return None
+    return row[0] or ROOT_SCOPE
+
+
 def get_manual_nodes(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
     """Return {node_id: {"type", "label", "pipeline_id"[, "config"]}}.
 
@@ -406,14 +428,24 @@ def get_manual_nodes(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
     # existing consumer (export, copy/paste, graph build) reading one
     # "config" key that means the same thing everywhere -- otherwise each
     # would have to learn about the split and one of them would be missed.
-    overrides = get_node_configs(db)
+    # Resolved per scope: a manual node's statements are made on the canvas
+    # it was dragged onto (intent_store.scope_of_node), so its config is the
+    # overlay for THAT scope — one overlay per scope, not one per node.
+    overrides_by_scope: dict[str, dict] = {}
+
+    def _overrides(scope: str) -> dict:
+        if scope not in overrides_by_scope:
+            overrides_by_scope[scope] = get_node_configs(db, scope)
+        return overrides_by_scope[scope]
+
     result = {}
     for row in rows:
         entry: dict = {
             "type": row[1],
             "label": row[2],
-            "pipeline_id": row[4] or ROOT_PIPELINE_ID,
+            "pipeline_id": row[4] or ROOT_SCOPE,
         }
+        overrides = _overrides(entry["pipeline_id"])
         if row[3] and row[3] != "{}":
             try:
                 entry["config"] = json.loads(row[3])
@@ -453,7 +485,7 @@ def get_builtin_functions(db) -> list[dict]:
 
 
 def write_manual_node(
-    db, node_id: str, node_type: str, label: str, pipeline_id: str = ROOT_PIPELINE_ID
+    db, node_id: str, node_type: str, label: str, pipeline_id: str = ROOT_SCOPE
 ) -> None:
     logger.info(
         "[pipeline_store] write_manual_node called (node_id=%r, type=%r, "
@@ -541,16 +573,27 @@ def _with_graduated_aspects(db, node_id: str, config: dict) -> dict:
     ``update_node_config``, which strips it on the way in).
     """
     from scistack_gui import intent_store
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
+    # Resolved for the scope the id names (a hypothesis's own statements over
+    # root's) — one overlay for one node; the whole-graph readers ask for
+    # the whole overlay once (`get_node_configs`).
+    scope = intent_store.scope_of_node(db, node_id)
     out = dict(config)
-    out.update(intent_store.node_config_overlay(db).get(strip_placement(node_id), {}))
+    out.update(intent_store.node_config_overlay(db, scope).get(strip_placement(node_id), {}))
     return out
 
 
-def get_node_configs(db) -> dict[str, dict]:
+def get_node_configs(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
     """``{node_id: config}`` for every node that has one, legacy column
-    included (``_node_config`` wins where both exist)."""
+    included (``_node_config`` wins where both exist).
+
+    With *pipeline_id*, the graduated aspects are RESOLVED for that scope
+    and keyed by the bare id — what a canvas build wants. Without it they
+    come for every scope at once, a hypothesis's own rows keyed
+    ``bare::scope`` (``intent_store.node_config_overlay_every_scope``) — for
+    the readers that match by function name across the project.
+    """
     _ensure_tables(db)
     configs: dict[str, dict] = {}
     for table in ("_pipeline_nodes", "_node_config"):
@@ -576,7 +619,12 @@ def get_node_configs(db) -> dict[str, dict]:
     # an aspect has moved out of the blob entirely.
     from scistack_gui import intent_store
 
-    for node_id, overlay in intent_store.node_config_overlay(db).items():
+    overlay_by_node = (
+        intent_store.node_config_overlay(db, pipeline_id)
+        if pipeline_id
+        else intent_store.node_config_overlay_every_scope(db)
+    )
+    for node_id, overlay in overlay_by_node.items():
         configs.setdefault(node_id, {}).update(overlay)
 
     logger.debug("[pipeline_store] loaded config for %d node(s)", len(configs))
@@ -653,7 +701,7 @@ def migrate_node_config(db, old_id: str, new_id: str) -> dict:
     Returns ``{"moved": [keys], "replaced": {key: previous_value}}``; both
     empty when there was nothing to move.
     """
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     _ensure_tables(db)
     old_bare = strip_placement(old_id)
@@ -829,7 +877,7 @@ def list_pipelines(db) -> list[dict]:
     rows = _duck(db)._fetchall(
         "SELECT pipeline_id, name FROM _pipelines WHERE NOT hidden "
         "ORDER BY (pipeline_id != ?), name",
-        [ROOT_PIPELINE_ID],
+        [ROOT_SCOPE],
     )
     return [{"pipeline_id": r[0], "name": r[1]} for r in rows]
 
@@ -844,7 +892,7 @@ def list_all_pipelines(db) -> list[dict]:
     rows = _duck(db)._fetchall(
         "SELECT pipeline_id, name, hidden FROM _pipelines "
         "ORDER BY (pipeline_id != ?), name",
-        [ROOT_PIPELINE_ID],
+        [ROOT_SCOPE],
     )
     return [{"pipeline_id": r[0], "name": r[1], "hidden": bool(r[2])} for r in rows]
 
@@ -1152,7 +1200,7 @@ def list_hypotheses(db) -> list[dict]:
         "h.hypothesis_statement, h.evidence_for, h.evidence_against "
         "FROM _hypotheses h JOIN _pipelines p ON p.pipeline_id = h.pipeline_id "
         "WHERE NOT p.hidden ORDER BY (p.pipeline_id != ?), p.name",
-        [ROOT_PIPELINE_ID],
+        [ROOT_SCOPE],
     )
     return [
         {
@@ -1238,7 +1286,7 @@ def hide_hypothesis(db, pipeline_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def hide_node(db, node_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
+def hide_node(db, node_id: str, pipeline_id: str = ROOT_SCOPE) -> None:
     """Mark a DB-derived node as hidden IN ``pipeline_id`` so that scope's
     _build_graph won't recreate it — a canonical id shared by another
     pipeline scope's independent placement of the same wiring (see
@@ -1250,7 +1298,7 @@ def hide_node(db, node_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
     intent_store.hide_node(db, node_id, pipeline_id)
 
 
-def unhide_node(db, node_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
+def unhide_node(db, node_id: str, pipeline_id: str = ROOT_SCOPE) -> None:
     """Remove a node from ``pipeline_id``'s hidden list (e.g. re-added there)."""
     _ensure_tables(db)
     from scistack_gui import intent_store
@@ -1259,7 +1307,7 @@ def unhide_node(db, node_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
 
 
 def unhide_nodes_by_prefix(
-    db, prefix: str, pipeline_id: str = ROOT_PIPELINE_ID
+    db, prefix: str, pipeline_id: str = ROOT_SCOPE
 ) -> None:
     """Remove all of ``pipeline_id``'s hidden nodes whose IDs start with
     ``prefix``.
@@ -1277,16 +1325,16 @@ def unhide_nodes_by_prefix(
 def get_hidden_node_ids(db, pipeline_id: "str | None" = None) -> set[str]:
     """Return the set of node IDs hidden in ``pipeline_id``.
 
-    ``pipeline_id=None`` (default) returns every scope's hidden ids unioned
-    — for callers that intentionally check hidden-ness independent of scope
-    (currently the execution/run-readiness path, which is not yet
-    scope-aware — see plan-scope-hidden-nodes-edges.md follow-up). Canvas
-    rendering (api.pipeline._build_graph) passes its own scope so a delete
-    in one pipeline never hides a shared-wiring node in another.
+    ``pipeline_id=None`` returns every scope's hidden ids unioned. Since
+    2026-09-20 execution is scope-aware: a run, a compiled pipeline and both
+    code exports pass the canvas they run from (a click's node id names it —
+    ``intent_store.scope_of_node``), so a node deleted in one hypothesis
+    still runs in another. Only the name-scoped fallback (a run request
+    with no node id) still passes ``None``. Canvas rendering
+    (api.pipeline._build_graph) has always passed its own scope.
 
-    Pending-constant combo hides (_pipeline_hidden_combos) remain globally
-    scoped by design (deferred, same follow-up) and are always unioned in
-    regardless of ``pipeline_id`` so that existing behavior is unchanged.
+    Pending-constant combo hides remain globally scoped by design and are
+    always unioned in regardless of ``pipeline_id``.
     """
     _ensure_tables(db)
     from scistack_gui import intent_store
@@ -1405,7 +1453,7 @@ def list_path_input_history(db, name: "str | None" = None) -> list[dict]:
 
 
 def hide_parameter_value(
-    db, const_name: str, value: str, pipeline_id: str = ROOT_PIPELINE_ID
+    db, const_name: str, value: str, pipeline_id: str = ROOT_SCOPE
 ) -> None:
     """Mark one constant value as excluded from future runs, without
     deleting anything (per-value analog of ``hide_node``)."""
@@ -1416,7 +1464,7 @@ def hide_parameter_value(
 
 
 def unhide_parameter_value(
-    db, const_name: str, value: str, pipeline_id: str = ROOT_PIPELINE_ID
+    db, const_name: str, value: str, pipeline_id: str = ROOT_SCOPE
 ) -> None:
     """Restore a previously hidden constant value."""
     _ensure_tables(db)
@@ -1426,7 +1474,7 @@ def unhide_parameter_value(
 
 
 def hide_parameter_values(
-    db, const_name: str, values: "list[str]", pipeline_id: str = ROOT_PIPELINE_ID
+    db, const_name: str, values: "list[str]", pipeline_id: str = ROOT_SCOPE
 ) -> None:
     """Hide several values of one Parameter in a single statement.
 
@@ -1447,7 +1495,7 @@ def hide_parameter_values(
 
 
 def unhide_parameter_values(
-    db, const_name: str, values: "list[str]", pipeline_id: str = ROOT_PIPELINE_ID
+    db, const_name: str, values: "list[str]", pipeline_id: str = ROOT_SCOPE
 ) -> None:
     """Restore several hidden values of one Parameter in a single statement.
     Bulk counterpart to :func:`hide_parameter_values`."""
@@ -1463,7 +1511,7 @@ def unhide_parameter_values(
 
 
 def list_hidden_parameter_values(
-    db, pipeline_id: "str | None" = ROOT_PIPELINE_ID
+    db, pipeline_id: "str | None" = ROOT_SCOPE
 ) -> list[dict]:
     """Return hidden constant values as [{"const_name", "value"}, ...].
 
@@ -1563,7 +1611,7 @@ def hide_edge(
     target: str = "",
     source_handle: "str | None" = None,
     target_handle: "str | None" = None,
-    pipeline_id: str = ROOT_PIPELINE_ID,
+    pipeline_id: str = ROOT_SCOPE,
 ) -> None:
     """Mark a DB-derived edge as hidden IN ``pipeline_id`` so that scope's
     build_edges won't recreate it — an edge id shared by another pipeline
@@ -1585,7 +1633,7 @@ def hide_edge(
     )
 
 
-def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
+def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> None:
     """Restore a previously hidden edge in ``pipeline_id``."""
     logger.info(
         "[pipeline_store] unhide_edge called (edge_id=%r, pipeline_id=%r)",
@@ -1700,7 +1748,7 @@ def get_hidden_ports_by_scope(db) -> dict[str, dict[str, set[str]]]:
 
 
 def _upsert_node(
-    db, node_id: str, node_type: str, label: str, pipeline_id: str = ROOT_PIPELINE_ID
+    db, node_id: str, node_type: str, label: str, pipeline_id: str = ROOT_SCOPE
 ) -> None:
     _duck(db)._execute(
         "INSERT INTO _pipeline_nodes (node_id, node_type, label, pipeline_id) "

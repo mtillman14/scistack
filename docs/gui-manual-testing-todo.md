@@ -36,6 +36,32 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0d. Hypothesis-scoped settings and hides — added 2026-09-20
+
+A node's run options / schema level / column selections and a Parameter's
+unchecked values are now statements made ON a canvas: root's apply on root,
+a hypothesis's on that hypothesis; a duplicate copies what it was made from.
+Before, every node-config write was global (two placements of one wiring
+shared their run options) and a run saw every hypothesis's hidden values at
+once. Settings saved before this build were global and still apply on every
+canvas until that canvas changes them.
+
+Backend: nothing to configure. Frontend: unchanged (the scope is read off the
+node id the canvas already sends).
+
+- [ ] Root canvas: set Distribute on a node, then Duplicate the hypothesis
+      (root). The copy shows Distribute ticked (copied).
+- [ ] In the copy, untick Distribute. Root still shows it ticked; the copy
+      shows it unticked after a reload (its own statement).
+- [ ] Run the node from the hypothesis — the log's run options say
+      `distribute=False`; run from root — `distribute=True`.
+- [ ] Duplicate the copy. The second copy shows the unticked state; ticking
+      it back in the first copy leaves the second unticked.
+- [ ] Hypothesis: uncheck one value of a Parameter. Run the consumer from
+      root — the value still runs; from the hypothesis — it is excluded.
+- [ ] Settings saved BEFORE this build (legacy `global` rows) still show on
+      every canvas until you change them on one.
+
 ## 0c. Plot Studio over both transports (handler table) — added 2026-09-20
 
 The plot family's JSON-RPC methods and HTTP routes are now built from ONE

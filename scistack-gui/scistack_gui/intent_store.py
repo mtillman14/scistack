@@ -301,7 +301,7 @@ def rekey_subject(db, old_ref: str, new_ref: str, *, old_wins: bool = True) -> i
     just ran (``.claude/plan-graduation-config-migration.md``). Pass
     ``old_wins=False`` to keep *new_ref*'s statements instead.
     """
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     old_ref, new_ref = strip_placement(old_ref), strip_placement(new_ref)
     if old_ref == new_ref:
@@ -344,7 +344,9 @@ def rekey_subject(db, old_ref: str, new_ref: str, *, old_wins: bool = True) -> i
     return moved
 
 
-def copy_subject(db, src_ref: str, dst_ref: str) -> int:
+def copy_subject(
+    db, src_ref: str, dst_ref: str, *, src_scope: str | None = None, dst_scope: str | None = None
+) -> int:
     """Copy one subject's statements onto another — what DUPLICATING a node
     does, as against :func:`rekey_subject`'s move.
 
@@ -353,25 +355,37 @@ def copy_subject(db, src_ref: str, dst_ref: str) -> int:
     store, duplicating a node copied only the legacy ``_pipeline_nodes.config``
     column, so a column selection saved on the original was silently absent
     from the copy — see ``scope_service._clone_nodes``.)
+
+    What is copied is the source AS RESOLVED in its scope (its own canvas's
+    statements over legacy ``global`` ones), written at the destination's
+    scope — so the copy carries everything the original ran with, as its own
+    rows, and a later edit to the original does not reach it. Scopes default
+    to :func:`scope_of_node` of each id.
     """
     from dataclasses import replace
 
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
+    src_scope = src_scope or scope_of_node(db, src_ref)
+    dst_scope = dst_scope or scope_of_node(db, dst_ref)
     src_ref, dst_ref = strip_placement(src_ref), strip_placement(dst_ref)
-    if src_ref == dst_ref:
+    if src_ref == dst_ref and src_scope == dst_scope:
         return 0
+    resolved: dict[tuple[str, str | None], Statement] = {}
+    for st in _in_scope_order(load_statements(db, subject_refs=[src_ref], scopes=[src_scope])):
+        resolved[(st.aspect, st.key)] = st
     rows = [
-        replace(st, subject_ref=dst_ref)
-        for st in load_statements(db, subject_refs=[src_ref])
+        replace(st, subject_ref=dst_ref, scope=dst_scope) for st in resolved.values()
     ]
     put_statements(db, rows)
     if rows:
         logger.info(
-            "[intent_store] copied %d statement(s): %s -> %s",
+            "[intent_store] copied %d statement(s): %s@%s -> %s@%s",
             len(rows),
             src_ref,
+            src_scope,
             dst_ref,
+            dst_scope,
         )
     return len(rows)
 
@@ -494,17 +508,55 @@ def _now() -> str:
 SCHEMA_LOCATION_KEYS = ("schemaSelection", "schemaLevel", "whereFilters")
 
 
-def set_column_selections(db, node_id: str, selections: dict | None) -> None:
+def scope_of_node(db, node_id: str) -> str:
+    """The scope a statement about *node_id* is made at — the ONE owner of
+    "which hypothesis was this said in".
+
+    * a placement-qualified id (``bare::pipe_x``) carries its scope;
+    * a manual node's row says which canvas it was dragged onto;
+    * anything else lives on the root canvas, ``main``.
+
+    A statement is made ON a canvas and applies on that canvas — root
+    included, the same rule the `hidden` aspect has always used. ``global``
+    is not a canvas: it holds the rows written before execution was
+    scope-aware (2026-09-20), which applied everywhere then and still do —
+    ``resolve`` walks ``scope -> global``, so a canvas's own statement
+    shadows a legacy one. Decided 2026-09-20 (plan Stage 6;
+    `docs/claude/decisions.md`).
+    """
+    from scistack_gui.ids import ROOT_SCOPE, parse_placement_id
+
+    parsed = parse_placement_id(node_id)
+    if parsed is not None:
+        scope = parsed[1]
+    else:
+        from scistack_gui import pipeline_store
+
+        scope = pipeline_store.manual_node_scope(db, node_id) or ROOT_SCOPE
+    return scope
+
+
+def scopes(db) -> list[str]:
+    """Every scope any statement is made at, ``global`` first."""
+    rows = _duck(db)._fetchall("SELECT DISTINCT scope FROM _intent ORDER BY scope")
+    found = {r[0] for r in rows if r[0]}
+    return [GLOBAL_SCOPE, *sorted(found - {GLOBAL_SCOPE})]
+
+
+def set_column_selections(
+    db, node_id: str, selections: dict | None, *, scope: str | None = None
+) -> None:
     """Replace a call site's column selections — one statement per parameter.
 
     Per parameter, not one blob: the resolver's unit is a field, so a
     selection on one input can be overridden, reported or dropped without
-    touching another's.
+    touching another's. ``scope`` defaults to :func:`scope_of_node`.
     """
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     bare = strip_placement(node_id)
-    clear_aspect(db, bare, ASPECT_COLUMNS)
+    scope = scope or scope_of_node(db, node_id)
+    clear_aspect(db, bare, ASPECT_COLUMNS, scope)
     statements = []
     for param, raw in (selections or {}).items():
         sel = normalize(ASPECT_COLUMNS, raw)
@@ -517,19 +569,22 @@ def set_column_selections(db, node_id: str, selections: dict | None) -> None:
                 aspect=ASPECT_COLUMNS,
                 value=sel,
                 key=param,
-                scope=GLOBAL_SCOPE,
+                scope=scope,
             )
         )
     put_statements(db, statements)
 
 
-def set_run_options(db, node_id: str, options: dict | None) -> None:
+def set_run_options(
+    db, node_id: str, options: dict | None, *, scope: str | None = None
+) -> None:
     """Replace a call site's run options (dry_run / save / distribute /
     as_table) — one whole-aspect statement."""
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     bare = strip_placement(node_id)
-    clear_aspect(db, bare, ASPECT_RUN_OPTIONS)
+    scope = scope or scope_of_node(db, node_id)
+    clear_aspect(db, bare, ASPECT_RUN_OPTIONS, scope)
     if options:
         put_statements(
             db,
@@ -539,13 +594,15 @@ def set_run_options(db, node_id: str, options: dict | None) -> None:
                     subject_ref=bare,
                     aspect=ASPECT_RUN_OPTIONS,
                     value=dict(options),
-                    scope=GLOBAL_SCOPE,
+                    scope=scope,
                 )
             ],
         )
 
 
-def set_schema_location(db, node_id: str, location: dict | None) -> None:
+def set_schema_location(
+    db, node_id: str, location: dict | None, *, scope: str | None = None
+) -> None:
     """Replace a call site's location settings — which locations it runs at,
     which keys iterate, which where-filters apply — as ONE statement.
 
@@ -555,12 +612,14 @@ def set_schema_location(db, node_id: str, location: dict | None) -> None:
     independently authored. A partial statement cannot arise, and merging an
     older one into a newer one would produce a location nobody asked for —
     which is why graduation replaces this aspect whole and logs what it
-    replaced (``rekey_subject``).
+    replaced (``rekey_subject``), and why a hypothesis's statement shadows
+    root's whole, never key by key.
     """
-    from scistack_gui.domain.graph_builder import strip_placement
+    from scistack_gui.ids import strip_placement
 
     bare = strip_placement(node_id)
-    clear_aspect(db, bare, ASPECT_SCHEMA_LOCATION)
+    scope = scope or scope_of_node(db, node_id)
+    clear_aspect(db, bare, ASPECT_SCHEMA_LOCATION, scope)
     value = {k: v for k, v in (location or {}).items() if k in SCHEMA_LOCATION_KEYS}
     if value:
         put_statements(
@@ -571,16 +630,16 @@ def set_schema_location(db, node_id: str, location: dict | None) -> None:
                     subject_ref=bare,
                     aspect=ASPECT_SCHEMA_LOCATION,
                     value=value,
-                    scope=GLOBAL_SCOPE,
+                    scope=scope,
                 )
             ],
         )
 
 
-def _set_schema_location_from_blob(db, node_id: str, blob_part) -> None:
+def _set_schema_location_from_blob(db, node_id: str, blob_part, *, scope=None) -> None:
     """Adapter for the SETTERS table: the blob carries the three location
     keys at top level, so the writer receives the whole blob."""
-    set_schema_location(db, node_id, blob_part)
+    set_schema_location(db, node_id, blob_part, scope=scope)
 
 
 #: ``{aspect: writer}`` for the graduated aspects — how a ``_node_config``
@@ -593,55 +652,93 @@ SETTERS = {
 }
 
 
-def split_node_config(db, node_id: str, config: dict) -> dict:
+def split_node_config(db, node_id: str, config: dict, *, scope: str | None = None) -> dict:
     """Write every graduated aspect of *config* as statements and return what
     is LEFT for the blob (nothing, once every aspect has moved).
 
     The `update_node_config` seam calls this. `schema_location` is three
     top-level blob keys, so it is gathered rather than popped by one name.
+    The scope is resolved ONCE here (:func:`scope_of_node`) so the three
+    writers cannot disagree about where the panel's one save lands.
     """
+    scope = scope or scope_of_node(db, node_id)
     rest = dict(config)
     if NODE_CONFIG_KEYS[ASPECT_COLUMNS] in rest:
-        set_column_selections(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_COLUMNS]))
+        set_column_selections(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_COLUMNS]), scope=scope)
     if NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS] in rest:
-        set_run_options(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS]))
+        set_run_options(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS]), scope=scope)
     if any(k in rest for k in SCHEMA_LOCATION_KEYS):
-        set_schema_location(db, node_id, {k: rest.pop(k) for k in SCHEMA_LOCATION_KEYS if k in rest})
+        set_schema_location(
+            db, node_id, {k: rest.pop(k) for k in SCHEMA_LOCATION_KEYS if k in rest}, scope=scope
+        )
     return rest
 
 
-def node_config_overlay(db) -> dict[str, dict]:
+def _in_scope_order(statements: list[Statement]) -> list[Statement]:
+    """Global statements first, the scope's own last — so a dict built by
+    iterating them ends with the scope's value: ``resolve``'s
+    ``scope -> global`` walk, applied to a whole overlay at once."""
+    return sorted(statements, key=lambda s: s.scope != GLOBAL_SCOPE)
+
+
+def node_config_overlay(db, scope: str = GLOBAL_SCOPE) -> dict[str, dict]:
     """``{bare_node_id: {blob_key: value}}`` — every graduated aspect, in the
-    blob spelling the panel reads.
+    blob spelling the panel reads, RESOLVED for *scope* (a canvas id, root
+    being ``main``): a statement made on that canvas shadows a legacy
+    ``global`` one; `columns` per parameter, `runOptions` and the location
+    whole. ``scope=global`` reads the legacy rows alone.
 
     One query per aspect for the whole graph, never one per node.
     """
     out: dict[str, dict] = {}
-    for st in load_statements(db, aspect=ASPECT_COLUMNS, subject_kind=SUBJECT_CALL_SITE):
+    wanted = [scope or GLOBAL_SCOPE]  # load_statements adds `global` itself
+    for st in _in_scope_order(
+        load_statements(db, aspect=ASPECT_COLUMNS, subject_kind=SUBJECT_CALL_SITE, scopes=wanted)
+    ):
         if st.key and st.value:
             out.setdefault(st.subject_ref, {}).setdefault(
                 NODE_CONFIG_KEYS[ASPECT_COLUMNS], {}
             )[st.key] = st.value
-    for st in load_statements(db, aspect=ASPECT_RUN_OPTIONS, subject_kind=SUBJECT_CALL_SITE):
+    for st in _in_scope_order(
+        load_statements(
+            db, aspect=ASPECT_RUN_OPTIONS, subject_kind=SUBJECT_CALL_SITE, scopes=wanted
+        )
+    ):
         if st.value:
             out.setdefault(st.subject_ref, {})[NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS]] = st.value
-    for st in load_statements(
-        db, aspect=ASPECT_SCHEMA_LOCATION, subject_kind=SUBJECT_CALL_SITE
+    for st in _in_scope_order(
+        load_statements(
+            db, aspect=ASPECT_SCHEMA_LOCATION, subject_kind=SUBJECT_CALL_SITE, scopes=wanted
+        )
     ):
         if isinstance(st.value, dict):
-            out.setdefault(st.subject_ref, {}).update(
-                {k: v for k, v in st.value.items() if k in SCHEMA_LOCATION_KEYS}
-            )
+            entry = out.setdefault(st.subject_ref, {})
+            for k in SCHEMA_LOCATION_KEYS:
+                entry.pop(k, None)  # the whole aspect is replaced, never merged
+            entry.update({k: v for k, v in st.value.items() if k in SCHEMA_LOCATION_KEYS})
     return out
 
 
-def column_selections_by_node(db) -> dict[str, dict]:
-    """``{bare_node_id: {param: selection}}`` — the display view of the
-    `columns` aspect alone."""
-    key = NODE_CONFIG_KEYS[ASPECT_COLUMNS]
-    return {
-        nid: cfg[key] for nid, cfg in node_config_overlay(db).items() if cfg.get(key)
-    }
+def node_config_overlay_every_scope(db) -> dict[str, dict]:
+    """The overlay for EVERY scope at once, keyed by the id a node shows
+    under in that scope: root's (``main`` over legacy ``global``) under the
+    bare id, another canvas's own rows under ``bare::scope``.
+
+    For the readers that match by function NAME across the whole project
+    (``execution_service.column_selections_for_nodes`` with a name, the
+    export paths' diagnostics); a canvas or a run knows its scope and asks
+    :func:`node_config_overlay` for it.
+    """
+    from scistack_gui.ids import ROOT_SCOPE, placement_id
+
+    out = dict(node_config_overlay(db, ROOT_SCOPE))
+    for scope in scopes(db):
+        if scope in (GLOBAL_SCOPE, ROOT_SCOPE):
+            continue
+        for bare, cfg in node_config_overlay(db, scope).items():
+            if cfg != out.get(bare):
+                out[placement_id(bare, scope)] = cfg
+    return out
 
 
 def _import_node_config(db) -> int:

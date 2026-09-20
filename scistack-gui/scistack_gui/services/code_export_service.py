@@ -500,10 +500,10 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
     )
 
     pending_consts = ps.get_pending_constants(db)
-    hidden_ids = ps.get_hidden_node_ids(db)
 
     steps: list = []
     for pid in pipeline_ids:
+        hidden_ids = ps.get_hidden_node_ids(db, pid)  # this canvas's hides
         for node_id, fn_label in _scope_function_node_ids(db, pid):
             targets = apply_pending_overrides(
                 derive_target_for_node(db, node_id), pending_consts

@@ -609,3 +609,53 @@ route (added to `api.ts`; **both vite bundles need a rebuild**).
 Verify: `cd /workspace/scistack-gui && pytest tests/test_api_handlers.py
 tests/test_plot_service.py tests/test_client_errors.py -q`, then the whole
 GUI suite.
+
+### Stage 5 — built 2026-09-20, tests unrun
+
+* `scistack_gui/ids.py` (leaf): `BareNodeId` / `PlacedNodeId` (`str`
+  subclasses; placing a placed id raises), `placement_id` /
+  `parse_placement_id` / `strip_placement` / `fn_node_id` /
+  `parse_fn_node_id`, the prefixes, `DB_DERIVED_PREFIXES`, and ONE
+  `ROOT_SCOPE` (it was `scope_filter.ROOT`, `pipeline_store.ROOT_PIPELINE_ID`
+  and `graph_builder._ROOT_PIPELINE_ID`). Every importer moved
+  (`graph_builder` included — 23 files); `tests/test_ids.py`.
+* Seam assertions: `for_each` refuses `schema_keys="subject"` (would have
+  iterated by character) and an unknown key by name; `InputBinding.
+  __post_init__` refuses a pinned rid on a non-PINNED binding and a pool on
+  a non-AGGREGATED one (a ColumnSelection never pools outside aggregation).
+  The indexed-binding-name fold is by construction now (edges are keyed by
+  the Selection's params) — no assertion needed.
+* Dead spellings deleted: `rid_column` / `param_of` / `is_rid_column` /
+  `rid_columns` / `RID_PREFIX` / the whole `vsig_*` family /
+  `InputBinding.column` / `tracked_columns` (→ `tracked_params`); the
+  Fixed-rid lookup is keyed by param.
+* Docs: `docs/claude/archive/` holds the five self-declared superseded
+  narratives (links repointed); `docs/claude/decisions.md` is the one-page
+  ADR index for the week's nine decisions; `database-model.md` carries the
+  `across_variants` column.
+
+### Stage 6 — decided YES and built 2026-09-20, tests unrun
+
+The user was away; the decision is recorded as D-2026-09-20-9 in
+`docs/claude/decisions.md` with the reasoning. In one line: a statement is
+made ON a canvas and applies there; the scope is read off the node id
+(`intent_store.scope_of_node` — placement suffix, manual row, else root
+`main`, the rule the `hidden` aspect always used), so NO request carries
+it; reads resolve `scope -> global` with `global` as the legacy layer; a
+duplicate copies the source as resolved into its own scope; runs, compiled
+pipelines and both code exports read the hides of the canvas they run from.
+
+Code: `intent_store.scope_of_node` / `scopes` / `node_config_overlay(db,
+scope)` / `node_config_overlay_every_scope` / setters with `scope=` /
+`copy_subject(src_scope=, dst_scope=)`; `pipeline_store.manual_node_scope`,
+`get_node_config` resolves the id's scope, `get_node_configs(db,
+pipeline_id)`, `get_manual_nodes` overlays per scope; `_build_graph` passes
+its scope; `execution_service._hidden_constant_values(db, pipeline_id)`
+and the four `get_hidden_node_ids` callers pass the canvas;
+`scope_service._clone_nodes` copies into the target scope.
+`tests/test_intent_store.py::TestScopeAware`.
+
+Verify: `cd /workspace/scistack-gui && pytest tests/test_ids.py
+tests/test_intent_store.py -q`, then the whole GUI suite, then
+`tests/integration`. GUI manual check: `docs/gui-manual-testing-todo.md`
+items 0c and 0d.
