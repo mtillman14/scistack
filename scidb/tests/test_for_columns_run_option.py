@@ -92,10 +92,17 @@ class TestRecorded:
         def total(value):
             return float(pd.DataFrame(value)["a"].sum())
 
-        for_each(total, {"value": Plain}, [Summed], subject=[], trial=[])
+        # Explicit locations, like test_column_selection_lineage's plain-input
+        # case: a bare DataFrame input expands by rid, and an empty-list key
+        # relies on schema discovery rather than the saved record.
+        for_each(total, {"value": Plain}, [Summed], subject=["01"], trial=["1"])
 
         variants = [
             v for v in db.list_pipeline_variants() if v["function_name"] == "total"
         ]
-        assert variants
+        assert variants, (
+            "no variant recorded for total; runs="
+            f"{db._duck._fetchall('SELECT function_name, run_id FROM _run')} "
+            f"records={db._duck._fetchall('SELECT type, count(*) FROM _record GROUP BY type')}"
+        )
         assert "for_columns" not in variants[0]["run_options"]

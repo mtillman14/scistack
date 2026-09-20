@@ -221,7 +221,7 @@ def check_selector_round_trip(
         return []
     where = f" {context}" if context else ""
     for param in lost:
-        Log.warning(
+        Log.warn(
             f"[selector-lost] {fn_name}{where}: input '{param}' was called with "
             f"{asked[param]} but its provenance edge recorded no selector, so "
             f"every reader of this run — a GUI re-run, an export, skip_computed "

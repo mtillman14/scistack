@@ -177,13 +177,34 @@ class TestAttachToTargetsWithHistory:
         assert targets
         assert "no_such_param" in caplog.text
 
-    def test_conflicting_selections_keep_the_first_and_warn(
+    def test_two_placements_of_one_call_site_are_one_statement(
         self, populated_db, bp_node_id, caplog
     ):
+        """Placement (`::scope`) is not part of a statement's subject — it is
+        the intent store's own `scope` column. Saving under the qualified id
+        after the bare one is the user restating the same call site's
+        selection, so the later statement wins and nothing conflicts (before
+        the store, this was two `_node_config` rows and a spurious WARN)."""
         import logging
 
         self._save(populated_db, bp_node_id, {"columns": ["a"]})
         self._save(populated_db, f"{bp_node_id}::main", {"columns": ["b"]})
+        with caplog.at_level(logging.WARNING):
+            merged = column_selections_for_nodes(
+                populated_db, {bp_node_id}, "bandpass_filter"
+            )
+        assert merged["signal"]["columns"] == ["b"]
+        assert "conflicting column selections" not in caplog.text
+
+    def test_conflicting_selections_keep_the_first_and_warn(
+        self, populated_db, bp_node_id, caplog
+    ):
+        """Two DIFFERENT call sites of one name, configured apart, is a real
+        conflict under a name-scoped run: first wins, loser is WARNed."""
+        import logging
+
+        self._save(populated_db, bp_node_id, {"columns": ["a"]})
+        self._save(populated_db, "fn__bandpass_filter__deadbeef", {"columns": ["b"]})
         with caplog.at_level(logging.WARNING):
             merged = column_selections_for_nodes(
                 populated_db, {bp_node_id}, "bandpass_filter"

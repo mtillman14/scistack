@@ -1903,7 +1903,7 @@ def check_recorded_selectors(
         current = parse_selector(asked.get(param))
         if current is None:
             lost.append(param)
-            Log.warning(
+            Log.warn(
                 f"[selector-dropped] {fn_name}{where}: input '{param}' ran "
                 f"before with {describe_columns(rec)} ({rec}) and this run "
                 f"binds the WHOLE variable. If that is deliberate, nothing is "
