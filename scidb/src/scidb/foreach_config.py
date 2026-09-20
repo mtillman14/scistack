@@ -415,7 +415,6 @@ class ForEachConfig:
         step never planned green) and a ``Variant`` pin vanished from the
         predicted config entirely.
         """
-=====NEW_END_MARKER_UNUSED
         from scifor import PathInput
 
         from .foreach import _is_loadable
