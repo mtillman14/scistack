@@ -92,7 +92,14 @@ def pooled(value):
 
 
 def with_ref(value, ref):
-    return float(len(value)) + float(pd.DataFrame(ref)["r"].iloc[0])
+    # `ref` is a one-row, one-column record, so it arrives as its VALUE — the
+    # same shape a plain input of that record would take. Until 2026-09-20 a
+    # Fixed input leaked its `__rid_ref` column (it was never one of scifor's
+    # extended schema keys, so scifor counted it as data), which made the
+    # frame two data columns wide and kept it a DataFrame. The selection seam
+    # drops `__record_id` before scifor extracts, so the leak is gone.
+    ref_value = ref["r"].iloc[0] if isinstance(ref, pd.DataFrame) else ref
+    return float(len(value)) + float(ref_value)
 
 
 def widen(value, factor):
@@ -743,3 +750,35 @@ class TestPathInputIsItsTemplate:
         site = ForEachConfig(self._fn, {"path": pi}).call_site_inputs()
         assert site["path"] == pi.to_key()
         assert "root_folder" in site["path"]
+
+
+class TestAFixedInputArrivesLikeAnyOther:
+    """A Fixed input's record reaches the function in the same shape a plain
+    input's would: a one-row, one-column record as its value, never with a
+    bookkeeping column attached. Until 2026-09-20 `__rid_ref` leaked into the
+    frame (it was never one of scifor's extended schema keys, so scifor
+    treated it as data), which silently widened every Fixed input to a
+    DataFrame."""
+
+    def test_no_internal_column_and_a_scalar_record_is_a_scalar(self, db):
+        _seed()
+        Ref.save(pd.DataFrame({"r": [1.0]}), subject="01")
+        seen: list = []
+
+        def probe(value, ref):
+            seen.append(ref)
+            return 1.0
+
+        for_each(
+            probe,
+            {"value": Wide, "ref": Fixed(Ref, subject="01")},
+            [Out],
+            subject=[],
+            trial=[],
+            cycle=[],
+        )
+        assert seen, "the function never ran"
+        for ref in seen:
+            if isinstance(ref, pd.DataFrame):
+                assert not any(str(c).startswith("__") for c in ref.columns), list(ref.columns)
+            assert float(ref if not isinstance(ref, pd.DataFrame) else ref["r"].iloc[0]) == 1.0
