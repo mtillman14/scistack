@@ -188,17 +188,26 @@ def is_internal_column(column: Any) -> bool:
 
 
 def variant_signature(branch_params: Mapping[str, Any] | None) -> str:
-    """The canonical identity of a variant group: its derived branch params
-    as sorted JSON. ONE recipe, shared by the save path (grouping loaded
-    records, whose branch params arrived through a JSON column) and the
-    expected-invocation predictor (grouping current records straight from
-    the graph), so the two can never disagree on what a group is — the
-    value is normalised through one JSON round trip so a tuple and a list,
-    or an int read back from JSON, sign identically on both sides."""
+    """The canonical identity of a point in variant space: a record's derived
+    branch params as sorted JSON.
+
+    THE recipe — every consumer that asks "are these two records the same
+    variant?" routes through here (``docs/claude/variant-space.md`` §4):
+    the aggregation auto-split grouping loaded records, the
+    expected-invocation predictor grouping current records straight from the
+    graph, the ``latest`` collapse key, the PathOutput ``{variant}`` digest
+    and the GUI's variant summary. They were five hand-rolled
+    ``json.dumps(..., sort_keys=True)`` calls and had already drifted.
+
+    ``sort_keys`` also sorts nested dicts, and a tuple and a list both emit
+    ``[1, 2]``, so a value read back from a JSON column and the same value
+    read from the graph sign identically. ``default=str`` keeps a
+    non-serialisable value (a datetime, say) from raising in the middle of a
+    load.
+    """
     import json
 
-    normalised = json.loads(json.dumps(dict(branch_params or {}), default=str))
-    return json.dumps(normalised, sort_keys=True)
+    return json.dumps(dict(branch_params or {}), sort_keys=True, default=str)
 
 
 #: The signature of a record with no derived branch params — and the value a
@@ -224,19 +233,25 @@ def signature_conflicts_with(signature: str, location: Mapping[str, Any]) -> boo
     return False
 
 
-def merge_branch_params(dicts: Iterable[Mapping[str, Any]]) -> tuple[dict, list[str]]:
-    """Fold several records' branch params into one, last write wins,
-    returning the merged dict and a description of every key that changed
-    value on the way — a conflict means two variant groups were pooled
-    into one call, which the auto-split exists to prevent."""
+def merge_branch_params(
+    dicts: Iterable[Mapping[str, Any]],
+) -> tuple[dict, dict[str, list]]:
+    """Fold several records' branch params into one point, last write wins.
+
+    Returns the merged dict and ``{key: [every value seen]}`` for each key
+    that changed value on the way. A conflict means two variant groups
+    reached one call — which the aggregation auto-split exists to prevent,
+    and which a PathOutput ``{placeholder}`` cannot represent — so both
+    callers need the keys, and one needs the values for its message.
+    """
     merged: dict = {}
-    conflicts: list[str] = []
+    seen: dict[str, list] = {}
     for bp in dicts:
         for k, v in (bp or {}).items():
             if k in merged and merged[k] != v:
-                conflicts.append(f"{k!r}: {merged[k]!r} -> {v!r}")
+                seen.setdefault(k, [merged[k]]).append(v)
             merged[k] = v
-    return merged, conflicts
+    return merged, seen
 
 
 @dataclass(frozen=True)
@@ -409,7 +424,7 @@ class RunBindings:
             for rid in rids
         ]
 
-    def branch_params_for(self, edges: Iterable[Binding]) -> tuple[dict, list[str]]:
+    def branch_params_for(self, edges: Iterable[Binding]) -> tuple[dict, dict[str, list]]:
         """The branch params an output built from *edges* inherits, merged
         across every consumed record, with any conflict named."""
         return merge_branch_params(self.rid_to_bp.get(e.rid, {}) for e in edges)

@@ -123,24 +123,33 @@ def selection_for(
     become ``Run:fn``; branch params keep their namespaced name, which is
     already the column name.
     """
-    from scidb.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
+    from scidb.variant import VariantAxes
 
+    # The three dimensions, parsed by their owner (docs/claude/variant-space.md
+    # §2) rather than by re-reading the prefixes here — this was the fourth
+    # copy of that parse.
+    dims = VariantAxes.of(branch_params)
     axes = _axes_of(table)
     code_axes = [a for a in axes if a["kind"] == "code"]
     run_axes = [a for a in axes if a["kind"] == "run"]
 
     selection: dict[str, Any] = {}
-    for key, value in branch_params.items():
-        if key == CODE_PIN_PREFIX:
-            selection[_bare_code_column(code_axes)] = value
-        elif key.startswith(f"{CODE_PIN_PREFIX}."):
-            selection[f"{CODE_FACTOR_PREFIX}{key.split('.', 1)[1]}"] = value
-        elif key == RUN_PIN_PREFIX:
-            selection[_bare_run_column(run_axes)] = value
-        elif key.startswith(f"{RUN_PIN_PREFIX}."):
-            selection[f"{RUN_FACTOR_PREFIX}{key.split('.', 1)[1]}"] = value
-        else:
-            selection[_param_column(key, axes)] = value
+    for key, value in dims.constants.items():
+        selection[_param_column(key, axes)] = value
+    for fn_name, value in dims.code.items():
+        column = (
+            _bare_code_column(code_axes)
+            if fn_name is None
+            else f"{CODE_FACTOR_PREFIX}{fn_name}"
+        )
+        selection[column] = value
+    for fn_name, value in dims.run.items():
+        column = (
+            _bare_run_column(run_axes)
+            if fn_name is None
+            else f"{RUN_FACTOR_PREFIX}{fn_name}"
+        )
+        selection[column] = value
     return selection
 
 

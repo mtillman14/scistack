@@ -145,12 +145,16 @@ def get_variable_records(variable_name: str, db: DatabaseManager = Depends(get_d
             }
         )
 
-    # Build the variant summary: group by branch_params JSON *and* producing
-    # function hash. The hash is what separates two runs of an edited function —
-    # without it they merge into a single row whose count is the sum of both.
+    # Build the variant summary: group by the record's point in variant space
+    # (`bindings.variant_signature`, the ONE recipe — see
+    # docs/claude/variant-space.md §4) *and* producing function hash. The hash
+    # is what separates two runs of an edited function — without it they merge
+    # into a single row whose count is the sum of both.
+    from scidb.bindings import variant_signature
+
     variant_map: dict[tuple, dict] = {}
     for rec in records:
-        key = (json.dumps(rec["branch_params"], sort_keys=True), rec["fn_hash"])
+        key = (variant_signature(rec["branch_params"]), rec["fn_hash"])
         if key not in variant_map:
             variant_map[key] = {
                 "branch_params": rec["branch_params"],

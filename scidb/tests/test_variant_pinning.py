@@ -494,3 +494,98 @@ class TestVariantWithWhere:
         val = result["Result"].iloc[0]
         val = val.sum() if isinstance(val, np.ndarray) else val
         assert val == 120.0
+
+
+# ---------------------------------------------------------------------------
+# VariantAxes — the three dimensions, parsed once
+# ---------------------------------------------------------------------------
+
+
+class TestVariantAxes:
+    """`branch_params` carries three axes in one dict, keyed by reserved
+    prefixes (docs/claude/variant-space.md §2). Four places used to re-parse
+    those prefixes: the loader's three-way split, the code filter, the run
+    filter, and the plotting layer's column mapping."""
+
+    def _axes(self):
+        from scidb.variant import VariantAxes
+
+        return VariantAxes.of(
+            {
+                "bandpass.low_hz": 20,
+                "__save__.run": "A",
+                "__code__": "latest",
+                "__code__.bandpass": "v2",
+                "__run__.loader": "distribute=true",
+            }
+        )
+
+    def test_splits_the_three_dimensions(self):
+        axes = self._axes()
+        assert axes.constants == {"bandpass.low_hz": 20, "__save__.run": "A"}
+        assert axes.code == {None: "latest", "bandpass": "v2"}
+        assert axes.run == {"loader": "distribute=true"}
+
+    def test_round_trips_to_the_one_dict_spelling(self):
+        from scidb.variant import VariantAxes
+
+        raw = {
+            "bandpass.low_hz": 20,
+            "__code__": "latest",
+            "__run__.loader": "distribute=true",
+        }
+        assert VariantAxes.of(raw).to_dict() == raw
+
+    def test_a_bare_save_kwarg_is_a_constant_not_a_pin(self):
+        from scidb.variant import VariantAxes
+
+        axes = VariantAxes.of({"__save__.side": "L"})
+        assert axes.constants == {"__save__.side": "L"}
+        assert not axes.pins_code_or_run
+
+    def test_pins_code_or_run_is_what_uncollapsed_loading_turns_on(self):
+        from scidb.variant import pin_loads_uncollapsed
+
+        assert self._axes().pins_code_or_run
+        assert pin_loads_uncollapsed({"__code__": "latest"})
+        assert pin_loads_uncollapsed({"__run__.fn": "distribute=true"})
+        assert not pin_loads_uncollapsed({"bandpass.low_hz": 20})
+        assert not pin_loads_uncollapsed(None)
+
+    def test_empty_is_falsey(self):
+        from scidb.variant import VariantAxes
+
+        assert not VariantAxes.of({})
+        assert not VariantAxes.of(None)
+
+
+class TestMatchBareName:
+    """One suffix rule, so "which variant do I load" and "what does
+    {low_hz} mean in this output path" cannot disagree."""
+
+    def test_exact_wins_over_suffix(self):
+        from scidb.variant import match_bare_name
+
+        bp = {"low_hz": 1, "bandpass.low_hz": 2}
+        assert match_bare_name(bp, "low_hz") == "low_hz"
+
+    def test_bare_name_suffix_matches(self):
+        from scidb.variant import match_bare_name
+
+        assert match_bare_name({"bandpass.low_hz": 2}, "low_hz") == "bandpass.low_hz"
+        assert match_bare_name({"__save__.side": "L"}, "side") == "__save__.side"
+
+    def test_absent_is_none_not_an_error(self):
+        from scidb.variant import match_bare_name
+
+        assert match_bare_name({"bandpass.low_hz": 2}, "nope") is None
+
+    def test_ambiguous_raises_naming_the_candidates(self):
+        import pytest
+
+        from scidb.exceptions import AmbiguousParamError
+        from scidb.variant import match_bare_name
+
+        with pytest.raises(AmbiguousParamError) as exc:
+            match_bare_name({"a.hz": 1, "b.hz": 2}, "hz")
+        assert "a.hz" in str(exc.value) and "b.hz" in str(exc.value)

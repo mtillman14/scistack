@@ -434,3 +434,41 @@ class TestCurrencyIsPerFunctionNotPerLocation:
             branch_params_filter={"__run__.make_rows": "distribute=false"},
         )
         assert len(frame) == 4
+
+
+class TestRunOptionsValue:
+    """`distribute` / `as_table` / `across_variants` are one value
+    (`scidb.foreach_config.RunOptions`), not three loose kwargs. They were
+    threaded through a dozen call sites, and the ones that forgot did not
+    fail — they computed the identity of a call nobody made (two GUI paths
+    hardcoded `distribute=False, as_table=None` beside a node that had saved
+    otherwise)."""
+
+    def test_from_config_tolerates_a_missing_or_empty_blob(self):
+        from scidb.foreach_config import RunOptions
+
+        assert RunOptions.from_config(None) == RunOptions()
+        assert RunOptions.from_config({}) == RunOptions()
+        assert RunOptions.from_config({"distribute": True}).distribute is True
+
+    def test_as_table_true_resolves_against_the_call_s_own_params(self):
+        from scidb.foreach_config import RunOptions
+
+        assert RunOptions(as_table=True).resolved_as_table(["b", "a"]) == ["a", "b"]
+        assert RunOptions(as_table=["b"]).resolved_as_table(["b", "a"]) == ["b"]
+        assert RunOptions().resolved_as_table(["a"]) == []
+
+    def test_round_trips_through_the_stored_blob(self):
+        from scidb.foreach_config import RunOptions
+
+        opts = RunOptions(distribute=True, as_table=["df"], across_variants=("x",))
+        assert RunOptions.from_config(opts.to_config()) == opts
+
+    def test_the_call_site_reads_it(self):
+        from scidb.foreach_config import CallSite, RunOptions
+
+        base = CallSite("fn", {"df": "Wide"})
+        pooled = CallSite("fn", {"df": "Wide"}, options=RunOptions(as_table=True))
+        named = CallSite("fn", {"df": "Wide"}, options=RunOptions(as_table=["df"]))
+        assert base.call_id != pooled.call_id
+        assert pooled.call_id == named.call_id, "True means every loadable input"

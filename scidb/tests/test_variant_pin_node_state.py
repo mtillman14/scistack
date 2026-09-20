@@ -124,11 +124,19 @@ def test_the_pin_actually_narrowed_the_run(two_variants_then_a_pinned_consumer):
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "The Variant pin is not carried into expected-invocation prediction: "
-        "config_from_inputs drops it (a Variant is not a type) and "
-        "_predict_config_invocations enumerates every current record of the "
-        "input type. The node therefore expects invocations over the variant it "
-        "was explicitly told not to touch, and reads needs-run permanently. "
+        "The Variant pin is not carried into expected-invocation prediction. "
+        "HALF of the original cause is gone since 2026-09-20: "
+        "config_from_inputs used to DROP the param entirely (a Variant is not "
+        "a type, and that copy of the unwrap did not know about Variant); it "
+        "now yields the type, through the one unwrap (scidb.input_spec). What "
+        "remains is the other half, and it is a design question rather than a "
+        "missing case: _predict_config_invocations enumerates every CURRENT "
+        "record of the input type, so the node expects invocations over the "
+        "variant it was told not to touch. Unlike AcrossVariants, the pin "
+        "cannot simply be recorded as a fact -- it is a load-time filter like "
+        "where=, whose whole effect IS the surviving input set, already on the "
+        "edges. Narrowing the prediction has to come from the DECLARATION "
+        "(inputs_fallback), which only the live-inputs caller has. "
         "Stage 4 of .claude/plan-variant-selection.md."
     ),
 )
@@ -171,3 +179,20 @@ def test_an_unpinned_consumer_is_complete(db):
     present = _present_for(db, "consume")
 
     assert not (expected - present)
+
+
+def test_the_pinned_param_reaches_the_predicted_config(
+    two_variants_then_a_pinned_consumer,
+):
+    """Half of the xfail above, now closed and guarded separately.
+
+    ``config_from_inputs`` used to have its own unwrap that did not know
+    about ``Variant``, so a pinned input was not merely mis-predicted — it
+    was ABSENT, and the config predicted a call with no variable inputs at
+    all. One unwrap (``scidb.input_spec``) now, so every identity path sees
+    the same set of wrappers.
+    """
+    from scidb.provenance_query import config_from_inputs
+
+    cfg = config_from_inputs({"scaled": Variant(Scaled, factor=2.0)})
+    assert cfg["input_types"] == {"scaled": "Scaled"}, cfg

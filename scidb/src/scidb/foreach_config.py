@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -143,6 +143,65 @@ def _hash_call_site(version_keys: dict) -> str:
 
 
 @dataclass(frozen=True)
+class RunOptions:
+    """HOW a ``for_each`` call is made — the identity-bearing execution modes,
+    as one value.
+
+    ``distribute`` (fan the result out over the iterated key), ``as_table``
+    (pool an input into one frame) and ``across_variants`` (pool every
+    variant group of an input into one call) are not settings: flipping any
+    of them names a DIFFERENT run, which writes a second record at the same
+    schema location. They are folded into ``invocation_id``, stored as
+    columns on ``_invocation``, and reported by
+    ``provenance_query.run_options_label``.
+
+    They exist as a value because they were three loose keyword arguments
+    threaded through a dozen call sites, and the ones that forgot to pass
+    them did not fail — they computed the identity of a call nobody made. Two
+    GUI paths hardcoded ``distribute=False, as_table=None`` while the node
+    beside them had saved otherwise; ``across_variants`` would have been a
+    fourth thing to forget.
+
+    ``as_table`` is kept in its DECLARED form (``True`` = every loadable
+    input, or an explicit list) and resolved to names by
+    :meth:`resolved_as_table`, because ``True`` only means something against
+    a particular parameter list — spelling it out early is what made the
+    forward and backward call ids disagree.
+    """
+
+    distribute: bool = False
+    as_table: Any = None
+    across_variants: Sequence[str] = ()
+
+    @classmethod
+    def from_config(cls, raw: "Mapping[str, Any] | None") -> "RunOptions":
+        """From a stored/GUI options blob (``{"distribute": ..., "as_table":
+        ...}``), tolerating a missing or empty one."""
+        raw = raw or {}
+        return cls(
+            distribute=bool(raw.get("distribute", False)),
+            as_table=raw.get("as_table") or None,
+            across_variants=tuple(raw.get("across_variants") or ()),
+        )
+
+    def resolved_as_table(self, loadable_params: "Iterable[str]") -> list[str]:
+        """``as_table`` as sorted parameter names — ``True`` means all of
+        *loadable_params* (``provenance.normalize_as_table``, the one rule)."""
+        from .provenance import normalize_as_table
+
+        return normalize_as_table(self.as_table, list(loadable_params))
+
+    def to_config(self) -> dict:
+        """Back to the blob shape the GUI stores and MATLAB renders."""
+        out: dict = {"distribute": self.distribute}
+        if self.as_table:
+            out["as_table"] = self.as_table
+        if self.across_variants:
+            out["across_variants"] = list(self.across_variants)
+        return out
+
+
+@dataclass(frozen=True)
 class CallSite:
     """What is unique to ONE ``for_each`` call site, and the one assembly of
     the payload its ``call_id`` hashes.
@@ -161,19 +220,17 @@ class CallSite:
 
     ``inputs`` is the call-site view of each loadable input — the TYPE it
     binds (a ``PathInput`` contributes its ``to_key()``): what narrows WHICH
-    records (a Fixed pin, a column selection) is invocation identity, on the
-    edge, not here. ``as_table`` is already resolved to parameter names
-    (``provenance.normalize_as_table``). ``glue`` maps a parameter to its
-    glue node NAMES: a different chain is a different call site, an edited
-    body is a new version at the same one.
+    records (a Fixed pin, a column selection, a Variant pin) is invocation
+    identity, on the edge, not here. ``options`` is the :class:`RunOptions`
+    the call runs under. ``glue`` maps a parameter to its glue node NAMES: a
+    different chain is a different call site, an edited body is a new version
+    at the same one.
     """
 
     fn_name: str
     inputs: Mapping[str, str] = field(default_factory=dict)
     constants: Mapping[str, Any] = field(default_factory=dict)
-    distribute: bool = False
-    as_table: Sequence[str] = ()
-    across_variants: Sequence[str] = ()
+    options: RunOptions = field(default_factory=lambda: RunOptions())
     glue: Mapping[str, Sequence[str]] = field(default_factory=dict)
 
     def version_keys(self) -> dict:
@@ -183,12 +240,14 @@ class CallSite:
             keys["__inputs"] = {k: self.inputs[k] for k in sorted(self.inputs)}
         # Always present, even when empty (a record's version keys carry it).
         keys["__constants"] = dict(self.constants)
-        if self.distribute:
+        if self.options.distribute:
             keys["__distribute"] = True
-        as_table = sorted(str(p) for p in self.as_table)
+        # `True` resolves against THIS call site's own loadable inputs, so
+        # `as_table=True` and the explicit list of the same params hash alike.
+        as_table = self.options.resolved_as_table(self.inputs)
         if as_table:
             keys["__as_table"] = as_table
-        pooled = sorted(str(p) for p in self.across_variants)
+        pooled = sorted(str(p) for p in self.options.across_variants)
         if pooled:
             keys["__across_variants"] = pooled
         if self.glue:
@@ -231,22 +290,28 @@ class ForEachConfig:
         # {param: [GlueSpec, ...]} — normalized glue chains (see scidb.glue).
         self.glue = glue or {}
 
+    @property
+    def options(self) -> RunOptions:
+        """The run options this call runs under — the two ``for_each`` flags
+        plus the inputs it pools across variant groups (a wrapper, not a
+        kwarg, but the same kind of fact)."""
+        return RunOptions(
+            distribute=bool(self.distribute),
+            as_table=self.as_table,
+            across_variants=tuple(self.across_variants),
+        )
+
     def call_site(self) -> "CallSite":
         """This call as a :class:`CallSite` — the ONE assembly of what is
         unique to a call site. ``inputs`` is the call-site view
-        (:meth:`call_site_inputs`); ``as_table`` is resolved to names over
-        every loadable input, exactly as the save path resolves the
-        ``__as_table`` it records."""
+        (:meth:`call_site_inputs`)."""
         from .glue import chain_names
-        from .provenance import normalize_as_table
 
         return CallSite(
             fn_name=getattr(self.fn, "__name__", repr(self.fn)),
             inputs=self.call_site_inputs(),
             constants=self._get_direct_constants(),
-            distribute=bool(self.distribute),
-            as_table=normalize_as_table(self.as_table, list(self._serialize_inputs())),
-            across_variants=self.across_variants,
+            options=self.options,
             glue={p: chain_names(c) for p, c in self.glue.items()},
         )
 
@@ -333,47 +398,46 @@ class ForEachConfig:
 
         What is unique to a call SITE is which TYPE feeds each parameter.
         Everything that narrows WHICH records of that type — a
-        ``ColumnSelection``'s columns, a ``Fixed`` pin's metadata — is
-        invocation identity: it lives on the edge (the selector, the pinned
-        record id), the canvas draws one node for ``Var``, ``Var["a"]`` and
-        ``Fixed(Var, subject=1)`` alike, and the backward reconstruction
-        (``config_from_inputs``, ``pipeline_variants``) unwraps both to the
-        type. So does this, since 2026-09-20 — before, a Fixed pin forked the
-        forward id and a Fixed-pinned pipeline step could never plan green.
+        ``ColumnSelection``'s columns, a ``Fixed`` pin's metadata, a
+        ``Variant`` pin's branch params — is invocation identity, on the
+        EDGE: the selector and the consumed record ids already say exactly
+        which records were read, so folding the wrapper in here would fork
+        the call site for a narrowing the graph can reproduce without it
+        (the same reasoning that keeps ``where=`` out, §10.1). The canvas
+        draws one node for ``Var``, ``Var["a"]``, ``Fixed(Var, subject=1)``
+        and ``Variant(Var, low_hz=20)`` alike, and the backward
+        reconstruction — which only ever sees ``param -> record -> type`` —
+        agrees by construction.
+
+        Every wrapper peels through ONE unwrap (:mod:`scidb.input_spec`).
+        Before 2026-09-20 each identity path had its own, handling a
+        different subset: a ``Fixed`` pin forked the forward id (a pinned
+        step never planned green) and a ``Variant`` pin vanished from the
+        predicted config entirely.
         """
-        from scifor import ColumnSelection, Fixed, PathInput
+=====NEW_END_MARKER_UNUSED
+        from scifor import PathInput
 
-        from .across_variants import AcrossVariants
         from .foreach import _is_loadable
-
-        def _unwrap(spec):
-            seen = 0
-            while seen < 4:
-                if isinstance(spec, Fixed):
-                    spec = getattr(spec, "data", spec)
-                elif isinstance(spec, ColumnSelection):
-                    spec = getattr(spec, "data", spec)
-                elif isinstance(spec, AcrossVariants):
-                    # Pooling is a run option (`__across_variants`), not a
-                    # different input type.
-                    spec = spec.var_type
-                else:
-                    break
-                seen += 1
-            return spec
+        from .input_spec import type_name
 
         result = {}
         for name in sorted(self.inputs):
             spec = self.inputs[name]
-            inner = _unwrap(spec)
-            if inner is not spec and isinstance(inner, type):
-                result[name] = inner.__name__
+            # Every wrapper peels: a Fixed pin, a column selection, an
+            # AcrossVariants pooling and a Variant pin all bind the same TYPE
+            # (`input_spec`, the ONE unwrap). What each of them narrows is
+            # invocation identity — the edge, the selector, the recorded run
+            # option — never the call site.
+            inner = type_name(spec)
+            if inner is not None:
+                result[name] = inner
                 continue
+            # Not a variable type: a PathInput (its template IS the call
+            # site), or a Merge / DataFrame that spells itself.
             if _is_loadable(spec) or isinstance(spec, PathInput):
                 if hasattr(spec, "to_key"):
                     result[name] = spec.to_key()
-                elif isinstance(spec, type):
-                    result[name] = spec.__name__
                 else:
                     result[name] = repr(spec)
         return result
@@ -412,13 +476,13 @@ class ForEachConfig:
         from .foreach import _is_loadable
         from .parameter import Parameter
 
-        def _unwrap(v):
+        def _unwrap_parameter(v):
             if isinstance(v, Parameter) and len(v.alternatives) == 1:
                 return v.alternatives[0]
             return v
 
         return {
-            k: _unwrap(v)
+            k: _unwrap_parameter(v)
             for k, v in self.inputs.items()
             if not _is_loadable(v) and not isinstance(v, (ColName, PathOutput, PathInput))
         }

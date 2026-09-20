@@ -25,6 +25,8 @@ import logging
 from itertools import product
 from pathlib import Path
 
+from scidb.foreach_config import RunOptions
+
 from scistack_gui.domain.graph_builder import PARAM_ID_PREFIX as _PARAM_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -1046,11 +1048,7 @@ def resolve_combo_call_ids(
     cids: list[str] = []
     for t in matches:
         cid = resolve_target_call_id(
-            function_name,
-            t,
-            pending_names,
-            distribute=run_opts.get("distribute", False),
-            as_table=run_opts.get("as_table"),
+            function_name, t, pending_names, RunOptions.from_config(run_opts)
         )
         if cid is not None:
             cids.append(cid)
@@ -1862,13 +1860,22 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         targets = apply_pending_overrides(
             derive_target_for_node(db, node_id), pending_consts
         )
+        # The step's OWN run options, not defaults: they are identity-bearing
+        # (folded into the call_id hidden-combo filtering matches on, and into
+        # the invocation_id the run writes), so hard-coding them here filtered
+        # against the id of a call this pipeline will never make AND ran every
+        # step non-distributed regardless of what the node said. The
+        # single-node Run path and the MATLAB path had both been fixed; this
+        # one had not.
+        step_options = RunOptions.from_config(
+            (pipeline_store.get_node_config(db, node_id) or {}).get("runOptions")
+        )
         targets = filter_hidden_targets(
             targets,
             fn_label,
             hidden_call_ids_for_fn(hidden_ids, fn_label),
             pending_consts,
-            distribute=False,
-            as_table=None,
+            step_options,
         )
         seen_target_keys: set = set()
         for target in targets:
@@ -1917,6 +1924,8 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 db=db,
                 pipeline=pipe,
                 glue=build_run_glue(target, fn_label) or None,
+                distribute=step_options.distribute,
+                as_table=step_options.as_table,
                 **schema_iterables,
             )
 

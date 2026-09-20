@@ -29,6 +29,7 @@ from io import StringIO
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from scidb.database import DatabaseManager
+from scidb.foreach_config import RunOptions
 
 from scidb import for_each
 from scistack_gui import registry
@@ -346,8 +347,7 @@ def _run_in_thread(
         function_name,
         hidden_call_ids_for_fn(hidden_ids, function_name),
         pending_consts,
-        distribute=opt_distribute,
-        as_table=opt_as_table,
+        RunOptions(distribute=opt_distribute, as_table=opt_as_table),
     )
     if len(unique_targets) != before_hidden_filter:
         logger.info(

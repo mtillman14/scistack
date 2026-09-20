@@ -26,6 +26,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from scidb.foreach_config import RunOptions
+
 logger = logging.getLogger(__name__)
 
 EXPORT_DIRNAME = "exports"
@@ -333,6 +335,14 @@ def _generate_python_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
         call = f"for_each({fn_name}, {inputs_src}, {outputs_src}"
         if glue_src:
             call += f", glue={glue_src}"
+        # Run options are identity-bearing: a script that omits them re-runs
+        # the pipeline as a DIFFERENT call, writing a second record at every
+        # location. `build_backend_pipeline` puts the step's own on the
+        # StepSpec, so they are read here rather than re-derived.
+        if spec.options.get("distribute"):
+            call += ", distribute=True"
+        if spec.options.get("as_table"):
+            call += f", as_table={spec.options['as_table']!r}"
         if spec.metadata_iterables:
             call += f", **{iterables_src}"
         call += ")"
@@ -498,9 +508,16 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
             targets = apply_pending_overrides(
                 derive_target_for_node(db, node_id), pending_consts
             )
+            # The step's OWN run options: identity-bearing, so defaults here
+            # filtered against the call_id of a call this script will never
+            # make, and the emitted `scidb.for_each` ran non-distributed
+            # whatever the node said.
+            options = RunOptions.from_config(
+                (ps.get_node_config(db, node_id) or {}).get("runOptions")
+            )
             targets = filter_hidden_targets(
                 targets, fn_label, hidden_call_ids_for_fn(hidden_ids, fn_label),
-                pending_consts, distribute=False, as_table=None,
+                pending_consts, options,
             )
             seen_keys: set = set()
             for target in targets:
@@ -508,8 +525,28 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
                 if key in seen_keys:
                     continue
                 seen_keys.add(key)
-                steps.append((fn_label, target))
+                steps.append((fn_label, target, options))
     return steps
+
+
+def _matlab_run_option_args(options, inputs: dict) -> str:
+    """``, 'distribute', true, 'as_table', ["a"]`` for a step's run options,
+    or ``""``.
+
+    They are identity-bearing (``scidb.foreach_config.RunOptions``): a script
+    that omits them re-runs the pipeline as a DIFFERENT call, writing a second
+    record at every location. ``across_variants`` needs nothing here — it
+    rides on the input expression as ``scidb.AcrossVariants(...)``.
+    """
+    from scistack_gui.api.matlab_command import _format_matlab_string_array
+
+    parts = ""
+    if options.distribute:
+        parts += ", 'distribute', true"
+    as_table = options.resolved_as_table(inputs)
+    if as_table:
+        parts += ", 'as_table', " + _format_matlab_string_array(as_table)
+    return parts
 
 
 def _topo_sort_targets(steps: list) -> list:
@@ -527,11 +564,11 @@ def _topo_sort_targets(steps: list) -> list:
         return types
 
     producers: dict = {}
-    for i, (_fn, target) in enumerate(steps):
+    for i, (_fn, target, _opts) in enumerate(steps):
         producers.setdefault(target["output_type"], []).append(i)
 
     deps = {i: set() for i in range(len(steps))}
-    for i, (_fn, target) in enumerate(steps):
+    for i, (_fn, target, _opts) in enumerate(steps):
         for t in consumed_types(target):
             for p in producers.get(t, []):
                 if p != i:
@@ -568,7 +605,7 @@ def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
 
     lines = [_matlab_header(db), ""]
     for i in order:
-        fn_label, target = steps[i]
+        fn_label, target, options = steps[i]
         inputs = build_run_inputs(target, fn_label, db)
         glue = build_run_glue(target, fn_label)
         output_cls = registry.get_variable_class(target["output_type"])
@@ -578,6 +615,7 @@ def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
         glue_src = _matlab_glue_struct(glue)
         if glue_src:
             call += f", 'glue', {glue_src}"
+        call += _matlab_run_option_args(options, inputs)
         if iter_args:
             call += f", {iter_args}"
         call += ");"

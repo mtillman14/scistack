@@ -498,3 +498,48 @@ class TestSanitization:
             subject=["S01"],
         )
         assert seen == ["r_a-b.pdf"]
+
+
+class TestVariantTokenIsOneDigest:
+    """``{variant}`` digests the group's canonical signature
+    (``bindings.variant_signature``) in BOTH iteration modes.
+
+    It used to digest two different texts: ``json.dumps(merged_bp)`` under
+    full iteration and ``"|".join(per_input_signatures)`` under aggregation.
+    One PathOutput template therefore wrote to two different directories for
+    the same variant group depending on how many schema keys the call
+    iterated — a silent file-location split, found 2026-09-20 while giving
+    the signature recipe one owner.
+    """
+
+    def _names(self, out_dir, **iterate):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        seen: list = []
+
+        def stat_summary(df, filename):
+            seen.append(str(filename).rsplit("/", 1)[-1])
+            return {"n": len(df)}
+
+        for_each(
+            stat_summary,
+            inputs={
+                "df": Filtered,
+                "filename": PathOutput(str(out_dir / "r_{variant}.pdf")),
+            },
+            outputs=[StatOut],
+            finalized=True,
+            **iterate,
+        )
+        return sorted(seen)
+
+    def test_full_iteration_and_aggregation_agree(self, db, tmp_path):
+        # One session, so the aggregating call's group and the fully-iterated
+        # call's group hold exactly the same record — only the mode differs.
+        _make_two_groups(db, subjects=("S01",), sessions=("1",))
+        agg = self._names(tmp_path / "agg", subject=["S01"])
+        full = self._names(tmp_path / "full", subject=["S01"], session=["1"])
+        assert len(agg) == 2 and len(full) == 2
+        assert agg == full, (
+            "the same variant group resolved {variant} to different digests "
+            f"under aggregation {agg} and full iteration {full}"
+        )

@@ -2130,15 +2130,13 @@ def config_call_id(fn_name: str, cfg: dict) -> str:
     as their ``to_key()``; glue contributes NAMES, not hashes (an edited
     glue body is a new version at the same call site).
     """
-    from .foreach_config import CallSite
+    from .foreach_config import CallSite, RunOptions
 
     return CallSite(
         fn_name=fn_name,
         inputs={**cfg.get("input_types", {}), **cfg.get("path_inputs", {})},
         constants=cfg.get("constants", {}),
-        distribute=bool(cfg.get("distribute")),
-        as_table=cfg.get("as_table") or (),
-        across_variants=cfg.get("across_variants") or (),
+        options=RunOptions.from_config(cfg),
         glue={p: names for p, (_h, names) in (cfg.get("glue_chains") or {}).items()},
     ).call_id
 
@@ -2159,7 +2157,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     ``run_options`` (:func:`run_options_label`), ``output_num`` (int|None),
     ``record_count`` (distinct output records).
     """
-    from .foreach_config import CallSite
+    from .foreach_config import CallSite, RunOptions
 
     inv_rows = duck._fetchall(
         "SELECT invocation_id, function_name, as_table, distribute, across_variants "
@@ -2231,9 +2229,11 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     fn_name=fn_name,
                     inputs=input_types,
                     constants=constants,
-                    distribute=bool(distribute),
-                    as_table=at,
-                    across_variants=pooled,
+                    options=RunOptions(
+                        distribute=bool(distribute),
+                        as_table=at or None,
+                        across_variants=pooled,
+                    ),
                     glue=glue_names,
                 )
                 groups[gkey] = {
@@ -2904,19 +2904,29 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
     entries) from a for_each-style ``inputs`` dict — used to predict expected
     invocations for a function that has never run yet.
 
-    Mirrors ``ForEachConfig._get_direct_constants`` / the save path: loadable
-    specs become input_types (by class name), ColumnSelection contributes a
-    selector, PathInput/PathOutput/ColName are excluded, everything else is a
-    constant. ``as_table``/``distribute`` aren't expressible here → defaults.
+    Mirrors ``ForEachConfig``'s own call-site view: a loadable spec becomes
+    its variable TYPE name (every wrapper peeled through
+    :mod:`scidb.input_spec`, the one unwrap), ColumnSelection contributes a
+    selector, AcrossVariants a run option, PathInput/PathOutput/ColName are
+    excluded, everything else is a constant. ``as_table``/``distribute``
+    aren't expressible here → defaults.
+
+    A ``Variant`` pin narrows WHICH records a run consumes but does not
+    change its type, so — like ``where=`` — it is absent from the config: the
+    edges of the run it produced already name exactly the pinned records.
+    What it does NOT do is narrow the PREDICTION built from this config,
+    which enumerates every current record of the type; see
+    ``scidb/tests/test_variant_pin_node_state.py``.
 
     ``glue`` (the same value passed to ``for_each``) is normalized into the
     ``glue_chains`` shape ``function_variant_configs`` produces, so a glued
     never-run node predicts the virtual rids the first run will actually write.
     """
-    from scifor import ColName, ColumnSelection, Fixed
+    from scifor import ColName
 
     from .across_variants import AcrossVariants
     from .foreach import _is_loadable
+    from .input_spec import type_name
     from .provenance_save import compute_input_selectors
 
     try:
@@ -2936,16 +2946,15 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
         if isinstance(spec, ColName):
             continue
         if _is_loadable(spec):
-            vt = spec
-            if isinstance(vt, AcrossVariants):
+            if isinstance(spec, AcrossVariants):
                 across_variants.append(name)
-                vt = vt.var_type
-            if isinstance(vt, Fixed):
-                vt = vt.data
-            if isinstance(vt, ColumnSelection):
-                vt = vt.data
-            if isinstance(vt, type):
-                input_types[name] = vt.__name__
+            # ONE unwrap (`input_spec`), so this never again knows about a
+            # narrower set of wrappers than the forward `call_site_inputs`
+            # does — a `Variant`-pinned input used to vanish from here
+            # entirely, because a Variant is not a type.
+            vt = type_name(spec)
+            if vt is not None:
+                input_types[name] = vt
         else:
             constants[name] = spec
     from .glue import chain_hash, chain_names, normalize_glue

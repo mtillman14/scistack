@@ -25,8 +25,8 @@ from sciduckdb import (
     count_null_list_elements,
 )
 
+from .bindings import variant_signature
 from .exceptions import (
-    AmbiguousParamError,
     AmbiguousVersionError,
     DatabaseNotConfiguredError,
     NotFoundError,
@@ -140,31 +140,19 @@ def _from_schema_str(value):
 def _match_branch_param(branch_params_dict: dict, key: str, value: Any) -> bool:
     """Match a single branch_params filter key/value against a branch_params dict.
 
-    1. Exact match (covers bare dynamic names and namespaced constant names).
-    2. Suffix match for bare constant names (e.g. "low_hz" → "bandpass_filter.low_hz",
-       and direct-save kwargs → "__save__.run").
-    A list/tuple ``value`` means membership (``stored in value``). Raises
-    AmbiguousParamError if the bare name matches multiple namespaced keys.
+    Which KEY a filter name refers to is ``variant.match_bare_name`` (exact
+    first, then bare-suffix, ambiguity is an error). This adds only the VALUE
+    rule: a list/tuple means membership (``stored in value``).
     """
+    from .variant import match_bare_name
 
-    def _vmatch(stored) -> bool:
-        if isinstance(value, (list, tuple)):
-            return stored in value
-        return stored == value
-
-    # Exact match
-    if key in branch_params_dict:
-        return _vmatch(branch_params_dict[key])
-    # Suffix match
-    suffix = f".{key}"
-    hits = [(k, v) for k, v in branch_params_dict.items() if k.endswith(suffix)]
-    if len(hits) == 1:
-        return _vmatch(hits[0][1])
-    if len(hits) > 1:
-        raise AmbiguousParamError(
-            f"'{key}' matches multiple branch params: {[h[0] for h in hits]}"
-        )
-    return False
+    matched = match_bare_name(branch_params_dict, key)
+    if matched is None:
+        return False
+    stored = branch_params_dict[matched]
+    if isinstance(value, (list, tuple)):
+        return stored in value
+    return stored == value
 
 
 def _filter_records_by_branch_params(df, branch_params_filter: dict | None, duck=None):
@@ -185,37 +173,24 @@ def _filter_records_by_branch_params(df, branch_params_filter: dict | None, duck
     if not branch_params_filter or len(df) == 0:
         return df
     from . import provenance_query
-    from .variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
+    from .variant import VariantAxes
 
-    # Split the three variant dimensions. They travel in one dict on purpose (see
-    # CODE_PIN_PREFIX / RUN_PIN_PREFIX) but they resolve against different graph
+    # The three variant dimensions. They travel in one dict on purpose
+    # (docs/claude/variant-space.md §2) but resolve against different graph
     # reads: constants accumulate through `branch_params_batch`, code versions
-    # and run options through `chain_batch`.
-    code_filter = {
-        k: v
-        for k, v in branch_params_filter.items()
-        if k == CODE_PIN_PREFIX or k.startswith(f"{CODE_PIN_PREFIX}.")
-    }
-    run_filter = {
-        k: v
-        for k, v in branch_params_filter.items()
-        if k == RUN_PIN_PREFIX or k.startswith(f"{RUN_PIN_PREFIX}.")
-    }
-    param_filter = {
-        k: v
-        for k, v in branch_params_filter.items()
-        if k not in code_filter and k not in run_filter
-    }
+    # and run options through `chain_batch`. `VariantAxes` is the ONE parse.
+    axes = VariantAxes.of(branch_params_filter)
 
-    if code_filter and duck is not None:
-        df = _filter_records_by_code_version(df, code_filter, duck)
+    if axes.code and duck is not None:
+        df = _filter_records_by_code_version(df, axes.code, duck)
         if len(df) == 0:
             return df
-    if run_filter and duck is not None:
-        df = _filter_records_by_run_options(df, run_filter, duck)
+    if axes.run and duck is not None:
+        df = _filter_records_by_run_options(df, axes.run, duck)
         if len(df) == 0:
             return df
 
+    param_filter = axes.constants
     if not param_filter:
         return df
 
@@ -262,8 +237,9 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
     """Keep only records whose producing *code* matches ``code_filter``.
 
     The code half of :func:`_filter_records_by_branch_params`. Keys are either
-    ``__code__`` (resolve the function automatically) or ``__code__.<fn_name>``
-    (explicit). Values are a per-function ordinal (``"v1"``) or ``"latest"``.
+    ``code_filter`` is the CODE axis as ``VariantAxes`` parsed it —
+    ``{fn_name: value}``, with ``None`` for the bare (resolve-the-function)
+    form. Values are a per-function ordinal (``"v1"``) or ``"latest"``.
 
     Two resolutions, deliberately different:
 
@@ -277,13 +253,13 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
     """
     from . import provenance_query
     from .exceptions import AmbiguousParamError
-    from .variant import CODE_PIN_PREFIX, LATEST_VERSION
+    from .variant import LATEST_VERSION
 
     record_ids = df["record_id"].tolist()
     pinned_fns: set = set()
     chain_wide = False
 
-    for key, value in code_filter.items():
+    for fn_name, value in code_filter.items():
         wanted_set, wanted = _pin_values(value)
 
         if wanted_set == {LATEST_VERSION}:
@@ -306,7 +282,6 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
         present_fns = {name for chain in chains.values() for name in chain}
         ordinals = provenance_query.code_version_ordinals(duck, present_fns)
 
-        fn_name = key[len(CODE_PIN_PREFIX) + 1 :] if "." in key else None
         if fn_name is None:
             # Bare pin: unambiguous only when exactly one upstream function has
             # more than one version. Mirrors `_match_branch_param`'s bare-name
@@ -398,10 +373,11 @@ def _filter_records_by_code_version(df, code_filter: dict, duck):
 def _filter_records_by_run_options(df, run_filter: dict, duck):
     """Keep only records whose upstream *run options* match ``run_filter``.
 
-    The run-options third of :func:`_filter_records_by_branch_params`. Keys are
-    ``__run__`` (resolve the function automatically) or ``__run__.<fn_name>``
-    (explicit). Values are a :func:`~scidb.provenance_query.run_options_label`
-    string (``"distribute=true"``) or ``"latest"``.
+    The run-options third of :func:`_filter_records_by_branch_params`.
+    ``run_filter`` is the RUN axis as ``VariantAxes`` parsed it —
+    ``{fn_name: value}``, ``None`` for the bare form. Values are a
+    :func:`~scidb.provenance_query.run_options_label` string
+    (``"distribute=true"``) or ``"latest"``.
 
     ``"latest"`` is the same chain-wide, per-location ``is_latest`` that
     ``code_version="latest"`` uses — there is ONE notion of "current at this
@@ -417,11 +393,11 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
     """
     from . import provenance_query
     from .exceptions import AmbiguousParamError
-    from .variant import LATEST_VERSION, RUN_PIN_PREFIX
+    from .variant import LATEST_VERSION
 
     record_ids = df["record_id"].tolist()
 
-    for key, value in run_filter.items():
+    for fn_name, value in run_filter.items():
         wanted_set, wanted = _pin_values(value)  # list = membership, see there
 
         if wanted_set == {LATEST_VERSION}:
@@ -439,7 +415,6 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
         present_fns = {name for chain in runs.values() for name in chain}
         axes = provenance_query.run_option_axes(duck, present_fns)
 
-        fn_name = key[len(RUN_PIN_PREFIX) + 1 :] if "." in key else None
         if fn_name is None:
             candidates = sorted(axes)
             if len(candidates) > 1:
@@ -2218,7 +2193,7 @@ class DatabaseManager:
                     # one family at one location can only be one superseding
                     # the other, and the newest wins below.
                     consumed = tuple(sorted(consumed_map.get(row.record_id, ())))
-                    bp_json = json.dumps(bp, sort_keys=True)
+                    bp_json = variant_signature(bp)
                     variant_key = (
                         inv[1],
                         bp_json,

@@ -10,6 +10,10 @@ from __future__ import annotations
 import ast
 import logging
 from itertools import product as _product
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scidb.foreach_config import RunOptions
 
 logger = logging.getLogger(__name__)
 
@@ -313,8 +317,7 @@ def _path_input_version_key(declared_name: str) -> "str | None":
 def compute_call_id(
     function_name: str,
     target: dict,
-    distribute: bool = False,
-    as_table=None,
+    options: "RunOptions | None" = None,
 ) -> str | None:
     """Deterministic call_id for a target: the target's bindings mapped onto
     ``scidb.foreach_config.CallSite`` — the ONE assembly of the call-id
@@ -339,10 +342,11 @@ def compute_call_id(
     an id no record would ever carry. The key comes from the live PathInput
     object so there is exactly one spelling of the recipe, scidb's.
     """
-    from scidb.foreach_config import CallSite
-    from scidb.provenance import normalize_as_table
+    from scidb.foreach_config import CallSite, RunOptions
 
     from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, BINDING_VARIABLE
+
+    options = options or RunOptions()
 
     inputs: dict = {}
     across_variants: list = []
@@ -377,15 +381,18 @@ def compute_call_id(
         # BINDING_PARAMETER contributes nothing: its concrete values travel
         # in __constants, exactly as in scidb's ForEachConfig.
 
+    # `across_variants` comes from the BINDINGS (a wrapper, not a canvas
+    # toggle), so it is folded in here rather than carried by the caller's
+    # options; everything else is the step's own RunOptions.
     return CallSite(
         fn_name=function_name,
         inputs=inputs,
         constants=dict(target.get("constants", {})),
-        distribute=bool(distribute),
-        # `True` means every loadable input — the variable and PathInput
-        # bindings, which is exactly what `inputs` holds here.
-        as_table=normalize_as_table(as_table, list(inputs)),
-        across_variants=across_variants,
+        options=RunOptions(
+            distribute=options.distribute,
+            as_table=options.as_table,
+            across_variants=tuple(across_variants),
+        ),
         glue={p: list(names) for p, names in (target.get("glue_chains") or {}).items()},
     ).call_id
 
@@ -408,8 +415,7 @@ def resolve_target_call_id(
     function_name: str,
     target: dict,
     pending_constant_names: set[str],
-    distribute: bool = False,
-    as_table=None,
+    options: "RunOptions | None" = None,
 ) -> str | None:
     """A target's EFFECTIVE call_id — reuses its real DB-history ``call_id``
     directly, except when ``apply_pending_overrides`` may have changed its
@@ -420,7 +426,7 @@ def resolve_target_call_id(
     touched = bool(pending_constant_names & set(target.get("constants", {})))
     cid = target.get("call_id") if (not touched and target.get("call_id")) else None
     if cid is None:
-        cid = compute_call_id(function_name, target, distribute=distribute, as_table=as_table)
+        cid = compute_call_id(function_name, target, options)
     return cid
 
 
@@ -429,8 +435,7 @@ def filter_hidden_targets(
     function_name: str,
     hidden_call_ids: set[str],
     pending_constants: dict,
-    distribute: bool = False,
-    as_table=None,
+    options: "RunOptions | None" = None,
 ) -> list[dict]:
     """Drop targets whose effective call_id (see ``resolve_target_call_id``)
     is hidden."""
@@ -439,9 +444,7 @@ def filter_hidden_targets(
     pending_names = set(pending_constants or {})
     kept = []
     for t in targets:
-        cid = resolve_target_call_id(
-            function_name, t, pending_names, distribute=distribute, as_table=as_table
-        )
+        cid = resolve_target_call_id(function_name, t, pending_names, options)
         if cid is not None and cid in hidden_call_ids:
             continue
         kept.append(t)

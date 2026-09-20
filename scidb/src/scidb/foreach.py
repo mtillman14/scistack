@@ -34,6 +34,7 @@ from .bindings import (
     is_internal_column,
     is_rid_column,
     is_vsig_column,
+    merge_branch_params,
     param_of,
     param_of_vsig,
     rid_column,
@@ -42,6 +43,9 @@ from .bindings import (
     variant_signature,
     vsig_column,
 )
+from .exceptions import AmbiguousParamError
+from .input_spec import type_name, variable_type
+from .variant import match_bare_name
 from .filters import Filter
 from .foreach_config import ForEachConfig
 from .log import Log
@@ -972,44 +976,36 @@ def _sanitize_path_value(value: Any) -> str:
     return s
 
 
-def _merge_group_bp(bp_dicts: "list[dict]") -> "tuple[dict, set]":
-    """Merge per-record branch_params dicts; track keys with conflicting values."""
-    merged: dict = {}
-    conflicted: set = set()
-    for bp in bp_dicts:
-        for k, v in (bp or {}).items():
-            if k in merged and merged[k] != v:
-                conflicted.add(k)
-            merged[k] = v
-    return merged, conflicted
-
-
 def _resolve_bp_placeholder(
-    name: str, merged_bp: dict, conflicted: set, signature_text: str
+    name: str, merged_bp: dict, conflicted: "dict[str, list]"
 ) -> "str | None":
     """Resolve one PathOutput placeholder from a variant group's branch_params.
 
-    Bare names suffix-match namespaced keys (the Variant()/branch_param()
-    contract); ambiguity is a hard error naming the candidates. ``{variant}``
-    is an 8-char digest of the group's canonical signature — the shorthand
+    Bare names suffix-match namespaced keys (``variant.match_bare_name`` — the
+    Variant()/branch_param() contract); ambiguity is a hard error naming the
+    candidates. ``{variant}`` is an 8-char digest of the group's canonical
+    signature (``bindings.variant_signature``, the ONE recipe) — the shorthand
     for many-param sweeps. Returns None for a key absent from the group
     (caller warns; the literal ``{name}`` stays in the path).
     """
     if name == _VARIANT_TOKEN:
-        return hashlib.sha256(signature_text.encode("utf-8")).hexdigest()[:8]
-    if name in merged_bp:
-        matches = [name]
-    else:
-        matches = [k for k in merged_bp if str(k).endswith("." + name)]
-    if len(matches) > 1:
+        # Digest the canonical signature of the group's own coordinate, so
+        # one template resolves to one directory. Until 2026-09-20 full
+        # iteration digested the merged branch params and aggregation
+        # digested the joined per-input signatures — two texts, two
+        # directories, for the same group.
+        return hashlib.sha256(
+            variant_signature(merged_bp).encode("utf-8")
+        ).hexdigest()[:8]
+    try:
+        key = match_bare_name(merged_bp, name)
+    except AmbiguousParamError as exc:
         raise ValueError(
-            f"PathOutput placeholder '{{{name}}}' is ambiguous: it suffix-matches "
-            f"{sorted(matches)}. Use the namespaced form, e.g. "
-            f"'{{{sorted(matches)[0]}}}'."
-        )
-    if not matches:
+            f"PathOutput placeholder '{{{name}}}' is ambiguous: {exc} Use the "
+            f"namespaced form."
+        ) from exc
+    if key is None:
         return None
-    key = matches[0]
     if key in conflicted:
         raise ValueError(
             f"PathOutput placeholder '{{{name}}}' matches branch_param '{key}', "
@@ -1023,13 +1019,12 @@ def _inject_path_placeholders(
     fc: dict,
     names: set,
     merged_bp: dict,
-    conflicted: set,
-    signature_text: str,
+    conflicted: "dict[str, list]",
     missing_out: set,
 ) -> None:
     """Inject resolved placeholder values into an expanded combo dict."""
     for name in names:
-        val = _resolve_bp_placeholder(name, merged_bp, conflicted, signature_text)
+        val = _resolve_bp_placeholder(name, merged_bp, conflicted)
         if val is None:
             missing_out.add(name)
         elif name not in fc:
@@ -2717,13 +2712,12 @@ def _for_each_prepare(
                     _bp_dicts += [
                         rid_to_bp.get(r, {}) for r in fixed_rid_values.values() if r
                     ]
-                    _merged, _confl = _merge_group_bp(_bp_dicts)
+                    _merged, _confl = merge_branch_params(_bp_dicts)
                     _inject_path_placeholders(
                         fc,
                         _path_placeholder_names,
                         _merged,
                         _confl,
-                        "|".join(sig_combo),
                         _path_missing_placeholders,
                     )
                 full_combos.append(fc)
@@ -2847,13 +2841,12 @@ def _for_each_prepare(
                             for k in full_combo
                             if is_rid_column(k)
                         ]
-                        _merged, _confl = _merge_group_bp(_bp_dicts)
+                        _merged, _confl = merge_branch_params(_bp_dicts)
                         _inject_path_placeholders(
                             full_combo,
                             _path_placeholder_names,
                             _merged,
                             _confl,
-                            json.dumps(_merged, sort_keys=True, default=str),
                             _path_missing_placeholders,
                         )
                     full_combos.append(full_combo)
@@ -2869,13 +2862,12 @@ def _for_each_prepare(
                         for k in full_combo
                         if is_rid_column(k)
                     ]
-                    _merged, _confl = _merge_group_bp(_bp_dicts)
+                    _merged, _confl = merge_branch_params(_bp_dicts)
                     _inject_path_placeholders(
                         full_combo,
                         _path_placeholder_names,
                         _merged,
                         _confl,
-                        json.dumps(_merged, sort_keys=True, default=str),
                         _path_missing_placeholders,
                     )
                 full_combos.append(full_combo)
@@ -4144,20 +4136,9 @@ def _merge_needs_per_combo(merge_spec: "Merge") -> bool:
 
 
 def _get_loadable_class_from_spec(spec: Any) -> Any:
-    """Extract the innermost loadable class from a spec (class, Variant, AcrossVariants, Fixed, ColumnSelection)."""
-    if isinstance(spec, AcrossVariants):
-        spec = spec.var_type
-    if isinstance(spec, Variant):
-        spec = spec.var_type
-    if isinstance(spec, Fixed):
-        spec = spec.data
-    if isinstance(spec, Variant):
-        spec = spec.var_type
-    if isinstance(spec, ColumnSelection):
-        spec = spec.data
-    if isinstance(spec, type) or hasattr(spec, "load"):
-        return spec
-    return None
+    """The innermost loadable class of a spec — ``input_spec.variable_type``,
+    the ONE unwrap (this name is kept for its call sites)."""
+    return variable_type(spec)
 
 
 def _make_plot_wrapper(fn: Any, path_param: str) -> Any:
@@ -5800,15 +5781,10 @@ def _build_run_bindings(
             kind = InputKind.AGGREGATED if aggregation_mode else InputKind.ITERATE
         else:
             continue  # a constant, a PathInput, a marker — not a record-bearing input
-        inner = spec
-        for _ in range(3):
-            inner = getattr(inner, "data", inner) if not isinstance(inner, type) else inner
-            if isinstance(inner, type):
-                break
         run.inputs[param] = InputBinding(
             param=param,
             kind=kind,
-            type_name=getattr(inner, "__name__", None) if isinstance(inner, type) else None,
+            type_name=type_name(spec),
             selector=selectors.get(param),
             pinned_rid=fixed_rid_values.get(param),
             pool=pools.get(param) if kind == InputKind.AGGREGATED else None,

@@ -622,3 +622,45 @@ class TestPooledBindingRoundTrip:
             "iterate": False,
             "pool_variants": True,
         }
+
+
+class TestCompiledPipelineHonoursRunOptions:
+    """`build_backend_pipeline` hardcoded `distribute=False, as_table=None`
+    while reading `schemaLevel` from the same node config, and never passed
+    either to `for_each` — so a compiled pipeline ran every step with
+    defaults while the single-node Run path and the MATLAB path honoured the
+    node's saved options. Three paths, one fact (`RunOptions`)."""
+
+    def test_the_step_spec_carries_the_node_s_options(self, populated_db, monkeypatch):
+        from scistack_gui import pipeline_store
+        from scistack_gui.services.execution_service import (
+            _discard_compiled,
+            build_backend_pipeline,
+        )
+
+        node_ids = [
+            n for n, label in _scoped_nodes(populated_db) if label == "bandpass_filter"
+        ]
+        assert node_ids, "seeded pipeline has no bandpass_filter node"
+        pipeline_store.update_node_config(
+            populated_db, node_ids[0], {"runOptions": {"distribute": True}}
+        )
+
+        built: dict = {}
+        try:
+            pipe = build_backend_pipeline(populated_db, "main", built)
+            options = [
+                spec.options
+                for _owner, spec in pipe._composed_steps()
+                if getattr(spec.fn, "__name__", "") == "bandpass_filter"
+            ]
+        finally:
+            _discard_compiled(built)
+        assert options, "no bandpass_filter step compiled"
+        assert all(o.get("distribute") is True for o in options), options
+
+
+def _scoped_nodes(db):
+    from scistack_gui.services.execution_service import _scope_function_node_ids
+
+    return list(_scope_function_node_ids(db, "main"))

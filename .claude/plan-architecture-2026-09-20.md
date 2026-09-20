@@ -370,3 +370,62 @@ literal `True` forward and as the resolved names backward (that call site
 never matched its records — `test_as_table_true`), and the GUI id left glue
 chains out. GUI tests now compare against `ForEachConfig.to_call_id`, the
 real forward id, instead of a hand-built payload.
+
+---
+
+## The duplicated-recipe sweep — built 2026-09-20, tests unrun
+
+Answering "are there other duplicated recipes?" turned up five, plus three
+live defects they were causing. Doc first: `docs/claude/variant-space.md`
+(the coordinate/selector distinction, the three axes, and which of the four
+"which variant is this?" questions each function answers).
+
+**1. Canonical variant signature.** `bindings.variant_signature` had four
+hand-rolled twins — `database.py`'s collapse key, `foreach.py`'s PathOutput
+`{variant}` text (×2), the GUI's variant-summary grouping — and they had
+drifted: `{variant}` digested `json.dumps(merged_bp)` under full iteration
+and `"|".join(signatures)` under aggregation, so ONE template wrote to two
+directories for the same group (`test_pathoutput_variants.py::
+TestVariantTokenIsOneDigest`). The recipe also simplified: the JSON round
+trip was a no-op (a tuple and a list both emit `[1, 2]`), so it is one
+`dumps` with `default=str` — cheaper on the collapse's hot path and no
+longer raises on a datetime. `merge_branch_params` absorbed
+`foreach._merge_group_bp` and now returns `{key: [every value seen]}`, which
+serves both callers.
+
+**2. Bare-name suffix match.** `variant.match_bare_name` — exact first, then
+`.{name}` suffix, ambiguity raises naming the candidates. Was spelled in
+`database._match_branch_param` (load filtering) and
+`foreach._resolve_bp_placeholder` (PathOutput placeholders).
+
+**3. Unwrap spec → variable type.** NEW leaf module `scidb/input_spec.py`
+(`peel` / `variable_type` / `type_name` / `find_wrapper` / `wrappers_of`),
+driven by one wrapper table. Six copies before, each knowing a different
+subset — which is not tidiness: `config_from_inputs` did not know about
+`Variant`, so a pinned input vanished from the predicted config, and
+`compute_input_selectors` enumerated two stackings by hand, so a column
+selection under a `Variant` reached the graph as "no selection". Both
+closed; `test_variant_pin_node_state.py`'s xfail reason now names only the
+half that remains (narrowing the PREDICTION, a design question — the pin is
+a load-time filter like `where=`, whose effect is already on the edges).
+
+**4. Variant space is typed.** `variant.VariantAxes` splits a branch_params
+dict into `constants` / `code` / `run` once, instead of in the loader's
+three-way split, the code filter, the run filter and the plotting layer's
+column mapping. The two filters now take `{fn_name: value}` and never see a
+prefix.
+
+**5. `RunOptions`.** `distribute` / `as_table` / `across_variants` as one
+value (`foreach_config`), held by `CallSite`, built from a node config with
+`from_config`, resolving `as_table=True` against the call's own params.
+Fixes two live defects: `build_backend_pipeline` and `_matlab_steps` each
+hardcoded `distribute=False, as_table=None` beside a node config they were
+already reading, so a compiled pipeline and an exported script ran every
+step with defaults AND filtered hidden combos against an id no record would
+carry. Both code exporters now emit the options too.
+
+Verify (one package at a time):
+`cd /workspace/scidb && pytest tests/ -q -x`
+`cd /workspace/scistack-gui && pytest tests/ -q -x`
+`cd /workspace/scistackplotdb && pytest tests/ -q`
+`cd /workspace/tests/integration && pytest -q`

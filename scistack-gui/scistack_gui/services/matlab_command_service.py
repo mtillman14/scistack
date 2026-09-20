@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import sys
 
+from scidb.foreach_config import RunOptions
+
 logger = logging.getLogger(__name__)
 
 
@@ -709,8 +711,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
             fn_label,
             hidden_call_ids_for_fn(hidden_ids, fn_label),
             pending_consts,
-            distribute=bool(step_run_options.get("distribute", False)),
-            as_table=step_run_options.get("as_table") or None,
+            RunOptions.from_config(step_run_options),
         )
         seen_target_keys: set = set()
         unique_targets: list[dict] = []

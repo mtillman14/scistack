@@ -14,15 +14,26 @@ consequences in `scimatlab` and `scifor`.*
 | `save` | Write the results to the database | no |
 | `distribute` | Split each returned value across the next-deeper schema key | **yes** |
 | `as_table` | Pass named inputs as whole tables rather than per-combo values | **yes** |
+| `across_variants` | Pool every variant group of an input into one call | **yes** (rides on the input as `AcrossVariants(X)`, not a kwarg) |
 
-"Identity-bearing" is the part that makes these more than presentation.
-`distribute` and `as_table` are both folded into the `invocation_id` and the
-`call_id` (`docs/claude/graph-database-state.md` §Identity,
-`scidb.foreach_config.CallSite`). Flipping either one does not
-modify a run — it names a *different* run. Any code that derives or filters
-targets must therefore use the same values the run will actually use, or it
-computes a call_id for a call nobody makes. This is why
-`filter_hidden_targets` takes them as explicit arguments.
+"Identity-bearing" is the part that makes these more than presentation. All
+three are folded into the `invocation_id` and the `call_id`
+(`docs/claude/graph-database-state.md` §Identity). Flipping any of them does
+not modify a run — it names a *different* run, which writes a second record
+at the same schema location. Any code that derives or filters targets must
+therefore use the same values the run will actually use, or it computes a
+call_id for a call nobody makes.
+
+**They travel as one value**, `scidb.foreach_config.RunOptions` — built from
+a node's saved config blob with `RunOptions.from_config(...)`, read by
+`CallSite`, `filter_hidden_targets` / `resolve_target_call_id` /
+`compute_call_id`, and both code exporters. They were three loose keyword
+arguments until 2026-09-20, and the call sites that forgot to pass them did
+not fail: `build_backend_pipeline` and the code exporter each hardcoded
+`distribute=False, as_table=None` beside a node config they were already
+reading, so a compiled pipeline and an exported script ran every step
+non-distributed however the node was set, and filtered hidden combos against
+the id of a call they would never make.
 
 ## The two sources, and why there are two
 

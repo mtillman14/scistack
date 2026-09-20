@@ -4,6 +4,8 @@ Unit tests for scistack_gui.domain.variant_resolver.
 All functions are pure — no DB or fixtures required.
 """
 
+from scidb.foreach_config import RunOptions
+
 from scistack_gui.domain.variant_resolver import (
     build_inferred_variants,
     build_schema_kwargs,
@@ -280,15 +282,15 @@ class TestComputeCallId:
     def test_matches_real_call_id(self):
         assert compute_call_id("bandpass_filter", self._target()) == self._forward()
 
-    def test_distribute_false_matches_distribute_omitted(self):
-        assert compute_call_id(
-            "fn", self._target(), distribute=False
-        ) == compute_call_id("fn", self._target())
+    def test_distribute_false_matches_options_omitted(self):
+        assert compute_call_id("fn", self._target(), RunOptions()) == compute_call_id(
+            "fn", self._target()
+        )
 
     def test_distribute_true_changes_id(self):
         assert compute_call_id(
-            "fn", self._target(), distribute=True
-        ) != compute_call_id("fn", self._target(), distribute=False)
+            "fn", self._target(), RunOptions(distribute=True)
+        ) != compute_call_id("fn", self._target(), RunOptions())
 
     def test_pooled_binding_matches_scidb_forward_call_id(self):
         """`pool_variants` on a binding is scidb's `AcrossVariants(X)` at the
@@ -313,23 +315,30 @@ class TestComputeCallId:
 
     def test_as_table_list_is_order_independent(self):
         assert compute_call_id(
-            "fn", self._target(), as_table=["b", "a"]
-        ) == compute_call_id("fn", self._target(), as_table=["a", "b"])
+            "fn", self._target(), RunOptions(as_table=["b", "a"])
+        ) == compute_call_id("fn", self._target(), RunOptions(as_table=["a", "b"]))
 
     def test_as_table_matches_real_call_id(self):
-        result = compute_call_id("bandpass_filter", self._target(), as_table=["signal"])
+        result = compute_call_id(
+            "bandpass_filter", self._target(), RunOptions(as_table=["signal"])
+        )
         assert result == self._forward(as_table=["signal"])
 
     def test_as_table_true_matches_real_call_id(self):
-        """`True` resolves to every loadable input on BOTH sides. It hashed
-        as the literal `True` here and as the resolved names in scidb until
-        2026-09-20, so this call site never matched its own records."""
-        result = compute_call_id("bandpass_filter", self._target(), as_table=True)
+        """`True` resolves to every loadable input on BOTH sides (``RunOptions.
+        resolved_as_table``). It hashed as the literal `True` here and as the
+        resolved names in scidb until 2026-09-20, so this call site never
+        matched its own records."""
+        result = compute_call_id(
+            "bandpass_filter", self._target(), RunOptions(as_table=True)
+        )
         assert result == self._forward(as_table=True)
         assert result == self._forward(as_table=["signal"])
 
     def test_distribute_matches_real_call_id(self):
-        result = compute_call_id("bandpass_filter", self._target(), distribute=True)
+        result = compute_call_id(
+            "bandpass_filter", self._target(), RunOptions(distribute=True)
+        )
         assert result == self._forward(distribute=True)
 
     def test_multi_type_input_returns_none(self):

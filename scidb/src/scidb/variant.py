@@ -1,5 +1,6 @@
 """Variant branch_param pinning wrapper for variable type inputs in for_each (DB-backed)."""
 
+from dataclasses import dataclass, field
 from typing import Any
 
 #: Reserved namespace marking a **code-version** pin inside an otherwise ordinary
@@ -61,14 +62,83 @@ RUN_COLUMN_PREFIX = "Run:"
 LATEST_COLUMN_NAME = "CodeIsLatest"
 
 
+def _axis_of(key: str) -> "tuple[str, str | None]":
+    """``(axis, fn_name)`` for one branch-params key — ``("constants", None)``,
+    ``("code", fn_or_None)`` or ``("run", fn_or_None)``."""
+    for axis, prefix in (("code", CODE_PIN_PREFIX), ("run", RUN_PIN_PREFIX)):
+        if key == prefix:
+            return axis, None
+        if key.startswith(f"{prefix}."):
+            return axis, key[len(prefix) + 1 :]
+    return "constants", None
+
+
 def is_code_or_run_pin(key: str) -> bool:
     """True for a ``__code__`` / ``__run__`` key (bare or ``.<fn>``-qualified)."""
-    return (
-        key == CODE_PIN_PREFIX
-        or key.startswith(f"{CODE_PIN_PREFIX}.")
-        or key == RUN_PIN_PREFIX
-        or key.startswith(f"{RUN_PIN_PREFIX}.")
-    )
+    return _axis_of(key)[0] != "constants"
+
+
+@dataclass(frozen=True)
+class VariantAxes:
+    """One ``branch_params`` dict, split into the three axes of variant space.
+
+    Variant space has three dimensions — the upstream CONSTANTS a record was
+    produced with, the CODE that produced it, and the RUN OPTIONS it ran
+    under (``docs/claude/variant-space.md`` §2) — and they travel in one dict
+    keyed by reserved prefixes, because "which variant of this input" is one
+    question and threading three filters through every call site that already
+    carries one buys nothing.
+
+    The cost of the shared dict is that the prefixes have to be parsed back
+    out, and every consumer was doing it: the loader split it three ways, the
+    code and run filters each re-derived ``fn_name`` from the key, the
+    plotting layer re-derived both to build its column names. This is that
+    parse, once.
+
+    ``constants`` keeps its keys as they are (``bandpass.low_hz``,
+    ``__save__.run``) — those ARE the namespaced spelling. ``code`` and
+    ``run`` are keyed by function name, with ``None`` for the bare
+    (resolve-it-for-me) form.
+    """
+
+    constants: dict = field(default_factory=dict)
+    code: dict = field(default_factory=dict)
+    run: dict = field(default_factory=dict)
+
+    @classmethod
+    def of(cls, branch_params: dict | None) -> "VariantAxes":
+        constants: dict = {}
+        code: dict = {}
+        run: dict = {}
+        for key, value in (branch_params or {}).items():
+            axis, fn_name = _axis_of(str(key))
+            if axis == "code":
+                code[fn_name] = value
+            elif axis == "run":
+                run[fn_name] = value
+            else:
+                constants[key] = value
+        return cls(constants, code, run)
+
+    def to_dict(self) -> dict:
+        """Back to the one-dict spelling every filter and pin takes."""
+        out = dict(self.constants)
+        for axis, prefix in ((self.code, CODE_PIN_PREFIX), (self.run, RUN_PIN_PREFIX)):
+            for fn_name, value in axis.items():
+                out[prefix if fn_name is None else f"{prefix}.{fn_name}"] = value
+        return out
+
+    def axis_dict(self, axis: str) -> dict:
+        """One axis back in its prefixed spelling — what the code and run
+        filters take."""
+        return VariantAxes(**{axis: getattr(self, axis)}).to_dict()
+
+    @property
+    def pins_code_or_run(self) -> bool:
+        return bool(self.code or self.run)
+
+    def __bool__(self) -> bool:
+        return bool(self.constants or self.code or self.run)
 
 
 def pin_loads_uncollapsed(branch_params: dict | None) -> bool:
@@ -90,7 +160,7 @@ def pin_loads_uncollapsed(branch_params: dict | None) -> bool:
     "load this variant" and "introspect this variant" cannot disagree about
     which records exist.
     """
-    return any(is_code_or_run_pin(key) for key in (branch_params or {}))
+    return VariantAxes.of(branch_params).pins_code_or_run
 
 
 def normalize_pin_key(key: str) -> str:
@@ -133,6 +203,34 @@ def normalize_selection(selection: dict | None) -> dict:
         else:
             out[normalize_pin_key(key)] = value
     return out
+
+
+def match_bare_name(branch_params: dict, key: str) -> "str | None":
+    """The key in *branch_params* that *key* names, or ``None``.
+
+    Branch params are namespaced per producing function
+    (``bandpass.low_hz``). A BARE name is resolved by suffix-match against
+    ``.{name}``; more than one hit raises ``AmbiguousParamError`` naming the
+    candidates rather than silently picking one. An exact hit always wins —
+    that covers the namespaced form, the synthetic ``__save__.<kwarg>`` /
+    ``__code__`` / ``__run__`` keys, and a bare dynamic discriminator.
+
+    THE rule, so "which variant do I load" (``database._match_branch_param``)
+    and "what does ``{low_hz}`` mean in this output path"
+    (``foreach._resolve_bp_placeholder``) cannot disagree about what a bare
+    name refers to. See ``docs/claude/variant-space.md`` §5.
+    """
+    if key in branch_params:
+        return key
+    suffix = f".{key}"
+    hits = [k for k in branch_params if str(k).endswith(suffix)]
+    if len(hits) > 1:
+        from .exceptions import AmbiguousParamError
+
+        raise AmbiguousParamError(
+            f"'{key}' matches multiple branch params: {sorted(hits)}."
+        )
+    return hits[0] if hits else None
 
 
 def branch_param(fn: str, **params: Any) -> dict:

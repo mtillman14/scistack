@@ -145,11 +145,14 @@ def record_direct_save(
 def compute_input_selectors(inputs: dict) -> dict:
     """Map each input param to its identity-affecting ``selector`` JSON, or None.
 
-    Currently only ``ColumnSelection`` (directly, or wrapped in ``Fixed``)
-    produces a selector — the chosen columns — because selecting different
-    columns of the same record is a different computation (§ ColumnSelection
-    decision). Fixed/Variant/Merge resolve to whole records and need no selector;
-    their effect is captured by *which* record_id the edge points at.
+    Only ``ColumnSelection`` produces a selector — the chosen columns —
+    because selecting different columns of the same record is a different
+    computation (§ ColumnSelection decision). It is found ANYWHERE in the
+    wrapper stack (``input_spec.find_wrapper``): ``Fixed(Var["a"], …)`` and
+    ``Variant(Var["a"], …)`` both carry one, and enumerating the stackings
+    by hand covered the first and not the second. Fixed/Variant/Merge
+    themselves resolve to whole records and need no selector; their effect
+    is captured by *which* record_id the edge points at.
 
     The shape and the stored spelling belong to ``scidb.intent`` (the
     ``columns`` aspect): this function decides WHICH inputs carry a selection,
@@ -163,19 +166,17 @@ def compute_input_selectors(inputs: dict) -> dict:
     suite, test_dag_runs). Only written when set, so an ordinary column
     selection keeps its old identity.
     """
-    from scifor import ColumnSelection, Fixed
+    from scifor import ColumnSelection
 
+    from .input_spec import find_wrapper
     from .intent import selector_json
 
     out: dict = {}
     for param, spec in inputs.items():
-        cs = None
-        if isinstance(spec, ColumnSelection):
-            cs = spec
-        elif isinstance(spec, Fixed) and isinstance(
-            getattr(spec, "data", None), ColumnSelection
-        ):
-            cs = spec.data
+        # Anywhere in the wrapper stack (`input_spec.find_wrapper`): a
+        # selection under a `Fixed` was handled, one under a `Variant` was
+        # not, and reached the graph as "no selection".
+        cs = find_wrapper(spec, ColumnSelection)
         # `None` for a whole-variable input, and for an empty non-iterate
         # selection — normalize_columns folds those together.
         out[param] = selector_json(cs) if cs is not None else None

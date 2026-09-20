@@ -141,7 +141,7 @@ class TestRunBindings:
         run.rid_to_bp = {"r1": {"bandpass.low_hz": 20}, "fixed1": {"ref.side": "L"}}
         merged, conflicts = run.branch_params_for(run.for_combo({"__rid_value": "r1"}))
         assert merged == {"bandpass.low_hz": 20, "ref.side": "L"}
-        assert conflicts == []
+        assert conflicts == {}
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +171,6 @@ class TestVariantSignature:
         assert not signature_conflicts_with(sig, {"subject": "01", "side": "left"})
         assert not signature_conflicts_with(sig, {"subject": "01"})  # side not iterated
         assert not signature_conflicts_with(EMPTY_SIGNATURE, {"side": "right"})
-
-    def test_merge_names_every_conflict(self):
-        merged, conflicts = merge_branch_params([{"a": 1}, {"a": 2, "b": 3}, {"b": 3}])
-        assert merged == {"a": 2, "b": 3}
-        assert conflicts == ["'a': 1 -> 2"]
 
 
 class TestRecordPool:
@@ -213,3 +208,103 @@ class TestRecordPool:
     def test_a_group_knows_its_branch_params(self):
         _, s20, _ = self._pool()
         assert VariantGroup(s20, ("a",)).branch_params == {"bandpass.low_hz": 20}
+
+
+class TestSignatureHasOneRecipe:
+    """`variant_signature` replaced five hand-rolled
+    `json.dumps(..., sort_keys=True)` calls (the collapse key, the PathOutput
+    `{variant}` text, the aggregation split, the predictor, the GUI's variant
+    summary). They had drifted — see
+    `test_pathoutput_variants.py::TestVariantTokenIsOneDigest`."""
+
+    def test_a_non_serialisable_value_does_not_raise(self):
+        from datetime import date
+
+        assert variant_signature({"d": date(2026, 9, 20)})  # default=str
+
+    def test_nested_dicts_sort_too(self):
+        assert variant_signature({"cfg": {"b": 1, "a": 2}}) == variant_signature(
+            {"cfg": {"a": 2, "b": 1}}
+        )
+
+
+class TestMergeReportsEveryValue:
+    def test_conflicts_name_the_key_and_every_value_seen(self):
+        merged, conflicts = merge_branch_params([{"a": 1}, {"a": 2, "b": 3}, {"a": 4}])
+        assert merged == {"a": 4, "b": 3}
+        assert conflicts == {"a": [1, 2, 4]}
+
+    def test_agreement_is_not_a_conflict(self):
+        merged, conflicts = merge_branch_params([{"a": 1}, {"a": 1}])
+        assert merged == {"a": 1} and conflicts == {}
+
+
+# ---------------------------------------------------------------------------
+# input_spec: ONE unwrap
+# ---------------------------------------------------------------------------
+
+
+class TestInputSpecUnwrap:
+    """Six hand-rolled unwraps, each knowing a different subset of the
+    wrappers, are why a `Variant`-pinned input vanished from the predicted
+    config and a column selection under a `Variant` reached the graph as
+    "no selection"."""
+
+    def _types(self):
+        from scidb import AcrossVariants, BaseVariable, Variant
+        from scifor import Fixed
+
+        class Wide(BaseVariable):
+            pass
+
+        return Wide, Variant, AcrossVariants, Fixed
+
+    def test_every_wrapper_peels_in_any_order(self):
+        from scidb.input_spec import type_name
+
+        Wide, Variant, AcrossVariants, Fixed = self._types()
+        for spec in (
+            Wide,
+            Wide["a"],
+            Fixed(Wide, subject="01"),
+            Variant(Wide, low_hz=20),
+            AcrossVariants(Wide),
+            AcrossVariants(Variant(Fixed(Wide["a"], subject="01"), low_hz=20)),
+            Variant(AcrossVariants(Wide), low_hz=20),
+        ):
+            assert type_name(spec) == "Wide", spec
+
+    def test_a_non_variable_has_no_type(self):
+        from scifor import PathInput
+
+        from scidb.input_spec import type_name, variable_type
+
+        assert type_name(20) is None
+        assert type_name("hello") is None
+        assert variable_type(PathInput("{subject}/a.csv")) is None
+
+    def test_find_wrapper_reaches_a_selection_under_any_wrapper(self):
+        from scifor import ColumnSelection, Fixed
+
+        from scidb.input_spec import find_wrapper
+
+        Wide, Variant, AcrossVariants, _Fixed = self._types()
+        for spec in (
+            Wide["a"],
+            Fixed(Wide["a"], subject="01"),
+            Variant(Wide["a"], low_hz=20),
+        ):
+            found = find_wrapper(spec, ColumnSelection)
+            assert found is not None and list(found.columns) == ["a"], spec
+        assert find_wrapper(Wide, ColumnSelection) is None
+        assert find_wrapper(Variant(Wide, low_hz=20), ColumnSelection) is None
+
+    def test_wrappers_of_reports_the_stack(self):
+        from scidb.input_spec import wrappers_of
+
+        Wide, Variant, AcrossVariants, Fixed = self._types()
+        assert set(wrappers_of(Variant(Fixed(Wide, subject="01"), low_hz=20))) == {
+            Variant,
+            Fixed,
+        }
+        assert wrappers_of(Wide) == []

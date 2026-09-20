@@ -14,6 +14,7 @@ they're the genuinely new (not-reused-from-execution_service) code.
 from __future__ import annotations
 
 import pytest
+from scidb.foreach_config import RunOptions
 from scistack_gui.db import get_db
 from scistack_gui.services.code_export_service import (
     _matlab_literal,
@@ -294,8 +295,8 @@ class TestSerializationHelpers:
     def test_topo_sort_orders_by_type_dependency(self):
         # fn_b consumes what fn_a produces -> fn_a must come first.
         steps = [
-            ("fn_b", {"input_types": {"x": "Produced"}, "output_type": "Final", "constants": {}}),
-            ("fn_a", {"input_types": {"x": "Raw"}, "output_type": "Produced", "constants": {}}),
+            ("fn_b", {"input_types": {"x": "Produced"}, "output_type": "Final", "constants": {}}, RunOptions()),
+            ("fn_a", {"input_types": {"x": "Raw"}, "output_type": "Produced", "constants": {}}, RunOptions()),
         ]
         order = _topo_sort_targets(steps)
         names_in_order = [steps[i][0] for i in order]
@@ -303,8 +304,8 @@ class TestSerializationHelpers:
 
     def test_topo_sort_raises_on_cycle(self):
         steps = [
-            ("fn_a", {"input_types": {"x": "B"}, "output_type": "A", "constants": {}}),
-            ("fn_b", {"input_types": {"x": "A"}, "output_type": "B", "constants": {}}),
+            ("fn_a", {"input_types": {"x": "B"}, "output_type": "A", "constants": {}}, RunOptions()),
+            ("fn_b", {"input_types": {"x": "A"}, "output_type": "B", "constants": {}}, RunOptions()),
         ]
         with pytest.raises(ValueError, match="cycle"):
             _topo_sort_targets(steps)
@@ -404,3 +405,36 @@ class TestColumnSelectionLiterals:
             assert _matlab_literal(self._sel(columns, iterate)) == (
                 _format_variable_class("RawSignal", columns, iterate)
             )
+
+
+class TestRunOptionsReachTheExport:
+    """Run options are identity-bearing: a script that omits them re-runs
+    the pipeline as a DIFFERENT call, writing a second record at every
+    location. Both emitters hardcoded `distribute=False, as_table=None`
+    until 2026-09-20 (`RunOptions`)."""
+
+    def test_matlab_emitter_renders_the_step_s_options(self):
+        from scistack_gui.services.code_export_service import _matlab_run_option_args
+
+        assert _matlab_run_option_args(RunOptions(), {"df": None}) == ""
+        assert (
+            _matlab_run_option_args(RunOptions(distribute=True), {"df": None})
+            == ", 'distribute', true"
+        )
+        assert (
+            _matlab_run_option_args(RunOptions(as_table=True), {"df": None})
+            == ', \'as_table\', ["df"]'
+        )
+        both = _matlab_run_option_args(
+            RunOptions(distribute=True, as_table=["df"]), {"df": None}
+        )
+        assert both == ', \'distribute\', true, \'as_table\', ["df"]'
+
+    def test_across_variants_is_not_a_kwarg_here(self):
+        """It rides on the input expression as `scidb.AcrossVariants(...)`."""
+        from scistack_gui.services.code_export_service import _matlab_run_option_args
+
+        assert (
+            _matlab_run_option_args(RunOptions(across_variants=("df",)), {"df": None})
+            == ""
+        )

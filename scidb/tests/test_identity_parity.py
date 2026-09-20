@@ -623,3 +623,50 @@ class TestSkipGateReadsRunOptions:
             for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[], skip_computed=True)
         assert len(Out.load(as_df=True, version="all")) == before + 4
         assert "run options changed" in caplog.text, caplog.text
+
+
+class TestSelectionUnderAnyWrapper:
+    """A column selection is invocation identity wherever it sits in the
+    wrapper stack. `compute_input_selectors` enumerated two stackings by
+    hand (bare and under `Fixed`), so one under a `Variant` reached the
+    graph as "no selection" — the write-side round-trip guard's exact
+    failure case (`docs/claude/input-binding-round-trip.md` §5)."""
+
+    def test_a_selection_under_a_variant_is_recorded(self, db, caplog):
+        import logging
+
+        from scidb import Variant
+
+        _seed()
+        for_each(scaled, {"value": Wide, "factor": 2.0}, [Scaled], subject=[], trial=[], cycle=[])
+        with caplog.at_level(logging.WARNING, logger="scidb"):
+            for_each(
+                first_a,
+                {"value": Variant(Scaled["a"], factor=2.0)},
+                [Out],
+                subject=[],
+                trial=[],
+                cycle=[],
+            )
+        assert "dropped" not in caplog.text.lower(), caplog.text
+        recorded = _recorded_selectors(db, "first_a")
+        assert recorded.get("value"), f"no selector recorded, got {recorded}"
+
+    def test_the_call_site_is_the_type_whatever_the_wrapper(self, db):
+        """Four spellings of "read Wide", one call site."""
+        from scidb import AcrossVariants, Variant
+        from scifor import Fixed
+
+        plain = ForEachConfig(first_a, {"value": Wide}).to_call_id()
+        for spec in (
+            Wide["a"],
+            Fixed(Wide, subject="01"),
+            Variant(Wide, low_hz=20),
+            AcrossVariants(Wide),
+        ):
+            got = ForEachConfig(first_a, {"value": spec}).to_call_id()
+            if isinstance(spec, AcrossVariants):
+                # Pooling is a RUN OPTION and does fork the call site.
+                assert got != plain, spec
+            else:
+                assert got == plain, spec
