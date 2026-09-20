@@ -1105,6 +1105,17 @@ def _h_plot_export(params):
     )
 
 
+
+def _h_plot_variant_sets_save(params):
+    """Persist a plot's named variant pins as statements about the plotted
+    variable (`variant_selection` aspect) — see plot_service.save_variant_sets."""
+    from scistack_gui.db import get_db
+    from scistack_gui.services.plot_service import save_variant_sets
+
+    return save_variant_sets(
+        get_db(), params["variable"], list(params.get("variant_sets") or [])
+    )
+
 def _h_plot_add_to_pipeline(params):
     from scistack_gui.db import get_db
     from scistack_gui.services.plot_service import add_to_pipeline
@@ -1276,6 +1287,7 @@ METHODS = {
     "plot_resolve": _h_plot_resolve,
     "plot_export": _h_plot_export,
     "plot_add_to_pipeline": _h_plot_add_to_pipeline,
+    "plot_variant_sets_save": _h_plot_variant_sets_save,
     "plot_save_start": _h_plot_save_start,
     "plot_invalidate": _h_plot_invalidate,
     # The webview's error boundaries write what they caught into scidb.log.

@@ -287,3 +287,17 @@ class ClientErrorRequest(BaseModel):
 def client_error(req: ClientErrorRequest) -> dict:
     """The webview caught a render error; write it into the shared log."""
     return report_client_error(req.model_dump())
+
+
+class VariantSetsRequest(BaseModel):
+    variable: str
+    variant_sets: list[dict] = []
+
+
+@router.post("/plot/variant-sets")
+def plot_variant_sets_save(
+    req: VariantSetsRequest, db: DatabaseManager = Depends(get_db)
+) -> dict:
+    """Persist a plot's named variant pins as statements about the plotted
+    variable — the `variant_selection` aspect of the intent store."""
+    return plot_service.save_variant_sets(db, req.variable, req.variant_sets)

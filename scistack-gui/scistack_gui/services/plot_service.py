@@ -18,6 +18,7 @@ run-ownership work resolved — see docs/claude/matlab-run-database-ownership.md
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,52 @@ def invalidate(db=None) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _with_stored_variant_sets(db, variable: str, spec):
+    """*spec* with the pins stored for *variable* in place of its default
+    ``variant_sets`` — or unchanged when none are stored, or when the store
+    is unavailable (a CSV source has no database)."""
+    if db is None or not variable:
+        return spec
+    try:
+        from scistackplot.spec import VariantSet
+
+        from scistack_gui import intent_store
+
+        stored = intent_store.variant_selections(db, variable)
+    except Exception:
+        logger.debug("[plot] stored variant pins unavailable for %s", variable, exc_info=True)
+        return spec
+    if not stored:
+        return spec
+    try:
+        sets = [VariantSet.from_dict(s) for s in stored]
+    except Exception:
+        logger.warning(
+            "[plot] %s: %d stored variant pin(s) could not be parsed — using the "
+            "default pin instead",
+            variable,
+            len(stored),
+            exc_info=True,
+        )
+        return spec
+    logger.info(
+        "[plot] %s: %d stored variant pin(s) replace the default: %s",
+        variable,
+        len(sets),
+        [s.name for s in sets],
+    )
+    return replace(spec, variant_sets=sets)
+
+
+def save_variant_sets(db, variable: str, variant_sets: list) -> dict:
+    """Persist a plot's pins as `variant_selection` statements about
+    *variable* (the RPC behind every edit of the Variants section)."""
+    from scistack_gui import intent_store
+
+    n = intent_store.set_variant_selections(db, variable, variant_sets)
+    return {"ok": True, "variable": variable, "stored": n}
+
+
 def describe(
     db,
     variable: str | None = None,
@@ -171,6 +218,11 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
     # default_spec owns roles + kind + facet wrap together: a 13-field struct
     # opens as a wrapped grid of subplots, not one overplotted axis.
     spec = default_spec(table, variable)
+    # A plot's named pins over variant space are statements about the plotted
+    # variable (`variant_selection` aspect of the intent store), so they
+    # survive the panel closing. Stored pins replace the default's — the
+    # user's most recent statement wins over a computed default.
+    spec = _with_stored_variant_sets(db, variable, spec)
 
     # Offers AND refusals: the variant picker draws every variable node on the
     # canvas, so one it cannot offer has to say why in place.

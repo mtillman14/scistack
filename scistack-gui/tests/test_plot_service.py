@@ -2504,3 +2504,38 @@ def test_fields_as_columns_reaches_plot_data(populated_db, tmp_path, monkeypatch
         populated_db, spec, str(tmp_path / "b.csv"), fields_as_columns=False
     )
     assert seen == [True, False], "default on, as the panel's checkbox"
+
+
+class TestVariantPinsAreStatements:
+    """A plot's named pins are `variant_selection` statements about the
+    plotted variable (Stage 7 of `.claude/plan-intent-and-fact.md`): they
+    outlive the panel, and the opening spec carries them back."""
+
+    def test_stored_pins_replace_the_default_on_open(self, populated_db):
+        default = plot_service.describe(populated_db, "FilteredSignal")["spec"]
+        pins = [
+            {"name": "twenty", "selection": {"bandpass_filter.low_hz": "20"}, "variable": None},
+        ]
+        plot_service.save_variant_sets(populated_db, "FilteredSignal", pins)
+
+        reopened = plot_service.describe(populated_db, "FilteredSignal")["spec"]
+        assert [s["name"] for s in reopened["variant_sets"]] == ["twenty"]
+        assert reopened["variant_sets"][0]["selection"] == {"bandpass_filter.low_hz": "20"}
+        assert reopened["variant_sets"] != default["variant_sets"] or len(pins) == len(
+            default["variant_sets"]
+        )
+
+    def test_pins_are_per_variable(self, populated_db):
+        plot_service.save_variant_sets(
+            populated_db, "FilteredSignal", [{"name": "only-here", "selection": {}}]
+        )
+        other = plot_service.describe(populated_db, "RawSignal")["spec"]
+        assert all(s["name"] != "only-here" for s in other["variant_sets"])
+
+    def test_saving_an_empty_list_clears_the_pins(self, populated_db):
+        plot_service.save_variant_sets(
+            populated_db, "FilteredSignal", [{"name": "gone", "selection": {}}]
+        )
+        plot_service.save_variant_sets(populated_db, "FilteredSignal", [])
+        reopened = plot_service.describe(populated_db, "FilteredSignal")["spec"]
+        assert all(s["name"] != "gone" for s in reopened["variant_sets"])

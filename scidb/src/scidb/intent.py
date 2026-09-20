@@ -91,6 +91,10 @@ ASPECT_SCHEMA_LOCATION = "schema_location"
 ASPECT_WIRING = "wiring"
 ASPECT_HIDDEN = "hidden"
 ASPECT_CONSTANTS = "constants"
+#: A plot's pin over variant space — a named ``VariantSet`` — is intent about
+#: which rows a figure reads, keyed by the set's name. It has no FACT side (a
+#: pin is not something a run records), so it resolves with history absent.
+ASPECT_VARIANT_SELECTION = "variant_selection"
 ASPECTS = (
     ASPECT_COLUMNS,
     ASPECT_RUN_OPTIONS,
@@ -98,6 +102,7 @@ ASPECTS = (
     ASPECT_WIRING,
     ASPECT_HIDDEN,
     ASPECT_CONSTANTS,
+    ASPECT_VARIANT_SELECTION,
 )
 
 #: Aspects whose value is a mapping KEYED BY PART (parameter, constant name,
@@ -105,7 +110,13 @@ ASPECTS = (
 #: is explicit rather than inferred from the payload's type, because a column
 #: selection is itself a mapping and "is this keyed or is this the value?"
 #: cannot be answered by looking.
-PER_KEY_ASPECTS = (ASPECT_COLUMNS, ASPECT_WIRING, ASPECT_CONSTANTS, ASPECT_HIDDEN)
+PER_KEY_ASPECTS = (
+    ASPECT_COLUMNS,
+    ASPECT_WIRING,
+    ASPECT_CONSTANTS,
+    ASPECT_HIDDEN,
+    ASPECT_VARIANT_SELECTION,
+)
 
 #: Origins, and the surfaces each reads IN ORDER (rule 3).
 #:

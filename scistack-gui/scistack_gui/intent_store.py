@@ -51,6 +51,7 @@ from scidb.intent import (
     ASPECT_HIDDEN,
     ASPECT_RUN_OPTIONS,
     ASPECT_SCHEMA_LOCATION,
+    ASPECT_VARIANT_SELECTION,
     ASPECT_WIRING,
     GLOBAL_SCOPE,
     SUBJECT_CALL_SITE,
@@ -968,6 +969,65 @@ def _import_pending_constants(db) -> int:
         add_pending_constant(db, const_name, value)
         n += 1
     return n
+
+
+# ---------------------------------------------------------------------------
+# `variant_selection`: a plot's named pins over variant space
+# ---------------------------------------------------------------------------
+# Plot Studio's Variants section edits a list of VariantSets — "baseline" is
+# `Code:bandpass == v1` — that used to live only in the panel's in-session
+# spec (and in source once a plot was added to the pipeline). Each set is a
+# statement about the plotted VARIABLE, keyed by the set's name, so pins
+# survive the panel closing and travel with the same scope and precedence as
+# every other statement. There is no fact side: a pin is not something a run
+# records.
+
+
+def set_variant_selections(db, variable: str, variant_sets, scope: str = GLOBAL_SCOPE) -> int:
+    """Replace the pins stored for *variable* with *variant_sets* (the
+    ``VariantSet.to_dict()`` list a spec carries). An unnamed set is keyed by
+    its position, so it round-trips without forcing a name on it."""
+    delete_statements(
+        db,
+        aspect=ASPECT_VARIANT_SELECTION,
+        subject_kind=SUBJECT_VARIABLE_TYPE,
+        subject_ref=variable,
+        scope=scope,
+    )
+    statements = []
+    for i, raw in enumerate(variant_sets or []):
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name")
+        statements.append(
+            Statement(
+                subject_kind=SUBJECT_VARIABLE_TYPE,
+                subject_ref=variable,
+                aspect=ASPECT_VARIANT_SELECTION,
+                value=dict(raw),
+                key=str(name) if name else f"#{i}",
+                scope=scope,
+                stated_at=_now(),
+            )
+        )
+    put_statements(db, statements)
+    logger.info(
+        "[intent_store] %s: %d variant pin(s) stored", variable, len(statements)
+    )
+    return len(statements)
+
+
+def variant_selections(db, variable: str, scope: str | None = None) -> list[dict]:
+    """The stored pins for *variable*, in the order they were stated."""
+    rows = load_statements(
+        db,
+        aspect=ASPECT_VARIANT_SELECTION,
+        subject_kind=SUBJECT_VARIABLE_TYPE,
+        subject_refs=[variable],
+        scopes=[scope] if scope else None,
+    )
+    rows.sort(key=lambda s: (str(s.stated_at or ""), s.key or ""))
+    return [dict(s.value) for s in rows if isinstance(s.value, dict)]
 
 
 # ---------------------------------------------------------------------------

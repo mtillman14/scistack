@@ -785,6 +785,29 @@ export default function PlotStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variable, sourceParams])
 
+  // A plot's named pins over variant space are STATEMENTS about the plotted
+  // variable (`variant_selection` in the intent store), so they outlive the
+  // panel. Persisted on every change after the opening spec has landed —
+  // the opening spec already carries whatever was stored, so re-saving it
+  // is a no-op, and a CSV source has no database to state anything in.
+  const variantSetsJson = JSON.stringify(spec?.variant_sets ?? null)
+  const openedVariantSets = useRef<string | null>(null)
+  // A retarget opens on another variable's stored pins: start the baseline over.
+  useEffect(() => { openedVariantSets.current = null }, [variable])
+  useEffect(() => {
+    if (!spec || !variable || csvPath) return
+    if (openedVariantSets.current === null) {
+      openedVariantSets.current = variantSetsJson
+      return
+    }
+    if (variantSetsJson === openedVariantSets.current) return
+    openedVariantSets.current = variantSetsJson
+    callBackend('plot_variant_sets_save', {
+      variable,
+      variant_sets: spec.variant_sets ?? [],
+    }).catch(err => console.warn('[PlotStudio] variant pins not saved:', err))
+  }, [variantSetsJson, spec, variable, csvPath])
+
   // Which factors fan the figure set out. Changing THAT is what invalidates a
   // cursor into the fan-out; changing a colour or a plot kind does not, and
   // resetting to figure 1 on every spec edit would make the panel unusable
