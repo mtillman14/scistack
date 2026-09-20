@@ -615,6 +615,30 @@ def _variable_input_type_names(variable_inputs: "dict | None") -> list[str]:
     return names
 
 
+def _run_origin_lines() -> list[str]:
+    """Label the runs this script starts as GUI runs.
+
+    A command the GUI generated read the intent store (column selections, run
+    options, hidden values are all baked into it), so its runs are ``gui``
+    runs even though MATLAB executes them — rule 3 of
+    docs/claude/intent-and-fact.md. Must come after the pyenv preamble (it
+    is a ``py.*`` call); ``setenv`` would not do, because Python's
+    ``os.environ`` is a snapshot taken at interpreter start.
+    """
+    return ["py.scidb.intent.set_ambient_origin('gui');"]
+
+
+def _run_origin_reset_lines() -> list[str]:
+    """Put the origin back to ``script`` once the generated run is over.
+
+    ``set_ambient_origin`` has no scope to exit, and a MATLAB session outlives
+    the script: without this, a user's own ``scidb.for_each`` typed at the
+    prompt afterwards would be recorded as a GUI run. Emitted on BOTH the
+    success path and the catch path, since the catch rethrows.
+    """
+    return ["py.scidb.intent.set_ambient_origin('script');"]
+
+
 def generate_matlab_command(
     function_name: str,
     db_path: str,
@@ -717,6 +741,9 @@ def generate_matlab_command(
         f"addpath('{_escape_matlab_string(d)}');" for d in (addpath_dirs or [])
     ]
     lines.extend(timing.section(addpath_lines, "scistack_t_addpath__", "addpath"))
+    lines.extend(
+        timing.section(_run_origin_lines(), "scistack_t_origin__", "run_origin")
+    )
 
     lines.extend(
         timing.section(
@@ -832,8 +859,10 @@ def generate_matlab_command(
             "        % close already logged its own error; don't mask the original"
         )
         lines.append("    end")
+        lines.extend("    " + line for line in _run_origin_reset_lines())
         lines.append("    rethrow(scistack_err__);")
         lines.append("end")
+        lines.extend(_run_origin_reset_lines())
         lines.extend(timing.total_lines())
         return "\n".join(lines)
 
@@ -885,8 +914,10 @@ def generate_matlab_command(
         "        % close already logged its own error; don't mask the original"
     )
     lines.append("    end")
+    lines.extend("    " + line for line in _run_origin_reset_lines())
     lines.append("    rethrow(scistack_err__);")
     lines.append("end")
+    lines.extend(_run_origin_reset_lines())
     lines.extend(timing.total_lines())
     return "\n".join(lines)
 
@@ -1231,6 +1262,9 @@ def generate_matlab_pipeline_command(
         f"addpath('{_escape_matlab_string(d)}');" for d in (addpath_dirs or [])
     ]
     lines.extend(timing.section(addpath_lines, "scistack_t_addpath__", "addpath"))
+    lines.extend(
+        timing.section(_run_origin_lines(), "scistack_t_origin__", "run_origin")
+    )
 
     all_step_path_inputs = {
         param: pi
@@ -1358,8 +1392,10 @@ def generate_matlab_pipeline_command(
         "        % close already logged its own error; don't mask the original"
     )
     lines.append("    end")
+    lines.extend("    " + line for line in _run_origin_reset_lines())
     lines.append("    rethrow(scistack_err__);")
     lines.append("end")
+    lines.extend(_run_origin_reset_lines())
     lines.extend(timing.total_lines())
     return "\n".join(lines)
 

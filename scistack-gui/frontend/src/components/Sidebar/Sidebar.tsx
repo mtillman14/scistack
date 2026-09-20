@@ -19,7 +19,7 @@ import { useStore } from '@xyflow/react'
 import EditTab from './EditTab'
 import FunctionSettingsPanel from './FunctionSettingsPanel'
 import GlueSettingsPanel from './GlueSettingsPanel'
-import type { SchemaSelection, RunOptions, WhereFilter, ColumnSelectionMap } from './FunctionSettingsPanel'
+import type { SchemaSelection, RunOptions, WhereFilter, ColumnSelectionMap, UnusedIntentMap } from './FunctionSettingsPanel'
 import ParameterSettingsPanel from './ParameterSettingsPanel'
 import VariableSettingsPanel from './VariableSettingsPanel'
 import PathInputSettingsPanel from './PathInputSettingsPanel'
@@ -41,6 +41,7 @@ interface FnNodeData {
   // only a VARIABLE-bound parameter can have columns picked for it.
   input_params?: Record<string, string>
   columnSelections?: ColumnSelectionMap
+  unusedIntent?: UnusedIntentMap
 }
 
 interface ParameterNodeData {
@@ -204,6 +205,7 @@ export default function Sidebar() {
             runOptions={(selectedNode.data as FnNodeData).runOptions ?? { dry_run: false, save: true, distribute: false, as_table: false }}
             inputParams={(selectedNode.data as FnNodeData).input_params ?? {}}
             columnSelections={(selectedNode.data as FnNodeData).columnSelections ?? {}}
+            unusedIntent={(selectedNode.data as FnNodeData).unusedIntent}
           />
         )}
         {isGlueNode(selectedNode) && (

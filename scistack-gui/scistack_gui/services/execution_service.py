@@ -1815,24 +1815,29 @@ def run_pipeline(
     returned "rendered" list of paths/payloads is the ONLY handle on the
     draft outputs).
     """
+    from scidb.intent import ORIGIN_GUI, run_origin
+
     built: dict = {}
     rendered: list = []
     try:
         pipe = build_backend_pipeline(db, pipeline_id, built)
-        if mode == "all":
-            pipe.run_all(skip_computed=skip_computed)
-        elif mode == "until":
-            pipe.run_until(target, finalized=finalized, skip_computed=skip_computed)
-        elif mode == "endpoints":
-            pipe.run_endpoints(
-                finalized=bool(finalized),
-                skip_computed=skip_computed,
-                include_used=True,
-            )
-        elif mode == "show":
-            rendered = pipe.show(target, skip_computed=skip_computed)
-        else:
-            raise ValueError(f"unknown run mode {mode!r}")
+        # Compiled from the canvas, so it read the intent store: label every
+        # run it starts (rule 3, docs/claude/intent-and-fact.md).
+        with run_origin(ORIGIN_GUI):
+            if mode == "all":
+                pipe.run_all(skip_computed=skip_computed)
+            elif mode == "until":
+                pipe.run_until(target, finalized=finalized, skip_computed=skip_computed)
+            elif mode == "endpoints":
+                pipe.run_endpoints(
+                    finalized=bool(finalized),
+                    skip_computed=skip_computed,
+                    include_used=True,
+                )
+            elif mode == "show":
+                rendered = pipe.show(target, skip_computed=skip_computed)
+            else:
+                raise ValueError(f"unknown run mode {mode!r}")
     finally:
         _discard_compiled(built)
     # for_each never raises on iteration failures (continue-and-report),

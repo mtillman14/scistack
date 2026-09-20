@@ -613,3 +613,79 @@ def describe_plan(plan: RunPlan) -> str:
         sel = columns.get(param)
         parts.append(f"{param}: {label} ({describe_columns(sel)})")
     return " · ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# The run's origin (rule 3), as ambient state
+# ---------------------------------------------------------------------------
+# A run's origin is decided by whoever STARTS it — the GUI's run thread, a
+# MATLAB command the GUI generated, a script — and read by whoever RECORDS it,
+# deep inside the save path. Threading a keyword through every for_each
+# signature between the two would touch four call chains for one string, so
+# it travels as ambient state instead: a context variable for in-process
+# callers, with an environment variable as the cross-process fallback (the
+# MATLAB sidecar is a different process; the generated command exports it).
+
+import contextvars as _contextvars
+import os as _os
+
+ORIGIN_ENV_VAR = "SCIDB_RUN_ORIGIN"
+
+_current_origin: _contextvars.ContextVar[str | None] = _contextvars.ContextVar(
+    "scidb_run_origin", default=None
+)
+
+
+def current_origin() -> str:
+    """The origin of the run in progress: the context variable if set, else
+    ``$SCIDB_RUN_ORIGIN``, else ``script`` — a run nobody labelled came from
+    code, and code reads source only (decision A, 2026-09-19)."""
+    value = _current_origin.get() or _os.environ.get(ORIGIN_ENV_VAR) or ORIGIN_SCRIPT
+    if value not in ORIGIN_SURFACES:
+        logger.warning(
+            "[intent] unknown run origin %r — treating it as %r", value, ORIGIN_SCRIPT
+        )
+        return ORIGIN_SCRIPT
+    return value
+
+
+class run_origin:
+    """``with run_origin("gui"): ...`` — label every run started inside.
+
+    Re-entrant and thread-safe by construction (a context variable), so the
+    GUI's run thread can set it without touching what a concurrent script
+    run records.
+    """
+
+    def __init__(self, origin: str):
+        if origin not in ORIGIN_SURFACES:
+            raise IntentError(
+                f"{origin!r} is not an origin ({', '.join(ORIGIN_SURFACES)})."
+            )
+        self.origin = origin
+        self._token = None
+
+    def __enter__(self):
+        self._token = _current_origin.set(self.origin)
+        return self
+
+    def __exit__(self, *exc):
+        if self._token is not None:
+            _current_origin.reset(self._token)
+        return False
+
+
+def set_ambient_origin(origin: str) -> str:
+    """Set the origin for every later run on this thread, with no scope to
+    exit — the cross-language entry point.
+
+    A MATLAB session hosting Python via ``py.*`` cannot use ``with``, and a
+    ``setenv`` from MATLAB is invisible to an already-started interpreter
+    (``os.environ`` is a snapshot). The GUI's generated MATLAB command calls
+    ``py.scidb.intent.set_ambient_origin('gui')`` once, after its pyenv
+    preamble, so the runs it launches record where they came from.
+    """
+    if origin not in ORIGIN_SURFACES:
+        raise IntentError(f"{origin!r} is not an origin ({', '.join(ORIGIN_SURFACES)}).")
+    _current_origin.set(origin)
+    return origin

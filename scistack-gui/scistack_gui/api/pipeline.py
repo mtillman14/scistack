@@ -1336,6 +1336,30 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         logger.info(
             "[pipeline] rehydrated placement-qualified config on %d node(s)", applied
         )
+
+    # Intent the last run did not use (decision A: a script run ignores the
+    # GUI's statements) — one batched provenance query for every function
+    # with a saved selection, then a pure pass over the nodes.
+    fn_with_selections = {
+        n["data"].get("label")
+        for n in nodes
+        if n.get("type") == "functionNode" and n["data"].get("columnSelections")
+    }
+    if fn_with_selections:
+        from scidb import provenance_query as _pq
+
+        try:
+            latest = _pq.latest_runs(db._duck, fn_with_selections)
+        except Exception:  # a marker must never break the graph build
+            logger.warning("[pipeline] latest_runs lookup failed", exc_info=True)
+            latest = {}
+        marked = gb.mark_unused_intent(nodes, latest)
+        if marked:
+            logger.info(
+                "[pipeline] %d node(s) carry a column selection their last run "
+                "did not use",
+                marked,
+            )
     nodes += build_pipeline_nodes(db, pipeline_id)
 
     # --- Endpoint classification (plot_/stat_ prefixes) ---

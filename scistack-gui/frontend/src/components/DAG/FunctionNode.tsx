@@ -53,6 +53,9 @@ interface FunctionNodeData {
   // Display only here: editing lives in FunctionSettingsPanel's Inputs
   // section, which is also the only writer of the stored node config.
   columnSelections?: Record<string, { columns: string[]; iterate: boolean }>
+  // Per-parameter "stated here, not used by the last run" — see
+  // FunctionSettingsPanel.UnusedIntent and docs/claude/intent-and-fact.md §7.
+  unusedIntent?: Record<string, { reason: string; origin: string | null }>
   // Set to 'matlab' for functions backed by a .m file. The extension uses this
   // to intercept start_run and route to handleMatlabRun instead of calling
   // into the Python registry (which doesn't know about MATLAB functions).
@@ -422,19 +425,34 @@ function PipelineFunctionNode({ id, data }: Props) {
 
       {columnChips.length > 0 && (
         <div style={styles.columnChipList}>
-          {columnChips.map(([param, text]) => (
-            <div
-              key={param}
-              style={styles.columnChip}
-              title={
-                `'${param}' is restricted to ${text}. Change it in the `
-                + 'function node’s Inputs section in the sidebar.'
-              }
-            >
-              <span style={styles.columnChipParam}>{param}</span>
-              <span style={styles.columnChipCols}>{'⟨'}{text}{'⟩'}</span>
-            </div>
-          ))}
+          {columnChips.map(([param, text]) => {
+            // A chip describing a selection the data does not reflect is the
+            // bug class the intent/fact model exists to kill — so the chip
+            // says so, rather than looking like every other chip.
+            const unused = data.unusedIntent?.[param]
+            return (
+              <div
+                key={param}
+                style={unused ? { ...styles.columnChip, ...styles.columnChipUnused } : styles.columnChip}
+                title={
+                  unused
+                    ? `'' is set to  here, but the last run `
+                      + (unused.reason === 'script_run'
+                        ? 'came from a script (which reads source only) and did not use it.'
+                        : unused.reason === 'never_run'
+                          ? 'has not happened yet.'
+                          : 'ran before this selection was made.')
+                      + ' See the Inputs section.'
+                    : `'' is restricted to . Change it in the `
+                      + 'function node’s Inputs section in the sidebar.'
+                }
+              >
+                <span style={styles.columnChipParam}>{param}</span>
+                <span style={styles.columnChipCols}>{'⟨'}{text}{'⟩'}</span>
+                {unused && <span style={styles.columnChipFlag}>!</span>}
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -757,6 +775,16 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+  },
+  // A chip whose selection the last run did not use (see unusedIntent).
+  columnChipUnused: {
+    background: '#fffbeb',
+    borderColor: '#fcd34d',
+  },
+  columnChipFlag: {
+    color: '#b45309',
+    fontWeight: 700,
+    marginLeft: 3,
   },
   // Variant popup only.
   variantInert: { opacity: 0.4, borderStyle: 'dashed' },

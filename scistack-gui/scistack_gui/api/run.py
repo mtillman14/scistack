@@ -575,7 +575,12 @@ def _run_in_thread(
             buf = StringIO()
             target_snapshot = dict(combo_totals)
             try:
-                with _RunLogRelay(), redirect_stdout(buf):
+                # This run reads the intent store (rule 3): label it so the
+                # `_run` row says so, and a later script run of the same
+                # function can be told apart from it on the canvas.
+                from scidb.intent import ORIGIN_GUI, run_origin
+
+                with _RunLogRelay(), redirect_stdout(buf), run_origin(ORIGIN_GUI):
                     for_each(
                         fn,
                         inputs=inputs,

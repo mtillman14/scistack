@@ -534,7 +534,8 @@ def ensure_provenance_tables(duck) -> None:
             timestamp     VARCHAR NOT NULL,
             user_id       VARCHAR,
             function_name VARCHAR NOT NULL,
-            where_clause  VARCHAR
+            where_clause  VARCHAR,
+            origin        VARCHAR
         )
     """)
 
@@ -590,6 +591,26 @@ def ensure_provenance_tables(duck) -> None:
         logger.debug(
             "ensure_provenance_tables: for_columns backfill check skipped",
             exc_info=True,
+        )
+
+    # Backfill: ``origin`` on _run — which surfaces the run read (rule 3 of
+    # docs/claude/intent-and-fact.md): ``gui`` / ``script`` / ``replay``. A
+    # row written before the column existed reads as NULL, which every
+    # consumer treats as "unknown", never as any particular origin.
+    try:
+        run_cols = {
+            r[0]
+            for r in duck._fetchall(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = '_run'"
+            )
+        }
+        if "origin" not in run_cols:
+            duck._execute("ALTER TABLE _run ADD COLUMN origin VARCHAR")
+            logger.debug("ensure_provenance_tables: added origin column to _run")
+    except Exception:
+        logger.debug(
+            "ensure_provenance_tables: origin backfill check skipped", exc_info=True
         )
 
     # Indexes for upward/downward traversal (the recursive CTEs in §6/§8 join

@@ -78,6 +78,27 @@ export interface ColumnSelection {
 
 export type ColumnSelectionMap = Record<string, ColumnSelection>
 
+/**
+ * A saved column selection the node's LAST RUN did not use, per parameter.
+ *
+ * Decision A of docs/claude/intent-and-fact.md: a script run ignores GUI
+ * intent, so the canvas can hold a statement the data does not reflect. The
+ * backend (graph_builder.mark_unused_intent) says which, and why:
+ *   script_run    — the last run read source only;
+ *   changed_since — stated after the last run, not yet run;
+ *   never_run     — this function has no recorded run at all.
+ * Silence here is the bug class this model exists to kill, so it is shown
+ * beside the selection, not hidden in a log.
+ */
+export interface UnusedIntent {
+  stated: ColumnSelection
+  recorded: ColumnSelection | null
+  origin: string | null
+  reason: 'script_run' | 'changed_since' | 'never_run'
+}
+
+export type UnusedIntentMap = Record<string, UnusedIntent>
+
 /** The one spelling of a selection, matching the backend's
  *  `column_selection.describe` — two spellings is how a user ends up reading
  *  a log line that disagrees with what the node shows. */
@@ -111,6 +132,7 @@ interface Props {
   runOptions: RunOptions
   inputParams: Record<string, string>
   columnSelections: ColumnSelectionMap
+  unusedIntent?: UnusedIntentMap
 }
 
 interface SchemaInfo {
@@ -315,7 +337,55 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange }: 
   )
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections }: Props) {
+/**
+ * "Stated here, not used by the last run." One line under a parameter whose
+ * saved selection is not what the data reflects — the two facts and the
+ * reason, never a silent chip. Wording per reason:
+ *   script_run    — the last run came from a script, which reads source
+ *                   only (decision A); the selection applies to GUI runs.
+ *   changed_since — the selection was changed after the last run.
+ *   never_run     — nothing has run yet.
+ */
+function UnusedIntentNote({ param, note }: { param: string; note: UnusedIntent }) {
+  const stated = describeColumnSelection(note.stated)
+  const recorded = note.recorded ? describeColumnSelection(note.recorded) : 'the whole variable'
+  let text: string
+  if (note.reason === 'script_run') {
+    text = `Not used by the last run: it ran from a script, which reads source only, and bound ${recorded}. This selection (${stated}) applies when ${param} is run from here.`
+  } else if (note.reason === 'changed_since') {
+    text = `Changed since the last run, which bound ${recorded}. Run again to apply ${stated}.`
+  } else {
+    text = `Not run yet — ${stated} will apply on the first run from here.`
+  }
+  return (
+    <div
+      style={unusedIntentStyle}
+      title={`stated: ${JSON.stringify(note.stated)} · last run (${note.origin ?? 'none'}) recorded: ${JSON.stringify(note.recorded)}`}
+    >
+      <span style={unusedIntentBadgeStyle}>not reflected</span> {text}
+    </div>
+  )
+}
+
+const unusedIntentStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: '#92400e',
+  background: '#fffbeb',
+  border: '1px solid #fcd34d',
+  borderRadius: 3,
+  padding: '3px 6px',
+  margin: '2px 0 6px 0',
+  lineHeight: 1.35,
+}
+
+const unusedIntentBadgeStyle: React.CSSProperties = {
+  fontWeight: 600,
+  textTransform: 'uppercase',
+  letterSpacing: 0.3,
+  marginRight: 4,
+}
+
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, unusedIntent }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
@@ -609,14 +679,18 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
               Nothing ticked means the whole variable.
             </div>
             {Object.entries(inputParams).map(([param, type]) => (
-              <ColumnSelectRow
-                key={param}
-                param={param}
-                variableType={type}
-                columns={type ? columnsByType[type] : undefined}
-                selection={columnSelections[param]}
-                onChange={setColumnSelection}
-              />
+              <div key={param}>
+                <ColumnSelectRow
+                  param={param}
+                  variableType={type}
+                  columns={type ? columnsByType[type] : undefined}
+                  selection={columnSelections[param]}
+                  onChange={setColumnSelection}
+                />
+                {unusedIntent?.[param] && (
+                  <UnusedIntentNote param={param} note={unusedIntent[param]} />
+                )}
+              </div>
             ))}
           </>
         )}

@@ -1919,6 +1919,65 @@ def check_recorded_selectors(
     return lost
 
 
+def latest_runs(duck, fn_names) -> dict:
+    """``{fn_name: {"run_id", "timestamp", "origin", "selectors"}}`` — each
+    function's most recent execution and what it actually bound.
+
+    ``origin`` is which surfaces that run read (``gui`` / ``script`` /
+    ``replay``; ``None`` for a row older than the column). ``selectors`` is
+    ``{param: selection}`` unioned over the run's invocations, parsed into
+    the canonical shape.
+
+    This is the fact a canvas needs to say "stated here, not used by the
+    last run": a statement in the intent store beside a latest run whose
+    origin does not read the store, or whose recorded selection differs from
+    the statement, is intent the user can see and the data does not reflect.
+    Batched by function so a canvas render asks once, not once per node.
+    """
+    from .intent import parse_selector
+
+    names = sorted({n for n in fn_names if n and n != SAVE_FUNCTION_NAME})
+    if not names:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT r.function_name, r.run_id, r.timestamp, r.origin "
+        "FROM _run r "
+        "JOIN (SELECT function_name, MAX(timestamp) AS ts FROM _run "
+        "      WHERE function_name IN ({ph}) GROUP BY function_name) latest "
+        "  ON latest.function_name = r.function_name AND latest.ts = r.timestamp",
+        names,
+    )
+    out: dict = {}
+    for fn_name, run_id, ts, origin in rows:
+        # Two runs in one timestamp: keep the greater run_id, deterministically.
+        prev = out.get(fn_name)
+        if prev is not None and prev["run_id"] >= run_id:
+            continue
+        out[fn_name] = {
+            "run_id": run_id,
+            "timestamp": ts,
+            "origin": origin,
+            "selectors": {},
+        }
+    if not out:
+        return out
+    sel_rows = _chunked_in(
+        duck,
+        "SELECT r.function_name, ii.param_name, ii.selector "
+        "FROM _run r "
+        "JOIN _run_invocation ri ON ri.run_id = r.run_id "
+        "JOIN _invocation_input ii ON ii.invocation_id = ri.invocation_id "
+        "WHERE r.run_id IN ({ph}) AND ii.selector IS NOT NULL",
+        [v["run_id"] for v in out.values()],
+    )
+    for fn_name, param, selector in sel_rows:
+        parsed = parse_selector(selector)
+        if parsed and fn_name in out:
+            out[fn_name]["selectors"].setdefault(param, parsed)
+    return out
+
+
 def config_call_id(fn_name: str, cfg: dict) -> str:
     """The call-site id a variant config reconstructs to.
 

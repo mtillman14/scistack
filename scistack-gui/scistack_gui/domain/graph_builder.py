@@ -2656,3 +2656,87 @@ def merge_manual_nodes(
             [(g.old_id, g.new_id) for g in graduations],
         )
     return to_add, graduations
+
+
+# ---------------------------------------------------------------------------
+# Intent the last run did not use
+# ---------------------------------------------------------------------------
+
+#: Why a stated selection is not what the data reflects.
+UNUSED_SCRIPT_RUN = "script_run"  # the last run read source only (rule 3)
+UNUSED_CHANGED_SINCE = "changed_since"  # stated after the last run, not yet run
+UNUSED_NEVER_RUN = "never_run"  # no run recorded for this function at all
+
+
+def mark_unused_intent(nodes: list[dict], latest_runs: dict) -> int:
+    """Stamp ``unusedIntent`` on function nodes whose saved column selection
+    is not what their most recent run actually bound.
+
+    Decision A (``docs/claude/intent-and-fact.md`` §7): a script run ignores
+    GUI intent. The canvas can therefore show a statement the last run never
+    used, and that must not be silent — a chip describing a selection the
+    data does not reflect is this whole model's bug class wearing a
+    different hat. *latest_runs* is ``provenance_query.latest_runs``:
+    ``{fn_name: {"origin", "selectors", ...}}``, batched by function so a
+    render asks once.
+
+    ``unusedIntent`` is ``{param: {"stated", "recorded", "origin", "reason"}}``
+    — the two facts and why they differ, in the same spirit as the
+    ``[selector-dropped]`` log line. Nothing is marked for a run older than
+    the ``origin`` column (``origin`` is ``None``): "unknown" must never be
+    reported as "ignored".
+
+    Pure: no I/O. Returns the number of nodes marked.
+    """
+    from scidb.intent import ORIGIN_SCRIPT, normalize_columns, same_columns
+
+    marked = 0
+    for n in nodes:
+        if n.get("type") != "functionNode":
+            continue
+        selections = (n.get("data") or {}).get("columnSelections") or {}
+        if not selections:
+            continue
+        fn_name = n["data"].get("label")
+        last = latest_runs.get(fn_name)
+        unused: dict = {}
+        for param, raw in selections.items():
+            stated = normalize_columns(raw)
+            if stated is None:
+                continue
+            if last is None:
+                unused[param] = {
+                    "stated": stated,
+                    "recorded": None,
+                    "origin": None,
+                    "reason": UNUSED_NEVER_RUN,
+                }
+                continue
+            recorded = (last.get("selectors") or {}).get(param)
+            if same_columns(stated, recorded):
+                continue
+            origin = last.get("origin")
+            if origin is None:
+                continue  # older than the column: unknown, not ignored
+            unused[param] = {
+                "stated": stated,
+                "recorded": recorded,
+                "origin": origin,
+                "reason": UNUSED_SCRIPT_RUN
+                if origin == ORIGIN_SCRIPT
+                else UNUSED_CHANGED_SINCE,
+            }
+        if unused:
+            n["data"]["unusedIntent"] = unused
+            marked += 1
+            logger.info(
+                "[graph_builder] %s: saved column selection not reflected by its "
+                "last run — %s",
+                n["id"],
+                "; ".join(
+                    f"{p}: stated {u['stated']}, last run ({u['origin'] or 'none'}) "
+                    f"bound {u['recorded'] or 'whole variable'} [{u['reason']}]"
+                    for p, u in unused.items()
+                ),
+            )
+    return marked

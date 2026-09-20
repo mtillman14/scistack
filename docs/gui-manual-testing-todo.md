@@ -36,6 +36,56 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0. Intent vs fact: run origin, "not reflected" marker, per-column run option — added 2026-09-19
+
+Branch `refactor/intent-and-fact` (Stages 4–6 of `.claude/plan-intent-and-fact.md`;
+model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.
+
+**Backend**
+1. Open a project whose database has an already-run function with a
+   column selection saved on its node (or make one: item 11 below).
+2. In `scidb.log`, on the first GUI start after pulling, confirm the one-time
+   import ran: `[intent_store] imported column selections from N node config(s)`.
+   The selections still show on their nodes (Inputs section) — the storage moved
+   from `_node_config` to `_intent`, the panel should look identical.
+3. Run that node from the GUI. Confirm in `scidb.log`:
+   - `[execution] '<fn>': bindings — value: <Type> ("col") · ...` — one line
+     naming EVERY signature parameter (unbound ones say `(unbound)`).
+   - no `[selector-lost]` and no `[selector-dropped]` line.
+4. Run the SAME function from a Python script or the MATLAB prompt with a
+   different (or no) column selection. Then click Restart / refresh the DAG.
+   - `scidb.log`: `[graph_builder] fn__...: saved column selection not reflected
+     by its last run — <param>: stated ..., last run (script) bound ... [script_run]`.
+   - `[selector-dropped]` WARN at the start of that script run if it bound the
+     whole variable where the GUI's last run had a selection.
+
+**Frontend**
+- [ ] After step 4, the node's column chip on the canvas turns amber with a `!`
+      and its tooltip says the last run came from a script and did not use it.
+- [ ] The Inputs section shows an amber **NOT REFLECTED** note under that
+      parameter, wording: "Not used by the last run: it ran from a script, which
+      reads source only, and bound ⟨…⟩. This selection (…) applies when <param>
+      is run from here."
+- [ ] Run the node from the GUI again → refresh → the amber marker is gone.
+- [ ] Change a selection on a node that HAS run from the GUI, don't run →
+      refresh → note reads "Changed since the last run … Run again to apply …".
+- [ ] A node whose function has never run shows "Not run yet — … will apply on
+      the first run from here."
+- [ ] Run options section: for a node with a `for_columns` (per-column)
+      selection, a read-only line **Run once per column** appears, naming the
+      parameter(s) and pointing at the Inputs section. It is absent otherwise.
+- [ ] Provenance / `scidb variants`: a per-column run's `run_options` reads
+      `distribute=false, for_columns=[<param>]`; a whole-table run of the same
+      function reads `distribute=false` — the two are distinguishable rows.
+- [ ] Duplicate a hypothesis containing a node with a column selection: the copy
+      shows the same selection; changing it on the copy leaves the original.
+- [ ] MATLAB: generate a run command from the GUI. The script contains
+      `py.scidb.intent.set_ambient_origin('gui');` after the pyenv preamble and
+      `...('script');` at the end on both the success and the catch path. After
+      running it, the node's last run shows as a GUI run (no amber marker).
+
+---
+
 ## 1. Save data (CSV) — the rows a plot is drawn from — added 2026-09-19
 
 **What changed:** a **Save data (CSV)** button in the Plot Studio writes the
