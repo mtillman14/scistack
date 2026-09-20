@@ -1,0 +1,371 @@
+"""
+The DAG side: running a node the way the canvas does.
+
+``api/run._run_in_thread`` is what the Run button reaches after the JSON-RPC
+handler — targets derived from the node's history, the panel's run options,
+where filters, the schema-location selection and the node config's column
+selections applied, then ``for_each``, then ``run_done``. Called here on the
+test thread with the pushes captured, over a scratch database seeded by the
+example pipeline's own functions.
+"""
+
+from __future__ import annotations
+
+import shutil
+
+import pandas as pd
+import pytest
+
+pytest.importorskip("scistack_gui")
+
+import scidb  # noqa: E402
+from scistack_gui.api import run as run_api  # noqa: E402
+from scistack_gui.api import ws as ws_mod  # noqa: E402
+from scistack_gui import pipeline_store  # noqa: E402
+
+from conftest import CYCLES, DATA_ROOT, PIPELINE_DIR, SPEEDS, TRIALS  # noqa: E402
+from test_edge_schema import ONE_SESSION, ONE_SUBJECT, load_levels, run_normalized_knee  # noqa: E402
+
+
+@pytest.fixture
+def pushes(monkeypatch):
+    messages: list = []
+    monkeypatch.setattr(ws_mod, "push_message", messages.append)
+    # api/run imports push_message by name in places; patch there too.
+    if hasattr(run_api, "push_message"):
+        monkeypatch.setattr(run_api, "push_message", messages.append)
+    return messages
+
+
+@pytest.fixture
+def root(tmp_path):
+    """An editable copy of one subject / one session, so a test can change a
+    file and re-run the LOADER — the way a recompute really happens, and the
+    only way that keeps one producer per location."""
+    dst = tmp_path / "data" / ONE_SUBJECT[0]
+    src = DATA_ROOT / ONE_SUBJECT[0]
+    shutil.copytree(src / ONE_SESSION[0], dst / ONE_SESSION[0])
+    shutil.copy(src / f"{ONE_SUBJECT[0]}_demographics.csv", dst / f"{ONE_SUBJECT[0]}_demographics.csv")
+    return tmp_path / "data"
+
+
+def _trial_file(root, speed, trial):
+    return root / ONE_SUBJECT[0] / ONE_SESSION[0] / f"t{trial}" / f"{ONE_SUBJECT[0]}_{ONE_SESSION[0]}_{speed}_t{trial}_trial.csv"
+
+
+def _rewrite(path, header, row):
+    path.write_text(f"{header}\n{row}\n")
+
+
+@pytest.fixture
+def registered(pipeline):
+    """The GUI's function registry, filled the way server startup fills it —
+    the run path resolves a function by NAME through it."""
+    from scistack_gui import registry
+
+    registry.register_module(pipeline, module_path=PIPELINE_DIR / "pipeline.py")
+    return registry
+
+
+@pytest.fixture
+def seeded(scratch_db, pipeline, as_gui_db, root, registered):
+    """A scratch database with history for every function the tests run."""
+    as_gui_db(scratch_db)
+    pipeline_store._ensure_tables(scratch_db)
+    load_levels(pipeline, root=root)
+    t = scidb.PathInput(
+        "{subject}/{session}/t{trial}/waveforms/{subject}_{session}_{speed}_t{trial}_c{cycle}.csv",
+        root_folder=str(root),
+    )
+    scidb.for_each(
+        pipeline.load_cycle_waveform, {"csv_file_path": t}, [pipeline.CycleWaveform],
+        subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[], cycle=[],
+    )
+    scidb.for_each(
+        pipeline.knee_excursion, {"knee": pipeline.CycleWaveform["knee"]}, [pipeline.KneeExcursion],
+        subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[], cycle=[],
+    )
+    run_normalized_knee(pipeline)
+    scidb.for_each(
+        pipeline.trial_mean_symmetry, {"cycles": pipeline.CycleSymmetry}, [pipeline.TrialMeanSymmetry],
+        as_table=["cycles"], subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[],
+    )
+    return scratch_db
+
+
+def _run(db, function_name, pushes, *, expect_success: bool = True, **kwargs) -> dict:
+    """Run synchronously, as the RPC handler's thread would; return run_done.
+
+    On an unexpected failure the assertion carries the run's OUTPUT lines —
+    the for_each summary and the per-combination reasons — which is where a
+    "0 of 66 completed" explains itself."""
+    run_id = f"t-{function_name}-{len(pushes)}"
+    run_api._run_in_thread(run_id, function_name, kwargs.pop("variants", []), db, **kwargs)
+    done = [m for m in pushes if m.get("type") == "run_done" and m.get("run_id") == run_id]
+    assert done, f"no run_done for {function_name}: {[m.get('type') for m in pushes]}"
+    result = done[-1]
+    if expect_success and not result.get("success"):
+        output = [m.get("text", "") for m in pushes if m.get("type") == "run_output" and m.get("run_id") == run_id]
+        tail = "\n".join(line for line in output if line.strip())[-2500:]
+        from scistack_gui.services.execution_service import derive_fn_targets
+
+        variants = [v for v in db.list_pipeline_variants() if v["function_name"] == function_name]
+        targets = derive_fn_targets(db, function_name)
+        raise AssertionError(
+            f"{function_name} run failed: error={result.get('error')!r} "
+            f"completed={result.get('completed_combos')} failed={result.get('failed_combos')}\n"
+            f"--- history ---\n"
+            f"selectors={[v.get('selectors') for v in variants]}\n"
+            f"input_types={[v.get('input_types') for v in variants]}\n"
+            f"--- derived targets ---\n"
+            f"bindings={[t.get('bindings') for t in targets]}\n"
+            f"--- run output (tail) ---\n{tail}"
+        )
+    return result
+
+
+def _count(variable) -> int:
+    try:
+        return len(variable.load(as_df=True, version="all"))
+    except scidb.NotFoundError:
+        return 0
+
+
+# --- a node with history re-runs from its own history -----------------------------------
+
+
+def test_a_node_reruns_from_history_and_adds_nothing(seeded, pipeline, pushes):
+    before = _count(pipeline.NormalizedKnee)
+    done = _run(seeded, "normalized_knee", pushes)
+    assert done["success"] is True, done
+    assert _count(pipeline.NormalizedKnee) == before
+
+
+def test_a_node_with_no_history_reports_why_it_cannot_run(scratch_db, pipeline, as_gui_db, pushes, registered):
+    """The canvas lets a user click Run on a node before anything upstream
+    exists: the message must say so, not spin."""
+    as_gui_db(scratch_db)
+    pipeline_store._ensure_tables(scratch_db)
+    done = _run(scratch_db, "normalized_knee", pushes, expect_success=False)
+    assert done["success"] is False
+    assert done.get("error"), done
+    assert "normalized_knee" in done["error"]
+
+
+# --- run options ------------------------------------------------------------------------------
+
+
+def test_dry_run_writes_nothing(seeded, pipeline, pushes):
+    before = _count(pipeline.NormalizedKnee)
+    done = _run(seeded, "normalized_knee", pushes, run_options={"dry_run": True})
+    assert done["success"] is True, done
+    assert _count(pipeline.NormalizedKnee) == before
+
+
+def test_save_off_writes_nothing(seeded, pipeline, pushes):
+    before = _count(pipeline.TrialMeanSymmetry)
+    # as_table pools unless the panel's "Iterate over" keys are given — the
+    # trial-level iteration this step was authored with.
+    done = _run(seeded, "trial_mean_symmetry", pushes, run_options={"save": False, "as_table": True},
+                schema_level=["subject", "session", "speed", "trial"])
+    assert done["success"] is True, done
+    assert _count(pipeline.TrialMeanSymmetry) == before
+
+
+# --- the schema-location selection ------------------------------------------------------
+
+
+def test_a_schema_selection_narrows_the_run(seeded, pipeline, pushes, root):
+    """The picker's pair — include prefixes + exclude levels — reaches
+    for_each as its iteration, so only the selected locations run."""
+    before = pipeline.NormalizedKnee.load(as_df=True)
+    # Make the step recomputable EVERYWHERE (every trial's speed changes), so
+    # what the narrowed run leaves alone is visible.
+    for speed in SPEEDS:
+        for trial in TRIALS:
+            _rewrite(_trial_file(root, speed, trial), "duration_s,walking_speed_mps", "30.0,5.0")
+    load_levels(pipeline, root=root)
+
+    done = _run(
+        seeded, "normalized_knee", pushes,
+        schema_selection={"include": [[["speed", "slow"], ["trial", "01"]]], "exclude_levels": {}},
+    )
+    assert done["success"] is True, done
+    after = pipeline.NormalizedKnee.load(as_df=True, version="all")
+    assert len(after) == len(before) + len(CYCLES), "only slow/t01's ten cycles were recomputed"
+
+
+def test_an_exclude_level_in_the_selection_skips_it(seeded, pipeline, pushes, root):
+    for speed in SPEEDS:
+        for trial in TRIALS:
+            _rewrite(_trial_file(root, speed, trial), "duration_s,walking_speed_mps", "31.0,7.0")
+    load_levels(pipeline, root=root)
+    before = _count(pipeline.NormalizedKnee)
+    done = _run(
+        seeded, "normalized_knee", pushes,
+        schema_selection={"include": [], "exclude_levels": {"speed": ["fast"]}},
+    )
+    assert done["success"] is True, done
+    added = _count(pipeline.NormalizedKnee) - before
+    assert added == len(TRIALS) * len(CYCLES), "every slow cycle recomputed, no fast one"
+
+
+# --- where filters ---------------------------------------------------------------------------
+
+
+def test_a_where_filter_runs_only_the_matching_records(seeded, pipeline, pushes, root):
+    excursion = pipeline.KneeExcursion.load(as_df=True)
+    threshold = float(excursion["data"].astype(float).median())
+    expected = int((excursion["data"].astype(float) > threshold).sum())
+    # Force a recompute so the filter's effect is countable: a new height.
+    _rewrite(root / ONE_SUBJECT[0] / f"{ONE_SUBJECT[0]}_demographics.csv",
+             "age_years,height_cm,mass_kg,group", "50,999.0,70.0,control")
+    load_levels(pipeline, root=root)
+    before = _count(pipeline.NormalizedKnee)
+    done = _run(
+        seeded, "normalized_knee", pushes,
+        where_filters=[run_api.WhereFilterSpec(variable="KneeExcursion", op=">", value=str(threshold))],
+    )
+    assert done["success"] is True, done
+    assert _count(pipeline.NormalizedKnee) - before == expected
+
+
+# --- column selections from the node config ---------------------------------------------------
+
+
+@pytest.mark.xfail(
+    reason=(
+        "A column selection saved on a NODE (`_node_config.columnSelections`) "
+        "does not reach the run: no [column_selection] line is logged and the "
+        "function receives every column. Either "
+        "`column_selections_for_nodes` does not match the config's node id "
+        "(placement-insensitive matching) or `_attach_column_selections` runs "
+        "on targets the run does not use. History-recorded selections DO reach "
+        "it (test_a_python_column_selection_survives_a_gui_rerun)."
+    ),
+    strict=True,
+)
+def test_a_column_selection_in_the_node_config_reaches_the_run(seeded, pipeline, pushes):
+    """The panel stores ``columnSelections`` per node; the run must hand the
+    function only those columns. ``trial_mean_symmetry`` averages whatever
+    joint columns it is given, so a two-column selection is visible in the
+    output's columns."""
+    pipeline_store.update_node_config(
+        seeded, "fn__trial_mean_symmetry__test",
+        {"columnSelections": {"cycles": {"columns": ["ankle", "knee"], "iterate": False}}},
+    )
+    done = _run(seeded, "trial_mean_symmetry", pushes, run_options={"as_table": True},
+                schema_level=["subject", "session", "speed", "trial"])
+    assert done["success"] is True, done
+    latest = pipeline.TrialMeanSymmetry.load(as_df=True)
+    columns = set()
+    for data in latest["data"]:
+        columns |= set(data.columns if isinstance(data, pd.DataFrame) else data.keys())
+    selection_lines = [
+        m.get("text", "") for m in pushes
+        if m.get("type") == "run_output" and "column" in m.get("text", "").lower()
+    ]
+    assert "hip" not in columns, (
+        f"columns={sorted(columns)}; the node config's selection did not reach the run.\n"
+        f"column-selection log lines: {selection_lines or '(none — the config was never read)'}"
+    )
+    assert {"ankle", "knee"} <= columns
+
+
+@pytest.mark.xfail(
+    reason=(
+        "for_columns records NO selector on its reassembly path: the "
+        "invocation's edges are written from `__upstream` (selector-less), "
+        "not `__graph_var_bindings`, so `pipeline_variants[].selectors` is "
+        "{} and a GUI re-run binds the whole variable. A plain "
+        "ColumnSelection (`Var['col']`) does record one and re-runs "
+        "correctly — see test_a_python_column_selection_survives_a_gui_rerun. "
+        "scidb/tests/test_reload_supersedes_changed_file.py::"
+        "test_a_for_columns_call_records_its_selector covers the simple shape "
+        "that DOES record it; the gap is the reassembly save path."
+    ),
+    strict=True,
+)
+def test_a_for_columns_selection_in_the_node_config_runs_per_column(seeded, pipeline, pushes):
+    scidb.for_each(
+        pipeline.scale_joint, {"value": pipeline.TrialMeanSymmetry.for_columns(), "scale": pipeline.SCALE},
+        [pipeline.ScaledTrialSymmetry], subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[],
+    )
+    pipeline_store.update_node_config(
+        seeded, "fn__scale_joint__test",
+        {"columnSelections": {"value": {"columns": ["hip"], "iterate": True}}},
+    )
+    done = _run(seeded, "scale_joint", pushes)
+    assert done["success"] is True, done
+    latest = pipeline.ScaledTrialSymmetry.load(as_df=True)
+    one = latest.iloc[0]["data"]
+    columns = set(one.columns if isinstance(one, pd.DataFrame) else one.keys())
+    assert columns >= {"hip"}
+
+
+# --- node state after the order-of-steps scenarios --------------------------------------------
+
+
+def test_node_state_is_green_after_a_full_run_and_red_after_an_upstream_edit(seeded, pipeline, pushes, root):
+    states = {s.function_name: s for s in seeded.inspect.node_state("normalized_knee", fn_registry={"normalized_knee": pipeline.normalized_knee})}
+    assert states["normalized_knee"].state in ("green", "red", "unknown")
+    green_before = states["normalized_knee"].state == "green"
+
+    # An upstream edit: one trial's speed changes, and its loader re-runs.
+    _rewrite(_trial_file(root, "fast", "02"), "duration_s,walking_speed_mps", "30.0,1.23")
+    load_levels(pipeline, root=root)
+    after = {s.function_name: s for s in seeded.inspect.node_state("normalized_knee", fn_registry={"normalized_knee": pipeline.normalized_knee})}
+    assert after["normalized_knee"].missing >= len(CYCLES) or after["normalized_knee"].state != "green" or not green_before
+    # Re-running clears it.
+    done = _run(seeded, "normalized_knee", pushes)
+    assert done["success"] is True, done
+    final = {s.function_name: s for s in seeded.inspect.node_state("normalized_knee", fn_registry={"normalized_knee": pipeline.normalized_knee})}
+    assert final["normalized_knee"].missing == 0
+
+
+
+def test_a_python_column_selection_survives_a_gui_rerun(seeded, pipeline, pushes):
+    """`normalized_knee` was authored as `CycleSymmetry["knee"]`. Re-run from
+    the canvas with NO node config, the function must still receive that one
+    column — the selection is recorded in provenance and read back — not the
+    whole table it cannot handle. (Found 2026-09-19: every combination failed
+    with "Data must be 1-dimensional".)"""
+    done = _run(seeded, "normalized_knee", pushes)
+    assert done["success"] is True and done.get("failed_combos", 0) == 0, done
+
+
+@pytest.mark.xfail(
+    reason=(
+        "for_columns records NO selector on its reassembly path: the "
+        "invocation's edges are written from `__upstream` (selector-less), "
+        "not `__graph_var_bindings`, so `pipeline_variants[].selectors` is "
+        "{} and a GUI re-run binds the whole variable. A plain "
+        "ColumnSelection (`Var['col']`) does record one and re-runs "
+        "correctly — see test_a_python_column_selection_survives_a_gui_rerun. "
+        "scidb/tests/test_reload_supersedes_changed_file.py::"
+        "test_a_for_columns_call_records_its_selector covers the simple shape "
+        "that DOES record it; the gap is the reassembly save path."
+    ),
+    strict=True,
+)
+def test_a_python_for_columns_survives_a_gui_rerun(seeded, pipeline, pushes):
+    scidb.for_each(
+        pipeline.scale_joint, {"value": pipeline.TrialMeanSymmetry.for_columns(), "scale": pipeline.SCALE},
+        [pipeline.ScaledTrialSymmetry], subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[],
+    )
+    before = _count(pipeline.ScaledTrialSymmetry)
+    # What history says, and what the run will therefore bind:
+    from scistack_gui.services.execution_service import derive_fn_targets
+
+    variants = [v for v in seeded.list_pipeline_variants() if v["function_name"] == "scale_joint"]
+    targets = derive_fn_targets(seeded, "scale_joint")
+    evidence = (
+        f"\nvariants[].selectors={[v.get('selectors') for v in variants]}"
+        f"\ntargets[].bindings={[t.get('bindings') for t in targets]}"
+    )
+    done = _run(seeded, "scale_joint", pushes)
+    assert done["success"] is True and done.get("failed_combos", 0) == 0, str(done) + evidence
+    assert _count(pipeline.ScaledTrialSymmetry) == before, "a faithful re-run adds nothing" + evidence
+    one = pipeline.ScaledTrialSymmetry.load(as_df=True).iloc[0]["data"]
+    columns = set(one.columns if isinstance(one, pd.DataFrame) else one.keys())
+    assert columns >= {"ankle", "knee", "hip"}, columns

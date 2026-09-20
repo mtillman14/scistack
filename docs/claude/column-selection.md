@@ -194,10 +194,18 @@ column-selected node. `tests/test_column_selection_binding.py` pins both.
    variable types (`EachOf`) applies the same column set to both. A column
    present in one type and absent in the other fails at load with scifor's
    existing `KeyError` naming the available columns.
-2. **History cannot tell you a run used a selection.** Provenance records the
-   variable type, not the columns; the GUI's own config is the only record.
-   Making that durable means recording the selection in `_invocation_input`,
-   a scidb-layer change.
+2. ~~History cannot tell you a run used a selection.~~ **Closed 2026-09-19.**
+   `_invocation_input.selector` records `{"columns": [...], "iterate": bool}`
+   (`iterate` for `for_columns` was the missing half), `pipeline_variants`
+   reports it as `selectors`, and `execution_service._attach_db_path_inputs`
+   stamps it on a history-derived target's bindings as the DEFAULT — the node
+   config's selection overrides it. Before this, a step authored in Python as
+   `Var["knee"]` re-ran from the canvas with the whole table and every
+   combination failed with "Data must be 1-dimensional"
+   (`tests/integration/test_dag_runs.py`). Note the identity effect: a
+   `for_columns` invocation now has a different id than before (its selector
+   changed from NULL), so its first re-run after upgrading writes new records
+   that supersede the old ones.
 
 ## Key Files
 

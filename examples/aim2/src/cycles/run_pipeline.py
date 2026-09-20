@@ -23,6 +23,7 @@ from pipeline import (  # noqa: E402 — same folder, run as a script
     DEMOGRAPHICS_FILE,
     SCALE,
     SESSION_FILE,
+    COUPLING_FILE,
     SYMMETRY_FILE,
     TRIAL_FILE,
     WAVEFORM_FILE,
@@ -31,6 +32,7 @@ from pipeline import (  # noqa: E402 — same folder, run as a script
     CycleSymmetry,
     CycleWaveform,
     Demographics,
+    JointCoupling,
     KneeExcursion,
     NormalizedKnee,
     ScaledTrialSymmetry,
@@ -46,6 +48,7 @@ from pipeline import (  # noqa: E402 — same folder, run as a script
     load_cycle_symmetry,
     load_cycle_waveform,
     load_demographics,
+    load_joint_coupling,
     load_session_info,
     load_trial_info,
     normalized_knee,
@@ -106,6 +109,17 @@ def main(db_path=None, subjects=(), sessions=()) -> None:
         load_trial_info,
         inputs={"csv_file_path": TRIAL_FILE},
         outputs=[TrialInfo],
+        subject=subject,
+        session=session,
+        speed=[],
+        trial=[],
+    )
+
+    # 1b(ii). Trial level, 2-D: one 3 x 3 matrix per trial (72 files).
+    scidb.for_each(
+        load_joint_coupling,
+        inputs={"csv_file_path": COUPLING_FILE},
+        outputs=[JointCoupling],
         subject=subject,
         session=session,
         speed=[],

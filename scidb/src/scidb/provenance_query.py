@@ -13,6 +13,7 @@ provably-correct, indexable edge walks. See ``docs/claude/lineage-simplification
 from __future__ import annotations
 
 import ast
+import json
 import logging
 
 from .database import _from_schema_str
@@ -1882,6 +1883,18 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
             continue  # a glue hop is not a pipeline step (D5)
         var_inputs, constants = invocation_inputs(duck, inv_id)
         input_types = {i["param_name"]: i["variable_type"] for i in var_inputs}
+        # The column selections the call used (`_invocation_input.selector`,
+        # `{"columns": [...], "iterate": bool}`), so a target derived from
+        # history re-runs with the columns it ran with — a Python
+        # `Var["col"]` was invisible to the GUI's Run button until 2026-09-19.
+        selectors = {
+            param: json.loads(sel)
+            for param, sel in duck._fetchall(
+                "SELECT param_name, selector FROM _invocation_input "
+                "WHERE invocation_id = ? AND selector IS NOT NULL",
+                [inv_id],
+            )
+        }
         # PathInput specs ride in input_types as their to_key() JSON string —
         # preserves the legacy contract (get_aggregated_variants parses them) and
         # call_id parity (forward to_call_id includes them in __inputs).
@@ -1945,6 +1958,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     # site interposed on its inputs. Part of the variant so a
                     # GUI target derived from history re-runs WITH its glue.
                     "glue_chains": glue_names,
+                    "selectors": selectors,
                     "output_num": output_num,
                 }
                 group_records[gkey] = set()

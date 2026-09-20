@@ -22,6 +22,7 @@ per-subject values:
 | cycle | all five | 720 | `subject01/baseline/t01/subject01_baseline_slow_t01_c01.csv` | `ankle,knee,hip` |
 | cycle (1-D) | all five | 720 | `subject01/baseline/t01/waveforms/subject01_baseline_slow_t01_c01.csv` | `percent,ankle,knee,hip` — 51 rows, one curve per joint |
 | trial | subject, session, speed, trial | 72 | `subject01/baseline/t01/subject01_baseline_slow_t01_trial.csv` | `duration_s,walking_speed_mps` |
+| trial (2-D) | subject, session, speed, trial | 72 | `subject01/baseline/t01/subject01_baseline_slow_t01_matrix.csv` | a 3 x 3 joint coupling matrix |
 | session | subject, session | 12 | `subject01/baseline/subject01_baseline_session.csv` | `comfortable_speed_mps,perceived_effort` |
 | subject | subject | 3 | `subject01/subject01_demographics.csv` | `age_years,height_cm,mass_kg,group` |
 
@@ -68,6 +69,7 @@ only its own keys — then the processing steps, one `for_each` feature each:
 | `cycle_deviation` | `as_table` + `distribute=True` — one row back out per cycle, addressed by the returned `cycle` column |
 | `scale_joint` | `for_columns()` — runs once per joint column, reassembled into one table |
 | `load_cycle_waveform` / `knee_excursion` | a 1-D variable (dict of lists, one curve per joint) and a 1-D input reduced to a scalar |
+| `load_joint_coupling` | a 2-D variable (a matrix per trial) — the heatmap path |
 
 And the steps that read **more than one level at once**:
 

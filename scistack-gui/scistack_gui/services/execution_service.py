@@ -188,6 +188,50 @@ def _db_path_input_params(db, function_name: str) -> dict[str, dict[str, str]]:
     return by_call
 
 
+def _fold_indexed_params(variant: dict, function_name: str) -> dict:
+    """Repair history recorded as ``cycles_0 .. cycles_9`` for a parameter
+    ``cycles`` — the aggregation path's per-record upstream keys, written
+    as separate parameters until 2026-09-19 (``provenance_save._var_bindings``
+    now folds them at save time). Databases written before that still hold
+    the split names, and a target derived from them handed the function ten
+    arguments it never had. Folded against the function's real signature,
+    so a parameter genuinely named ``x_1`` is left alone."""
+    input_types = variant.get("input_types") or {}
+    if not input_types:
+        return variant
+    try:
+        from scistack_gui.services.pipeline_service import get_function_params
+
+        signature = set(get_function_params(function_name))
+    except Exception:  # noqa: BLE001 — an unregistered function keeps its history as is
+        return variant
+    folded: dict = {}
+    changed = False
+    for param, type_val in input_types.items():
+        target = param
+        if param not in signature:
+            base, sep, index = param.rpartition("_")
+            if sep and index.isdigit() and base in signature:
+                target = base
+                changed = True
+        if target in folded and folded[target] != type_val:
+            # Two records of DIFFERENT types under one parameter: keep both
+            # names rather than guess.
+            folded[param] = type_val
+            continue
+        folded[target] = type_val
+    if not changed:
+        return variant
+    logger.info(
+        "[execution] '%s': folded indexed upstream parameters %s onto %s "
+        "(history written before 2026-09-19)",
+        function_name,
+        sorted(p for p in input_types if p not in folded),
+        sorted(p for p in folded if p not in input_types),
+    )
+    return {**variant, "input_types": folded}
+
+
 def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[dict]:
     """Give each DB-history target its unified ``bindings``, so every target
     reaching ``build_run_inputs`` has the same shape regardless of whether it
@@ -218,10 +262,27 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
     by_call = _db_path_input_params(db, function_name)
     for t in targets:
         bindings: dict[str, dict] = {}
+        selectors = t.get("selectors") or {}
         for param, type_val in (t.get("input_types") or {}).items():
+            # The column selection the recorded call used
+            # (`pipeline_variants[].selectors`) is the binding's DEFAULT; a
+            # selection saved on the node (`_attach_column_selections`, run
+            # later) still overrides it. Without this a step authored in
+            # Python as `Var["knee"]` re-ran from the canvas with the whole
+            # table and failed in the function (integration suite,
+            # 2026-09-19).
+            sel = selectors.get(param) or {}
             bindings[param] = variable_binding(
-                list(type_val) if isinstance(type_val, (list, tuple, set)) else [type_val]
+                list(type_val) if isinstance(type_val, (list, tuple, set)) else [type_val],
+                columns=list(sel.get("columns") or []) if sel else None,
+                iterate=bool(sel.get("iterate", False)),
             )
+            if sel:
+                logger.info(
+                    "[execution] '%s': '%s' keeps its recorded column selection %s%s",
+                    function_name, param, sel.get("columns") or "every column",
+                    " (per column)" if sel.get("iterate") else "",
+                )
         for param, decl_name in by_call.get(t.get("call_id"), {}).items():
             bindings[param] = pathinput_binding(decl_name)
         t.setdefault("bindings", bindings)
@@ -309,12 +370,11 @@ def _attach_column_selections(
 ) -> list[dict]:
     """Stamp the GUI's saved column selections onto every target's bindings.
 
-    Modelled directly on :func:`_attach_db_path_inputs` — the existing
-    precedent for "GUI state that DB history cannot carry". Provenance records
-    an input edge as ``(param -> record -> variable_type)``, so a run that used
-    ``Trials["filename"]`` is indistinguishable in history from one that used
-    the whole variable; the GUI's own config is the only record there is (see
-    ``docs/claude/column-selection.md`` §From the GUI, "Known limitations").
+    Modelled directly on :func:`_attach_db_path_inputs`. Since 2026-09-19
+    history DOES carry a call's selection (``_invocation_input.selector``,
+    surfaced as ``pipeline_variants[].selectors`` and stamped on the bindings
+    as their default in :func:`_attach_db_path_inputs`); what is saved on the
+    node is the user's OVERRIDE of it, applied here on top.
 
     Called from BOTH derivation paths, because either can be the one a run
     bottoms out in: ``derive_fn_targets`` (``name_scoped=True`` — any node id
@@ -441,7 +501,11 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
     fn_variants = _attach_db_path_inputs(
         db,
         function_name,
-        [v for v in all_variants if v["function_name"] == function_name],
+        [
+            _fold_indexed_params(v, function_name)
+            for v in all_variants
+            if v["function_name"] == function_name
+        ],
     )
 
     all_edges = pipeline_store.get_manual_edges(db)

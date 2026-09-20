@@ -470,12 +470,21 @@ def _fields_to_columns(
         ids = frame.groupby(index, dropna=False, sort=False).ngroup().to_numpy()
     else:
         ids = np.zeros(len(frame), dtype=np.int64)
-    clash = pd.DataFrame({"id": ids, "field": fields.to_numpy()}).dropna().duplicated()
+    pairs = pd.DataFrame({"id": ids, "field": fields.to_numpy()})
+    clash = pairs.dropna().duplicated()
     if clash.any():
+        # Name the first few clashing locations: "N records" alone cannot
+        # say whether the frame really holds a location twice or an index
+        # column is missing from `index`.
+        examples = (
+            pd.concat([frame[index].reset_index(drop=True), pairs], axis=1)[clash.reindex(pairs.index, fill_value=False)]
+            .head(3)
+            .to_dict("records")
+        )
         raise ValueError(
             f"Cannot give each {field_name} its own column: {int(clash.sum())} "
-            f"record(s) hold the same field twice. Save with one row per field "
-            f"instead."
+            f"record(s) hold the same field twice (index columns {index}; e.g. "
+            f"{examples}). Save with one row per field instead."
         )
     count = int(ids.max()) + 1 if len(ids) else 0
     _, first = np.unique(ids, return_index=True)

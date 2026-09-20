@@ -115,6 +115,11 @@ class KneeExcursion(BaseVariable):
     """Cycle level: peak-to-peak of the knee curve — 1-D reduced to a scalar."""
 
 
+class JointCoupling(BaseVariable):
+    """Trial level, 2-D: a 3 x 3 joint coupling matrix — the dataset's one
+    matrix-valued variable, which the plot layer draws as a heatmap."""
+
+
 #: Every key is delimited in the path, so no ``key_regex`` is needed and
 #: ``for_each`` can discover all five from what is on disk.
 SYMMETRY_FILE = scidb.PathInput(
@@ -142,6 +147,16 @@ TRIAL_FILE = scidb.PathInput(
 WAVEFORM_FILE = scidb.PathInput(
     "{subject}/{session}/t{trial}/waveforms/"
     "{subject}_{session}_{speed}_t{trial}_c{cycle}.csv",
+    root_folder=str(DATA_ROOT),
+)
+
+#: One 3 x 3 matrix per trial (subject x session x speed x trial). Named
+#: `_matrix.csv`, NOT `_coupling.csv`: `{cycle}.csv` in SYMMETRY_FILE's
+#: template swallows any suffix, and `_c` + `oupling` was a cycle called
+#: "oupling" — the loader read every matrix file as a cycle (integration
+#: suite, 2026-09-19). Two templates over one folder must not share a tail.
+COUPLING_FILE = scidb.PathInput(
+    "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_matrix.csv",
     root_folder=str(DATA_ROOT),
 )
 
@@ -366,3 +381,19 @@ def knee_excursion(knee):
     if len(curve) == 1 and hasattr(curve.iloc[0], "__len__"):
         curve = pd.Series(curve.iloc[0])
     return float(curve.max() - curve.min())
+
+
+# ---------------------------------------------------------------------------
+# Step 12 — 2-D data: one matrix per trial
+# ---------------------------------------------------------------------------
+
+
+def load_joint_coupling(csv_file_path):
+    """Read one trial's 3 x 3 coupling matrix as a list of rows.
+
+    A nested list is stored as ONE 2-D value per record, so the variable is
+    matrix-valued: the plot layer offers only a heatmap for it, averaging the
+    matrices a panel collapses over, and "Save data" refuses it.
+    """
+    frame = pd.read_csv(csv_file_path, index_col=0)
+    return frame[JOINTS].to_numpy().tolist()

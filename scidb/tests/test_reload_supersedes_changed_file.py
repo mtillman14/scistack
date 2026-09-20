@@ -110,3 +110,27 @@ def test_the_edited_record_is_read_by_a_downstream_step(db, files):
     assert len(row) == 1, lengths[["subject", "trial"]].to_string()
     got = row["data"].iloc[0]
     assert float(got) == float(len("03-2 with more text"))
+
+
+def test_a_for_columns_call_records_its_selector(db):
+    """`for_columns()` ran with no column list, so it had no selector at all
+    and looked, in history, like a whole-table input. The selector now says
+    `iterate`, so a run derived from history is per-column too."""
+    import pandas as pd
+
+    from scidb import for_each
+
+    class Wide(BaseVariable):
+        pass
+
+    class Doubled(BaseVariable):
+        pass
+
+    Wide.save(pd.DataFrame({"a": [1.0], "b": [2.0]}), subject="01", trial="1")
+
+    def double(value):
+        return float(pd.Series(value).iloc[0]) * 2
+
+    for_each(double, {"value": Wide.for_columns()}, [Doubled], subject=[], trial=[])
+    variants = [v for v in db.list_pipeline_variants() if v["function_name"] == "double"]
+    assert variants and variants[0]["selectors"].get("value", {}).get("iterate") is True

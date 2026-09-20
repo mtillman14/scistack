@@ -181,3 +181,25 @@ def test_running_a_step_again_adds_nothing(pipeline, example_db):
     )
     after = pipeline.TrialCadence.load(as_df=True, version="all")
     assert len(after) == before
+
+
+
+def test_no_two_templates_claim_the_same_file(pipeline, example_db):
+    """Every PathInput of the pipeline discovers a disjoint set of files.
+    `{cycle}.csv` swallows any suffix, so a matrix file named
+    `..._t01_coupling.csv` was once a cycle called "oupling" — every row of
+    every 3 x 3 matrix loaded as symmetry data."""
+    templates = {
+        name: getattr(pipeline, name)
+        for name in dir(pipeline)
+        if name.endswith("_FILE")
+    }
+    for name, template in templates.items():
+        for values in template.discover():
+            for key in ("subject", "session", "speed", "trial", "cycle"):
+                if key in values:
+                    assert str(values[key]).isalnum(), f"{name}: {key}={values[key]!r} is not a level"
+            if "cycle" in values:
+                assert values["cycle"] in CYCLES, f"{name} discovered cycle={values['cycle']!r}"
+    cycles = set(_frame(pipeline.CycleSymmetry)["cycle"].astype(str))
+    assert cycles == set(CYCLES), cycles

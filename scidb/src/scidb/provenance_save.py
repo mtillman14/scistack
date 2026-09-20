@@ -158,10 +158,23 @@ def compute_input_selectors(inputs: dict) -> dict:
             getattr(spec, "data", None), ColumnSelection
         ):
             cs = spec.data
-        if cs is not None and getattr(cs, "columns", None):
-            out[param] = json.dumps({"columns": list(cs.columns)}, sort_keys=True)
-        else:
+        if cs is None:
             out[param] = None
+            continue
+        columns = list(getattr(cs, "columns", None) or [])
+        iterate = bool(getattr(cs, "iterate", False))
+        if not columns and not iterate:
+            out[param] = None  # a plain whole-variable input
+            continue
+        # `iterate` (for_columns) rides along since 2026-09-19: a per-column
+        # run over every column has no column list, so it had no selector
+        # at all and a GUI re-run from history handed the function the
+        # whole table (integration suite, test_dag_runs). Only written when
+        # set, so an ordinary column selection keeps its old identity.
+        selector = {"columns": columns}
+        if iterate:
+            selector["iterate"] = True
+        out[param] = json.dumps(selector, sort_keys=True)
     return out
 
 
@@ -219,6 +232,14 @@ def _variable_bindings(meta: dict) -> list[tuple[str, str, str | None]]:
     for key, rid in upstream.items():
         if rid is None:
             continue
+        # The aggregation path stores one key per consumed record
+        # (`__rid_<param>_<i>`), so these edges carry INDEXED names. They are
+        # deliberately left as they are: `compute_invocation_id` hashes the
+        # binding names, and `_predict_config_invocations` (skip_computed)
+        # predicts one binding per param from the stored config — folding
+        # here made every second identical aggregation run recompute.
+        # Consumers that need the real parameter fold on READ instead
+        # (`execution_service._fold_indexed_params`).
         param = key[len("__rid_") :] if key.startswith("__rid_") else key
         out.append((param, str(rid), None))
     return out
