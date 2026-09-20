@@ -431,23 +431,35 @@ class TestIntent:
         text = render.render_intent(report)
         assert "bandpass3" in text and "no statements" in text
 
-    def test_a_store_row_is_read_and_resolved(self, insp):
+    def test_a_store_row_is_read_and_resolved(self, tmp_path):
         """A statement written in the GUI's table shape resolves against the
-        recorded fact, and a script origin reports it as not read."""
+        recorded fact, and a script origin reports it as not read.
+
+        The inspector opens READ-ONLY, so the row is written first, through a
+        plain DuckDB connection, into a database of this test's own.
+        """
+        import duckdb
+
         from scidb.intent import INTENT_COLUMNS, INTENT_TABLE
 
-        duck = insp._duck
-        duck._execute(
-            f"CREATE TABLE IF NOT EXISTS {INTENT_TABLE} ("
-            "subject_kind VARCHAR, subject_ref VARCHAR, scope VARCHAR, aspect VARCHAR, "
-            "aspect_key VARCHAR, value_json VARCHAR, origin VARCHAR, stated_at VARCHAR)"
-        )
-        duck._execute(
-            f"INSERT INTO {INTENT_TABLE} ({', '.join(INTENT_COLUMNS)}) VALUES "
-            "('call_site', 'fn__bandpass3__0123456789abcdef', 'global', 'columns', "
-            "'signal', '{\"columns\": [\"a\"], \"iterate\": false}', 'store', '2026')"
-        )
+        db_path, data_root = tmp_path / "intent.duckdb", tmp_path / "data"
+        build_p3_db(db_path, data_root)
+        con = duckdb.connect(str(db_path))
         try:
+            con.execute(
+                f"CREATE TABLE IF NOT EXISTS {INTENT_TABLE} ("
+                "subject_kind VARCHAR, subject_ref VARCHAR, scope VARCHAR, aspect VARCHAR, "
+                "aspect_key VARCHAR, value_json VARCHAR, origin VARCHAR, stated_at VARCHAR)"
+            )
+            con.execute(
+                f"INSERT INTO {INTENT_TABLE} ({', '.join(INTENT_COLUMNS)}) VALUES "
+                "('call_site', 'fn__bandpass3__0123456789abcdef', 'global', 'columns', "
+                "'signal', '{\"columns\": [\"a\"], \"iterate\": false}', 'store', '2026')"
+            )
+        finally:
+            con.close()
+
+        with Inspector.open(db_path) as insp:
             as_gui = insp.intent("bandpass3", origin="gui")
             assert any(
                 f.aspect == "columns" and f.key == "signal" and f.surface == "store"
@@ -456,8 +468,6 @@ class TestIntent:
             as_script = insp.intent("bandpass3", origin="script")
             assert len(as_script.unread) == 1
             assert "not read by a script run" in render.render_intent(as_script)
-        finally:
-            duck._execute(f"DROP TABLE {INTENT_TABLE}")
 
     def test_cli_intent_and_trace_flag(self, green_env, capsys):
         assert main(["--db", str(green_env[0]), "intent", "bandpass3"]) == 0

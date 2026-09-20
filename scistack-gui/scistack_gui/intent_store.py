@@ -318,13 +318,17 @@ def rekey_subject(db, old_ref: str, new_ref: str, *, old_wins: bool = True) -> i
         if existing is not None and not old_wins:
             continue
         if existing is not None and existing[0] != json.dumps(st.value):
+            try:
+                previous = json.loads(existing[0])
+            except (TypeError, ValueError):
+                previous = existing[0]
             logger.info(
-                "[intent_store] rekey %s -> %s: %s%s previous value %s replaced by %r",
+                "[intent_store] rekey %s -> %s: %s%s previous value %r replaced by %r",
                 old_ref,
                 new_ref,
                 st.aspect,
                 f".{st.key}" if st.key else "",
-                existing[0],
+                previous,
                 st.value,
             )
         put_statements(db, [replace(st, subject_ref=new_ref)])

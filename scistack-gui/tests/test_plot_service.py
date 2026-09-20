@@ -2530,7 +2530,7 @@ class TestVariantPinsAreStatements:
             populated_db, "FilteredSignal", [{"name": "only-here", "selection": {}}]
         )
         other = plot_service.describe(populated_db, "RawSignal")["spec"]
-        assert all(s["name"] != "only-here" for s in other["variant_sets"])
+        assert all(s.get("name") != "only-here" for s in other["variant_sets"])
 
     def test_saving_an_empty_list_clears_the_pins(self, populated_db):
         plot_service.save_variant_sets(
@@ -2538,4 +2538,4 @@ class TestVariantPinsAreStatements:
         )
         plot_service.save_variant_sets(populated_db, "FilteredSignal", [])
         reopened = plot_service.describe(populated_db, "FilteredSignal")["spec"]
-        assert all(s["name"] != "gone" for s in reopened["variant_sets"])
+        assert all(s.get("name") != "gone" for s in reopened["variant_sets"])

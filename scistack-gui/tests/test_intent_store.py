@@ -96,8 +96,9 @@ class TestThroughNodeConfig:
         }
 
     def test_the_blob_no_longer_owns_it(self, populated_db):
-        """One owner per aspect: the selection is stripped on the way in, so
-        `_node_config` cannot drift from `_intent`."""
+        """One owner per aspect: every graduated aspect is stripped on the way
+        in, so `_node_config` cannot drift from `_intent` — and with every
+        aspect graduated, the blob is empty."""
         pipeline_store.update_node_config(
             populated_db,
             NODE,
@@ -106,8 +107,10 @@ class TestThroughNodeConfig:
         raw = pipeline_store._duck(populated_db)._fetchone(
             "SELECT config FROM _node_config WHERE node_id = ?", [NODE]
         )
-        assert "columnSelections" not in (raw[0] if raw else "")
-        assert "schemaLevel" in raw[0]
+        assert raw[0] == "{}"
+        config = pipeline_store.get_node_config(populated_db, NODE)
+        assert config["schemaLevel"] == ["subject"]
+        assert config["columnSelections"] == {"cycles": _sel("ankle")}
 
     def test_other_settings_are_untouched(self, populated_db):
         pipeline_store.update_node_config(

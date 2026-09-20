@@ -1953,7 +1953,11 @@ class TestGraduationCarriesNodeConfig:
 
         node = self._graduated(data, bp_node_id)
         assert node["data"]["schemaLevel"] == ["subject"]
-        assert node["data"]["columnSelections"] == {"signal": {"columns": ["a"]}}
+        # Normalised on the way through the intent store: the one shape, not the
+        # raw blob the panel happened to send.
+        assert node["data"]["columnSelections"] == {
+            "signal": {"columns": ["a"], "iterate": False}
+        }
 
         configs = pipeline_store.get_node_configs(_gui_db.get_db())
         assert self.FRESH not in configs, "moved, not copied"
@@ -2000,7 +2004,9 @@ class TestGraduationCarriesNodeConfig:
         )
         self._place_fresh(client, {"schemaLevel": ["subject"]})
 
-        with caplog.at_level(logging.INFO, logger="scistack_gui.pipeline_store"):
+        # The move is the intent store's now (rekey_subject), so capture the
+        # whole GUI namespace rather than one module's logger.
+        with caplog.at_level(logging.INFO, logger="scistack_gui"):
             data = client.get("/api/pipeline").json()
 
         node = self._graduated(data, bp_node_id)
