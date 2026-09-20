@@ -3183,12 +3183,35 @@ def expected_invocations_for_function(
     for cfg in configs:
         _predict_config_invocations(duck, fn_hash, cfg, expected)
 
-    # (c) live prediction from the declared inputs (never-run fallback) —
-    # under call_id scoping, only when the declared config IS that call site.
+    # (c) live prediction from the declared inputs — the NEVER-RUN fallback,
+    # and only that. A declaration says which types feed which parameters; it
+    # cannot say at which schema level the call iterates, because that is
+    # decided per run (`for_each(subject=[], trial=[])`). So a fallback
+    # prediction always takes `_predict_config_invocations`' no-level branch
+    # and enumerates one invocation per input LOCATION — right for a node
+    # that has never run, and wrong for an aggregating one that has: those
+    # per-location invocations were never written, so the node counted them
+    # missing and could never plan green. (It went unnoticed because a call
+    # site with `as_table` or `distribute` has a different call id from the
+    # option-less `config_from_inputs` shape, so the fallback was skipped
+    # there — the only aggregating node-state test in the suite.)
+    #
+    # History is authoritative about the level, so the fallback contributes
+    # only when this call site has no recorded config of its own.
     if inputs_fallback:
         fallback_cfg = config_from_inputs(inputs_fallback, glue=glue_fallback)
-        if call_id is None or config_call_id(fn_name, fallback_cfg) == call_id:
+        fallback_cid = config_call_id(fn_name, fallback_cfg)
+        already_run = any(config_call_id(fn_name, c) == fallback_cid for c in configs)
+        if (call_id is None or fallback_cid == call_id) and not already_run:
             _predict_config_invocations(duck, fn_hash, fallback_cfg, expected)
+        elif already_run:
+            logger.debug(
+                "expected_invocations(%s): declared inputs match a recorded "
+                "config (call_id=%s) — history decides the iteration level, "
+                "not the declaration",
+                fn_name,
+                fallback_cid,
+            )
 
     return expected
 

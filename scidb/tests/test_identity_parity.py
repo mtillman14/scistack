@@ -95,6 +95,13 @@ def with_ref(value, ref):
     return float(len(value)) + float(pd.DataFrame(ref)["r"].iloc[0])
 
 
+def widen(value, factor):
+    """Keeps the a/b columns, so a column selection downstream names a real
+    one; `factor` gives the output a branch param to pin on."""
+    df = pd.DataFrame(value)
+    return df[["a", "b"]] * factor
+
+
 # ---------------------------------------------------------------------------
 # invocation_id: reconstructible from the graph
 # ---------------------------------------------------------------------------
@@ -422,6 +429,10 @@ class Scaled(BaseVariable):
     """A per-cycle record that exists in two variants (`scaled` at 2 and 3)."""
 
 
+class Widened(BaseVariable):
+    """Two-column per-cycle records, for selecting a column of a variant."""
+
+
 def _seed_variants():
     _seed()
     for factor in (2.0, 3.0):
@@ -476,6 +487,39 @@ class TestVariantSplitIsPredicted:
         forward = ForEachConfig(pooled, {"value": Scaled}).to_call_id()
         node = check_node_state(pooled, [Out], inputs={"value": Scaled}, db=db, call_id=forward)
         assert node["state"] == "green", node
+
+
+class TestTheDeclarationOnlyPredictsForANeverRunCallSite:
+    """A declaration says which TYPES feed which parameters; it cannot say
+    at which schema level the call iterates, because that is per run. So the
+    never-run fallback always predicts one invocation per input LOCATION —
+    right for a node that has never run, wrong for an aggregating one that
+    has, whose per-location invocations were never written.
+
+    It went unnoticed because the only aggregating node-state test used
+    `as_table`, whose call id differs from the option-less shape
+    `config_from_inputs` builds — so the fallback was skipped there for an
+    unrelated reason.
+    """
+
+    def test_a_plain_aggregating_node_plans_green(self, db):
+        from scidb.state import check_node_state
+
+        _seed()
+        for_each(pooled, {"value": Wide}, [Out], subject=[], trial=[])
+        forward = ForEachConfig(pooled, {"value": Wide}).to_call_id()
+        node = check_node_state(pooled, [Out], inputs={"value": Wide}, db=db, call_id=forward)
+        assert node["state"] == "green", node
+
+    def test_a_never_run_node_still_predicts_from_its_declaration(self, db):
+        """The fallback's real job: with no history there is nothing else to
+        predict from, and the node must read red rather than green-by-default."""
+        from scidb.state import check_node_state
+
+        _seed()
+        node = check_node_state(pooled, [Out], inputs={"value": Wide}, db=db)
+        assert node["state"] == "red", node
+        assert node["counts"]["missing"] > 0, node
 
     def test_a_rerun_skips_every_group(self, db, caplog):
         import logging
@@ -638,11 +682,13 @@ class TestSelectionUnderAnyWrapper:
         from scidb import Variant
 
         _seed()
-        for_each(scaled, {"value": Wide, "factor": 2.0}, [Scaled], subject=[], trial=[], cycle=[])
+        # `widen` keeps the a/b columns, so `Widened["a"]` names a real one,
+        # and its constant gives the records a branch param to pin on.
+        for_each(widen, {"value": Wide, "factor": 2.0}, [Widened], subject=[], trial=[], cycle=[])
         with caplog.at_level(logging.WARNING, logger="scidb"):
             for_each(
                 first_a,
-                {"value": Variant(Scaled["a"], factor=2.0)},
+                {"value": Variant(Widened["a"], factor=2.0)},
                 [Out],
                 subject=[],
                 trial=[],

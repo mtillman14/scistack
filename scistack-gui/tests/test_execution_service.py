@@ -618,8 +618,6 @@ class TestPooledBindingRoundTrip:
         # ...and the MATLAB rendering of the same binding says so too.
         assert variable_inputs_view([target], "bandpass_filter")["signal"] == {
             "types": ["RawSignal"],
-            "columns": [],
-            "iterate": False,
             "pool_variants": True,
         }
 
@@ -631,36 +629,36 @@ class TestCompiledPipelineHonoursRunOptions:
     defaults while the single-node Run path and the MATLAB path honoured the
     node's saved options. Three paths, one fact (`RunOptions`)."""
 
-    def test_the_step_spec_carries_the_node_s_options(self, populated_db, monkeypatch):
-        from scistack_gui import pipeline_store
+    def _bandpass_options(self, db):
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,
         )
 
-        node_ids = [
-            n for n, label in _scoped_nodes(populated_db) if label == "bandpass_filter"
-        ]
-        assert node_ids, "seeded pipeline has no bandpass_filter node"
-        pipeline_store.update_node_config(
-            populated_db, node_ids[0], {"runOptions": {"distribute": True}}
-        )
-
         built: dict = {}
         try:
-            pipe = build_backend_pipeline(populated_db, "main", built)
-            options = [
+            pipe = build_backend_pipeline(db, "main", built)
+            return [
                 spec.options
-                for _owner, spec in pipe._composed_steps()
+                for spec in pipe.steps
                 if getattr(spec.fn, "__name__", "") == "bandpass_filter"
             ]
         finally:
             _discard_compiled(built)
-        assert options, "no bandpass_filter step compiled"
+
+    def test_defaults_when_the_node_saved_none(self, client, populated_db):
+        options = self._bandpass_options(populated_db)
+        assert options, "seeded pipeline compiled no bandpass_filter step"
+        assert all(not o.get("distribute") for o in options), options
+
+    def test_the_step_spec_carries_the_node_s_options(
+        self, client, populated_db, bp_node_id
+    ):
+        from scistack_gui import pipeline_store
+
+        pipeline_store.update_node_config(
+            populated_db, bp_node_id, {"runOptions": {"distribute": True}}
+        )
+        options = self._bandpass_options(populated_db)
+        assert options, "seeded pipeline compiled no bandpass_filter step"
         assert all(o.get("distribute") is True for o in options), options
-
-
-def _scoped_nodes(db):
-    from scistack_gui.services.execution_service import _scope_function_node_ids
-
-    return list(_scope_function_node_ids(db, "main"))

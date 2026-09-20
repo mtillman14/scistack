@@ -490,6 +490,17 @@ class TestGraduationMovesNodeConfig:
     too, or the settings the user made on a fresh node are orphaned under
     an id that no longer exists on the canvas — the "saved node config(s)
     match no node" WARN. See .claude/plan-graduation-config-migration.md.
+
+    The SEAM is ``graduate_manual_node``, and that matters since every
+    execution-intent aspect graduated to the intent store: a config written
+    through ``update_node_config`` is split, with ``columnSelections`` /
+    ``runOptions`` / the three schema-location keys becoming statements and
+    only the rest staying in the ``_node_config`` blob. So
+    ``migrate_node_config`` alone moves only the blob remainder — the
+    statements move via ``intent_store.rekey_subject``, and the tests below
+    ask the entry point that does both. (``migrate_node_config`` is still
+    tested directly where the source really is the blob: the legacy
+    ``_pipeline_nodes.config`` column.)
     """
 
     OLD = "fn__grSides__5c9r0r"
@@ -505,29 +516,34 @@ class TestGraduationMovesNodeConfig:
         db = populated_db
         self._fresh(db, config={"schemaLevel": ["subject"], "runOptions": {"distribute": True}})
 
-        result = pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+        pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
 
-        assert result == {"moved": ["runOptions", "schemaLevel"], "replaced": {}}
         assert pipeline_store.get_node_config(db, self.NEW) == {
             "schemaLevel": ["subject"],
             "runOptions": {"distribute": True},
         }
-        assert self.OLD not in pipeline_store.get_node_configs(db), (
+        assert pipeline_store.get_node_config(db, self.OLD) == {}, (
             "a move, not a copy — the orphan WARN must stop naming this id"
         )
 
     def test_scope_qualified_source_key_moves_too(self, populated_db):
         db = populated_db
         self._fresh(db, config={"whereFilters": [{"a": 1}]}, key=f"{self.OLD}::sub1")
-        pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+        pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
         assert pipeline_store.get_node_config(db, self.NEW)["whereFilters"] == [{"a": 1}]
-        assert f"{self.OLD}::sub1" not in pipeline_store.get_node_configs(db)
+        assert pipeline_store.get_node_config(db, f"{self.OLD}::sub1") == {}
 
-    def test_qualified_source_wins_over_bare_source(self, populated_db):
+    def test_a_setting_is_keyed_by_the_node_not_its_placement(self, populated_db):
+        """A statement's subject is the BARE node id (``rekey_subject``
+        strips the placement), so configuring the same node through two
+        ``::scope``-qualified ids is two writes to ONE setting and the later
+        wins. Before the graduation to statements these were two rows and
+        the qualified one was preferred; the outcome here is the same, the
+        reason is simpler."""
         db = populated_db
         self._fresh(db, config={"schemaLevel": ["subject"]})
         pipeline_store.update_node_config(db, f"{self.OLD}::main", {"schemaLevel": ["session"]})
-        pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+        pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
         assert pipeline_store.get_node_config(db, self.NEW)["schemaLevel"] == ["session"]
 
     def test_legacy_pipeline_nodes_column_is_a_source(self, populated_db):
@@ -549,10 +565,9 @@ class TestGraduationMovesNodeConfig:
         )
         self._fresh(db, config={"schemaLevel": ["subject"]})
 
-        with caplog.at_level(logging.INFO, logger="scistack_gui.pipeline_store"):
-            result = pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
+        with caplog.at_level(logging.INFO, logger="scistack_gui"):
+            pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
 
-        assert result["replaced"] == {"schemaLevel": ["session"]}
         cfg = pipeline_store.get_node_config(db, self.NEW)
         assert cfg["schemaLevel"] == ["subject"], "the fresh node's setting wins"
         assert cfg["whereFilters"] == [{"old": 1}], "keys the fresh node never set stay"

@@ -1475,16 +1475,19 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
                 continue
             sel = _cs.from_binding(binding)
             pooled = bool(binding.get("pool_variants"))
-            entry = (
-                {
-                    "types": types,
-                    "columns": list(sel["columns"]) if sel else [],
-                    "iterate": bool(sel["iterate"]) if sel else False,
-                    "pool_variants": pooled,
-                }
-                if sel or pooled
-                else list(types)
-            )
+            entry: "dict | list"
+            if sel or pooled:
+                entry = {"types": types}
+                if sel:
+                    entry["columns"] = list(sel["columns"])
+                    entry["iterate"] = bool(sel["iterate"])
+                # Omitted when false, the same rule `variable_binding` uses,
+                # so a plain selection's rendering is byte-identical to what
+                # it was before pooling existed.
+                if pooled:
+                    entry["pool_variants"] = True
+            else:
+                entry = list(types)
             previous = out.get(param)
             if previous is not None and previous != entry:
                 logger.warning(
