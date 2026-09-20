@@ -212,3 +212,27 @@ made batch-shaped, the model is wrong and Stage 5 should not start.
 * No `derived_from` inheritance between hypotheses.
 * No general framework for "state a layer cannot carry" beyond the six
   aspects named in the doc.
+
+---
+
+## Status — 2026-09-19, branch `refactor/intent-and-fact`
+
+Built and committed, **no Python test has been run** (the user runs tests):
+
+| stage | commit | what | verification needed |
+|---|---|---|---|
+| 1 | 27c4c109 | `scidb.intent` vocabulary + resolver; columns normalizer one owner | `scidb/tests/test_intent.py` |
+| 2 | 14d83771 | write-side + read-side selector guards; bindings INFO line | `scidb/tests/test_selector_round_trip.py`, `tests/integration/test_dag_runs.py` |
+| 3 | a60445d7 | aggregation rows now carry `__graph_var_bindings` (with selector) — identity changes for aggregation+selector calls only; name-scoped config match admits non-16-hex suffixes | the two former xfails + `scidb/tests/test_aggregation_with_variants.py`, `test_stat_leaves.py` |
+| 4 | 1061612b | `_invocation.for_columns` + `run_options_label` + GUI read-only line. **Deviation:** NOT an identity term (selector already is) | `scidb/tests/test_for_columns_run_option.py` |
+| 5 | 637386b1 | `_intent` table; `columns` graduated; rekey/copy; one-time import | `scistack-gui/tests/test_intent_store.py` |
+| 6 | 1c9716d4 | `_run.origin`; ambient origin; MATLAB command labels; `mark_unused_intent` + amber chip/note | `scidb/tests/test_run_origin.py`, `scistack-gui/tests/test_unused_intent.py`, manual item 0 |
+| 7 | 97af5ded | partial: `scidb runs` origin column | `scidb/tests/test_inspect_phase3.py` |
+
+Stage 7 remaining (deliberately after a green run): MATLAB route's copy of
+`build_run_inputs` (`api/matlab_command.py:~1415`) rendered from a
+`RunPlan`; Plot Studio `VariantSet` pins as `aspect="variant_selection"`.
+
+Stage 5 remaining aspects (one commit each): `run_options`, `hidden`,
+edges/constants, `schema_location`. Stored scope is still `global` until
+execution is scope-aware.
