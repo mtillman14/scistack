@@ -167,7 +167,6 @@ def for_each(
     _pre_combo_hook: Callable[[dict], bool] | None = None,
     _progress_fn: Callable[[dict], None] | None = None,
     _cancel_check: Callable[[], bool] | None = None,
-    _lineage_fixed_rids: dict | None = None,
     **metadata_iterables: list[Any],
 ) -> pd.DataFrame | None
 ```
@@ -192,10 +191,21 @@ Compared to `scifor.for_each()`, three major parameters are added:
 | `save` | Whether to actually save results to the database (default `True`). |
 | `db` | Optional explicit database instance; if omitted, the global database from `configure_database()` is used. |
 
-The `_inject_combo_metadata`, `_pre_combo_hook`, and `_lineage_fixed_rids` parameters are internal hooks used by the `scihist` layer above:
+The `_inject_combo_metadata` and `_pre_combo_hook` parameters are internal hooks:
 - `_inject_combo_metadata`: Passes current combo metadata to `generates_file` functions
 - `_pre_combo_hook`: Implements `skip_computed` logic
-- `_lineage_fixed_rids`: Pre-resolved record IDs for Fixed inputs (used by scihist for lineage tracking)
+
+(`_lineage_fixed_rids` — pre-resolved Fixed record ids handed in by a caller — was removed 2026-09-20: nothing passed it, and a Fixed input's rid is resolved by Step 12 onto `RunBindings.pinned_rids`, with a database lookup at save time as the fallback.)
+
+**Three phases, one state.** The body of `for_each` is the pre-loop setup (where/db/EachOf normalisation, endpoint detection, `for_columns` resolution, the skip hook) followed by three functions that share one `_ForEachState`:
+
+| Phase | Function | Steps |
+|---|---|---|
+| prepare | `_for_each_prepare(...) -> _ForEachState` | 2–15: load, Step 12 rid tracking → `RunBindings`, combo expansion, skip hook |
+| execute | `_for_each_execute(state, ...) -> result_tbl` | 16–17: wrap `fn` for per-combo needs, delegate to `scifor.for_each`, log the run summary |
+| save | `_for_each_save_resolved(state=..., result_tbl=...)` → `_save_results(result_tbl, outputs, state, db)` | 18–19: schema restore, Fixed pins, save, graph |
+
+The MATLAB bridge calls prepare and save across two RPCs with the state cached between them; its loop runs in MATLAB's `scifor.for_each`, so it never calls execute. `_save_results` takes the state rather than the seventeen individual facts it used to (2026-09-20): every one of them — output names, config keys, glue, the function object, `generates_file`, `endpoint_kind` — is a fact about the call, and a caller that forgot to pass one used to save under a default instead of failing.
 
 ---
 

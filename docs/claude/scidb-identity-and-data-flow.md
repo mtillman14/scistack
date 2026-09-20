@@ -445,14 +445,14 @@ DatabaseManager.save(instance, metadata, lineage=..., lineage_hash=...)
 The for_each save path adds config_keys and branch_params tracking on top of the direct save:
 
 ```
-_save_results(result_tbl, outputs, output_names, config_keys, db, rid_to_bp, rid_keys)
+_save_results(result_tbl, outputs, state, db)      # state: _ForEachState (2026-09-20)
     |
     FOR each row in result_tbl:
     |
-    +-- 1. Collect upstream branch_params
-    |      FOR each __rid_{param} column:
-    |        rid = row[__rid_{param}]
-    |        merged_bp.update(rid_to_bp[rid])   # inherit upstream
+    +-- 1. The row's edges and inherited branch_params — ONE assembly
+    |      edges = state.bindings.for_combo(row)          # __rid_* / __vsig_* off the row,
+    |                                                      # pooled records, pinned rids
+    |      merged_bp, conflicts = state.bindings.branch_params_for(edges)
     |
     +-- 2. Add namespaced constants
     |      FOR each constant in config_keys["__constants"]:

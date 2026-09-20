@@ -470,3 +470,30 @@ Also open, deliberately not done here:
   import has been seen complete on a real database).
 * GUI never visually checked: `docs/gui-manual-testing-todo.md` items 0b
   and 0a. Branch unmerged.
+
+### Stage 2b — built 2026-09-20 (550d700e), tests unrun
+
+* `_save_results(result_tbl, outputs, state, db)` — from seventeen
+  parameters. `generates_file` / `endpoint_kind` moved onto the state (set
+  at prepare from both entry points; the MATLAB bridge's second RPC reads
+  them off the cached state instead of re-sending).
+* Retired from `_ForEachState`: `rid_to_bp` → `bindings.rid_to_bp`,
+  `fixed_rid_values` → `bindings.pinned_rids`, `rid_keys` →
+  `bindings.tracked_columns` (ITERATE ∪ AGGREGATED). `rid_keys_for_schema`
+  stays — a fact about the scifor call, not the inputs. `state.bindings` is
+  never None.
+* `_for_each_execute(state, ...)` extracted — Steps 16-17 (fn wrapping,
+  scifor delegation, run summary). Pure signature move; every name passed
+  explicitly. `for_each`'s body: 630 → 465 lines.
+
+**Deliberately not done:** extracting the ~220-line pre-prepare setup
+block (where/db/EachOf/endpoint/for_columns/skip-hook). It is linear
+normalisation, not duplication; it early-returns through the EachOf
+recursion; and a pure move would hand back a ten-field tuple. If it is
+ever extracted it should come back as a `CallSetup` value — a design
+step, not a signature move.
+
+Verify: `cd /workspace/scidb && pytest tests/ -q`, then
+`cd /workspace/scimatlab && pytest tests/ -q` (the bridge reads
+`bindings.tracked_columns` / `pinned_rids` for its rename map and passes
+`endpoint_kind` at prepare), then `cd /workspace/tests/integration && pytest -q`.
