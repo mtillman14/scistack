@@ -28,7 +28,7 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 import numpy as np
 from scidb.database import configure_database
 from scidb.foreach import for_each as scidb_for_each
-from scimatlab.bridge import for_each_prepare, register_matlab_variable
+from scimatlab.bridge import for_each_prepare, for_each_save, register_matlab_variable
 
 
 def double(x):
@@ -173,5 +173,51 @@ class TestBridgeSkipComputed:
                 skip_computed=True,
             )
             assert isinstance(list(prep["full_combos"]), list)
+        finally:
+            db.close()
+
+
+class TestRowSelectionAlignsWithSkippedCombos:
+    """`row_selection` is what MATLAB indexes by loop position, so it must be
+    aligned with the combos MATLAB actually loops over — `full_combos` AFTER
+    the skip hook — not with every combination that was expanded. The first
+    bridge run of the selection seam asserted the two were the same length
+    and blew up the moment skip_computed removed anything."""
+
+    def test_selection_list_matches_the_combos_matlab_loops_over(self, tmp_path):
+        db = configure_database(tmp_path / "align.duckdb", ["subject", "trial"])
+        RawSignal = register_matlab_variable("RawSignal_Align")
+        Filtered = register_matlab_variable("Filtered_Align")
+        try:
+            db.save_variable(RawSignal, np.array([1, 2, 3]), subject=1, trial=1)
+            db.save_variable(RawSignal, np.array([4, 5, 6]), subject=2, trial=1)
+            # Compute subject 1 only; subject 2 is still owed.
+            scidb_for_each(double, inputs={"x": RawSignal}, outputs=[Filtered], db=db, subject=[1], trial=[1])
+            _, fn_hash = _stored_invocation(db, "double")
+
+            prep = for_each_prepare(
+                "double",
+                fn_hash,
+                {"x": _var_spec("RawSignal_Align")},
+                ["Filtered_Align"],
+                {"subject": [1, 2], "trial": [1]},
+                db=db,
+                skip_computed=True,
+            )
+            combos = list(prep["full_combos"])
+            selection = list(prep["row_selection"])
+            assert len(combos) == 1, combos  # subject 1 skipped
+            assert len(selection) == len(combos)
+            # ...and it is subject 2's record that the surviving combo reads.
+            (subject2_rid,) = [
+                r[0]
+                for r in db._duck._fetchall(
+                    "SELECT r.record_id FROM _record r JOIN _schema s ON s.schema_id = r.schema_id "
+                    "WHERE r.type = ? AND s.subject = '2'",
+                    ["RawSignal_Align"],
+                )
+            ]
+            assert selection[0]["x"] == [subject2_rid]
+            for_each_save(prep["handle"], [], save=False)
         finally:
             db.close()

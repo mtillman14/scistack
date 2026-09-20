@@ -122,7 +122,10 @@ class TestLabelledTableSpreadsOnBridge:
         # The same log line the Python loop emits, plus the bridge's shape
         # line showing the nested (1, 1) -> spread transition.
         assert "discriminated by unpinned schema key(s)" in caplog.text
-        assert "nested shape=(1, 1)" in caplog.text
+        # (1, 2): the output column plus the combo's `x__combo` handle, which
+        # every combination carries (a PathInput-only one with an empty
+        # Selection included) so the save can find its row's selection.
+        assert "nested shape=(1, 2)" in caplog.text
 
     def test_each_record_holds_only_its_row(self, db, literal_file):
         out_name = "Outcomes_SP2"

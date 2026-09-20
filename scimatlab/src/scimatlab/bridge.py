@@ -881,11 +881,18 @@ def for_each_prepare(
     # so `for_each.m` selects rows with ismember on x__record_id and never
     # needs Python per combo. Python's own loop reads the same selections
     # through scifor's `_select_rows` hook: one rule, two runtimes.
-    row_selection = [
-        {param: list(rids) for param, rids in sel.rids.items()}
-        for sel in _bindings.selections
-    ]
-    assert len(row_selection) == len(state.full_combos)
+    #
+    # Aligned by walking `state.full_combos` — NOT by dumping
+    # `bindings.selections`: selections are registered for every combination
+    # at expansion, and the skip hook removes combinations from
+    # `full_combos` AFTERWARDS, so the two lists differ in length whenever
+    # skip_computed skipped anything (the first bridge test run, 2026-09-20).
+    row_selection = []
+    for combo in state.full_combos:
+        sel = _bindings.selection_of(combo)
+        row_selection.append(
+            {param: list(rids) for param, rids in sel.rids.items()} if sel else {}
+        )
 
     # Loaded inputs: rename DataFrame columns (and inside wrappers)
     matlab_loaded_inputs = {
