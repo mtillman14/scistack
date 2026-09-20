@@ -1978,6 +1978,50 @@ def latest_runs(duck, fn_names) -> dict:
     return out
 
 
+def recorded_schema_keys(duck, fn_name: str, schema_keys) -> list[str] | None:
+    """The schema keys *fn_name* ITERATED on its most recent run, in dataset
+    order — or ``None`` when it has never run.
+
+    Read off the records that run produced: the schema columns populated on
+    their ``_schema`` rows are the keys the run iterated (a ``distribute``
+    run saves one level below where it iterated, so its deepest populated
+    key is dropped). This is the ``schema_location`` aspect's FACT — history
+    as the floor (rule 4 of docs/claude/intent-and-fact.md): a re-run from
+    the canvas with no level chosen on the node should run where the
+    function ran, not at every key the dataset has. Defaulting to every key
+    is how a trial-level step re-run from the GUI fanned out to cycle level
+    and wrote ten records per trial (test_dag_runs, 2026-09-19).
+    """
+    keys = list(schema_keys or [])
+    if not keys:
+        return None
+    last = latest_runs(duck, [fn_name]).get(fn_name)
+    if last is None:
+        return None
+    cols = ", ".join(f's."{k}"' for k in keys)
+    rows = duck._fetchall(
+        f"SELECT DISTINCT inv.distribute, {cols} "  # noqa: S608 - keys are the dataset's own
+        "FROM _run_invocation ri "
+        "JOIN _invocation inv ON inv.invocation_id = ri.invocation_id "
+        "JOIN _invocation_output io ON io.invocation_id = ri.invocation_id "
+        "JOIN _record r ON r.record_id = io.output_record_id "
+        "JOIN _schema s ON s.schema_id = r.schema_id "
+        "WHERE ri.run_id = ?",
+        [last["run_id"]],
+    )
+    if not rows:
+        return None
+    populated: set[str] = set()
+    distributed = False
+    for distribute, *values in rows:
+        distributed = distributed or bool(distribute)
+        populated.update(k for k, v in zip(keys, values) if v is not None)
+    level = [k for k in keys if k in populated]
+    if distributed and level:
+        level = level[:-1]
+    return level
+
+
 def config_call_id(fn_name: str, cfg: dict) -> str:
     """The call-site id a variant config reconstructs to.
 

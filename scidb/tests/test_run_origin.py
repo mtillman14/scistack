@@ -108,3 +108,51 @@ class TestRecorded:
 
     def test_a_function_that_never_ran_is_absent(self, db):
         assert latest_runs(db._duck, ["never"]) == {}
+
+
+class TestRecordedSchemaKeys:
+    """The `schema_location` aspect's fact: where a function last ran."""
+
+    def test_the_iterated_keys_are_read_off_the_records(self, db):
+        from scidb.provenance_query import recorded_schema_keys
+
+        class Src2(BaseVariable):
+            pass
+
+        class Out2(BaseVariable):
+            pass
+
+        Src2.save(pd.DataFrame({"a": [1.0], "b": [2.0]}), subject="01", trial="1")
+
+        def pick2(value):
+            return float(pd.Series(value).iloc[0])
+
+        for_each(pick2, {"value": Src2["a"]}, [Out2], subject=[], trial=[])
+        assert recorded_schema_keys(db._duck, "pick2", ["subject", "trial"]) == [
+            "subject",
+            "trial",
+        ]
+
+    def test_a_coarser_run_reports_its_own_level(self, db):
+        """A run iterating subject only saves subject-level records, and that
+        — not every key the dataset has — is what a re-run should default to."""
+        from scidb.provenance_query import recorded_schema_keys
+
+        class Src3(BaseVariable):
+            pass
+
+        class Out3(BaseVariable):
+            pass
+
+        Src3.save(pd.DataFrame({"a": [1.0, 2.0]}), subject="01")
+
+        def pick3(value):
+            return float(len(value))
+
+        for_each(pick3, {"value": Src3}, [Out3], subject=[])
+        assert recorded_schema_keys(db._duck, "pick3", ["subject", "trial"]) == ["subject"]
+
+    def test_no_history_is_none(self, db):
+        from scidb.provenance_query import recorded_schema_keys
+
+        assert recorded_schema_keys(db._duck, "never", ["subject", "trial"]) is None
