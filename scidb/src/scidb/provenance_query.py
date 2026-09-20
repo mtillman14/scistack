@@ -1987,8 +1987,10 @@ def recorded_schema_keys(duck, fn_name: str, schema_keys) -> list[str] | None:
     run saves one level below where it iterated, so its deepest populated
     key is dropped). A run that produced DATASET-level records — no schema
     key at all, one call over everything — answers ``[]``, which is a real
-    level and not the same as ``None``: ``for_each(schema_keys=[])`` pools
-    every row into one call, ``schema_keys=None`` iterates every key. This is the ``schema_location`` aspect's FACT — history
+    level and not the same as ``None`` (no history). Note the for_each
+    spelling is the other way round: ``schema_keys=None`` iterates nothing
+    (one call), ``schema_keys=[]`` iterates every key — the caller that
+    turns this answer into a for_each argument maps ``[]`` to ``None``. This is the ``schema_location`` aspect's FACT — history
     as the floor (rule 4 of docs/claude/intent-and-fact.md): a re-run from
     the canvas with no level chosen on the node should run where the
     function ran, not at every key the dataset has. Defaulting to every key

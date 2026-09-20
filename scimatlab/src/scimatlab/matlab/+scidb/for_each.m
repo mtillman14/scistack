@@ -231,7 +231,11 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     end
 
     % --- schema_keys: string array -> py.list, or py.None ---
-    if isempty(opts.schema_keys)
+    % Mirrors scidb.for_each: NOT GIVEN -> py.None -> one call over the whole
+    % dataset; GIVEN EMPTY ({} / string.empty) -> py.list() -> every schema
+    % key, the same reading as subject=[] meaning every subject. isempty()
+    % alone cannot tell those two apart, hence the schema_keys_given flag.
+    if ~opts.schema_keys_given
         py_schema_keys = py.None;
     else
         py_schema_keys = py.list(cellstr(opts.schema_keys(:)'));
@@ -1729,6 +1733,7 @@ function [meta_args, opts] = split_options(varargin)
     opts.finalized = false;
     opts.share_limits = struct();
     opts.schema_keys = string.empty;
+    opts.schema_keys_given = false;
     opts.schema_filter = struct();
     % Glue chains: struct mapping an INPUT name to a function handle, or a
     % cell array of handles applied in order, reshaping that input's loaded
@@ -1812,6 +1817,7 @@ function [meta_args, opts] = split_options(varargin)
                     % seeds metadata_iterables via scifor.expand_schema_keys
                     % (same function scidb.for_each's Python path uses).
                     opts.schema_keys = string(varargin{i+1});
+                    opts.schema_keys_given = true;
                     i = i + 2; continue;
                 case "schema_filter"
                     % struct: schema key -> explicit value list, overriding

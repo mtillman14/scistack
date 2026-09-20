@@ -212,7 +212,27 @@ class TestDatasetLevel:
         def count(value):
             return float(len(value))
 
-        # schema_keys=[]: pool everything into ONE call.
-        for_each(count, {"value": Whole2}, [Once], schema_keys=[])
+        # schema_keys=None (the default): iterate nothing — ONE call over the
+        # whole dataset. `[]` would mean every key, as `subject=[]` means
+        # every subject.
+        for_each(count, {"value": Whole2}, [Once])
         assert len(Once.load(as_df=True, version="all")) == 1
         assert recorded_schema_keys(db._duck, "count", ["subject", "trial"]) == []
+
+    def test_an_empty_schema_keys_list_iterates_every_key(self, db):
+        """`schema_keys=[]` reads like `subject=[]`: all of them."""
+
+        class PerTrial(BaseVariable):
+            pass
+
+        class Echo(BaseVariable):
+            pass
+
+        PerTrial.save(pd.DataFrame({"a": [1.0]}), subject="01", trial="1")
+        PerTrial.save(pd.DataFrame({"a": [2.0]}), subject="01", trial="2")
+
+        def echo(value):
+            return float(len(value))
+
+        for_each(echo, {"value": PerTrial}, [Echo], schema_keys=[])
+        assert len(Echo.load(as_df=True, version="all")) == 2

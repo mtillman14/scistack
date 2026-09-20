@@ -378,7 +378,7 @@ def _run_in_thread(
         logger.info(
             "[run_thread] No schema iteration requested — iterating %s (%s) "
             "(run_id=%s)",
-            schema_level,
+            schema_level if schema_level is not None else "nothing: one call",
             why,
             run_id,
         )

@@ -1471,10 +1471,12 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
 
 def default_schema_level(
     db, function_name: str, targets: list[dict], *, stated=None
-) -> tuple[list[str], str]:
+) -> tuple["list[str] | None", str]:
     """Which schema keys a run of *function_name* iterates when the caller
     passes none — ``(keys, reason)``, ``reason`` naming the rule that
-    answered so the log can say so.
+    answered so the log can say so. ``keys`` is spelled the way
+    ``for_each(schema_keys=...)`` reads it: a list of keys, or ``None`` for
+    a once-per-dataset call (iterate nothing, pool every row).
 
     The ONE owner of this default, for the run thread and the compiled
     pipeline alike. Precedence, per ``docs/claude/intent-and-fact.md``:
@@ -1514,13 +1516,13 @@ def default_schema_level(
         )
         recorded = None
     if recorded is not None:
-        # `[]` is a real answer: the last run was one call over the whole
-        # dataset (records with no schema key). Only `None` means no history.
-        return recorded, (
-            "the level it last ran at"
-            if recorded
-            else "the level it last ran at — none: one call over the whole dataset"
-        )
+        # An empty recorded level is a real answer: the last run was one call
+        # over the whole dataset (records with no schema key). Spelled as
+        # for_each spells it — `None` iterates nothing, `[]` would mean every
+        # key. Only a missing history (`recorded is None`) falls through.
+        if recorded:
+            return recorded, "the level it last ran at"
+        return None, "the level it last ran at — none: one call over the whole dataset"
 
     type_names: set[str] = set()
     templates: list[list[str]] = []
@@ -1553,13 +1555,11 @@ def default_schema_level(
         # At least one bound input has a known level. Their union may be EMPTY
         # — a PathInput with no placeholder, a variable saved with no key —
         # and that is a real level, not an absence: once over the whole
-        # dataset, exactly as `for_each(schema_keys=[])` runs.
+        # dataset — `for_each(schema_keys=None)`, iterate nothing.
         inferred = _pq.finest_schema_keys(levels, schema_keys)
-        return inferred, (
-            "the finest level its inputs carry"
-            if inferred
-            else "the level its inputs carry — none: one call over the whole dataset"
-        )
+        if inferred:
+            return inferred, "the finest level its inputs carry"
+        return None, "the level its inputs carry — none: one call over the whole dataset"
 
     return schema_keys, "no history and no bound input to read a level from"
 
@@ -1855,12 +1855,12 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 "schemaLevel"
             )
             level, why = default_schema_level(db, fn_label, [target], stated=stated)
-            schema_iterables = {k: all_iterables[k] for k in level if k in all_iterables}
+            schema_iterables = {k: all_iterables[k] for k in (level or []) if k in all_iterables}
             logger.info(
                 "[execution] scope %s: '%s' iterates %s (%s)",
                 pipeline_id,
                 fn_label,
-                level,
+                level if level is not None else "nothing: one call",
                 why,
             )
             try:

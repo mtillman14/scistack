@@ -1033,3 +1033,19 @@ Now if a second `for_each` call runs with `low_hz=50`, new `FilteredEMG` records
 ## Related
 
 - [[variant-branch-param-pinning]] — `Variant(X, low_hz=20)` pins an input to a specific branch_param variant; `branch_params_filter` is threaded through `_load_input` exactly like `where=`.
+
+## `schema_keys`: `None` is one call, `[]` is every key (2026-09-19)
+
+`for_each(schema_keys=...)` reads like the per-key iterables: `subject=[]`
+means every subject, so `schema_keys=[]` means every schema key. `None` (the
+default, with no `schema_filter`) seeds no iteration at all and pools every
+row into ONE call — the whole-dataset operation. Nothing in between is
+spelled by emptiness. `+scidb/for_each.m` mirrors it: an option NOT GIVEN is
+`py.None`; given empty (`{}` / `string.empty`) is `py.list()`, distinguished
+by `opts.schema_keys_given` because `isempty` cannot tell them apart.
+
+The GUI's `execution_service.default_schema_level` returns the same
+spelling — a key list, or `None` for a once-per-dataset call — while the
+provenance readers (`recorded_schema_keys`, `variable_schema_keys`) answer a
+dataset-level record as `[]` (a level with no keys) and no history as `None`.
+The owner maps between the two; nothing else does.

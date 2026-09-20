@@ -413,7 +413,8 @@ def test_a_dataset_level_step_reruns_once_from_the_canvas(seeded, pipeline, push
     a once-per-dataset operation. Its history records an EMPTY level, and a
     canvas re-run with no Schema Level chosen must iterate nothing — one
     call, no new records — rather than once per cycle with the same input
-    handed to every call. `[]` is a level; `None` would have meant every key.
+    handed to every call. Spelled as for_each reads it: `schema_keys=None`
+    iterates nothing; `[]` would mean every key.
     """
     import logging
 
@@ -434,7 +435,7 @@ def test_a_dataset_level_step_reruns_once_from_the_canvas(seeded, pipeline, push
 
     _registry._functions["note_length"] = note_length
     # The Python-authored run: once over the dataset.
-    scidb.for_each(note_length, {"note": DatasetNote}, [NoteLength], schema_keys=[])
+    scidb.for_each(note_length, {"note": DatasetNote}, [NoteLength])
     before = _count(NoteLength)
     assert before == 1
 
@@ -442,4 +443,4 @@ def test_a_dataset_level_step_reruns_once_from_the_canvas(seeded, pipeline, push
         done = _run(seeded, "note_length", pushes)
     assert done["success"] is True, done
     assert _count(NoteLength) == before, "a faithful re-run adds nothing"
-    assert "iterating [] (" in caplog.text, caplog.text
+    assert "iterating nothing: one call (" in caplog.text, caplog.text

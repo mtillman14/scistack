@@ -498,9 +498,9 @@ class TestDatasetLevelDefault:
     """A once-per-dataset operation — a PathInput naming no schema key, a
     variable saved with none — implies NO iteration: one call. That is a
     level (`[]`), and is not the "nothing to go on" case that means every
-    key. `for_each(schema_keys=[])` pools everything into one call;
-    `schema_keys=None` iterates every key, so the two must never be
-    confused on the way to it."""
+    key. It is spelled the way `for_each` reads it: `schema_keys=None`
+    iterates nothing (one call), `schema_keys=[]` iterates every key — as
+    `subject=[]` means every subject."""
 
     def _target(self, **bindings):
         return {"constants": {}, "output_type": "X", "bindings": bindings}
@@ -522,7 +522,7 @@ class TestDatasetLevelDefault:
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(f=pathinput_binding("config"))]
         )
-        assert level == []
+        assert level is None
         assert "one call over the whole dataset" in why
 
     def test_a_dataset_level_variable_means_one_call(self, populated_db):
@@ -538,7 +538,7 @@ class TestDatasetLevelDefault:
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(x=variable_binding(["WholeDataset"]))]
         )
-        assert level == []
+        assert level is None
         assert "one call" in why
 
     def test_a_dataset_level_input_beside_a_finer_one_iterates_the_finer(

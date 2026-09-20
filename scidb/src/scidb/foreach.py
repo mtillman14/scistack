@@ -302,8 +302,12 @@ def for_each(
         schema_keys: Optional list of schema key names to iterate — structural
                     sugar for passing ``key=[]`` for each one by hand (each
                     auto-resolves to every distinct value in the database).
-                    Defaults to all schema keys. Cannot be combined with
-                    explicit **metadata_iterables. Implemented via scifor's
+                    ``[]`` iterates EVERY schema key, the same reading as
+                    ``subject=[]`` meaning every subject; ``None`` (the
+                    default, with no schema_filter) iterates nothing and
+                    pools every row into ONE call — the whole-dataset
+                    operation. Cannot be combined with explicit
+                    **metadata_iterables. Implemented via scifor's
                     ``expand_schema_keys()``, shared with scifor.for_each().
         locations: Optional ``scifor.LocationFilter`` (or its mapping form)
                     naming which schema locations to run: ragged ``include``
@@ -433,8 +437,15 @@ def for_each(
                 "schema_filter/schema_keys require a database connection, but no db "
                 "was provided and no global database is configured."
             )
+        # `schema_keys=[]` means EVERY key — the same reading as `subject=[]`
+        # ("all values of subject") — while `None` (with no schema_filter)
+        # never reaches here and pools every row into one call. The two are
+        # the whole-dataset operation and the full grid; nothing in between
+        # is spelled by emptiness.
         iterate_keys = (
-            schema_keys if schema_keys is not None else active_db.dataset_schema_keys
+            list(schema_keys)
+            if schema_keys is not None and len(list(schema_keys)) > 0
+            else active_db.dataset_schema_keys
         )
         # Shared with scifor.for_each(): seeds {key: []} for each iterated key,
         # and raises if metadata_iterables is already populated (mutual
