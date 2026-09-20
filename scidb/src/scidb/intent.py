@@ -689,3 +689,77 @@ def set_ambient_origin(origin: str) -> str:
         raise IntentError(f"{origin!r} is not an origin ({', '.join(ORIGIN_SURFACES)}).")
     _current_origin.set(origin)
     return origin
+
+
+# ---------------------------------------------------------------------------
+# The stored shape (read contract)
+# ---------------------------------------------------------------------------
+# The intent STORE is GUI-owned (scistack_gui.intent_store creates and writes
+# it), but its ROW SHAPE is this module's: the columns are Statement's
+# fields. Naming them here is what lets scidb's own inspector read the table
+# back without importing the GUI — a store that scidb could not read would
+# make "why does the data not reflect the canvas" unanswerable from the CLI.
+
+INTENT_TABLE = "_intent"
+INTENT_COLUMNS = (
+    "subject_kind",
+    "subject_ref",
+    "scope",
+    "aspect",
+    "aspect_key",
+    "value_json",
+    "origin",
+    "stated_at",
+)
+
+
+def statements_from_rows(rows: Iterable[tuple]) -> list[Statement]:
+    """Rows in ``INTENT_COLUMNS`` order → statements, skipping bookkeeping
+    rows and anything malformed (logged, never raised — a bad row must not
+    take the readable ones with it)."""
+    out: list[Statement] = []
+    for row in rows:
+        try:
+            kind, ref, scope, aspect, key, raw, origin, stated_at = row
+        except (TypeError, ValueError):
+            logger.warning("[intent] malformed intent row: %r", row)
+            continue
+        if kind not in SUBJECT_KINDS:
+            continue  # migration markers and the like
+        try:
+            value = json.loads(raw) if raw else None
+        except (TypeError, ValueError):
+            logger.warning("[intent] unparseable value on %s/%s: %r", kind, ref, raw)
+            continue
+        try:
+            out.append(
+                Statement(
+                    subject_kind=kind,
+                    subject_ref=ref,
+                    aspect=aspect,
+                    value=normalize(aspect, value),
+                    key=key or None,
+                    scope=scope or GLOBAL_SCOPE,
+                    surface=origin,
+                    stated_at=stated_at,
+                )
+            )
+        except IntentError as exc:
+            logger.warning("[intent] skipping row: %s", exc)
+    return out
+
+
+def load_statements_sql(duck, *, aspect: str | None = None) -> list[Statement]:
+    """Read the store through any object with ``_fetchall(sql, params)`` —
+    ``[]`` when the table does not exist (a database no GUI has opened)."""
+    cols = ", ".join(INTENT_COLUMNS)
+    sql = f"SELECT {cols} FROM {INTENT_TABLE}"
+    params: list = []
+    if aspect:
+        sql += " WHERE aspect = ?"
+        params.append(aspect)
+    try:
+        rows = duck._fetchall(sql, params)
+    except Exception:
+        return []
+    return statements_from_rows(rows)

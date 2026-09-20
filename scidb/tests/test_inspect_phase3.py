@@ -412,3 +412,59 @@ class TestCli:
             main(["--db", str(green_env[0]), "state", "bandpass3", "subject=S01"]) == 1
         )
         assert "--pathinput" in capsys.readouterr().err
+
+
+class TestIntent:
+    """`scidb intent <fn>` / `trace --intent`: intent vs fact from the CLI.
+
+    The green database has never been opened by a GUI, so it has no intent
+    store — the report shows fact alone, and says so. The store's read
+    contract is scidb's (`scidb.intent.INTENT_COLUMNS`), so when a table IS
+    present the inspector reads it without importing the GUI.
+    """
+
+    def test_fact_alone_when_no_store_exists(self, insp):
+        report = insp.intent("bandpass3")
+        assert report.function_name == "bandpass3"
+        assert report.statements == []
+        assert report.last_run is not None
+        text = render.render_intent(report)
+        assert "bandpass3" in text and "no statements" in text
+
+    def test_a_store_row_is_read_and_resolved(self, insp):
+        """A statement written in the GUI's table shape resolves against the
+        recorded fact, and a script origin reports it as not read."""
+        from scidb.intent import INTENT_COLUMNS, INTENT_TABLE
+
+        duck = insp._duck
+        duck._execute(
+            f"CREATE TABLE IF NOT EXISTS {INTENT_TABLE} ("
+            "subject_kind VARCHAR, subject_ref VARCHAR, scope VARCHAR, aspect VARCHAR, "
+            "aspect_key VARCHAR, value_json VARCHAR, origin VARCHAR, stated_at VARCHAR)"
+        )
+        duck._execute(
+            f"INSERT INTO {INTENT_TABLE} ({', '.join(INTENT_COLUMNS)}) VALUES "
+            "('call_site', 'fn__bandpass3__0123456789abcdef', 'global', 'columns', "
+            "'signal', '{\"columns\": [\"a\"], \"iterate\": false}', 'store', '2026')"
+        )
+        try:
+            as_gui = insp.intent("bandpass3", origin="gui")
+            assert any(
+                f.aspect == "columns" and f.key == "signal" and f.surface == "store"
+                for f in as_gui.fields
+            )
+            as_script = insp.intent("bandpass3", origin="script")
+            assert len(as_script.unread) == 1
+            assert "not read by a script run" in render.render_intent(as_script)
+        finally:
+            duck._execute(f"DROP TABLE {INTENT_TABLE}")
+
+    def test_cli_intent_and_trace_flag(self, green_env, capsys):
+        assert main(["--db", str(green_env[0]), "intent", "bandpass3"]) == 0
+        assert "intent vs fact" in capsys.readouterr().out
+        assert (
+            main(["--db", str(green_env[0]), "trace", "P3Feat", "subject=S01", "--intent"])
+            == 0
+        )
+        out = capsys.readouterr().out
+        assert "feature3" in out and "intent vs fact" in out

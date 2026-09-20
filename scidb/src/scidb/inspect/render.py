@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from .api import (
     DbOverview,
     ExclusionRecord,
+    IntentReport,
     NodeStateSummary,
     PickCandidate,
     ProvenanceTree,
@@ -943,3 +944,55 @@ def render_records(records: list[RecordSummary], schema_keys: list[str]) -> str:
             row.append(r.value_preview)
         rows.append(row)
     return format_table(headers, rows)
+
+
+def render_intent(report: IntentReport) -> str:
+    """Intent, fact and the Decision for one function, as text.
+
+    Three blocks, in the order a reader needs them: what the last run WAS
+    (origin), what each field RESOLVES to and from where, and the statements
+    this origin does not read. A field flagged ``lost`` — history recorded a
+    selection, the winner carries none — is the shape of a dropped selection
+    and is marked so it cannot be skimmed past.
+    """
+    from ..intent import describe_columns
+
+    lines = [f"{report.function_name} — intent vs fact (origin={report.origin}, scope={report.scope})"]
+    if report.last_run:
+        lines.append(
+            f"  last run: {report.last_run.get('timestamp') or '?'} "
+            f"origin={report.last_run.get('origin') or '?'}"
+        )
+    else:
+        lines.append("  last run: (none recorded)")
+
+    if not report.fields:
+        lines.append("  (no statements and no recorded fact)")
+    else:
+        rows = []
+        for f in report.fields:
+            if f.aspect == "columns":
+                shown = describe_columns(f.value)
+                recorded = describe_columns(f.recorded) if f.recorded else "-"
+            else:
+                shown = repr(f.value)
+                recorded = repr(f.recorded) if f.recorded is not None else "-"
+            rows.append(
+                [
+                    f"{f.aspect}" + (f".{f.key}" if f.key else ""),
+                    shown,
+                    f.surface + (f"@{f.scope}" if f.scope and f.surface != "history" else ""),
+                    recorded,
+                    "LOST" if f.lost else "",
+                ]
+            )
+        lines.append(format_table(["field", "resolves to", "from", "history recorded", ""], rows))
+
+    if report.unread:
+        lines.append(f"  not read by a {report.origin} run ({len(report.unread)} statement(s)):")
+        for s in report.unread:
+            key = f".{s['key']}" if s.get("key") else ""
+            lines.append(f"    {s['aspect']}{key} = {s['value']!r}  [{s['surface']}@{s['scope']}]")
+    if not report.statements:
+        lines.append("  (no statements in the intent store for this function)")
+    return "\n".join(lines)

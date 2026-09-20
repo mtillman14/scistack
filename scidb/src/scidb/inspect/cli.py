@@ -433,6 +433,21 @@ def _cmd_trace(insp: Inspector, args) -> None:
                 tree, style=_resolve_style(args), show_runs=args.runs
             )
         )
+    if getattr(args, "intent", False):
+        # Intent vs fact for every function in the traced chain, root first —
+        # "the data does not reflect the canvas" is usually one hop away.
+        seen: list[str] = []
+        for n in tree.nodes:
+            fn_name = getattr(n, "function_name", None)
+            if fn_name and fn_name not in seen:
+                seen.append(fn_name)
+        reports = [insp.intent(fn_name) for fn_name in seen]
+        if args.json:
+            _emit_json(reports)
+        else:
+            for report in reports:
+                print()
+                print(render.render_intent(report))
 
 
 def _cmd_report(insp: Inspector, args) -> None:
@@ -462,6 +477,14 @@ def _cmd_runs(insp: Inspector, args) -> None:
     else:
         print(render.render_runs_table(runs))
 
+
+
+def _cmd_intent(insp: Inspector, args) -> None:
+    report = insp.intent(args.fn, origin=args.origin, scope=args.scope)
+    if args.json:
+        _emit_json(report)
+    else:
+        print(render.render_intent(report))
 
 def _cmd_state(insp: Inspector, args) -> None:
     if args.pathinput:
@@ -683,6 +706,12 @@ def _add_commands(
         action="store_true",
         help="Append the execution audit (who ran it, when, where=).",
     )
+    p.add_argument(
+        "--intent",
+        action="store_true",
+        help="Append intent vs fact for every function in the chain: what the "
+        "canvas states, what provenance recorded, which wins (see `intent`).",
+    )
     p.set_defaults(_handler=_cmd_trace)
 
     p = sub.add_parser(
@@ -736,6 +765,23 @@ def _add_commands(
         "-n", "--limit", type=int, default=50, help="Maximum rows (default: 50)."
     )
     p.set_defaults(_handler=_cmd_runs)
+
+    p = sub.add_parser(
+        "intent",
+        parents=[parent],
+        help="Intent vs fact for one function: what the canvas states, what "
+        "provenance recorded, and which wins under a given run origin.",
+    )
+    p.add_argument("fn", help="Function name.")
+    p.add_argument(
+        "--origin",
+        default="gui",
+        choices=["gui", "script", "replay"],
+        help="Resolve as this kind of run would (default: gui). A script run "
+        "reads source only, so GUI statements show as 'not read'.",
+    )
+    p.add_argument("--scope", default="global", help="Pipeline scope (default: global).")
+    p.set_defaults(_handler=_cmd_intent)
 
     p = sub.add_parser(
         "state", parents=[parent], help="Green/red run state per pipeline function."

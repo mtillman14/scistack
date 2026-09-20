@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import functools
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -101,6 +101,42 @@ class RunRecord:
     origin: str | None = None
 
 
+
+
+@dataclass
+class IntentField:
+    """One resolved field of a call site: what wins, and what it beat."""
+
+    aspect: str
+    key: str | None
+    value: Any
+    surface: str  # store / source / history
+    scope: str | None
+    recorded: Any  # what provenance holds for this field, or None
+    lost: bool  # history recorded something and the winner carries nothing
+
+
+@dataclass
+class IntentReport:
+    """Intent, fact and the Decision for one function — the CLI's answer to
+    "why does the data not reflect the canvas?" (docs/claude/intent-and-fact.md).
+
+    ``statements`` is what the intent store holds for the function's call
+    sites; ``fact`` what provenance recorded for the same fields; ``fields``
+    the resolver's verdict per field under ``origin``; ``unread`` the
+    statements this origin does not read (a script run and the GUI store);
+    ``last_run`` the newest execution's origin, so "the canvas says X, the
+    last run was a script" is one line.
+    """
+
+    function_name: str
+    origin: str
+    scope: str
+    statements: list[dict] = field(default_factory=list)
+    fact: dict = field(default_factory=dict)
+    fields: list[IntentField] = field(default_factory=list)
+    unread: list[dict] = field(default_factory=list)
+    last_run: dict | None = None
 @dataclass
 class RunRef:
     """One execution that produced a trace node's record.
@@ -966,6 +1002,84 @@ class Inspector:
             )
             for run_id, ts, uid, fn_name, wc, origin, n in rows
         ]
+
+    @_timed
+    def intent(
+        self, fn: str, *, origin: str = "gui", scope: str = "global"
+    ) -> IntentReport:
+        """Intent, fact and the Decision for one function.
+
+        Statements come from the intent store when the database has one
+        (``scidb.intent.load_statements_sql``; a database no GUI has opened
+        has none, and the report then shows fact alone). Fact is what
+        provenance recorded for the same fields — the ``columns`` selectors
+        per parameter, the run options — and the resolver
+        (``scidb.intent.resolve``) says which wins under *origin* and what it
+        beat. A field whose winner carries nothing while history recorded a
+        selection is flagged ``lost``: the shape of a dropped selection.
+        """
+        from .. import intent as _intent
+        from .. import provenance_query as _pq
+
+        fn_name = getattr(fn, "__name__", fn)
+        prefix = f"fn__{fn_name}__"
+        statements = [
+            s
+            for s in _intent.load_statements_sql(self._duck)
+            if s.subject_kind == _intent.SUBJECT_CALL_SITE
+            and s.subject_ref.startswith(prefix)
+        ]
+
+        # Fact: the union of recorded selectors across the function's
+        # configs, and the run options of its newest configuration.
+        fact: dict = {}
+        selectors: dict = {}
+        run_options: dict = {}
+        for cfg in _pq.function_variant_configs(self._duck, fn_name):
+            for param, sel in (cfg.get("selectors") or {}).items():
+                parsed = _intent.parse_selector(sel)
+                if parsed:
+                    selectors.setdefault(param, parsed)
+            run_options = {
+                "distribute": bool(cfg.get("distribute")),
+                "as_table": list(cfg.get("as_table") or []),
+            }
+        if selectors:
+            fact[_intent.ASPECT_COLUMNS] = selectors
+        if run_options:
+            fact[_intent.ASPECT_RUN_OPTIONS] = run_options
+
+        plan = _intent.resolve(statements, fact, origin=origin, scope=scope)
+        decision = plan.decision
+        fields = [
+            IntentField(
+                aspect=f.aspect,
+                key=f.key,
+                value=f.value,
+                surface=f.surface,
+                scope=f.scope,
+                recorded=f.recorded,
+                lost=(not f.value) and bool(f.recorded),
+            )
+            for (_a, _k), f in sorted(
+                decision.fields.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
+            )
+        ]
+        last = _pq.latest_runs(self._duck, [fn_name]).get(fn_name)
+        return IntentReport(
+            function_name=fn_name,
+            origin=origin,
+            scope=scope,
+            statements=[asdict(s) for s in statements],
+            fact=fact,
+            fields=fields,
+            unread=[asdict(s) for s in decision.unread],
+            last_run=(
+                {"origin": last.get("origin"), "timestamp": _iso(last.get("timestamp"))}
+                if last
+                else None
+            ),
+        )
 
     @_timed
     def audit(
