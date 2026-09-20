@@ -2068,10 +2068,27 @@ def _for_each_prepare(
 
         # Update loaded_inputs with renamed DataFrame (or rewrap in Fixed)
         if is_fixed:
-            # For Fixed inputs, extract the single record_id and store it
-            # (Fixed inputs should have exactly one row after filtering)
-            if len(df) == 1:
-                fixed_rid_values[param_name] = str(df.iloc[0]["__record_id"])
+            # The one record a Fixed input pins. The loaded frame is the WHOLE
+            # variable (scifor applies the pin per call), so the pin's metadata
+            # is applied here to find it: a pin on a subject-level variable
+            # by `subject="01"` matches one of N rows. Before 2026-09-20 only
+            # a frame that was ALREADY one row counted, so a partial pin
+            # recorded no rid, no edge, and no `__rid_<param>` on the combo —
+            # the Fixed input was invisible to provenance and to the skip gate.
+            _pinned = df
+            for _k, _v in (getattr(data, "fixed_metadata", None) or {}).items():
+                if _k in _pinned.columns:
+                    _pinned = _pinned[_pinned[_k].astype(str) == str(_v)]
+            if len(_pinned) == 1:
+                fixed_rid_values[param_name] = str(_pinned.iloc[0]["__record_id"])
+            elif len(_pinned) > 1:
+                Log.warn(
+                    f"input '{param_name}' (Fixed): the pin "
+                    f"{getattr(data, 'fixed_metadata', {})} matches {len(_pinned)} "
+                    f"records, not one — no input edge can be recorded for it. "
+                    f"Pin every schema key of {getattr(data.data, '__name__', data.data)} "
+                    f"or narrow with where=."
+                )
             data.data = df_renamed
             Log.debug(
                 f"input '{param_name}' (Fixed): rid tracked "
@@ -3100,7 +3117,10 @@ def _for_each_save_resolved(
         # Compute Fixed input rids for the bipartite graph edges if not provided
         # (Fixed inputs contribute __graph_var_bindings just like variable inputs).
         fixed_rids_for_save = lineage_fixed_rids
-        if fixed_rids_for_save is None:
+        if not fixed_rids_for_save:
+            # Empty as well as None: Step 12 records a Fixed rid only when the
+            # pin resolves to one row of the loaded frame; the database lookup
+            # here is the fallback for anything it could not place.
             fixed_rids_for_save = _compute_fixed_input_rids(inputs, db)
             if fixed_rids_for_save:
                 Log.debug(

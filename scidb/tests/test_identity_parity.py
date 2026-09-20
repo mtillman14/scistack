@@ -158,6 +158,29 @@ class TestInvocationIdIsReconstructible:
         for_each(scaled, {"value": Wide, "factor": 2.0}, [Out], subject=[], trial=[], cycle=[])
         self._assert_parity(db)
 
+    def test_fixed_reference(self, db):
+        """A pinned reference record is an EDGE: without it the id cannot be
+        rebuilt, and until 2026-09-20 a partial pin recorded none."""
+        _seed()
+        Ref.save(pd.DataFrame({"r": [1.0]}), subject="01")
+        Ref.save(pd.DataFrame({"r": [2.0]}), subject="02")
+        for_each(
+            with_ref,
+            {"value": Wide, "ref": Fixed(Ref, subject="01")},
+            [Out],
+            subject=[],
+            trial=[],
+            cycle=[],
+        )
+        self._assert_parity(db)
+        edges = db._duck._fetchall(
+            "SELECT DISTINCT param_name FROM _invocation_input ii "
+            "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
+            "WHERE inv.function_name = ?",
+            ["with_ref"],
+        )
+        assert {p for (p,) in edges} == {"value", "ref"}, edges
+
 
 # ---------------------------------------------------------------------------
 # call_id: forward (before save) == backward (from records)
