@@ -25,23 +25,74 @@ suites, `tests/integration/test_dag_runs.py`.
 
 ## Stage 2 — `for_each`: three phases, one row→edges assembly
 
-* Introduce `RunState` (typed; the `state` object already half exists) and
-  extract `_prepare(...)`, `_execute(...)`, `_save(...)` from the 975-line
-  body. Pure signature moves first — no behaviour change — one commit.
-* `provenance_save.row_input_edges(row, rid_keys, fixed_rids,
-  combo_to_rids, selectors) -> list[(param, rid, selector)]`: the ONE
-  function that turns a result row into its input edges, used by both the
-  full-iteration and the aggregation paths. `__graph_var_bindings` is then
-  always set; the `__upstream` fallback in `_variable_bindings` becomes
-  dead and is removed.
-* **Guard:** `compute_invocation_id` must produce identical ids before and
-  after for every shape in Stage 1's parity suite — run it first, run it
-  last. `check_selector_round_trip` must never fire.
-* `_save_results`'s 17 parameters collapse to `(result_tbl, outputs,
-  state)`.
+*(rewritten 2026-09-20 after the parity suite's first two runs; the
+"first decision" is done — aggregation edges carry the real parameter
+name, `Fixed` is the edge — and the typed spine below is what the phase
+extraction is built on)*
 
-Verification: the whole scidb suite (this touches everything), one package
-at a time; `tests/integration`.
+### 2a — The typed spine: how a rid travels (do this first)
+
+Today a record id is carried through `foreach.py` as `__record_id` on a
+frame, `__rid_{param}` on a combo, `__rid_{param}_{i}` in `__upstream`, a
+bare string in the skip gate, and a `(param, rid, selector)` tuple in the
+graph — across SIXTEEN differently-named containers (`rid_keys`,
+`rid_to_bp`, `combo_to_rids`, `fixed_rid_values`, `lineage_fixed_rids`,
+…), each keyed by one of those spellings with nothing saying which. The
+`Fixed`-on-aggregation edge was missing for as long as the graph existed
+because the rid sat in one container (bare keys) while the save read
+another (prefixed keys, a different source) and no type told them apart.
+
+New leaf module `scidb/src/scidb/bindings.py` (no scidb imports; scifor
+may import it later for the MATLAB bridge):
+
+* `RID_PREFIX = "__rid_"`, `rid_column(param) -> str`,
+  `param_of(column) -> str` — the ONLY two places the prefix is spelled.
+  The 15 hand-rolled `key[len("__rid_"):]` slices become calls.
+* `InputKind` — `ITERATE` (a plain variable: every record at a location
+  is its own call), `PINNED` (`Fixed`: one rid, injected everywhere),
+  `LINEAGE_ONLY` (`ColumnSelection`: prunes, never expands),
+  `AGGREGATED` (records below the iterated level, pooled) — decided ONCE
+  at Step 12 and carried, so the save, the skip gate and the predictor
+  read a field instead of each re-deriving "is this Fixed?" with
+  `isinstance` + `hasattr("fixed_metadata")` (the predictor re-derives it
+  a fourth way today, from schema levels).
+* `Binding(param, rid, selector)` — a frozen dataclass replacing the
+  two-arity tuple `compute_invocation_id` accepts; `compute_invocation_id`
+  takes `Iterable[Binding]` and the tuple form is gone.
+* `InputBinding(param, kind, type_name, selector, rids: tuple[str, ...],
+  rid_to_bp)` — one input's whole story after Step 12.
+* `RunBindings` — `{param: InputBinding}` plus the per-combo view
+  (`for_combo(combo) -> list[Binding]`), which is the ONE row→edges
+  assembly: full iteration reads `__rid_*` off the combo, aggregation
+  reads the pooled set, pinned rids are appended, and NOTHING else builds
+  an edge list. `__graph_var_bindings` is written from it;
+  `_variable_bindings`' `__upstream` fallback goes.
+
+**Guard:** `test_identity_parity.py` before and after every commit of
+2a; `compute_invocation_id` must produce identical ids for every shape
+(the spelling of a `Binding` is the same bytes as the tuple).
+
+### 2b — Three phases over a typed `RunState`
+
+* `RunState` gains `bindings: RunBindings` and the sixteen containers
+  are retired one at a time (each retirement is a commit; each ends
+  green on the parity suite and `test_aggregation*`).
+* Extract `_prepare(...)`, `_execute(...)`, `_save(...)` from the 975-line
+  body — pure signature moves first, no behaviour change, one commit.
+* `_save_results`'s 17 parameters collapse to
+  `(result_tbl, outputs, state)`.
+
+### 2c — What stays stringly-typed, and why
+
+A newtype cannot reach inside a pandas column name, so `__rid_x` on a
+frame stays a string at the scifor boundary. 2a makes the boundary ONE
+place (`rid_column` / `param_of`) instead of fifteen; moving the binding
+off the frame entirely — scifor's filter asking `RunBindings.for_combo`
+rather than reading `__rid_*` columns — is the last step, and it is what
+retires the column convention for good. Do it after 2b, when there is
+one consumer left.
+
+Verification: the whole scidb suite, one file at a time; `tests/integration`.
 
 ## Stage 3 — Import cycles
 
@@ -187,3 +238,11 @@ this touches identity for every aggregation — but at minimum:
 `test_variant_pin_node_state.py`, `test_for_each_caching*.py`,
 `test_glue_identity.py`; GUI `test_execution_service.py`, `test_api.py`,
 `test_pipeline_call_sites.py`; `tests/integration` (all three files).
+
+### Stage 2, first decision — **green** 2026-09-20 (user-run)
+
+Three gaps closed on the way: a partially pinned `Fixed` input recorded
+no edge (one-row check → pin applied at Step 12), `{}` was not `None`
+(save fallback), and the fallback's `db` was `None` under the global
+database (Step 12's `fixed_rid_values` now reaches the save). Stage 2a
+(the typed spine) is next; nothing of it is built yet.
