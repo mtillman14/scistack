@@ -497,3 +497,5 @@ Verify: `cd /workspace/scidb && pytest tests/ -q`, then
 `cd /workspace/scimatlab && pytest tests/ -q` (the bridge reads
 `bindings.tracked_columns` / `pinned_rids` for its rename map and passes
 `endpoint_kind` at prepare), then `cd /workspace/tests/integration && pytest -q`.
+
+Stage 2b: **green on all four suites 2026-09-20** (user-run).
