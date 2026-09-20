@@ -389,19 +389,29 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
         inv_rows = _chunked_in(
             duck,
             "SELECT io.output_record_id, io.invocation_id, inv.function_name, "
-            "inv.function_hash, inv.distribute, inv.as_table "
+            "inv.function_hash, inv.distribute, inv.as_table, inv.for_columns "
             "FROM _invocation_output io "
             "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
             "WHERE io.output_record_id IN ({ph})",
             new_records,
         )
-        for out_rid, inv_id, fn_name, fn_hash, distribute, as_table in inv_rows:
+        for (
+            out_rid,
+            inv_id,
+            fn_name,
+            fn_hash,
+            distribute,
+            as_table,
+            for_columns,
+        ) in inv_rows:
             prev = rec_to_inv.get(out_rid)
             if prev is None or inv_id < prev[0]:
                 rec_to_inv[out_rid] = (inv_id, fn_name)
             inv_fn_name[inv_id] = fn_name
             inv_fn_hash[inv_id] = fn_hash
-            inv_run_options[inv_id] = run_options_label(distribute, as_table)
+            inv_run_options[inv_id] = run_options_label(
+                distribute, as_table, for_columns
+            )
 
         # 2) inputs for the newly discovered invocations (skip ones already loaded).
         inv_ids = list(
@@ -489,7 +499,7 @@ def branch_params_batch(duck, record_ids, max_depth: int = 20) -> dict:
     return out
 
 
-def run_options_label(distribute, as_table) -> str:
+def run_options_label(distribute, as_table, for_columns=None) -> str:
     """One string for an invocation's identity-bearing run options.
 
     ``distribute`` and ``as_table`` are the two ``for_each`` flags folded into
@@ -503,11 +513,24 @@ def run_options_label(distribute, as_table) -> str:
     appended only when something is aggregated — the common no-options case
     reads as ``distribute=false`` rather than as an empty string, because it is
     a level a user will see in a dropdown next to its alternative.
+
+    ``for_columns=[param]`` joins them (2026-09-19). It is an execution MODE
+    like its two siblings — "run the function once per column and reassemble"
+    — and it was the only one not reported anywhere, which is how it stayed
+    invisible while being silently dropped. Unlike them it is NOT a separate
+    identity term: the per-param selector already carries ``iterate`` and
+    ``compute_invocation_id`` folds that in, so adding it again would count
+    one fact twice. It IS in this label, because two records at one location
+    — one per-column, one whole-table — are different runs a reader has to be
+    able to tell apart.
     """
     names = sorted(str(x) for x in (as_table or ()))
+    per_col = sorted(str(x) for x in (for_columns or ()))
     label = f"distribute={'true' if distribute else 'false'}"
     if names:
         label += f", as_table=[{', '.join(names)}]"
+    if per_col:
+        label += f", for_columns=[{', '.join(per_col)}]"
     return label
 
 
@@ -518,11 +541,13 @@ def invocation_run_options_batch(duck, invocation_ids) -> dict:
         return {}
     rows = _chunked_in(
         duck,
-        "SELECT invocation_id, distribute, as_table FROM _invocation "
+        "SELECT invocation_id, distribute, as_table, for_columns FROM _invocation "
         "WHERE invocation_id IN ({ph})",
         ids,
     )
-    return {inv_id: run_options_label(dist, at) for inv_id, dist, at in rows}
+    return {
+        inv_id: run_options_label(dist, at, fc) for inv_id, dist, at, fc in rows
+    }
 
 
 def run_option_axes(duck, fn_names) -> dict:
@@ -542,13 +567,13 @@ def run_option_axes(duck, fn_names) -> dict:
         return {}
     rows = _chunked_in(
         duck,
-        "SELECT DISTINCT function_name, distribute, as_table FROM _invocation "
-        "WHERE function_name IN ({ph})",
+        "SELECT DISTINCT function_name, distribute, as_table, for_columns "
+        "FROM _invocation WHERE function_name IN ({ph})",
         names,
     )
     labels: dict = {}
-    for fn_name, dist, at in rows:
-        labels.setdefault(fn_name, set()).add(run_options_label(dist, at))
+    for fn_name, dist, at, fc in rows:
+        labels.setdefault(fn_name, set()).add(run_options_label(dist, at, fc))
     out = {fn: sorted(levels) for fn, levels in labels.items() if len(levels) > 1}
     if out:
         logger.info(
@@ -585,17 +610,18 @@ def current_run_options(duck, fn_names) -> dict:
         return {}
     rows = _chunked_in(
         duck,
-        "SELECT inv.function_name, inv.distribute, inv.as_table, MAX(rs.timestamp) "
+        "SELECT inv.function_name, inv.distribute, inv.as_table, inv.for_columns, "
+        "MAX(rs.timestamp) "
         "FROM _invocation inv "
         "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
         "JOIN _record_save rs ON rs.record_id = io.output_record_id "
         "WHERE inv.function_name IN ({ph}) "
-        "GROUP BY inv.function_name, inv.distribute, inv.as_table",
+        "GROUP BY inv.function_name, inv.distribute, inv.as_table, inv.for_columns",
         names,
     )
     newest: dict = {}  # fn -> (timestamp, label)
-    for fn_name, dist, at, ts in rows:
-        label = run_options_label(dist, at)
+    for fn_name, dist, at, fc, ts in rows:
+        label = run_options_label(dist, at, fc)
         # Label breaks a timestamp tie deterministically, as `_order_versions`
         # does with the hash.
         candidate = (ts or "", label)
@@ -2026,7 +2052,21 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     # folded into invocation_id, so two runs differing only by a
                     # flag are two variants) — it was simply never reported, so
                     # `scidb variants` showed them as indistinguishable rows.
-                    "run_options": run_options_label(distribute, at),
+                    # `for_columns` is derived from the selectors right here
+                    # rather than read from `_invocation.for_columns`: one
+                    # source of truth (the selector), so the reported mode can
+                    # never disagree with the selection it describes, and a
+                    # record written before the column existed still reports
+                    # correctly.
+                    "run_options": run_options_label(
+                        distribute,
+                        at,
+                        sorted(
+                            p
+                            for p, s in selectors.items()
+                            if isinstance(s, dict) and s.get("iterate")
+                        ),
+                    ),
                     # {param: [glue node name, ...]} — the reshaping this call
                     # site interposed on its inputs. Part of the variant so a
                     # GUI target derived from history re-runs WITH its glue.

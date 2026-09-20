@@ -317,3 +317,33 @@ combo (no variant ambiguity), and an identical re-run still hits cache.
   raw `.data` value (combined-call lineage, parity with Python). Per-column
   function-hash lineage is intentionally not recorded.
 ```
+
+## `for_columns` as a run option (2026-09-19)
+
+`iterate` is an execution MODE recorded inside a column list. Its siblings
+`distribute` and `as_table` are first class — `_invocation` columns, folded
+into `invocation_id`, reported by `pipeline_variants`, shown in the GUI's Run
+options — and that is why they never got lost and this one did (it reached
+storage as "no selection" on the aggregation save path; see
+`docs/claude/input-binding-round-trip.md`).
+
+It now joins them, with ONE deliberate difference:
+
+* **`_invocation.for_columns`** (`VARCHAR[]`) records which params ran once
+  per column. Added by an additive backfill, like `_invocation_input.selector`
+  before it.
+* **`run_options_label`** appends `, for_columns=[param]`, so two records at
+  one location — one per-column, one whole-table — are distinguishable in
+  `is_latest`, in the `Run:<fn>` plot axis and in `Variant(...,
+  run_options=...)`. They were indistinguishable before.
+* **`pipeline_variants[].run_options`** reports it, derived from the edges'
+  selectors rather than read from the column, so a record written before the
+  column existed still reports correctly and the two can never disagree.
+* **The GUI's Run options section** states "Run once per column", read-only,
+  naming the params and pointing at the Inputs section where it is set.
+
+**Not an identity term.** `compute_invocation_id` already folds in each
+input's selector, and `iterate` lives inside that selector — so adding a
+separate identity term would count one fact twice and re-identify every
+per-column call ever recorded, for no gain. The column is descriptive; the
+selector remains the source of truth, and `for_columns` is derived from it.

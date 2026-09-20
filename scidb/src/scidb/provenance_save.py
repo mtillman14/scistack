@@ -438,6 +438,7 @@ def record_run(
 
     import time
 
+    from .intent import parse_selector
     from .log import Log
 
     timings: dict[str, float] = {}
@@ -541,6 +542,19 @@ def record_run(
             inv_id = compute_invocation_id(
                 meta.get("__fn_hash") or "", as_table, distribute, bindings
             )
+            # Which params ran once per column, DERIVED from the edges'
+            # selectors rather than carried separately — one source of truth,
+            # so the column can never disagree with the selector it describes.
+            # Descriptive only: `iterate` is already inside the selector that
+            # compute_invocation_id folds in, so recording it again as an
+            # identity term would count the same fact twice.
+            for_columns = sorted(
+                {
+                    param
+                    for param, _rid, selector in var_b
+                    if (parse_selector(selector) or {}).get("iterate")
+                }
+            )
             # Store NULL (not []) for "no aggregation" — avoids empty-list bind
             # ambiguity on the VARCHAR[] column; identity hashing treats them alike.
             invocation_rows[inv_id] = (
@@ -549,6 +563,7 @@ def record_run(
                 fn_hash,
                 as_table or None,
                 distribute,
+                for_columns or None,
             )
             for param, rid, selector in bindings:
                 input_edges[(inv_id, param, rid)] = selector
@@ -872,6 +887,7 @@ def _commit_graph(
                     "function_hash",
                     "as_table",
                     "distribute",
+                    "for_columns",
                 ),
                 invocation_rows.values(),
                 conflict_cols=["invocation_id"],

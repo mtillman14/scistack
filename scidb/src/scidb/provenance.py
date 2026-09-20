@@ -472,7 +472,8 @@ def ensure_provenance_tables(duck) -> None:
             function_name VARCHAR NOT NULL,
             function_hash VARCHAR NOT NULL,
             as_table      VARCHAR[],
-            distribute    BOOLEAN DEFAULT FALSE
+            distribute    BOOLEAN DEFAULT FALSE,
+            for_columns   VARCHAR[]
         )
     """)
 
@@ -564,6 +565,31 @@ def ensure_provenance_tables(duck) -> None:
     except Exception:
         logger.debug(
             "ensure_provenance_tables: column backfill check skipped", exc_info=True
+        )
+
+    # Backfill: ``for_columns`` on _invocation — which params ran once per
+    # column. Purely DESCRIPTIVE: it is derived from the edges' selectors and
+    # is NOT folded into ``invocation_id`` (the selector already is, so adding
+    # it would count the same fact twice and re-identify every per-column call
+    # ever recorded). It exists so a run-option query does not have to parse
+    # selector JSON to answer "did this run once per column?".
+    try:
+        inv_cols = {
+            r[0]
+            for r in duck._fetchall(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = '_invocation'"
+            )
+        }
+        if "for_columns" not in inv_cols:
+            duck._execute("ALTER TABLE _invocation ADD COLUMN for_columns VARCHAR[]")
+            logger.debug(
+                "ensure_provenance_tables: added for_columns column to _invocation"
+            )
+    except Exception:
+        logger.debug(
+            "ensure_provenance_tables: for_columns backfill check skipped",
+            exc_info=True,
         )
 
     # Indexes for upward/downward traversal (the recursive CTEs in §6/§8 join

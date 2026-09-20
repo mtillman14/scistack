@@ -763,6 +763,28 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
           <span style={styles.optionText}>As table</span>
           <span style={styles.optionHint}>Keep schema columns in DataFrames</span>
         </label>
+
+        {/* `for_columns` is an execution MODE, exactly like its two siblings
+            above — "call the function once per column and reassemble" — but
+            it is SET per input, on the Inputs section, because it names which
+            input iterates. Stating it here is what makes it visible where a
+            user looks for modes; it stayed invisible for as long as it lived
+            only inside a column list, which is how it got silently dropped
+            (docs/claude/intent-and-fact.md, plan Stage 4). Read-only on
+            purpose: one place to change it, one place to see it. */}
+        {Object.entries(columnSelections).some(([, sel]) => sel?.iterate) && (
+          <div style={styles.optionLabel}>
+            <span style={{ ...styles.checkbox, visibility: 'hidden' }} />
+            <span style={styles.optionText}>Run once per column</span>
+            <span style={styles.optionHint}>
+              {Object.entries(columnSelections)
+                .filter(([, sel]) => sel?.iterate)
+                .map(([param]) => param)
+                .join(', ')}
+              {' — set on the Inputs section'}
+            </span>
+          </div>
+        )}
       </section>
 
       {/* The same picker the plotting tab opens. `nodeId` switches its tree to
