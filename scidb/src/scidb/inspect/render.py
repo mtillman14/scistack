@@ -658,12 +658,16 @@ def render_runs_table(runs: list[RunRecord]) -> str:
     headers = ["timestamp", "user", "function"]
     if has_run_meta:
         headers.append("invocations")
+        # Which surfaces the run read (gui / script / replay). "?" for a row
+        # older than the column: unknown, never assumed.
+        headers.append("origin")
     headers.append("where")
     rows = []
     for r in runs:
         row = [r.timestamp, r.user_id, r.function_name]
         if has_run_meta:
             row.append(r.n_invocations)
+            row.append(r.origin or "?")
         row.append(r.where_clause or "-")
         rows.append(row)
     return format_table(headers, rows)

@@ -96,6 +96,9 @@ class RunRecord:
     where_clause: str | None  # display-only by design — never parsed
     run_id: str | None = None  # set by runs(); audit rows have no run_id
     n_invocations: int | None = None
+    # Which surfaces the run read — gui / script / replay (rule 3 of
+    # docs/claude/intent-and-fact.md); None on rows older than the column.
+    origin: str | None = None
 
 
 @dataclass
@@ -942,11 +945,12 @@ class Inspector:
         params.append(int(limit))
         rows = self._duck._fetchall(
             "SELECT r.run_id, r.timestamp, r.user_id, r.function_name, "
-            "r.where_clause, COUNT(ri.invocation_id) "
+            "r.where_clause, r.origin, COUNT(ri.invocation_id) "
             "FROM _run r "
             "LEFT JOIN _run_invocation ri ON ri.run_id = r.run_id "
             + where
-            + "GROUP BY r.run_id, r.timestamp, r.user_id, r.function_name, r.where_clause "
+            + "GROUP BY r.run_id, r.timestamp, r.user_id, r.function_name, "
+            "r.where_clause, r.origin "
             "ORDER BY r.timestamp DESC LIMIT ?",
             params,
         )
@@ -958,8 +962,9 @@ class Inspector:
                 where_clause=wc,
                 run_id=run_id,
                 n_invocations=int(n),
+                origin=origin,
             )
-            for run_id, ts, uid, fn_name, wc, n in rows
+            for run_id, ts, uid, fn_name, wc, origin, n in rows
         ]
 
     @_timed
