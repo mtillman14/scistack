@@ -158,8 +158,9 @@ def compute_invocation_id(
         as_table: Resolved aggregated param names. Order-insensitive (sorted in).
         distribute: Post-call fan-out flag.
         input_bindings: Iterable of input edges, one per realized input (variable
-            *and* constant). Each is ``(param_name, input_record_id)`` or
-            ``(param_name, input_record_id, selector)``. ``selector`` qualifies
+            *and* constant): ``bindings.Binding`` objects, or the legacy
+            ``(param_name, input_record_id)`` / ``(param_name, input_record_id,
+            selector)`` tuples they replace. ``selector`` qualifies
             wrappers that change *which* data is consumed without changing the
             record — notably ``ColumnSelection`` (e.g. ``{"columns": [...]}``) —
             so two calls selecting different columns of the same record get
@@ -169,13 +170,14 @@ def compute_invocation_id(
     its whole effect on the computation is the surviving input set = these very
     bindings (see §10.1). Re-running the same call reproduces this id exactly.
     """
+    # Every edge is a ``bindings.Binding``; the two tuple arities the caller
+    # may still hand in are coerced (same bytes — the parity suite pins it).
+    from .bindings import Binding
+
     norm: list[tuple[str, str, str]] = []
     for b in input_bindings:
-        if len(b) == 3:
-            param, rid, selector = b
-        else:
-            (param, rid), selector = b, None
-        norm.append((str(param), str(rid), "" if selector is None else str(selector)))
+        edge = Binding.coerce(b)
+        norm.append((edge.param, edge.rid, "" if edge.selector is None else edge.selector))
     bindings = sorted(norm)
     parts = [
         f"fn_hash:{function_hash}",

@@ -30,7 +30,7 @@ from typing import Any
 
 from scicanonicalhash import canonical_hash
 
-from .bindings import param_of
+from .bindings import Binding, param_of
 from .provenance import (
     CONSTANT_TYPE,
     PATHINPUT_TYPE,
@@ -263,8 +263,9 @@ def _parse_json_dict(val: Any) -> dict:
     return {}
 
 
-def _variable_bindings(meta: dict) -> list[tuple[str, str, str | None]]:
-    """Variable input edges as ``(param_name, record_id, selector)`` triples.
+def _variable_bindings(meta: dict) -> "list[Binding]":
+    """Variable input edges as ``bindings.Binding``s (``param``, ``rid``,
+    ``selector``).
 
     Prefers ``__graph_var_bindings`` — the *complete* per-row binding set the
     save path assembles from every consumed input record (variables, Fixed,
@@ -279,7 +280,7 @@ def _variable_bindings(meta: dict) -> list[tuple[str, str, str | None]]:
             param, rid, selector = entry
             if rid is None:
                 continue
-            out.append((param, str(rid), selector))
+            out.append(Binding(str(param), str(rid), selector))
         return out
 
     # Fallback for a meta with no `__graph_var_bindings` — since 2026-09-20
@@ -308,8 +309,7 @@ def _variable_bindings(meta: dict) -> list[tuple[str, str, str | None]]:
     for key, rid in upstream.items():
         if rid is None:
             continue
-        param = param_of(key)
-        out.append((_fold(param), str(rid), None))
+        out.append(Binding(_fold(param_of(key)), str(rid), None))
     return out
 
 
@@ -375,13 +375,13 @@ def invocation_id_for_meta(meta: dict) -> str:
     var_b = _variable_bindings(meta)
     const_b = _constant_bindings(meta)
     loadable_params = list(_parse_json_dict(meta.get("__inputs")).keys()) or [
-        p for p, _r, _s in var_b
+        b.param for b in var_b
     ]
     as_table = _normalize_as_table(meta, loadable_params)
     distribute = bool(meta.get("__distribute", False))
-    bindings: list[tuple[str, str, str | None]] = list(var_b)
+    bindings: list[Binding] = list(var_b)
     for param, value in const_b.items():
-        bindings.append((param, compute_constant_record_id(value), None))
+        bindings.append(Binding(param, compute_constant_record_id(value), None))
     return compute_invocation_id(
         meta.get("__fn_hash") or "", as_table, distribute, bindings
     )
@@ -518,25 +518,24 @@ def record_run(
             fn_name = meta.get("__fn") or function_name or "unknown"
             fn_hash = meta.get("__fn_hash") or ""
 
-            var_b = _variable_bindings(meta)  # list of (param, rid, selector)
+            var_b = _variable_bindings(meta)  # list[Binding]
             const_b = _constant_bindings(meta)
             loadable_params = list(_parse_json_dict(meta.get("__inputs")).keys()) or [
-                p for p, _r, _s in var_b
+                b.param for b in var_b
             ]
             as_table = _normalize_as_table(meta, loadable_params)
             distribute = bool(meta.get("__distribute", False))
 
             # Assemble the full binding set (variables + constants) and the
-            # constant entity/value rows it implies. Bindings are
-            # (param, record_id, selector) triples; constants carry no selector.
-            bindings: list[tuple[str, str, str | None]] = list(var_b)
+            # constant entity/value rows it implies; constants carry no selector.
+            bindings: list[Binding] = list(var_b)
             for param, value in const_b.items():
                 # canonical_hash drives the record id too, so hash once and derive
                 # the id from it instead of calling compute_constant_record_id
                 # (which would re-hash the value).
                 ch = canonical_hash(value)
                 crid = constant_record_id_from_hash(ch)
-                bindings.append((param, crid, None))
+                bindings.append(Binding(param, crid, None))
                 constant_rows[crid] = (
                     crid,
                     constant_value_repr(value),
@@ -564,9 +563,9 @@ def record_run(
             # identity term would count the same fact twice.
             for_columns = sorted(
                 {
-                    param
-                    for param, _rid, selector in var_b
-                    if (parse_selector(selector) or {}).get("iterate")
+                    b.param
+                    for b in var_b
+                    if (parse_selector(b.selector) or {}).get("iterate")
                 }
             )
             # Store NULL (not []) for "no aggregation" — avoids empty-list bind
@@ -579,8 +578,8 @@ def record_run(
                 distribute,
                 for_columns or None,
             )
-            for param, rid, selector in bindings:
-                input_edges[(inv_id, param, rid)] = selector
+            for b in bindings:
+                input_edges[(inv_id, b.param, b.rid)] = b.selector
 
             # PathInput-spec edges: config-level (template+root_folder), recorded as
             # distinctly-typed input records so variant queries can surface them.
