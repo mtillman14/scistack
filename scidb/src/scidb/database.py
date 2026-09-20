@@ -4363,36 +4363,9 @@ class DatabaseManager:
                         }
                     }
         """
-        import re
         from collections import defaultdict
 
-        def _parse_path_input(value: str) -> dict | None:
-            """Parse PathInput from __inputs value string."""
-            # New JSON format
-            if value.startswith("{"):
-                try:
-                    parsed = json.loads(value)
-                    if parsed.get("__type") == "PathInput":
-                        return {
-                            "template": parsed["template"],
-                            "root_folder": parsed.get("root_folder"),
-                        }
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-            # Legacy repr format: PathInput('...', root_folder=PosixPath('...'))
-            if value.startswith("PathInput("):
-                m = re.match(r"PathInput\('([^']*)'", value)
-                if m:
-                    template = m.group(1)
-                    root_match = re.search(
-                        r"root_folder=(?:Posix|Windows|Pure\w*)?Path\('([^']*)'\)",
-                        value,
-                    )
-                    root = root_match.group(1) if root_match else None
-                    return {"template": template, "root_folder": root}
-
-            return None
+        from .provenance import parse_path_input_spec as _parse_path_input
 
         # Fetch base variant data
         variants = self.list_pipeline_variants()

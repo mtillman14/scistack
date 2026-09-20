@@ -29,12 +29,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..exceptions import NotFoundError
 from ..log import Log
+from ..provenance import parse_path_input_spec
 
 if TYPE_CHECKING:
     from ..database import DatabaseManager
@@ -113,36 +113,8 @@ def var_node_id(name: str) -> str:
 
 
 def parse_path_input(value: str) -> dict | None:
-    """If *value* (an input_types entry) represents a PathInput spec, return
-    ``{"template": ..., "root_folder": ...}``, else None.
-
-    Ported from scistack-gui ``domain/graph_builder.parse_path_input``
-    (owning-layer move). Handles the ``PathInput.to_key()`` JSON format and
-    the legacy ``PathInput('...')`` repr format.
-    """
-    if value.startswith("{"):
-        try:
-            parsed = json.loads(value)
-            if parsed.get("__type") == "PathInput":
-                return {
-                    "template": parsed["template"],
-                    "root_folder": parsed.get("root_folder"),
-                }
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    if value.startswith("PathInput("):
-        m = re.match(r"PathInput\('([^']*)'", value)
-        if m:
-            root_match = re.search(
-                r"root_folder=(?:Posix|Windows|Pure\w*)?Path\('([^']*)'\)", value
-            )
-            return {
-                "template": m.group(1),
-                "root_folder": root_match.group(1) if root_match else None,
-            }
-
-    return None
+    """``scidb.provenance.parse_path_input_spec`` under this module's name."""
+    return parse_path_input_spec(value)
 
 
 def _value_str(value) -> str:

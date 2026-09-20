@@ -29,16 +29,15 @@ can be pinned by unit tests without a database.
 
 **Deliberately not part of the binding's identity.** ``variable_types_view``
 still returns bare type names, so ``graph_builder.wiring_id`` and
-``variant_resolver.compute_call_id`` are untouched by a column pick. That
-asymmetry is load-bearing rather than an oversight: scidb's FORWARD
-``to_call_id`` does fold ``ColumnSelection.to_key()`` into ``__inputs``, but
-the GUI never sees the forward id — provenance stores an input edge as
-``(param -> record -> variable_type)`` with no trace of the columns, so
-``provenance_query.pipeline_variants`` reconstructs ``__inputs = {"table_in":
-"Trials"}`` and the canvas node id is built from THAT. Feeding columns into
-the GUI's ``compute_call_id`` would predict an id no record ever carries and
-silently break combo hiding on every column-selected node. See
-``docs/claude/column-selection.md`` §From the GUI.
+``variant_resolver.compute_call_id`` are untouched by a column pick: which
+columns a call reads is INVOCATION identity (the edge's selector), not
+call-site identity — provenance stores an input edge as ``(param -> record
+-> variable_type)``, ``pipeline_variants`` reconstructs ``__inputs =
+{"table_in": "Trials"}``, the canvas node id is built from THAT, and since
+2026-09-20 scidb's forward ``to_call_id`` hashes the same call-site view
+(``ForEachConfig.call_site_inputs``). Forward, backward and the GUI's
+prediction agree, and ``scidb/tests/test_identity_parity.py`` keeps it so.
+See ``docs/claude/column-selection.md`` §From the GUI.
 """
 
 from __future__ import annotations

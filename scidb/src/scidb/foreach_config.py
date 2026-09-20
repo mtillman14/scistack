@@ -238,8 +238,61 @@ class ForEachConfig:
         Used to disambiguate records produced by the same function invoked
         from multiple call sites — without this, function_name alone collides
         when distinguishing one call site's output from another's.
+
+        **Forward must equal backward.** This id is compared against
+        ``provenance_query.config_call_id`` — the same recipe run over what
+        the graph RECORDED (``param -> record -> variable type``) — by
+        ``check_node_state`` when a pipeline step scopes its state to its own
+        call site. The graph keeps no trace of a column selection on an input
+        edge beyond the selector (which is invocation identity, not call-site
+        identity), so ``__inputs`` here is the CALL-SITE view: a
+        ``ColumnSelection`` contributes the type it wraps. Before 2026-09-20
+        it contributed ``to_key()`` (the columns), the forward id never
+        matched any recorded config, and a column-selected pipeline step
+        planned red forever. ``to_version_keys`` is unchanged — there the
+        columns MUST fork the version key so a column change re-runs.
         """
-        return call_id_from_version_keys(self.to_version_keys())
+        keys = dict(self.to_version_keys())
+        call_site = self.call_site_inputs()
+        if call_site:
+            keys["__inputs"] = call_site
+        else:
+            keys.pop("__inputs", None)
+        return call_id_from_version_keys(keys)
+
+    def call_site_inputs(self) -> dict:
+        """``{param: identity}`` as the call SITE sees it — the shape
+        ``provenance_query.config_from_inputs`` builds from live inputs and
+        ``pipeline_variants`` reconstructs from stored edges.
+
+        A ``ColumnSelection`` is the type it wraps: which columns a call reads
+        is invocation identity (the edge's selector), not call-site identity
+        (the canvas draws one node for ``Var`` and ``Var["a"]``). Every other
+        loadable spec keeps its ``to_key()`` — ``Fixed`` included, whose
+        metadata forks the forward id today while the backward id collapses
+        it; that disagreement is pinned as an expected failure in
+        ``scidb/tests/test_identity_parity.py`` pending a decision.
+        """
+        from scifor import ColumnSelection, PathInput
+
+        from .foreach import _is_loadable
+
+        result = {}
+        for name in sorted(self.inputs):
+            spec = self.inputs[name]
+            if isinstance(spec, ColumnSelection) and isinstance(
+                getattr(spec, "data", None), type
+            ):
+                result[name] = spec.data.__name__
+                continue
+            if _is_loadable(spec) or isinstance(spec, PathInput):
+                if hasattr(spec, "to_key"):
+                    result[name] = spec.to_key()
+                elif isinstance(spec, type):
+                    result[name] = spec.__name__
+                else:
+                    result[name] = repr(spec)
+        return result
 
     def _get_direct_constants(self) -> dict:
         """Return scalar constant inputs (non-loadable values).

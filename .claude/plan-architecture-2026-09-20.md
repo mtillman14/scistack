@@ -102,3 +102,35 @@ Verification: `test_intent_store.py`, `test_api.py` hypothesis tests,
 
 Items 7 (MATLAB as a bridge), 8 (`DatabaseManager` split), 9 (frontend), 10
 (migrations) — each its own plan when taken up.
+
+---
+
+## Status
+
+### Stage 1 — built 2026-09-20, tests unrun
+
+* `scidb.provenance.compute_wiring_id` / `parse_path_input_spec` /
+  `strip_path_input_specs` are the owners; `graph_builder.wiring_id`,
+  `parse_path_input`, `strip_path_input_params` are re-exports, and
+  `scidb.inspect.graph` + `scidb.database` dropped their copies (THREE
+  copies of the PathInput spec parser existed).
+* Writing the call_id parity test exposed a latent bug: the forward
+  `ForEachConfig.to_call_id` folded `ColumnSelection.to_key()` (the columns)
+  into `__inputs` while the backward `config_call_id` uses the bare type —
+  so `check_node_state(call_id=manifest["call_id"])` never matched a
+  column-selected pipeline step, which planned red forever. Fixed:
+  `to_call_id` hashes `call_site_inputs()` (a ColumnSelection is the type it
+  wraps); `to_version_keys` is unchanged so a column change still re-runs.
+* **Decision needed (pinned as `xfail(strict=True)` in
+  `test_identity_parity.py::TestCallIdForwardEqualsBackward::test_fixed`):**
+  `Fixed(subject=1)` vs `Fixed(subject=2)` forks the forward call_id
+  (`test_unified_modifier_classes::test_different_fixed_metadata_forks_call_id`)
+  but the backward id collapses them (the pinned record is an edge, not a
+  config). One call site or two? The canvas says one.
+* Not unified: `scidb.inspect.graph._step_id` has its OWN wiring key for
+  report step ids (a fourth identity, display-only). Noted, not touched.
+
+Verify: `scidb/tests/test_identity_parity.py`, `test_unified_modifier_classes.py`,
+`test_parameter.py`, `test_state*.py`; GUI `test_binding_identity.py`,
+`test_column_selection_binding.py`, `test_pipeline_call_sites.py`, `test_graph_builder.py`;
+`tests/integration/test_dag_runs.py`.

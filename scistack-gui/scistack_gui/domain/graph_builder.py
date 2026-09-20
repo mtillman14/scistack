@@ -7,12 +7,14 @@ entirely on plain Python data structures (dicts, lists, sets, strings).
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+
+from scidb.provenance import compute_wiring_id as _compute_wiring_id
+from scidb.provenance import parse_path_input_spec as _parse_path_input_spec
+from scidb.provenance import strip_path_input_specs as _strip_path_input_specs
 
 logger = logging.getLogger(__name__)
 
@@ -280,63 +282,25 @@ _STATE_WORST_ORDER = {"red": 0, "pending": 1, "green": 2}
 
 
 def strip_path_input_params(input_params: dict) -> dict:
-    """*input_params* without the entries that are really PathInput specs.
-
-    A raw ``list_pipeline_variants()`` row records a PathInput-fed parameter
-    inside ``input_types``, right alongside genuine variable inputs.
-    ``aggregate_variants`` partitions it out into ``AggregatedData.path_inputs``
-    instead, so the canvas never sees it as an input type. Anything that hashes
-    an input shape has to agree on which view it is using, or one call site
-    hashes two different ways depending on who asked — see ``wiring_id``.
-    """
-    return {
-        k: v
-        for k, v in input_params.items()
-        if not (isinstance(v, str) and parse_path_input(v) is not None)
-    }
+    """*input_params* without the entries that are really PathInput specs —
+    ``scidb.provenance.strip_path_input_specs``, kept under the GUI's name."""
+    return _strip_path_input_specs(input_params)
 
 
 def wiring_id(fn_name: str, input_params: dict, out_types, path_inputs: dict) -> str:
-    """16-hex id for a function's WIRING: name + loadable-input shape +
-    output types — the call_id recipe minus constants, so constant-value
-    variants of the same call share one canvas node. Deterministic across
-    graph builds (node ids key saved positions and scope membership).
+    """16-hex id for a function's WIRING — the id a canvas node is keyed by
+    and the subject every ``_intent`` statement is about.
 
-    ``path_inputs`` (``{param_name: declared PathInput name}``) is part of
-    the shape. Without it, two call sites of one function fed by DIFFERENT
-    PathInputs into the same output variable hashed identically and
-    collapsed onto a single canvas node. It is omitted from the payload when
-    empty — mirroring scidb's ``to_version_keys``, which drops ``__inputs``
-    entirely rather than emitting ``{}`` — so only PathInput-fed nodes have
-    their ids affected by this term.
-
-    A PathInput is represented by that term and ONLY that term, so any spec
-    left in ``input_params`` is stripped here rather than counted twice. This
-    normalisation is the function's own job because its callers legitimately
-    hold both views: the canvas passes ``AggregatedData.fn_input_params``
-    (already partitioned), while the run path passes a raw variant's
-    ``input_types`` (not partitioned — ``_attach_db_path_inputs`` adds
-    bindings but never removes the spec). When those disagreed, a graduated
-    PathInput-fed node hashed one way on the canvas and another in
-    ``derive_target_for_node``, which then matched no history and reported
-    "No pipeline history or output connections found" for a green, fully
-    wired, already-run node. Stripping here cannot move a canvas id — that
-    side never had a spec to strip — so no stored position or scope
-    membership is disturbed.
+    **The recipe is scidb's** (``scidb.provenance.compute_wiring_id``), the
+    same way ``call_id`` is: one owner below every caller, computed here by
+    IMPORT rather than predicted. Until 2026-09-20 this module held the only
+    copy, and each time the canvas and the run path disagreed the fix was a
+    normalisation patch on this side (``strip_path_input_params``); the
+    normalisation now lives inside the recipe, so both views hash alike by
+    construction. The bytes are unchanged — node ids key saved layout
+    positions and scope membership.
     """
-    input_params = strip_path_input_params(input_params)
-    payload_obj: dict = {
-        "fn": fn_name,
-        "inputs": {
-            k: (sorted(v) if isinstance(v, (list, set, tuple)) else v)
-            for k, v in sorted(input_params.items())
-        },
-        "outputs": sorted(out_types),
-    }
-    if path_inputs:
-        payload_obj["path_inputs"] = dict(sorted(path_inputs.items()))
-    payload = json.dumps(payload_obj, sort_keys=True, default=str)
-    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+    return _compute_wiring_id(fn_name, input_params, out_types, path_inputs)
 
 
 def path_input_bindings_by_fkey(path_inputs: dict) -> dict[FnKey, dict[str, str]]:
@@ -556,38 +520,14 @@ def legacy_edge_rewrites(
 
 
 def parse_path_input(value: str) -> dict | None:
-    """If *value* (from __inputs) represents a PathInput, return parsed info.
+    """If *value* (from __inputs) represents a PathInput spec, return
+    ``{"template": ..., "root_folder": ...}``, else ``None``.
 
-    Handles two formats:
-    - New: JSON with ``__type: "PathInput"`` (from PathInput.to_key())
-    - Legacy: repr string like ``PathInput('{subject}/...', root_folder=...)``
-
-    Returns ``{"template": ..., "root_folder": ...}`` or ``None``.
+    The parser is scidb's (``scidb.provenance.parse_path_input_spec``); this
+    name is kept for the GUI's call sites. Three copies of it existed before
+    2026-09-20 (here, ``scidb.inspect.graph``, ``scidb.database``).
     """
-    # New JSON format
-    if value.startswith("{"):
-        try:
-            parsed = json.loads(value)
-            if parsed.get("__type") == "PathInput":
-                return {
-                    "template": parsed["template"],
-                    "root_folder": parsed.get("root_folder"),
-                }
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    # Legacy repr format: PathInput('...', root_folder=PosixPath('...'))
-    if value.startswith("PathInput("):
-        m = re.match(r"PathInput\('([^']*)'", value)
-        if m:
-            template = m.group(1)
-            root_match = re.search(
-                r"root_folder=(?:Posix|Windows|Pure\w*)?Path\('([^']*)'\)", value
-            )
-            root = root_match.group(1) if root_match else None
-            return {"template": template, "root_folder": root}
-
-    return None
+    return _parse_path_input_spec(value)
 
 
 def _path_input_content_variants(obj) -> list[tuple[str, str | None]]:

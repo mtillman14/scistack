@@ -6,13 +6,12 @@ Stage 1 of .claude/plan-column-selection-ui.md: a variable binding can carry
 that decides what a stored selection means.
 
 The regression pins at the bottom are the load-bearing half: a column pick
-must NOT move ``wiring_id`` or ``compute_call_id``. scidb's forward
-``to_call_id`` does fold ``ColumnSelection.to_key()`` into ``__inputs``, but
-the GUI never sees the forward id -- provenance stores an input edge as
-``(param -> record -> variable_type)``, so ``pipeline_variants`` reconstructs
-``__inputs = {"param": "Type"}`` and the canvas node id comes from THAT.
-Feeding columns into the GUI's prediction would compute an id no record ever
-carries, and silently break combo hiding on every column-selected node.
+must NOT move ``wiring_id`` or ``compute_call_id``. Provenance stores an
+input edge as ``(param -> record -> variable_type)``, so ``pipeline_variants``
+reconstructs ``__inputs = {"param": "Type"}`` and the canvas node id comes
+from THAT; since 2026-09-20 scidb's forward ``to_call_id`` hashes the same
+call-site view (``ForEachConfig.call_site_inputs``), so forward, backward and
+the GUI's prediction agree (``scidb/tests/test_identity_parity.py``).
 """
 
 from __future__ import annotations

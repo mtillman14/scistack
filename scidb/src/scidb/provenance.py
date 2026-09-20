@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CONSTANT_TYPE",
+    "compute_wiring_id",
+    "parse_path_input_spec",
+    "strip_path_input_specs",
     "GLUE_INPUT_PARAM",
     "GLUE_TYPE",
     "PATHINPUT_TYPE",
@@ -624,3 +627,112 @@ def ensure_provenance_tables(duck) -> None:
         "ON _invocation_input (invocation_id)"
     )
     logger.debug("ensure_provenance_tables: done")
+
+
+# ---------------------------------------------------------------------------
+# Call-site identity: the WIRING (Stage 1 of plan-architecture-2026-09-20)
+# ---------------------------------------------------------------------------
+# A call site is a function plus the SHAPE of what feeds it — which variable
+# types, which PathInputs, which outputs — and nothing about the values: the
+# constants vary per variant, the data per record. It is the identity the
+# canvas keys a node by, and the subject every `_intent` statement is about.
+#
+# This recipe used to live only in scistack_gui.domain.graph_builder, the GUI
+# predicting an id nothing in scidb computed; each disagreement between the
+# canvas and the run path grew a normalisation patch on the GUI side
+# (`strip_path_input_params`). One owner now, below every caller, with the
+# normalisation INSIDE the recipe so there is exactly one view to hash. The
+# bytes are unchanged: node ids key saved layout positions and scope
+# membership, so the payload here is the GUI's, verbatim.
+
+
+def parse_path_input_spec(value) -> "dict | None":
+    """``{"template", "root_folder"}`` when *value* (an ``__inputs`` /
+    ``input_types`` entry) is a PathInput SPEC, else ``None``.
+
+    Two formats: ``PathInput.to_key()``'s JSON (``{"__type": "PathInput",
+    ...}``) and the legacy ``PathInput('...', root_folder=PosixPath('...'))``
+    repr. The ONE parser — `scidb.inspect.graph`, `scidb.database` and the
+    GUI's `graph_builder` each carried a copy before 2026-09-20.
+    """
+    import json as _json
+    import re as _re
+
+    if not isinstance(value, str):
+        return None
+    if value.startswith("{"):
+        try:
+            parsed = _json.loads(value)
+            if isinstance(parsed, dict) and parsed.get("__type") == "PathInput":
+                return {
+                    "template": parsed["template"],
+                    "root_folder": parsed.get("root_folder"),
+                }
+        except (_json.JSONDecodeError, KeyError, TypeError):
+            pass
+    if value.startswith("PathInput("):
+        m = _re.match(r"PathInput\('([^']*)'", value)
+        if m:
+            root_match = _re.search(
+                r"root_folder=(?:Posix|Windows|Pure\w*)?Path\('([^']*)'\)", value
+            )
+            return {
+                "template": m.group(1),
+                "root_folder": root_match.group(1) if root_match else None,
+            }
+    return None
+
+
+def strip_path_input_specs(input_types: dict) -> dict:
+    """*input_types* without the entries that are really PathInput specs.
+
+    A raw variant row records a PathInput-fed parameter inside
+    ``input_types`` beside the genuine variable inputs; the canvas view
+    partitions it out. Anything that hashes an input shape has to agree on
+    which view it is using — so the hash strips it itself (see
+    :func:`compute_wiring_id`) and callers may pass either view.
+    """
+    return {
+        k: v
+        for k, v in (input_types or {}).items()
+        if parse_path_input_spec(v) is None
+    }
+
+
+def compute_wiring_id(
+    fn_name: str, input_types: dict, out_types, path_inputs: "dict | None"
+) -> str:
+    """16-hex id for a function's WIRING: name + loadable-input shape +
+    output types — the call_id recipe minus constants, so constant-value
+    variants of one call share one canvas node. Deterministic across graph
+    builds.
+
+    ``path_inputs`` is ``{param_name: declared PathInput name}`` and is part
+    of the shape: two call sites of one function fed by DIFFERENT PathInputs
+    into the same output hashed identically without it. Omitted from the
+    payload when empty — mirroring ``to_version_keys``, which drops
+    ``__inputs`` rather than emitting ``{}`` — so only PathInput-fed call
+    sites have their ids affected by the term.
+
+    A PathInput is represented by that term and ONLY that term: any spec
+    left in ``input_types`` is stripped here rather than counted twice, so
+    the canvas's partitioned view and a raw variant's ``input_types`` hash
+    alike. That disagreement is what once made a graduated PathInput-fed
+    node unrunnable ("No pipeline history or output connections found" for
+    a green, fully wired node).
+    """
+    import json as _json
+
+    input_types = strip_path_input_specs(input_types)
+    payload_obj: dict = {
+        "fn": fn_name,
+        "inputs": {
+            k: (sorted(v) if isinstance(v, (list, set, tuple)) else v)
+            for k, v in sorted(input_types.items())
+        },
+        "outputs": sorted(out_types),
+    }
+    if path_inputs:
+        payload_obj["path_inputs"] = dict(sorted(path_inputs.items()))
+    payload = _json.dumps(payload_obj, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]

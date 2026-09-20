@@ -264,3 +264,50 @@ class TestComputeCallIdIncludesPathInputs:
             )
             is None
         )
+
+
+class TestWiringIdIsScidbs:
+    """`wiring_id` is scidb's recipe (`scidb.provenance.compute_wiring_id`),
+    imported — not a GUI prediction (Stage 1 of the 2026-09-20 plan)."""
+
+    def test_the_gui_hashes_with_scidbs_recipe(self):
+        from scidb.provenance import compute_wiring_id
+
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        args = ("load", {"x": "Raw"}, {"Out"}, {"f": "files"})
+        assert wiring_id(*args) == compute_wiring_id(*args)
+
+    def test_raw_and_partitioned_views_hash_alike(self):
+        """A raw variant's input_types carries the PathInput SPEC beside the
+        variable inputs; the canvas view partitions it out. The recipe strips
+        it itself, so the two views cannot hash differently — the mismatch
+        that once made a graduated PathInput-fed node unrunnable."""
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        spec = '{"__type": "PathInput", "template": "{subject}/x.csv", "root_folder": null}'
+        raw = wiring_id("load", {"x": "Raw", "path": spec}, {"Out"}, {"path": "files"})
+        partitioned = wiring_id("load", {"x": "Raw"}, {"Out"}, {"path": "files"})
+        assert raw == partitioned
+
+    def test_the_bytes_did_not_move(self):
+        """Node ids key saved layout positions: the recipe's output for a
+        fixed input is pinned so a refactor cannot silently re-key every
+        canvas."""
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        assert wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {}) == (
+            wiring_id("bandpass_filter", {"signal": "RawSignal"}, ["FilteredSignal"], None)
+        )
+        # Regenerate this constant ONLY with a layout migration.
+        import hashlib
+        import json
+
+        payload = json.dumps(
+            {"fn": "bandpass_filter", "inputs": {"signal": "RawSignal"}, "outputs": ["FilteredSignal"]},
+            sort_keys=True,
+            default=str,
+        )
+        assert wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {}) == (
+            hashlib.sha256(payload.encode()).hexdigest()[:16]
+        )
