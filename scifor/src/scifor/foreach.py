@@ -100,6 +100,7 @@ def for_each(
     _cancel_check: "Callable[[], bool] | None" = None,
     _path_input_resolver: "Callable[['PathInput', dict], Any] | None" = None,
     _mapping_inputs: "dict[str, list[str]] | None" = None,
+    _select_rows: "Callable[[str, 'pd.DataFrame', dict], 'pd.DataFrame'] | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -169,6 +170,20 @@ def for_each(
                  ``_resolve_mapping_inputs`` / ``DatabaseManager
                  .mapping_data_columns``). Ignored for an input passed
                  through ``as_table`` or with a column selection.
+        _select_rows: Optional ``(input_name, frame, metadata) -> frame``.
+                 Called on every per-combo DataFrame input AFTER this loop's
+                 own schema-key filter and BEFORE extraction / column
+                 selection, so a caller that knows more about which rows a
+                 combination reads than the schema keys say can narrow the
+                 frame further — and drop any bookkeeping column of its own
+                 before the function sees it. This loop filters by ITS
+                 schema; anything finer is the caller's, and it says so
+                 here rather than by extending the schema with private keys
+                 (which is what scidb did until 2026-09-20: it renamed its
+                 record-id column per input, pushed those names into
+                 ``set_schema`` so this filter would match on them, and
+                 stripped them back out in four places). A frame the caller
+                 has nothing to say about must be returned unchanged.
         **metadata_iterables: Iterables of metadata values to combine.
 
     Returns:
@@ -222,6 +237,7 @@ def for_each(
                 _cancel_check=_cancel_check,
                 _path_input_resolver=_path_input_resolver,
                 _mapping_inputs=_mapping_inputs,
+                _select_rows=_select_rows,
                 **metadata_iterables,
             )
             if result is not None:
@@ -818,7 +834,12 @@ def for_each(
                 if param_name in iterate_params:
                     # Keep the full per-combo DataFrame; slice per column below.
                     iterate_dfs[param_name] = _prepare_iterate_df(
-                        var_spec, metadata, full_schema_keys, where
+                        var_spec,
+                        metadata,
+                        full_schema_keys,
+                        where,
+                        select_rows=_select_rows,
+                        param_name=param_name,
                     )
                     continue
                 wants_table = param_name in as_table_set
@@ -829,6 +850,8 @@ def for_each(
                     wants_table,
                     where,
                     mapping_cols=(_mapping_inputs or {}).get(param_name),
+                    select_rows=_select_rows,
+                    param_name=param_name,
                 )
             except Exception as e:
                 _record_iteration_failure(
@@ -1623,12 +1646,16 @@ def _prepare_input(
     as_table: bool,
     where=None,
     mapping_cols: "list[str] | None" = None,
+    select_rows=None,
+    param_name: str = "",
 ) -> Any:
     """Prepare a single data input for the current combo.
 
     ``mapping_cols`` marks the input as dict-valued (see ``for_each``'s
     ``_mapping_inputs``); it only reaches ``_extract_data``, so a column
-    selection or ``as_table`` still wins.
+    selection or ``as_table`` still wins. ``select_rows`` is ``for_each``'s
+    ``_select_rows`` hook, applied to ``param_name``'s frame right after the
+    schema filter.
     """
     if isinstance(var_spec, Merge):
         return _prepare_merge(var_spec, metadata, schema_keys, where)
@@ -1655,6 +1682,8 @@ def _prepare_input(
         return df
 
     filtered = _filter_df_for_combo(df, effective_metadata, schema_keys)
+    if select_rows is not None:
+        filtered = select_rows(param_name, filtered, metadata)
     filtered = _apply_where_filter(filtered, where)
 
     # No matching rows -> skip this combo (unless as_table, where an empty
@@ -1768,18 +1797,26 @@ def _resolve_iterate_columns(var_spec: Any, schema_keys: list[str]) -> list[str]
 
 
 def _prepare_iterate_df(
-    var_spec: Any, metadata: dict, schema_keys: list[str], where=None
+    var_spec: Any,
+    metadata: dict,
+    schema_keys: list[str],
+    where=None,
+    select_rows=None,
+    param_name: str = "",
 ) -> "pd.DataFrame":
     """Prepare the per-combo DataFrame for an iterate-mode ColumnSelection.
 
     Returns the combo-filtered DataFrame retaining the iterate columns so the
     caller can slice one column at a time. Unlike ``_prepare_input`` it does
-    not collapse to a single column.
+    not collapse to a single column. ``select_rows`` / ``param_name``: see
+    ``_prepare_input``.
     """
     df, effective_metadata, _column_selection = _resolve_data_spec(var_spec, metadata)
     if not _is_per_combo_df(df, schema_keys):
         return df
     filtered = _filter_df_for_combo(df, effective_metadata, schema_keys)
+    if select_rows is not None:
+        filtered = select_rows(param_name, filtered, metadata)
     filtered = _apply_where_filter(filtered, where)
     if len(filtered) == 0:
         raise NoDataError("No data for this combo after filtering.")

@@ -2094,3 +2094,107 @@ def test_spread_nested_results_ignores_absent_output_columns():
     flat = pd.DataFrame({"subject": ["A"], "val": [1.0]})
     out = spread_nested_results(flat, ["Out"], ["subject"])
     assert out is flat
+
+
+# ---------------------------------------------------------------------------
+# _select_rows: the caller narrows a frame beyond the schema filter
+# ---------------------------------------------------------------------------
+
+
+class TestSelectRowsHook:
+    """``_select_rows(name, frame, metadata)`` runs after scifor's own
+    schema-key filter and before extraction. It is how a caller that knows
+    which ROWS a combination reads (scidb: which record ids) says so, instead
+    of extending scifor's schema with private keys and stripping them back
+    out (the convention this replaced, 2026-09-20)."""
+
+    def _two_variants(self):
+        # Two rows per (subject, session): the same location, two "variants",
+        # distinguished by a bookkeeping column the function must never see.
+        rows = []
+        for s in (1, 2):
+            for v, rid in (("a", "r-a"), ("b", "r-b")):
+                rows.append({"subject": s, "session": "pre", "__rec": rid, "emg": f"{s}{v}"})
+        return pd.DataFrame(rows)
+
+    def test_hook_sees_the_schema_filtered_frame_and_its_return_is_used(self):
+        set_schema(["subject", "session"])
+        seen: list = []
+
+        def select(name, frame, metadata):
+            seen.append((name, sorted(frame["subject"].unique()), dict(metadata)))
+            keep = frame[frame["__rec"] == metadata["__pick"]]
+            return keep.drop(columns=["__rec"])
+
+        def fn(x):
+            return x
+
+        combos = [
+            {"subject": 1, "session": "pre", "__pick": "r-a"},
+            {"subject": 1, "session": "pre", "__pick": "r-b"},
+            {"subject": 2, "session": "pre", "__pick": "r-a"},
+        ]
+        result = for_each(
+            fn,
+            {"x": self._two_variants()},
+            output_names=["out"],
+            _all_combos=combos,
+            _select_rows=select,
+            subject=[1, 2],
+            session=["pre"],
+        )
+        # The hook saw only the rows the schema filter left (one subject each).
+        assert [s for _n, s, _m in seen] == [[1], [1], [2]]
+        assert all(n == "x" for n, _s, _m in seen)
+        # Its return is what the function received: one row, one column, so
+        # a scalar — and the bookkeeping column never reached the function.
+        assert list(result["out"]) == ["1a", "1b", "2a"]
+        # The combo's own keys pass through to the result row untouched.
+        assert list(result["__pick"]) == ["r-a", "r-b", "r-a"]
+
+    def test_hook_returning_nothing_is_no_data_for_that_combo(self):
+        set_schema(["subject", "session"])
+
+        def select(name, frame, metadata):
+            return frame.iloc[0:0]
+
+        result = for_each(
+            lambda x: x,
+            {"x": self._two_variants()},
+            output_names=["out"],
+            _select_rows=select,
+            subject=[1, 2],
+            session=["pre"],
+        )
+        assert result is None or result.empty
+
+    def test_no_hook_is_the_old_behaviour(self):
+        set_schema(["subject", "session"])
+        result = for_each(
+            lambda x: len(x),
+            {"x": self._two_variants()},
+            output_names=["n"],
+            subject=[1, 2],
+            session=["pre"],
+        )
+        # Two rows per location, no hook → the function gets both.
+        assert list(result["n"]) == [2, 2]
+
+    def test_hook_is_applied_on_the_for_columns_path_too(self):
+        set_schema(["subject", "session"])
+        df = self._two_variants().rename(columns={"emg": "a"})
+        df["b"] = df["a"] + "!"
+
+        def select(name, frame, metadata):
+            return frame[frame["__rec"] == "r-a"].drop(columns=["__rec"])
+
+        result = for_each(
+            lambda x: str(x[0]) if hasattr(x, "__len__") else str(x),
+            {"x": ColumnSelection(df, ["a", "b"], iterate=True)},
+            output_names=["out"],
+            _select_rows=select,
+            subject=[1],
+            session=["pre"],
+        )
+        assert set(result.columns) >= {"a", "b"}
+        assert list(result["a"]) == ["1a"] and list(result["b"]) == ["1a!"]
