@@ -1,2 +1,2 @@
-age_years,height_cm,mass_kg
-46,164.5,72.9
+age_years,height_cm,mass_kg,group
+46,164.5,72.9,treatment

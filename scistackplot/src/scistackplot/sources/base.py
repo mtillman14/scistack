@@ -46,6 +46,20 @@ def _lazy_attr(obj: Any, name: str, factory: Callable[[], Any]) -> Any:
         return existing
 
 
+class UnknownMeasureError(KeyError, ValueError):
+    """A measure (or variable) the source does not have.
+
+    Both a ``KeyError`` -- what every source raised before, and what the REST
+    layer catches -- and a ``ValueError``, the typed error the rest of the
+    stack translates into a message. A bare ``KeyError`` reached the GUI
+    service as an untyped exception (integration suite, 2026-09-19). Same
+    pattern as numpy's ``AxisError(ValueError, IndexError)``.
+    """
+
+    def __str__(self) -> str:  # KeyError quotes its message; say it plainly
+        return str(self.args[0]) if self.args else ""
+
+
 @runtime_checkable
 class DataSource(Protocol):
     """Supplies long-format tables and the metadata needed to build controls."""
@@ -186,6 +200,18 @@ class BaseSource:
         underneath: a run that writes records drops the whole source
         (``plot_service.invalidate``), and this cache goes with it.
         """
+        # Before the memo is consulted, not after a hit: a source that can ask
+        # its store whether the variables moved (scistackplotdb's content
+        # fingerprint) drops what is stale HERE, or a memo hit would serve a
+        # table the database has moved past. That is exactly what happened
+        # for a record written by a terminal run, and for a schema exclusion
+        # (2026-09-19, scistackplotdb/tests/test_schema_exclusions.py) — the
+        # frame cache re-validated itself, but only on the miss path this hit
+        # never reached.
+        self._revalidate(
+            [*measures, *([x_measure] if x_measure else []),
+             *(group.variable for group in (factor_variables or ()))]
+        )
         memo = self._current_table_cache()
         key = (
             tuple(measures),
@@ -285,6 +311,14 @@ class BaseSource:
         """How :meth:`_current_table_cache` names a change in its log line."""
         return "cache generation"
 
+    def _revalidate(self, variables: list[str]) -> None:
+        """Drop cached state for any of ``variables`` whose store has moved.
+
+        A no-op here: an in-memory or CSV source owns its data and nothing can
+        change it behind its back. A database-backed source overrides this to
+        ask the store (see ``ScidbSource._revalidate``).
+        """
+
     def _table_cache(self) -> dict:
         """The memo, created on first use.
 
@@ -322,7 +356,7 @@ class BaseSource:
         requested = [*measures, *([x_measure] if x_measure else [])]
         unknown = [m for m in requested if m not in table.measure_names]
         if unknown:
-            raise KeyError(
+            raise UnknownMeasureError(
                 f"Unknown measure(s) {unknown}. Available: {table.measure_names}"
             )
         # A flat table already carries every column, so an x measure needs no

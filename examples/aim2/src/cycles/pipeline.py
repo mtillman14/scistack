@@ -102,6 +102,19 @@ class SubjectProfile(BaseVariable):
     """Subject level: mean symmetry per joint, beside the subject's age."""
 
 
+class CycleWaveform(BaseVariable):
+    """Cycle level, 1-D: one curve per joint over the gait cycle.
+
+    The only ARRAY-valued variable here, and the one the plotting layer's
+    1-D paths need — line and band plots, the per-cell statistic that
+    reduces a curve to one number, and the transport downsampling.
+    """
+
+
+class KneeExcursion(BaseVariable):
+    """Cycle level: peak-to-peak of the knee curve — 1-D reduced to a scalar."""
+
+
 #: Every key is delimited in the path, so no ``key_regex`` is needed and
 #: ``for_each`` can discover all five from what is on disk.
 SYMMETRY_FILE = scidb.PathInput(
@@ -120,6 +133,15 @@ SESSION_FILE = scidb.PathInput(
 )
 TRIAL_FILE = scidb.PathInput(
     "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_trial.csv",
+    root_folder=str(DATA_ROOT),
+)
+
+#: The waveforms live in their own subfolder, so these files cannot also
+#: match SYMMETRY_FILE — two templates over one folder would otherwise both
+#: claim them, and ``{cycle}.csv`` would happily swallow a longer suffix.
+WAVEFORM_FILE = scidb.PathInput(
+    "{subject}/{session}/t{trial}/waveforms/"
+    "{subject}_{session}_{speed}_t{trial}_c{cycle}.csv",
     root_folder=str(DATA_ROOT),
 )
 
@@ -314,3 +336,33 @@ def subject_profile(trials, age_years):
     profile["age_years"] = float(pd.Series(age_years).iloc[0])
     profile["n_trials"] = len(trials)
     return profile
+
+
+# ---------------------------------------------------------------------------
+# Step 11 — 1-D data: one curve per joint, per cycle
+# ---------------------------------------------------------------------------
+
+
+def load_cycle_waveform(csv_file_path):
+    """Read one cycle's waveform file: 51 samples x three joints.
+
+    Returns a dict of lists rather than a DataFrame, so each joint is stored
+    as ONE 1-D value per record instead of 51 rows. That is what makes this
+    variable array-valued: the plot layer offers it as a line or a band, and
+    a scalar plot kind reduces each curve with the cell statistic first.
+    """
+    frame = pd.read_csv(csv_file_path)
+    return {joint: frame[joint].tolist() for joint in JOINTS if joint in frame.columns}
+
+
+def knee_excursion(knee):
+    """Peak-to-peak of one cycle's knee curve — a 1-D input, a scalar out.
+
+    ``CycleWaveform["knee"]`` selects one joint, so the value handed over is
+    that joint's curve. Reducing it here (rather than plotting the curve)
+    is the pipeline-side counterpart of the Plot Studio's cell statistic.
+    """
+    curve = pd.Series(knee)
+    if len(curve) == 1 and hasattr(curve.iloc[0], "__len__"):
+        curve = pd.Series(curve.iloc[0])
+    return float(curve.max() - curve.min())

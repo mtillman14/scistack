@@ -103,7 +103,7 @@ _VALID_SCHEMA_KEY_TYPES = ("numeric", "string")
 
 
 def _from_schema_str(value):
-    """Convert a schema VARCHAR value back to a numeric type if possible.
+    """Convert ONE schema VARCHAR value back to a numeric type if possible.
 
     Schema keys are stored as VARCHAR, so loaded values are always strings.
     This restores the original type (int or float) so that user-facing
@@ -113,6 +113,12 @@ def _from_schema_str(value):
     This keeps zero-padded identifiers like "01" as strings (since str(1) ==
     "1" ≠ "01"), which is critical for subject/trial IDs that must match
     what the user passed into for_each.
+
+    **Never call this on a loaded value directly** — use
+    :meth:`DatabaseManager.restore_schema_value`, which decides per KEY. Per
+    value, cycles "01".."09" stayed strings while "10" became the int 10, so
+    one column held both (integration suite, 2026-09-19). Whether a key is
+    numeric is a property of the key, not of each of its values.
     """
     if not isinstance(value, str):
         return value
@@ -1193,6 +1199,8 @@ class DatabaseManager:
 
         Returns schema_id.
         """
+        # New schema rows can change a key's numeric/string answer.
+        self._forget_schema_key_kinds()
         schema_id = (
             self._duck._get_or_create_schema_id(schema_level, schema_keys)
             if schema_level is not None and schema_keys
@@ -1317,6 +1325,7 @@ class DatabaseManager:
         Returns schema_id.
         """
         if schema_level is not None and schema_keys:
+            self._forget_schema_key_kinds()
             schema_id = self._duck._get_or_create_schema_id(
                 schema_level, {k: _schema_str(v) for k, v in schema_keys.items()}
             )
@@ -1588,6 +1597,7 @@ class DatabaseManager:
 
         # Resolve schema_ids for all unique combos (batch)
         t2 = time.perf_counter()
+        self._forget_schema_key_kinds()
         schema_id_cache = self._duck.batch_get_or_create_schema_ids(
             {
                 k: {col: _schema_str(v) for col, v in vals.items()}
@@ -2193,17 +2203,24 @@ class DatabaseManager:
                 inv = inv_map.get(row.record_id)
                 if inv is not None:
                     bp = bp_map.get(row.record_id, {})
-                    # output_num keeps distinct outputs of ONE call separate
-                    # (flatten/distribute spread one call into many records that
-                    # share fn + constants); temporal re-saves share output_num
-                    # and collapse to the newest.
-                    onum = onum_map.get(row.record_id)
+                    # output_num is deliberately NOT part of the key. It used
+                    # to be, to keep "distinct outputs of one call" apart -- but
+                    # those sit at distinct schema_ids (a distribute piece per
+                    # location) or under distinct variables (outputs=[A, B]),
+                    # and the group key below holds both already. What it DID
+                    # split was re-saves: a batch loader shares one invocation
+                    # across runs and a re-run's record takes the next free
+                    # slot (provenance_save, Fix B), so the record for one
+                    # changed file was output #34 on the first run and #60 on
+                    # the second -- two "latest" records at one location
+                    # (integration suite, 2026-09-19, plan D3). Two records of
+                    # one family at one location can only be one superseding
+                    # the other, and the newest wins below.
                     consumed = tuple(sorted(consumed_map.get(row.record_id, ())))
                     bp_json = json.dumps(bp, sort_keys=True)
                     variant_key = (
                         inv[1],
                         bp_json,
-                        onum,
                         consumed,
                     )
                     family_key = (row.variable_name, row.schema_id, inv[1], bp_json, consumed)
@@ -2415,7 +2432,7 @@ class DatabaseManager:
             if key in row.index:
                 val = row[key]
                 if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                    schema[key] = _from_schema_str(val)
+                    schema[key] = self.restore_schema_value(key, val)
 
         # Direct-save kwargs: __save__.<kwarg> entries in derived branch params.
         version = {}
@@ -3223,8 +3240,8 @@ class DatabaseManager:
                     meta_dict[key] = col_series.values
                 else:
                     meta_dict[key] = col_series.apply(
-                        lambda v: (
-                            _from_schema_str(v)
+                        lambda v, _key=key: (
+                            self.restore_schema_value(_key, v)
                             if v is not None
                             and not (isinstance(v, float) and pd.isna(v))
                             else None
@@ -3888,7 +3905,7 @@ class DatabaseManager:
             for sk in schema_keys:
                 val = getattr(row, sk, None)
                 if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                    flat_metadata[sk] = _from_schema_str(val)
+                    flat_metadata[sk] = self.restore_schema_value(sk, val)
 
             # branch_params + direct-save kwargs derived from the bipartite graph
             # (§6), not a column. __save__.<kwarg> entries are the record's
@@ -4821,6 +4838,61 @@ class DatabaseManager:
             return self._registered_types[type_name]
 
         return BaseVariable.get_subclass_by_name(type_name)
+
+    def schema_key_is_numeric(self, key: str) -> bool:
+        """Whether loaded values of ``key`` are restored to numbers.
+
+        The rule, in order:
+
+        1. a declared type (``schema_key_types``) wins — ``"numeric"`` or
+           ``"string"``;
+        2. otherwise the key is numeric only if EVERY value stored for it
+           round-trips through :func:`_from_schema_str` unchanged in spelling.
+           One zero-padded ``"01"`` among the values makes the whole key a
+           string key, so ``"10"`` beside it stays ``"10"`` rather than
+           becoming 10 and giving the column two types.
+
+        Cached per key; the cache is dropped whenever records are saved, since
+        a new value can change the answer (a first ``"01"`` after ``1, 2``).
+        """
+        cache = self.__dict__.setdefault("_schema_key_numeric_cache", {})
+        if key in cache:
+            return cache[key]
+        declared = (self.dataset_schema_key_types or {}).get(key)
+        if declared in ("numeric", "string"):
+            numeric = declared == "numeric"
+            reason = f"declared {declared}"
+        else:
+            values = [v for v in self._duck.distinct_schema_values(key) if v is not None]
+            kept = [v for v in values if isinstance(_from_schema_str(v), str)]
+            numeric = bool(values) and not kept
+            reason = (
+                "no values stored yet"
+                if not values
+                else "every stored value is a plain number"
+                if numeric
+                else f"{len(kept)} of {len(values)} stored value(s) keep their spelling "
+                f"(e.g. {kept[0]!r})"
+            )
+        Log.debug(
+            "schema key %r loads as %s: %s",
+            key,
+            "numbers" if numeric else "strings",
+            reason,
+        )
+        cache[key] = numeric
+        return numeric
+
+    def restore_schema_value(self, key: str, value):
+        """A loaded schema value with the type its KEY has — see
+        :meth:`schema_key_is_numeric`. The one restore every load path uses."""
+        if value is None or not isinstance(value, str):
+            return value
+        return _from_schema_str(value) if self.schema_key_is_numeric(key) else value
+
+    def _forget_schema_key_kinds(self) -> None:
+        """Drop the per-key numeric/string cache — called after any save."""
+        self.__dict__.pop("_schema_key_numeric_cache", None)
 
     def distinct_schema_values(self, key: str) -> list:
         """Return all distinct values stored for a schema key.

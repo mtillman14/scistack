@@ -46,7 +46,7 @@ from scistacklog import Log
 
 from .roles import chain_cut, collapse_order, collapse_steps
 from .shape import Shape
-from .spec import PlotSpec
+from .spec import LocationFilter, PlotSpec
 from .table import LongTable
 
 LAYER = "scistackplot"
@@ -323,7 +323,10 @@ def plot_data(
             spread = options.field_factor if fields_as_columns else None
             if spread and spread in frame.columns:
                 long_rows = len(frame)
-                frame = _fields_to_columns(frame, spread, plan.spec, plan.table)
+                frame = _fields_to_columns(
+                    frame, spread, plan.spec, plan.table,
+                    levels=_field_levels(plan.spec, plan.table, spread),
+                )
                 Log.info(
                     "[plot-data] one column per %s: %d long row(s) -> %d row(s), "
                     "field column(s) %s",
@@ -386,11 +389,20 @@ def _field_factor(table: LongTable) -> str | None:
 
 
 def _field_levels(spec: PlotSpec, table: LongTable, name: str) -> list[Any]:
-    """The field levels the file will have — what survives the spec's
-    filters (a field picker is a filter), in declared order."""
+    """The field levels the file will have: the declared levels, narrowed by
+    the filters on the FIELD column itself (a field picker is a filter) -- and
+    by nothing else. A filter on another column that happens to empty the
+    data must not also empty the header: the file still has one column per
+    field, with no rows (integration suite, 2026-09-19)."""
+    from dataclasses import replace
+
     from .reduce import _level_rank, apply_filters
 
-    present = apply_filters(table.frame, spec)[name].dropna().unique().tolist()
+    own = [f for f in spec.filters if f.column == name]
+    frame = table.frame
+    if own:
+        frame = apply_filters(frame, replace(spec, filters=own, location_filter=LocationFilter()))
+    present = frame[name].dropna().unique().tolist()
     return sorted(present, key=lambda level: _level_rank(table, name, level))
 
 
@@ -421,7 +433,11 @@ def _wide_names(levels: list[Any], measures: list[str], index: list[str]) -> lis
 
 
 def _fields_to_columns(
-    frame: pd.DataFrame, field_name: str, spec: PlotSpec, table: LongTable
+    frame: pd.DataFrame,
+    field_name: str,
+    spec: PlotSpec,
+    table: LongTable,
+    levels: list[Any] | None = None,
 ) -> pd.DataFrame:
     """Spread the field factor into one column per field — a pure reshape.
 
@@ -438,10 +454,11 @@ def _fields_to_columns(
     measures = _measure_columns(list(frame.columns), spec)
     index = [c for c in frame.columns if c != field_name and c not in measures]
     fields = frame[field_name]
-    levels = sorted(
-        fields.dropna().unique().tolist(),
-        key=lambda level: _level_rank(table, field_name, level),
-    )
+    if levels is None:
+        levels = sorted(
+            fields.dropna().unique().tolist(),
+            key=lambda level: _level_rank(table, field_name, level),
+        )
     if fields.isna().any():
         Log.warn(
             "[plot-data] %d row(s) have no %s and cannot be placed in a field column — dropped",

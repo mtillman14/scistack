@@ -694,7 +694,8 @@ class Inspector:
 
         node = (
             provenance_query._fetch_record_node(
-                self._duck, rid, self._db.dataset_schema_keys
+                self._duck, rid, self._db.dataset_schema_keys,
+                restore=self._db.restore_schema_value,
             )
             or {}
         )

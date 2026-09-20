@@ -487,6 +487,17 @@ def load_variable(
                     db, frame
                 )
 
+        # Schema exclusions (`scidb.exclude_schema`): "excluded from every
+        # analysis" includes a plot. `for_each` drops these combinations
+        # before it iterates; a plot read the records straight from the
+        # table and showed the excluded trial beside the others (integration
+        # suite, 2026-09-19). Same resolution as for_each's Step 9.5, on the
+        # frame's own key columns; NULL keys of a coarser record are
+        # wildcards in the override rows, so a subject-level record is
+        # dropped only by a subject-level exclusion.
+        with timer.phase("schema_exclusions"):
+            frame = _drop_excluded_rows(db, frame, keys, variable)
+
         # Cells and SAMPLES alongside the record count: 419 records is the same
         # number whether each holds 200 samples or 250,000, and only the second
         # explains a plot that never returns. Measured over the data columns
@@ -882,3 +893,38 @@ def _truncate(value: Any, limit: int = 60) -> Any:
     if not isinstance(value, str) or len(value) <= limit:
         return value
     return f"{value[: limit - 1]}…"
+
+
+def _drop_excluded_rows(db, frame: pd.DataFrame, keys: list[str], variable: str) -> pd.DataFrame:
+    """``frame`` minus the rows at a schema location the project excluded
+    (:func:`scidb.exclusions.filter_excluded_combos`, the rule ``for_each``
+    applies). One pass over the DISTINCT locations, not the rows."""
+    from scidb.exclusions import filter_excluded_combos
+
+    present = [key for key in keys if key in frame.columns]
+    if frame.empty or not present:
+        return frame
+    locations = frame[present].drop_duplicates()
+    combos = [
+        {key: str(value) for key, value in row.items() if value is not None and not pd.isna(value)}
+        for row in locations.to_dict("records")
+    ]
+    kept = filter_excluded_combos(combos, list(keys), db)
+    if len(kept) == len(combos):
+        return frame
+    kept_set = {tuple(sorted(c.items())) for c in kept}
+    mask = [
+        tuple(sorted((k, str(v)) for k, v in row.items() if v is not None and not pd.isna(v)))
+        in kept_set
+        for row in frame[present].to_dict("records")
+    ]
+    dropped = len(frame) - sum(mask)
+    Log.info(
+        "%s: %d record(s) at %d excluded schema location(s) left out of the "
+        "plot (scidb.exclude_schema)",
+        variable,
+        dropped,
+        len(combos) - len(kept),
+        layer=LAYER,
+    )
+    return frame[mask].reset_index(drop=True)

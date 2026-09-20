@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .roles import (
+    layer_cap_reason,
     collapse_order,
     complete_assignment,
     grouping_layers,
@@ -372,17 +373,30 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
             collapsible=collapsible,
             n_groups=len(kind_groups),
         )
+        reason = why_unavailable(
+            kind,
+            raw_shape,
+            kind_roles,
+            collapsible=collapsible,
+            n_groups=len(kind_groups),
+        )
+        if reason is None:
+            # The layer cap, judged as THIS kind reads the grouping and at the
+            # shape it draws (a scalar kind cell-collapses a 1-D measure, so
+            # its layers are ticks). Same rule as `validate`, so the panel
+            # never offers a kind the renderer then refuses.
+            candidate = (suggested.apply(spec) if suggested else spec)
+            drawn_shape = (
+                Shape.SCALAR if collapsible and kind in SCALAR_KINDS else raw_shape
+            )
+            reason = layer_cap_reason(
+                candidate, collapsed, kind_roles, kind, shape=drawn_shape
+            )
         entries.append(
             {
                 "kind": str(kind),
-                "available": kind in allowed_here,
-                "reason": why_unavailable(
-                    kind,
-                    raw_shape,
-                    kind_roles,
-                    collapsible=collapsible,
-                    n_groups=len(kind_groups),
-                ),
+                "available": kind in allowed_here and reason is None,
+                "reason": reason,
                 # Whether picking this kind collapses the measure's CELLS, so
                 # the panel can say so on the option rather than only after
                 # the click.

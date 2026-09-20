@@ -663,9 +663,9 @@ def strip_answered_roles(
       answers it;
     * the user assigns a code axis to a facet, then adds a variant that pins it.
 
-    Only names that WERE factors of the undecided table are dropped. A role
-    naming something that was never a factor at all is still a typo, and
-    ``validate`` should still say so.
+    Names that were never a factor of either table are dropped too, with a
+    WARN (since 2026-09-19 -- see the comment below): refusing them was an
+    unfixable state in the panel.
 
     The grouping order and the colour go with the role: a stale name left in
     ``groups`` is harmless (``ordered_groups`` ignores non-holders) but a stale
@@ -677,6 +677,29 @@ def strip_answered_roles(
         for name in spec.roles
         if table.has_factor(name) and not derived.has_factor(name)
     ]
+    # A role for a factor NEITHER table has. Until 2026-09-19 this was left
+    # for `validate` to refuse as a typo. In the panel that refusal cannot be
+    # fixed: the factor is not listed, so its role cannot be removed -- the
+    # case being a spec saved against a deeper variable, reopened after the
+    # variable moved to a coarser level (the integration suite, plan B9).
+    # Dropped with a WARN instead, so the figure draws and the log says what
+    # was ignored. `validate` still refuses it for a direct library caller.
+    # In NEITHER table: a derived factor (a level group's `Phase`, the
+    # `Variant` axis) exists only in `derived`, and must not be mistaken for
+    # a missing one.
+    missing = [
+        name
+        for name in spec.roles
+        if not table.has_factor(name) and not derived.has_factor(name)
+    ]
+    if missing:
+        Log.warn(
+            "role(s) for %s ignored -- not factors of this table (%s)",
+            missing,
+            derived.factor_names,
+            layer=LAYER,
+        )
+        stale = [*stale, *missing]
     if not stale:
         return spec
     Log.debug(

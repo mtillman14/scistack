@@ -1,2 +1,2 @@
-age_years,height_cm,mass_kg
-49,165.5,68.3
+age_years,height_cm,mass_kg,group
+49,165.5,68.3,control

@@ -93,7 +93,7 @@ from .roles import (
     with_requirements_for,
 )
 from .shape import Shape, classify_column, classify_value, is_plottable
-from .sources import BaseSource, CsvSource, DataFrameSource, DataSource
+from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
 from .spec import (
     Aggregation,
     LegacySpecError,
@@ -207,6 +207,7 @@ __all__ = [
     "natural_sort_key",
     # sources
     "DataSource",
+    "UnknownMeasureError",
     "BaseSource",
     "CsvSource",
     "DataFrameSource",

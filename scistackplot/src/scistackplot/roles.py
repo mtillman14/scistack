@@ -753,6 +753,35 @@ def series_layers(
 # ---------------------------------------------------------------------------
 
 
+def layer_cap_reason(
+    spec: PlotSpec,
+    table: LongTable,
+    roles: dict[str, Role] | None = None,
+    kind: "PlotKind | None" = None,
+    shape: Shape | None = None,
+) -> str | None:
+    """Why the grouping has too many labelled tick layers for ``kind``, or None.
+
+    The one statement of the ``MAX_X_LAYERS`` cap, shared by ``validate``
+    (which refuses the spec) and ``capability.capabilities`` (which greys the
+    kind out with this text). It is per KIND because the cap is on labelled
+    TICKS, and a kind decides whether the grouping list is ticks or series:
+    four grouping layers are four series on a 1-D line and four nested ticks
+    on the box that cell-collapses the same measure. Until 2026-09-19 only
+    ``validate`` applied it, so the panel offered a bar that then failed to
+    draw (found by the role-assignment sweep, plan B1).
+    """
+    layers = grouping_layers(spec, table, roles, kind, shape=shape)
+    if len(layers.labelled_ticks) > MAX_X_LAYERS:
+        return (
+            f"At most {MAX_X_LAYERS} labelled tick layers fit on the x axis; "
+            f"got {len(layers.labelled_ticks)}: {layers.labelled_ticks}. A "
+            f"fourth level of nesting cannot be read off an axis -- colour one "
+            f"of them, or move one to 'facet' (separate panels)."
+        )
+    return None
+
+
 def kind_requirement(
     kind: PlotKind, shape: Shape, roles: dict[str, Role], n_groups: int
 ) -> str | None:
@@ -824,14 +853,9 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
             f"the matrix itself, so {assignment.groups} cannot group it. Use "
             f"'facet' (separate panels) or 'iterate' (separate figures)."
         )
-    layers = grouping_layers(spec, table, roles)
-    if len(layers.labelled_ticks) > MAX_X_LAYERS:
-        raise RoleError(
-            f"At most {MAX_X_LAYERS} labelled tick layers fit on the x axis; "
-            f"got {len(layers.labelled_ticks)}: {layers.labelled_ticks}. A "
-            f"fourth level of nesting cannot be read off an axis — colour one "
-            f"of them, or move one to 'facet' (separate panels)."
-        )
+    cap = layer_cap_reason(spec, table, roles)
+    if cap is not None:
+        raise RoleError(cap)
 
     # --- the kind's own needs --------------------------------------------
     requirement = kind_requirement(spec.kind, shape, roles, len(assignment.groups))

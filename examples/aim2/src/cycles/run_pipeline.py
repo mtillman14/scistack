@@ -25,10 +25,13 @@ from pipeline import (  # noqa: E402 — same folder, run as a script
     SESSION_FILE,
     SYMMETRY_FILE,
     TRIAL_FILE,
+    WAVEFORM_FILE,
     AnkleOverThreshold,
     CycleDeviation,
     CycleSymmetry,
+    CycleWaveform,
     Demographics,
+    KneeExcursion,
     NormalizedKnee,
     ScaledTrialSymmetry,
     SessionInfo,
@@ -39,7 +42,9 @@ from pipeline import (  # noqa: E402 — same folder, run as a script
     TrialMeanSymmetry,
     ankle_over_threshold,
     cycle_deviation,
+    knee_excursion,
     load_cycle_symmetry,
+    load_cycle_waveform,
     load_demographics,
     load_session_info,
     load_trial_info,
@@ -55,8 +60,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ["subject", "session", "speed", "trial", "cycle"]
 
 
-def main() -> None:
-    scidb.configure_database(PROJECT_ROOT / "aim2.duckdb", SCHEMA)
+def main(db_path=None, subjects=(), sessions=()) -> None:
+    """Run every step.
+
+    ``subjects`` / ``sessions`` restrict the run to part of the dataset;
+    empty (the default) means "whatever is on disk", which is how the
+    example is meant to be run. The integration suite passes a subset so a
+    test session does not pay for all 720 cycles.
+    """
+    scidb.configure_database(db_path or PROJECT_ROOT / "aim2.duckdb", SCHEMA)
+    subject = list(subjects)
+    session = list(sessions)
 
     # --- load, one call per level ------------------------------------------
     # Empty lists mean "whatever is on disk": each PathInput discovers the
@@ -68,8 +82,20 @@ def main() -> None:
         load_cycle_symmetry,
         inputs={"csv_file_path": SYMMETRY_FILE},
         outputs=[CycleSymmetry],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
+        speed=[],
+        trial=[],
+        cycle=[],
+    )
+
+    # 1a(ii). Cycle level, 1-D: one curve per joint, same 720 combinations.
+    scidb.for_each(
+        load_cycle_waveform,
+        inputs={"csv_file_path": WAVEFORM_FILE},
+        outputs=[CycleWaveform],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
         cycle=[],
@@ -80,8 +106,8 @@ def main() -> None:
         load_trial_info,
         inputs={"csv_file_path": TRIAL_FILE},
         outputs=[TrialInfo],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
     )
@@ -91,8 +117,8 @@ def main() -> None:
         load_session_info,
         inputs={"csv_file_path": SESSION_FILE},
         outputs=[SessionInfo],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
     )
 
     # 1d. Subject level: one file each (3 files).
@@ -100,7 +126,7 @@ def main() -> None:
         load_demographics,
         inputs={"csv_file_path": DEMOGRAPHICS_FILE},
         outputs=[Demographics],
-        subject=[],
+        subject=subject,
     )
 
     # --- process ------------------------------------------------------------
@@ -111,8 +137,8 @@ def main() -> None:
         ankle_over_threshold,
         inputs={"ankle": CycleSymmetry["ankle"], "threshold": ASYMMETRY_THRESHOLD},
         outputs=[AnkleOverThreshold],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
         cycle=[],
@@ -129,40 +155,53 @@ def main() -> None:
             "height_cm": Demographics["height_cm"],       # subject level
         },
         outputs=[NormalizedKnee],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
         cycle=[],
     )
 
-    # 4. `cycle` is NOT iterated, so each call gets that trial's ten cycles as
+    # 4. A 1-D input reduced to a scalar: one joint's curve in, its
+    #    peak-to-peak out.
+    scidb.for_each(
+        knee_excursion,
+        inputs={"knee": CycleWaveform["knee"]},
+        outputs=[KneeExcursion],
+        subject=subject,
+        session=session,
+        speed=[],
+        trial=[],
+        cycle=[],
+    )
+
+    # 5. `cycle` is NOT iterated, so each call gets that trial's ten cycles as
     #    one DataFrame (as_table) and returns the trial's means.
     scidb.for_each(
         trial_mean_symmetry,
         inputs={"cycles": CycleSymmetry},
         outputs=[TrialMeanSymmetry],
         as_table=["cycles"],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
     )
 
-    # 5. A cycle-level TABLE beside a trial-level SCALAR: the cycles of this
+    # 6. A cycle-level TABLE beside a trial-level SCALAR: the cycles of this
     #    trial, over the duration recorded for the trial itself.
     scidb.for_each(
         trial_cadence,
         inputs={"cycles": CycleSymmetry, "duration_s": TrialInfo["duration_s"]},
         outputs=[TrialCadence],
         as_table=["cycles"],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
     )
 
-    # 6. Same coarse iteration, but the function returns one row per cycle.
+    # 7. Same coarse iteration, but the function returns one row per cycle.
     #    distribute=True files those rows back at the cycle level, addressed
     #    by the returned `cycle` column.
     scidb.for_each(
@@ -171,13 +210,13 @@ def main() -> None:
         outputs=[CycleDeviation],
         as_table=["cycles"],
         distribute=True,
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
     )
 
-    # 7. Session level, against the subject's OWN baseline: `Fixed` pins one
+    # 8. Session level, against the subject's OWN baseline: `Fixed` pins one
     #    input to session="baseline" while the other follows the iteration.
     scidb.for_each(
         speed_change_from_baseline,
@@ -188,29 +227,29 @@ def main() -> None:
             ),
         },
         outputs=[SpeedChangeFromBaseline],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
     )
 
-    # 8. Once per joint column of the trial means, reassembled into one table.
+    # 9. Once per joint column of the trial means, reassembled into one table.
     scidb.for_each(
         scale_joint,
         inputs={"value": TrialMeanSymmetry.for_columns(), "scale": SCALE},
         outputs=[ScaledTrialSymmetry],
-        subject=[],
-        session=[],
+        subject=subject,
+        session=session,
         speed=[],
         trial=[],
     )
 
-    # 9. Subject level from everything below it: every trial mean this subject
+    # 10. Subject level from everything below it: every trial mean this subject
     #    has (as_table), plus their one subject-level age.
     scidb.for_each(
         subject_profile,
         inputs={"trials": TrialMeanSymmetry, "age_years": Demographics["age_years"]},
         outputs=[SubjectProfile],
         as_table=["trials"],
-        subject=[],
+        subject=subject,
     )
 
 

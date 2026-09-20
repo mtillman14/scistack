@@ -4,3 +4,5 @@
 plots/stim_intensities/Thumbs.db
 "*.db" 
 *.db
+*.duckdb
+*.duckdb.wal

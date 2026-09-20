@@ -20,11 +20,12 @@ per-subject values:
 | level | keys | files | file | columns |
 |---|---|---|---|---|
 | cycle | all five | 720 | `subject01/baseline/t01/subject01_baseline_slow_t01_c01.csv` | `ankle,knee,hip` |
+| cycle (1-D) | all five | 720 | `subject01/baseline/t01/waveforms/subject01_baseline_slow_t01_c01.csv` | `percent,ankle,knee,hip` — 51 rows, one curve per joint |
 | trial | subject, session, speed, trial | 72 | `subject01/baseline/t01/subject01_baseline_slow_t01_trial.csv` | `duration_s,walking_speed_mps` |
 | session | subject, session | 12 | `subject01/baseline/subject01_baseline_session.csv` | `comfortable_speed_mps,perceived_effort` |
-| subject | subject | 3 | `subject01/subject01_demographics.csv` | `age_years,height_cm,mass_kg` |
+| subject | subject | 3 | `subject01/subject01_demographics.csv` | `age_years,height_cm,mass_kg,group` |
 
-Every file holds a header and **one data row**:
+Every file except the waveforms holds a header and **one data row**:
 
 ```
 ankle,knee,hip
@@ -33,7 +34,11 @@ ankle,knee,hip
 
 Symmetry values are made up, in the range 0–200, where **0 is perfectly
 symmetric** and larger is more asymmetric. A file's level follows from the
-keys its name carries — nothing declares it separately.
+keys its name carries — nothing declares it separately. The waveforms are
+the dataset's one **array-valued** variable (a curve per joint per cycle), and
+`group` (control / treatment) its one **categorical** subject-level column —
+the two things a plot needs beyond scalars: a line/band, and a grouping that
+is not a schema key.
 
 Both loaders store the three joints as one variable with a column each, so
 the joints arrive as a `ColName` factor in the Plot Studio and "Save data
@@ -62,6 +67,7 @@ only its own keys — then the processing steps, one `for_each` feature each:
 | `trial_mean_symmetry` | `as_table` — a trial's ten cycles arrive as one DataFrame |
 | `cycle_deviation` | `as_table` + `distribute=True` — one row back out per cycle, addressed by the returned `cycle` column |
 | `scale_joint` | `for_columns()` — runs once per joint column, reassembled into one table |
+| `load_cycle_waveform` / `knee_excursion` | a 1-D variable (dict of lists, one curve per joint) and a 1-D input reduced to a scalar |
 
 And the steps that read **more than one level at once**:
 
@@ -75,6 +81,15 @@ And the steps that read **more than one level at once**:
 A value recorded above the combination being computed is broadcast down to
 it, so every cycle of a subject sees that subject's height. Nothing has to
 be joined by hand.
+
+**Integration tests** — `tests/integration/` runs this pipeline over a subset
+of the data and checks every layer against the result (record levels,
+storage round trip, the plot layer, the GUI's plot service, provenance):
+
+```
+pytest tests/integration -q
+SCISTACK_INTEGRATION_FULL=1 pytest tests/integration -q
+```
 
 **MATLAB** — `src/cycles/main_cycles.m` runs the load step only
 (`loadGaitSymmetryOneCycle.m` + the `GaitSymmetryLoaded` variable).

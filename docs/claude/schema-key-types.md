@@ -204,3 +204,23 @@ iteration is requested.
 - `docs/claude/pathinput-zero-padded-matching.md` — the resolution mechanism.
 - `.claude/plan-schema-key-type-canonicalization.md` — design history and
   the rejected alternatives.
+
+## Loaded values: the type is the key's, not the value's (2026-09-19)
+
+`_from_schema_str` restores a stored VARCHAR to a number when the spelling
+round-trips (`"10"` → 10, `"01"` stays). Applied per value it produced a
+column with two types — cycles `"01".."09"` beside the int 10 — which the
+example integration suite caught (`tests/integration/test_storage_roundtrip.py`).
+
+Every load path now calls `DatabaseManager.restore_schema_value(key, value)`,
+which asks `schema_key_is_numeric(key)`:
+
+1. a declared `schema_key_types` entry wins (`"numeric"` / `"string"`);
+2. otherwise the key is numeric only when **every** stored value of it
+   round-trips. One zero-padded value makes the whole key a string key.
+
+The answer is cached per key and dropped whenever a schema row is created
+(`_forget_schema_key_kinds`), because a first `"01"` after `1, 2` changes it.
+Logged once per key at DEBUG: `schema key 'cycle' loads as strings: 1 of 10
+stored value(s) keep their spelling (e.g. '01')`. Regression tests:
+`scidb/tests/test_schema_key_type_consistency.py`.

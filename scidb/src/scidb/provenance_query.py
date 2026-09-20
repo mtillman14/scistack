@@ -1374,11 +1374,15 @@ def stored_invocation_signature(duck, record_id: str):
     }
 
 
-def _fetch_record_node(duck, record_id: str, schema_keys: list[str]):
+def _fetch_record_node(duck, record_id: str, schema_keys: list[str], restore=None):
     """``{type, schema}`` for a variable record, or ``None`` if absent.
 
     Constants are not pipeline nodes, so callers filter them out by ``type``.
+    ``restore(key, value)`` gives each schema value its key's type
+    (``DatabaseManager.restore_schema_value``); callers holding a manager
+    pass it, so a trace shows ``cycle=10`` spelled as the record was saved.
     """
+    restore = restore or (lambda _key, value: _from_schema_str(value))
     schema_cols = ", ".join(f's."{k}"' for k in schema_keys)
     select_extra = (", " + schema_cols) if schema_keys else ""
     rows = duck._fetchall(
@@ -1394,7 +1398,7 @@ def _fetch_record_node(duck, record_id: str, schema_keys: list[str]):
     for i, key in enumerate(schema_keys):
         val = row[1 + i]
         if val is not None:
-            schema[key] = _from_schema_str(val)
+            schema[key] = restore(key, val)
     return {"type": row[0], "schema": schema}
 
 
@@ -1454,7 +1458,7 @@ def upstream_provenance(db, record_id: str, max_depth: int = 20) -> list[dict]:
             continue
         visited.add(rid)
 
-        node = _fetch_record_node(duck, rid, schema_keys)
+        node = _fetch_record_node(duck, rid, schema_keys, restore=db.restore_schema_value)
         if node is None or node["type"] in (CONSTANT_TYPE, PATHINPUT_TYPE):
             continue
 
@@ -2668,4 +2672,12 @@ def variable_content_fingerprint(duck, variable: str) -> tuple[int, int]:
     )
     if not row:
         return (0, 0)
-    return (int(row[0]), int(row[1] or 0))
+    # Folded in: the schema-exclusion registry. A plot leaves excluded
+    # locations out (scistackplotdb.load), so excluding or re-including a
+    # trial must invalidate a cached frame exactly as a new record does.
+    overrides = duck._fetchone(
+        "SELECT coalesce(bit_xor(hash(CAST(changed_at AS VARCHAR) || CAST(status AS VARCHAR))), 0) "
+        "FROM __scidb_schema_overrides"
+    )
+    salt = int(overrides[0] or 0) if overrides else 0
+    return (int(row[0]), int(row[1] or 0) ^ salt)

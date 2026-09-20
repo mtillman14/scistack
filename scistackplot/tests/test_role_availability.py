@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from scistackplot import PlotSpec, Role, RoleError, role_options
 from scistackplot.capability import (
     ROLE_ORDER,
@@ -337,3 +339,33 @@ def test_a_kind_suggestion_carries_the_whole_assignment(series_table):
     assert kinds["violin"]["assignment"] is not None
     assert set(kinds["violin"]["assignment"]) == {"roles", "groups", "color"}
     assert kinds["line"]["assignment"] is None, "no shape change, no suggestion"
+
+
+def test_the_report_never_offers_a_kind_the_validator_refuses_for_layers(scalar_table):
+    """Four grouping layers exceed MAX_X_LAYERS. `validate` refused the bar,
+    but the capability report still offered it — so the panel showed a kind
+    that then failed to draw (role-assignment sweep, 2026-09-19). One rule,
+    `roles.layer_cap_reason`, now feeds both."""
+    from scistackplot import PlotKind, PlotSpec, Role, RoleError, capabilities
+    from scistackplot.roles import validate
+
+    frame = scalar_table.frame.assign(limb=["L", "R"] * (len(scalar_table.frame) // 2))
+    from scistackplot import LongTable
+
+    table = LongTable.from_frame(
+        frame, factors=["subject", "session", "trial", "limb"], measures=["StepLength"],
+        name="StepLength", schema_levels=["subject", "session", "trial"],
+    )
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.GROUP, "limb": Role.GROUP},
+        groups=["limb", "trial", "session", "subject"],
+        kind=PlotKind.BAR,
+    )
+    with pytest.raises(RoleError, match="labelled tick layers"):
+        validate(spec, table)
+    report = capabilities(spec, table)
+    bar = next(e for e in report["kinds"] if e["kind"] == "bar")
+    assert bar["available"] is False
+    assert "labelled tick layers" in bar["reason"]
+    assert "bar" not in report["available"]

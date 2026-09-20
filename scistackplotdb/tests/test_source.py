@@ -631,3 +631,12 @@ def test_pin_keeps_locations_never_rerun_under_the_newest_code(seeded):
     }
     assert by_subject[SUBJECTS[0]] == {"v2"}
     assert by_subject[SUBJECTS[1]] == {"v1"}
+
+
+def test_struct_fields_keep_their_stored_order(seeded):
+    """The fields' order is the order the user stored the columns in — a
+    montage's muscles, ``ankle, knee, hip`` — never a natural sort, which
+    would put LMG before RHAM on every panel grid and CSV header."""
+    table = ScidbSource(seeded).get_table(["Emg"])
+    (field,) = table.field_factors
+    assert [str(level) for level in field.levels] == ["RHAM", "RTA", "LMG"]

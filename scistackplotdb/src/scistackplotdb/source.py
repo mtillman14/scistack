@@ -26,7 +26,7 @@ from scistackplot import (
 )
 from scistackplot.dedup import SingleFlight
 from scistackplot.framesize import format_extent, frame_extent
-from scistackplot.sources import BaseSource
+from scistackplot.sources import BaseSource, UnknownMeasureError
 from scistackplot.variants import VARIABLE_COLUMN
 
 from .hierarchy import join_frames, joinable, joined_levels
@@ -227,6 +227,32 @@ class ScidbSource(BaseSource):
     def _generation_label(self) -> str:
         return "declared [schema_keys] level order"
 
+    def _level_order(self, name: str, frame, *, is_field: bool) -> list[str]:
+        """A factor's declared level order for :class:`LongTable`.
+
+        Schema keys and joined factors go through :meth:`_ordered` (declared
+        ``[schema_keys]`` order, else natural sort). A **field factor** does
+        not: its levels are the columns of a struct variable, and the order the
+        user stored them in — ``ankle, knee, hip``; the muscles of an EMG
+        montage — IS the declared order. Natural-sorting it put ``hip`` before
+        ``knee`` on every panel grid and in every "Save data" header (found
+        by the integration suite, 2026-09-19). The melt preserves column order,
+        so first appearance in the frame is that order.
+        """
+        observed = [str(v) for v in frame[name].dropna().unique()]
+        if is_field:
+            unique = list(dict.fromkeys(observed))
+            if MISSING_LEVEL in unique:
+                unique = [v for v in unique if v != MISSING_LEVEL] + [MISSING_LEVEL]
+            Log.debug(
+                "field factor %r keeps its stored column order: %s",
+                name,
+                unique,
+                layer=LAYER,
+            )
+            return unique
+        return self._ordered(name, observed)
+
     def _ordered(self, key: str, values: list[str]) -> list[str]:
         """
         Order a factor's levels.
@@ -376,6 +402,15 @@ class ScidbSource(BaseSource):
                 )
             return None
 
+    def _revalidate(self, variables: list[str]) -> None:
+        """``get_table``'s pre-check: a variable whose content fingerprint moved
+        has its frames AND every built table dropped before the memo is read.
+        One cheap aggregate query per variable per request — the price of a
+        panel that shows what a terminal run just wrote."""
+        for variable in dict.fromkeys(variables):
+            if variable in self._fingerprints and not self._cache_is_current(variable):
+                self.invalidate(variable)
+
     def _cache_is_current(self, variable: str) -> bool:
         """True when the cached frame still matches what the database holds.
 
@@ -510,7 +545,7 @@ class ScidbSource(BaseSource):
         if unknown:
             # Same failure shape as the CSV source's unknown-column error, so
             # callers (and the GUI) handle one kind of "no such measure".
-            raise KeyError(f"Unknown variable(s) {unknown}. Available: {known}")
+            raise UnknownMeasureError(f"Unknown variable(s) {unknown}. Available: {known}")
 
         if len(measures) > 1:
             return self._stacked_table(measures, factor_variables)
@@ -592,7 +627,7 @@ class ScidbSource(BaseSource):
         factors.extend(c for c in field_columns if c in frame.columns)
 
         level_order = {
-            name: self._ordered(name, [str(v) for v in frame[name].dropna().unique()])
+            name: self._level_order(name, frame, is_field=name in field_columns)
             for name in factors
         }
 
@@ -968,9 +1003,7 @@ class ScidbSource(BaseSource):
         factors.extend(c for c in field_columns if c in combined.columns)
         factors.append(VARIABLE_COLUMN)
         level_order = {
-            name: self._ordered(
-                name, [str(v) for v in combined[name].dropna().unique()]
-            )
+            name: self._level_order(name, combined, is_field=name in field_columns)
             for name in factors
         }
         # Declared order, not observed: the user listed the variables.
