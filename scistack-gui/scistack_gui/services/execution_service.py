@@ -1417,6 +1417,57 @@ def describe_run_inputs(inputs: dict, function_name: str) -> str:
     )
 
 
+
+def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
+    """The MATLAB generator's ``variable_inputs`` map, from the SAME resolved
+    bindings :func:`build_run_inputs` consumes.
+
+    ``{param: [type_names]}`` for a whole-variable binding and
+    ``{param: {"types": [...], "columns": [...], "iterate": bool}}`` for one
+    with a column selection — the two shapes
+    ``api.matlab_command._variable_binding_parts`` parses. Until 2026-09-19
+    the MATLAB route assembled this from canvas edges plus the node config
+    on its own, so a selection recorded in HISTORY (a Python-authored
+    ``Var["knee"]`` step) reached a Python re-run and not a MATLAB one: two
+    derivations of one fact, agreeing by convention. One derivation now;
+    this is only a rendering of it.
+
+    Targets of one call site agree on their bindings; if two disagree (a
+    name-scoped derivation over two call sites of one name) the first wins
+    and the loser is WARNed, matching ``column_selections_for_nodes``.
+    """
+    from scistack_gui.domain import column_selection as _cs
+    from scistack_gui.domain.edge_resolver import BINDING_VARIABLE
+
+    out: dict = {}
+    for t in targets or []:
+        for param, binding in (t.get("bindings") or {}).items():
+            if binding.get("kind") != BINDING_VARIABLE:
+                continue
+            ref = binding.get("ref")
+            types = [str(x) for x in (ref if isinstance(ref, (list, tuple)) else [ref]) if x]
+            if not types:
+                continue
+            sel = _cs.from_binding(binding)
+            entry = (
+                {"types": types, "columns": list(sel["columns"]), "iterate": sel["iterate"]}
+                if sel
+                else list(types)
+            )
+            previous = out.get(param)
+            if previous is not None and previous != entry:
+                logger.warning(
+                    "[execution] '%s': parameter %r is bound differently on two "
+                    "targets (%s vs %s) — keeping the first for the MATLAB command",
+                    function_name or "?",
+                    param,
+                    previous,
+                    entry,
+                )
+                continue
+            out[param] = entry
+    return out
+
 def build_run_glue(target: dict, function_name: str) -> dict:
     """The for_each ``glue=`` dict for a derived target, or ``{}``.
 

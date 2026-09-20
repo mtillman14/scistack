@@ -192,97 +192,6 @@ def _collect_variable_inputs(
     return dict(resolved.input_types)
 
 
-def _apply_column_selections(
-    function_name: str,
-    variable_inputs: dict,
-    selections: dict,
-    db_input_types: "dict | None" = None,
-) -> dict:
-    """Fold the GUI's saved column selections into ``variable_inputs``.
-
-    Returns the SAME single map, with a selected parameter's entry promoted
-    from ``[type_names]`` to ``{"types": [...], "columns": [...], "iterate":
-    bool}`` — the second shape ``api.matlab_command._variable_binding_parts``
-    parses. One map, so all three emit sites (template/first-run, single-fn
-    ``_for_each_call_lines``, per-step pipeline) are covered by the one
-    helper that already renders it.
-
-    *db_input_types* is ``{param: type_name}` from DB history. It is what
-    covers the case the edge path cannot: a source-declared function that has
-    already run has NO manual edge rows, so ``_collect_variable_inputs``
-    returns nothing for it and the recorded type is the only source for the
-    class name the selection has to wrap.
-
-    A selection for a parameter with no type from either source is dropped
-    with a WARN — emitting ``("filename")`` with no class in front of it
-    would be a syntax error in the generated script.
-    """
-    from scistack_gui.domain import column_selection as _cs
-
-    if not selections:
-        return variable_inputs
-
-    merged = dict(variable_inputs or {})
-    for param, raw in selections.items():
-        sel = _cs.normalize(raw)
-        if sel is None:
-            continue
-        existing = merged.get(param)
-        if isinstance(existing, str):
-            types = [existing]
-        elif isinstance(existing, (list, tuple)):
-            types = [t for t in existing if t]
-        else:
-            types = []
-        if not types:
-            recorded = (db_input_types or {}).get(param)
-            types = [recorded] if recorded else []
-        if not types:
-            logger.warning(
-                "generate_matlab_command: %s: parameter '%s' has a column "
-                "selection (%s) but no variable type from either the canvas "
-                "wiring or DB history — the selection is dropped. Reconnect "
-                "the variable to that parameter's handle.",
-                function_name,
-                param,
-                _cs.describe(sel),
-            )
-            continue
-        merged[param] = {
-            "types": types,
-            "columns": list(sel["columns"]),
-            "iterate": sel["iterate"],
-        }
-        logger.info(
-            "generate_matlab_command: %s: '%s' (%s) restricted to %s",
-            function_name,
-            param,
-            ", ".join(types),
-            _cs.describe(sel),
-        )
-    return merged
-
-
-def _db_input_types(variants: list[dict]) -> dict[str, str]:
-    """``{param: type_name}`` recorded across *variants* — the fallback source
-    of a class name for a parameter with no manual edge. PathInput specs are
-    excluded: they are not variable types and must never be constructed as
-    one."""
-    from scistack_gui.domain.graph_builder import parse_path_input
-
-    out: dict[str, str] = {}
-    for v in variants or []:
-        for param, type_val in (v.get("input_types") or {}).items():
-            if isinstance(type_val, (list, tuple)):
-                if len(type_val) != 1:
-                    continue
-                type_val = type_val[0]
-            if not type_val or parse_path_input(str(type_val)) is not None:
-                continue
-            out.setdefault(param, str(type_val))
-    return out
-
-
 def _collect_glue_chains(
     function_name: str, manual_edges: list[dict], manual_nodes: dict
 ) -> dict[str, list[dict]]:
@@ -483,32 +392,42 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         function_name, saved_sweeps, manual_edges, manual_nodes
     )
 
-    # Collect Variable mappings — the live overlay for functions with DB
-    # history, and the ONLY source for one that has never run (see
-    # _collect_variable_inputs).
-    variable_inputs = _collect_variable_inputs(
-        function_name, manual_edges, manual_nodes
+    # Variable bindings come from the ONE derivation the Python run uses
+    # (execution_service.derive_*: history with its recorded selectors, the
+    # node's own statements on top, manual edges reconciled) and are only
+    # RENDERED here. This route used to assemble its own map from edges plus
+    # the node config, so a selection recorded in history — a Python-authored
+    # `Var["knee"]` step — reached a Python re-run and not a MATLAB one.
+    # Node-scoped when the request names a node, name-scoped otherwise —
+    # the same distinction the Python run draws.
+    from scistack_gui.services.execution_service import (
+        derive_fn_targets,
+        derive_target_for_node,
+        variable_inputs_view,
     )
-
-    # Fold in the node's saved column selections. Name-scoped when the request
-    # carries no node_id (a pipeline/legacy caller), node-scoped when it does —
-    # the same distinction execution_service draws, so a Python run and a
-    # MATLAB run of the same node agree on which columns are loaded.
-    from scistack_gui.services.execution_service import column_selections_for_nodes
 
     _node_id = params.get("node_id")
-    variable_inputs = _apply_column_selections(
-        function_name,
-        variable_inputs,
-        column_selections_for_nodes(
-            db,
-            {_node_id} if _node_id else _fn_node_ids(
-                function_name, manual_edges, manual_nodes
-            ),
-            "" if _node_id else function_name,
-        ),
-        _db_input_types(fn_variants),
-    )
+    try:
+        _targets = (
+            derive_target_for_node(db, _node_id)
+            if _node_id
+            else derive_fn_targets(db, function_name)
+        )
+    except Exception:
+        logger.warning(
+            "generate_matlab_command: target derivation failed for '%s' — "
+            "falling back to canvas edges alone",
+            function_name,
+            exc_info=True,
+        )
+        _targets = []
+    variable_inputs = variable_inputs_view(_targets, function_name)
+    if not variable_inputs:
+        # No derivable target (never run, and no output wired yet): the
+        # canvas edges are still the only source of what feeds what.
+        variable_inputs = _collect_variable_inputs(
+            function_name, manual_edges, manual_nodes
+        )
 
     # Collect glue chains. Without this the generated script ran with the glue
     # silently dropped — the MATLAB half of the feature was built, but nothing
@@ -722,8 +641,8 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     from scistack_gui.services.execution_service import (
         _scope_function_node_ids,
         apply_pending_overrides,
-        column_selections_for_nodes,
         derive_target_for_node,
+        variable_inputs_view,
     )
 
     db_path = str(get_db_path())
@@ -830,17 +749,14 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         sweep_params = _collect_sweep_params(
             fn_label, saved_sweeps, manual_edges, manual_nodes
         )
-        step_variable_inputs = _collect_variable_inputs(
-            fn_label, manual_edges, manual_nodes
-        )
-        # Node-scoped: a pipeline step IS one specific node, so two call sites
-        # of the same function keep their own column selections.
-        step_variable_inputs = _apply_column_selections(
-            fn_label,
-            step_variable_inputs,
-            column_selections_for_nodes(db, {node_id}),
-            _db_input_types(unique_targets),
-        )
+        # A pipeline step IS one specific node, and its targets already carry
+        # the resolved bindings (history's selectors, the node's own
+        # statements on top) — rendered here, not re-derived.
+        step_variable_inputs = variable_inputs_view(unique_targets, fn_label)
+        if not step_variable_inputs:
+            step_variable_inputs = _collect_variable_inputs(
+                fn_label, manual_edges, manual_nodes
+            )
 
         steps.append(
             {

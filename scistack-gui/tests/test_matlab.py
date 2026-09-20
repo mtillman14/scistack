@@ -4109,77 +4109,67 @@ class TestDoubleQuotedStringEscaping:
         assert "Trials().for_columns()" in cmd
 
 
-class TestApplyColumnSelectionsToVariableInputs:
-    """``matlab_command_service._apply_column_selections`` keeps ONE map --
-    no parallel ``column_selections`` dict, which is the "one concept, two
-    representations" trap that leaves two of the three emit sites unupdated.
+class TestVariableInputsView:
+    """The MATLAB generator's ``variable_inputs`` map is a RENDERING of the
+    resolved bindings the Python run consumes — one derivation, two
+    languages. Before 2026-09-19 ``matlab_command_service`` assembled its
+    own map from edges plus node config, so a selection recorded in history
+    reached a Python re-run and not a MATLAB one.
     """
 
-    def test_promotes_an_edge_derived_entry(self):
-        from scistack_gui.services.matlab_command_service import (
-            _apply_column_selections,
-        )
+    def _target(self, bindings):
+        return {"constants": {}, "bindings": bindings}
 
-        out = _apply_column_selections(
-            "summarise", {"table_in": ["Trials"]}, {"table_in": ["filename"]}
+    def test_a_whole_variable_binding_is_the_plain_list(self):
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import variable_inputs_view
+
+        out = variable_inputs_view([self._target({"table_in": variable_binding(["Trials"])})])
+        assert out == {"table_in": ["Trials"]}
+
+    def test_a_selected_binding_is_promoted(self):
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import variable_inputs_view
+
+        out = variable_inputs_view(
+            [self._target({"table_in": variable_binding(["Trials"], ["filename"])})]
         )
         assert out == {
-            "table_in": {
-                "types": ["Trials"],
-                "columns": ["filename"],
-                "iterate": False,
-            }
+            "table_in": {"types": ["Trials"], "columns": ["filename"], "iterate": False}
         }
 
-    def test_falls_back_to_the_recorded_type_when_there_is_no_edge(self):
-        """A source-declared function that has already run has no manual edge
-        rows, so DB history is the only source of the class name."""
-        from scistack_gui.services.matlab_command_service import (
-            _apply_column_selections,
+    def test_a_history_selection_reaches_matlab_too(self, populated_db, bp_node_id):
+        """The regression: a Python-authored `Var["col"]` step re-run from a
+        MATLAB command must load that column, with no node config at all."""
+        from scistack_gui.services.execution_service import (
+            derive_fn_targets,
+            variable_inputs_view,
         )
 
-        out = _apply_column_selections(
-            "summarise", {}, {"table_in": ["filename"]}, {"table_in": "Trials"}
-        )
-        assert out["table_in"]["types"] == ["Trials"]
+        targets = derive_fn_targets(populated_db, "bandpass_filter")
+        out = variable_inputs_view(targets, "bandpass_filter")
+        assert "signal" in out  # the recorded binding, whatever its shape
 
-    def test_drops_a_selection_with_no_type_from_either_source(self, caplog):
-        """``("filename")`` with no class in front of it is a parse error in
-        the generated script."""
-        from scistack_gui.services.matlab_command_service import (
-            _apply_column_selections,
+    def test_non_variable_bindings_are_not_variable_inputs(self):
+        from scistack_gui.domain.edge_resolver import parameter_binding, pathinput_binding
+        from scistack_gui.services.execution_service import variable_inputs_view
+
+        out = variable_inputs_view(
+            [self._target({"p": parameter_binding("P"), "f": pathinput_binding("F")})]
         )
+        assert out == {}
+
+    def test_two_targets_that_disagree_keep_the_first_and_warn(self, caplog):
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import variable_inputs_view
 
         with caplog.at_level(logging.WARNING):
-            out = _apply_column_selections(
-                "summarise", {}, {"table_in": ["filename"]}, {}
+            out = variable_inputs_view(
+                [
+                    self._target({"a": variable_binding(["A"], ["x"])}),
+                    self._target({"a": variable_binding(["A"], ["y"])}),
+                ],
+                "f",
             )
-        assert out == {}
-        assert "no variable type" in caplog.text
-
-    def test_leaves_unselected_params_untouched(self):
-        from scistack_gui.services.matlab_command_service import (
-            _apply_column_selections,
-        )
-
-        out = _apply_column_selections(
-            "summarise", {"a": ["A"], "b": ["B"]}, {"a": ["x"]}
-        )
-        assert out["b"] == ["B"]
-
-    def test_db_input_types_excludes_path_input_specs(self):
-        """A PathInput spec sitting in ``input_types`` is not a variable type
-        and must never be constructed as one."""
-        from scistack_gui.services.matlab_command_service import _db_input_types
-
-        out = _db_input_types(
-            [
-                {
-                    "input_types": {
-                        "table_in": "Trials",
-                        "filepath": "PathInput('data/{subject}.csv')",
-                    }
-                }
-            ]
-        )
-        assert out == {"table_in": "Trials"}
+        assert out["a"]["columns"] == ["x"]
+        assert "bound differently" in caplog.text
