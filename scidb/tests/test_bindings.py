@@ -12,6 +12,7 @@ import math
 import pytest
 
 from scidb.bindings import (
+    COMBO_KEY,
     EMPTY_SIGNATURE,
     RID_PREFIX,
     Binding,
@@ -19,6 +20,7 @@ from scidb.bindings import (
     InputKind,
     RecordPool,
     RunBindings,
+    Selection,
     VariantGroup,
     is_internal_column,
     is_rid_column,
@@ -71,6 +73,10 @@ class TestBinding:
 
 
 class TestRunBindings:
+    """The combo carries ONE key — ``COMBO_KEY``, the index of its
+    ``Selection`` — and every reader (scifor's row filter, the graph edges,
+    the skip gate) resolves through it. No per-input prefixed keys."""
+
     def _run(self):
         return RunBindings(
             {
@@ -80,25 +86,41 @@ class TestRunBindings:
             }
         )
 
-    def test_full_iteration_reads_the_combo_and_appends_the_pin(self):
-        edges = self._run().for_combo({"subject": "01", "__rid_value": "r1", "__rid_cols": "c9"})
-        assert set(edges) == {
+    def test_a_combo_names_its_selection_and_the_pin_is_appended(self):
+        run = self._run()
+        handle = run.add_selection(Selection({"value": ("r1",), "cols": ("c9",)}))
+        combo = {"subject": "01", COMBO_KEY: handle}
+        assert run.selection_of(combo) is run.selections[0]
+        assert set(run.for_combo(combo)) == {
             Binding("value", "r1", '{"columns": ["a"]}'),
             Binding("cols", "c9", None),
             Binding("ref", "fixed1", None),
         }
 
-    def test_a_pin_already_on_the_combo_is_not_doubled(self):
-        edges = self._run().for_combo({"__rid_ref": "fixed1", "__rid_value": "r1"})
+    def test_a_pin_already_in_the_selection_is_not_doubled(self):
+        run = self._run()
+        handle = run.add_selection(Selection({"value": ("r1",), "ref": ("fixed1",)}))
+        edges = run.for_combo({COMBO_KEY: handle})
         assert sum(1 for e in edges if e.param == "ref") == 1
 
-    def test_aggregation_reads_the_pool_under_the_real_name(self):
+    def test_the_handle_survives_a_result_row(self):
+        """scifor writes the combo into the result row; the row's handle may
+        come back as a float (pandas), a string (MATLAB), or an int."""
+        run = self._run()
+        handle = run.add_selection(Selection({"value": ("r1",)}))
+        for spelled in (handle, float(handle), str(handle)):
+            assert run.selection_of({COMBO_KEY: spelled}) is run.selections[0]
+        assert run.selection_of({}) is None
+        assert run.selection_of({COMBO_KEY: math.nan}) is None
+        assert run.selection_of({COMBO_KEY: 99}) is None
+
+    def test_aggregation_selection_names_the_group_and_every_pooled_record(self):
         run = self._run()
         run.iterated_keys = ("subject",)
+        s20 = variant_signature({"bandpass.low_hz": 20})
         run["value"].kind = InputKind.AGGREGATED
         run["value"].pool = RecordPool(
-            ("subject",),
-            {("01",): {EMPTY_SIGNATURE: VariantGroup(EMPTY_SIGNATURE, ("r1", "r2"))}},
+            ("subject",), {("01",): {s20: VariantGroup(s20, ("r1", "r2"))}}
         )
         run["cols"].kind = InputKind.AGGREGATED
         run["cols"].pool = RecordPool(
@@ -106,20 +128,31 @@ class TestRunBindings:
             {("01",): {EMPTY_SIGNATURE: VariantGroup(EMPTY_SIGNATURE, ("c1",))}},
             split=False,
         )
-        assert run.split_params == ["value"] and run.vsig_columns == ["__vsig_value"]
-        edges = run.for_combo({"subject": "01", "__vsig_value": EMPTY_SIGNATURE})
+        assert run.split_params == ["value"]
+        # What expansion builds for the (subject=01, group s20) call:
+        combo = {"subject": "01"}
+        sel = Selection(
+            {
+                "value": tuple(run["value"].pool.rids_at(combo, s20)),
+                "cols": tuple(run["cols"].pool.rids_at(combo)),
+            },
+            {"value": s20},
+        )
+        combo[COMBO_KEY] = run.add_selection(sel)
+        edges = run.for_combo(combo)
         assert [e for e in edges if e.param == "value"] == [
             Binding("value", "r1", '{"columns": ["a"]}'),
             Binding("value", "r2", '{"columns": ["a"]}'),
         ]
         assert Binding("cols", "c1", None) in edges
         assert Binding("ref", "fixed1", None) in edges
-        # A location with no data binds only the pin.
+        # A combo with no selection binds only the pin.
         assert run.rids_for_combo({"subject": "02"}) == {"ref": ["fixed1"]}
 
-    def test_a_nan_or_none_rid_is_not_an_edge(self):
-        edges = self._run().for_combo({"__rid_value": math.nan, "__rid_cols": None})
-        assert {e.param for e in edges} == {"ref"}
+    def test_a_selection_with_no_records_is_not_an_edge(self):
+        run = self._run()
+        handle = run.add_selection(Selection({"value": ()}))
+        assert {e.param for e in run.for_combo({COMBO_KEY: handle})} == {"ref"}
 
     def test_kinds_are_queryable(self):
         run = self._run()
@@ -127,21 +160,37 @@ class TestRunBindings:
         assert run["value"].column == "__rid_value"
         assert "cols" in run and "nope" not in run
         assert run.pinned_rids == {"ref": "fixed1"}
+        assert run.tracked_columns == ["__rid_value"]
 
     def test_pin_binds_a_late_resolved_fixed_input(self):
+        """A Fixed pin Step 12 could not settle is looked up at save time,
+        AFTER the selections were built — so it is appended, not baked in."""
         run = self._run()
+        handle = run.add_selection(Selection({"value": ("r1",)}))
         run.pin("ref", "fixed2")
         run.pin("extra", "e1")
         assert run["ref"].pinned_rid == "fixed2"
         assert run["extra"].kind == InputKind.PINNED
-        assert {e.param: e.rid for e in run.for_combo({})} == {"ref": "fixed2", "extra": "e1"}
+        assert {e.param: e.rid for e in run.for_combo({COMBO_KEY: handle})} == {
+            "value": "r1",
+            "ref": "fixed2",
+            "extra": "e1",
+        }
 
     def test_branch_params_merge_across_the_edges(self):
         run = self._run()
         run.rid_to_bp = {"r1": {"bandpass.low_hz": 20}, "fixed1": {"ref.side": "L"}}
-        merged, conflicts = run.branch_params_for(run.for_combo({"__rid_value": "r1"}))
+        handle = run.add_selection(Selection({"value": ("r1",)}))
+        merged, conflicts = run.branch_params_for(run.for_combo({COMBO_KEY: handle}))
         assert merged == {"bandpass.low_hz": 20, "ref.side": "L"}
         assert conflicts == {}
+
+    def test_selection_with_rid_is_a_copy(self):
+        base = Selection({"value": ("r1",)})
+        more = base.with_rid("cols", "c1").with_rid("cols", "c2")
+        assert base.rids == {"value": ("r1",)}
+        assert more.rids == {"value": ("r1",), "cols": ("c1", "c2")}
+        assert more.all_rids() == {"r1", "c1", "c2"}
 
 
 # ---------------------------------------------------------------------------
@@ -187,23 +236,23 @@ class TestRecordPool:
         )
         return pool, s20, s30
 
-    def test_split_reads_the_group_the_combo_names(self):
+    def test_split_reads_the_group_named(self):
         pool, s20, s30 = self._pool()
-        assert pool.rids_at({"subject": "01", "__vsig_value": s20}, "value") == ["a", "b"]
-        assert pool.rids_at({"subject": "01", "__vsig_value": s30}, "value") == ["c"]
-        assert pool.rids_at({"subject": "02", "__vsig_value": s30}, "value") == []
+        assert pool.rids_at({"subject": "01"}, s20) == ["a", "b"]
+        assert pool.rids_at({"subject": "01"}, s30) == ["c"]
+        assert pool.rids_at({"subject": "02"}, s30) == []
+        assert pool.rids_at({"subject": "01"}) == []  # no group named: the empty one
         assert pool.signatures() == [s20, s30]
 
     def test_pooled_reads_every_group(self):
         pool, s20, s30 = self._pool(split=False)
-        assert pool.rids_at({"subject": "01"}, "value") == ["a", "b", "c"]
+        assert pool.rids_at({"subject": "01"}) == ["a", "b", "c"]
 
     def test_a_coarse_input_is_found_beneath_its_location(self):
         """Keyed by the iterated keys the input POPULATES: a subject-level
         input under a per-session aggregation serves every session."""
         pool, s20, _ = self._pool()
-        combo = {"subject": "01", "session": "3", "__vsig_value": s20}
-        assert pool.rids_at(combo, "value") == ["a", "b"]
+        assert pool.rids_at({"subject": "01", "session": "3"}, s20) == ["a", "b"]
 
     def test_a_group_knows_its_branch_params(self):
         _, s20, _ = self._pool()

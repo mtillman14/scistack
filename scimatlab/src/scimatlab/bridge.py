@@ -332,14 +332,16 @@ _for_each_state_id_counter = 0
 
 
 def _sanitize_rid_key(key: str) -> str:
-    """Map ``__rid_x`` → ``x__rid_x`` so MATLAB structs accept it.
+    """Map a ``__``-prefixed internal name → ``x__...`` so MATLAB accepts it.
 
     MATLAB struct field names cannot start with ``_``; tables also have
-    historically auto-sanitized leading underscores. Prefix with ``x`` so
-    every artifact the bridge hands to MATLAB (DataFrame columns, combo
-    dict keys, metadata iterable keys, scifor schema list) uses the same
-    name and ``+scifor/for_each.m`` can filter and group by them.
-    Reversed by ``_unsanitize_rid_key`` before save.
+    historically auto-sanitized leading underscores. Exactly TWO names cross
+    this way since 2026-09-20: ``__record_id`` on a loaded frame (the column
+    ``for_each.m`` selects rows by, then drops) and ``__combo`` on a
+    combination (the index of its row selection). The per-input
+    ``__rid_{param}`` / ``__vsig_{param}`` families this used to rename are
+    gone — the selection travels as data (``row_selection``) rather than as
+    columns. Reversed by the save RPC before Python reads the result table.
     """
     if key.startswith("__"):
         return "x" + key
@@ -356,18 +358,19 @@ def _strip_internal_columns(val, also_strip_record_id_branch_params=False):
     """Drop scidb-internal columns from a DataFrame so MATLAB's scifor
     doesn't trip over them.
 
-    Always drops ``__rid_*`` columns. When
-    ``also_strip_record_id_branch_params=True`` (used for Merge
-    constituents and for Fixed/ColumnSelection inner data), additionally
-    drops ``__record_id`` and ``__branch_params`` — those columns are
-    Python-side variant-tracking artifacts that ``MATLAB +scifor/for_each``
-    has no concept of and that break ``innerjoin`` inside Merge
-    (different record_ids per constituent produce zero-row inner joins).
+    When ``also_strip_record_id_branch_params=True`` (used for Merge
+    constituents and for Fixed/ColumnSelection inner data), drops
+    ``__record_id`` and ``__branch_params`` — those columns are Python-side
+    variant-tracking artifacts that ``MATLAB +scifor/for_each`` has no
+    concept of and that break ``innerjoin`` inside Merge (different
+    record_ids per constituent produce zero-row inner joins). A Fixed or
+    ColumnSelection input therefore has no record-id column for the row
+    selection to act on in MATLAB — the Fixed pin narrows by its own
+    metadata and a ColumnSelection pools its variants, exactly as before.
 
-    Free-standing DataFrames (the rid-expansion case) keep
-    ``__record_id`` / ``__branch_params`` so the rest of the prepare
-    pipeline can still find them; the per-input rename to ``x__rid_*``
-    runs afterward.
+    A free-standing DataFrame (a plain variable input) keeps ``__record_id``:
+    it crosses as ``x__record_id`` and is what ``for_each.m`` selects rows
+    by (``_row_selection``) before dropping it.
     """
     import pandas as pd
     from scifor.column_selection import ColumnSelection as _SciforColSel
@@ -375,7 +378,7 @@ def _strip_internal_columns(val, also_strip_record_id_branch_params=False):
     from scifor.merge import Merge as _SciforMerge
 
     if isinstance(val, pd.DataFrame):
-        drop_cols = [c for c in val.columns if c.startswith("__rid_")]
+        drop_cols: list = []
         if also_strip_record_id_branch_params:
             for extra in ("__record_id", "__branch_params"):
                 if extra in val.columns:
@@ -405,11 +408,11 @@ def _strip_internal_columns(val, also_strip_record_id_branch_params=False):
 def _rename_rid_columns_in_value(val, rename_map):
     """Walk a loaded-input value and prep its DataFrames for MATLAB:
 
-    - **Free-standing DataFrame** (variant-iterated input): rename the
-      iterated ``__rid_*`` columns to MATLAB-safe form.
+    - **Free-standing DataFrame** (a plain variable input): rename
+      ``__record_id`` to its MATLAB-safe form (``rename_map``).
     - **Inside ``scifor.Fixed`` / ``scifor.ColumnSelection``**: strip
-      every ``__rid_*`` AND ``__record_id`` / ``__branch_params``
-      column. See ``_strip_internal_columns`` for why.
+      ``__record_id`` / ``__branch_params``. See ``_strip_internal_columns``
+      for why.
     - **``scifor.Merge``**: each constituent is treated as Fixed-like:
       ``__record_id`` / ``__branch_params`` are stripped so MATLAB
       scifor's ``innerjoin`` doesn't see per-constituent record IDs
@@ -579,7 +582,7 @@ def for_each_prepare(
         If any input resolves to a ``PerComboLoader`` (per-combo loading
         is not yet supported on the MATLAB path).
     """
-    from scidb.bindings import is_internal_column, rid_column
+    from scidb.bindings import COMBO_KEY, RECORD_ID_COLUMN
     from scidb.foreach import (
         PerComboLoader,
         PerComboLoaderMerge,
@@ -859,34 +862,30 @@ def for_each_prepare(
             f"Call from Python instead, or restructure to use bulk-loadable types."
         )
 
-    # --- Sanitize __rid_* artifacts at the MATLAB boundary ---
-    # The internal state cache keeps the original ``__rid_*`` names so
-    # Python's save path (_for_each_save_resolved → _save_results) still
-    # finds them. Only the MATLAB-facing copies are renamed.
-    #
-    # Sources of __rid_* names to cover:
-    #   - bindings.tracked_columns: plain variable inputs Step 12 registered
-    #     a rid column for (ITERATE or AGGREGATED)
-    #   - bindings.pinned_rids: Fixed inputs (and inputs that prep
-    #     misclassifies as Fixed-like via the .data attribute, e.g.
-    #     ColumnSelection — Step 12 adds __rid_{param} for each)
-    #   - any other __rid_* key that may appear in combos / DataFrame
-    #     columns / extended_metadata_iterables
+    # --- The two internal names that cross the MATLAB boundary ---
+    # The state cache keeps the original names so Python's save path
+    # (_for_each_save_resolved → _save_results) reads the result table it
+    # expects; only the MATLAB-facing copies are renamed. `__record_id` is
+    # the frame column `for_each.m` selects rows by; `__combo` is the combo's
+    # handle into `row_selection` below (and comes back on every result row,
+    # which is how the save finds each row's Selection).
     _bindings = state.bindings
-    rid_rename_map = {k: _sanitize_rid_key(k) for k in _bindings.tracked_columns}
-    for fixed_param in _bindings.pinned_rids:
-        rk = rid_column(fixed_param)
-        rid_rename_map.setdefault(rk, _sanitize_rid_key(rk))
-    # Aggregation auto-split (D1): combos and DataFrame columns carry
-    # __vsig_* variant-signature discriminators — same leading-underscore
-    # problem as __rid_*, same fix (rid_keys_for_schema holds the vsig
-    # columns in aggregation mode).
-    for k in state.rid_keys_for_schema or []:
-        rid_rename_map.setdefault(k, _sanitize_rid_key(k))
-    # Check extended_metadata_iterables for any __rid_*/__vsig_* keys
-    for k in state.extended_metadata_iterables:
-        if is_internal_column(k) and k not in rid_rename_map:
-            rid_rename_map[k] = _sanitize_rid_key(k)
+    rid_rename_map = {
+        RECORD_ID_COLUMN: _sanitize_rid_key(RECORD_ID_COLUMN),
+        COMBO_KEY: _sanitize_rid_key(COMBO_KEY),
+    }
+
+    # "Python decides, MATLAB applies": which rows of each input a
+    # combination reads is its `Selection`, serialised here aligned with
+    # full_combos — `{param: [rid, ...]}` per combo —
+    # so `for_each.m` selects rows with ismember on x__record_id and never
+    # needs Python per combo. Python's own loop reads the same selections
+    # through scifor's `_select_rows` hook: one rule, two runtimes.
+    row_selection = [
+        {param: list(rids) for param, rids in sel.rids.items()}
+        for sel in _bindings.selections
+    ]
+    assert len(row_selection) == len(state.full_combos)
 
     # Loaded inputs: rename DataFrame columns (and inside wrappers)
     matlab_loaded_inputs = {
@@ -925,22 +924,9 @@ def for_each_prepare(
         for k, v in state.extended_metadata_iterables.items()
     }
 
-    # Update Python's scifor schema (which MATLAB's scifor.get_schema reads
-    # via Phase 1.3 forwarding) so it sees sanitized __rid_* names. Python's
-    # _for_each_save_resolved's Step 18 restores to current_schema_keys
-    # regardless of what we set here, so this is per-call only.
-    if state.rid_keys_for_schema:
-        import scifor as _scifor_local
-
-        sanitized_schema = list(state.current_schema_keys) + [
-            _sanitize_rid_key(k) for k in state.rid_keys_for_schema
-        ]
-        _scifor_local.set_schema(sanitized_schema)
-    # If state.rid_keys_for_schema is empty (aggregation mode or Fixed-only
-    # inputs), combos may still carry __rid_* keys — but Python's scifor
-    # never adds those to its schema so MATLAB's scifor.for_each won't
-    # filter on them; no schema update is needed here. The DataFrame /
-    # combo / metadata-iterable renames above are sufficient.
+    # (scifor's schema is no longer extended for a run — MATLAB's
+    # scifor.get_schema sees the dataset schema, and row selection travels
+    # as `row_selection` instead.)
 
     # Cache state for the matching for_each_save call
     global _for_each_state_id_counter
@@ -968,6 +954,9 @@ def for_each_prepare(
         "handle": handle,
         "loaded_inputs": matlab_loaded_inputs,
         "full_combos": matlab_full_combos,
+        "row_selection": row_selection,
+        "record_id_column": rid_rename_map[RECORD_ID_COLUMN],
+        "combo_key": rid_rename_map[COMBO_KEY],
         "output_names": state.output_names,
         "extended_metadata_iterables": matlab_meta_iters,
         "fn_name": state.fn_name,
@@ -1126,9 +1115,9 @@ def for_each_save(
         save = False
 
     # Reverse the bridge-boundary sanitization on the way back: MATLAB
-    # produced result tables whose columns include the sanitized names
-    # (e.g. ``x__rid_x``); Python's save path (state.bindings, _save_results)
-    # expects the original ``__rid_x`` names.
+    # produced result tables whose columns include the sanitized combo handle
+    # (``x__combo``); Python's save path (state.bindings, _save_results)
+    # expects ``__combo`` to find each row's Selection.
     reverse_map = {v: k for k, v in rid_rename_map.items()}
 
     # Merge per-output DataFrames into the single result_tbl shape that

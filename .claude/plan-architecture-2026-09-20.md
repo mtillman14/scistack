@@ -499,3 +499,28 @@ Verify: `cd /workspace/scidb && pytest tests/ -q`, then
 `endpoint_kind` at prepare), then `cd /workspace/tests/integration && pytest -q`.
 
 Stage 2b: **green on all four suites 2026-09-20** (user-run).
+
+### Stage 2c — built 2026-09-20, tests unrun (`.claude/plan-2c-row-selection-seam.md`)
+
+The selection is a value. `scidb.bindings.Selection` (per input, the
+record ids; per split aggregated input, the group's signature) is built
+once per combination at expansion and held on `RunBindings.selections`;
+the combo carries ONE key, `COMBO_KEY = "__combo"`, its index. scifor
+grew `_select_rows(param, frame, combo)`, called after its schema filter,
+and scidb's hook keeps the rows the Selection names and drops
+`__record_id`. The frame is never renamed, scifor's schema is never
+extended (Step 15 and Step 18 are gone, with `rid_keys_for_schema` and
+the iterables padding), and nothing parses a prefix off a combo or a row:
+the save (`for_combo`), the draft stamp, the skip gate, the normaliser,
+introspect and the PathOutput collision guard all read the Selection.
+scifor lost its four prefix strips; MATLAB's `for_each.m` lost its four
+and gained `_row_selection` / `_record_id_column` (the bridge serialises
+`selections` aligned with `full_combos`; `x__combo` / `x__record_id` are
+the only two sanitised names left). `rid_per_combo` and friends are keyed
+by PARAM.
+
+Verify: `cd /workspace/scifor && pytest tests/ -q`, then the whole scidb
+suite (`test_identity_parity.py` must show byte-identical edges;
+`test_column_selection_combo_pruning.py` guards that `__record_id` never
+reaches a function), then `cd /workspace/scimatlab && pytest tests/ -q`,
+then the MATLAB suite (the `.m` loop changed), then `tests/integration`.

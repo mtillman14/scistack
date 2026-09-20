@@ -165,14 +165,14 @@ class TestIdentityIsStillPythons:
             glue=_chain(),
         )
 
-        # The combos MATLAB will loop over already carry the VIRTUAL rids —
+        # The selections MATLAB will apply already name the VIRTUAL rids —
         # that is what makes an edited MATLAB glue invalidate the consumer,
         # exactly as on the Python path.
         rid_values = {
-            v
-            for combo in prep["full_combos"]
-            for k, v in combo.items()
-            if k.startswith(("__rid_", "x__rid_", "rid_"))
+            rid
+            for sel in prep["row_selection"]
+            for rids in sel.values()
+            for rid in rids
         }
         real_rids = {
             r[0]
@@ -202,10 +202,10 @@ class TestIdentityIsStillPythons:
                 glue=glue,
             )
             return {
-                v
-                for combo in prep["full_combos"]
-                for k, v in combo.items()
-                if k.startswith(("__rid_", "x__rid_", "rid_"))
+                rid
+                for sel in prep["row_selection"]
+                for rids in sel.values()
+                for rid in rids
             }
 
         assert _rids(_chain()) != _rids(_chain(GLUE_SRC_EDITED))

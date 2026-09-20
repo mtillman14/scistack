@@ -210,12 +210,22 @@ class TestPrepareEndpoints:
         paths = list(prep["resolved_path_outputs"]["filename"])
         assert len(paths) == len(combos) == 2
         assert sorted(p.rsplit("/", 1)[-1] for p in paths) == ["r_20.pdf", "r_30.pdf"]
-        # Injected placeholder keys must NOT cross as combo keys; the vsig
-        # discriminator crosses SANITIZED (MATLAB fields can't start with _).
-        for combo in combos:
+        # Injected placeholder keys must NOT cross as combo keys. What does
+        # cross is the combo's handle into `row_selection`, SANITIZED (MATLAB
+        # fields can't start with _), and the selection itself names the
+        # records each group reads — the per-input `x__vsig_*` discriminator
+        # columns are gone (2026-09-20).
+        selection = list(prep["row_selection"])
+        assert len(selection) == len(combos)
+        for i, combo in enumerate(combos):
             assert "low_hz" not in combo
-            assert "__vsig_df" not in combo
-            assert "x__vsig_df" in combo
+            assert not any(str(k).startswith("x__vsig_") for k in combo)
+            assert combo[prep["combo_key"]] == i
+            assert selection[i]["df"], "each group's selection names its records"
+        assert {tuple(s["df"]) for s in selection} and len(
+            {tuple(s["df"]) for s in selection}
+        ) == 2, "two variant groups, two different record sets"
+        assert prep["record_id_column"] == "x__record_id"
         assert prep["endpoint_kind"] == "stat"
         assert prep["path_param"] == "filename"
         assert prep["as_table_effective"] is True

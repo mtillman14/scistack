@@ -25,23 +25,20 @@ from scifor import for_each as _scifor_for_each
 from . import glue as _glue
 from .across_variants import AcrossVariants
 from .bindings import (
+    COMBO_KEY,
     EMPTY_SIGNATURE,
+    RECORD_ID_COLUMN,
     InputBinding,
     InputKind,
     RecordPool,
     RunBindings,
+    Selection,
     VariantGroup,
-    is_internal_column,
-    is_rid_column,
-    is_vsig_column,
     merge_branch_params,
     param_of,
-    param_of_vsig,
     rid_column,
-    rid_columns,
     signature_conflicts_with,
     variant_signature,
-    vsig_column,
 )
 from .exceptions import AmbiguousParamError
 from .input_spec import type_name, variable_type
@@ -198,12 +195,6 @@ class _ForEachState:
     loaded_inputs: dict
     full_combos: list
     extended_metadata_iterables: dict
-    # Which ``__rid_*`` / ``__vsig_*`` keys scifor's schema was EXTENDED with
-    # for this call, so Step 18 can restore it. Not derivable from
-    # ``bindings``: it is a fact about the scifor call, not about the inputs
-    # (full iteration extends with the iteration rids, aggregation with the
-    # variant-group signatures, and a Fixed-only call with neither).
-    rid_keys_for_schema: list
     aggregation_mode: bool
     current_schema_keys: list
     # What KIND of call this is, decided before prepare and read by the save:
@@ -884,6 +875,8 @@ def _for_each_execute(
                     inputs,
                     _loaded_inputs_ref,
                     as_table_params=_as_table_params,
+                    bindings=state.bindings,
+                    aggregation_mode=state.aggregation_mode,
                 )
 
             # Per-schema-key glue (the D4 opt-in) runs here, on the
@@ -929,6 +922,23 @@ def _for_each_execute(
         if _progress_fn is not None:
             _progress_fn(info)
 
+    # Which rows of an input a combination reads is its `Selection`; scifor
+    # applies it through this hook after its own schema filter. The hook and
+    # the graph edges (`RunBindings.edges_for`) read the SAME selection — the
+    # frame filter and the recorded lineage cannot disagree by construction.
+    # A frame with no `__record_id` (a DataFrame passed directly, a PathInput,
+    # a Merge) has no entry and passes through untouched.
+    _bindings = state.bindings
+
+    def _select_rows(param: str, frame, combo: dict):
+        if RECORD_ID_COLUMN not in frame.columns:
+            return frame
+        sel = _bindings.selection_of(combo)
+        rids = sel.rids.get(param) if sel is not None else None
+        if rids is not None:
+            frame = frame[frame[RECORD_ID_COLUMN].astype(str).isin([str(r) for r in rids])]
+        return frame.drop(columns=[RECORD_ID_COLUMN])
+
     # Delegate the core loop to scifor
     with Log.step(f"delegate_to_scifor({fn_name}, {len(state.full_combos)} combos)"):
         result_tbl = _scifor_for_each(
@@ -945,6 +955,7 @@ def _for_each_execute(
             _cancel_check=_cancel_check,
             _path_input_resolver=_path_input_resolver,
             _mapping_inputs=state.mapping_inputs,
+            _select_rows=_select_rows,
             **state.extended_metadata_iterables,
         )
 
@@ -976,34 +987,51 @@ def _for_each_execute(
 def _apply_introspect(result_tbl, state, where):
     """Append introspection columns to the for_each result DataFrame.
 
-    Column order: existing non-__rid columns (schema + outputs) →
-    _record_id_* / _branch_params_* pairs (one per DB-backed input) →
+    Column order: existing columns (schema + outputs, minus the combo handle)
+    → _record_id_* / _branch_params_* pairs (one per DB-backed input) →
     _call_id, _config_keys, _where.
+
+    Every row names its ``Selection`` (``COMBO_KEY``); the per-input columns
+    are read from it. A full-iteration input reads one record, so its
+    ``_record_id_*`` is that id; an aggregated input reads several, so its
+    ``_record_id_*`` is the list and its ``_branch_params_*`` the variant
+    group's (from the signature) — the same two shapes the ``__rid_*`` /
+    ``__vsig_*`` row columns used to carry.
     """
-    # Identify __rid_* / __vsig_* columns and remove them from their current
-    # positions (both are internal discriminators: per-record in full
-    # iteration, per-variant-group signature in aggregation auto-split).
-    rid_cols = rid_columns(result_tbl.columns)
-    vsig_cols = [c for c in result_tbl.columns if is_vsig_column(c)]
-    df = result_tbl.drop(columns=rid_cols + vsig_cols)
+    bindings = state.bindings
+    selections = [bindings.selection_of(row) for row in result_tbl.to_dict("records")]
+    df = result_tbl.drop(columns=[COMBO_KEY], errors="ignore")
 
-    # Append per-input record_id + branch_params pairs in input order.
-    for rid_col in rid_cols:
-        param_name = param_of(rid_col)
-        record_ids = result_tbl[rid_col]
-        df[f"_record_id_{param_name}"] = record_ids.values
-        df[f"_branch_params_{param_name}"] = [
-            state.bindings.rid_to_bp.get(rid, {}) for rid in record_ids
-        ]
+    params: list = []
+    for sel in selections:
+        if sel is None:
+            continue
+        for p in list(sel.rids) + list(sel.groups):
+            if p not in params:
+                params.append(p)
 
-    # Aggregation auto-split rows have no single record_id per input; surface
-    # the variant group's branch_params (parsed from the signature) instead.
-    for vsig_col in vsig_cols:
-        param_name = param_of_vsig(vsig_col)
-        df[f"_branch_params_{param_name}"] = [
-            json.loads(s) if isinstance(s, str) and s else {}
-            for s in result_tbl[vsig_col]
-        ]
+    for param_name in params:
+        rid_col: list = []
+        bp_col: list = []
+        for sel in selections:
+            rids = tuple(sel.rids.get(param_name, ())) if sel else ()
+            sig = sel.groups.get(param_name) if sel else None
+            if sig is not None:
+                # An aggregated split input: the group's coordinate.
+                rid_col.append(list(rids))
+                try:
+                    bp_col.append(json.loads(sig))
+                except (ValueError, TypeError):
+                    bp_col.append({})
+            elif len(rids) == 1:
+                rid_col.append(rids[0])
+                bp_col.append(bindings.rid_to_bp.get(rids[0], {}))
+            else:
+                rid_col.append(list(rids))
+                merged, _ = merge_branch_params(bindings.rid_to_bp.get(r, {}) for r in rids)
+                bp_col.append(merged)
+        df[f"_record_id_{param_name}"] = rid_col
+        df[f"_branch_params_{param_name}"] = bp_col
 
     # Append call-level columns (same value on every row).
     df["_call_id"] = state.call_id
@@ -1117,15 +1145,15 @@ def _guard_pathoutput_collisions(
     path_outputs: list,
     full_combos: list,
     colname_columns: "list | None",
-    rid_to_bp: dict,
+    bindings: RunBindings,
     placeholder_names: set,
 ) -> None:
     """Hard-error when one resolved artifact path is shared by combos that
     agree on their SCHEMA/iterable identity but differ in VARIANT identity
-    (``__vsig_*`` / ``__rid_*``) — silent file loss with a one-line fix to
-    name. Collisions from omitted schema keys are deliberately not errors
+    (their ``Selection``) — silent file loss with a one-line fix to name.
+    Collisions from omitted schema keys are deliberately not errors
     (pre-existing, possibly intentional overwrites); in full iteration, combos
-    at different schema locations also differ in ``__rid_*``, so variant
+    at different schema locations also read different records, so variant
     difference alone must NOT trigger the guard.
 
     ``colname_columns``: the concrete for_columns axis (resolved before
@@ -1139,24 +1167,32 @@ def _guard_pathoutput_collisions(
             sorted(
                 (k, str(v))
                 for k, v in fc.items()
-                if not str(k).startswith("__") and k not in placeholder_names
+                if k != COMBO_KEY and k not in placeholder_names
             )
         )
 
-    def _variant_keys(fc: dict) -> dict:
-        return {k: v for k, v in fc.items() if is_internal_column(k)}
+    def _variant_identity(fc: dict) -> tuple:
+        sel = bindings.selection_of(fc)
+        if sel is None:
+            return ()
+        return (
+            tuple(sorted((p, tuple(r)) for p, r in sel.rids.items())),
+            tuple(sorted(sel.groups.items())),
+        )
 
     def _group_bp(fc: dict) -> dict:
-        bp: dict = {}
-        for k, v in fc.items():
-            if is_vsig_column(k) and isinstance(v, str):
-                try:
-                    bp.update(json.loads(v))
-                except (ValueError, TypeError):
-                    pass
-            elif is_rid_column(k):
-                bp.update(rid_to_bp.get(v, {}))
-        return bp
+        sel = bindings.selection_of(fc)
+        if sel is None:
+            return {}
+        merged, _ = merge_branch_params(
+            bindings.rid_to_bp.get(r, {}) for rs in sel.rids.values() for r in rs
+        )
+        for sig in sel.groups.values():
+            try:
+                merged.update(json.loads(sig))
+            except (ValueError, TypeError):
+                pass
+        return merged
 
     for po in path_outputs:
         columns = (
@@ -1173,7 +1209,7 @@ def _guard_pathoutput_collisions(
                     continue
                 if _base_identity(prev) != _base_identity(fc):
                     continue  # schema-driven collision: user's business
-                if _variant_keys(prev) == _variant_keys(fc):
+                if _variant_identity(prev) == _variant_identity(fc):
                     continue  # identical combo re-reference
                 bp_a, bp_b = _group_bp(prev), _group_bp(fc)
                 diff_keys = sorted(
@@ -1345,16 +1381,17 @@ def _build_skip_hook(
     graph ``function_hash``). Passing the same MATLAB hash here keeps the
     function-hash comparison meaningful instead of forcing eternal recompute.
 
-    ``agg_binding_ref`` is a MUTABLE holder ``{"bindings": RunBindings | None}``.
-    The hook is built BEFORE ``_for_each_prepare`` but fires inside prepare's
-    Step 14 combo filter — after Step 12 has built the typed bindings (every
-    aggregated input's `RecordPool`) — so prepare fills the holder right
-    before Step 14 via the ``_agg_binding_ref`` attribute exposed
-    on the returned hook (one dict is auto-created when the caller passes
-    none, which covers both the Python and MATLAB-bridge call sites). In
-    aggregation mode the combo carries no ``__rid_*`` keys, so the gate binds
-    the variant group by its exact consumed-rid set (see
-    ``_find_skip_gate_record``) instead of per-param rid comparison.
+    ``agg_binding_ref`` is a MUTABLE holder ``{"bindings": RunBindings | None,
+    "aggregation": bool}``. The hook is built BEFORE ``_for_each_prepare`` but
+    fires inside prepare's Step 14 combo filter — after Step 13 has built the
+    typed bindings and registered every combination's ``Selection`` — so
+    prepare fills the holder right before Step 14 via the
+    ``_agg_binding_ref`` attribute exposed on the returned hook (one dict is
+    auto-created when the caller passes none, which covers both the Python
+    and MATLAB-bridge call sites). Each combo names its selection
+    (``COMBO_KEY``); in aggregation mode the gate binds the variant group by
+    its exact consumed-rid set (see ``_find_skip_gate_record``) instead of
+    the per-param rid comparison.
     """
     from scilineage.hashing import compute_function_hash
 
@@ -1364,7 +1401,7 @@ def _build_skip_hook(
     from .provenance_save import compute_input_selectors
 
     if agg_binding_ref is None:
-        agg_binding_ref = {"bindings": None}
+        agg_binding_ref = {"bindings": None, "aggregation": False}
 
     schema_keys: set = set(db.dataset_schema_keys)
 
@@ -1429,29 +1466,27 @@ def _build_skip_hook(
     def _should_skip(combo: dict) -> bool:
         schema_combo = {k: v for k, v in combo.items() if k in schema_keys}
         combo_str = _combo_str(schema_combo)
-        _vsig_bits = [
-            f"{param_of_vsig(k)} group {v}"
-            for k, v in sorted(combo.items())
-            if is_vsig_column(k)
-        ]
-        if _vsig_bits:
-            combo_str += " [" + "; ".join(_vsig_bits) + "]"
+        # What this combination reads — its `Selection` (filled into the
+        # holder at Step 13, before this hook fires at Step 14).
+        _bound: RunBindings | None = (agg_binding_ref or {}).get("bindings")
+        _sel = _bound.selection_of(combo) if _bound is not None else None
+        if _sel is not None and _sel.groups:
+            combo_str += " [" + "; ".join(
+                f"{p} group {sig}" for p, sig in sorted(_sel.groups.items())
+            ) + "]"
 
         # Aggregation mode: bind the combo's variant group to its exact
-        # consumed-rid set (filled into agg_binding_ref after prepare). The
-        # per-param __rid_* staleness comparison below never fires for
-        # aggregation combos, so the group identity must be enforced at the
-        # gate — otherwise a NEW variant group (or a grown record set) would
-        # cross-skip against another group's output.
+        # consumed-rid set. The per-param staleness comparison below compares
+        # one record per param, which is not what an aggregating call does,
+        # so the group identity must be enforced at the gate — otherwise a
+        # NEW variant group (or a grown record set) would cross-skip against
+        # another group's output.
         expected_input_rids = None
         _fixed_rids: frozenset = frozenset()
-        _bound: RunBindings | None = (agg_binding_ref or {}).get("bindings")
-        if _bound is not None:
+        if _bound is not None and (agg_binding_ref or {}).get("aggregation"):
             _fixed_rids = frozenset(str(r) for r in _bound.pinned_rids.values())
             expected_input_rids = {
-                str(r)
-                for param, rids in _bound.rids_for_combo(combo).items()
-                for r in rids
+                str(r) for rids in _bound.rids_for(_sel).values() for r in rids
             } - _fixed_rids
 
         # Gate: does an output for THIS variant already exist? Find the latest
@@ -1494,31 +1529,28 @@ def _build_skip_hook(
             )
 
         stored_var = sig["var_inputs"]  # param -> [(record_id, selector), ...]
-        for key, rid_val in combo.items():
-            if not is_rid_column(key) or rid_val is None:
-                continue
-            param = param_of(key)
-            # Self-referential: the loaded input IS the output record. Stable.
-            if str(rid_val) == str(output_record_id):
-                continue
-            stored = stored_var.get(param)
-            if not stored:
-                return _recompute(combo_str, f"no stored input {param}")
-            # A full-iteration combo binds ONE record per param; the stored
-            # edge list for it has one entry (several only for an aggregating
-            # param, whose combos carry no __rid_* key and are gated above).
-            stored_rids = {str(r) for r, _s in stored}
-            if str(rid_val) not in stored_rids:
-                # Naming both rids is what makes an edited *glue* diagnosable:
-                # the binding moves because the glue's virtual record id moved,
-                # and this is the line that proves the edit propagated.
-                return _recompute(
-                    combo_str,
-                    f"binding '{param}' changed ({sorted(stored_rids)} -> {rid_val})",
-                )
-            stored_sel = next((s for r, s in stored if str(r) == str(rid_val)), None)
-            if (stored_sel or None) != (selectors.get(param) or None):
-                return _recompute(combo_str, f"selector for {param} changed")
+        _current = _bound.rids_for(_sel) if _bound is not None else {}
+        for param, rid_vals in _current.items():
+            for rid_val in rid_vals:
+                # Self-referential: the loaded input IS the output record. Stable.
+                if str(rid_val) == str(output_record_id):
+                    continue
+                stored = stored_var.get(param)
+                if not stored:
+                    return _recompute(combo_str, f"no stored input {param}")
+                stored_rids = {str(r) for r, _s in stored}
+                if str(rid_val) not in stored_rids:
+                    # Naming both rids is what makes an edited *glue*
+                    # diagnosable: the binding moves because the glue's
+                    # virtual record id moved, and this is the line that
+                    # proves the edit propagated.
+                    return _recompute(
+                        combo_str,
+                        f"binding '{param}' changed ({sorted(stored_rids)} -> {rid_val})",
+                    )
+                stored_sel = next((s for r, s in stored if str(r) == str(rid_val)), None)
+                if (stored_sel or None) != (selectors.get(param) or None):
+                    return _recompute(combo_str, f"selector for {param} changed")
 
         # Constants: compare current value hashes to stored content hashes.
         stored_const = sig["const_hashes"]
@@ -2113,20 +2145,27 @@ def _for_each_prepare(
             )
     per_combo_glue = glue_fusion.per_combo
 
-    # --- Step 11: Variant tracking: build rid→bp mapping and __rid_{param} discriminator columns ---
+    # --- Step 11: Variant tracking: build the rid→bp mapping and sort inputs by kind ---
+    #
+    # A loaded frame keeps its `__record_id` column exactly as the loader
+    # wrote it. Which of its records a combination reads is decided at combo
+    # expansion (a `Selection` per combo, `scidb.bindings`) and applied by
+    # scifor through the `_select_rows` hook — NOT by renaming the column per
+    # input and pushing those names into scifor's schema, which is what this
+    # step did until 2026-09-20 (and then stripped back out in four places).
     from itertools import product as _iproduct
 
     import pandas as pd
 
     Log.debug("building variant tracking (rid->branch_params mapping)")
     rid_to_bp: dict = {}  # {record_id: branch_params_dict}
-    rid_keys: list = []  # __rid_{param_name} column names added to this call's schema
+    tracked_params: list = []  # plain variable inputs: rid is an iteration axis / a pool
     fixed_rid_values: dict = {}  # {param_name: record_id} for Fixed inputs
     # ColumnSelection inputs participate in non-existent-combo PRUNING but NOT in
-    # rid expansion / schema extension. Coupling them into rid_keys (as plain
-    # DataFrame inputs are) would change variant semantics — it perturbs Variant
-    # branch_param pinning and for_columns aggregation. So we track them
-    # separately and use only their schema-location coverage to prune combos.
+    # rid expansion. Coupling them in (as plain DataFrame inputs are) would
+    # change variant semantics — it perturbs Variant branch_param pinning and
+    # for_columns aggregation. So we track them separately and use only their
+    # schema-location coverage to prune combos.
     colsel_params: list = []  # param_names whose input is a ColumnSelection wrapper
 
     for param_name, data in list(loaded_inputs.items()):
@@ -2153,11 +2192,11 @@ def _for_each_prepare(
             df = data.data
             is_colsel = True
 
-        if df is None or "__record_id" not in df.columns:
+        if df is None or RECORD_ID_COLUMN not in df.columns:
             if df is not None:
                 Log.debug(
                     f"input '{param_name}' "
-                    f"({type(data).__name__}) has no __record_id column — "
+                    f"({type(data).__name__}) has no {RECORD_ID_COLUMN} column — "
                     f"rid tracking disabled for this input"
                 )
             continue
@@ -2165,9 +2204,9 @@ def _for_each_prepare(
         # Build rid→bp from this input's DataFrame (vectorized for performance)
         bp_col = "__branch_params" if "__branch_params" in df.columns else None
         # Filter out None record_ids using vectorized operation
-        valid_mask = df["__record_id"].notna()
+        valid_mask = df[RECORD_ID_COLUMN].notna()
         if valid_mask.any():
-            valid_rids = df.loc[valid_mask, "__record_id"]
+            valid_rids = df.loc[valid_mask, RECORD_ID_COLUMN]
             if bp_col:
                 valid_bps = df.loc[valid_mask, bp_col]
                 # Use zip over columns instead of iterrows() - 10-100x faster
@@ -2179,11 +2218,6 @@ def _for_each_prepare(
                 for rid in valid_rids:
                     rid_to_bp[rid] = {}
 
-        # Rename __record_id → __rid_{param_name} so per-param tracking is unambiguous
-        rid_col = rid_column(param_name)
-        df_renamed = df.rename(columns={"__record_id": rid_col})
-
-        # Update loaded_inputs with renamed DataFrame (or rewrap in Fixed)
         if is_fixed:
             # The one record a Fixed input pins. The loaded frame is the WHOLE
             # variable (scifor applies the pin per call), so the pin's metadata
@@ -2197,7 +2231,7 @@ def _for_each_prepare(
                 if _k in _pinned.columns:
                     _pinned = _pinned[_pinned[_k].astype(str) == str(_v)]
             if len(_pinned) == 1:
-                fixed_rid_values[param_name] = str(_pinned.iloc[0]["__record_id"])
+                fixed_rid_values[param_name] = str(_pinned.iloc[0][RECORD_ID_COLUMN])
             elif len(_pinned) > 1:
                 Log.warn(
                     f"input '{param_name}' (Fixed): the pin "
@@ -2206,41 +2240,36 @@ def _for_each_prepare(
                     f"Pin every schema key of {getattr(data.data, '__name__', data.data)} "
                     f"or narrow with where=."
                 )
-            data.data = df_renamed
             Log.debug(
                 f"input '{param_name}' (Fixed): rid tracked "
-                f"via fixed_rid_values (no iteration rid key)"
+                f"via fixed_rid_values (no iteration axis)"
             )
         elif is_colsel:
-            # ColumnSelection: keep the renamed (now __-prefixed, hence
-            # column-selection-dropped) discriminator on the wrapper's data, and
-            # mark the param for existence-based combo pruning. Deliberately NOT
-            # added to rid_keys: no schema extension, no rid expansion.
+            # ColumnSelection: mark the param for existence-based combo
+            # pruning. Deliberately NOT a tracked param: no rid expansion.
             #
-            # Absent from rid_keys does NOT mean absent from lineage. The rids
-            # are collected separately into `colsel_rid_per_combo` and merged
-            # into the input's `RecordPool` (`RunBindings`), which is what the save path binds
+            # Not expanding does NOT mean absent from lineage. The rids are
+            # collected separately into `colsel_rid_per_combo` and land in
+            # each combo's `Selection`, which is what the save path binds
             # `_invocation_input` edges from. Before 2026-09-15 they were not,
-            # and every record built from a column-selected input was saved with
-            # no record of what it consumed.
-            data.data = df_renamed
+            # and every record built from a column-selected input was saved
+            # with no record of what it consumed.
             colsel_params.append(param_name)
             Log.debug(
                 f"input '{param_name}' (ColumnSelection): "
                 f"pruning-only (no rid expansion)"
             )
         else:
-            # Plain DataFrame: full rid tracking (expansion + schema + pruning).
-            loaded_inputs[param_name] = df_renamed
-            rid_keys.append(rid_col)
+            # Plain DataFrame: full rid tracking (expansion + pruning).
+            tracked_params.append(param_name)
             Log.debug(
                 f"input '{param_name}' "
-                f"({type(data).__name__}): registered rid key '{rid_col}'"
+                f"({type(data).__name__}): rid-tracked"
             )
 
     Log.debug(
         f"variant tracking: {len(rid_to_bp)} record_id(s) mapped, "
-        f"{len(rid_keys)} rid key(s): {rid_keys}, "
+        f"{len(tracked_params)} tracked input(s): {tracked_params}, "
         f"{len(fixed_rid_values)} fixed input rid(s): {list(fixed_rid_values.keys())}"
     )
 
@@ -2308,25 +2337,25 @@ def _for_each_prepare(
             f"{sorted(_path_placeholder_names)}"
         )
 
-    # For each rid_key, map combo_tuple → [rid_values at that combo]
+    # For each tracked input, map combo_tuple → [rid_values at that combo].
+    # Keyed by PARAM (2026-09-20; was the `__rid_{param}` column name).
     rid_per_combo: dict = {}
-    # rid_col -> set of _lookup_keys positions that input actually populates
+    # param -> set of _lookup_keys positions that input actually populates
     rid_populated_idx: dict = {}
     # The SAME mapping, built for ColumnSelection inputs, kept in its own dict.
     #
-    # ColumnSelection is deliberately absent from `rid_keys` (below): coupling
-    # it into rid expansion changes Variant pinning and for_columns semantics.
-    # But rid_keys was also the only thing feeding the SAVE path's input
+    # ColumnSelection is deliberately not a tracked param: coupling it into
+    # rid expansion changes Variant pinning and for_columns semantics. But
+    # the tracked set was also the only thing feeding the SAVE path's input
     # binding, so switching off iteration switched off LINEAGE too — records
     # saved from a column-selected input got no `_invocation_input` edges at
     # all (2026-09-15: GAITRiteSymmetry, which then could not be told apart
     # from its own superseded generation and plotted as replicates of it).
     # Two unrelated jobs on one wire. This dict is the second wire: it feeds
-    # the input's `RecordPool` (`RunBindings`), which the save path reads, and nothing that decides
-    # how many times the function is called or how its schema is extended.
+    # each combo's `Selection`, which the save path reads, and nothing that
+    # decides how many times the function is called.
     colsel_rid_per_combo: dict = {}
-    for rid_col in list(rid_keys) + [rid_column(p) for p in colsel_params]:
-        param_name = param_of(rid_col)
+    for param_name in list(tracked_params) + list(colsel_params):
         _is_colsel_input = param_name in colsel_params
         data = loaded_inputs.get(param_name)
 
@@ -2337,7 +2366,7 @@ def _for_each_prepare(
         elif hasattr(data, "data") and isinstance(data.data, pd.DataFrame):
             df = data.data
 
-        if df is None or rid_col not in df.columns:
+        if df is None or RECORD_ID_COLUMN not in df.columns:
             continue
         # Group only by the schema keys this input actually POPULATES. A variable
         # stored at a coarser level than the dataset schema (e.g. a subject/session/
@@ -2358,7 +2387,7 @@ def _for_each_prepare(
         # the full-iteration expansion loop probes `rid_per_combo` alone — so a
         # ColumnSelection entry here changes no combo, and lets the lineage
         # lookup below blank the same positions a coarse input leaves empty.
-        rid_populated_idx[rid_col] = {_lookup_keys.index(k) for k in schema_cols_in_df}
+        rid_populated_idx[param_name] = {_lookup_keys.index(k) for k in schema_cols_in_df}
         mapping: dict = {}
         # Dedupe rids per group so DataFrame-mode inputs (one DuckDB row
         # per inner-table row, all sharing a single record_id) don't
@@ -2373,19 +2402,19 @@ def _for_each_prepare(
                     for sk, v in zip(schema_cols_in_df, raw_key, strict=False)
                 }
                 key = tuple(col_val.get(sk, "") for sk in _lookup_keys)
-                mapping[key] = list(dict.fromkeys(group[rid_col].tolist()))
+                mapping[key] = list(dict.fromkeys(group[RECORD_ID_COLUMN].tolist()))
         else:
             # No lookup cols in df — use all-empty key
             mapping[tuple("" for _ in _lookup_keys)] = list(
-                dict.fromkeys(df[rid_col].tolist())
+                dict.fromkeys(df[RECORD_ID_COLUMN].tolist())
             )
         if _is_colsel_input:
-            colsel_rid_per_combo[rid_col] = mapping
+            colsel_rid_per_combo[param_name] = mapping
         else:
-            rid_per_combo[rid_col] = mapping
+            rid_per_combo[param_name] = mapping
 
-    def _rid_probe_key(rid_col: str, schema_vals: tuple) -> tuple:
-        """The key to look up *rid_col*'s mapping with for a combo location.
+    def _rid_probe_key(param: str, schema_vals: tuple) -> tuple:
+        """The key to look up *param*'s mapping with for a combo location.
 
         ``schema_vals`` carries a real value in every position; a coarse input's
         mapping keys carry "" wherever that input has no axis. Blank the same
@@ -2399,7 +2428,7 @@ def _for_each_prepare(
         always compared this way — that asymmetry is why a coarse
         ``ColumnSelection`` input worked while a coarse plain one did not.
         """
-        populated = rid_populated_idx.get(rid_col)
+        populated = rid_populated_idx.get(param)
         if populated is None or len(populated) == len(_lookup_keys):
             return schema_vals
         return tuple(
@@ -2495,10 +2524,9 @@ def _for_each_prepare(
         if _d is not None:
             _diag_inputs.append((_pn, _d))
     for _pn, _d in _diag_inputs:
-        _rid_cols = rid_columns(_d.columns)
-        if not _rid_cols:
+        if RECORD_ID_COLUMN not in _d.columns:
             continue
-        _rc = _rid_cols[0]
+        _rc = RECORD_ID_COLUMN
         _scols = [k for k in _lookup_keys if k in _d.columns]
         if not _scols:
             continue
@@ -2597,13 +2625,13 @@ def _for_each_prepare(
         _iterated_keys_ordered = [k for k in _lookup_keys if k in _iterated_schema_keys]
         _iter_idx = [_lookup_keys.index(k) for k in _iterated_keys_ordered]
 
-        def _pool_from_mapping(rid_col: str, mapping: dict, *, split: bool) -> RecordPool:
+        def _pool_from_mapping(param: str, mapping: dict, *, split: bool) -> RecordPool:
             """A `RecordPool` from `rid_per_combo`'s ``{full_key: [rids]}``,
             keyed by the iterated keys THIS input populates ("" positions in
             its keys are axes it does not have — a coarse input is found at
             every location beneath it, the aggregation twin of
             `_rid_probe_key`)."""
-            populated = rid_populated_idx.get(rid_col, set(range(len(_lookup_keys))))
+            populated = rid_populated_idx.get(param, set(range(len(_lookup_keys))))
             loc_idx = [i for i in _iter_idx if i in populated]
             loc_keys = tuple(_lookup_keys[i] for i in loc_idx)
             grouped: dict = {}
@@ -2621,14 +2649,13 @@ def _for_each_prepare(
             )
 
         pools: dict = {}  # param -> RecordPool
-        for rid_col, mapping in colsel_rid_per_combo.items():
-            pools[param_of(rid_col)] = _pool_from_mapping(rid_col, mapping, split=False)
+        for param_name, mapping in colsel_rid_per_combo.items():
+            pools[param_name] = _pool_from_mapping(param_name, mapping, split=False)
 
-        for rid_col in rid_keys:
-            param_name = param_of(rid_col)
+        for param_name in tracked_params:
             data = loaded_inputs.get(param_name)
             _df = data if isinstance(data, pd.DataFrame) else None
-            if _df is None or rid_col not in _df.columns:
+            if _df is None or RECORD_ID_COLUMN not in _df.columns:
                 continue
 
             if param_name in _across_params:
@@ -2636,12 +2663,12 @@ def _for_each_prepare(
                 # branch_param key as an ordinary column so the function can
                 # group by specification (variant identity is preserved).
                 pools[param_name] = _pool_from_mapping(
-                    rid_col, rid_per_combo.get(rid_col, {}), split=False
+                    param_name, rid_per_combo.get(param_name, {}), split=False
                 )
                 bp_keys = sorted(
                     {
                         k
-                        for rid in _df[rid_col].dropna().unique()
+                        for rid in _df[RECORD_ID_COLUMN].dropna().unique()
                         for k in rid_to_bp.get(rid, {})
                     }
                 )
@@ -2650,7 +2677,7 @@ def _for_each_prepare(
                     if k in _df.columns:
                         _collided.append(k)
                         continue
-                    _df[k] = _df[rid_col].map(
+                    _df[k] = _df[RECORD_ID_COLUMN].map(
                         lambda r, _k=k: rid_to_bp.get(r, {}).get(_k)
                     )
                     _attached.append(k)
@@ -2669,18 +2696,19 @@ def _for_each_prepare(
                 )
                 continue
 
-            # Split input: one __vsig_{param} discriminator column per row.
-            # scifor treats __-prefixed schema keys as internal (filters by
-            # them, hides them from the user function) — same seam as __rid_*.
-            pool = _pool_from_mapping(rid_col, rid_per_combo.get(rid_col, {}), split=True)
-            pools[param_name] = pool
-            _df[vsig_column(param_name)] = _df[rid_col].map(_sig_of)
+            # Split input: one call per variant group. The group a call reads
+            # is named in its `Selection` (built below) and applied by scifor
+            # through `_select_rows`, by record id — no discriminator column
+            # on the frame, no key in scifor's schema.
+            pools[param_name] = _pool_from_mapping(
+                param_name, rid_per_combo.get(param_name, {}), split=True
+            )
 
             # Ragged variant groups: a group missing schema locations that other
             # groups cover aggregates a PARTIAL set of rows. Decided policy
             # (D1): warn and proceed.
             per_combo_locs: dict = {}
-            for full_key, rids in rid_per_combo.get(rid_col, {}).items():
+            for full_key, rids in rid_per_combo.get(param_name, {}).items():
                 ck = tuple(full_key[i] for i in _iter_idx)
                 for rid in rids:
                     per_combo_locs.setdefault(ck, {}).setdefault(_sig_of(rid), set()).add(
@@ -2723,9 +2751,9 @@ def _for_each_prepare(
                 Log.warn(_msg)
 
         for param_name, data in list(loaded_inputs.items()):
-            # Resolve the underlying frame for plain DataFrame OR ColumnSelection
-            # wrapper inputs (the latter now carries a renamed __rid_* column too,
-            # since Step 11 registers a rid key for it).
+            # Drop schema columns BELOW the lowest iterated level when they are
+            # entirely NULL (see above). `__record_id` stays: scifor's
+            # `_select_rows` hook selects the call's rows by it and drops it.
             if isinstance(data, pd.DataFrame):
                 _df = data
             elif isinstance(data, _scifor.ColumnSelection) and isinstance(
@@ -2734,25 +2762,36 @@ def _for_each_prepare(
                 _df = data.data
             else:
                 continue
-            rid_cols_in_df = rid_columns(_df.columns)
             empty_schema_cols = [
                 c
                 for c in _df.columns
                 if c in below_iterated_keys and _df[c].isna().all()
             ]
-            drop_cols = rid_cols_in_df + empty_schema_cols
-            if drop_cols:
-                _stripped = _df.drop(columns=drop_cols)
+            if empty_schema_cols:
+                _stripped = _df.drop(columns=empty_schema_cols)
                 if isinstance(data, pd.DataFrame):
                     loaded_inputs[param_name] = _stripped
                 else:
                     data.data = _stripped
-            if empty_schema_cols:
                 Log.debug(
                     f"aggregation: dropped all-null schema "
                     f"column(s) {empty_schema_cols} from loaded input "
                     f"'{param_name}' (below iterated schema level)"
                 )
+
+        # Step 13: every input's binding, typed — decided once from what Step
+        # 11 sorted the inputs into (`RunBindings`). Built BEFORE expansion so
+        # each combination's `Selection` can be registered on it.
+        run_bindings = _build_run_bindings(
+            inputs,
+            tracked_params=tracked_params,
+            fixed_rid_values=fixed_rid_values,
+            colsel_params=colsel_params,
+            aggregation_mode=True,
+            pools=pools,
+            iterated_keys=_iterated_keys_ordered,
+            rid_to_bp=rid_to_bp,
+        )
 
         # Expand combos over the observed signature combinations per combo —
         # one call per variant group (auto-split), Cartesian across split
@@ -2761,13 +2800,12 @@ def _for_each_prepare(
         # empty signature so the combo still flows through and skips
         # gracefully, matching pre-split behavior for empty locations.
         #
-        # The combo carries `__vsig_{param}` for every split input, and that
-        # is ALL the save path needs: `RunBindings.rids_for_combo` reads the
-        # named group out of the pool (pooled inputs give every group), so
-        # each output saves with only ITS group's contributing rids and the
+        # Each call gets ONE `Selection` — per input, the records it reads —
+        # and the combo carries only its handle (`COMBO_KEY`). scifor's frame
+        # filter and the save path's edges both read the selection, so each
+        # output saves with only ITS group's contributing rids and the
         # branch_params merge is conflict-free by construction.
         split_params = [p for p, pool in pools.items() if pool.split]
-        vsig_cols = [vsig_column(p) for p in split_params]
 
         full_combos = []
         for combo in base_combos:
@@ -2786,12 +2824,20 @@ def _for_each_prepare(
                 # same as a combo with no data at all.
                 sig_options.append(aligned or [EMPTY_SIGNATURE])
             for sig_combo in _iproduct(*sig_options) if sig_options else [()]:
+                groups = dict(zip(split_params, sig_combo, strict=False))
+                rids: dict = {}
+                for p, pool in pools.items():
+                    chosen = pool.rids_at(combo, groups.get(p))
+                    if chosen:
+                        rids[p] = tuple(chosen)
+                for p, rid in fixed_rid_values.items():
+                    if rid:
+                        rids[p] = (str(rid),)
                 fc = dict(combo)
-                for c, s in zip(vsig_cols, sig_combo, strict=False):
-                    fc[c] = s
+                fc[COMBO_KEY] = run_bindings.add_selection(Selection(rids, groups))
                 if _path_placeholder_names:
                     # Group bp = the parsed split-input signatures + any Fixed
-                    # inputs' bp; {variant} digests the signature tuple itself.
+                    # inputs' bp; {variant} digests the merged coordinate.
                     _bp_dicts = [json.loads(s) for s in sig_combo]
                     _bp_dicts += [
                         rid_to_bp.get(r, {}) for r in fixed_rid_values.values() if r
@@ -2805,10 +2851,6 @@ def _for_each_prepare(
                         _path_missing_placeholders,
                     )
                 full_combos.append(fc)
-
-        # The __vsig_* keys extend the scifor schema (Step 15) so each call's
-        # rows are filtered to its variant group.
-        rid_keys_for_schema = list(vsig_cols)
 
         total_rids = sum(
             len(g.rids)
@@ -2829,15 +2871,12 @@ def _for_each_prepare(
     else:
         # Full iteration mode: expand combos with rid variants.
         #
-        # Plain inputs bind lineage through the `__rid_*` columns their
-        # expansion puts in the result table. ColumnSelection binds lineage
-        # here the way `Fixed` does: by putting `__rid_{param}` straight into
-        # the combo, so the result table carries the column and
-        # `RunBindings.rids_for_combo` reads it like any other. No pools in
-        # this mode: every input's record rides on the combination.
+        # Every plain input's record is an iteration AXIS: one combination per
+        # record at a location. A Fixed input's pin and a ColumnSelection's
+        # (lineage-only) record are added to every combination's `Selection`
+        # without expanding it. No pools in this mode.
         pools = {}
         _iterated_keys_ordered = []
-        rid_keys_for_schema = rid_keys
 
         # AcrossVariants only changes aggregation-mode behavior: in full
         # iteration every combo sees exactly one variant row (rid expansion),
@@ -2855,6 +2894,19 @@ def _for_each_prepare(
             )
             warnings.warn(_msg, UserWarning, stacklevel=2)
             Log.warn(_msg)
+
+        # Step 13: the typed bindings, BEFORE expansion so each combination's
+        # `Selection` can be registered on them.
+        run_bindings = _build_run_bindings(
+            inputs,
+            tracked_params=tracked_params,
+            fixed_rid_values=fixed_rid_values,
+            colsel_params=colsel_params,
+            aggregation_mode=False,
+            pools=None,
+            iterated_keys=None,
+            rid_to_bp=rid_to_bp,
+        )
 
         # Expand each base combo with all valid rid-combos for that schema location
         Log.debug(
@@ -2875,77 +2927,45 @@ def _for_each_prepare(
                 _pruned_colsel += 1
                 continue
 
-            # The ColumnSelection rid(s) at this location, injected into the
-            # combo below exactly as a Fixed input's are. Computed once per
+            # The records every expansion of this location binds without
+            # iterating over: a Fixed input's pin, and a ColumnSelection's
+            # record(s) at this location (lineage only). Computed once per
             # location rather than per expanded combo.
-            _colsel_rid_at_combo: dict = {}
-            for _cs_col, _cs_map in colsel_rid_per_combo.items():
-                _rids = _cs_map.get(_rid_probe_key(_cs_col, schema_vals), [])
+            _fixed_rids: dict = {p: (str(r),) for p, r in fixed_rid_values.items() if r}
+            for _cs_param, _cs_map in colsel_rid_per_combo.items():
+                _rids = _cs_map.get(_rid_probe_key(_cs_param, schema_vals), [])
                 if not _rids:
                     continue
                 if len(_rids) > 1:
                     # ColumnSelection pools variants rather than expanding them
-                    # (that is the whole point of keeping it out of rid_keys),
-                    # and a single `__rid_*` combo key holds one id. Bind the
-                    # first and say so, rather than binding nothing.
+                    # (that is the whole point of keeping it out of the tracked
+                    # set); it used to bind only the first because a `__rid_*`
+                    # combo key held one id. A Selection holds them all.
                     Log.debug(
-                        f"ColumnSelection '{param_of(_cs_col)}' has "
-                        f"{len(_rids)} record(s) at this location; binding the "
-                        f"first for lineage"
+                        f"ColumnSelection '{_cs_param}' has {len(_rids)} "
+                        f"record(s) at this location; binding all for lineage"
                     )
-                _colsel_rid_at_combo[_cs_col] = _rids[0]
+                _fixed_rids[_cs_param] = tuple(str(r) for r in _rids)
 
             rid_lists: list = []
-            rid_col_names: list = []
+            rid_params: list = []
             valid = True
-            for rid_col, mapping in rid_per_combo.items():
-                rids = mapping.get(_rid_probe_key(rid_col, schema_vals), [])
+            for param, mapping in rid_per_combo.items():
+                rids = mapping.get(_rid_probe_key(param, schema_vals), [])
                 if not rids:
                     valid = False
                     break
                 rid_lists.append(rids)
-                rid_col_names.append(rid_col)
+                rid_params.append(param)
 
             if not valid:
                 continue
 
-            if rid_lists:
-                for rid_combo in _iproduct(*rid_lists):
-                    full_combo = {**combo}
-                    for rc_name, rc_val in zip(rid_col_names, rid_combo, strict=False):
-                        full_combo[rc_name] = rc_val
-                    # Add Fixed input record_ids to combo
-                    for fixed_param, fixed_rid in fixed_rid_values.items():
-                        full_combo[rid_column(fixed_param)] = fixed_rid
-                    # Same, for ColumnSelection inputs (lineage only).
-                    full_combo.update(_colsel_rid_at_combo)
-                    if _path_placeholder_names:
-                        _bp_dicts = [
-                            rid_to_bp.get(full_combo[k], {})
-                            for k in full_combo
-                            if is_rid_column(k)
-                        ]
-                        _merged, _confl = merge_branch_params(_bp_dicts)
-                        _inject_path_placeholders(
-                            full_combo,
-                            _path_placeholder_names,
-                            _merged,
-                            _confl,
-                            _path_missing_placeholders,
-                        )
-                    full_combos.append(full_combo)
-            else:
-                full_combo = {**combo}
-                # Add Fixed input record_ids to combo
-                for fixed_param, fixed_rid in fixed_rid_values.items():
-                    full_combo[rid_column(fixed_param)] = fixed_rid
-                full_combo.update(_colsel_rid_at_combo)
+            def _register(full_combo: dict, chosen: dict) -> None:
+                rids = {**_fixed_rids, **{p: (str(r),) for p, r in chosen.items()}}
+                full_combo[COMBO_KEY] = run_bindings.add_selection(Selection(rids))
                 if _path_placeholder_names:
-                    _bp_dicts = [
-                        rid_to_bp.get(full_combo[k], {})
-                        for k in full_combo
-                        if is_rid_column(k)
-                    ]
+                    _bp_dicts = [rid_to_bp.get(r, {}) for rs in rids.values() for r in rs]
                     _merged, _confl = merge_branch_params(_bp_dicts)
                     _inject_path_placeholders(
                         full_combo,
@@ -2955,6 +2975,12 @@ def _for_each_prepare(
                         _path_missing_placeholders,
                     )
                 full_combos.append(full_combo)
+
+            if rid_lists:
+                for rid_combo in _iproduct(*rid_lists):
+                    _register(dict(combo), dict(zip(rid_params, rid_combo, strict=False)))
+            else:
+                _register(dict(combo), {})
 
         if _pruned_colsel:
             Log.debug(
@@ -3026,39 +3052,25 @@ def _for_each_prepare(
             _path_outputs,
             full_combos,
             _colname_columns,
-            rid_to_bp,
+            run_bindings,
             _path_placeholder_names,
         )
-
-    # Step 13: every input's binding, typed — decided once from what Step 12
-    # sorted the inputs into, read by the skip gate (below), the save path and
-    # the draft stamp. Built BEFORE the hook runs, because the gate is its
-    # first reader.
-    run_bindings = _build_run_bindings(
-        inputs,
-        rid_keys=rid_keys,
-        fixed_rid_values=fixed_rid_values,
-        colsel_params=colsel_params,
-        aggregation_mode=_aggregation_mode,
-        pools=pools,
-        iterated_keys=_iterated_keys_ordered,
-        rid_to_bp=rid_to_bp,
-    )
 
     # Step 14: Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
     # combos where the hook returns True.
     _skip_computed_count = 0
     if _pre_combo_hook is not None:
-        # Aggregation mode: hand the skip hook the typed bindings Step 12 just
-        # built (via the mutable holder _build_skip_hook exposes). Aggregation
-        # combos carry no __rid_* keys, so the hook's gate binds each group by
-        # its exact rid set (`RunBindings.rids_for_combo`) — without this, a new
-        # variant group (or a grown record set) would cross-skip against
-        # another group's output. Works for both the Python and MATLAB-bridge
-        # call sites, which both build the hook before calling prepare.
+        # Hand the skip hook the typed bindings (via the mutable holder
+        # _build_skip_hook exposes): each combo names its `Selection` and the
+        # gate compares that — its exact consumed-rid set — against the
+        # stored edges. Without it a new variant group (or a grown record
+        # set) would cross-skip against another group's output. Works for
+        # both the Python and MATLAB-bridge call sites, which both build the
+        # hook before calling prepare.
         _hook_agg_ref = getattr(_pre_combo_hook, "_agg_binding_ref", None)
-        if _hook_agg_ref is not None and _aggregation_mode:
+        if _hook_agg_ref is not None:
             _hook_agg_ref["bindings"] = run_bindings
+            _hook_agg_ref["aggregation"] = _aggregation_mode
         Log.debug("applying pre-combo hook (skip_computed)")
         pre_hook_count = len(full_combos)
         full_combos = [c for c in full_combos if not _pre_combo_hook(c)]
@@ -3074,40 +3086,10 @@ def _for_each_prepare(
     else:
         Log.debug("no pre-combo hook provided, skipping")
 
-    # Step 15: Temporarily extend scifor's schema with the discriminator keys so
-    # _filter_df_for_combo treats them as schema columns (not data columns):
-    # __rid_* record ids in full iteration (single-row filtered DFs), __vsig_*
-    # branch-param signatures in aggregation (per-variant-group multi-row DFs).
-    if rid_keys_for_schema:
-        extended_schema = current_schema_keys + rid_keys_for_schema
-        Log.debug(
-            f"extending scifor schema from {len(current_schema_keys)} to {len(extended_schema)} keys (added {len(rid_keys_for_schema)} {'variant-signature' if _aggregation_mode else 'rid'} keys)"
-        )
-        _scifor.set_schema(extended_schema)
-    else:
-        Log.debug("not extending scifor schema (no discriminator keys)")
-
-    # Collect all values per extension key so scifor's metadata_iterables are
-    # complete. Full iteration extends with __rid_* record ids; aggregation
-    # extends with __vsig_* branch-param signatures (collected from the
-    # expanded combos so empty-signature placeholders are included).
-    extended_metadata_iterables = dict(metadata_iterables)
-    if rid_keys_for_schema:
-        if _aggregation_mode:
-            for vsig_col in rid_keys_for_schema:
-                extended_metadata_iterables[vsig_col] = list(
-                    dict.fromkeys(
-                        str(fc[vsig_col]) for fc in full_combos if vsig_col in fc
-                    )
-                )
-        else:
-            for rid_col, mapping in rid_per_combo.items():
-                all_rids: list = []
-                for rids in mapping.values():
-                    all_rids.extend(rids)
-                extended_metadata_iterables[rid_col] = list(
-                    dict.fromkeys(all_rids)
-                )  # preserve order, dedupe
+    # (Step 15 — extending scifor's schema with `__rid_*` / `__vsig_*` keys so
+    # its schema filter would select rows by them — is gone as of 2026-09-20.
+    # scifor's schema is the dataset schema; which rows a call reads is its
+    # `Selection`, applied through scifor's `_select_rows` hook.)
 
     return _ForEachState(
         fn=fn,
@@ -3117,8 +3099,7 @@ def _for_each_prepare(
         output_names=output_names,
         loaded_inputs=loaded_inputs,
         full_combos=full_combos,
-        extended_metadata_iterables=extended_metadata_iterables,
-        rid_keys_for_schema=rid_keys_for_schema,
+        extended_metadata_iterables=dict(metadata_iterables),
         aggregation_mode=_aggregation_mode,
         current_schema_keys=current_schema_keys,
         generates_file=generates_file,
@@ -3153,15 +3134,8 @@ def _for_each_save_resolved(
     the record_id is known); draft mode stamps here with the same blob minus
     the record_id.
     """
-    # Step 18: Restore scifor's schema
-    if state.rid_keys_for_schema:
-        Log.debug(
-            f"restoring scifor schema to {len(state.current_schema_keys)} keys (removing {len(state.rid_keys_for_schema)} rid keys)"
-        )
-        _scifor.set_schema(state.current_schema_keys)
-    else:
-        Log.debug("no schema restoration needed (wasn't extended)")
-
+    # (Step 18 — restoring scifor's schema after Step 15 extended it — is gone
+    # with Step 15, 2026-09-20. The schema is never touched by a run.)
     if result_tbl is None:
         return None
 
@@ -3260,6 +3234,9 @@ def _normalize_variable_inputs(
     inputs: dict,
     loaded_inputs: "dict | None" = None,
     as_table_params: "set[str] | None" = None,
+    *,
+    bindings: "RunBindings | None" = None,
+    aggregation_mode: bool = False,
 ) -> dict:
     """Normalize variable inputs to the raw data the function expects.
 
@@ -3274,18 +3251,22 @@ def _normalize_variable_inputs(
 
     ``as_table_params`` is what the caller asked to receive as whole DataFrames,
     and those are passed through untouched. Unwrapping them was a real bug with a
-    narrow trigger: this normalization only runs for combos carrying a ``__rid_*``
-    key, which are added when EVERY schema key is iterated, so an ``as_table``
-    input silently arrived as a bare scalar in exactly that case and nowhere
-    else. A ``plot_``/``stat_`` endpoint iterating down to the leaf level then
-    received a float where its body expects a frame.
+    narrow trigger: this normalization only runs in FULL iteration (every schema
+    key iterated — one record per input per call), so an ``as_table`` input
+    silently arrived as a bare scalar in exactly that case and nowhere else. A
+    ``plot_``/``stat_`` endpoint iterating down to the leaf level then received
+    a float where its body expects a frame.
 
     Args:
         resolved: Dict of param_name → raw_data from scifor
-        current_combo: Combo dict with __rid_* → record_id + schema keys
+        current_combo: The combo scifor is running (schema keys + ``COMBO_KEY``)
         inputs: Original inputs dict with param_name → variable_class or Fixed()
         loaded_inputs: The spread DataFrames from _for_each_prepare (state.loaded_inputs).
         as_table_params: Param names the caller declared ``as_table``.
+        bindings: The run's ``RunBindings`` — which records this combo reads
+            (``selection_of``) is what says a param is a variable input here.
+        aggregation_mode: An aggregating call hands the function the pooled
+            frame as is; nothing is normalised.
 
     Returns:
         Dict with normalized raw data for variable inputs, pass-through for others
@@ -3294,12 +3275,14 @@ def _normalize_variable_inputs(
 
     reconstructed = {}
     as_table_params = as_table_params or set()
+    selection = bindings.selection_of(current_combo) if bindings is not None else None
+    bound = {} if (aggregation_mode or selection is None) else dict(selection.rids)
 
     for param_name, raw_value in resolved.items():
-        # Check if this param is a variable input (has __rid_* entry)
-        rid_key = rid_column(param_name)
-        if rid_key not in current_combo or param_name in as_table_params:
-            # Not a variable, or the caller wants the whole table — pass through.
+        # A variable input in a full-iteration combo reads exactly one record;
+        # anything else (a constant, a PathInput, an as_table param, any param
+        # of an aggregating call) passes through untouched.
+        if param_name not in bound or param_name in as_table_params:
             reconstructed[param_name] = raw_value
             continue
 
@@ -3340,7 +3323,6 @@ def _normalize_variable_inputs(
             # data was a dict.
             df_input = loaded_inputs.get(param_name)
             if isinstance(df_input, pd.DataFrame):
-                rid_col = rid_column(param_name)
                 # Columns that are NOT data: internal __ columns + schema/combo keys
                 schema_keys_in_combo = {
                     k for k in current_combo if not k.startswith("__")
@@ -3359,9 +3341,9 @@ def _normalize_variable_inputs(
                 is_dict_type = len(data_cols) > 1 or (
                     len(data_cols) == 1 and data_cols[0] != view_name
                 )
-                if is_dict_type and rid_col in df_input.columns:
-                    rid_val = str(current_combo[rid_col])
-                    mask = df_input[rid_col].astype(str) == rid_val
+                if is_dict_type and RECORD_ID_COLUMN in df_input.columns:
+                    rid_val = str(bound[param_name][0])
+                    mask = df_input[RECORD_ID_COLUMN].astype(str) == rid_val
                     if mask.any():
                         row = df_input[mask].iloc[0]
                         data_value = {col: row[col] for col in data_cols}
@@ -5141,28 +5123,22 @@ def _save_results(
         direct_constants = constants_val or {}
 
     # Input-provenance diagnostic. A row's _invocation_input edges come from
-    # its __rid_* columns (full iteration), the aggregated inputs' pools
-    # (`RecordPool`, read by the row's location and __vsig_* group) or a
-    # pinned rid. If NONE can bind, the output records are saved with NO
+    # the `Selection` its `COMBO_KEY` names (every record the call read) plus
+    # any pinned rid. If NONE can bind, the output records are saved with NO
     # consumed-input edges → broken lineage AND the precondition for the
     # re-run orphan/duplicate cascade. Cheap: inspects columns once.
-    _rid_cols_present = rid_columns(result_tbl.columns)
-    _pools_have_rids = any(
-        g.rids
-        for b in run_bindings.inputs.values()
-        if b.pool is not None
-        for groups in b.pool.groups_by_location.values()
-        for g in groups.values()
-    )
+    _handle_present = COMBO_KEY in result_tbl.columns
+    _selections_have_rids = any(s.rids for s in run_bindings.selections)
     _pinned = run_bindings.pinned_rids
     Log.debug(
         f"[batch_save] input-provenance sources for {fn_name!r}: "
         f"bindings={ {p: b.kind.value for p, b in run_bindings.inputs.items()} }, "
-        f"__rid_* cols in result_tbl={_rid_cols_present}, "
-        f"pools={'has-rids' if _pools_have_rids else 'none'}, "
+        f"{COMBO_KEY} in result_tbl={_handle_present}, "
+        f"selections={len(run_bindings.selections)} "
+        f"({'with rids' if _selections_have_rids else 'none with rids'}), "
         f"fixed_rids={list(_pinned)}"
     )
-    if not _rid_cols_present and not _pools_have_rids and not _pinned:
+    if not (_handle_present and _selections_have_rids) and not _pinned:
         # Only WARN for the case that is actually a bug. With no scidb-variable
         # input there is nothing to bind, so having no input edges is the
         # correct outcome, not a symptom — warning on it every PathInput- or
@@ -5173,13 +5149,13 @@ def _save_results(
         _var_params = variable_input_params(config_keys)
         if _var_params:
             Log.warn(
-                f"[batch_save] {fn_name!r}: NO variable input-binding source (no "
-                f"__rid_* columns in the result table, no records in the "
-                f"aggregated pools, no fixed rids) — saved records will have NO "
-                f"_invocation_input edges, yet scidb-variable input(s) "
-                f"{_var_params} WERE consumed. This severs lineage and is the "
-                f"precondition for the re-run orphan/duplicate cascade — the "
-                f"__rid_* discriminators were likely dropped before save, e.g. "
+                f"[batch_save] {fn_name!r}: NO variable input-binding source (the "
+                f"result table carries no {COMBO_KEY} handle or the selections "
+                f"it names hold no records, and there are no fixed rids) — saved "
+                f"records will have NO _invocation_input edges, yet scidb-variable "
+                f"input(s) {_var_params} WERE consumed. This severs lineage and is "
+                f"the precondition for the re-run orphan/duplicate cascade — the "
+                f"{COMBO_KEY} column was likely dropped before save, e.g. "
                 f"distribute fan-out or the result round-trip."
             )
         else:
@@ -5363,8 +5339,8 @@ def _save_results(
             input_selectors,
             _selectors_recorded,
             context=(
-                f"{_rows_without_bindings}/{len(rows)} saved row(s) had no "
-                f"__rid_* columns and no pooled rids, so they bound no input"
+                f"{_rows_without_bindings}/{len(rows)} saved row(s) named no "
+                f"selection with records (and no pin), so they bound no input"
                 if _rows_without_bindings
                 else ""
             ),
@@ -5826,7 +5802,7 @@ def _active_database():
 def _build_run_bindings(
     inputs: dict,
     *,
-    rid_keys: list,
+    tracked_params: list,
     fixed_rid_values: dict,
     colsel_params: list,
     aggregation_mode: bool,
@@ -5834,7 +5810,7 @@ def _build_run_bindings(
     iterated_keys: list | None = None,
     rid_to_bp: dict | None = None,
 ) -> RunBindings:
-    """Step 12's classification of every input, as one typed structure.
+    """Step 11's classification of every input, as one typed structure.
 
     The kind is decided HERE, once, from what Step 12 already sorted the
     input into — an iteration rid key, a pinned rid, a lineage-only column
@@ -5845,7 +5821,7 @@ def _build_run_bindings(
     from .provenance_save import compute_input_selectors
 
     selectors = compute_input_selectors(inputs)
-    iterate_params = {param_of(c) for c in (rid_keys or [])}
+    iterate_params = set(tracked_params or [])
     pools = pools or {}
     run = RunBindings(rid_to_bp=dict(rid_to_bp or {}), iterated_keys=tuple(iterated_keys or ()))
     for param, spec in inputs.items():

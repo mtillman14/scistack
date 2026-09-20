@@ -477,21 +477,30 @@ For each loaded DataFrame input that has a `__record_id` column:
 
    This mapping is used later in Step 19 (save) to inherit upstream branch params.
 
-2. **Rename `__record_id` → `__rid_{param_name}`**: For example, if the input parameter is named `"signal"`, the column becomes `__rid_signal`. This renaming is necessary because a function might have multiple database inputs (e.g., `signal` and `reference`), each with their own `__record_id` column. Renaming to `__rid_signal` and `__rid_reference` keeps them unambiguous.
+2. **Sort each input by kind** (`InputKind`, `scidb.bindings`): a plain variable is *tracked* (its record is an iteration axis, or a pool under aggregation); a `Fixed` is *pinned* (one record, resolved here from the frame by applying the pin's metadata); a `ColumnSelection` is *lineage-only* (prunes combos, never expands). The frame keeps its `__record_id` column exactly as the loader wrote it.
+
+   > Until 2026-09-20 this step renamed `__record_id` to `__rid_{param}` per input, and Step 15 pushed those names into scifor's global schema so its per-combo filter would select rows by them; scifor then stripped the prefixes back out in four places, and MATLAB's `for_each.m` in four more. That convention is gone — see **The selection seam** under Step 12.
 
 3. **Strip `__branch_params`**: The `__branch_params` column is dropped from all DataFrames. Its information has been captured in `rid_to_bp` and is no longer needed in the DataFrame. Leaving it in would confuse scifor's data-column detection.
 
-### Step 12: Expand combos with record-ID variants
+### Step 12: Expand combos — each combination gets a `Selection`
 
 **The problem this step solves:**
 
-At this point, the loaded DataFrame for `FilteredEMG` (continuing the example from Step 11) has a column `__rid_signal` containing record IDs like `"a1b2c3d4e5f6g7h8"` and `"x9y8z7w6v5u4t3s2"`. The base combos from Step 9 are just `{subject: "1", session: "A"}`, `{subject: "1", session: "B"}`, etc. — they say nothing about *which variant* to use.
+At this point, the loaded DataFrame for `FilteredEMG` (continuing the example from Step 11) has a `__record_id` column holding ids like `"a1b2c3d4e5f6g7h8"` and `"x9y8z7w6v5u4t3s2"`. The base combos from Step 9 are just `{subject: "1", session: "A"}`, `{subject: "1", session: "B"}`, etc. — they say nothing about *which variant* to use.
 
-scidb needs to expand each base combo into one combo per variant. If subject 1, session A has two variants of `FilteredEMG` (one with record ID `a1b2...` and one with `x9y8...`), then `{subject: "1", session: "A"}` must become two combos:
-- `{subject: "1", session: "A", __rid_signal: "a1b2c3d4e5f6g7h8"}`
-- `{subject: "1", session: "A", __rid_signal: "x9y8z7w6v5u4t3s2"}`
+scidb needs to expand each base combo into one combo per variant. If subject 1, session A has two variants of `FilteredEMG`, `{subject: "1", session: "A"}` must become two *combinations* — and each has to say which record it reads.
 
-Later, when scifor filters the DataFrame for each combo, the `__rid_signal` column acts as an additional filter — selecting exactly one row (one variant) per combo.
+**The selection seam (2026-09-20).** A combination has two halves with different owners:
+
+| half | what | owner | where it lives |
+|---|---|---|---|
+| **location** | schema keys + declared iterables | scifor — its row filter, its `distribute` resolution, its result row | the combo dict |
+| **selection** | which record(s) of each input this combination reads | scidb — the frame filter AND the graph edges | a `Selection` (`scidb.bindings`) on `RunBindings.selections` |
+
+The combo dict scifor sees is the location plus **one** key, `__combo` (`bindings.COMBO_KEY`): the index of that combination's `Selection`. So the two combos above are `{subject: "1", session: "A", __combo: 0}` and `{..., __combo: 1}`, with `selections[0].rids == {"signal": ("a1b2…",)}` and `selections[1].rids == {"signal": ("x9y8…",)}`. A `Fixed` input's pin and a `ColumnSelection`'s record(s) at the location go into every combination's selection without expanding it.
+
+scifor applies the selection through its `_select_rows(param, frame, combo)` hook, called after its own schema-key filter: scidb's hook looks up `state.bindings.selection_of(combo)`, keeps the rows whose `__record_id` is in `selection.rids[param]`, and drops the column. **The same `Selection` is what the save writes the graph edges from** (`RunBindings.edges_for`) and what the skip gate compares — the frame filter and the recorded lineage cannot disagree by construction. The result row inherits `__combo` from the combo (scifor writes `dict(metadata)` into every row; `distribute` and `for_columns` fan-out inherit it), which is how the save finds each row's selection. Nothing parses a prefix off a combo or a row any more.
 
 **But first: aggregation mode detection:**
 
@@ -501,22 +510,20 @@ The detection is simple: if the set of iterated schema keys is a strict subset o
 
 **Aggregation AUTO-SPLITS by branch_param signature (D1, implemented).** Skipping *per-record* rid expansion does not mean pooling variants: if a schema location holds multiple branch_param variants of an input, aggregation runs **one call per distinct branch_params group** — equivalent to the user writing `EachOf(Variant(...), Variant(...))`, but implemented at signature granularity with no per-alternative reload. Pooling distinct variants into one table (the pre-D1 behavior, "variant smushing") double-counted aggregates and destroyed variant identity. Mechanics:
 
-- Each record's derived branch params canonicalize to a **signature** (`scidb.bindings.variant_signature`, sorted-key JSON through one normalising round trip — the ONE recipe the save path and the expected-invocation predictor share). Every split input gets a `__vsig_{param}` column (rows → their group's signature; spelled by `vsig_column`) — the same `__`-prefixed-schema-key seam as `__rid_*`, so scifor filters by it but hides it from the user's function.
+- Each record's derived branch params canonicalize to a **signature** (`scidb.bindings.variant_signature`, sorted-key JSON through one normalising round trip — the ONE recipe the save path and the expected-invocation predictor share). Each call's `Selection` names the group it reads (`Selection.groups[param]` is the signature; `Selection.rids[param]` the group's records) — nothing is added to the frame.
 - Every rid-tracked input becomes a **`RecordPool`** on its `InputBinding` (`RunBindings`, built at Step 13): its records per iterated location, per `VariantGroup(signature, rids)`. The pool is keyed by the iterated keys the input *populates* (`location_keys`), so an input coarser than the iterated level is found at every location beneath it. A plain input's pool is `split=True` (one call per group); `AcrossVariants` and `ColumnSelection` pools are `split=False` (every group in the one call).
 - Base combos expand over the observed signature combinations (Cartesian across multi-variant inputs, mirroring full-iteration rid expansion). Single-signature inputs expand 1:1 — **no behavior change when there are no variants**. A split input with no data at a combo expands with the empty signature, so the combo still flows through and skips gracefully.
-- The scifor schema is extended with the `__vsig_*` keys (Step 15) and restored afterward (Step 18), exactly like `__rid_*` keys in full iteration.
-- The combo carries `__vsig_{param}` for every split input, and that is all the save path needs: `RunBindings.rids_for_combo(row)` reads the named group out of each pool (pooled inputs give every group; a pinned input its one rid; full-iteration inputs their `__rid_*` value), `for_combo` types the answer as the graph's edge list, and `branch_params_for` merges the consumed records' branch params — **conflict-free by construction** for split aggregations (the "branch_params key … overwritten" warning fires only when two groups reach one call). Two groups at one schema location save as two variants (their `__invocation_id` differs), loadable via `branch_param("bandpass", low_hz=20)`-style filters.
+- Each call's `Selection` names the group's records: per split input, `pool.rids_at(location, signature)`; per pooled input, every group's records; plus any pinned rid — and `Selection.groups` records the signature per split input. scifor's `_select_rows` hook selects the frame's rows by those ids; nothing is added to the frame or to scifor's schema. `RunBindings.edges_for(selection)` writes the same records as the graph edges and `branch_params_for` merges their branch params — **conflict-free by construction** for split aggregations (the "branch_params key … overwritten" warning fires only when two groups reach one call). Two groups at one schema location save as two variants (their `__invocation_id` differs), loadable via `branch_param("bandpass", low_hz=20)`-style filters.
 - The expected-invocation predictor (`provenance_query._predict_config_invocations`) groups an aggregated input's current records with the same `variant_signature`, one predicted invocation per group, Cartesian across split inputs — so a node that ran over variants plans green (`test_identity_parity.py::TestVariantSplitIsPredicted`). An `AcrossVariants` input is pooled by the predictor too, because pooling is a recorded **run option**: `ForEachConfig` writes `__across_variants` (a version key and call-site identity beside `__as_table`), `record_run` stores it on `_invocation.across_variants` and folds it into `invocation_id` (only when non-empty — a pooled call and a one-group split call write the same edges, so nothing else could tell them apart), and `function_variant_configs` / `pipeline_variants` / `config_call_id` read it back (`TestAcrossVariantsIsAFact`). The GUI carries it as `pool_variants` on a history-derived binding, so a re-run from the canvas — Python, MATLAB command, or either code export — pools what the original pooled.
 - **Ragged variant groups warn and proceed**: a group covering fewer schema locations than others (e.g. `low_hz=30` computed for only some sessions) aggregates only the rows it has, with a `RAGGED`-labeled `warnings.warn` + `Log.warn` naming the group and missing locations.
-- `introspect=True` surfaces each row's group as `_branch_params_{param}` (parsed from the signature); `__vsig_*` columns are stripped from introspection output.
+- `introspect=True` surfaces each row's group as `_branch_params_{param}` (parsed from the selection's signature) and its records as `_record_id_{param}` (the list); the `__combo` handle is dropped from the returned table.
 
 **`AcrossVariants(X)` — the explicit pooling opt-in** (multiverse / specification-curve analysis, the one legitimate cross-variant use case): loading is identical to the bare input, no `__vsig` column is added, and each namespaced branch_param key (e.g. `bandpass.low_hz`) is attached as an ordinary DataFrame column so the function can group by specification. Collisions with existing data columns warn and preserve the data column. In full-iteration mode `AcrossVariants` is a warned no-op (each combo already sees one variant). It rejects `Merge`/`EachOf`/`ColumnSelection` at construction and carries its own `to_key()` (`AcrossVariants(Filtered)`) so pooled and split runs never collide.
 
-**skip_computed binds groups to their consumed-rid sets.** Aggregation combos carry no `__rid_*` keys, so the per-param staleness comparison in `_should_skip` never fires; instead the gate (`_find_skip_gate_record`) only accepts a candidate whose invocation consumed **exactly** the combo's expected rid set (`RunBindings.rids_for_combo`, handed to the hook via the `_agg_binding_ref` attribute filled at Step 13, just before Step 14). This prevents a new variant group from cross-skipping against another group's output, and also fixes a pre-existing hole: an aggregation whose underlying record set *grew* (e.g. a new session) now recomputes instead of silently skipping.
+**skip_computed binds groups to their consumed-rid sets.** An aggregating call reads several records per input, which is not what the per-param staleness comparison in `_should_skip` checks; instead the gate (`_find_skip_gate_record`) only accepts a candidate whose invocation consumed **exactly** the combo's selection (`RunBindings.rids_for(selection)`, handed to the hook via the `_agg_binding_ref` holder filled at Step 13, just before Step 14). This prevents a new variant group from cross-skipping against another group's output, and also fixes a pre-existing hole: an aggregation whose underlying record set *grew* (e.g. a new session) now recomputes instead of silently skipping.
 
 Aggregation mode also still:
 
-- Strips `__rid_*` columns from all DataFrames (the function should not see them)
 - Drops schema columns *below* the lowest iterated level when they are entirely NULL (a variable stored at a higher schema level loads with all-NULL columns for finer-grained keys; in aggregation mode those carry no per-row meaning and would clutter the user-facing table / surface as empty cell columns on the MATLAB bridge)
 
 `Variant(var_type, low_hz=20)` (load-time pinning) remains available to run only one group; see [variant-branch-param-pinning.md](variant-branch-param-pinning.md). Design rationale: decision D1 in [endpoints-viz-and-stats-design.md](endpoints-viz-and-stats-design.md). Tests: `scidb/tests/test_aggregation_with_variants.py`.
@@ -525,14 +532,14 @@ Aggregation mode also still:
 
 When all schema keys are being iterated, scidb performs variant expansion:
 
-1. **Build `rid_per_combo`**: For each `__rid_{param}` column in each loaded DataFrame:
-   - Group the DataFrame by the lookup keys (all schema keys + any non-schema metadata keys being iterated)
-   - For each group (each unique schema location), collect the list of record IDs present
-   - Store as a nested dict: `rid_per_combo[rid_col_name][schema_tuple] = [list_of_rids]`
+1. **Build `rid_per_combo`**: For each tracked input's loaded DataFrame (keyed by PARAM name):
+   - Group the DataFrame by the lookup keys (all schema keys + any non-schema metadata keys being iterated) that the input actually populates
+   - For each group (each unique schema location), collect the list of `__record_id` values present
+   - Store as a nested dict: `rid_per_combo[param][schema_tuple] = [list_of_rids]`
 
-   For example, with `__rid_signal`:
+   For example, for the `signal` input:
    ```python
-   rid_per_combo["__rid_signal"] = {
+   rid_per_combo["signal"] = {
        ("1", "A"):  ["a1b2c3d4e5f6g7h8", "x9y8z7w6v5u4t3s2"],  # 2 variants
        ("1", "B"):  ["d4e5f6g7h8i9j0k1"],                        # 1 variant
        ("2", "A"):  ["m2n3o4p5q6r7s8t9"],                        # 1 variant
@@ -550,18 +557,22 @@ When all schema keys are being iterated, scidb performs variant expansion:
 **Example with two inputs:**
 
 Combo `{subject: "1", session: "A"}` with:
-- `__rid_signal` has record IDs `["abc...", "def..."]` (2 upstream variants)
-- `__rid_reference` has record ID `["xyz..."]` (1 variant)
+- `signal` has record IDs `["abc...", "def..."]` (2 upstream variants)
+- `reference` has record ID `["xyz..."]` (1 variant)
 
-Expansion: `2 x 1 = 2` full combos:
+Expansion: `2 x 1 = 2` combinations, each a combo dict plus a `Selection`:
 ```python
-{subject: "1", session: "A", __rid_signal: "abc...", __rid_reference: "xyz..."}
-{subject: "1", session: "A", __rid_signal: "def...", __rid_reference: "xyz..."}
+{subject: "1", session: "A", __combo: 0}   selections[0] = Selection({"signal": ("abc...",), "reference": ("xyz...",)})
+{subject: "1", session: "A", __combo: 1}   selections[1] = Selection({"signal": ("def...",), "reference": ("xyz...",)})
 ```
 
 The expansion count is logged: `expanded 4 base combos -> 8 full combos (rid variants)`.
 
-### Step 13: Persist expected combos (lines 460–465)
+### Step 13: The typed bindings (`RunBindings`)
+
+`_build_run_bindings` turns Step 11's sorting into one typed structure (`scidb.bindings.RunBindings`): every input's `InputBinding` (kind, selector, pinned rid, `RecordPool` under aggregation), every loaded record's branch params (`rid_to_bp`), and — registered by Step 12's expansion — every combination's `Selection`. It is built BEFORE the skip hook fires (Step 14), because the gate is its first reader; the save path and the draft endpoint stamp are the others. It is `state.bindings`, never `None`.
+
+### (Historical) Step 13: Persist expected combos
 
 **Why this is needed:** The GUI's pipeline status system (`check_node_state`) needs to know how many combos a function *should* have produced, so it can show whether a pipeline step is complete, partially complete, or has missing outputs. For database-backed inputs, this can be inferred from the existing data. But for `PathInput`-only functions (where inputs come from the filesystem, not the database), there are no database records to infer from. So scidb explicitly persists the expected set.
 
@@ -570,7 +581,7 @@ Before any combos are filtered by `skip_computed`, scidb writes the full expecte
 First, a `call_id` is computed from the version keys via `ForEachConfig.to_call_id()` (see the `_for_each_expected` table section above for details on how `call_id` is derived).
 
 For each combo in `full_combos`:
-1. Extract only the schema-key values from the combo dict (ignore `__rid_*` keys)
+1. Extract only the schema-key values from the combo dict (ignore `__combo`)
 2. Look up or create a `schema_id` in the `_schema` table for those values
 3. Insert `(function_name, call_id, schema_id, "{}")` into `_for_each_expected`
 
@@ -586,7 +597,11 @@ The number of skipped combos is printed: `skip_computed: 47/50 combos skipped`.
 
 This filtering happens *after* expected combos are persisted (Step 13), so the expected set reflects all combos that *should* exist, regardless of whether they were skipped in this particular run. This is necessary because `check_node_state` needs to know the full set to detect missing outputs, even if those outputs were computed in a previous run.
 
-### Step 15: Extend scifor's schema with rid keys (lines 478–489)
+### Step 15: (gone) Extend scifor's schema with rid keys
+
+**Retired 2026-09-20.** scifor's schema is never touched by a run. What this step did — push the per-input `__rid_*` / `__vsig_*` column names into `scifor.set_schema` so scifor's schema filter would select rows by them, then restore the schema in Step 18 — is what the `_select_rows` hook does explicitly (see **The selection seam** under Step 12). The historical description follows for readers of older logs.
+
+#### Historical description
 
 **Why this is needed:** The `__rid_signal` column in the loaded DataFrame is an internal tracking column. scifor doesn't know about it — scifor only knows about "schema keys" (which it uses for filtering) and "data columns" (which it passes to the function). If scifor sees `__rid_signal` as a data column, it will try to pass it to the function, and it will not filter on it — meaning the function might receive multiple rows from different variants in a single call.
 
@@ -644,9 +659,13 @@ Key points:
 - `_log_fn=Log.info` — scifor's per-combo log messages go to the scidb log file
 - The progress function is wrapped in `_tracking_progress_fn` (lines 520–527) to track final completed/skipped counts for logging
 
-scifor now executes its loop as documented in `scifor-for-each-internals.md`: for each combo, filter the loaded DataFrames to matching rows (including filtering by `__rid_*` columns thanks to the extended schema), call the function, collect results, return a DataFrame.
+scifor now executes its loop as documented in `scifor-for-each-internals.md`: for each combo, filter the loaded DataFrames to matching rows by schema key, hand each frame to scidb's `_select_rows` hook (which keeps the rows the combo's `Selection` names and drops `__record_id`), call the function, collect results, return a DataFrame whose rows carry `__combo`.
 
-### Step 18: Restore scifor's schema (lines 549–551)
+### Step 18: (gone) Restore scifor's schema
+
+**Retired with Step 15, 2026-09-20.** Historical description follows.
+
+#### Historical description
 
 The schema extension from Step 15 was temporary — it was needed only for scifor's filtering during the loop. Now that scifor has finished, the schema is restored to its original form:
 
@@ -666,7 +685,7 @@ For each row in the result table:
 
 **Purpose:** Inherit the pipeline history from the input records so the output carries a complete record of all upstream choices.
 
-For each `__rid_*` column in the row (e.g., `__rid_signal`), extract the record ID value (e.g., `"a1b2c3d4e5f6g7h8"`), look it up in `rid_to_bp` (built in Step 11), and merge the resulting branch params dict into `merged_bp`.
+The row's `__combo` names its `Selection`; `state.bindings.for_combo(row)` turns it into the graph edges, and `branch_params_for(edges)` looks each consumed record up in `rid_to_bp` (built in Step 11) and merges the results into `merged_bp`.
 
 For example, if `rid_to_bp["a1b2c3d4e5f6g7h8"]` is `{"bandpass.low_hz": 20}`, then `merged_bp` starts as `{"bandpass.low_hz": 20}`.
 
@@ -725,7 +744,7 @@ If a save fails, the error is printed and logged but does not stop other saves.
 
 ## The variant tracking system — a complete picture
 
-The `record_id`, `branch_params`, `rid_to_bp`, and `__rid_*` mechanisms described across Steps 10–12 and 19 can be confusing because they are spread across many steps. This section ties them together into a single narrative.
+The `record_id`, `branch_params`, `rid_to_bp`, and `Selection` mechanisms described across Steps 10–13 and 19 can be confusing because they are spread across many steps. This section ties them together into a single narrative.
 
 ### The core problem
 
@@ -754,7 +773,7 @@ When `_load_var_type_all()` loads `FilteredEMG`, it includes `__record_id` as a 
 | 1 | B | [0.3, 0.4, ...] | cccc... | {"bandpass.low_hz": 20} |
 | 1 | B | [0.7, 0.8, ...] | dddd... | {"bandpass.low_hz": 50} |
 
-### Step 11 captures the mapping and renames the column
+### Step 11 captures the mapping
 
 `rid_to_bp` captures the record_id → branch_params relationship:
 
@@ -767,28 +786,34 @@ rid_to_bp = {
 }
 ```
 
-The `__record_id` column is renamed to `__rid_signal` (because the input parameter is named `signal`).
+The `__record_id` column stays on the frame as it is.
 
-### Step 12 expands combos to include the record_id
+### Step 12 expands combos, each with a `Selection`
 
 Base combos are `[{subject: "1", session: "A"}, {subject: "1", session: "B"}]`. After expansion:
 
 ```python
-[
-    {subject: "1", session: "A", __rid_signal: "aaaa..."},
-    {subject: "1", session: "A", __rid_signal: "bbbb..."},
-    {subject: "1", session: "B", __rid_signal: "cccc..."},
-    {subject: "1", session: "B", __rid_signal: "dddd..."},
+full_combos = [
+    {subject: "1", session: "A", __combo: 0},
+    {subject: "1", session: "A", __combo: 1},
+    {subject: "1", session: "B", __combo: 2},
+    {subject: "1", session: "B", __combo: 3},
+]
+state.bindings.selections = [
+    Selection({"signal": ("aaaa...",)}),
+    Selection({"signal": ("bbbb...",)}),
+    Selection({"signal": ("cccc...",)}),
+    Selection({"signal": ("dddd...",)}),
 ]
 ```
 
-### Step 15 makes scifor filter on the record_id
+### scifor's `_select_rows` hook selects the record
 
-The schema becomes `["subject", "session", "__rid_signal"]`. Now when scifor processes combo `{subject: "1", session: "A", __rid_signal: "aaaa..."}`, it filters the DataFrame to the single row where all three match — the `low_hz=20` variant.
+scifor filters the frame to `subject=1, session=A` (two rows: both variants), then calls scidb's hook with `("signal", frame, {subject: "1", session: "A", __combo: 0})`. The hook looks up `selections[0]`, keeps the row whose `__record_id` is `"aaaa..."` — the `low_hz=20` variant — and drops the column. The schema was never touched.
 
 ### Step 19 inherits upstream branch_params
 
-When saving the RMS output, scidb looks up `rid_to_bp["aaaa..."]` → `{"bandpass.low_hz": 20}`, merges in the current function's constants, and saves:
+When saving the RMS output, scidb reads the row's `__combo`, takes `selections[0]`'s edges (`RunBindings.edges_for`), looks up `rid_to_bp["aaaa..."]` → `{"bandpass.low_hz": 20}` for each, merges in the current function's constants, and saves:
 
 ```python
 branch_params = {"bandpass.low_hz": 20, "compute_rms.window": 50}
@@ -1006,7 +1031,7 @@ What happens:
     - `low_hz`: constant 20 → pass through
     - `high_hz`: constant 450 → pass through
 
-11. **Variant tracking**: DataFrame has `__record_id` → rename to `__rid_signal`. Build `rid_to_bp`:
+11. **Variant tracking**: DataFrame has `__record_id` (kept as is); `signal` is a tracked input. Build `rid_to_bp`:
     ```python
     rid_to_bp = {
         "e3f4a5b6c7d8e9f0": {},  # no upstream variants
@@ -1017,22 +1042,22 @@ What happens:
     ```
     Strip `__branch_params` column.
 
-12. **Expand combos**: 4 base combos. Each schema location has exactly 1 record ID → no expansion needed (4 → 4).
+12. **Expand combos**: 4 base combos. Each schema location has exactly 1 record ID → no expansion needed (4 → 4). Each combo gets `__combo: i` and `selections[i] = Selection({"signal": (<that record id>,)})`.
 
-13. **Persist expected combos**: Write 4 entries to `_for_each_expected`.
+13. **Typed bindings**: `state.bindings` — `signal` is `ITERATE`, the four selections above.
 
 14. **Skip_computed**: No hook — skip.
 
-15. **Extend schema**: `scifor.set_schema(["subject", "session", "__rid_signal"])`.
+15. *(gone — the schema is never extended.)*
 
 16. **Wrap fn**: No PerComboLoader inputs, no metadata injection — skip.
 
-17. **Delegate to scifor**: scifor iterates over each combo, filters the DataFrame to the matching row (by subject + session + `__rid_signal`), drops schema columns, extracts the scalar signal value, calls `bandpass(signal=<array>, low_hz=20, high_hz=450)`, collects results.
+17. **Delegate to scifor**: scifor iterates over each combo, filters the DataFrame to the matching rows (by subject + session), calls scidb's `_select_rows` hook, which keeps the row whose `__record_id` is in `selections[combo["__combo"]].rids["signal"]` and drops the column, then drops schema columns, extracts the scalar signal value, calls `bandpass(signal=<array>, low_hz=20, high_hz=450)`, collects results — each result row carrying its `__combo`.
 
-18. **Restore schema**: `scifor.set_schema(["subject", "session"])` — remove `__rid_signal` so subsequent calls are not affected.
+18. *(gone — nothing to restore.)*
 
 19. **Save results**: For each result row:
-    - Look up `__rid_signal` in `rid_to_bp` → `{}` (no upstream branch params for raw data)
+    - `state.bindings.for_combo(row)` — the row's `__combo` names its selection, whose record is the edge; look it up in `rid_to_bp` → `{}` (no upstream branch params for raw data)
     - Add `{"bandpass.low_hz": 20, "bandpass.high_hz": 450}` to branch_params
     - Build save metadata including `__fn`, `__fn_hash`, `__inputs`, `__constants`, `__branch_params`, `__upstream`
     - Call `FilteredEMG.save(filtered_value, **save_metadata)`
@@ -1040,7 +1065,7 @@ What happens:
     - A row is inserted into `_record_metadata` and the data is written to `FilteredEMG_data`
     - Print: `[save] subject=1, session=A, low_hz=20, high_hz=450: FilteredEMG -> record_id=abc123... (ndarray shape=(100,)) in 0.003s`
 
-Now if a second `for_each` call runs with `low_hz=50`, new `FilteredEMG` records are created with different `record_id` values and different `branch_params` (`{"bandpass.low_hz": 50}`). Both variants coexist in the database. A downstream `for_each` loading `FilteredEMG` will see both variants and, through the rid expansion mechanism, process each one separately.
+Now if a second `for_each` call runs with `low_hz=50`, new `FilteredEMG` records are created with different `record_id` values and different `branch_params` (`{"bandpass.low_hz": 50}`). Both variants coexist in the database. A downstream `for_each` loading `FilteredEMG` will see both variants and, through the expansion into per-record selections, process each one separately.
 
 ## Related
 

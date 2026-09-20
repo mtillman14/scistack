@@ -515,7 +515,9 @@ class TestProvenancePerGroup:
             bp.get("bandpass.low_hz") for bp in result["_branch_params_signal"]
         )
         assert bps == [20, 30]
-        assert not any(c.startswith("__vsig_") for c in result.columns)
+        # Introspection resolves everything through the row's Selection; no
+        # internal column survives on the returned table.
+        assert not any(str(c).startswith("__") for c in result.columns)
 
     def test_full_aggregation_stores_upstream_rids_per_group(self, db):
         RawSignal.save(np.array([1.0]), subject="S01", session="1")

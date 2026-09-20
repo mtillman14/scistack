@@ -379,11 +379,9 @@ def for_each(
                     )
 
     # Step 3: Validate distribute parameter and resolve target key.
-    # Internal discriminator keys (scidb's __rid_* record-id and __vsig_*
-    # variant-signature schema extensions) are not experimental LEVELS — they
-    # must be invisible to distribute resolution, or an aggregation over a
-    # variant-tracked input would see the discriminator as the deepest key
-    # and refuse to distribute.
+    # (The schema is the caller's dataset schema. Until 2026-09-20 scidb
+    # extended it per run with private discriminator keys that had to be
+    # hidden here; row selection is the `_select_rows` hook now.)
     #
     # The resolved target is reported at INFO, not DEBUG. This line is the one
     # observable difference between "distribute ran" and "distribute was
@@ -394,11 +392,7 @@ def for_each(
     # were inspected by hand (2026-09-14).
     distribute_key = None
     if distribute:
-        real_schema_keys = [
-            k
-            for k in full_schema_keys
-            if "__rid_" not in str(k) and "__vsig_" not in str(k)
-        ]
+        real_schema_keys = list(full_schema_keys)
         if not real_schema_keys:
             raise ValueError(
                 "distribute=True requires a schema. Call set_schema() or "
@@ -1261,13 +1255,8 @@ def _run_column_iteration(
             call_kwargs[name] = base_kwargs[name].resolve(metadata, col)
         for name, df in iterate_dfs.items():
             if name in as_table_set:
-                # Keep real schema keys + the current column, but never surface
-                # internal tracking columns (e.g. scidb's ``__rid_*`` record-id
-                # discriminators, which DB wrappers add to the schema for per-combo
-                # filtering). They've already done their filtering job upstream.
-                keep = [
-                    c for c in df.columns if c in schema_keys and not c.startswith("__")
-                ] + [col]
+                # Keep the schema keys + the current column.
+                keep = [c for c in df.columns if c in schema_keys] + [col]
                 call_kwargs[name] = df[keep]
             else:
                 call_kwargs[name] = df[col].values
@@ -1596,9 +1585,7 @@ def _extract_data(
 ) -> Any:
     """Extract data from a filtered DataFrame.
 
-    If as_table: return full DataFrame (real schema columns + data columns, but
-    not internal ``__``-prefixed schema columns such as scidb's ``__rid_*``
-    record-id discriminators).
+    If as_table: return the full DataFrame (schema columns + data columns).
     Otherwise: drop schema key columns; if 1 row + 1 data col -> extract scalar.
 
     ``mapping_cols`` (see ``for_each``'s ``_mapping_inputs``) says the rows are
@@ -1608,8 +1595,7 @@ def _extract_data(
     fires for a *single* data column and a dict has as many columns as keys.
     """
     if as_table:
-        internal = [c for c in df.columns if c in schema_keys and c.startswith("__")]
-        return df.drop(columns=internal) if internal else df
+        return df
 
     if mapping_cols and len(df) == 1:
         present = [c for c in mapping_cols if c in df.columns]
@@ -1696,14 +1682,8 @@ def _prepare_input(
         cols = column_selection or _all_data_columns(filtered, schema_keys)
         cols = _apply_exclusions(cols, excl)
         if as_table:
-            # Keep real schema columns alongside selected data columns, but never
-            # surface internal tracking columns (e.g. scidb's ``__rid_*`` record-id
-            # discriminators added to the schema for per-combo filtering).
-            keep = [
-                c
-                for c in filtered.columns
-                if c in schema_keys and not c.startswith("__")
-            ] + cols
+            # Keep the schema columns alongside the selected data columns.
+            keep = [c for c in filtered.columns if c in schema_keys] + cols
             return filtered[keep]
         return _apply_column_selection(filtered, cols)
 
@@ -2228,11 +2208,7 @@ def _spread_decision(
     collection and stamps each piece with its own ``distribute_key``, so the
     pieces arrive as pinned single rows and take condition 2.
     """
-    real_keys = [
-        k
-        for k in (schema_keys or [])
-        if "__rid_" not in str(k) and "__vsig_" not in str(k)
-    ]
+    real_keys = list(schema_keys or [])
     discriminating: set[str] = set()
     collisions: set[str] = set()
     combos_with: int = 0

@@ -49,6 +49,16 @@ function varargout = for_each(fn, inputs, varargin)
 %                       (one per output). Defaults to {'output'} for each.
 %       _all_combos   - Pre-built cell array of combo structs (from DB
 %                       wrappers that pre-filter). Bypasses cartesian_product.
+%       _row_selection - Cell array aligned with _all_combos: per combo, a
+%                       struct {input name -> string array of record ids}
+%                       naming which ROWS of that input the combination
+%                       reads, applied after this loop's own schema-key
+%                       filter and before extraction. The caller that knows
+%                       (scidb) says so here rather than by extending the
+%                       schema with private keys. Needs _record_id_column.
+%       _record_id_column - Name of the record-id column on the loaded
+%                       tables (e.g. "x__record_id"): rows are selected by
+%                       it and it is dropped before fn sees the table.
 %       _mapping_inputs - struct: input name -> string array of data column
 %                       names, declaring that the input's rows are STRUCT
 %                       records spread one column per field rather than the
@@ -378,11 +388,9 @@ function varargout = for_each(fn, inputs, varargin)
     end
 
     % --- Validate distribute parameter and resolve target key ---
-    % Internal discriminator keys (scidb's __rid_*/__vsig_* schema
-    % extensions, arriving sanitized as x__rid_*/x__vsig_* through the
-    % bridge) are not experimental LEVELS — hide them from distribute
-    % resolution, or an aggregation over a variant-tracked input would see
-    % the discriminator as the deepest key and refuse to distribute.
+    % (The schema is the dataset schema: scidb no longer extends it with
+    % per-input discriminator keys — row selection arrives as
+    % _row_selection instead, 2026-09-20 — so nothing here needs hiding.)
     %
     % The resolved target is logged at INFO, matching the wording of Python's
     % scifor (foreach.py resolve_distribute_target). A distribute that lands
@@ -401,8 +409,7 @@ function varargout = for_each(fn, inputs, varargin)
     % how schema-key columns are represented elsewhere in the framework.
     distribute_key_synthetic = false;
     if distribute
-        real_schema_keys = full_schema_keys( ...
-            ~contains(full_schema_keys, "__rid_") & ~contains(full_schema_keys, "__vsig_"));
+        real_schema_keys = full_schema_keys;
         if isempty(real_schema_keys)
             error('scifor:for_each', ...
                 'distribute=true requires schema keys. Call set_schema() first.');
@@ -848,11 +855,23 @@ function varargout = for_each(fn, inputs, varargin)
 
             var_spec = inputs.(input_names{p});
 
+            % Which rows of this input the combination reads (scidb's
+            % Selection, pre-computed and aligned with _all_combos); empty
+            % when the caller has nothing to say for this input.
+            sel_rids = string.empty;
+            if ~isempty(opts.row_selection) && c <= numel(opts.row_selection)
+                sel_c = opts.row_selection{c};
+                if isstruct(sel_c) && isfield(sel_c, input_names{p})
+                    sel_rids = string(sel_c.(input_names{p}));
+                end
+            end
+
             if iterate_pos(p)
                 % Keep the full per-combo table; slice per column below.
                 try
                     iterate_tables{p} = prepare_iterate_table( ...
-                        var_spec, metadata, effective_keys, where_filter);
+                        var_spec, metadata, effective_keys, where_filter, ...
+                        sel_rids, opts.record_id_column);
                 catch err
                     [failure_reasons, failure_order] = record_iteration_failure( ...
                         failure_reasons, failure_order, err, metadata_str, ...
@@ -872,7 +891,8 @@ function varargout = for_each(fn, inputs, varargin)
             end
 
             try
-                loaded{p} = prepare_input(var_spec, metadata, effective_keys, wants_table, where_filter, mapping_cols);
+                loaded{p} = prepare_input(var_spec, metadata, effective_keys, wants_table, where_filter, mapping_cols, ...
+                    sel_rids, opts.record_id_column);
             catch err
                 [failure_reasons, failure_order] = record_iteration_failure( ...
                     failure_reasons, failure_order, err, metadata_str, ...
@@ -1128,15 +1148,25 @@ end
 % Input preparation per combo
 % =========================================================================
 
-function result = prepare_input(var_spec, metadata, schema_keys, as_table, where_filter, mapping_cols)
+function result = prepare_input(var_spec, metadata, schema_keys, as_table, where_filter, mapping_cols, sel_rids, rid_col)
 %PREPARE_INPUT  Prepare a single data input for the current combo.
 %
 %   MAPPING_COLS (optional) is a string array of data column names declaring
 %   that this input's rows are struct records spread one column per field.
 %   It only reaches extract_data, so a column selection or as_table wins.
+%
+%   SEL_RIDS / RID_COL (optional): the record ids this combination reads of
+%   this input and the column they are in (see _row_selection). Applied
+%   right after the schema-key filter; the column is dropped either way.
 
     if nargin < 6
         mapping_cols = string.empty;
+    end
+    if nargin < 7
+        sel_rids = string.empty;
+    end
+    if nargin < 8
+        rid_col = "";
     end
 
     % Merge
@@ -1167,6 +1197,7 @@ function result = prepare_input(var_spec, metadata, schema_keys, as_table, where
 
     % Filter by combo metadata (always returns a table; extraction is done by extract_data)
     filtered = filter_table_for_combo(tbl, effective_meta, schema_keys);
+    filtered = select_rows_by_id(filtered, sel_rids, rid_col);
 
     % Apply where filter (scifor.ColFilter on table rows)
     if ~isempty(where_filter)
@@ -1209,11 +1240,18 @@ function cs = unwrap_column_selection(var_spec)
 end
 
 
-function result = prepare_iterate_table(var_spec, metadata, schema_keys, where_filter)
+function result = prepare_iterate_table(var_spec, metadata, schema_keys, where_filter, sel_rids, rid_col)
 %PREPARE_ITERATE_TABLE  Prepare the per-combo table for an iterate-mode
 %   ColumnSelection (for_columns). Returns the combo-filtered table retaining
 %   all iterate columns so the caller can slice one column at a time. Unlike
-%   prepare_input it does not collapse to a single column.
+%   prepare_input it does not collapse to a single column. SEL_RIDS /
+%   RID_COL: see prepare_input.
+    if nargin < 5
+        sel_rids = string.empty;
+    end
+    if nargin < 6
+        rid_col = "";
+    end
     [tbl, effective_meta, ~] = resolve_data_spec(var_spec, metadata);
 
     if ~is_per_combo_table(tbl, schema_keys)
@@ -1223,6 +1261,7 @@ function result = prepare_iterate_table(var_spec, metadata, schema_keys, where_f
     end
 
     filtered = filter_table_for_combo(tbl, effective_meta, schema_keys);
+    filtered = select_rows_by_id(filtered, sel_rids, rid_col);
 
     if ~isempty(where_filter)
         filtered = apply_where_filter(filtered, where_filter);
@@ -1233,6 +1272,24 @@ function result = prepare_iterate_table(var_spec, metadata, schema_keys, where_f
     end
 
     result = filtered;
+end
+
+
+function tbl = select_rows_by_id(tbl, sel_rids, rid_col)
+%SELECT_ROWS_BY_ID  Keep the rows whose record id is in SEL_RIDS, then drop
+%   the id column. The MATLAB half of the seam Python's scifor exposes as
+%   the _select_rows hook: which rows a combination reads is decided by the
+%   caller (scidb's Selection, pre-computed as _row_selection) and applied
+%   here, after the schema filter. A table without the column, or a
+%   combination with nothing to say (empty SEL_RIDS), passes through — the
+%   column is still dropped so fn never sees bookkeeping.
+    if strlength(rid_col) == 0 || ~ismember(rid_col, string(tbl.Properties.VariableNames))
+        return;
+    end
+    if ~isempty(sel_rids)
+        tbl = tbl(ismember(string(tbl.(rid_col)), sel_rids), :);
+    end
+    tbl.(rid_col) = [];
 end
 
 
@@ -1323,10 +1380,12 @@ end
 
 function cols = all_data_columns(tbl, schema_keys)
 %ALL_DATA_COLUMNS  A table's data columns: everything that is not a schema key
-%   or an internal ``__*`` column. Used to expand an empty (all-columns)
-%   ColumnSelection to a concrete list.
+%   or an internal ``__*`` / ``x__*`` column (the latter is how a ``__``
+%   name crosses the Python bridge, e.g. the record-id column a scidb
+%   table carries until the row selection drops it). Used to expand an
+%   empty (all-columns) ColumnSelection to a concrete list.
     vn = string(tbl.Properties.VariableNames);
-    is_internal = startsWith(vn, "__");
+    is_internal = startsWith(vn, "__") | startsWith(vn, "x__");
     is_schema = ismember(vn, string(schema_keys));
     cols = vn(~is_schema & ~is_internal);
 end
@@ -2325,6 +2384,8 @@ function [meta_args, opts] = split_options(varargin)
     opts.categorical = false;
     opts.output_names = {};
     opts.all_combos = [];
+    opts.row_selection = {};
+    opts.record_id_column = "";
     opts.nest_table_outputs = false;
     opts.resolve_pathinput = true;
     opts.pathinput_loader = [];  % optional loader(pi, meta_nv) callback; the
@@ -2386,6 +2447,19 @@ function [meta_args, opts] = split_options(varargin)
                     continue;
                 case "_all_combos"
                     opts.all_combos = varargin{i+1};
+                    i = i + 2;
+                    continue;
+                case "_row_selection"
+                    % Per-combo row selection (see header). Python decides
+                    % which record ids each combination reads (its
+                    % Selection); this loop applies it — the same rule
+                    % Python's own loop applies through scifor's
+                    % _select_rows hook.
+                    opts.row_selection = varargin{i+1};
+                    i = i + 2;
+                    continue;
+                case "_record_id_column"
+                    opts.record_id_column = string(varargin{i+1});
                     i = i + 2;
                     continue;
                 case "_nest_table_outputs"

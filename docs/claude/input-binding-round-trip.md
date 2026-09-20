@@ -148,10 +148,10 @@ binding is.
         selectors = {param: '{"columns": [...], "iterate": true}' | None}
                     │
                     ▼  per output row, at save                [foreach.py _save_results]
-        __graph_var_bindings = [(param, record_id, selector), …]
-        (no __rid_* columns on the row → unset → __upstream fallback, NO selectors)
+        edges = state.bindings.for_combo(row)     ← the row's __combo names its Selection
+        (every mode: full iteration, aggregation, for_columns — one assembly)
                     │
-                    ▼  record_run → _variable_bindings        [provenance_save.py]
+                    ▼  record_run                             [provenance_save.py]
         _invocation_input(invocation_id, param_name, input_record_id, selector)
                     │
                     ▼  read back                              [provenance_query.py]
@@ -178,12 +178,13 @@ what the Stage 1 guards look for.
 Three known breaks, all of the same family — a re-spelling that loses the
 optional part:
 
-1. **The `__upstream` fallback drops every selector.** Aggregation and
-   `for_columns` reassembly rows carry no `__rid_*` columns, so
-   `__graph_var_bindings` is never set and `_variable_bindings` falls back to
-   `__upstream`, which is `{__rid_<param>: record_id}` with nowhere to put a
-   selector. Everything downstream then honestly reports "no selection was
-   used", and a GUI re-run binds the whole variable.
+1. **(Fixed 2026-09-20.) The `__upstream` fallback dropped every selector.**
+   Aggregation and `for_columns` reassembly rows carried no `__rid_*`
+   columns, so the edge list was never set and the save fell back to
+   `__upstream`, `{__rid_<param>: record_id}`, with nowhere to put a
+   selector. Both spellings are gone: every row names its `Selection`
+   (`__combo`), and `RunBindings.edges_for` is the one assembly in every
+   mode, selector included.
 2. **A node-config selection that never reaches the run** — an id-matching
    question, because `_node_config` is keyed by the placement-qualified
    canvas node id (`docs/claude/placement-qualified-ids.md`).

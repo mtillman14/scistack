@@ -533,10 +533,36 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         return;
     end
 
+    % --- Row selection: which record ids each combination reads ---
+    % Python decided (each combo's Selection, aligned with full_combos);
+    % scifor.for_each applies it after its schema filter, by the sanitized
+    % record-id column, and drops that column. The same rule Python's own
+    % loop applies through scifor's _select_rows hook. Replaces the schema
+    % extension with x__rid_*/x__vsig_* keys (2026-09-20).
+    py_row_sel = prep{'row_selection'};
+    n_sel = int64(py.len(py_row_sel));
+    row_selection = cell(1, n_sel);
+    for si = 1:n_sel
+        d = py_row_sel{si};
+        s = struct();
+        ks = cell(py.list(d.keys()));
+        for kii = 1:numel(ks)
+            pname = char(ks{kii});
+            s.(pname) = string(cellfun(@char, cell(py.list(d{pname})), ...
+                'UniformOutput', false));
+        end
+        row_selection{si} = s;
+    end
+    record_id_column = string(prep{'record_id_column'});
+
     % --- Build scifor options for the inner loop ---
     scifor_opts = {};
     scifor_opts{end+1} = '_all_combos';
     scifor_opts{end+1} = all_combos;
+    scifor_opts{end+1} = '_row_selection';
+    scifor_opts{end+1} = row_selection;
+    scifor_opts{end+1} = '_record_id_column';
+    scifor_opts{end+1} = record_id_column;
     scifor_opts{end+1} = '_nest_table_outputs';
     scifor_opts{end+1} = true;
     scifor_opts{end+1} = 'output_names';
