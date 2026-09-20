@@ -39,6 +39,28 @@ from scidb.provenance_save import compute_input_selectors
 
 KEYS = ["subject", "trial", "cycle"]
 
+#: Every aggregation-mode disagreement below has ONE cause. When a combo
+#: consumes several records of one parameter (cycles pooled per trial), the
+#: save path writes the edges under INDEXED names — `value_0`, `value_1` —
+#: rather than `value` with several edges (which the `_invocation_input`
+#: primary key already allows). Nothing in scidb folds them on read, so every
+#: backward reconstruction (`pipeline_variants[].input_types`,
+#: `function_variant_configs`, the recorded selectors) speaks a different
+#: parameter vocabulary from the forward call; the GUI papers over it with
+#: `execution_service._fold_indexed_params` on its run path only. Folding at
+#: save time was tried on 2026-09-19 and reverted because the skip_computed
+#: predictor assumed the indexed names. This is Stage 2's "one row -> edges
+#: assembly" decision; pinned here so it stays executable until then.
+INDEXED_AGGREGATION_EDGES = pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "aggregation edges are recorded under indexed parameter names "
+        "(value_0, value_1) and never folded on read, so the backward "
+        "reconstruction names parameters the forward call does not have — "
+        "see INDEXED_AGGREGATION_EDGES; decided in Stage 2 (one row->edges assembly)"
+    ),
+)
+
 
 @pytest.fixture
 def db(tmp_path):
@@ -161,7 +183,16 @@ class TestCallIdForwardEqualsBackward:
         backward = _backward_call_ids(db, fn.__name__)
         assert backward, "no variant recorded"
         assert forward in backward, (
-            f"forward call_id {forward} is not among the recorded {sorted(backward)}: "
+            f"forward call_id {forward} is not among pipeline_variants' {sorted(backward)}"
+        )
+        # The SECOND backward reconstruction — the one check_node_state
+        # compares a pipeline step's forward id against.
+        via_configs = {
+            pq.config_call_id(fn.__name__, cfg)
+            for cfg in pq.function_variant_configs(db._duck, fn.__name__)
+        }
+        assert forward in via_configs, (
+            f"forward call_id {forward} is not among config_call_id's {sorted(via_configs)}: "
             f"check_node_state would never match this call site"
         )
 
@@ -188,10 +219,12 @@ class TestCallIdForwardEqualsBackward:
             db, first_a, {"value": Wide.for_columns()}, dict(subject=[], trial=[], cycle=[])
         )
 
+    @INDEXED_AGGREGATION_EDGES
     def test_as_table(self, db):
         _seed()
         self._check(db, pooled, {"value": Wide}, dict(subject=[], trial=[]), as_table=["value"])
 
+    @INDEXED_AGGREGATION_EDGES
     def test_distribute(self, db):
         _seed()
 
@@ -249,8 +282,14 @@ def _recorded_selectors(db, fn_name: str) -> dict:
 
 class TestSelectorAskedEqualsRecorded:
     def _check(self, db, fn, inputs, iterate):
+        from scidb.foreach import _resolve_for_columns
+
         for_each(fn, inputs, [Out], **iterate)
-        asked = {p: s for p, s in compute_input_selectors(inputs).items() if s}
+        # What the call asked for, AFTER `for_columns()` has been resolved to
+        # the concrete column list — the same step the save path runs before
+        # it computes the selectors it records.
+        resolved = _resolve_for_columns(inputs, db)
+        asked = {p: s for p, s in compute_input_selectors(resolved).items() if s}
         recorded = _recorded_selectors(db, fn.__name__)
         assert recorded == asked, f"asked {asked}, recorded {recorded}"
 
@@ -262,12 +301,16 @@ class TestSelectorAskedEqualsRecorded:
         _seed()
         self._check(db, first_a, {"value": Wide.for_columns()}, dict(subject=[], trial=[], cycle=[]))
 
+    @INDEXED_AGGREGATION_EDGES
     def test_column_selection_aggregation(self, db):
         _seed()
         self._check(db, pooled, {"value": Wide["a"]}, dict(subject=[], trial=[]))
 
+    @INDEXED_AGGREGATION_EDGES
     def test_for_columns_aggregation(self, db):
-        """The exact shape of the 2026-09-19 bug."""
+        """The exact shape of the 2026-09-19 bug — the selector IS recorded now
+        (Stage 3 of the intent/fact plan); what still differs is the parameter
+        name it is recorded under."""
         _seed()
         self._check(db, first_a, {"value": Wide.for_columns()}, dict(subject=[], trial=[]))
 

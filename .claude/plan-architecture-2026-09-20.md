@@ -129,6 +129,21 @@ Items 7 (MATLAB as a bridge), 8 (`DatabaseManager` split), 9 (frontend), 10
   config). One call site or two? The canvas says one.
 * Not unified: `scidb.inspect.graph._step_id` has its OWN wiring key for
   report step ids (a fourth identity, display-only). Noted, not touched.
+* **First run of the suite found the aggregation vocabulary split** (four
+  more `xfail(strict=True)`, marker `INDEXED_AGGREGATION_EDGES`): a combo
+  that consumes several records of one parameter records its edges under
+  INDEXED names (`value_0`, `value_1`), nothing in scidb folds them on read,
+  so every backward reconstruction — `pipeline_variants`,
+  `function_variant_configs`/`config_call_id`, the recorded selectors —
+  names parameters the forward call does not have. Consequences today: a
+  pipeline step that aggregates (`as_table`, any pooling) can never plan
+  green through `check_node_state(call_id=...)`; the GUI folds on its run
+  path only. Save-time folding was tried and reverted on 2026-09-19 (the
+  skip predictor assumed indexed names). **This is Stage 2's first
+  decision**: edges should carry the real parameter name with several
+  edges per parameter (the PK already allows it), the predictor enumerates
+  N bindings per parameter, and every aggregation `invocation_id` migrates
+  once.
 
 Verify: `scidb/tests/test_identity_parity.py`, `test_unified_modifier_classes.py`,
 `test_parameter.py`, `test_state*.py`; GUI `test_binding_identity.py`,
