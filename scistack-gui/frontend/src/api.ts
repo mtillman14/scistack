@@ -247,6 +247,8 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     plot_location_tree:     { path: '/api/plot/locations', method: 'POST', body: true },
     plot_export:            { path: '/api/plot/export', method: 'POST', body: true },
     plot_add_to_pipeline:   { path: '/api/plot/add-to-pipeline', method: 'POST', body: true },
+    // Named variant pins, saved as statements about the plotted variable.
+    plot_variant_sets_save: { path: '/api/plot/variant-sets', method: 'POST', body: true },
     // Returns a job id immediately; progress arrives as notifications. One
     // figure or the whole fan-out — `figure_index` is the only difference, and
     // neither fits a request/response budget: one full-resolution figure is

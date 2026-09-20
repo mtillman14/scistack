@@ -1,27 +1,48 @@
 """
-Plot Studio API (HTTP transport).
+Plot Studio — the handler table for both transports.
 
-Thin wrappers over ``services.plot_service`` — the JSON-RPC handlers in
-``server.py`` call the same functions, so the browser GUI and the VS Code
-extension cannot diverge.
+Each :class:`~scistack_gui.api.handlers.Handler` below is one Plot Studio
+operation, declared ONCE: ``server.py`` takes its JSON-RPC method from
+:func:`rpc_methods` and its lock policy from :func:`self_managed`;
+:func:`install_routes` builds the HTTP route (mounted under ``/api``). The
+frontend's route map (``frontend/src/api.ts``) names the same paths, and
+``tests/test_api_handlers.py`` checks that it does.
 
-    POST /api/plot/describe        — catalog + default spec for a variable
-    POST /api/plot/capabilities    — available plot kinds for a role assignment
-    POST /api/plot/locations       — per-location status tree for one variable
-    POST /api/plot/resolve         — plotly figure dicts for the panel
-    POST /api/plot/export          — generated plot_ function + for_each call
-    POST /api/plot/add-to-pipeline — write the endpoint into the project
-    POST /api/plot/invalidate      — drop cached frames after a run
-    POST /api/client-error         — a webview error boundary's report
+    POST /api/plot/describe                 plot_describe
+    POST /api/plot/capabilities             plot_capabilities
+    POST /api/plot/variant-graph            plot_variant_graph
+    POST /api/plot/grouping-graph           plot_grouping_graph
+    POST /api/plot/grouping-columns         plot_grouping_columns
+    POST /api/plot/grouping-default-variant plot_grouping_default_variant
+    POST /api/plot/locations                plot_location_tree
+    POST /api/plot/resolve                  plot_resolve
+    POST /api/plot/export                   plot_export
+    POST /api/plot/add-to-pipeline          plot_add_to_pipeline
+    POST /api/plot/variant-sets             plot_variant_sets_save
+    POST /api/plot/save                     plot_save_start
+    POST /api/plot/invalidate               plot_invalidate
+    POST /api/client-error                  report_client_error
+
+Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
+time in pandas and matplotlib, with the database touched only while the
+variable frames load. Holding the file lock for the rest of it blocked
+MATLAB for the full duration — the 2026-09-11 log shows one 31-second hold
+for work that needed the database for well under a second of it. So every
+handler whose service takes the connection itself declares
+``holds_db_lock=False``; a handler declared so that then forgets to wrap
+its own access fails with a closed connection rather than silently working,
+because the JSON-RPC server closes the connection whenever the refcount
+hits zero. The two that keep the blanket hold: ``plot_add_to_pipeline``
+writes source files and reloads the registry through services that reach
+the database by their own routes; ``plot_invalidate`` only drops a dict.
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
-from scidb.database import DatabaseManager
 
-from scistack_gui.db import get_db
+from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.services import plot_service
 from scistack_gui.services.client_errors import report_client_error
 
@@ -29,10 +50,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_BAD_REQUEST = {ValueError: 400, KeyError: 400}
+#: The plotting packages are optional; a missing one is "not implemented".
+_NOT_INSTALLED = {RuntimeError: 501}
+
 
 class DescribeRequest(BaseModel):
     variable: str | None = None
-    refresh: bool = False
+    refresh: bool | None = False
     # Set to plot a CSV instead of the project database (the standalone path).
     csv_path: str | None = None
 
@@ -51,60 +76,20 @@ class ExportRequest(BaseModel):
     function_name: str | None = None
     output_variable: str | None = None
     path_template: str | None = None
-    finalized: bool = True
-
-
-@router.post("/plot/describe")
-def plot_describe(req: DescribeRequest, db: DatabaseManager = Depends(get_db)) -> dict:
-    try:
-        return plot_service.describe(
-            db, req.variable, refresh=req.refresh, csv_path=req.csv_path
-        )
-    except RuntimeError as exc:  # plotting packages not installed
-        raise HTTPException(status_code=501, detail=str(exc))
-
-
-@router.post("/plot/capabilities")
-def plot_capabilities(req: SpecRequest, db: DatabaseManager = Depends(get_db)) -> dict:
-    try:
-        return plot_service.capabilities_for(db, req.spec, csv_path=req.csv_path)
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    finalized: bool | None = True
 
 
 class VariantGraphRequest(BaseModel):
     variable: str
     # Every function node on the canvas, so nodes outside this variable's chain
     # can still list the versions they have run.
-    functions: list[str] = []
+    functions: list[str] | None = None
     csv_path: str | None = None
-
-
-@router.post("/plot/variant-graph")
-def plot_variant_graph(
-    req: VariantGraphRequest, db: DatabaseManager = Depends(get_db)
-) -> dict:
-    try:
-        return plot_service.variant_graph(
-            db, req.variable, functions=req.functions, csv_path=req.csv_path
-        )
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class GroupingGraphRequest(BaseModel):
     variable: str
     csv_path: str | None = None
-
-
-@router.post("/plot/grouping-graph")
-def plot_grouping_graph(
-    req: GroupingGraphRequest, db: DatabaseManager = Depends(get_db)
-) -> dict:
-    try:
-        return plot_service.grouping_graph(db, req.variable, csv_path=req.csv_path)
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class GroupingColumnsRequest(BaseModel):
@@ -115,33 +100,9 @@ class GroupingColumnsRequest(BaseModel):
     csv_path: str | None = None
 
 
-@router.post("/plot/grouping-columns")
-def plot_grouping_columns(
-    req: GroupingColumnsRequest, db: DatabaseManager = Depends(get_db)
-) -> dict:
-    try:
-        return plot_service.grouping_columns(
-            db, req.variable, req.group_variable, csv_path=req.csv_path
-        )
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
 class GroupingDefaultVariantRequest(BaseModel):
     group_variable: str
     csv_path: str | None = None
-
-
-@router.post("/plot/grouping-default-variant")
-def plot_grouping_default_variant(
-    req: GroupingDefaultVariantRequest, db: DatabaseManager = Depends(get_db)
-) -> dict:
-    try:
-        return plot_service.grouping_default_variant(
-            db, req.group_variable, csv_path=req.csv_path
-        )
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class LocationTreeRequest(BaseModel):
@@ -150,79 +111,14 @@ class LocationTreeRequest(BaseModel):
     # "v1"}). Omitted on the canvas path, where no spec is open: the service
     # falls back to the same default a panel opens on.
     selection: dict | None = None
-    problems_only: bool = False
+    problems_only: bool | None = False
     csv_path: str | None = None
-
-
-@router.post("/plot/locations")
-def plot_locations(
-    req: LocationTreeRequest, db: DatabaseManager = Depends(get_db)
-) -> dict:
-    try:
-        return plot_service.location_tree(
-            db,
-            req.variable,
-            selection=req.selection,
-            problems_only=req.problems_only,
-            csv_path=req.csv_path,
-        )
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except RuntimeError as exc:  # plotting packages not installed
-        raise HTTPException(status_code=501, detail=str(exc))
-
-
-@router.post("/plot/resolve")
-def plot_resolve(req: SpecRequest, db: DatabaseManager = Depends(get_db)) -> dict:
-    try:
-        return plot_service.resolve_figures(
-            db,
-            req.spec,
-            max_points=req.max_points,
-            figure_index=req.figure_index,
-            csv_path=req.csv_path,
-        )
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.post("/plot/export")
-def plot_export(req: ExportRequest, db: DatabaseManager = Depends(get_db)) -> dict:
-    try:
-        return plot_service.export_code(
-            db,
-            req.spec,
-            function_name=req.function_name,
-            output_variable=req.output_variable,
-            path_template=req.path_template,
-            finalized=req.finalized,
-            csv_path=req.csv_path,
-        )
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.post("/plot/add-to-pipeline")
-def plot_add_to_pipeline(
-    req: ExportRequest, db: DatabaseManager = Depends(get_db)
-) -> dict:
-    try:
-        return plot_service.add_to_pipeline(
-            db,
-            req.spec,
-            function_name=req.function_name,
-            output_variable=req.output_variable,
-            path_template=req.path_template,
-            finalized=req.finalized,
-        )
-    except (ValueError, KeyError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class SaveRequest(BaseModel):
     spec: dict
     path: str
-    dpi: int = 200
+    dpi: int | None = 200
     #: Which figure of an ITERATE fan-out to save; None saves all of them.
     #: This also decides what `path` means — one file, or the folder N files
     #: go into. See `plot_service.save_figure`.
@@ -234,70 +130,219 @@ class SaveRequest(BaseModel):
     #: leaves; None lets the server mint one.
     job_id: str | None = None
     #: "image" (the figure) or "data" (the plot's long table as CSV).
-    what: str = "image"
+    what: str | None = "image"
     #: For "data": a key from the capability report's `data_export.depths`;
     #: None is the plotted sample.
     depth: str | None = None
     #: For "data": one column per struct field (default) or a ColName column.
-    fields_as_columns: bool = True
-
-
-@router.post("/plot/save")
-def plot_save(req: SaveRequest, db: DatabaseManager = Depends(get_db)) -> dict:
-    """Start a save job. Returns a job id immediately; progress arrives as
-    ``plot_save_progress`` / ``plot_save_complete`` / ``plot_save_failed``
-    notifications.
-
-    One route for one figure and for all of them — ``figure_index`` is the only
-    difference, and neither fits a request/response budget. The separate
-    ``/plot/save-all`` is gone with the synchronous save it complemented; a save
-    at full resolution is minutes of work (see ``plot_service.start_save_job``).
-    """
-    try:
-        return plot_service.start_save_job(
-            db,
-            req.spec,
-            req.path,
-            dpi=req.dpi,
-            figure_index=req.figure_index,
-            image_format=req.image_format,
-            csv_path=req.csv_path,
-            job_id=req.job_id,
-            what=req.what,
-            depth=req.depth,
-            fields_as_columns=req.fields_as_columns,
-        )
-    except (ValueError, KeyError, OSError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.post("/plot/invalidate")
-def plot_invalidate(db: DatabaseManager = Depends(get_db)) -> dict:
-    return plot_service.invalidate(db)
-
-
-class ClientErrorRequest(BaseModel):
-    where: str = "webview"
-    message: str = ""
-    stack: str | None = None
-    component_stack: str | None = None
-
-
-@router.post("/client-error")
-def client_error(req: ClientErrorRequest) -> dict:
-    """The webview caught a render error; write it into the shared log."""
-    return report_client_error(req.model_dump())
+    fields_as_columns: bool | None = True
 
 
 class VariantSetsRequest(BaseModel):
     variable: str
-    variant_sets: list[dict] = []
+    variant_sets: list[dict] | None = None
 
 
-@router.post("/plot/variant-sets")
-def plot_variant_sets_save(
-    req: VariantSetsRequest, db: DatabaseManager = Depends(get_db)
-) -> dict:
+class ClientErrorRequest(BaseModel):
+    where: str | None = "webview"
+    message: str | None = ""
+    stack: str | None = None
+    component_stack: str | None = None
+
+
+# --- the calls ---------------------------------------------------------------
+
+
+def _describe(db, req: DescribeRequest) -> dict:
+    return plot_service.describe(
+        db, req.variable, refresh=bool(req.refresh), csv_path=req.csv_path
+    )
+
+
+def _capabilities(db, req: SpecRequest) -> dict:
+    return plot_service.capabilities_for(db, req.spec, csv_path=req.csv_path)
+
+
+def _variant_graph(db, req: VariantGraphRequest) -> dict:
+    return plot_service.variant_graph(
+        db, req.variable, functions=req.functions or [], csv_path=req.csv_path
+    )
+
+
+def _grouping_graph(db, req: GroupingGraphRequest) -> dict:
+    return plot_service.grouping_graph(db, req.variable, csv_path=req.csv_path)
+
+
+def _grouping_columns(db, req: GroupingColumnsRequest) -> dict:
+    return plot_service.grouping_columns(
+        db, req.variable, req.group_variable, csv_path=req.csv_path
+    )
+
+
+def _grouping_default_variant(db, req: GroupingDefaultVariantRequest) -> dict:
+    return plot_service.grouping_default_variant(
+        db, req.group_variable, csv_path=req.csv_path
+    )
+
+
+def _location_tree(db, req: LocationTreeRequest) -> dict:
+    return plot_service.location_tree(
+        db,
+        req.variable,
+        selection=req.selection,
+        problems_only=bool(req.problems_only),
+        csv_path=req.csv_path,
+    )
+
+
+def _resolve(db, req: SpecRequest) -> dict:
+    return plot_service.resolve_figures(
+        db,
+        req.spec,
+        max_points=req.max_points,
+        figure_index=req.figure_index,
+        csv_path=req.csv_path,
+    )
+
+
+def _export(db, req: ExportRequest) -> dict:
+    return plot_service.export_code(
+        db,
+        req.spec,
+        function_name=req.function_name,
+        output_variable=req.output_variable,
+        path_template=req.path_template,
+        finalized=req.finalized is not False,
+        csv_path=req.csv_path,
+    )
+
+
+def _add_to_pipeline(db, req: ExportRequest) -> dict:
+    return plot_service.add_to_pipeline(
+        db,
+        req.spec,
+        function_name=req.function_name,
+        output_variable=req.output_variable,
+        path_template=req.path_template,
+        finalized=req.finalized is not False,
+    )
+
+
+def _variant_sets_save(db, req: VariantSetsRequest) -> dict:
     """Persist a plot's named variant pins as statements about the plotted
     variable — the `variant_selection` aspect of the intent store."""
-    return plot_service.save_variant_sets(db, req.variable, req.variant_sets)
+    return plot_service.save_variant_sets(db, req.variable, list(req.variant_sets or []))
+
+
+def _save_start(db, req: SaveRequest) -> dict:
+    """Start a save job. Returns a job id immediately; progress arrives as
+    ``plot_save_progress`` / ``plot_save_complete`` / ``plot_save_failed``
+    notifications.
+
+    One method for one figure and for all of them — ``figure_index`` is the
+    only difference, and neither fits a request/response budget: a single
+    full-resolution figure is ~12 minutes of work (scidb.log 2026-09-11). The
+    separate ``save-all`` is gone with the synchronous save it complemented.
+    See ``plot_service.start_save_job``.
+    """
+    return plot_service.start_save_job(
+        db,
+        req.spec,
+        req.path,
+        dpi=req.dpi if req.dpi is not None else 200,
+        figure_index=req.figure_index,
+        image_format=req.image_format,
+        csv_path=req.csv_path,
+        # The client may name the job so it can adopt the id before the request
+        # leaves — a fast save can finish before the response arrives, and a
+        # panel that learns the id from the response drops those messages.
+        job_id=req.job_id,
+        # "image" (default) or "data" — the plot's long table as CSV, at
+        # `depth` (a key from the capability report's data_export.depths).
+        what=req.what or "image",
+        depth=req.depth,
+        # "One column per field" for a struct variable; the panel's checkbox
+        # defaults to on.
+        fields_as_columns=req.fields_as_columns is not False,
+    )
+
+
+def _invalidate(db) -> dict:
+    return plot_service.invalidate(db)
+
+
+def _client_error(req: ClientErrorRequest) -> dict:
+    """The webview caught a render error; write it into the shared log."""
+    return report_client_error(req.model_dump())
+
+
+PLOT_HANDLERS: tuple[Handler, ...] = (
+    Handler(
+        "plot_describe", "/plot/describe", DescribeRequest, _describe,
+        holds_db_lock=False, http_errors=_NOT_INSTALLED,
+    ),
+    Handler(
+        "plot_capabilities", "/plot/capabilities", SpecRequest, _capabilities,
+        holds_db_lock=False, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_variant_graph", "/plot/variant-graph", VariantGraphRequest,
+        _variant_graph, holds_db_lock=False, http_errors=_BAD_REQUEST,
+    ),
+    # Read-only picker calls that take the connection inside the service for
+    # exactly as long as the query needs it. `plot_grouping_columns` is the
+    # one that can cost real time (one DISTINCT per column of a wide sheet).
+    Handler(
+        "plot_grouping_graph", "/plot/grouping-graph", GroupingGraphRequest,
+        _grouping_graph, holds_db_lock=False, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_grouping_columns", "/plot/grouping-columns",
+        GroupingColumnsRequest, _grouping_columns,
+        holds_db_lock=False, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_grouping_default_variant", "/plot/grouping-default-variant",
+        GroupingDefaultVariantRequest, _grouping_default_variant,
+        holds_db_lock=False, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_location_tree", "/plot/locations", LocationTreeRequest,
+        _location_tree, holds_db_lock=False,
+        http_errors={**_BAD_REQUEST, **_NOT_INSTALLED},
+    ),
+    Handler(
+        "plot_resolve", "/plot/resolve", SpecRequest, _resolve,
+        holds_db_lock=False, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_export", "/plot/export", ExportRequest, _export,
+        holds_db_lock=False, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_add_to_pipeline", "/plot/add-to-pipeline", ExportRequest,
+        _add_to_pipeline, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_variant_sets_save", "/plot/variant-sets", VariantSetsRequest,
+        _variant_sets_save,
+    ),
+    # Spawns a thread and returns; the HANDLER touches nothing. Its worker
+    # takes the connection through `save_figure` -> `_load` on its own
+    # schedule, which is the point — a save must not hold the DuckDB file
+    # for the minutes it spends in pandas and matplotlib.
+    Handler(
+        "plot_save_start", "/plot/save", SaveRequest, _save_start,
+        holds_db_lock=False, http_errors={**_BAD_REQUEST, OSError: 400},
+    ),
+    Handler("plot_invalidate", "/plot/invalidate", None, _invalidate),
+    # Touches no database at all — it only writes a log line, and must still
+    # work while MATLAB holds the file (that is exactly when a webview crash
+    # is worth hearing about).
+    Handler(
+        "report_client_error", "/client-error", ClientErrorRequest,
+        _client_error, holds_db_lock=False, needs_db=False,
+    ),
+)
+
+install_routes(router, PLOT_HANDLERS)

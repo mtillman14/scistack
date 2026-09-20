@@ -54,7 +54,7 @@ def test_oversized_stacks_are_clipped(caught):
 def test_the_rpc_is_registered_and_needs_no_database():
     from scistack_gui import server
 
-    assert server.METHODS["report_client_error"] is server._h_report_client_error
+    assert server.METHODS["report_client_error"].handler.needs_db is False
     # Otherwise `_handle_request` would try to open DuckDB first and a crash
     # during a MATLAB run would be reported as "database locked" instead.
     assert "report_client_error" in server.SELF_MANAGED_DB_METHODS

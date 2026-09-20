@@ -1865,9 +1865,9 @@ def test_location_tree_on_a_csv_says_so_rather_than_failing(populated_db, tmp_pa
 
 def test_both_transports_reach_the_same_function(populated_db):
     """The JSON-RPC handler and the HTTP route must not diverge."""
-    from scistack_gui.server import _h_plot_location_tree
+    from scistack_gui.server import METHODS
 
-    rpc = _h_plot_location_tree({"variable": "FilteredSignal"})
+    rpc = METHODS["plot_location_tree"]({"variable": "FilteredSignal"})
     direct = plot_service.location_tree(populated_db, "FilteredSignal")
 
     assert rpc == direct

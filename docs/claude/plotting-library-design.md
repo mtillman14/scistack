@@ -4,7 +4,7 @@
 
 > **Status: IMPLEMENTED, TESTS PASSING (2026-09-06).** All six stages exist:
 > `scistackplot/` and `scistackplotdb/` (new sibling packages), the
-> `plot_service` + `api/plot.py` + JSON-RPC handlers in scistack-gui, the Plot
+> `plot_service` + the `api/plot.py` handler table (both transports) in scistack-gui, the Plot
 > Studio webview panel, and the extension commands. The decision table, module
 > layout, staging, and per-fix history live in `.claude/plan-scistackplot.md`.
 

@@ -1,9 +1,11 @@
 """
 Plot Studio backend.
 
-One service, two transports: the FastAPI routes in ``api/plot.py`` and the
-JSON-RPC handlers in ``server.py`` both call these functions, so the web GUI
-and the VS Code extension can never drift apart.
+One service, two transports, ONE declaration: ``api/plot.py``'s handler
+table (``api/handlers.py``) builds both the FastAPI routes and the JSON-RPC
+methods in ``server.py`` from the same rows, so the web GUI and the VS Code
+extension cannot drift apart — ``tests/test_api_handlers.py`` checks the
+table against both transports and the frontend's route map.
 
 Everything plot-related that is *policy* — which kinds are available, what the
 default roles are, how data is reduced — lives in ``scistackplot`` /

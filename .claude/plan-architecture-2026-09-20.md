@@ -578,3 +578,34 @@ Verify: `cd /workspace/scidb && pytest tests/test_imports.py -q` first
 (it is slow — one interpreter per module), then the whole scidb suite,
 then `cd /workspace/scimatlab && pytest tests/ -q` (the bridge import
 moved), then `cd /workspace/scistack-gui && pytest tests/ -q`.
+
+### Stage 4 — built 2026-09-20, tests unrun
+
+`scistack_gui/api/handlers.py`: `Handler(name, path, params, call,
+holds_db_lock, needs_db, http_errors, http_method)` and three builders —
+`rpc_methods(table)` (the `name -> callable(params)` entries for
+`server.METHODS`; params are validated through the same pydantic model the
+HTTP body uses), `self_managed(table)` (the names whose row says
+`holds_db_lock=False`), `install_routes(router, table)` (one FastAPI route
+per row, with the row's exception → status map). The module is named
+`handlers.py`, not the plan's `registry.py` — `api/registry.py` is already
+the `/api/registry` route.
+
+Migrated: the plot family + the webview error report (14 methods) —
+`api/plot.py` is now the table, `server.py` lost its fourteen `_h_plot_*`
+and splices `**rpc_methods(PLOT_HANDLERS)` / `| self_managed(PLOT_HANDLERS)`
+in. `variable_provenance` and `node_location_tree` stay hand-written (they
+sat in the plot block but are not plot handlers; next to move, with the
+rest, one family per commit).
+
+`tests/test_api_handlers.py` asserts, per row: it is in `METHODS` AND is
+the table's own entry; it is a route in `create_app().openapi()`; it is in
+`frontend/src/api.ts` with the same path, method and body-ness; its lock
+policy is what the dispatch loop applies; and that no `_h_<table name>`
+or `@router.post` survives outside the table. The frontend check found a
+real gap on its first run-by-eye: `plot_variant_sets_save` had no browser
+route (added to `api.ts`; **both vite bundles need a rebuild**).
+
+Verify: `cd /workspace/scistack-gui && pytest tests/test_api_handlers.py
+tests/test_plot_service.py tests/test_client_errors.py -q`, then the whole
+GUI suite.

@@ -36,6 +36,34 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0c. Plot Studio over both transports (handler table) — added 2026-09-20
+
+The plot family's JSON-RPC methods and HTTP routes are now built from ONE
+table (`scistack_gui/api/plot.py`, `PLOT_HANDLERS`), and RPC params are
+validated through the same pydantic model as the HTTP body. Behaviour is
+meant to be identical; this is a regression check, plus one real fix: the
+browser build had no route for **saving named variant sets**
+(`plot_variant_sets_save` was missing from `frontend/src/api.ts`).
+
+Backend: nothing to configure. Frontend: **rebuild both vite targets**
+(`api.ts` changed).
+
+- [ ] VS Code extension: open Plot Studio on any variable — the panel
+      describes, resolves, and the location tree opens (four different
+      RPC methods, all through the table).
+- [ ] VS Code extension: Save figure (one) and Save data (CSV) — the job
+      id comes back at once and progress notifications arrive.
+- [ ] VS Code extension: with MATLAB attached and holding the DB, resolve a
+      plot — it still renders (the self-managed hold policy came through
+      the table).
+- [ ] Browser build (`scistack-gui` CLI): name a variant set in the DAG
+      popup and save it — before this it threw `Unknown method:
+      plot_variant_sets_save` in the console; now it persists and survives
+      a reload.
+- [ ] Either transport: force a webview render error (or POST
+      `/api/client-error` with `{"where":"x","message":"y"}`) — the line
+      reaches `scidb.log` at ERROR, with no database needed.
+
 ## 0b. Run options reach the compiled pipeline and both code exports — added 2026-09-20
 
 A step's saved **run options** (`distribute`, `as_table`) were honoured by the

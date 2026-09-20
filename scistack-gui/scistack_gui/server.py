@@ -970,44 +970,12 @@ def _h_restart_matlab_engine(params):
 
 
 # --- Plot Studio (docs/claude/plotting-library-design.md) ---
-# These call the same service functions as the HTTP routes in api/plot.py, so
-# the browser GUI and the extension can't drift. They deliberately reuse the
-# ONE DatabaseManager the server already holds: a second DuckDB connection
-# would reintroduce the write-lock contention the MATLAB run-ownership work
-# resolved (docs/claude/matlab-run-database-ownership.md).
-
-
-def _h_plot_describe(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import describe
-
-    return describe(
-        get_db(),
-        params.get("variable"),
-        refresh=bool(params.get("refresh")),
-        csv_path=params.get("csv_path"),
-    )
-
-
-def _h_plot_capabilities(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import capabilities_for
-
-    return capabilities_for(
-        get_db(), params["spec"], csv_path=params.get("csv_path")
-    )
-
-
-def _h_plot_variant_graph(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import variant_graph
-
-    return variant_graph(
-        get_db(),
-        params["variable"],
-        functions=params.get("functions") or [],
-        csv_path=params.get("csv_path"),
-    )
+# The plot family is declared ONCE, in ``api/plot.py``'s ``PLOT_HANDLERS``
+# table, and the JSON-RPC methods and lock policy below are built from it
+# (``api/handlers.py``). They reuse the ONE DatabaseManager the server
+# already holds: a second DuckDB connection would reintroduce the write-lock
+# contention the MATLAB run-ownership work resolved
+# (docs/claude/matlab-run-database-ownership.md).
 
 
 def _h_variable_provenance(params):
@@ -1023,49 +991,6 @@ def _h_variable_provenance(params):
     )
 
 
-def _h_plot_grouping_graph(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import grouping_graph
-
-    return grouping_graph(
-        get_db(), params["variable"], csv_path=params.get("csv_path")
-    )
-
-
-def _h_plot_grouping_columns(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import grouping_columns
-
-    return grouping_columns(
-        get_db(),
-        params["variable"],
-        params["group_variable"],
-        csv_path=params.get("csv_path"),
-    )
-
-
-def _h_plot_grouping_default_variant(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import grouping_default_variant
-
-    return grouping_default_variant(
-        get_db(), params["group_variable"], csv_path=params.get("csv_path")
-    )
-
-
-def _h_plot_location_tree(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import location_tree
-
-    return location_tree(
-        get_db(),
-        params["variable"],
-        selection=params.get("selection"),
-        problems_only=bool(params.get("problems_only")),
-        csv_path=params.get("csv_path"),
-    )
-
-
 def _h_node_location_tree(params):
     from scistack_gui.db import get_db
     from scistack_gui.services.node_location_service import node_location_tree
@@ -1077,108 +1002,12 @@ def _h_node_location_tree(params):
     )
 
 
-def _h_plot_resolve(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import resolve_figures
-
-    return resolve_figures(
-        get_db(),
-        params["spec"],
-        max_points=params.get("max_points"),
-        figure_index=params.get("figure_index"),
-        csv_path=params.get("csv_path"),
-    )
-
-
-def _h_plot_export(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import export_code
-
-    return export_code(
-        get_db(),
-        params["spec"],
-        function_name=params.get("function_name"),
-        output_variable=params.get("output_variable"),
-        path_template=params.get("path_template"),
-        finalized=params.get("finalized", True),
-        csv_path=params.get("csv_path"),
-    )
-
-
-
-def _h_plot_variant_sets_save(params):
-    """Persist a plot's named variant pins as statements about the plotted
-    variable (`variant_selection` aspect) — see plot_service.save_variant_sets."""
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import save_variant_sets
-
-    return save_variant_sets(
-        get_db(), params["variable"], list(params.get("variant_sets") or [])
-    )
-
-def _h_plot_add_to_pipeline(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import add_to_pipeline
-
-    return add_to_pipeline(
-        get_db(),
-        params["spec"],
-        function_name=params.get("function_name"),
-        output_variable=params.get("output_variable"),
-        path_template=params.get("path_template"),
-        finalized=params.get("finalized", True),
-    )
-
-
-def _h_plot_save_start(params):
-    """Start a save job. ``figure_index`` picks one figure; absent saves all.
-
-    One method for both, because both are background jobs now: a single
-    full-resolution figure is ~12 minutes of work (scidb.log 2026-09-11), so the
-    request/response save it used to be timed out just as surely as the fan-out
-    save did. See ``plot_service.start_save_job``.
-    """
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import start_save_job
-
-    return start_save_job(
-        get_db(),
-        params["spec"],
-        params["path"],
-        dpi=params.get("dpi", 200),
-        figure_index=params.get("figure_index"),
-        image_format=params.get("image_format"),
-        csv_path=params.get("csv_path"),
-        # The client may name the job so it can adopt the id before the request
-        # leaves — a fast save can finish before the response arrives, and a
-        # panel that learns the id from the response drops those messages.
-        job_id=params.get("job_id"),
-        # "image" (default) or "data" — the plot's long table as CSV, at
-        # `depth` (a key from the capability report's data_export.depths).
-        what=params.get("what", "image"),
-        depth=params.get("depth"),
-        # "One column per field" for a struct variable; the panel's checkbox
-        # defaults to on.
-        fields_as_columns=params.get("fields_as_columns", True),
-    )
-
-
-def _h_plot_invalidate(params):
-    from scistack_gui.db import get_db
-    from scistack_gui.services.plot_service import invalidate
-
-    return invalidate(get_db())
-
-
-def _h_report_client_error(params):
-    from scistack_gui.services.client_errors import report_client_error
-
-    return report_client_error(params)
-
-
 # ---------------------------------------------------------------------------
 # Method dispatch table
 # ---------------------------------------------------------------------------
+
+from scistack_gui.api.handlers import rpc_methods, self_managed  # noqa: E402
+from scistack_gui.api.plot import PLOT_HANDLERS  # noqa: E402
 
 METHODS = {
     "get_pipeline": _h_get_pipeline,
@@ -1275,23 +1104,11 @@ METHODS = {
     "start_matlab_sidecar_run": _h_start_matlab_sidecar_run,
     "get_matlab_engine_status": _h_get_matlab_engine_status,
     "restart_matlab_engine": _h_restart_matlab_engine,
-    "plot_describe": _h_plot_describe,
-    "plot_capabilities": _h_plot_capabilities,
-    "plot_variant_graph": _h_plot_variant_graph,
     "variable_provenance": _h_variable_provenance,
-    "plot_grouping_graph": _h_plot_grouping_graph,
-    "plot_grouping_columns": _h_plot_grouping_columns,
-    "plot_grouping_default_variant": _h_plot_grouping_default_variant,
-    "plot_location_tree": _h_plot_location_tree,
     "node_location_tree": _h_node_location_tree,
-    "plot_resolve": _h_plot_resolve,
-    "plot_export": _h_plot_export,
-    "plot_add_to_pipeline": _h_plot_add_to_pipeline,
-    "plot_variant_sets_save": _h_plot_variant_sets_save,
-    "plot_save_start": _h_plot_save_start,
-    "plot_invalidate": _h_plot_invalidate,
-    # The webview's error boundaries write what they caught into scidb.log.
-    "report_client_error": _h_report_client_error,
+    # Plot Studio and the webview error report: one declaration per method,
+    # in api/plot.py, serving both transports.
+    **rpc_methods(PLOT_HANDLERS),
 }
 
 
@@ -1299,12 +1116,12 @@ METHODS = {
 #: actually need it, instead of letting :func:`_handle_request` hold it across
 #: the whole call.
 #:
-#: Every entry is plot work, and they are here for one measured reason: a plot
-#: resolve spends nearly all of its time in pandas and matplotlib, with the
-#: database touched only while the variable frames load. Holding the file lock
-#: for the rest of it blocked MATLAB for the full duration — the 2026-09-11 log
-#: shows one 31-second hold (12:27:39 acquire, 12:28:10 release) for work that
-#: needed the database for well under a second of it.
+#: They are here for one measured reason: a plot resolve spends nearly all of
+#: its time in pandas and matplotlib, with the database touched only while the
+#: variable frames load. Holding the file lock for the rest of it blocked
+#: MATLAB for the full duration — the 2026-09-11 log shows one 31-second hold
+#: (12:27:39 acquire, 12:28:10 release) for work that needed the database for
+#: well under a second of it.
 #:
 #: The precedent is :func:`_h_start_run`, which has owned its own connection
 #: since the MATLAB run-ownership work (docs/claude/matlab-run-database-ownership.md).
@@ -1313,52 +1130,28 @@ METHODS = {
 #:
 #: A method added here that then forgets to wrap its own database access will
 #: fail with a closed connection rather than silently working, because the
-#: JSON-RPC server closes the connection whenever the refcount hits zero. That
-#: is why the list is the plot methods whose cost is CPU-bound reduction and
-#: rendering, and not simply every ``plot_*`` handler:
+#: JSON-RPC server closes the connection whenever the refcount hits zero.
 #:
-#: * ``plot_add_to_pipeline`` writes source files and reloads the registry
-#:   through services that reach the database by their own routes
-#:   (``target_file_service``), so it keeps the blanket hold.
-#: * ``plot_invalidate`` only drops a dict; there is no hold worth narrowing.
+#: A method declared in a handler table carries the policy on its own row
+#: (``Handler.holds_db_lock=False``) and lands here through
+#: :func:`self_managed`; the plot family says why each of its rows is what it
+#: is in ``api/plot.py``. The hand-written entries below are the ones not yet
+#: moved into a table.
 SELF_MANAGED_DB_METHODS = frozenset(
     {
-        "plot_describe",
-        "plot_capabilities",
-        "plot_variant_graph",
-        # Same shape again: a read-only walk that takes the connection inside
+        # A read-only walk that takes the connection inside
         # `provenance_service` for exactly as long as the queries need it. The
         # tree walk is O(depth) queries and the panel is opened while a user is
         # reading, so it must not hold the file against MATLAB for the whole
         # round trip.
         "variable_provenance",
-        # Same shape as plot_variant_graph: read-only picker calls that take
-        # the connection inside the service for exactly as long as the query
-        # needs it. `plot_grouping_columns` is the one that can cost real time
-        # (one DISTINCT per column of a wide sheet), which is precisely why it
-        # must not hold the lock across the whole request.
-        "plot_grouping_graph",
-        "plot_grouping_columns",
-        "plot_grouping_default_variant",
-        "plot_location_tree",
         # Same shape as plot_location_tree: it takes the connection inside
         # `node_location_tree` and can spend seconds there (one
         # `location_states` per input variable), so it must not hold it
         # across the whole request.
         "node_location_tree",
-        "plot_resolve",
-        "plot_export",
-        # Spawns a thread and returns; the HANDLER touches nothing. Its worker
-        # takes the connection through `save_figure` -> `_load` on its own
-        # schedule, which is the point — a save must not hold the DuckDB file
-        # for the minutes it spends in pandas and matplotlib.
-        "plot_save_start",
-        # Touches no database at all — it only writes a log line, and must
-        # still work while MATLAB holds the file (that is exactly when a
-        # webview crash is worth hearing about).
-        "report_client_error",
     }
-)
+) | self_managed(PLOT_HANDLERS)
 
 
 # ---------------------------------------------------------------------------
