@@ -210,6 +210,10 @@ class _ForEachState:
     # whole-table glue on a per-combo input). See scidb.glue.
     glue_chains: Any = None  # dict[str, list[GlueSpec]] | None
     per_combo_glue: Any = None  # dict[str, list[GlueSpec]] | None
+    # Every input's kind, selector and pinned rid after Step 12 — the typed
+    # spine (scidb.bindings.RunBindings). `for_combo` is the ONE row->edges
+    # assembly the save path writes `__graph_var_bindings` from.
+    bindings: Any = None  # RunBindings | None
     # {param: (chain_hash, input_set_signature, {source_rid: virtual_rid})}.
     # The provenance half: the consumer's bindings already point at the virtual
     # rids (fuse_glue rewrote __record_id), and the save path writes the
@@ -3061,6 +3065,14 @@ def _for_each_prepare(
         glue_chains=deferred_glue_chains or None,
         per_combo_glue=per_combo_glue or None,
         glue_virtual=glue_fusion.virtual or None,
+        bindings=_build_run_bindings(
+            inputs,
+            rid_keys=rid_keys,
+            fixed_rid_values=fixed_rid_values,
+            colsel_params=colsel_params,
+            aggregation_mode=_aggregation_mode,
+            rid_to_bp=rid_to_bp,
+        ),
     )
 
 
@@ -3173,6 +3185,7 @@ def _for_each_save_resolved(
             glue_virtual=state.glue_virtual,
             glue_chains=state.glue_chains,
             fn=state.fn,
+            run_bindings=state.bindings,
         )
         save_elapsed = time.perf_counter() - save_t0
         Log.debug(
@@ -5116,6 +5129,7 @@ def _save_results(
     glue_virtual: "dict | None" = None,
     glue_chains: "dict | None" = None,
     fn: Any | None = None,
+    run_bindings: Any = None,
 ) -> None:
     """Save results from the result table to output variable types using batch operations.
 
@@ -5307,39 +5321,38 @@ def _save_results(
 
         save_metadata["__branch_params"] = merged_bp
 
-        # Build the COMPLETE bipartite input edge set for this row: every
-        # consumed input record (variable, Fixed, Variant, Merge constituent)
-        # with its ColumnSelection selector. Sourced from all __rid_* columns in
-        # the row plus Fixed rids (which may not appear as __rid_* columns), so
-        # the graph and skip_computed see the same bindings. Aggregation rows
-        # carry no __rid_* columns → leave unset and let record_run fall back to
-        # the indexed __upstream it builds below.
+        # The row's input edges — every consumed record with its selector —
+        # from the ONE assembly (`RunBindings.for_combo`): full-iteration
+        # rows carry `__rid_*` columns, aggregation rows carry none and hand
+        # over the location's pooled rids below, and a pinned (Fixed) rid is
+        # appended in either mode. Two hand-written assemblies here used to
+        # disagree (the for_columns and Fixed edges both went missing on the
+        # aggregation side); now there is one, and `__upstream` is only the
+        # dict-shaped view of the same rids that older readers expect.
         _sel = input_selectors or {}
-        _row_bindings: dict = {}
-        for _col, _val in row.items():
-            if not is_rid_column(_col):
-                continue
-            if _val is None or (isinstance(_val, float) and pd.isna(_val)):
-                continue
-            _param = param_of(_col)
-            _row_bindings[_param] = str(_val)
-        if lineage_fixed_rids:
-            for _k, _v in lineage_fixed_rids.items():
-                if _v is None:
-                    continue
-                _param = param_of(_k)
-                _row_bindings.setdefault(_param, str(_v))
-        if _row_bindings:
-            save_metadata["__graph_var_bindings"] = [
-                (p, r, _sel.get(p)) for p, r in _row_bindings.items()
-            ]
-            _selectors_recorded.update(
-                {p: _sel.get(p) for p in _row_bindings if _sel.get(p)}
-            )
+        _pinned_extra = {
+            rid_column(param_of(k)): v for k, v in (lineage_fixed_rids or {}).items() if v
+        }
+        _row_combo = {**row, **{k: v for k, v in _pinned_extra.items() if k not in row}}
+        _pooled_for_row = None
+        if combo_to_rids is not None and combo_to_rids_keys is not None:
+            _combo_key = tuple(str(row.get(k, "")) for k in combo_to_rids_keys)
+            _pooled_for_row = combo_to_rids.get(_combo_key) or None
+        if run_bindings is not None:
+            _edges = run_bindings.for_combo(_row_combo, pooled=_pooled_for_row)
         else:
-            # No __rid_* columns on this row → record_run falls back to the
-            # indexed __upstream, which has no selector field at all. Counted
-            # (not warned per row) so the round-trip guard fires ONCE per run.
+            # No typed bindings (a caller outside for_each): the same rule,
+            # spelled inline once.
+            from .bindings import RunBindings as _RB
+
+            _edges = _RB().for_combo(_row_combo, pooled=_pooled_for_row)
+            _edges = [
+                type(e)(e.param, e.rid, _sel.get(e.param)) for e in _edges
+            ]
+        if _edges:
+            save_metadata["__graph_var_bindings"] = [tuple(e) for e in _edges]
+            _selectors_recorded.update({e.param: e.selector for e in _edges if e.selector})
+        else:
             _rows_without_bindings += 1
 
         # Add upstream record_ids to version_keys so that records from different
@@ -5365,45 +5378,6 @@ def _save_results(
                                 upstream[f"{rid_col}_{idx}"] = rid
                 if upstream:
                     save_metadata["__upstream"] = upstream
-                    # The graph edges for an aggregation row: every consumed
-                    # record, under the REAL parameter name, with the param's
-                    # selector — several edges per parameter, which the
-                    # `_invocation_input` primary key has always allowed.
-                    #
-                    # `__upstream` above keeps its INDEXED keys (`__rid_x_0`,
-                    # `__rid_x_1`): it is a metadata dict and needs unique
-                    # keys. Until 2026-09-20 the edges were written from it
-                    # and inherited those names, so every backward
-                    # reconstruction (`pipeline_variants`, `config_call_id`,
-                    # the recorded selectors) spoke a parameter vocabulary the
-                    # forward call did not have, and an aggregating pipeline
-                    # step could never plan green. Folding was first tried and
-                    # reverted on 2026-09-19 because `stored_invocation_
-                    # signature` kept one edge per param; it keeps a list now.
-                    # Identity moves ONCE for every aggregation invocation —
-                    # `compute_invocation_id` hashes the names — and a re-run
-                    # supersedes. See test_identity_parity.py.
-                    _agg_bindings = []
-                    _bound_params: set = set()
-                    for _rid_col, _rids in rids_by_param.items():
-                        _param = param_of(_rid_col)
-                        for _rid in _rids:
-                            _agg_bindings.append((_param, str(_rid), _sel.get(_param)))
-                            _bound_params.add(_param)
-                    # A Fixed input is pinned to one record and never appears in
-                    # combo_to_rids; it is an edge all the same (the full-
-                    # iteration block above binds it via lineage_fixed_rids).
-                    for _k, _v in (lineage_fixed_rids or {}).items():
-                        if _v is None:
-                            continue
-                        _param = param_of(_k)
-                        if _param not in _bound_params:
-                            _agg_bindings.append((_param, str(_v), _sel.get(_param)))
-                    save_metadata["__graph_var_bindings"] = _agg_bindings
-                    _selectors_recorded.update(
-                        {p: s for p, _r, s in _agg_bindings if s}
-                    )
-                    _rows_without_bindings -= 1
         elif rid_keys:
             # Full iteration mode: per-row rid lookup
             upstream = {}
@@ -5931,3 +5905,54 @@ def _active_database():
         return get_database()
     except Exception:
         return None
+
+
+def _build_run_bindings(
+    inputs: dict,
+    *,
+    rid_keys: list,
+    fixed_rid_values: dict,
+    colsel_params: list,
+    aggregation_mode: bool,
+    rid_to_bp: dict | None = None,
+):
+    """Step 12's classification of every input, as one typed structure.
+
+    The kind is decided HERE, once, from what Step 12 already sorted the
+    input into — an iteration rid key, a pinned rid, a lineage-only column
+    selection — and read everywhere else (`scidb.bindings.InputKind`).
+    Under aggregation every rid-tracked input is AGGREGATED: its records
+    below the iterated level pool into one call.
+    """
+    from .bindings import InputBinding, InputKind, RunBindings
+    from .provenance_save import compute_input_selectors
+
+    selectors = compute_input_selectors(inputs)
+    iterate_params = {param_of(c) for c in (rid_keys or [])}
+    run = RunBindings()
+    for param, spec in inputs.items():
+        if param in fixed_rid_values:
+            kind = InputKind.PINNED
+        elif param in colsel_params:
+            kind = InputKind.AGGREGATED if aggregation_mode else InputKind.LINEAGE_ONLY
+        elif param in iterate_params:
+            kind = InputKind.AGGREGATED if aggregation_mode else InputKind.ITERATE
+        else:
+            continue  # a constant, a PathInput, a marker — not a record-bearing input
+        inner = spec
+        for _ in range(3):
+            inner = getattr(inner, "data", inner) if not isinstance(inner, type) else inner
+            if isinstance(inner, type):
+                break
+        run.inputs[param] = InputBinding(
+            param=param,
+            kind=kind,
+            type_name=getattr(inner, "__name__", None) if isinstance(inner, type) else None,
+            selector=selectors.get(param),
+            pinned_rid=fixed_rid_values.get(param),
+        )
+    Log.debug(
+        "run bindings: "
+        + ", ".join(f"{p}={b.kind.value}" for p, b in run.inputs.items())
+    )
+    return run

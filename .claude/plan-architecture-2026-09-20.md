@@ -246,3 +246,23 @@ no edge (one-row check → pin applied at Step 12), `{}` was not `None`
 (save fallback), and the fallback's `db` was `None` under the global
 database (Step 12's `fixed_rid_values` now reaches the save). Stage 2a
 (the typed spine) is next; nothing of it is built yet.
+
+### Stage 2a — built 2026-09-20, tests unrun
+
+`scidb/bindings.py` (c69f1b5f): the prefix has one owner, 15 slices and
+every `f"__rid_{...}"` replaced. `Binding` is the graph edge (a62c7b12):
+`compute_invocation_id`, `_variable_bindings`, `record_run` and
+`invocation_id_for_meta` speak it (tuples still coerce at the metadata
+boundary — same bytes, pinned by `test_bindings.py`). `RunBindings` is
+built once at the end of prepare (`_build_run_bindings`: kind decided from
+what Step 12 sorted each input into) and carried as `state.bindings`; the
+save path writes `__graph_var_bindings` from `RunBindings.for_combo` in
+BOTH modes — the two hand-written assemblies (full-iteration rows vs the
+aggregation block) are gone. `__upstream` remains as the dict-shaped view
+older readers expect. `_save_results` gained a `run_bindings=` kwarg; the
+17→3 parameter collapse is 2b.
+
+Verify: `test_bindings.py`, `test_identity_parity.py`, `test_aggregation*.py`,
+`test_column_selection_lineage.py`, `test_glue_identity.py`,
+`test_variant_pin_node_state.py`, `test_selector_round_trip.py`;
+`tests/integration`.
