@@ -10,7 +10,7 @@ survive five hand-offs, and until this module each was spelled differently:
   key on each combination (so scifor filters the frame to that record per
   call), then a meta column on the result row;
 * ``__rid_{param}_{i}`` — the aggregation path's ``__upstream`` dict, which
-  needs unique keys;
+  needed unique keys (gone since 2026-09-20);
 * a bare string — the skip gate's rid sets;
 * ``(param, rid, selector)`` — the graph edge.
 
@@ -178,8 +178,9 @@ class RunBindings:
     :meth:`for_combo` is the only place an invocation's edge list is built:
     full iteration reads ``__rid_*`` off the combination, aggregation reads
     the pooled set for the combination's location, pinned rids are appended
-    — and nothing else assembles edges. ``__graph_var_bindings`` is written
-    from its result.
+    — and nothing else assembles edges. Its result travels TYPED on the
+    ``GraphRecord`` the save hands to ``record_run``, and its invocation id
+    is stamped into the record's version keys as ``__invocation_id``.
     """
 
     inputs: dict[str, InputBinding] = field(default_factory=dict)

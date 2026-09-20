@@ -5,8 +5,7 @@ unchanged. ``docs/claude/input-binding-round-trip.md`` §5 explains why one
 check cannot cover both ends:
 
 * the WRITE side (``provenance_save.check_selector_round_trip``) catches a
-  selection that never reached an edge — the ``__upstream`` fallback has
-  nowhere to put one;
+  selection that never reached an edge;
 * the READ side (``provenance_query.check_recorded_selectors``) catches a
   selection that history recorded and the next run fails to carry.
 

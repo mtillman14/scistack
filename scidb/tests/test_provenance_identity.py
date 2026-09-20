@@ -8,6 +8,9 @@ Covers ``scidb.provenance``:
 - the seven tables are created with the expected columns
 """
 
+import pytest
+import scifor as _scifor
+
 import scidb.provenance as prov
 
 from scidb import configure_database
@@ -136,16 +139,13 @@ def test_invocation_id_distribute_matters():
 
 
 # ---------------------------------------------------------------------------
-# record_run's inlined invocation_id must agree with invocation_id_for_meta.
-#
-# record_run computes the id directly from the bindings/as_table/distribute it
-# already assembled (a perf win — it no longer re-derives them via
-# invocation_id_for_meta). The generates_file lineage-only save still keys on
-# invocation_id_for_meta, so the two must stay byte-identical or those paths
-# would disagree on identity.
+# One identity recipe: invocation_identity (what the save stamps into the
+# record) and record_run's inline assembly must agree byte for byte — and
+# record_run refuses to write a graph that disagrees with the record.
 # ---------------------------------------------------------------------------
-def _inline_invocation_id(meta):
+def _inline_invocation_id(meta, edges):
     """Reproduce the exact assembly record_run does inline for one record."""
+    from scidb.bindings import Binding
     from scidb.provenance import (
         compute_invocation_id,
         constant_record_id_from_hash,
@@ -154,22 +154,21 @@ def _inline_invocation_id(meta):
         _constant_bindings,
         _normalize_as_table,
         _parse_json_dict,
-        _variable_bindings,
     )
 
     from scicanonicalhash import canonical_hash
 
-    var_b = _variable_bindings(meta)
+    var_b = [Binding.coerce(e) for e in edges]
     const_b = _constant_bindings(meta)
     loadable = list(_parse_json_dict(meta.get("__inputs")).keys()) or [
-        p for p, _r, _s in var_b
+        b.param for b in var_b
     ]
     as_table = _normalize_as_table(meta, loadable)
     distribute = bool(meta.get("__distribute", False))
     bindings = list(var_b)
     for param, value in const_b.items():
         bindings.append(
-            (param, constant_record_id_from_hash(canonical_hash(value)), None)
+            Binding(param, constant_record_id_from_hash(canonical_hash(value)), None)
         )
     return compute_invocation_id(
         meta.get("__fn_hash") or "", as_table, distribute, bindings
@@ -179,33 +178,49 @@ def _inline_invocation_id(meta):
 def test_inline_invocation_id_matches_helper():
     import json
 
-    from scidb.provenance_save import invocation_id_for_meta
+    from scidb.provenance_save import invocation_identity
 
-    metas = [
+    cases = [
         # plain variable + constant
-        {
-            "__fn_hash": "h1",
-            "__upstream": json.dumps({"__rid_signal": "rid_sig"}),
-            "__constants": json.dumps({"low_hz": 20}),
-        },
+        ({"__fn_hash": "h1", "__constants": json.dumps({"low_hz": 20})}, [("signal", "rid_sig")]),
         # multiple constants, no variables
-        {"__fn_hash": "h2", "__constants": json.dumps({"a": 1, "b": "x", "c": 3.5})},
+        ({"__fn_hash": "h2", "__constants": json.dumps({"a": 1, "b": "x", "c": 3.5})}, []),
         # aggregation flag + inputs list
-        {
-            "__fn_hash": "h3",
-            "__upstream": json.dumps({"__rid_x": "r1", "__rid_y": "r2"}),
-            "__inputs": json.dumps({"x": "k", "y": "k"}),
-            "__as_table": True,
-        },
+        (
+            {"__fn_hash": "h3", "__inputs": json.dumps({"x": "k", "y": "k"}), "__as_table": True},
+            [("x", "r1"), ("y", "r2")],
+        ),
         # distribute flag
-        {
-            "__fn_hash": "h4",
-            "__upstream": json.dumps({"__rid_x": "r1"}),
-            "__distribute": True,
-        },
+        ({"__fn_hash": "h4", "__distribute": True}, [("x", "r1")]),
+        # several edges under ONE parameter (an aggregating call)
+        ({"__fn_hash": "h5", "__as_table": ["x"]}, [("x", "r1", None), ("x", "r2", None)]),
     ]
-    for meta in metas:
-        assert _inline_invocation_id(meta) == invocation_id_for_meta(meta)
+    for meta, edges in cases:
+        assert _inline_invocation_id(meta, edges) == invocation_identity(meta, edges)
+
+
+@pytest.fixture
+def db(tmp_path):
+    _scifor.set_schema([])
+    database = configure_database(tmp_path / "identity.duckdb", ["subject"])
+    yield database
+    _scifor.set_schema([])
+    database.close()
+
+
+def test_record_run_refuses_a_graph_that_disagrees_with_the_record(db):
+    """The self-check: a GraphRecord whose stamped invocation id does not
+    match the edges it carries is a bug of exactly the class the typed spine
+    exists to catch, and record_run must not paper over it."""
+    from scidb.bindings import Binding
+    from scidb.provenance_save import GraphRecord, record_run
+
+    meta = {"__fn": "f", "__fn_hash": "h", "__constants": {}}
+    bad = GraphRecord(
+        "Out", 1, 0, "out_rid_1", meta, bindings=[Binding("x", "r1")], invocation_id="0" * 16
+    )
+    with pytest.raises(RuntimeError, match="identity drift"):
+        record_run(db, [bad], function_name="f", where_clause=None, user_id="t")
 
 
 # ---------------------------------------------------------------------------

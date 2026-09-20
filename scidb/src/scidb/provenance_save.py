@@ -14,11 +14,13 @@ Everything is content-addressed and inserted ``ON CONFLICT DO NOTHING``, so
 re-running an identical pipeline writes no duplicate provenance — only a fresh
 ``_run`` row.
 
-The graph is built from the per-record ``save_metadata`` that for_each already
-assembles, which carries ``__fn`` / ``__fn_hash`` (function identity),
-``__upstream`` (``{__rid_<param>: record_id}`` — variable input edges),
-``__constants`` (``{param: value}`` — constant inputs), and the
-``__as_table`` / ``__distribute`` identity flags.
+The graph is built from each ``GraphRecord`` the save path hands over: its
+TYPED input edges (``bindings``, from ``RunBindings.for_combo``) plus the
+``save_metadata`` carrying ``__fn`` / ``__fn_hash`` (function identity),
+``__constants`` (``{param: value}`` — constant inputs), the ``__as_table`` /
+``__distribute`` identity flags, and ``__invocation_id`` — the identity the
+save stamped into the record, which :func:`record_run` recomputes from the
+edges and refuses to disagree with.
 """
 
 from __future__ import annotations
@@ -53,7 +55,7 @@ __all__ = [
     "compute_input_selectors",
     "check_selector_round_trip",
     "record_direct_save",
-    "invocation_id_for_meta",
+    "invocation_identity",
 ]
 
 
@@ -195,14 +197,12 @@ def check_selector_round_trip(
     :func:`compute_input_selectors` — what the call requested. *recorded* is
     what the edges actually carry, ``{param: selector-or-None}``.
 
-    Why this exists at all: :func:`_variable_bindings` prefers
-    ``__graph_var_bindings`` (param, record_id, selector) but falls back to
-    ``__upstream``, which is ``{__rid_<param>: record_id}`` with **nowhere to
-    put a selector**. Aggregation and ``for_columns`` reassembly rows carry no
-    ``__rid_*`` columns, so they take that fallback and every edge is written
-    with ``selector=NULL``. Everything downstream then honestly reports "no
-    selection was used", a GUI re-run binds the whole variable, and the
-    function quietly receives the whole table.
+    Why this exists at all: until 2026-09-20 the save path had two edge
+    assemblies, and the aggregation one wrote its edges from a dict with
+    nowhere to put a selector, so every such edge carried ``selector=NULL``
+    and a ``for_columns`` step re-ran from the canvas as a whole-table step.
+    There is one assembly now (``RunBindings.for_combo``); this stays as the
+    guard that an input the call selected on always reaches an edge.
 
     Log-only, and never raises: a lost selector is a diagnosis, not a reason
     to fail a run that has already computed its results. Same shape as the
@@ -226,24 +226,50 @@ def check_selector_round_trip(
             f"[selector-lost] {fn_name}{where}: input '{param}' was called with "
             f"{asked[param]} but its provenance edge recorded no selector, so "
             f"every reader of this run — a GUI re-run, an export, skip_computed "
-            f"— will bind the WHOLE variable. The edge came from "
-            f"__upstream (no selector field) rather than __graph_var_bindings; "
-            f"see docs/claude/input-binding-round-trip.md §4."
+            f"— will bind the WHOLE variable. See "
+            f"docs/claude/input-binding-round-trip.md §4."
         )
     return lost
 
 
-# A saved output record awaiting graph insertion. ``meta`` is its
-# ``save_metadata`` dict (carrying __fn/__fn_hash/__upstream/__constants/flags).
+# A saved output record awaiting graph insertion.
+#
+# ``meta`` is its ``save_metadata`` dict (``__fn`` / ``__fn_hash`` /
+# ``__constants`` / ``__as_table`` / ``__distribute`` / ``__invocation_id``).
+# ``bindings`` is the TYPED edge list the save path assembled
+# (``RunBindings.for_combo``) — the record's consumed inputs live here and
+# nowhere else since 2026-09-20; ``__upstream`` and ``__graph_var_bindings``
+# no longer exist. ``invocation_id`` is what the save stamped into the
+# record's version keys; ``record_run`` recomputes it from ``bindings`` and
+# refuses to write a graph that disagrees with the record's own identity.
 class GraphRecord:
-    __slots__ = ("type_name", "schema_version", "output_num", "record_id", "meta")
+    __slots__ = (
+        "type_name",
+        "schema_version",
+        "output_num",
+        "record_id",
+        "meta",
+        "bindings",
+        "invocation_id",
+    )
 
-    def __init__(self, type_name, schema_version, output_num, record_id, meta):
+    def __init__(
+        self,
+        type_name,
+        schema_version,
+        output_num,
+        record_id,
+        meta,
+        bindings=(),
+        invocation_id=None,
+    ):
         self.type_name = type_name
         self.schema_version = schema_version
         self.output_num = output_num
         self.record_id = record_id
         self.meta = meta
+        self.bindings = [Binding.coerce(b) for b in bindings]
+        self.invocation_id = invocation_id
 
 
 # ---------------------------------------------------------------------------
@@ -261,56 +287,6 @@ def _parse_json_dict(val: Any) -> dict:
     if isinstance(val, dict):
         return dict(val)
     return {}
-
-
-def _variable_bindings(meta: dict) -> "list[Binding]":
-    """Variable input edges as ``bindings.Binding``s (``param``, ``rid``,
-    ``selector``).
-
-    Prefers ``__graph_var_bindings`` — the *complete* per-row binding set the
-    save path assembles from every consumed input record (variables, Fixed,
-    Variant, Merge constituents) with ColumnSelection selectors. Falls back to
-    ``__upstream`` (``{__rid_<param>: record_id}``, no selectors) for the
-    aggregation path, which builds upstream edges separately.
-    """
-    gvb = meta.get("__graph_var_bindings")
-    if gvb:
-        out = []
-        for entry in gvb:
-            param, rid, selector = entry
-            if rid is None:
-                continue
-            out.append(Binding(str(param), str(rid), selector))
-        return out
-
-    # Fallback for a meta with no `__graph_var_bindings` — since 2026-09-20
-    # only a lineage-only / legacy save reaches here; the for_each save path
-    # always writes the edge list. `__upstream` keys are INDEXED
-    # (`__rid_<param>_<i>`, one per consumed record) because it is a dict;
-    # the edge carries the REAL parameter name, several edges per parameter.
-    upstream = _parse_json_dict(meta.get("__upstream"))
-    names = {
-        (param_of(k)) for k in upstream
-    }
-
-    def _fold(param: str) -> str:
-        # `x_0`, `x_1`, ... fold to `x` only when SEVERAL such keys share the
-        # head: a single record is stored un-indexed, so a parameter genuinely
-        # named `x_1` (one key, no siblings) is left alone.
-        head, sep, tail = param.rpartition("_")
-        if not (sep and tail.isdigit() and head):
-            return param
-        siblings = [
-            n for n in names if n.rpartition("_")[0] == head and n.rpartition("_")[2].isdigit()
-        ]
-        return head if len(siblings) > 1 else param
-
-    out = []
-    for key, rid in upstream.items():
-        if rid is None:
-            continue
-        out.append(Binding(_fold(param_of(key)), str(rid), None))
-    return out
 
 
 def _constant_bindings(meta: dict) -> dict[str, Any]:
@@ -362,29 +338,37 @@ def _normalize_as_table(meta: dict, loadable_params: list[str]) -> list[str]:
     return normalize_as_table(meta.get("__as_table"), loadable_params)
 
 
-def invocation_id_for_meta(meta: dict) -> str:
-    """The ``invocation_id`` for a record's ``save_metadata`` — identical to what
-    :func:`record_run` computes for it (same binding assembly via the shared
-    ``_variable_bindings`` / ``_constant_bindings`` / ``_normalize_as_table``
-    helpers). Pure function of the metadata; used by ``record_run`` itself and by
-    the generates_file lineage-only save to key its ``generated:{invocation_id}``
-    record.
+def invocation_identity(meta: dict, bindings) -> str:
+    """The ``invocation_id`` of a call, from its save metadata and its TYPED
+    input edges — the ONE recipe.
+
+    Two callers, and they must agree by construction: the save path stamps
+    the result into the record's version keys as ``__invocation_id`` (so a
+    record's identity depends on the exact invocation that produced it —
+    function hash, run options, every edge with its selector, every
+    constant), and :func:`record_run` recomputes it from the edges it is
+    about to write and refuses to write a graph that disagrees. Before
+    2026-09-20 the record side used a second, dict-shaped spelling of the
+    same rids (``__upstream``, with indexed keys) that was included in
+    identity while the typed edge list was excluded; there is one spelling
+    now.
+
+    *bindings* are the variable edges (``bindings.Binding``); the constants
+    come from ``meta["__constants"]`` and become edges here.
     """
     from .provenance import compute_invocation_id
 
-    var_b = _variable_bindings(meta)
+    var_b = [Binding.coerce(b) for b in bindings]
     const_b = _constant_bindings(meta)
     loadable_params = list(_parse_json_dict(meta.get("__inputs")).keys()) or [
         b.param for b in var_b
     ]
     as_table = _normalize_as_table(meta, loadable_params)
     distribute = bool(meta.get("__distribute", False))
-    bindings: list[Binding] = list(var_b)
+    edges: list[Binding] = list(var_b)
     for param, value in const_b.items():
-        bindings.append(Binding(param, compute_constant_record_id(value), None))
-    return compute_invocation_id(
-        meta.get("__fn_hash") or "", as_table, distribute, bindings
-    )
+        edges.append(Binding(param, compute_constant_record_id(value), None))
+    return compute_invocation_id(meta.get("__fn_hash") or "", as_table, distribute, edges)
 
 
 # ---------------------------------------------------------------------------
@@ -500,14 +484,13 @@ def record_run(
         meta = g.meta
 
         # repr() every field that can be a live dict/list (e.g. __constants /
-        # __upstream / __inputs may arrive parsed, not as JSON strings) so the key
-        # is always hashable. repr is deterministic for a given content+order, so
+        # __inputs may arrive parsed, not as JSON strings) so the key is always
+        # hashable. repr is deterministic for a given content+order, so
         # identical metas (a fan-out) share a key; any ordering difference only
         # costs a recompute (compute_invocation_id sorts bindings → same id).
         cache_key = (
             meta.get("__fn_hash"),
-            repr(meta.get("__graph_var_bindings")),
-            repr(meta.get("__upstream")),
+            tuple(sorted(tuple(b) for b in g.bindings)),
             repr(meta.get("__inputs")),
             repr(meta.get("__constants")),
             repr(meta.get("__as_table")),
@@ -518,7 +501,7 @@ def record_run(
             fn_name = meta.get("__fn") or function_name or "unknown"
             fn_hash = meta.get("__fn_hash") or ""
 
-            var_b = _variable_bindings(meta)  # list[Binding]
+            var_b = list(g.bindings)  # the typed edges the save path assembled
             const_b = _constant_bindings(meta)
             loadable_params = list(_parse_json_dict(meta.get("__inputs")).keys()) or [
                 b.param for b in var_b
@@ -546,15 +529,25 @@ def record_run(
                     crid, (crid, created_at, CONSTANT_TYPE, None, ch, None, False)
                 )
 
-            # Identity. ``bindings`` (var inputs + constant rids), ``as_table`` and
-            # ``distribute`` here are assembled identically to invocation_id_for_meta,
-            # so compute the id directly from them rather than re-deriving the whole
-            # binding set + re-hashing every constant per record. The generates_file
-            # lineage-only save calls invocation_id_for_meta, which shares these
-            # same helpers, so the two paths still agree.
+            # Identity — the same recipe as `invocation_identity`, spelled with
+            # the constant hashes already in hand. The save path stamped ITS
+            # answer into the record's version keys (`__invocation_id`), and a
+            # graph that disagreed with the record's own identity would be a
+            # bug of exactly the class this check exists to catch, so it is a
+            # hard error rather than a warning.
             inv_id = compute_invocation_id(
                 meta.get("__fn_hash") or "", as_table, distribute, bindings
             )
+            stamped = g.invocation_id or meta.get("__invocation_id")
+            if stamped and stamped != inv_id:
+                raise RuntimeError(
+                    f"identity drift for {fn_name} record {g.record_id}: the save "
+                    f"stamped invocation {stamped} but the edges it handed over "
+                    f"compute {inv_id} — {len(var_b)} variable edge(s) "
+                    f"{sorted((b.param, b.rid[:8]) for b in var_b)}, constants "
+                    f"{sorted(const_b)}. The record and the graph would name "
+                    f"different invocations; nothing was written."
+                )
             # Which params ran once per column, DERIVED from the edges'
             # selectors rather than carried separately — one source of truth,
             # so the column can never disagree with the selector it describes.

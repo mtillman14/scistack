@@ -2710,7 +2710,7 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     * an input whose records sit BELOW it (cycles pooled per trial) is
       AGGREGATED: every record under the location is one edge of ONE
       invocation, under the real parameter name (the save path's
-      ``__graph_var_bindings`` since 2026-09-20);
+      the typed ``GraphRecord.bindings`` since 2026-09-20);
     * an input COARSER than the level broadcasts: the record at the enclosing
       location binds at every location beneath it.
 

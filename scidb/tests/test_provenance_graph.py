@@ -196,21 +196,23 @@ def test_rerun_idempotent_graph_new_run(db):
 # _invocation_output PK collision — the slot-allocation cursor.
 # ---------------------------------------------------------------------------
 def test_distribute_fanout_one_invocation_unique_slots(db):
+    from scidb.bindings import Binding
     from scidb.provenance_save import GraphRecord, record_run
 
     n = 500
-    # Use live dicts (not JSON strings) for __upstream/__constants — that is how
-    # real for_each meta arrives, and the cache key must stay hashable for them.
+    # A live dict for __constants — that is how real for_each meta arrives,
+    # and the cache key must stay hashable for it. The edges travel TYPED on
+    # the GraphRecord (since 2026-09-20), never in the meta.
     shared_meta = {
         "__fn": "calc_fanout",
         "__fn_hash": "fanouthash",
-        "__upstream": {"__rid_signal": "input_rid_X"},
         "__constants": {"low_hz": 20},
         "__distribute": True,
     }
+    edges = [Binding("signal", "input_rid_X")]
     # All share one invocation + the same base output_num (0), distinct outputs.
     graph_records = [
-        GraphRecord("Filtered", 1, 0, f"out_rid_{i:05d}", dict(shared_meta))
+        GraphRecord("Filtered", 1, 0, f"out_rid_{i:05d}", dict(shared_meta), bindings=edges)
         for i in range(n)
     ]
 

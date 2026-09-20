@@ -1571,13 +1571,14 @@ class DatabaseManager:
         all_nested = []
         unique_schema_combos = {}  # {combo_key: schema_keys_dict}
         for data_val, flat_meta in data_items:
-            # Drop transient for_each bookkeeping that must not become version
-            # keys: __branch_params (now derived from the graph) and
-            # __graph_var_bindings (the bipartite edge list consumed by record_run).
+            # Drop transient for_each bookkeeping that must not become a
+            # version key: __branch_params (derived from the graph). The
+            # record's producing invocation is a version key on purpose —
+            # `__invocation_id`, stamped by the save path — so identical
+            # content from different inputs, code or options is a different
+            # record; the edges themselves travel typed on the GraphRecord.
             flat_meta_cleaned = {
-                k: v
-                for k, v in flat_meta.items()
-                if k not in ("__branch_params", "__graph_var_bindings")
+                k: v for k, v in flat_meta.items() if k != "__branch_params"
             }
             nested = self._split_metadata(flat_meta_cleaned)
             all_nested.append(nested)
@@ -2735,14 +2736,9 @@ class DatabaseManager:
         user_id = get_user_id()
 
         # Drop transient for_each bookkeeping that must not become version keys:
-        # __branch_params (accumulated constants, now derived from the graph) and
-        # __graph_var_bindings (the bipartite edge list consumed by record_run).
+        # __branch_params (accumulated constants, now derived from the graph).
         if isinstance(metadata, dict):
-            metadata = {
-                k: v
-                for k, v in metadata.items()
-                if k not in ("__branch_params", "__graph_var_bindings")
-            }
+            metadata = {k: v for k, v in metadata.items() if k != "__branch_params"}
 
         # Split metadata
         nested_metadata = self._split_metadata(metadata)

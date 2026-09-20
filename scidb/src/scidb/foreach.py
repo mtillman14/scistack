@@ -3181,7 +3181,6 @@ def _for_each_save_resolved(
             input_selectors=input_selectors,
             generates_file=generates_file,
             endpoint_kind=endpoint_kind,
-            stamp_param_names=[param_of(rc) for rc in (state.rid_keys or [])],
             glue_virtual=state.glue_virtual,
             glue_chains=state.glue_chains,
             fn=state.fn,
@@ -4496,21 +4495,6 @@ def _stamp_db_name(db: Any) -> "str | None":
     return _Path(p).name if p is not None else None
 
 
-def _collapse_upstream_param(key: str, param_names: "list[str]") -> str:
-    """Map an ``__upstream`` key back to its input param name.
-
-    Aggregation stores multiple rids per param as indexed keys
-    (``__rid_df_0``, ``__rid_df_1``, …); the blob groups them under ``df``.
-    """
-    k = param_of(key)
-    if k in param_names:
-        return k
-    for p in sorted(param_names, key=len, reverse=True):
-        if k.startswith(p + "_") and k[len(p) + 1 :].isdigit():
-            return p
-    return k
-
-
 def _build_stamp_blob(
     *, fn_name: str, inputs_map: dict, schema: dict, db: Any, record_id: "str | None"
 ) -> dict:
@@ -4536,28 +4520,12 @@ def _build_stamp_blob(
     return blob
 
 
-def _stamp_inputs_from_meta(meta: dict, param_names: "list[str]") -> dict:
-    """Consumed input rids per param, from save metadata (record mode)."""
+def _stamp_inputs_from_edges(edges) -> dict:
+    """Consumed input rids per param, from the record's typed edges (record
+    mode). ``{param: [rid, ...]}``."""
     inputs_map: dict = {}
-    gvb = meta.get("__graph_var_bindings")
-    if gvb:
-        for entry in gvb:
-            param, rid = entry[0], entry[1]
-            if rid is not None:
-                inputs_map.setdefault(str(param), []).append(str(rid))
-        return inputs_map
-    upstream = meta.get("__upstream") or {}
-    if isinstance(upstream, str):
-        try:
-            upstream = json.loads(upstream)
-        except (ValueError, TypeError):
-            upstream = {}
-    for key, rid in upstream.items():
-        if rid is None:
-            continue
-        inputs_map.setdefault(_collapse_upstream_param(key, param_names), []).append(
-            str(rid)
-        )
+    for e in edges or []:
+        inputs_map.setdefault(e.param, []).append(e.rid)
     return inputs_map
 
 
@@ -4576,29 +4544,22 @@ def _stamp_draft_endpoint_artifacts(
     if not state.output_names:
         return
     out_name = state.output_names[0]
-    param_names = [param_of(rc) for rc in (state.rid_keys or [])]
     schema_keys = list(state.current_schema_keys or [])
     stamped = 0
     for row in result_tbl.to_dict("records"):
         apath = _endpoint_artifact_path(endpoint_kind, row.get(out_name))
         if not apath:
             continue
-        inputs_map: dict = {}
-        for col, val in row.items():
-            if not is_rid_column(col):
-                continue
-            if val is None or (isinstance(val, float) and pd.isna(val)):
-                continue
-            inputs_map.setdefault(param_of(col), []).append(str(val))
-        if (
-            not inputs_map
-            and state.combo_to_rids is not None
-            and state.iterated_keys_ordered is not None
-        ):
+        # The same assembly the record-mode save uses, so a draft stamp names
+        # exactly the edges a real save would record.
+        pooled = None
+        if state.combo_to_rids is not None and state.iterated_keys_ordered is not None:
             key = tuple(str(row.get(k, "")) for k in state.iterated_keys_ordered)
-            for rid_col, rids in state.combo_to_rids.get(key, {}).items():
-                param = _collapse_upstream_param(rid_col, param_names)
-                inputs_map[param] = [str(r) for r in rids]
+            pooled = state.combo_to_rids.get(key) or None
+        from .bindings import RunBindings as _RB
+
+        edges = (state.bindings or _RB()).for_combo(row, pooled=pooled)
+        inputs_map = _stamp_inputs_from_edges(edges)
         schema = {
             k: row[k]
             for k in schema_keys
@@ -5125,7 +5086,6 @@ def _save_results(
     input_selectors: "dict | None" = None,
     generates_file: bool = False,
     endpoint_kind: "str | None" = None,
-    stamp_param_names: "list | None" = None,
     glue_virtual: "dict | None" = None,
     glue_chains: "dict | None" = None,
     fn: Any | None = None,
@@ -5239,6 +5199,11 @@ def _save_results(
     # one row — a per-row warning would print once per record.
     _selectors_recorded: dict = {}
     _rows_without_bindings = 0
+    # One invocation id per distinct edge set: a fan-out emits thousands of
+    # rows sharing one invocation, and the id is a hash over every edge.
+    from .provenance_save import invocation_identity as _invocation_identity
+
+    _inv_id_cache: dict = {}
     for _row_idx, row in enumerate(rows):
         # 1. Collect upstream branch_params via __rid_* columns → rid_to_bp lookup
         merged_bp: dict = {}
@@ -5350,46 +5315,23 @@ def _save_results(
                 type(e)(e.param, e.rid, _sel.get(e.param)) for e in _edges
             ]
         if _edges:
-            save_metadata["__graph_var_bindings"] = [tuple(e) for e in _edges]
             _selectors_recorded.update({e.param: e.selector for e in _edges if e.selector})
         else:
             _rows_without_bindings += 1
 
-        # Add upstream record_ids to version_keys so that records from different
-        # upstream variants get distinct record_ids even when content is identical.
-        if combo_to_rids is not None and combo_to_rids_keys is not None:
-            # Aggregation mode: collect all contributing upstream rids per parameter
-            combo_key = tuple(str(row.get(k, "")) for k in combo_to_rids_keys)
-            rids_by_param = combo_to_rids.get(combo_key, {})
-            if rids_by_param:
-                # Build __upstream from contributing rids
-                # Since aggregation has multiple upstream records per parameter,
-                # we store them as individual indexed entries for provenance compatibility:
-                # __rid_signal_0, __rid_signal_1, etc.
-                upstream = {}
-                for rid_col, rids in rids_by_param.items():
-                    if rids:
-                        if len(rids) == 1:
-                            # Single rid: store normally
-                            upstream[rid_col] = rids[0]
-                        else:
-                            # Multiple rids: store as indexed entries
-                            for idx, rid in enumerate(rids):
-                                upstream[f"{rid_col}_{idx}"] = rid
-                if upstream:
-                    save_metadata["__upstream"] = upstream
-        elif rid_keys:
-            # Full iteration mode: per-row rid lookup
-            upstream = {}
-            for rid_col in rid_keys:
-                if rid_col in row:
-                    rid_val = row[rid_col]
-                    if rid_val is not None and not (
-                        isinstance(rid_val, float) and pd.isna(rid_val)
-                    ):
-                        upstream[rid_col] = rid_val
-            if upstream:
-                save_metadata["__upstream"] = upstream
+        # The record's identity includes the exact invocation that produced
+        # it: `__invocation_id` goes into the version keys (so identical
+        # content from different inputs, code or options is a different
+        # record), and record_run recomputes it from these same edges and
+        # refuses to write a graph that disagrees. This replaces `__upstream`
+        # — a second, dict-shaped spelling of the same rids with indexed keys
+        # (`__rid_x_0`), which was what identity depended on until 2026-09-20.
+        _edge_key = tuple(sorted(tuple(e) for e in _edges))
+        _inv_id = _inv_id_cache.get(_edge_key)
+        if _inv_id is None:
+            _inv_id = _invocation_identity(save_metadata, _edges)
+            _inv_id_cache[_edge_key] = _inv_id
+        save_metadata["__invocation_id"] = _inv_id
 
         for output_idx, (output_obj, output_name) in enumerate(
             zip(outputs, output_names, strict=False)
@@ -5418,11 +5360,7 @@ def _save_results(
                 meta_copy = dict(save_meta_for_output)
                 if "__branch_params" in meta_copy:
                     meta_copy["__branch_params"] = dict(meta_copy["__branch_params"])
-                if "__upstream" in meta_copy and isinstance(
-                    meta_copy["__upstream"], dict
-                ):
-                    meta_copy["__upstream"] = dict(meta_copy["__upstream"])
-                batch_items[key].append((output_value, meta_copy))
+                batch_items[key].append((output_value, meta_copy, _edges))
                 continue
 
             output_value = row[output_name]
@@ -5435,11 +5373,7 @@ def _save_results(
                 gen_meta = dict(save_metadata)
                 if "__branch_params" in gen_meta:
                     gen_meta["__branch_params"] = dict(gen_meta["__branch_params"])
-                if "__upstream" in gen_meta and isinstance(
-                    gen_meta["__upstream"], dict
-                ):
-                    gen_meta["__upstream"] = dict(gen_meta["__upstream"])
-                generated_items.append((output_obj, output_idx, gen_meta))
+                generated_items.append((output_obj, output_idx, gen_meta, _edges))
                 continue
 
             # Normal save path - collect for batch save - need deep copy to avoid shared dict references
@@ -5450,9 +5384,7 @@ def _save_results(
             meta_copy = dict(save_metadata)
             if "__branch_params" in meta_copy:
                 meta_copy["__branch_params"] = dict(meta_copy["__branch_params"])
-            if "__upstream" in meta_copy and isinstance(meta_copy["__upstream"], dict):
-                meta_copy["__upstream"] = dict(meta_copy["__upstream"])
-            batch_items[key].append((output_value, meta_copy))
+            batch_items[key].append((output_value, meta_copy, _edges))
 
     # Did every selection the call asked for reach an edge? Once per run.
     if input_selectors and any(input_selectors.values()):
@@ -5464,7 +5396,7 @@ def _save_results(
             _selectors_recorded,
             context=(
                 f"{_rows_without_bindings}/{len(rows)} saved row(s) had no "
-                f"__rid_* columns, so their edges came from __upstream"
+                f"__rid_* columns and no pooled rids, so they bound no input"
                 if _rows_without_bindings
                 else ""
             ),
@@ -5487,6 +5419,11 @@ def _save_results(
 
         if len(items) == 0:
             continue
+
+        # save_batch takes (data, meta) pairs; the typed edges ride beside them
+        # and rejoin their record below, by position.
+        edges_by_item = [_e for _d, _m, _e in items]
+        items = [(_d, _m) for _d, _m, _e in items]
 
         Log.info(
             f"[batch_save] Saving {len(items)} record(s) for {_output_name(output_obj)} ({save_path} path)"
@@ -5537,7 +5474,9 @@ def _save_results(
                 type(output_obj) if not isinstance(output_obj, type) else output_obj
             )
             _out_sv = getattr(_out_cls, "schema_version", 1)
-            for (_data, _meta), _rid in zip(items, record_ids, strict=False):
+            for (_data, _meta), _edges_for, _rid in zip(
+                items, edges_by_item, record_ids, strict=False
+            ):
                 if isinstance(_rid, str):
                     graph_records.append(
                         _GraphRecord(
@@ -5546,6 +5485,8 @@ def _save_results(
                             output_idx,
                             _rid,
                             _meta,
+                            bindings=_edges_for,
+                            invocation_id=_meta.get("__invocation_id"),
                         )
                     )
                     # Endpoint artifact stamping (D4, record mode): the one
@@ -5558,9 +5499,7 @@ def _save_results(
 
                             _blob = _build_stamp_blob(
                                 fn_name=fn_name,
-                                inputs_map=_stamp_inputs_from_meta(
-                                    _meta, stamp_param_names or []
-                                ),
+                                inputs_map=_stamp_inputs_from_edges(_edges_for),
                                 schema={
                                     k: v
                                     for k, v in _meta.items()
@@ -5632,7 +5571,7 @@ def _save_results(
 
         from .database import get_user_id
         from .provenance import insert_record_entity
-        from .provenance_save import invocation_id_for_meta
+        from .provenance_save import invocation_identity
 
         _db = db
         if _db is None:
@@ -5643,12 +5582,13 @@ def _save_results(
         Log.info(
             f"[batch_save] Saving {len(generated_items)} generates_file item(s) (lineage-only)"
         )
-        for output_obj, output_idx, gen_meta in generated_items:
+        for output_obj, output_idx, gen_meta, gen_edges in generated_items:
             try:
                 cls = output_obj if isinstance(output_obj, type) else type(output_obj)
                 out_name = cls.__name__
                 sv = getattr(cls, "schema_version", 1)
-                generated_id = f"generated:{invocation_id_for_meta(gen_meta)}"
+                gen_inv_id = invocation_identity(gen_meta, gen_edges)
+                generated_id = f"generated:{gen_inv_id}"
                 schema_keys = {
                     k: v for k, v in gen_meta.items() if k in schema_keys_set
                 }
@@ -5677,7 +5617,15 @@ def _save_results(
                     schema_version=sv,
                 )
                 graph_records.append(
-                    _GraphRecord(out_name, sv, output_idx, generated_id, gen_meta)
+                    _GraphRecord(
+                        out_name,
+                        sv,
+                        output_idx,
+                        generated_id,
+                        gen_meta,
+                        bindings=gen_edges,
+                        invocation_id=gen_inv_id,
+                    )
                 )
                 total_saved += 1
                 meta_str = ", ".join(
