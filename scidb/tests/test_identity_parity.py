@@ -105,7 +105,7 @@ def _recompute_invocation_ids(db, type_name: str) -> list[tuple[str, str]]:
         as_table, distribute = duck._fetchone(
             "SELECT as_table, distribute FROM _invocation WHERE invocation_id = ?", [inv_id]
         )
-        bindings = [(p, r, s) for p, (r, s) in sig["var_inputs"].items()]
+        bindings = [(p, r, s) for p, edges in sig["var_inputs"].items() for r, s in edges]
         bindings += [
             (p, constant_record_id_from_hash(h), None) for p, h in sig["const_hashes"].items()
         ]

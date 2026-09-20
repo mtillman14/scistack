@@ -826,7 +826,14 @@ def _combo_str(schema_combo: dict, branch_params: dict | None = None) -> str:
 
 
 def _schema_id_to_combo(db, schema_id) -> dict:
-    """Convert a schema_id to a dict of schema key → value."""
+    """Convert a schema_id to a dict of schema key → value.
+
+    A predicted invocation at a location that has no ``_schema`` row yet (an
+    aggregating call that has never produced anything there) arrives as a
+    ``((key, value), ...)`` tuple instead of an id — read as-is.
+    """
+    if isinstance(schema_id, tuple):
+        return {k: v for k, v in schema_id if v is not None}
     schema_keys = db.dataset_schema_keys
     if not schema_keys:
         return {}

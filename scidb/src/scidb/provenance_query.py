@@ -2636,6 +2636,27 @@ def _schema_locations(duck, schema_ids, schema_keys) -> dict:
     }
 
 
+def _schema_ids_at_level(duck, iterated, schema_keys) -> dict:
+    """``{(value, ...) over the iterated keys: schema_id}`` for every schema
+    row populated at EXACTLY that level — one query over `_schema`, which
+    holds one row per location and is small."""
+    keys = list(schema_keys or [])
+    iterated_set = set(iterated or [])
+    if not keys:
+        return {}
+    cols = ", ".join(f'"{k}"' for k in keys)
+    try:
+        rows = duck._fetchall(f"SELECT schema_id, {cols} FROM _schema", [])  # noqa: S608
+    except Exception:
+        return {}
+    out: dict = {}
+    for sid, *values in rows:
+        loc = {k: v for k, v in zip(keys, values) if v is not None}
+        if set(loc) == iterated_set:
+            out[tuple(loc.get(k) for k in iterated)] = sid
+    return out
+
+
 def iterated_keys_for_invocations(duck, invocation_ids, schema_keys) -> "list[str] | None":
     """The schema keys a set of invocations ITERATED, read off the records
     they produced — the populated keys of their output locations, in dataset
@@ -2775,11 +2796,13 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     candidates: set = set()
     for m in list(at_level.values()) + list(pooled.values()):
         candidates |= set(m)
-    sid_by_location = {
-        _project(loc): sid
-        for sid, loc in locations.items()
-        if set(loc) == iterated_set
-    }
+    # The OUTPUT location's schema row — the pair `present_invocation_schema_
+    # pairs` will hold once the call has run. An aggregated input's records
+    # sit below it, so it is looked up at the iterated level itself; before
+    # the first run no row exists and the location travels as a tuple
+    # (`state._schema_id_to_combo` reads either), which can only ever count
+    # as missing — correct, since nothing was produced there.
+    sid_by_location = _schema_ids_at_level(duck, iterated, schema_keys)
     for L in candidates:
         choices_by_param: dict = {}
         ok = True
@@ -2804,7 +2827,7 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
                 break
         if not ok:
             continue
-        _emit(choices_by_param, sid_by_location.get(L))
+        _emit(choices_by_param, sid_by_location.get(L, tuple(zip(iterated, L))))
 
 
 def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:

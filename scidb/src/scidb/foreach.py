@@ -5352,6 +5352,7 @@ def _save_results(
                     # `compute_invocation_id` hashes the names — and a re-run
                     # supersedes. See test_identity_parity.py.
                     _agg_bindings = []
+                    _bound_params: set = set()
                     for _rid_col, _rids in rids_by_param.items():
                         _param = (
                             _rid_col[len("__rid_") :]
@@ -5360,6 +5361,16 @@ def _save_results(
                         )
                         for _rid in _rids:
                             _agg_bindings.append((_param, str(_rid), _sel.get(_param)))
+                            _bound_params.add(_param)
+                    # A Fixed input is pinned to one record and never appears in
+                    # combo_to_rids; it is an edge all the same (the full-
+                    # iteration block above binds it via lineage_fixed_rids).
+                    for _k, _v in (lineage_fixed_rids or {}).items():
+                        if _v is None:
+                            continue
+                        _param = _k[len("__rid_") :] if _k.startswith("__rid_") else _k
+                        if _param not in _bound_params:
+                            _agg_bindings.append((_param, str(_v), _sel.get(_param)))
                     save_metadata["__graph_var_bindings"] = _agg_bindings
                     _selectors_recorded.update(
                         {p: s for p, _r, s in _agg_bindings if s}
