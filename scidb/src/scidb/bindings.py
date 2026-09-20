@@ -389,6 +389,24 @@ class RunBindings:
         return {p: b.pinned_rid for p, b in self.inputs.items() if b.pinned_rid}
 
     @property
+    def tracked_columns(self) -> list[str]:
+        """The ``__rid_{param}`` columns Step 12 registered on a loaded
+        frame — the plain variable inputs, whether they went on to be an
+        iteration axis (``ITERATE``) or to pool (``AGGREGATED``).
+
+        Deliberately not "the axes": a ``LINEAGE_ONLY`` (ColumnSelection)
+        input also carries a rid column but never expands, and a ``PINNED``
+        one has no column at all. Telling those three apart is what
+        ``InputKind`` is for; this is the set the MATLAB bridge must rename
+        and the set the save-path diagnostic reports.
+        """
+        return [
+            b.column
+            for b in self.inputs.values()
+            if b.kind in (InputKind.ITERATE, InputKind.AGGREGATED)
+        ]
+
+    @property
     def split_params(self) -> list[str]:
         """Inputs that expand one call per variant group, in input order."""
         return [p for p, b in self.inputs.items() if b.splits]

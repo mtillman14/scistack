@@ -790,6 +790,9 @@ def for_each_prepare(
         metadata_iterables=meta,
         glue=glue_arg,
         glue_language="matlab",
+        # The save happens in a SECOND RPC, which reads this off the cached
+        # state rather than being told again — one fact, one place.
+        endpoint_kind=endpoint_kind or None,
     )
 
     if state is None:
@@ -862,14 +865,16 @@ def for_each_prepare(
     # finds them. Only the MATLAB-facing copies are renamed.
     #
     # Sources of __rid_* names to cover:
-    #   - state.rid_keys: var-type inputs that got rid-expanded
-    #   - state.fixed_rid_values: Fixed inputs (and inputs that prep
+    #   - bindings.tracked_columns: plain variable inputs Step 12 registered
+    #     a rid column for (ITERATE or AGGREGATED)
+    #   - bindings.pinned_rids: Fixed inputs (and inputs that prep
     #     misclassifies as Fixed-like via the .data attribute, e.g.
     #     ColumnSelection — Step 12 adds __rid_{param} for each)
     #   - any other __rid_* key that may appear in combos / DataFrame
     #     columns / extended_metadata_iterables
-    rid_rename_map = {k: _sanitize_rid_key(k) for k in state.rid_keys}
-    for fixed_param in state.fixed_rid_values:
+    _bindings = state.bindings
+    rid_rename_map = {k: _sanitize_rid_key(k) for k in _bindings.tracked_columns}
+    for fixed_param in _bindings.pinned_rids:
         rk = rid_column(fixed_param)
         rid_rename_map.setdefault(rk, _sanitize_rid_key(rk))
     # Aggregation auto-split (D1): combos and DataFrame columns carry
@@ -1113,7 +1118,6 @@ def for_each_save(
     outputs = cached["outputs"]
     db = cached["db"]
     rid_rename_map = cached.get("rid_rename_map", {})
-    endpoint_kind = cached.get("endpoint_kind") or None
     # Endpoint DRAFT (finalized=False): policy computed once in prepare via
     # _endpoint_policy; the save phase is suppressed here Python-side so
     # MATLAB never re-implements the rule. Draft artifact stamping still
@@ -1123,7 +1127,7 @@ def for_each_save(
 
     # Reverse the bridge-boundary sanitization on the way back: MATLAB
     # produced result tables whose columns include the sanitized names
-    # (e.g. ``x__rid_x``); Python's save path (state.rid_keys, _save_results)
+    # (e.g. ``x__rid_x``); Python's save path (state.bindings, _save_results)
     # expects the original ``__rid_x`` names.
     reverse_map = {v: k for k, v in rid_rename_map.items()}
 
@@ -1208,7 +1212,6 @@ def for_each_save(
         outputs=outputs,
         save=bool(save),
         db=db if db is not None and not isinstance(db, type(None)) else None,
-        endpoint_kind=endpoint_kind,
     )
 
     if introspect and result_tbl is not None and not result_tbl.empty:

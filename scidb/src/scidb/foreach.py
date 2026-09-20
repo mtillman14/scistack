@@ -8,7 +8,7 @@ import re
 import time
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path as _Path
 from typing import TYPE_CHECKING, Any
 
@@ -198,12 +198,21 @@ class _ForEachState:
     loaded_inputs: dict
     full_combos: list
     extended_metadata_iterables: dict
-    rid_to_bp: dict
-    rid_keys: list
+    # Which ``__rid_*`` / ``__vsig_*`` keys scifor's schema was EXTENDED with
+    # for this call, so Step 18 can restore it. Not derivable from
+    # ``bindings``: it is a fact about the scifor call, not about the inputs
+    # (full iteration extends with the iteration rids, aggregation with the
+    # variant-group signatures, and a Fixed-only call with neither).
     rid_keys_for_schema: list
     aggregation_mode: bool
-    fixed_rid_values: dict
     current_schema_keys: list
+    # What KIND of call this is, decided before prepare and read by the save:
+    # a @scistack(generates_file=True) side-effect function saves lineage-only
+    # (no data row), and a plot_/stat_ endpoint stamps its artifact. Both were
+    # threaded through two signatures as keyword arguments that defaulted to
+    # "no" — so a caller that forgot one silently saved the wrong kind.
+    generates_file: bool = False
+    endpoint_kind: "str | None" = None
     # PathOutput branch_param placeholder keys injected into combos (stripped
     # from the result table before save/return; see _for_each_save_resolved).
     path_extra_keys: Any = None  # set | None
@@ -229,10 +238,21 @@ class _ForEachState:
     # whole-table glue on a per-combo input). See scidb.glue.
     glue_chains: Any = None  # dict[str, list[GlueSpec]] | None
     per_combo_glue: Any = None  # dict[str, list[GlueSpec]] | None
-    # Every input's kind, selector and pinned rid after Step 12 — the typed
-    # spine (scidb.bindings.RunBindings). `for_combo` is the ONE row->edges
-    # assembly the save path writes `__graph_var_bindings` from.
-    bindings: Any = None  # RunBindings | None
+    # Every input's kind, selector, pinned rid, pooled records and branch
+    # params after Step 12 — the typed spine (scidb.bindings.RunBindings).
+    # `rids_for_combo` is the ONE answer to "what did this call consume" and
+    # `for_combo` types it as the graph's edges.
+    #
+    # It REPLACED three fields that held slices of the same thing:
+    # `rid_to_bp` (now `bindings.rid_to_bp`), `fixed_rid_values` (now
+    # `bindings.pinned_rids`) and `rid_keys` (now `bindings.tracked_columns`).
+    # Keeping them beside it is how the Fixed-on-aggregation edge went
+    # missing: two containers, one fact, and the save read the wrong one.
+    #
+    # NEVER None: the save path resolves a late Fixed pin by calling
+    # `.pin()` on it, and a `state.bindings or RunBindings()` dance at each
+    # reader would pin into a throwaway that the next reader never sees.
+    bindings: RunBindings = field(default_factory=RunBindings)
     # {param: (chain_hash, input_set_signature, {source_rid: virtual_rid})}.
     # The provenance half: the consumer's bindings already point at the virtual
     # rids (fuse_glue rewrote __record_id), and the save path writes the
@@ -669,9 +689,90 @@ def for_each(
             # its own scifor call, and a preview that describes a different
             # run than the one that follows is worse than no preview.
             locations=locations,
+            # What kind of call this is — the save reads both off the state.
+            generates_file=_is_generates_file,
+            endpoint_kind=_endpoint_kind,
         )
     if state is None:
         return None
+
+    # --- Execute: wrap fn for per-combo needs, delegate the loop to scifor,
+    #     log the authoritative run summary. ---
+    result_tbl = _for_each_execute(
+        state,
+        fn=fn,
+        fn_name=fn_name,
+        inputs=inputs,
+        db=db,
+        as_table=as_table,
+        distribute=distribute,
+        share_limits=share_limits,
+        locations=locations,
+        cancel_check=_cancel_check,
+        progress_fn=_progress_fn,
+        inject_combo_metadata=_inject_combo_metadata,
+    )
+
+    # --- Schema restore + save (+ endpoint artifact stamping) ---
+    with Log.step(f"for_each_save({fn_name})"):
+        result_tbl = _for_each_save_resolved(
+            state=state,
+            result_tbl=result_tbl,
+            # state.inputs, not the local `inputs`: prepare folded any
+            # Parameter-fed glue into the values, and that folded dict is what
+            # ForEachConfig hashed.
+            inputs=state.inputs if state.inputs is not None else inputs,
+            outputs=outputs,
+            save=save,
+            db=db,
+        )
+
+    if introspect and result_tbl is not None and not result_tbl.empty:
+        result_tbl = _apply_introspect(result_tbl, state, where)
+
+    return result_tbl
+
+
+# ---------------------------------------------------------------------------
+# Execute phase (Steps 16-17) — between _for_each_prepare and
+# _for_each_save_resolved
+# ---------------------------------------------------------------------------
+
+
+def _for_each_execute(
+    state: "_ForEachState",
+    *,
+    fn: Callable,
+    fn_name: str,
+    inputs: dict,
+    db,
+    as_table,
+    distribute: bool,
+    share_limits,
+    locations,
+    cancel_check,
+    progress_fn,
+    inject_combo_metadata: bool,
+):
+    """Run scidb.for_each's Steps 16-17: wrap ``fn`` for whatever per-combo
+    work the inputs need (PerComboLoader resolution, variable-input
+    normalisation, combo-metadata injection, per-combo glue), delegate the
+    loop to ``scifor.for_each`` over ``state.full_combos``, and log the one
+    authoritative run-summary line. Returns scifor's result table.
+
+    The middle third of ``for_each``: ``_for_each_prepare`` before it, and
+    ``_for_each_save_resolved`` after. A pure signature move — every name it
+    reads was a local of ``for_each`` at the point the body sat, and it
+    still receives them explicitly (``inputs`` is the caller's dict after
+    ``for_columns`` resolution, NOT ``state.inputs``, which has had
+    Parameter-fed glue folded in; ``fn`` is the endpoint-wrapped function).
+    The MATLAB bridge does not call this: its loop runs in MATLAB's
+    ``scifor.for_each``, which is why prepare and save were already
+    separate functions and this one is the last of the three.
+    """
+    _cancel_check = cancel_check
+    _progress_fn = progress_fn
+    _inject_combo_metadata = inject_combo_metadata
 
     # --- Step 16: Wrap fn to resolve PerComboLoader/PerComboLoaderMerge inputs
     #     per-combo, normalize variable inputs to raw data, and/or inject combo
@@ -864,25 +965,6 @@ def for_each(
         _summary_parts.append("cancelled")
     Log.info(f"for_each({fn_name}) run summary: {', '.join(_summary_parts)}")
 
-    # --- Schema restore + save (+ endpoint artifact stamping) ---
-    with Log.step(f"for_each_save({fn_name})"):
-        result_tbl = _for_each_save_resolved(
-            state=state,
-            result_tbl=result_tbl,
-            # state.inputs, not the local `inputs`: prepare folded any
-            # Parameter-fed glue into the values, and that folded dict is what
-            # ForEachConfig hashed.
-            inputs=state.inputs if state.inputs is not None else inputs,
-            outputs=outputs,
-            save=save,
-            db=db,
-            generates_file=_is_generates_file,
-            endpoint_kind=_endpoint_kind,
-        )
-
-    if introspect and result_tbl is not None and not result_tbl.empty:
-        result_tbl = _apply_introspect(result_tbl, state, where)
-
     return result_tbl
 
 
@@ -911,7 +993,7 @@ def _apply_introspect(result_tbl, state, where):
         record_ids = result_tbl[rid_col]
         df[f"_record_id_{param_name}"] = record_ids.values
         df[f"_branch_params_{param_name}"] = [
-            state.rid_to_bp.get(rid, {}) for rid in record_ids
+            state.bindings.rid_to_bp.get(rid, {}) for rid in record_ids
         ]
 
     # Aggregation auto-split rows have no single record_id per input; surface
@@ -1493,6 +1575,8 @@ def _for_each_prepare(
     glue: "dict[str, Any] | None" = None,
     glue_language: str = "python",
     locations: "Any" = None,
+    generates_file: bool = False,
+    endpoint_kind: "str | None" = None,
 ) -> "_ForEachState | None":
     """Run scidb.for_each's pre-loop work (Steps 2-15).
 
@@ -3034,12 +3118,11 @@ def _for_each_prepare(
         loaded_inputs=loaded_inputs,
         full_combos=full_combos,
         extended_metadata_iterables=extended_metadata_iterables,
-        rid_to_bp=rid_to_bp,
-        rid_keys=rid_keys,
         rid_keys_for_schema=rid_keys_for_schema,
         aggregation_mode=_aggregation_mode,
-        fixed_rid_values=fixed_rid_values,
         current_schema_keys=current_schema_keys,
+        generates_file=generates_file,
+        endpoint_kind=endpoint_kind,
         path_extra_keys=_path_placeholder_names or None,
         skip_computed_count=_skip_computed_count,
         mapping_inputs=mapping_inputs or None,
@@ -3061,8 +3144,6 @@ def _for_each_save_resolved(
     outputs: list,
     save: bool,
     db,
-    generates_file: bool = False,
-    endpoint_kind: "str | None" = None,
 ):
     """Run scidb.for_each's Step 18 (schema restore) and Step 19 (save).
 
@@ -3111,7 +3192,7 @@ def _for_each_save_resolved(
         # routed through the same virtual map — or the graph edge would point
         # at the raw record while the combo carries the virtual one, a
         # binding mismatch that makes skip_computed recompute on every run.
-        bindings = state.bindings or RunBindings()
+        bindings = state.bindings
         unpinned = [
             b.param for b in bindings.of_kind(InputKind.PINNED) if not b.pinned_rid
         ]
@@ -3130,19 +3211,7 @@ def _for_each_save_resolved(
             )
 
         save_t0 = time.perf_counter()
-        _save_results(
-            result_tbl,
-            outputs,
-            state.output_names,
-            state.config_keys,
-            db,
-            bindings,
-            generates_file=generates_file,
-            endpoint_kind=endpoint_kind,
-            glue_virtual=state.glue_virtual,
-            glue_chains=state.glue_chains,
-            fn=state.fn,
-        )
+        _save_results(result_tbl, outputs, state, db)
         save_elapsed = time.perf_counter() - save_t0
         Log.debug(
             f"save_results complete: saved {len(result_tbl)} result(s) in {save_elapsed:.3f}s"
@@ -3157,8 +3226,8 @@ def _for_each_save_resolved(
     # Endpoint DRAFT stamping (D4): the save was suppressed (finalized=False,
     # or explicit save=False), but draft artifacts get the same provenance
     # blob a finalized run would embed — draft:true in place of a record_id.
-    if endpoint_kind and not (save and outputs) and not result_tbl.empty:
-        _stamp_draft_endpoint_artifacts(endpoint_kind, result_tbl, state, db)
+    if state.endpoint_kind and not (save and outputs) and not result_tbl.empty:
+        _stamp_draft_endpoint_artifacts(state.endpoint_kind, result_tbl, state, db)
 
     return result_tbl
 
@@ -4498,7 +4567,7 @@ def _stamp_draft_endpoint_artifacts(
             continue
         # The same assembly the record-mode save uses, so a draft stamp names
         # exactly the edges a real save would record.
-        edges = (state.bindings or RunBindings()).for_combo(row)
+        edges = state.bindings.for_combo(row)
         inputs_map = _stamp_inputs_from_edges(edges)
         schema = {
             k: row[k]
@@ -5015,29 +5084,38 @@ def _apply_per_combo_col_selection(raw: Any, columns: list, cls_name: str) -> An
 def _save_results(
     result_tbl: "pd.DataFrame",
     outputs: list[Any],
-    output_names: list[str],
-    config_keys: dict,
+    state: "_ForEachState",
     db: Any | None,
-    run_bindings: RunBindings,
-    *,
-    generates_file: bool = False,
-    endpoint_kind: "str | None" = None,
-    glue_virtual: "dict | None" = None,
-    glue_chains: "dict | None" = None,
-    fn: Any | None = None,
 ) -> None:
     """Save results from the result table to output variable types using batch operations.
 
-    Every question about what a row consumed is answered by ``run_bindings``
-    (`scidb.bindings.RunBindings`): its edges (`for_combo`), the branch
-    params it inherits (`branch_params_for`) and the selectors the call
-    asked for (`selectors`). The row itself contributes its ``__rid_*`` /
-    ``__vsig_*`` columns and nothing else.
+    Three arguments and the database, where there were seventeen. Everything
+    else this needs is a fact about the CALL, and the call is ``state``
+    (`_ForEachState`) — the output names, the config keys, the glue, the
+    function object, whether it generates a file, which endpoint kind it is.
+    Passing them individually meant every new fact had to be threaded through
+    two more signatures, and a caller that forgot one did not fail: it saved
+    under a default.
+
+    Every question about what a row CONSUMED is answered by
+    ``state.bindings`` (`scidb.bindings.RunBindings`): its edges
+    (`for_combo`), the branch params it inherits (`branch_params_for`) and
+    the selectors the call asked for (`selectors`). The row itself
+    contributes its ``__rid_*`` / ``__vsig_*`` columns and nothing else.
 
     The for_each save path adds config_keys and branch_params tracking on top of the
     direct save, as documented in scidb-identity-and-data-flow.md.
     """
     import pandas as pd
+
+    output_names = state.output_names
+    config_keys = state.config_keys
+    run_bindings = state.bindings
+    generates_file = state.generates_file
+    endpoint_kind = state.endpoint_kind
+    glue_virtual = state.glue_virtual
+    glue_chains = state.glue_chains
+    fn = state.fn
 
     batch_start_time = time.perf_counter()
 
