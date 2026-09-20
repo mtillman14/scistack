@@ -30,6 +30,7 @@ from typing import Any
 
 from scicanonicalhash import canonical_hash
 
+from .bindings import param_of
 from .provenance import (
     CONSTANT_TYPE,
     PATHINPUT_TYPE,
@@ -288,7 +289,7 @@ def _variable_bindings(meta: dict) -> list[tuple[str, str, str | None]]:
     # the edge carries the REAL parameter name, several edges per parameter.
     upstream = _parse_json_dict(meta.get("__upstream"))
     names = {
-        (k[len("__rid_") :] if k.startswith("__rid_") else k) for k in upstream
+        (param_of(k)) for k in upstream
     }
 
     def _fold(param: str) -> str:
@@ -307,7 +308,7 @@ def _variable_bindings(meta: dict) -> list[tuple[str, str, str | None]]:
     for key, rid in upstream.items():
         if rid is None:
             continue
-        param = key[len("__rid_") :] if key.startswith("__rid_") else key
+        param = param_of(key)
         out.append((_fold(param), str(rid), None))
     return out
 

@@ -24,6 +24,7 @@ from scifor import for_each as _scifor_for_each
 
 from . import glue as _glue
 from .across_variants import AcrossVariants
+from .bindings import is_rid_column, param_of, rid_column, rid_columns
 from .filters import Filter
 from .foreach_config import ForEachConfig
 from .log import Log
@@ -876,13 +877,13 @@ def _apply_introspect(result_tbl, state, where):
     # Identify __rid_* / __vsig_* columns and remove them from their current
     # positions (both are internal discriminators: per-record in full
     # iteration, per-variant-group signature in aggregation auto-split).
-    rid_cols = [c for c in result_tbl.columns if c.startswith("__rid_")]
+    rid_cols = rid_columns(result_tbl.columns)
     vsig_cols = [c for c in result_tbl.columns if c.startswith("__vsig_")]
     df = result_tbl.drop(columns=rid_cols + vsig_cols)
 
     # Append per-input record_id + branch_params pairs in input order.
     for rid_col in rid_cols:
-        param_name = rid_col[len("__rid_") :]
+        param_name = param_of(rid_col)
         record_ids = result_tbl[rid_col]
         df[f"_record_id_{param_name}"] = record_ids.values
         df[f"_branch_params_{param_name}"] = [
@@ -1056,7 +1057,7 @@ def _guard_pathoutput_collisions(
                     bp.update(json.loads(v))
                 except (ValueError, TypeError):
                     pass
-            elif str(k).startswith("__rid_"):
+            elif is_rid_column(k):
                 bp.update(rid_to_bp.get(v, {}))
         return bp
 
@@ -1380,9 +1381,9 @@ def _build_skip_hook(
 
         stored_var = sig["var_inputs"]  # param -> [(record_id, selector), ...]
         for key, rid_val in combo.items():
-            if not key.startswith("__rid_") or rid_val is None:
+            if not is_rid_column(key) or rid_val is None:
                 continue
-            param = key[len("__rid_") :]
+            param = param_of(key)
             # Self-referential: the loaded input IS the output record. Stable.
             if str(rid_val) == str(output_record_id):
                 continue
@@ -2063,7 +2064,7 @@ def _for_each_prepare(
                     rid_to_bp[rid] = {}
 
         # Rename __record_id → __rid_{param_name} so per-param tracking is unambiguous
-        rid_col = f"__rid_{param_name}"
+        rid_col = rid_column(param_name)
         df_renamed = df.rename(columns={"__record_id": rid_col})
 
         # Update loaded_inputs with renamed DataFrame (or rewrap in Fixed)
@@ -2208,8 +2209,8 @@ def _for_each_prepare(
     # `_combo_to_rids`, which the save path reads, and nothing that decides
     # how many times the function is called or how its schema is extended.
     colsel_rid_per_combo: dict = {}
-    for rid_col in list(rid_keys) + [f"__rid_{p}" for p in colsel_params]:
-        param_name = rid_col[len("__rid_") :]
+    for rid_col in list(rid_keys) + [rid_column(p) for p in colsel_params]:
+        param_name = param_of(rid_col)
         _is_colsel_input = param_name in colsel_params
         data = loaded_inputs.get(param_name)
 
@@ -2378,7 +2379,7 @@ def _for_each_prepare(
         if _d is not None:
             _diag_inputs.append((_pn, _d))
     for _pn, _d in _diag_inputs:
-        _rid_cols = [c for c in _d.columns if c.startswith("__rid_")]
+        _rid_cols = rid_columns(_d.columns)
         if not _rid_cols:
             continue
         _rc = _rid_cols[0]
@@ -2480,7 +2481,7 @@ def _for_each_prepare(
         _sig_rids_by_combo: dict = {}
 
         for rid_col in rid_keys:
-            param_name = rid_col[len("__rid_") :]
+            param_name = param_of(rid_col)
             data = loaded_inputs.get(param_name)
             _df = data if isinstance(data, pd.DataFrame) else None
             if _df is None or rid_col not in _df.columns:
@@ -2600,7 +2601,7 @@ def _for_each_prepare(
                 _df = data.data
             else:
                 continue
-            rid_cols_in_df = [c for c in _df.columns if c.startswith("__rid_")]
+            rid_cols_in_df = rid_columns(_df.columns)
             empty_schema_cols = [
                 c
                 for c in _df.columns
@@ -2691,7 +2692,7 @@ def _for_each_prepare(
                 **rid_per_combo,
                 **colsel_rid_per_combo,
             }.items():
-                if f"__vsig_{rid_col[len('__rid_') :]}" in vsig_cols:
+                if f"__vsig_{param_of(rid_col)}" in vsig_cols:
                     continue
                 param_rids = []
                 for full_key, rids in mapping.items():
@@ -2706,7 +2707,7 @@ def _for_each_prepare(
                     fc[c] = s
                     group_rids = _sig_rids_by_combo.get(c, {}).get(ck, {}).get(s, [])
                     if group_rids:
-                        rids_by_param["__rid_" + c[len("__vsig_") :]] = group_rids
+                        rids_by_param[rid_column(c[len("__vsig_") :])] = group_rids
                 if _path_placeholder_names:
                     # Group bp = the parsed split-input signatures + any Fixed
                     # inputs' bp; {variant} digests the signature tuple itself.
@@ -2823,7 +2824,7 @@ def _for_each_prepare(
                     # and a single `__rid_*` combo key holds one id. Bind the
                     # first and say so, rather than binding nothing.
                     Log.debug(
-                        f"ColumnSelection '{_cs_col[len('__rid_') :]}' has "
+                        f"ColumnSelection '{param_of(_cs_col)}' has "
                         f"{len(_rids)} record(s) at this location; binding the "
                         f"first for lineage"
                     )
@@ -2850,14 +2851,14 @@ def _for_each_prepare(
                         full_combo[rc_name] = rc_val
                     # Add Fixed input record_ids to combo
                     for fixed_param, fixed_rid in fixed_rid_values.items():
-                        full_combo[f"__rid_{fixed_param}"] = fixed_rid
+                        full_combo[rid_column(fixed_param)] = fixed_rid
                     # Same, for ColumnSelection inputs (lineage only).
                     full_combo.update(_colsel_rid_at_combo)
                     if _path_placeholder_names:
                         _bp_dicts = [
                             rid_to_bp.get(full_combo[k], {})
                             for k in full_combo
-                            if str(k).startswith("__rid_")
+                            if is_rid_column(k)
                         ]
                         _merged, _confl = _merge_group_bp(_bp_dicts)
                         _inject_path_placeholders(
@@ -2873,13 +2874,13 @@ def _for_each_prepare(
                 full_combo = {**combo}
                 # Add Fixed input record_ids to combo
                 for fixed_param, fixed_rid in fixed_rid_values.items():
-                    full_combo[f"__rid_{fixed_param}"] = fixed_rid
+                    full_combo[rid_column(fixed_param)] = fixed_rid
                 full_combo.update(_colsel_rid_at_combo)
                 if _path_placeholder_names:
                     _bp_dicts = [
                         rid_to_bp.get(full_combo[k], {})
                         for k in full_combo
-                        if str(k).startswith("__rid_")
+                        if is_rid_column(k)
                     ]
                     _merged, _confl = _merge_group_bp(_bp_dicts)
                     _inject_path_placeholders(
@@ -3127,7 +3128,7 @@ def _for_each_save_resolved(
         fixed_rids_for_save = lineage_fixed_rids
         if not fixed_rids_for_save and getattr(state, "fixed_rid_values", None):
             fixed_rids_for_save = {
-                f"__rid_{p}": r for p, r in state.fixed_rid_values.items() if r
+                rid_column(p): r for p, r in state.fixed_rid_values.items() if r
             }
         if not fixed_rids_for_save:
             fixed_rids_for_save = _compute_fixed_input_rids(
@@ -3168,7 +3169,7 @@ def _for_each_save_resolved(
             input_selectors=input_selectors,
             generates_file=generates_file,
             endpoint_kind=endpoint_kind,
-            stamp_param_names=[rc[len("__rid_") :] for rc in (state.rid_keys or [])],
+            stamp_param_names=[param_of(rc) for rc in (state.rid_keys or [])],
             glue_virtual=state.glue_virtual,
             glue_chains=state.glue_chains,
             fn=state.fn,
@@ -3201,7 +3202,7 @@ def _remap_fixed_rids_through_glue(fixed_rids: dict, glue_virtual: dict) -> dict
     """
     out = dict(fixed_rids)
     for key, rid in fixed_rids.items():
-        param = key[len("__rid_") :] if key.startswith("__rid_") else key
+        param = param_of(key)
         entry = glue_virtual.get(param)
         if not entry or rid is None:
             continue
@@ -3258,7 +3259,7 @@ def _normalize_variable_inputs(
 
     for param_name, raw_value in resolved.items():
         # Check if this param is a variable input (has __rid_* entry)
-        rid_key = f"__rid_{param_name}"
+        rid_key = rid_column(param_name)
         if rid_key not in current_combo or param_name in as_table_params:
             # Not a variable, or the caller wants the whole table — pass through.
             reconstructed[param_name] = raw_value
@@ -3301,7 +3302,7 @@ def _normalize_variable_inputs(
             # data was a dict.
             df_input = loaded_inputs.get(param_name)
             if isinstance(df_input, pd.DataFrame):
-                rid_col = f"__rid_{param_name}"
+                rid_col = rid_column(param_name)
                 # Columns that are NOT data: internal __ columns + schema/combo keys
                 schema_keys_in_combo = {
                     k for k in current_combo if not k.startswith("__")
@@ -4020,7 +4021,7 @@ def _compute_fixed_input_rids(inputs: dict, db) -> dict:
         try:
             rid = db.find_record_id(inner, value.fixed_metadata)
             if rid:
-                fixed_rids[f"__rid_{name}"] = rid
+                fixed_rids[rid_column(name)] = rid
         except Exception:
             # If lookup fails, skip this Fixed input
             pass
@@ -4488,7 +4489,7 @@ def _collapse_upstream_param(key: str, param_names: "list[str]") -> str:
     Aggregation stores multiple rids per param as indexed keys
     (``__rid_df_0``, ``__rid_df_1``, …); the blob groups them under ``df``.
     """
-    k = key[len("__rid_") :] if str(key).startswith("__rid_") else str(key)
+    k = param_of(key)
     if k in param_names:
         return k
     for p in sorted(param_names, key=len, reverse=True):
@@ -4562,7 +4563,7 @@ def _stamp_draft_endpoint_artifacts(
     if not state.output_names:
         return
     out_name = state.output_names[0]
-    param_names = [rc[len("__rid_") :] for rc in (state.rid_keys or [])]
+    param_names = [param_of(rc) for rc in (state.rid_keys or [])]
     schema_keys = list(state.current_schema_keys or [])
     stamped = 0
     for row in result_tbl.to_dict("records"):
@@ -4571,11 +4572,11 @@ def _stamp_draft_endpoint_artifacts(
             continue
         inputs_map: dict = {}
         for col, val in row.items():
-            if not str(col).startswith("__rid_"):
+            if not is_rid_column(col):
                 continue
             if val is None or (isinstance(val, float) and pd.isna(val)):
                 continue
-            inputs_map.setdefault(col[len("__rid_") :], []).append(str(val))
+            inputs_map.setdefault(param_of(col), []).append(str(val))
         if (
             not inputs_map
             and state.combo_to_rids is not None
@@ -5155,7 +5156,7 @@ def _save_results(
     # the output records are saved with NO consumed-input edges → broken lineage
     # AND the precondition for the re-run orphan/duplicate cascade (records can't
     # be tied to the input version they consumed). Cheap: inspects columns once.
-    _rid_cols_present = [c for c in result_tbl.columns if c.startswith("__rid_")]
+    _rid_cols_present = rid_columns(result_tbl.columns)
     # combo_to_rids may be a non-empty dict of EMPTY rid-maps (aggregation
     # bookkeeping with no actual upstream records) — that still yields no input
     # edges, so check for real rids rather than mere presence.
@@ -5316,17 +5317,17 @@ def _save_results(
         _sel = input_selectors or {}
         _row_bindings: dict = {}
         for _col, _val in row.items():
-            if not _col.startswith("__rid_"):
+            if not is_rid_column(_col):
                 continue
             if _val is None or (isinstance(_val, float) and pd.isna(_val)):
                 continue
-            _param = _col[len("__rid_") :]
+            _param = param_of(_col)
             _row_bindings[_param] = str(_val)
         if lineage_fixed_rids:
             for _k, _v in lineage_fixed_rids.items():
                 if _v is None:
                     continue
-                _param = _k[len("__rid_") :] if _k.startswith("__rid_") else _k
+                _param = param_of(_k)
                 _row_bindings.setdefault(_param, str(_v))
         if _row_bindings:
             save_metadata["__graph_var_bindings"] = [
@@ -5385,11 +5386,7 @@ def _save_results(
                     _agg_bindings = []
                     _bound_params: set = set()
                     for _rid_col, _rids in rids_by_param.items():
-                        _param = (
-                            _rid_col[len("__rid_") :]
-                            if _rid_col.startswith("__rid_")
-                            else _rid_col
-                        )
+                        _param = param_of(_rid_col)
                         for _rid in _rids:
                             _agg_bindings.append((_param, str(_rid), _sel.get(_param)))
                             _bound_params.add(_param)
@@ -5399,7 +5396,7 @@ def _save_results(
                     for _k, _v in (lineage_fixed_rids or {}).items():
                         if _v is None:
                             continue
-                        _param = _k[len("__rid_") :] if _k.startswith("__rid_") else _k
+                        _param = param_of(_k)
                         if _param not in _bound_params:
                             _agg_bindings.append((_param, str(_v), _sel.get(_param)))
                     save_metadata["__graph_var_bindings"] = _agg_bindings
