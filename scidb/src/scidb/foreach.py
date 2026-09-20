@@ -3116,12 +3116,23 @@ def _for_each_save_resolved(
         )
         # Compute Fixed input rids for the bipartite graph edges if not provided
         # (Fixed inputs contribute __graph_var_bindings just like variable inputs).
+        # The pinned record of every Fixed input, for the graph edges. Three
+        # sources, in order: what a lineage caller handed in; what Step 12
+        # resolved from the loaded frame (`state.fixed_rid_values`, keyed by
+        # param — this is the one every ordinary Python run has, and until
+        # 2026-09-20 it never reached here: only the caller-supplied dict was
+        # read, and the database fallback below got a `db` that is None when
+        # the global database is in use, so an aggregating call recorded no
+        # edge for its Fixed input at all); and the database lookup last.
         fixed_rids_for_save = lineage_fixed_rids
+        if not fixed_rids_for_save and getattr(state, "fixed_rid_values", None):
+            fixed_rids_for_save = {
+                f"__rid_{p}": r for p, r in state.fixed_rid_values.items() if r
+            }
         if not fixed_rids_for_save:
-            # Empty as well as None: Step 12 records a Fixed rid only when the
-            # pin resolves to one row of the loaded frame; the database lookup
-            # here is the fallback for anything it could not place.
-            fixed_rids_for_save = _compute_fixed_input_rids(inputs, db)
+            fixed_rids_for_save = _compute_fixed_input_rids(
+                inputs, db if db is not None else _active_database()
+            )
             if fixed_rids_for_save:
                 Log.debug(
                     f"computed {len(fixed_rids_for_save)} Fixed input rid(s) for graph: {list(fixed_rids_for_save.keys())}"
@@ -5912,3 +5923,14 @@ def _propagate_schema(db, distribute: bool) -> None:
             "but no database is available. Either pass db= to for_each or "
             "call configure_database() first."
         )
+
+
+def _active_database():
+    """The configured database, or ``None`` — for callers holding ``db=None``
+    that still need a lookup (the Fixed-rid fallback at save)."""
+    try:
+        from .database import get_database
+
+        return get_database()
+    except Exception:
+        return None
