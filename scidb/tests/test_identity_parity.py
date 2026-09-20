@@ -63,6 +63,10 @@ class Out(BaseVariable):
     pass
 
 
+class Ref(BaseVariable):
+    """A subject-level reference record, read fully pinned."""
+
+
 def _seed():
     for subject in ("01", "02"):
         for trial in ("1", "2"):
@@ -85,6 +89,10 @@ def scaled(value, factor):
 
 def pooled(value):
     return float(len(value))
+
+
+def with_ref(value, ref):
+    return float(len(value)) + float(pd.DataFrame(ref)["r"].iloc[0])
 
 
 # ---------------------------------------------------------------------------
@@ -229,15 +237,32 @@ class TestCallIdForwardEqualsBackward:
         template = PathInput("{subject}/note.txt", root_folder=str(root))
         self._check(db, read_note, {"path": template}, dict(subject=[]))
 
-    def test_fixed(self, db):
+    def test_fixed_full_iteration(self, db):
         """A Fixed pin is the EDGE (the pinned record id), not the call site —
-        one node on the canvas for every pin of one type. Decided 2026-09-20."""
+        one node on the canvas for every pin of one type. Decided 2026-09-20.
+        The realistic shape: a reference record, fully pinned, read beside a
+        per-combo input."""
         _seed()
+        Ref.save(pd.DataFrame({"r": [1.0]}), subject="01")
+        Ref.save(pd.DataFrame({"r": [2.0]}), subject="02")
         self._check(
             db,
-            pooled,
-            {"value": Fixed(Wide, subject="01")},
-            dict(trial=[]),
+            with_ref,
+            {"value": Wide, "ref": Fixed(Ref, subject="01")},
+            dict(subject=[], trial=[], cycle=[]),
+        )
+
+    def test_fixed_aggregation(self, db):
+        """The same pin on an aggregating call — the path that recorded NO edge
+        for a Fixed input at all until 2026-09-20."""
+        _seed()
+        Ref.save(pd.DataFrame({"r": [1.0]}), subject="01")
+        Ref.save(pd.DataFrame({"r": [2.0]}), subject="02")
+        self._check(
+            db,
+            with_ref,
+            {"value": Wide, "ref": Fixed(Ref, subject="01")},
+            dict(subject=[], trial=[]),
         )
 
 
