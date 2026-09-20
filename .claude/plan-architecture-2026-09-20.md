@@ -107,7 +107,7 @@ Items 7 (MATLAB as a bridge), 8 (`DatabaseManager` split), 9 (frontend), 10
 
 ## Status
 
-### Stage 1 — built 2026-09-20, tests unrun
+### Stage 1 — built 2026-09-20, **green** (106 passed, 5 pinned xfails in the parity suite; user-run)
 
 * `scidb.provenance.compute_wiring_id` / `parse_path_input_spec` /
   `strip_path_input_specs` are the owners; `graph_builder.wiring_id`,
