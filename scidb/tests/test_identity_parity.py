@@ -170,12 +170,31 @@ def _backward_call_ids(db, fn_name: str) -> set[str]:
 
 class TestCallIdForwardEqualsBackward:
     def _check(self, db, fn, inputs, iterate, **options):
+        # Built BEFORE the run: if for_each mutated a spec in place, the id
+        # computed afterwards would silently describe a different call.
+        config = ForEachConfig(fn, inputs, **options)
+        forward = config.to_call_id()
         for_each(fn, inputs, [Out], **iterate, **options)
-        forward = ForEachConfig(fn, inputs, **options).to_call_id()
-        backward = _backward_call_ids(db, fn.__name__)
+        assert ForEachConfig(fn, inputs, **options).to_call_id() == forward, (
+            "for_each mutated the inputs dict in place"
+        )
+        variants = [v for v in db.list_pipeline_variants() if v["function_name"] == fn.__name__]
+        backward = {v["call_id"] for v in variants}
         assert backward, "no variant recorded"
+        forward_keys = {
+            "__fn": config.to_version_keys()["__fn"],
+            "__inputs": config.call_site_inputs(),
+            "__constants": config.to_version_keys().get("__constants"),
+        }
         assert forward in backward, (
-            f"forward call_id {forward} is not among pipeline_variants' {sorted(backward)}"
+            f"forward call_id {forward} is not among pipeline_variants' {sorted(backward)}\n"
+            f"  forward keys:  {forward_keys}\n"
+            f"  backward rows: "
+            + "; ".join(
+                f"input_types={v.get('input_types')} constants={v.get('constants')} "
+                f"run_options={v.get('run_options')}"
+                for v in variants
+            )
         )
         # The SECOND backward reconstruction — the one check_node_state
         # compares a pipeline step's forward id against.
