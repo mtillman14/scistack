@@ -390,3 +390,85 @@ class TestAggregationIsWholeAgain:
             )
         assert len(Out.load(as_df=True, version="all")) == before
         assert "skip_computed: 4/4 combos skipped" in caplog.text, caplog.text
+
+
+# ---------------------------------------------------------------------------
+# aggregation over variants: one invocation per variant group, predicted
+# ---------------------------------------------------------------------------
+
+
+class Scaled(BaseVariable):
+    """A per-cycle record that exists in two variants (`scaled` at 2 and 3)."""
+
+
+def _seed_variants():
+    _seed()
+    for factor in (2.0, 3.0):
+        for_each(
+            scaled, {"value": Wide, "factor": factor}, [Scaled], subject=[], trial=[], cycle=[]
+        )
+
+
+class TestVariantSplitIsPredicted:
+    """An aggregating call over variant records auto-splits: one invocation
+    per variant group per location (`scidb.bindings.RecordPool`). Until
+    2026-09-20 the expected-invocation predictor pooled the groups into one
+    invocation that was never written, so such a node could never plan
+    green — the "known gap" both sides now close with ONE signature recipe
+    (`variant_signature`)."""
+
+    def test_the_run_writes_one_invocation_per_group(self, db):
+        _seed_variants()
+        for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
+        # 2 subjects x 2 trials x 2 variant groups
+        n = db._duck._fetchone(
+            "SELECT COUNT(DISTINCT invocation_id) FROM _invocation WHERE function_name = ?",
+            ["pooled"],
+        )[0]
+        assert n == 8, n
+
+    def test_every_written_invocation_is_predicted(self, db):
+        _seed_variants()
+        for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
+        from scilineage.hashing import compute_function_hash
+
+        expected = pq.expected_invocations_for_function(
+            db, "pooled", compute_function_hash(pooled, truncate=16)
+        )
+        written = {
+            inv
+            for (inv,) in db._duck._fetchall(
+                "SELECT invocation_id FROM _invocation WHERE function_name = ?", ["pooled"]
+            )
+        }
+        predicted = {inv for inv, _sid in expected}
+        assert predicted == written, (
+            f"predicted-only: {sorted(predicted - written)}, "
+            f"written-only: {sorted(written - predicted)}"
+        )
+
+    def test_the_step_plans_green_after_its_run(self, db):
+        from scidb.state import check_node_state
+
+        _seed_variants()
+        for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
+        forward = ForEachConfig(pooled, {"value": Scaled}).to_call_id()
+        node = check_node_state(pooled, [Out], inputs={"value": Scaled}, db=db, call_id=forward)
+        assert node["state"] == "green", node
+
+    def test_a_rerun_skips_every_group(self, db, caplog):
+        import logging
+
+        _seed_variants()
+        for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
+        before = len(Out.load(as_df=True, version="all"))
+        with caplog.at_level(logging.INFO):
+            for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[], skip_computed=True)
+        assert len(Out.load(as_df=True, version="all")) == before
+        assert "skip_computed: 8/8 combos skipped" in caplog.text, caplog.text
+
+    def test_invocation_ids_rebuild_from_the_graph(self, db):
+        _seed_variants()
+        for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
+        pairs = _recompute_invocation_ids(db, "Out")
+        assert pairs and all(s == r for s, r in pairs)

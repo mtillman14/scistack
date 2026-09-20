@@ -91,3 +91,49 @@ def test_coarse_input_has_lineage(db):
     for_each(_sum, {"signal": CoarseInput}, [AggOut], subject=["S01"], session=["1"])
     out = AggOut.load(subject="S01", session="1")
     assert db.has_lineage(out.record_id) is True
+
+
+class Demo(BaseVariable):
+    """Stored at subject level only — COARSER than the iterated level below."""
+
+
+class Fine(BaseVariable):
+    """Stored at subject/session/cycle — pooled per session below."""
+
+
+def _both(signal, demo):
+    return _sum(signal) + _sum(demo)
+
+
+def test_input_coarser_than_the_iterated_level_records_its_edge(db):
+    """Iterate subject+session, pooling cycles; a subject-level input serves
+    every session beneath it. The aggregation pool is keyed by the iterated
+    keys the input POPULATES (`RecordPool.location_keys`) — keyed by all of
+    them, the subject-level record matched no session and the output was
+    saved with no edge to it."""
+    from scidb import provenance_query
+
+    Demo.save(10.0, subject="S01")
+    for cycle in ("1", "2"):
+        Fine.save(1.0, subject="S01", session="1", cycle=cycle)
+    demo = Demo.load(subject="S01")
+    demo_sid = _schema_id_of(db, demo.record_id)
+
+    for_each(_both, {"signal": Fine, "demo": Demo}, [AggOut], subject=["S01"], session=["1"])
+
+    out = AggOut.load(subject="S01", session="1")
+    consumed = provenance_query.consumed_input_schema_ids(db._duck, [out.record_id])
+    assert demo_sid in consumed.get(out.record_id, frozenset()), (
+        f"AggOut must record Demo@{demo_sid} as a consumed input; got "
+        f"{consumed.get(out.record_id)}"
+    )
+    params = {
+        p
+        for (p,) in db._duck._fetchall(
+            "SELECT DISTINCT ii.param_name FROM _invocation_input ii "
+            "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
+            "WHERE inv.function_name = ?",
+            ["_both"],
+        )
+    }
+    assert params == {"signal", "demo"}, params

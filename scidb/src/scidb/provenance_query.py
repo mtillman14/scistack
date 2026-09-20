@@ -16,6 +16,7 @@ import ast
 import json
 import logging
 
+from .bindings import signature_conflicts_with, variant_signature
 from .database import _from_schema_str
 from .provenance import (
     CONSTANT_TYPE,
@@ -2717,10 +2718,16 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     Without a known level (a config with no outputs yet, or the never-run
     fallback) the old per-location cross product is used.
 
-    Known gap: an aggregating call that auto-splits its pooled records by
-    variant group (``__vsig``) writes one invocation per group; this pools
-    them into one. Such a config predicts an invocation that was never
-    written and reads as missing.
+    An aggregating call auto-splits its pooled records by variant group
+    (``scidb.bindings.variant_signature`` of each record's derived branch
+    params — one call per group, Cartesian across split inputs, exactly as
+    the save path expands its combos), so the prediction is grouped the same
+    way with the same recipe. A ``ColumnSelection`` input pools every group
+    (it never splits on the save side either).
+
+    Remaining gap: ``AcrossVariants`` is a call-site wrapper the graph does
+    not record, so an input the run pooled explicitly is predicted split;
+    such a config reads as missing (conservative: never falsely green).
     """
     import itertools
 
@@ -2737,9 +2744,23 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
         param: _current_records_by_schema(duck, vtype)
         for param, vtype in input_types.items()
     }
+    # Every candidate record's variant identity, in one closure build — the
+    # aggregation grouping below reads it. Computed on the RAW rids; a glued
+    # param's virtual rid inherits its source's (positional: the virtual map
+    # preserves order).
+    raw = dict(per_param)
+    bp_by_rid = branch_params_batch(
+        duck, [rid for m in raw.values() for rids in m.values() for rid in rids]
+    )
     # Glued params bind to a virtual record, not the raw one — predict the
     # same id the save path wrote.
     per_param = _glue_virtualize(per_param, cfg)
+    for p, by_sid in per_param.items():
+        if by_sid is raw.get(p):
+            continue
+        for sid, rids in by_sid.items():
+            for raw_rid, virt in zip(raw[p].get(sid, []), rids):
+                bp_by_rid[virt] = bp_by_rid.get(raw_rid, {})
     param_names = list(input_types.keys())
 
     def _emit(choices_by_param: dict, sid) -> None:
@@ -2810,7 +2831,21 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
             if p in at_level and L in at_level[p]:
                 choices_by_param[p] = [(p, [rid]) for rid in at_level[p][L]]
             elif p in pooled and L in pooled[p]:
-                choices_by_param[p] = [(p, sorted(pooled[p][L]))]
+                rids = pooled[p][L]
+                if selectors.get(p):
+                    choices_by_param[p] = [(p, sorted(rids))]
+                    continue
+                groups: dict = {}
+                for rid in rids:
+                    groups.setdefault(variant_signature(bp_by_rid.get(rid, {})), []).append(rid)
+                location = dict(zip(iterated, L))
+                aligned = [
+                    sig for sig in sorted(groups) if not signature_conflicts_with(sig, location)
+                ]
+                if not aligned:
+                    ok = False  # every group contradicts the location: no call ran here
+                    break
+                choices_by_param[p] = [(p, sorted(groups[sig])) for sig in aligned]
             elif p in coarse:
                 serving = [
                     (p, [rid])

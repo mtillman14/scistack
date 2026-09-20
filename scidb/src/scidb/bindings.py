@@ -9,8 +9,10 @@ survive five hand-offs, and until this module each was spelled differently:
 * ``__rid_{param}`` — the same rid renamed per parameter (Step 12), then a
   key on each combination (so scifor filters the frame to that record per
   call), then a meta column on the result row;
-* ``__rid_{param}_{i}`` — the aggregation path's ``__upstream`` dict, which
-  needed unique keys (gone since 2026-09-20);
+* ``__vsig_{param}`` — under aggregation, not a rid but the SIGNATURE of a
+  variant group (the JSON of its records' branch params), riding on the
+  frame and the combo exactly like a rid, and the only link from a combo
+  to the set of records it pooled (see "Variant groups" below);
 * a bare string — the skip gate's rid sets;
 * ``(param, rid, selector)`` — the graph edge.
 
@@ -139,51 +141,220 @@ class Binding:
         return cls(str(param), str(rid), None if selector is None else str(selector))
 
 
+# ---------------------------------------------------------------------------
+# Variant groups — the aggregation-mode selection
+# ---------------------------------------------------------------------------
+# Full iteration selects ONE record per input per call and carries it as
+# ``__rid_{param}``. Aggregation selects a SET: every record of the input
+# below the iterated location — split by *variant group*, so cycles filtered
+# with ``low_hz=20`` and cycles filtered with ``low_hz=50`` never pool into one
+# aggregate (that double-counts and destroys variant identity; decision D1 in
+# ``endpoints-viz-and-stats-design.md``). A group is identified by its
+# SIGNATURE: the canonical JSON of the records' derived branch params
+# (``{"bandpass.low_hz": 20}``), and it rides on the frame and the combo as
+# ``__vsig_{param}`` exactly the way a rid rides as ``__rid_{param}`` — the
+# same transport, the same seam, and the same reason it is a column: scifor's
+# per-combo filter only knows how to filter on columns. ``AcrossVariants``
+# opts an input out of the split (pool everything, attach the branch params
+# as ordinary columns); a ``ColumnSelection`` input never splits.
+#
+# ``__save__.<key>`` entries in a signature are save-time kwargs that are BOTH
+# a discriminator and a loaded data column scifor row-filters by when
+# ``<key>`` is iterated; a group whose value contradicts the combo's own is
+# not paired with it (:func:`signature_conflicts_with`).
+
+VSIG_PREFIX = "__vsig_"
+SAVE_KWARG_PREFIX = "__save__."
+
+
+def vsig_column(param: str) -> str:
+    """``__vsig_{param}`` — the variant-group signature column / combo key."""
+    return f"{VSIG_PREFIX}{param}"
+
+
+def is_vsig_column(column: Any) -> bool:
+    return str(column).startswith(VSIG_PREFIX)
+
+
+def param_of_vsig(column: Any) -> str:
+    s = str(column)
+    return s[len(VSIG_PREFIX) :] if s.startswith(VSIG_PREFIX) else s
+
+
+def is_internal_column(column: Any) -> bool:
+    """A ``__rid_*`` or ``__vsig_*`` column: scidb's own transport, filtered
+    on by scifor and hidden from the user function."""
+    return is_rid_column(column) or is_vsig_column(column)
+
+
+def variant_signature(branch_params: Mapping[str, Any] | None) -> str:
+    """The canonical identity of a variant group: its derived branch params
+    as sorted JSON. ONE recipe, shared by the save path (grouping loaded
+    records, whose branch params arrived through a JSON column) and the
+    expected-invocation predictor (grouping current records straight from
+    the graph), so the two can never disagree on what a group is — the
+    value is normalised through one JSON round trip so a tuple and a list,
+    or an int read back from JSON, sign identically on both sides."""
+    import json
+
+    normalised = json.loads(json.dumps(dict(branch_params or {}), default=str))
+    return json.dumps(normalised, sort_keys=True)
+
+
+#: The signature of a record with no derived branch params — and the value a
+#: split input takes at a combination where it has no data, so the combo
+#: still flows through and skips gracefully.
+EMPTY_SIGNATURE = variant_signature({})
+
+
+def signature_conflicts_with(signature: str, location: Mapping[str, Any]) -> bool:
+    """True when a ``__save__.<key>`` entry contradicts *location*'s own
+    value for ``<key>`` — pairing that group with that combination would call
+    the function on rows the combination's own filter excludes."""
+    import json
+
+    if signature == EMPTY_SIGNATURE:
+        return False
+    for k, v in json.loads(signature).items():
+        if not str(k).startswith(SAVE_KWARG_PREFIX):
+            continue
+        bare = str(k)[len(SAVE_KWARG_PREFIX) :]
+        if bare in location and str(location[bare]) != str(v):
+            return True
+    return False
+
+
+def merge_branch_params(dicts: Iterable[Mapping[str, Any]]) -> tuple[dict, list[str]]:
+    """Fold several records' branch params into one, last write wins,
+    returning the merged dict and a description of every key that changed
+    value on the way — a conflict means two variant groups were pooled
+    into one call, which the auto-split exists to prevent."""
+    merged: dict = {}
+    conflicts: list[str] = []
+    for bp in dicts:
+        for k, v in (bp or {}).items():
+            if k in merged and merged[k] != v:
+                conflicts.append(f"{k!r}: {merged[k]!r} -> {v!r}")
+            merged[k] = v
+    return merged, conflicts
+
+
+@dataclass(frozen=True)
+class VariantGroup:
+    """One variant group of one input at one iterated location: the records
+    that pool into a single aggregating call."""
+
+    signature: str
+    rids: tuple[str, ...]
+
+    @property
+    def branch_params(self) -> dict:
+        import json
+
+        return dict(json.loads(self.signature))
+
+
+@dataclass
+class RecordPool:
+    """What an ``AGGREGATED`` input pools: its records per iterated location,
+    per variant group.
+
+    ``location_keys`` are the iterated schema keys THIS input populates — an
+    input coarser than the iterated level (a subject-level table under a
+    per-session aggregation) is keyed by the subset it has, so it is found
+    at every location beneath it instead of at none. ``split`` says whether
+    the groups are separate calls (one ``__vsig_{param}`` value per call) or
+    pooled into one (``AcrossVariants``, ``ColumnSelection``).
+    """
+
+    location_keys: tuple[str, ...] = ()
+    groups_by_location: dict[tuple, dict[str, VariantGroup]] = field(default_factory=dict)
+    split: bool = True
+
+    def location_of(self, combo: Mapping[str, Any]) -> tuple:
+        return tuple(str(combo.get(k, "")) for k in self.location_keys)
+
+    def groups_at(self, combo: Mapping[str, Any]) -> dict[str, VariantGroup]:
+        return self.groups_by_location.get(self.location_of(combo), {})
+
+    def signatures(self) -> list[str]:
+        """Every signature seen at any location, first-seen order."""
+        return list(
+            dict.fromkeys(sig for groups in self.groups_by_location.values() for sig in groups)
+        )
+
+    def rids_at(self, combo: Mapping[str, Any], param: str) -> list[str]:
+        """The records this input feeds the call that *combo* runs: the
+        group the combo names in ``__vsig_{param}`` when split, every
+        group's records when pooled."""
+        groups = self.groups_at(combo)
+        if not self.split:
+            return [rid for g in groups.values() for rid in g.rids]
+        group = groups.get(str(combo.get(vsig_column(param), EMPTY_SIGNATURE)))
+        return list(group.rids) if group else []
+
+
 @dataclass
 class InputBinding:
     """One input's whole story after Step 12.
 
-    ``rids`` is every record this input can bind — one for ``PINNED``, the
-    per-location candidates for ``ITERATE`` / ``LINEAGE_ONLY``, the pooled
-    set for ``AGGREGATED`` — keyed by the (stringified) schema location so
-    a combination can ask for its own. ``rid_to_bp`` is each rid's branch
-    params, the variant identity the save path stamps on the output.
+    ``pinned_rid`` is the one record a ``PINNED`` input reads; ``pool`` is
+    what an ``AGGREGATED`` input reads (per location, per variant group);
+    an ``ITERATE`` / ``LINEAGE_ONLY`` input's record rides on the
+    combination itself as ``__rid_{param}``.
     """
 
     param: str
     kind: InputKind
     type_name: str | None = None
     selector: str | None = None
-    rids_by_location: dict[tuple, list[str]] = field(default_factory=dict)
     pinned_rid: str | None = None
-    rid_to_bp: dict[str, dict] = field(default_factory=dict)
+    pool: RecordPool | None = None
 
     @property
     def column(self) -> str:
         return rid_column(self.param)
 
-    def all_rids(self) -> list[str]:
-        out: list[str] = []
-        if self.pinned_rid:
-            out.append(self.pinned_rid)
-        for rids in self.rids_by_location.values():
-            out.extend(rids)
-        return out
+    @property
+    def vsig_column(self) -> str:
+        return vsig_column(self.param)
+
+    @property
+    def splits(self) -> bool:
+        """One call per variant group (carries a ``__vsig_`` column)."""
+        return self.pool is not None and self.pool.split
+
+    def rids_for(self, combo: Mapping[str, Any]) -> list[str]:
+        """The records this input binds in the call *combo* runs."""
+        if self.pool is not None:
+            return self.pool.rids_at(combo, self.param)
+        value = combo.get(self.column)
+        if value is not None and not (isinstance(value, float) and value != value):
+            return [str(value)]
+        return [self.pinned_rid] if self.pinned_rid else []
 
 
 @dataclass
 class RunBindings:
     """Every input's :class:`InputBinding`, and the ONE row→edges assembly.
 
-    :meth:`for_combo` is the only place an invocation's edge list is built:
-    full iteration reads ``__rid_*`` off the combination, aggregation reads
-    the pooled set for the combination's location, pinned rids are appended
-    — and nothing else assembles edges. Its result travels TYPED on the
-    ``GraphRecord`` the save hands to ``record_run``, and its invocation id
-    is stamped into the record's version keys as ``__invocation_id``.
+    :meth:`rids_for_combo` is the only place "which records does this call
+    consume" is answered — the save path's edges, the skip gate's expected
+    rid set and the draft endpoint stamp all read it — and
+    :meth:`for_combo` types that answer as the graph's edge list. Its result
+    travels TYPED on the ``GraphRecord`` the save hands to ``record_run``,
+    and its invocation id is stamped into the record's version keys as
+    ``__invocation_id``.
+
+    ``rid_to_bp`` is every loaded record's derived branch params (the
+    variant identity the save path checks for conflicts); ``iterated_keys``
+    are the schema keys an aggregating run iterated, in combo order (empty
+    for a grand aggregation and for full iteration).
     """
 
     inputs: dict[str, InputBinding] = field(default_factory=dict)
+    rid_to_bp: dict[str, dict] = field(default_factory=dict)
+    iterated_keys: tuple[str, ...] = ()
 
     def __getitem__(self, param: str) -> InputBinding:
         return self.inputs[param]
@@ -198,39 +369,47 @@ class RunBindings:
     def selectors(self) -> dict[str, str | None]:
         return {p: b.selector for p, b in self.inputs.items()}
 
-    def for_combo(
-        self,
-        combo: Mapping[str, Any],
-        pooled: Mapping[str, Iterable[str]] | None = None,
-    ) -> list[Binding]:
-        """The edges of the invocation that *combo* runs.
+    @property
+    def pinned_rids(self) -> dict[str, str]:
+        return {p: b.pinned_rid for p, b in self.inputs.items() if b.pinned_rid}
 
-        *combo* carries ``__rid_{param}`` for every ``ITERATE`` /
-        ``LINEAGE_ONLY`` / ``PINNED`` input in full iteration; an aggregating
-        call passes the location's pooled rids per parameter in *pooled*
-        (keyed by param or by its rid column — both are read). A pinned rid
-        missing from both is appended from the binding itself, so a ``Fixed``
-        input is an edge in every mode.
-        """
-        edges: list[Binding] = []
-        bound: set[str] = set()
-        for key, value in combo.items():
-            if not is_rid_column(key) or value is None:
-                continue
-            if isinstance(value, float) and value != value:  # NaN
-                continue
-            param = param_of(key)
-            edges.append(Binding(param, str(value), self.selectors.get(param)))
-            bound.add(param)
-        for key, rids in (pooled or {}).items():
-            param = param_of(key)
-            for rid in rids:
-                if rid is None:
-                    continue
-                edges.append(Binding(param, str(rid), self.selectors.get(param)))
-                bound.add(param)
+    @property
+    def split_params(self) -> list[str]:
+        """Inputs that expand one call per variant group, in input order."""
+        return [p for p, b in self.inputs.items() if b.splits]
+
+    @property
+    def vsig_columns(self) -> list[str]:
+        return [vsig_column(p) for p in self.split_params]
+
+    def pin(self, param: str, rid: str) -> None:
+        """Bind *param* to one record (a ``Fixed`` input whose rid was
+        resolved after Step 12, or remapped through a glue chain)."""
+        binding = self.inputs.get(param)
+        if binding is None:
+            self.inputs[param] = InputBinding(param=param, kind=InputKind.PINNED, pinned_rid=rid)
+        else:
+            binding.pinned_rid = rid
+
+    def rids_for_combo(self, combo: Mapping[str, Any]) -> dict[str, list[str]]:
+        """``{param: [rid, ...]}`` — every record the call *combo* runs
+        consumes, in every mode."""
+        out: dict[str, list[str]] = {}
         for param, binding in self.inputs.items():
-            if binding.pinned_rid and param not in bound:
-                edges.append(Binding(param, binding.pinned_rid, binding.selector))
-                bound.add(param)
-        return edges
+            rids = binding.rids_for(combo)
+            if rids:
+                out[param] = rids
+        return out
+
+    def for_combo(self, combo: Mapping[str, Any]) -> list[Binding]:
+        """The edges of the invocation that *combo* runs."""
+        return [
+            Binding(param, str(rid), self.inputs[param].selector)
+            for param, rids in self.rids_for_combo(combo).items()
+            for rid in rids
+        ]
+
+    def branch_params_for(self, edges: Iterable[Binding]) -> tuple[dict, list[str]]:
+        """The branch params an output built from *edges* inherits, merged
+        across every consumed record, with any conflict named."""
+        return merge_branch_params(self.rid_to_bp.get(e.rid, {}) for e in edges)

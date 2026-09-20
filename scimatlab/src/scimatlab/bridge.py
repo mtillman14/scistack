@@ -579,6 +579,7 @@ def for_each_prepare(
         If any input resolves to a ``PerComboLoader`` (per-combo loading
         is not yet supported on the MATLAB path).
     """
+    from scidb.bindings import is_internal_column, rid_column
     from scidb.foreach import (
         PerComboLoader,
         PerComboLoaderMerge,
@@ -869,7 +870,7 @@ def for_each_prepare(
     #     columns / extended_metadata_iterables
     rid_rename_map = {k: _sanitize_rid_key(k) for k in state.rid_keys}
     for fixed_param in state.fixed_rid_values:
-        rk = f"__rid_{fixed_param}"
+        rk = rid_column(fixed_param)
         rid_rename_map.setdefault(rk, _sanitize_rid_key(rk))
     # Aggregation auto-split (D1): combos and DataFrame columns carry
     # __vsig_* variant-signature discriminators — same leading-underscore
@@ -879,7 +880,7 @@ def for_each_prepare(
         rid_rename_map.setdefault(k, _sanitize_rid_key(k))
     # Check extended_metadata_iterables for any __rid_*/__vsig_* keys
     for k in state.extended_metadata_iterables:
-        if k.startswith(("__rid_", "__vsig_")) and k not in rid_rename_map:
+        if is_internal_column(k) and k not in rid_rename_map:
             rid_rename_map[k] = _sanitize_rid_key(k)
 
     # Loaded inputs: rename DataFrame columns (and inside wrappers)
@@ -1207,7 +1208,6 @@ def for_each_save(
         outputs=outputs,
         save=bool(save),
         db=db if db is not None and not isinstance(db, type(None)) else None,
-        lineage_fixed_rids=None,
         endpoint_kind=endpoint_kind,
     )
 

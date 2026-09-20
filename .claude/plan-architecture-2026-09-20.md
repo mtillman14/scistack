@@ -266,3 +266,67 @@ Verify: `test_bindings.py`, `test_identity_parity.py`, `test_aggregation*.py`,
 `test_column_selection_lineage.py`, `test_glue_identity.py`,
 `test_variant_pin_node_state.py`, `test_selector_round_trip.py`;
 `tests/integration`.
+
+### `__upstream` removed — built 2026-09-20 (d6920016), tests unrun
+
+A record's identity is its invocation: `invocation_identity(meta, bindings)`
+is the one recipe, `__invocation_id` is a version key, `record_run` refuses
+a graph that disagrees with the stamped id ("identity drift"). `GraphRecord`
+carries typed `bindings`. Verify: `test_provenance_identity.py`,
+`test_provenance_graph.py`, `test_identity_parity.py`, `test_bindings.py`,
+then the whole scidb suite one file at a time, then `tests/integration`.
+
+### 2a, variant groups — built 2026-09-20, tests unrun
+
+`__vsig_{param}` was the last stringly-typed rid-shaped thing: the
+aggregation auto-split's variant-group signature (JSON of a record's
+derived branch params) riding on the frame and the combo the way a rid
+does, with `_combo_to_rids` — a dict keyed by "iterated keys + `__vsig_*`
+values", rebuilt with the same tuple recipe at FOUR readers (two in
+`_save_results`, the draft endpoint stamp, the skip gate) — as the only
+link from a combo to its consumed records. Now in `scidb.bindings`:
+
+* `variant_signature(bp)` / `EMPTY_SIGNATURE` / `vsig_column` /
+  `param_of_vsig` / `is_internal_column` / `signature_conflicts_with`
+  (`__save__.<key>` alignment) / `merge_branch_params` — the spellings and
+  the recipe, one owner. `variant_signature` normalises through one JSON
+  round trip so the save path (branch params read back from a JSON
+  column) and the predictor (branch params straight from the graph) sign
+  identically.
+* `VariantGroup(signature, rids)` and `RecordPool(location_keys,
+  groups_by_location, split)` on `InputBinding.pool` for every
+  `AGGREGATED` input. The pool is keyed by the iterated keys the input
+  POPULATES, so an input coarser than the iterated level is found beneath
+  its location (the old `_sig_rids_by_combo[c][ck]` lookup compared the
+  full iterated tuple and matched nothing — no edge; regression test
+  `test_coarse_input_provenance.py::test_input_coarser_than_the_iterated_level_records_its_edge`).
+* `RunBindings.rids_for_combo(combo)` answers "what did this call consume"
+  in every mode (pool by location + `__vsig_` group / pooled / `__rid_*`
+  off the combo / pinned); `for_combo` types it; `branch_params_for`
+  merges; `pin` binds a late-resolved Fixed rid. `combo_to_rids`,
+  `iterated_keys_ordered`, `lineage_fixed_rids` (a `for_each` kwarg
+  nothing passed) and `input_selectors` are gone; the hook holder is
+  `{"bindings": RunBindings}`; `_save_results` is
+  `(result_tbl, outputs, output_names, config_keys, db, run_bindings, *, …)`
+  (17 → 6 + 5 keyword; the rest is 2b's `state`). `RunBindings` is built
+  at Step 13, before the skip hook (its first reader).
+* The predictor's "variant auto-split" gap is closed:
+  `_predict_config_invocations` groups an aggregated input's current
+  records by `variant_signature(branch_params_batch(...))`, one predicted
+  invocation per group, Cartesian across split inputs, `__save__`
+  alignment applied; a ColumnSelection input pools (as the save side
+  does). Remaining gap, documented in the docstring: `AcrossVariants` is
+  not in the graph, so an explicitly pooled input is predicted split
+  (conservative). `test_identity_parity.py::TestVariantSplitIsPredicted`
+  (5 tests: 8 invocations written, predicted == written, plans green,
+  rerun skips 8/8, ids rebuild).
+* MATLAB bridge: `is_internal_column` / `rid_column` from `scidb.bindings`;
+  `lineage_fixed_rids=None` dropped from its save call. scifor's own
+  `"__rid_" not in k and "__vsig_" not in k` stays (scifor cannot import
+  scidb; that boundary is 2c).
+
+Verify (one package at a time):
+`cd /workspace/scidb && pytest tests/test_bindings.py tests/test_identity_parity.py tests/test_coarse_input_provenance.py tests/test_aggregation.py tests/test_aggregation_with_variants.py tests/test_provenance_identity.py tests/test_provenance_graph.py tests/test_glue_identity.py tests/test_stat_leaves.py tests/test_column_selection_lineage.py -q`
+then `cd /workspace/scidb && pytest tests/ -q -x`, then
+`cd /workspace/tests/integration && pytest -q`, then
+`cd /workspace/scimatlab && pytest tests/ -q -x`.
