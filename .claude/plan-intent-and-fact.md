@@ -236,3 +236,16 @@ Stage 7 remaining (deliberately after a green run): MATLAB route's copy of
 Stage 5 remaining aspects (one commit each): `run_options`, `hidden`,
 edges/constants, `schema_location`. Stored scope is still `global` until
 execution is scope-aware.
+
+### 2026-09-19, later — plan fully built
+
+| stage | commits | verification |
+|---|---|---|
+| 5 (all aspects) | 3e2ce89a | `scistack-gui/tests/test_intent_store.py`, `test_execution_service.py`, `test_graph_builder.py`, `test_api.py` |
+| 7 MATLAB route | 21d12486 | `scistack-gui/tests/test_matlab.py` |
+| 7 `scidb intent` | 2295a70b | `scidb/tests/test_inspect_phase3.py` |
+| 7 plot pins | 6b200788 | `scistack-gui/tests/test_plot_service.py` |
+
+Not done, by design: dropping the superseded tables (after a real-database
+check of the import), and per-pipeline scope on stored rows (blocked on
+scope-aware execution).

@@ -83,6 +83,21 @@ model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.
       `py.scidb.intent.set_ambient_origin('gui');` after the pyenv preamble and
       `...('script');` at the end on both the success and the catch path. After
       running it, the node's last run shows as a GUI run (no amber marker).
+- [ ] **Pins survive the panel.** In Plot Studio, add/rename a variant row,
+      close the panel, reopen the same variable: the rows are back
+      (`scidb.log`: `[plot] <Var>: N stored variant pin(s) replace the default`).
+      Open a DIFFERENT variable: its own default, not the other's pins.
+- [ ] **MATLAB parity.** For a node whose selection came from a Python
+      `Var["col"]` run (no node config), generate the MATLAB command: it loads
+      `Var("col")`, not `Var()`.
+- [ ] **CLI.** `scidb --db <path> intent <fn>` prints the intent-vs-fact table;
+      `--origin script` lists the GUI statements under "not read". `scidb trace
+      <Var> <key=val> --intent` appends one block per function in the chain.
+- [ ] **Hidden state and edges still work** after the storage move: hide a
+      value on a Parameter node, hide/unhide an edge, draw a manual edge,
+      stage a pending constant — each behaves as before, and `scidb.log`
+      shows `[intent_store] import <name>: N row(s) carried over` once on
+      the first start.
 
 ---
 

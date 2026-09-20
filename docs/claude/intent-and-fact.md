@@ -133,6 +133,7 @@ its comparison. Exactly one owner each, in the lowest layer that can host it:
 | `wiring` | which source feeds which parameter | `scidb`, alongside the input-binding shape (`docs/claude/input-binding-round-trip.md`) |
 | `hidden` | which call sites / values / edges are excluded | scidb (it already stores `excluded` on records) |
 | `constants` | pending and recorded constant values | `scidb.foreach_config` |
+| `variant_selection` | a plot's named pins over variant space (`VariantSet`), keyed by name, about the plotted variable; no fact side | `scidb.intent` (shape), `scistackplot.spec.VariantSet` (payload) |
 
 The GUI imports all of them. The precedent that this works is `call_id`:
 scidb owns the recipe (`foreach_config.call_id_from_version_keys`), computes
@@ -223,3 +224,24 @@ shippable.
 | what a binding is | `docs/claude/input-binding-round-trip.md` |
 | why ids move | `docs/claude/placement-qualified-ids.md` |
 | duplication semantics | `services/scope_service.py::duplicate_pipeline`, `_clone_nodes` |
+
+## 11. Status — 2026-09-19, branch `refactor/intent-and-fact`
+
+Every stage of `.claude/plan-intent-and-fact.md` is built:
+
+* **Store:** `_intent` holds all seven execution-intent tables' worth of state
+  plus `variant_selection`. `pipeline_store` keeps its accessors and
+  delegates (`scistack_gui/intent_store.py`, `GRADUATED_ASPECTS` is the
+  progress bar). The old tables are left in place, rows untouched, after a
+  marker-guarded one-time import each; dropping them is a separate step.
+* **Origin:** `_run.origin`; `scidb.intent.run_origin` / `set_ambient_origin`;
+  the GUI run thread, the compiled pipeline and GUI-generated MATLAB commands
+  label `gui`; unlabelled is `script`.
+* **Divergence:** `graph_builder.mark_unused_intent` → amber chip + NOT
+  REFLECTED note; `scidb intent <fn>` / `scidb trace --intent` from the CLI.
+* **One derivation:** the MATLAB route renders
+  `execution_service.variable_inputs_view(targets)`; its own copy is gone.
+* **Schema level fact:** `provenance_query.recorded_schema_keys` — a GUI
+  re-run iterates where the function last ran unless the node says otherwise.
+
+Still `global` scope on every stored row until execution is scope-aware.
