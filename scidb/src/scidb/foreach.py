@@ -5317,6 +5317,48 @@ def _save_results(
                                 upstream[f"{rid_col}_{idx}"] = rid
                 if upstream:
                     save_metadata["__upstream"] = upstream
+                    # The selector the __upstream fallback has nowhere to put.
+                    #
+                    # A ColumnSelection input is deliberately absent from
+                    # `rid_keys` (it prunes combos but never expands them), so
+                    # an AGGREGATION row carries no `__rid_*` column for it and
+                    # the block above leaves `__graph_var_bindings` unset.
+                    # `_variable_bindings` then falls back to `__upstream`,
+                    # which is `{__rid_<param>: record_id}` — no selector
+                    # field at all — and the call is recorded as having read
+                    # the whole variable. That is what made a `for_columns`
+                    # step re-run from the canvas as a whole-table step.
+                    #
+                    # Written with the SAME (indexed) binding names
+                    # `__upstream` uses, so the only thing that changes is the
+                    # selector — and ONLY for calls that actually have one:
+                    # `compute_invocation_id` folds selectors in, so emitting
+                    # this unconditionally would re-identify every aggregation
+                    # ever recorded. See docs/claude/input-binding-round-trip.md.
+                    _agg_bindings = []
+                    for _key, _rid in upstream.items():
+                        _param = (
+                            _key[len("__rid_") :]
+                            if _key.startswith("__rid_")
+                            else _key
+                        )
+                        # The name stays INDEXED (`signal_0`) — folding it to
+                        # the real param is what `execution_service.
+                        # _fold_indexed_params` does on READ, and doing it here
+                        # instead broke skip_computed for every aggregation
+                        # (2026-09-19). Only the selector LOOKUP folds.
+                        _base = _param
+                        if _base not in _sel and "_" in _base:
+                            _head, _, _tail = _base.rpartition("_")
+                            if _tail.isdigit() and _head in _sel:
+                                _base = _head
+                        _agg_bindings.append((_param, str(_rid), _sel.get(_base)))
+                    if any(_s for _, _, _s in _agg_bindings):
+                        save_metadata["__graph_var_bindings"] = _agg_bindings
+                        _selectors_recorded.update(
+                            {p: s for p, _r, s in _agg_bindings if s}
+                        )
+                        _rows_without_bindings -= 1
         elif rid_keys:
             # Full iteration mode: per-row rid lookup
             upstream = {}

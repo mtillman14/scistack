@@ -331,7 +331,21 @@ def column_selections_for_nodes(
         if not function_name:
             return False
         parsed = parse_fn_node_id(bare)
-        return parsed is not None and parsed[0] == function_name
+        if parsed is not None:
+            return parsed[0] == function_name
+        # `parse_fn_node_id` answers only for a CANONICAL id — it requires a
+        # 16-hex call_id and returns None for every other suffix. A config is
+        # saved under whatever id the canvas showed, and a node that has never
+        # run carries a 6-char manual suffix (`fn__{fn}__a1b2c3`), so the
+        # name-scoped reading this function documents has to admit those too;
+        # going through the canonical parser alone silently ran the whole
+        # variable for exactly the case the panel was used for.
+        #
+        # One trailing segment only: `fn__{fn}__{suffix}` with no further
+        # `__`, so a function named `load` can never claim a config saved for
+        # `load__raw`.
+        prefix = f"fn__{function_name}__"
+        return bare.startswith(prefix) and "__" not in bare[len(prefix) :]
 
     merged: dict[str, dict] = {}
     source: dict[str, str] = {}
@@ -358,6 +372,28 @@ def column_selections_for_nodes(
                 continue
             merged[param] = sel
             source[param] = nid
+
+    if not merged:
+        # The silent case, made loud: a selection saved on a node that no id
+        # in this derivation matches looks exactly like no selection at all,
+        # and the run then loads whole tables with nothing in the log to say
+        # why. Naming both sides turns that into a one-line diagnosis.
+        unmatched = sorted(
+            nid
+            for nid, config in pipeline_store.get_node_configs(db).items()
+            if (config or {}).get("columnSelections")
+        )
+        if unmatched:
+            logger.info(
+                "[execution] '%s': no saved column selection applies — "
+                "selections exist on node(s) %s, and this derivation asked "
+                "for %s%s. If the run loads whole tables and the panel shows "
+                "a selection, these two id sets are why.",
+                function_name or "?",
+                unmatched,
+                sorted(wanted) or "(no node ids)",
+                f" plus any fn__{function_name}__* id" if function_name else "",
+            )
     return merged
 
 

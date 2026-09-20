@@ -233,18 +233,6 @@ def test_a_where_filter_runs_only_the_matching_records(seeded, pipeline, pushes,
 # --- column selections from the node config ---------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "A column selection saved on a NODE (`_node_config.columnSelections`) "
-        "does not reach the run: no [column_selection] line is logged and the "
-        "function receives every column. Either "
-        "`column_selections_for_nodes` does not match the config's node id "
-        "(placement-insensitive matching) or `_attach_column_selections` runs "
-        "on targets the run does not use. History-recorded selections DO reach "
-        "it (test_a_python_column_selection_survives_a_gui_rerun)."
-    ),
-    strict=True,
-)
 def test_a_column_selection_in_the_node_config_reaches_the_run(seeded, pipeline, pushes):
     """The panel stores ``columnSelections`` per node; the run must hand the
     function only those columns. ``trial_mean_symmetry`` averages whatever
@@ -272,20 +260,6 @@ def test_a_column_selection_in_the_node_config_reaches_the_run(seeded, pipeline,
     assert {"ankle", "knee"} <= columns
 
 
-@pytest.mark.xfail(
-    reason=(
-        "for_columns records NO selector on its reassembly path: the "
-        "invocation's edges are written from `__upstream` (selector-less), "
-        "not `__graph_var_bindings`, so `pipeline_variants[].selectors` is "
-        "{} and a GUI re-run binds the whole variable. A plain "
-        "ColumnSelection (`Var['col']`) does record one and re-runs "
-        "correctly — see test_a_python_column_selection_survives_a_gui_rerun. "
-        "scidb/tests/test_reload_supersedes_changed_file.py::"
-        "test_a_for_columns_call_records_its_selector covers the simple shape "
-        "that DOES record it; the gap is the reassembly save path."
-    ),
-    strict=True,
-)
 def test_a_for_columns_selection_in_the_node_config_runs_per_column(seeded, pipeline, pushes):
     scidb.for_each(
         pipeline.scale_joint, {"value": pipeline.TrialMeanSymmetry.for_columns(), "scale": pipeline.SCALE},
@@ -334,20 +308,6 @@ def test_a_python_column_selection_survives_a_gui_rerun(seeded, pipeline, pushes
     assert done["success"] is True and done.get("failed_combos", 0) == 0, done
 
 
-@pytest.mark.xfail(
-    reason=(
-        "for_columns records NO selector on its reassembly path: the "
-        "invocation's edges are written from `__upstream` (selector-less), "
-        "not `__graph_var_bindings`, so `pipeline_variants[].selectors` is "
-        "{} and a GUI re-run binds the whole variable. A plain "
-        "ColumnSelection (`Var['col']`) does record one and re-runs "
-        "correctly — see test_a_python_column_selection_survives_a_gui_rerun. "
-        "scidb/tests/test_reload_supersedes_changed_file.py::"
-        "test_a_for_columns_call_records_its_selector covers the simple shape "
-        "that DOES record it; the gap is the reassembly save path."
-    ),
-    strict=True,
-)
 def test_a_python_for_columns_survives_a_gui_rerun(seeded, pipeline, pushes):
     scidb.for_each(
         pipeline.scale_joint, {"value": pipeline.TrialMeanSymmetry.for_columns(), "scale": pipeline.SCALE},
