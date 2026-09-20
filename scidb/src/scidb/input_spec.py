@@ -123,12 +123,22 @@ def find_wrapper(spec: Any, wrapper: type) -> Any:
 def variable_type(spec: Any) -> Any:
     """The loadable variable type *spec* binds, or ``None``.
 
-    "Loadable" is a class or anything exposing ``.load()`` — the same test
-    the loader applies. Returns ``None`` for a constant, a ``PathInput``, a
-    marker or a bare DataFrame, so a caller can use it as the "is this a
-    record-bearing input?" question too.
+    "Loadable" is a class or anything exposing ``.load()``, with ``PathInput``
+    excluded BEFORE that fallback — it has a real ``.load()`` (for
+    standalone/scifor use) but under scidb its per-combo resolution belongs
+    to scifor's for_each loop, not the variable loader, and it is identified
+    by its TEMPLATE (``to_key()``), not by a type name. The same exclusion,
+    for the same reason, as ``foreach._is_loadable``.
+
+    Returns ``None`` for a constant, a ``PathInput``, a ``Merge``, a marker
+    or a bare DataFrame, so a caller can use it as the "does this input bind
+    records of ONE variable type?" question too.
     """
+    from scifor.pathinput import PathInput
+
     inner = peel(spec)
+    if isinstance(inner, PathInput):
+        return None
     if isinstance(inner, type) or hasattr(inner, "load"):
         return inner
     return None

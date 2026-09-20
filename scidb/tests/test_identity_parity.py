@@ -670,3 +670,30 @@ class TestSelectionUnderAnyWrapper:
                 assert got != plain, spec
             else:
                 assert got == plain, spec
+
+
+class TestPathInputIsItsTemplate:
+    """A PathInput has a real ``.load()`` AND a ``__name__``, so "the
+    variable type this binds" must exclude it explicitly — otherwise its
+    call-site identity becomes the display string ``PathInput('{s}/a.csv')``
+    instead of ``to_key()``, and two templates differing only by
+    ``root_folder`` collapse into ONE call site. The exclusion
+    ``foreach._is_loadable`` has always had, now in ``input_spec`` too."""
+
+    @staticmethod
+    def _fn(path):
+        return 1.0
+
+    def test_two_root_folders_are_two_call_sites(self, tmp_path):
+        a = PathInput("{subject}/a.csv", root_folder=str(tmp_path / "one"))
+        b = PathInput("{subject}/a.csv", root_folder=str(tmp_path / "two"))
+        assert (
+            ForEachConfig(self._fn, {"path": a}).to_call_id()
+            != ForEachConfig(self._fn, {"path": b}).to_call_id()
+        )
+
+    def test_the_call_site_carries_the_to_key_not_the_display_name(self, tmp_path):
+        pi = PathInput("{subject}/a.csv", root_folder=str(tmp_path))
+        site = ForEachConfig(self._fn, {"path": pi}).call_site_inputs()
+        assert site["path"] == pi.to_key()
+        assert "root_folder" in site["path"]
