@@ -281,21 +281,34 @@ def _variable_bindings(meta: dict) -> list[tuple[str, str, str | None]]:
             out.append((param, str(rid), selector))
         return out
 
+    # Fallback for a meta with no `__graph_var_bindings` — since 2026-09-20
+    # only a lineage-only / legacy save reaches here; the for_each save path
+    # always writes the edge list. `__upstream` keys are INDEXED
+    # (`__rid_<param>_<i>`, one per consumed record) because it is a dict;
+    # the edge carries the REAL parameter name, several edges per parameter.
     upstream = _parse_json_dict(meta.get("__upstream"))
+    names = {
+        (k[len("__rid_") :] if k.startswith("__rid_") else k) for k in upstream
+    }
+
+    def _fold(param: str) -> str:
+        # `x_0`, `x_1`, ... fold to `x` only when SEVERAL such keys share the
+        # head: a single record is stored un-indexed, so a parameter genuinely
+        # named `x_1` (one key, no siblings) is left alone.
+        head, sep, tail = param.rpartition("_")
+        if not (sep and tail.isdigit() and head):
+            return param
+        siblings = [
+            n for n in names if n.rpartition("_")[0] == head and n.rpartition("_")[2].isdigit()
+        ]
+        return head if len(siblings) > 1 else param
+
     out = []
     for key, rid in upstream.items():
         if rid is None:
             continue
-        # The aggregation path stores one key per consumed record
-        # (`__rid_<param>_<i>`), so these edges carry INDEXED names. They are
-        # deliberately left as they are: `compute_invocation_id` hashes the
-        # binding names, and `_predict_config_invocations` (skip_computed)
-        # predicts one binding per param from the stored config — folding
-        # here made every second identical aggregation run recompute.
-        # Consumers that need the real parameter fold on READ instead
-        # (`execution_service._fold_indexed_params`).
         param = key[len("__rid_") :] if key.startswith("__rid_") else key
-        out.append((param, str(rid), None))
+        out.append((_fold(param), str(rid), None))
     return out
 
 

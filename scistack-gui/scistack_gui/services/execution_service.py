@@ -189,17 +189,15 @@ def _db_path_input_params(db, function_name: str) -> dict[str, dict[str, str]]:
 
 
 def _fold_indexed_params(variant: dict, function_name: str) -> dict:
-    """Repair history recorded as ``cycles_0 .. cycles_9`` for a parameter
-    ``cycles`` — the aggregation path's per-record upstream keys, written
-    as separate parameters. (Folding them at SAVE time was tried on
-    2026-09-19 and reverted: the skip_computed predictor assumed the indexed
-    names, and every second identical aggregation run recomputed. They are
-    still written indexed; this is the read-side fold, on the run path only —
-    ``scidb/tests/test_identity_parity.py::INDEXED_AGGREGATION_EDGES`` pins
-    the disagreement that leaves.) Without it a target derived from such
-    history handed the function ten arguments it never had. Folded against
-    the function's real signature, so a parameter genuinely named ``x_1`` is
-    left alone."""
+    """Repair LEGACY history recorded as ``cycles_0 .. cycles_9`` for a
+    parameter ``cycles`` — the aggregation path's per-record upstream keys,
+    written as separate parameters until 2026-09-20 (edges now carry the
+    real name, several per parameter; ``scidb/tests/test_identity_parity.py``
+    keeps it so). Rows written before that still hold the split names, and a
+    target derived from them handed the function ten arguments it never had.
+    Folded against the function's real signature, so a parameter genuinely
+    named ``x_1`` is left alone. Retire once no database predates the
+    change."""
     input_types = variant.get("input_types") or {}
     if not input_types:
         return variant

@@ -39,27 +39,11 @@ from scidb.provenance_save import compute_input_selectors
 
 KEYS = ["subject", "trial", "cycle"]
 
-#: Every aggregation-mode disagreement below has ONE cause. When a combo
-#: consumes several records of one parameter (cycles pooled per trial), the
-#: save path writes the edges under INDEXED names — `value_0`, `value_1` —
-#: rather than `value` with several edges (which the `_invocation_input`
-#: primary key already allows). Nothing in scidb folds them on read, so every
-#: backward reconstruction (`pipeline_variants[].input_types`,
-#: `function_variant_configs`, the recorded selectors) speaks a different
-#: parameter vocabulary from the forward call; the GUI papers over it with
-#: `execution_service._fold_indexed_params` on its run path only. Folding at
-#: save time was tried on 2026-09-19 and reverted because the skip_computed
-#: predictor assumed the indexed names. This is Stage 2's "one row -> edges
-#: assembly" decision; pinned here so it stays executable until then.
-INDEXED_AGGREGATION_EDGES = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "aggregation edges are recorded under indexed parameter names "
-        "(value_0, value_1) and never folded on read, so the backward "
-        "reconstruction names parameters the forward call does not have — "
-        "see INDEXED_AGGREGATION_EDGES; decided in Stage 2 (one row->edges assembly)"
-    ),
-)
+#: Aggregation edges — several records consumed under one parameter — were
+#: recorded under INDEXED names (`value_0`, `value_1`) until 2026-09-20, so
+#: every backward reconstruction named parameters the forward call did not
+#: have. They are written under the real name now, several edges per param,
+#: and the aggregation cases below are the regression guard.
 
 
 @pytest.fixture
@@ -219,12 +203,10 @@ class TestCallIdForwardEqualsBackward:
             db, first_a, {"value": Wide.for_columns()}, dict(subject=[], trial=[], cycle=[])
         )
 
-    @INDEXED_AGGREGATION_EDGES
     def test_as_table(self, db):
         _seed()
         self._check(db, pooled, {"value": Wide}, dict(subject=[], trial=[]), as_table=["value"])
 
-    @INDEXED_AGGREGATION_EDGES
     def test_distribute(self, db):
         _seed()
 
@@ -247,18 +229,9 @@ class TestCallIdForwardEqualsBackward:
         template = PathInput("{subject}/note.txt", root_folder=str(root))
         self._check(db, read_note, {"path": template}, dict(subject=[]))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Fixed metadata forks the FORWARD call_id (test_unified_modifier_classes"
-            "::test_different_fixed_metadata_forks_call_id) while the BACKWARD id "
-            "collapses it (function_variant_configs keys on the input TYPE; the "
-            "pinned record is an edge, not a config). A Fixed-pinned pipeline step "
-            "therefore never plans green. Decision needed: is Fixed(subject=1) vs "
-            "Fixed(subject=2) one call site or two? The canvas says one."
-        ),
-    )
     def test_fixed(self, db):
+        """A Fixed pin is the EDGE (the pinned record id), not the call site —
+        one node on the canvas for every pin of one type. Decided 2026-09-20."""
         _seed()
         self._check(
             db,
@@ -301,19 +274,52 @@ class TestSelectorAskedEqualsRecorded:
         _seed()
         self._check(db, first_a, {"value": Wide.for_columns()}, dict(subject=[], trial=[], cycle=[]))
 
-    @INDEXED_AGGREGATION_EDGES
     def test_column_selection_aggregation(self, db):
         _seed()
         self._check(db, pooled, {"value": Wide["a"]}, dict(subject=[], trial=[]))
 
-    @INDEXED_AGGREGATION_EDGES
     def test_for_columns_aggregation(self, db):
-        """The exact shape of the 2026-09-19 bug — the selector IS recorded now
-        (Stage 3 of the intent/fact plan); what still differs is the parameter
-        name it is recorded under."""
+        """The exact shape of the 2026-09-19 bug."""
         _seed()
         self._check(db, first_a, {"value": Wide.for_columns()}, dict(subject=[], trial=[]))
 
     def test_no_selection_records_none(self, db):
         _seed()
         self._check(db, first_a, {"value": Wide}, dict(subject=[], trial=[], cycle=[]))
+
+
+# ---------------------------------------------------------------------------
+# What the parity buys: an aggregating step plans green and skips on re-run
+# ---------------------------------------------------------------------------
+
+
+class TestAggregationIsWholeAgain:
+    """The two consumers that broke while the vocabulary was split."""
+
+    def test_an_aggregating_step_plans_green_after_its_run(self, db):
+        from scidb.state import check_node_state
+
+        _seed()
+        for_each(pooled, {"value": Wide}, [Out], subject=[], trial=[], as_table=["value"])
+        forward = ForEachConfig(pooled, {"value": Wide}, as_table=["value"]).to_call_id()
+        node = check_node_state(pooled, [Out], inputs={"value": Wide}, db=db, call_id=forward)
+        assert node["state"] == "green", node
+
+    def test_an_aggregating_rerun_skips_every_combo(self, db, caplog):
+        import logging
+
+        _seed()
+        for_each(pooled, {"value": Wide}, [Out], subject=[], trial=[], as_table=["value"])
+        before = len(Out.load(as_df=True, version="all"))
+        with caplog.at_level(logging.INFO):
+            for_each(
+                pooled,
+                {"value": Wide},
+                [Out],
+                subject=[],
+                trial=[],
+                as_table=["value"],
+                skip_computed=True,
+            )
+        assert len(Out.load(as_df=True, version="all")) == before
+        assert "skip_computed: 4/4 combos skipped" in caplog.text, caplog.text

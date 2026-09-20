@@ -149,3 +149,41 @@ Verify: `scidb/tests/test_identity_parity.py`, `test_unified_modifier_classes.py
 `test_parameter.py`, `test_state*.py`; GUI `test_binding_identity.py`,
 `test_column_selection_binding.py`, `test_pipeline_call_sites.py`, `test_graph_builder.py`;
 `tests/integration/test_dag_runs.py`.
+
+### Stage 2, first decision — built 2026-09-20, tests unrun
+
+Both decisions taken with the user (2026-09-20):
+
+1. **Aggregation edges carry the real parameter name**, several edges per
+   parameter. `_save_results` writes `__graph_var_bindings` for every
+   aggregation row (unconditionally now); `_variable_bindings`' `__upstream`
+   fallback folds index groups (legacy metas only); `stored_invocation_
+   signature.var_inputs` is `param -> [(rid, selector), ...]` and both
+   consumers (`_should_skip`, `_find_skip_gate_record`) read the list — the
+   thing that made the 2026-09-19 fold attempt break skip_computed.
+   `_predict_config_invocations` binds by iteration level:
+   `function_variant_configs` now attaches `iterated_keys` (read off each
+   config's outputs, `iterated_keys_for_invocations`) and the predictor pools
+   below-level inputs into one edge set, cross-products at-level ones, and
+   broadcasts coarser ones. Known gap, documented in the predictor: a call
+   that auto-splits pooled records by variant group writes one invocation
+   per group; the predictor pools them into one and such a config reads as
+   missing. **Every aggregation `invocation_id` (and its record ids) moves
+   once; a re-run supersedes.** The GUI's `_fold_indexed_params` is now a
+   legacy-row repair.
+2. **A `Fixed` pin is the edge, not the call site.** `call_site_inputs`
+   unwraps `Fixed` (and `ColumnSelection`) to the type; the old
+   forks-call_id test is inverted with the reason; version keys still fork.
+
+Parity suite: the five pins are gone; two consumer tests added (an
+aggregating step plans green through `check_node_state`; an aggregating
+re-run skips every combo).
+
+Verify: the WHOLE scidb suite one file at a time is the honest ask here —
+this touches identity for every aggregation — but at minimum:
+`test_identity_parity.py`, `test_aggregation.py`,
+`test_aggregation_with_variants.py`, `test_stat_leaves.py`,
+`test_column_selection_lineage.py`, `test_unified_modifier_classes.py`,
+`test_variant_pin_node_state.py`, `test_for_each_caching*.py`,
+`test_glue_identity.py`; GUI `test_execution_service.py`, `test_api.py`,
+`test_pipeline_call_sites.py`; `tests/integration` (all three files).

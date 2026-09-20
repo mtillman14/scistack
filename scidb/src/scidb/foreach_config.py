@@ -265,25 +265,38 @@ class ForEachConfig:
         ``provenance_query.config_from_inputs`` builds from live inputs and
         ``pipeline_variants`` reconstructs from stored edges.
 
-        A ``ColumnSelection`` is the type it wraps: which columns a call reads
-        is invocation identity (the edge's selector), not call-site identity
-        (the canvas draws one node for ``Var`` and ``Var["a"]``). Every other
-        loadable spec keeps its ``to_key()`` — ``Fixed`` included, whose
-        metadata forks the forward id today while the backward id collapses
-        it; that disagreement is pinned as an expected failure in
-        ``scidb/tests/test_identity_parity.py`` pending a decision.
+        What is unique to a call SITE is which TYPE feeds each parameter.
+        Everything that narrows WHICH records of that type — a
+        ``ColumnSelection``'s columns, a ``Fixed`` pin's metadata — is
+        invocation identity: it lives on the edge (the selector, the pinned
+        record id), the canvas draws one node for ``Var``, ``Var["a"]`` and
+        ``Fixed(Var, subject=1)`` alike, and the backward reconstruction
+        (``config_from_inputs``, ``pipeline_variants``) unwraps both to the
+        type. So does this, since 2026-09-20 — before, a Fixed pin forked the
+        forward id and a Fixed-pinned pipeline step could never plan green.
         """
-        from scifor import ColumnSelection, PathInput
+        from scifor import ColumnSelection, Fixed, PathInput
 
         from .foreach import _is_loadable
+
+        def _unwrap(spec):
+            seen = 0
+            while seen < 4:
+                if isinstance(spec, Fixed):
+                    spec = getattr(spec, "data", spec)
+                elif isinstance(spec, ColumnSelection):
+                    spec = getattr(spec, "data", spec)
+                else:
+                    break
+                seen += 1
+            return spec
 
         result = {}
         for name in sorted(self.inputs):
             spec = self.inputs[name]
-            if isinstance(spec, ColumnSelection) and isinstance(
-                getattr(spec, "data", None), type
-            ):
-                result[name] = spec.data.__name__
+            inner = _unwrap(spec)
+            if inner is not spec and isinstance(inner, type):
+                result[name] = inner.__name__
                 continue
             if _is_loadable(spec) or isinstance(spec, PathInput):
                 if hasattr(spec, "to_key"):

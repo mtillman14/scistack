@@ -145,10 +145,17 @@ class TestVersionKeyStability:
         assert keys["__inputs"]["x"] == "Fixed(Measurement, subject=1)"
         assert "0x" not in keys["__inputs"]["x"]  # not a memory-address repr()
 
-    def test_different_fixed_metadata_forks_call_id(self):
+    def test_different_fixed_metadata_is_one_call_site(self):
+        """A Fixed pin narrows WHICH record of the type feeds the call — that
+        is the edge (invocation identity), not the call site. The canvas draws
+        one node for both, the backward reconstruction unwraps to the type,
+        and since 2026-09-20 the forward id agrees (test_identity_parity).
+        The VERSION key still forks (test_fixed_to_key_is_deterministic_not_repr),
+        so the two pins never share a record."""
         config_a = ForEachConfig(lambda x: x, {"x": Fixed(Measurement, subject=1)})
         config_b = ForEachConfig(lambda x: x, {"x": Fixed(Measurement, subject=2)})
-        assert config_a.to_call_id() != config_b.to_call_id()
+        assert config_a.to_call_id() == config_b.to_call_id()
+        assert config_a.to_version_keys() != config_b.to_version_keys()
 
     def test_same_fixed_metadata_shares_call_id_across_instances(self):
         config_a = ForEachConfig(lambda x: x, {"x": Fixed(Measurement, subject=1)})

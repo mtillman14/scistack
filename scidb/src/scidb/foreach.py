@@ -1171,7 +1171,8 @@ def _find_skip_gate_record(
         if expected_input_rids is not None:
             stored_rids = {
                 str(in_rid)
-                for (in_rid, _sel) in sig.get("var_inputs", {}).values()
+                for edges in sig.get("var_inputs", {}).values()
+                for (in_rid, _sel) in edges
                 if in_rid is not None
             }
             stored_rids -= {str(r) for r in fixed_rids}
@@ -1377,7 +1378,7 @@ def _build_skip_hook(
         if sig["function_hash"] != fn_hash:
             return _recompute(combo_str, "function hash changed")
 
-        stored_var = sig["var_inputs"]  # param -> (record_id, selector)
+        stored_var = sig["var_inputs"]  # param -> [(record_id, selector), ...]
         for key, rid_val in combo.items():
             if not key.startswith("__rid_") or rid_val is None:
                 continue
@@ -1386,17 +1387,21 @@ def _build_skip_hook(
             if str(rid_val) == str(output_record_id):
                 continue
             stored = stored_var.get(param)
-            if stored is None:
+            if not stored:
                 return _recompute(combo_str, f"no stored input {param}")
-            stored_rid, stored_sel = stored
-            if str(stored_rid) != str(rid_val):
+            # A full-iteration combo binds ONE record per param; the stored
+            # edge list for it has one entry (several only for an aggregating
+            # param, whose combos carry no __rid_* key and are gated above).
+            stored_rids = {str(r) for r, _s in stored}
+            if str(rid_val) not in stored_rids:
                 # Naming both rids is what makes an edited *glue* diagnosable:
                 # the binding moves because the glue's virtual record id moved,
                 # and this is the line that proves the edit propagated.
                 return _recompute(
                     combo_str,
-                    f"binding '{param}' changed ({stored_rid} -> {rid_val})",
+                    f"binding '{param}' changed ({sorted(stored_rids)} -> {rid_val})",
                 )
+            stored_sel = next((s for r, s in stored if str(r) == str(rid_val)), None)
             if (stored_sel or None) != (selectors.get(param) or None):
                 return _recompute(combo_str, f"selector for {param} changed")
 
@@ -5328,48 +5333,38 @@ def _save_results(
                                 upstream[f"{rid_col}_{idx}"] = rid
                 if upstream:
                     save_metadata["__upstream"] = upstream
-                    # The selector the __upstream fallback has nowhere to put.
+                    # The graph edges for an aggregation row: every consumed
+                    # record, under the REAL parameter name, with the param's
+                    # selector — several edges per parameter, which the
+                    # `_invocation_input` primary key has always allowed.
                     #
-                    # A ColumnSelection input is deliberately absent from
-                    # `rid_keys` (it prunes combos but never expands them), so
-                    # an AGGREGATION row carries no `__rid_*` column for it and
-                    # the block above leaves `__graph_var_bindings` unset.
-                    # `_variable_bindings` then falls back to `__upstream`,
-                    # which is `{__rid_<param>: record_id}` — no selector
-                    # field at all — and the call is recorded as having read
-                    # the whole variable. That is what made a `for_columns`
-                    # step re-run from the canvas as a whole-table step.
-                    #
-                    # Written with the SAME (indexed) binding names
-                    # `__upstream` uses, so the only thing that changes is the
-                    # selector — and ONLY for calls that actually have one:
-                    # `compute_invocation_id` folds selectors in, so emitting
-                    # this unconditionally would re-identify every aggregation
-                    # ever recorded. See docs/claude/input-binding-round-trip.md.
+                    # `__upstream` above keeps its INDEXED keys (`__rid_x_0`,
+                    # `__rid_x_1`): it is a metadata dict and needs unique
+                    # keys. Until 2026-09-20 the edges were written from it
+                    # and inherited those names, so every backward
+                    # reconstruction (`pipeline_variants`, `config_call_id`,
+                    # the recorded selectors) spoke a parameter vocabulary the
+                    # forward call did not have, and an aggregating pipeline
+                    # step could never plan green. Folding was first tried and
+                    # reverted on 2026-09-19 because `stored_invocation_
+                    # signature` kept one edge per param; it keeps a list now.
+                    # Identity moves ONCE for every aggregation invocation —
+                    # `compute_invocation_id` hashes the names — and a re-run
+                    # supersedes. See test_identity_parity.py.
                     _agg_bindings = []
-                    for _key, _rid in upstream.items():
+                    for _rid_col, _rids in rids_by_param.items():
                         _param = (
-                            _key[len("__rid_") :]
-                            if _key.startswith("__rid_")
-                            else _key
+                            _rid_col[len("__rid_") :]
+                            if _rid_col.startswith("__rid_")
+                            else _rid_col
                         )
-                        # The name stays INDEXED (`signal_0`) — folding it to
-                        # the real param is what `execution_service.
-                        # _fold_indexed_params` does on READ, and doing it here
-                        # instead broke skip_computed for every aggregation
-                        # (2026-09-19). Only the selector LOOKUP folds.
-                        _base = _param
-                        if _base not in _sel and "_" in _base:
-                            _head, _, _tail = _base.rpartition("_")
-                            if _tail.isdigit() and _head in _sel:
-                                _base = _head
-                        _agg_bindings.append((_param, str(_rid), _sel.get(_base)))
-                    if any(_s for _, _, _s in _agg_bindings):
-                        save_metadata["__graph_var_bindings"] = _agg_bindings
-                        _selectors_recorded.update(
-                            {p: s for p, _r, s in _agg_bindings if s}
-                        )
-                        _rows_without_bindings -= 1
+                        for _rid in _rids:
+                            _agg_bindings.append((_param, str(_rid), _sel.get(_param)))
+                    save_metadata["__graph_var_bindings"] = _agg_bindings
+                    _selectors_recorded.update(
+                        {p: s for p, _r, s in _agg_bindings if s}
+                    )
+                    _rows_without_bindings -= 1
         elif rid_keys:
             # Full iteration mode: per-row rid lookup
             upstream = {}

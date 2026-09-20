@@ -1369,7 +1369,11 @@ def stored_invocation_signature(duck, record_id: str):
 
     Returns ``None`` if the record has no producing invocation (raw/manual), else
     ``{"function_hash", "var_inputs", "const_hashes"}`` where ``var_inputs`` maps
-    ``param -> (input_record_id, selector)`` and ``const_hashes`` maps
+    ``param -> [(input_record_id, selector), ...]`` — a LIST, because an
+    aggregating call consumes several records under one parameter and every
+    one of them is an edge (since 2026-09-20 under the real parameter name;
+    keeping one edge per param here is what made folding the names break
+    skip_computed the first time) — and ``const_hashes`` maps
     ``param -> content_hash``. This is the new-table replacement for the old
     ``_lineage`` reads (function hash + input edges + constant records).
     """
@@ -1385,7 +1389,7 @@ def stored_invocation_signature(duck, record_id: str):
         "WHERE ii.invocation_id = ?",
         [inv_id],
     )
-    var_inputs: dict[str, tuple] = {}
+    var_inputs: dict[str, list] = {}
     const_hashes: dict[str, str] = {}
     for param, in_rid, selector, rtype, chash in rows:
         if rtype == PATHINPUT_TYPE:
@@ -1393,7 +1397,7 @@ def stored_invocation_signature(duck, record_id: str):
         if rtype == CONSTANT_TYPE:
             const_hashes[param] = chash
         else:
-            var_inputs[param] = (in_rid, selector)
+            var_inputs.setdefault(param, []).append((in_rid, selector))
     return {
         "function_hash": fn_hash,
         "var_inputs": var_inputs,
@@ -1843,6 +1847,19 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
                 "invocation_ids": set(),
             }
         configs[key]["invocation_ids"].add(inv_id)
+
+    # Where each config ITERATED, read off its own outputs — what the
+    # predictor needs to bind an aggregated input as one edge set rather than
+    # one edge per invocation (see _predict_config_invocations). One batched
+    # query per config, never per record.
+    schema_keys = list(getattr(duck, "dataset_schema", None) or [])
+    for cfg in configs.values():
+        cfg["schema_keys"] = schema_keys
+        cfg["iterated_keys"] = (
+            iterated_keys_for_invocations(duck, cfg["invocation_ids"], schema_keys)
+            if schema_keys
+            else None
+        )
     return list(configs.values())
 
 
@@ -2601,10 +2618,89 @@ def _glue_virtualize(
     return out
 
 
+def _schema_locations(duck, schema_ids, schema_keys) -> dict:
+    """``{schema_id: {key: value, ...}}`` (populated keys only) for the given
+    schema rows — one query, so a prediction never asks per record."""
+    ids = [s for s in dict.fromkeys(schema_ids) if s is not None]
+    if not ids or not schema_keys:
+        return {}
+    cols = ", ".join(f'"{k}"' for k in schema_keys)
+    rows = _chunked_in(
+        duck,
+        f"SELECT schema_id, {cols} FROM _schema WHERE schema_id IN ({{ph}})",  # noqa: S608
+        ids,
+    )
+    return {
+        sid: {k: v for k, v in zip(schema_keys, values) if v is not None}
+        for sid, *values in rows
+    }
+
+
+def iterated_keys_for_invocations(duck, invocation_ids, schema_keys) -> "list[str] | None":
+    """The schema keys a set of invocations ITERATED, read off the records
+    they produced — the populated keys of their output locations, in dataset
+    order; a ``distribute`` invocation saves one level below where it
+    iterated, so its deepest key is dropped. ``None`` when nothing was
+    produced (nothing to read a level from). Batched: one query."""
+    ids = [i for i in dict.fromkeys(invocation_ids) if i]
+    keys = list(schema_keys or [])
+    if not ids or not keys:
+        return None
+    cols = ", ".join(f'MAX(CASE WHEN s."{k}" IS NOT NULL THEN 1 ELSE 0 END)' for k in keys)
+    rows = _chunked_in(
+        duck,
+        f"SELECT MAX(CASE WHEN inv.distribute THEN 1 ELSE 0 END), {cols} "  # noqa: S608
+        "FROM _invocation inv "
+        "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
+        "JOIN _record r ON r.record_id = io.output_record_id "
+        "LEFT JOIN _schema s ON s.schema_id = r.schema_id "
+        "WHERE inv.invocation_id IN ({ph})",
+        ids,
+    )
+    populated: set[str] = set()
+    distributed = False
+    saw_any = False
+    for dist, *flags in rows:
+        if dist is None and not any(f for f in flags if f):
+            continue
+        saw_any = True
+        distributed = distributed or bool(dist)
+        populated.update(k for k, f in zip(keys, flags) if f)
+    if not saw_any:
+        return None
+    level = [k for k in keys if k in populated]
+    if distributed and level:
+        level = level[:-1]
+    return level
+
+
 def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> None:
     """Add expected ``(invocation_id, schema_id)`` pairs for one config × current
-    input data into ``into``. Cross-products each input param's current records at
-    every schema location where all params have data."""
+    input data into ``into``.
+
+    The prediction has to bind inputs exactly as the save path did, and that
+    depends on where the call ITERATED relative to where each input's records
+    sit (``cfg["iterated_keys"]``, read off the config's own outputs by
+    :func:`function_variant_configs`):
+
+    * an input whose records sit AT the iterated level binds one record per
+      call — several records at one location are variants, and each is its
+      own invocation (a cross product, as before);
+    * an input whose records sit BELOW it (cycles pooled per trial) is
+      AGGREGATED: every record under the location is one edge of ONE
+      invocation, under the real parameter name (the save path's
+      ``__graph_var_bindings`` since 2026-09-20);
+    * an input COARSER than the level broadcasts: the record at the enclosing
+      location binds at every location beneath it.
+
+    Without a known level (a config with no outputs yet, or the never-run
+    fallback) the old per-location cross product is used.
+
+    Known gap: an aggregating call that auto-splits its pooled records by
+    variant group (``__vsig``) writes one invocation per group; this pools
+    them into one. Such a config predicts an invocation that was never
+    written and reads as missing.
+    """
     import itertools
 
     from .provenance import compute_constant_record_id, compute_invocation_id
@@ -2623,24 +2719,92 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     # Glued params bind to a virtual record, not the raw one — predict the
     # same id the save path wrote.
     per_param = _glue_virtualize(per_param, cfg)
-    common_schema = (
-        set.intersection(*[set(m.keys()) for m in per_param.values()])
-        if per_param
-        else set()
-    )
     param_names = list(input_types.keys())
-    for sid in common_schema:
-        choices = [[(p, rid) for rid in per_param[p][sid]] for p in param_names]
+
+    def _emit(choices_by_param: dict, sid) -> None:
+        choices = [choices_by_param[p] for p in param_names]
         for combo in itertools.product(*choices):
-            bindings = [(p, rid, selectors.get(p)) for p, rid in combo]
+            bindings = [
+                (p, rid, selectors.get(p)) for p, rids in combo for rid in rids
+            ]
             bindings += [(p, crid, None) for p, crid in const_bindings]
-            inv_id = compute_invocation_id(
-                fn_hash,
-                cfg["as_table"],
-                cfg["distribute"],
-                bindings,
+            into.add(
+                (compute_invocation_id(fn_hash, cfg["as_table"], cfg["distribute"], bindings), sid)
             )
-            into.add((inv_id, sid))
+
+    iterated = cfg.get("iterated_keys")
+    schema_keys = list(cfg.get("schema_keys") or [])
+    if iterated is None or not schema_keys:
+        common_schema = (
+            set.intersection(*[set(m.keys()) for m in per_param.values()])
+            if per_param
+            else set()
+        )
+        for sid in common_schema:
+            # one record per choice: (param, [rid])
+            _emit({p: [(p, [rid]) for rid in per_param[p][sid]] for p in param_names}, sid)
+        return
+
+    # Where every record of every param sits, in one query.
+    all_sids = {sid for m in per_param.values() for sid in m}
+    locations = _schema_locations(duck, all_sids, schema_keys)
+    iterated_set = set(iterated)
+
+    def _project(loc: dict) -> tuple:
+        return tuple(loc.get(k) for k in iterated)
+
+    # For each param: the locations (projected onto the iterated keys) it can
+    # serve, and how — one record per call (at level), all records pooled
+    # (below), or the enclosing record broadcast (coarser).
+    at_level: dict[str, dict] = {}  # param -> {L: [rid, ...]}  (cross product)
+    pooled: dict[str, dict] = {}  # param -> {L: [rid, ...]}  (one edge set)
+    coarse: dict[str, list] = {}  # param -> [(loc, [rid, ...])]
+    for p, by_sid in per_param.items():
+        for sid, rids in by_sid.items():
+            loc = locations.get(sid, {})
+            populated = set(loc)
+            if populated == iterated_set:
+                at_level.setdefault(p, {}).setdefault(_project(loc), []).extend(rids)
+            elif populated > iterated_set:
+                pooled.setdefault(p, {}).setdefault(_project(loc), []).extend(rids)
+            else:
+                coarse.setdefault(p, []).append((loc, list(rids)))
+
+    # Candidate locations: every projected location a non-coarse param has
+    # data at; each param must be able to serve it.
+    candidates: set = set()
+    for m in list(at_level.values()) + list(pooled.values()):
+        candidates |= set(m)
+    sid_by_location = {
+        _project(loc): sid
+        for sid, loc in locations.items()
+        if set(loc) == iterated_set
+    }
+    for L in candidates:
+        choices_by_param: dict = {}
+        ok = True
+        for p in param_names:
+            if p in at_level and L in at_level[p]:
+                choices_by_param[p] = [(p, [rid]) for rid in at_level[p][L]]
+            elif p in pooled and L in pooled[p]:
+                choices_by_param[p] = [(p, sorted(pooled[p][L]))]
+            elif p in coarse:
+                serving = [
+                    (p, [rid])
+                    for loc, rids in coarse[p]
+                    if all(loc.get(k) == v for k, v in zip(iterated, L) if k in loc)
+                    for rid in rids
+                ]
+                if not serving:
+                    ok = False
+                    break
+                choices_by_param[p] = serving
+            else:
+                ok = False
+                break
+        if not ok:
+            continue
+        _emit(choices_by_param, sid_by_location.get(L))
 
 
 def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
