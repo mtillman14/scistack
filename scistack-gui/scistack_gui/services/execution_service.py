@@ -1313,12 +1313,72 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
             ", ".join(unbound),
         )
     logger.info(
-        "[execution] '%s': built inputs for %d param(s): %s",
+        "[execution] '%s': bindings — %s",
         function_name,
-        len(inputs),
-        ", ".join(sorted(inputs)) or "(none)",
+        describe_run_inputs(inputs, function_name),
     )
     return inputs
+
+
+def _describe_input_value(value) -> str:
+    """One input, in the spelling the canvas chip uses.
+
+    ``scidb.intent.describe_columns`` owns the selection half, so the log line
+    and the node cannot disagree about what a run was fed.
+    """
+    from scidb.intent import describe_columns
+    from scifor import ColumnSelection, EachOf, Fixed, PathInput
+
+    if isinstance(value, EachOf):
+        # A Parameter IS an EachOf, and reports itself as one.
+        kind = type(value).__name__
+        alts = value.alternatives
+        if kind != "EachOf":
+            return f"{kind}({len(alts)} value(s))"
+        return " | ".join(_describe_input_value(a) for a in alts) or f"{kind}(empty)"
+    if isinstance(value, ColumnSelection):
+        inner = getattr(value, "data", None)
+        name = getattr(inner, "__name__", None) or str(inner)
+        return f"{name} ({describe_columns(value)})"
+    if isinstance(value, Fixed):
+        inner = getattr(value, "data", None)
+        return f"Fixed({_describe_input_value(inner)})"
+    if isinstance(value, PathInput):
+        return f"PathInput({value})"
+    name = getattr(value, "__name__", None)
+    if name:
+        return f"{name} (whole variable)"
+    return repr(value)
+
+
+def describe_run_inputs(inputs: dict, function_name: str) -> str:
+    """One line naming EVERY input this run feeds the function.
+
+    ``value: TrialMeanSymmetry ("ankle") · cycles: CycleSymmetry (whole
+    variable) · tol: 0.01 · side: (unbound)``
+
+    Completeness is the point: the line is built from the function's
+    SIGNATURE, not from the inputs dict, so a parameter nothing bound is
+    named as unbound rather than silently absent. "What did this run actually
+    feed the function?" took four round trips through the logs on 2026-09-19;
+    this is the line that answers it. See
+    ``docs/claude/input-binding-round-trip.md``.
+    """
+    from scistack_gui.api.pipeline import _fn_params_from_registry
+
+    try:
+        params = list(_fn_params_from_registry(function_name))
+    except Exception:  # a log line must never break a run
+        params = []
+    for extra in inputs:
+        if extra not in params:
+            params.append(extra)
+    if not params:
+        return "(no inputs)"
+    return " · ".join(
+        f"{p}: {_describe_input_value(inputs[p]) if p in inputs else '(unbound)'}"
+        for p in params
+    )
 
 
 def build_run_glue(target: dict, function_name: str) -> dict:

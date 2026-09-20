@@ -369,3 +369,27 @@ def test_a_python_for_columns_survives_a_gui_rerun(seeded, pipeline, pushes):
     one = pipeline.ScaledTrialSymmetry.load(as_df=True).iloc[0]["data"]
     columns = set(one.columns if isinstance(one, pd.DataFrame) else one.keys())
     assert columns >= {"ankle", "knee", "hip"}, columns
+
+
+# --- the run says what it fed the function -------------------------------------------
+
+
+def test_the_run_logs_a_bindings_line_naming_every_input(seeded, pipeline, pushes, caplog):
+    """"What did this run actually feed the function?" took four round trips
+    through the logs on 2026-09-19. One INFO line answers it, and it is built
+    from the SIGNATURE — a parameter nothing bound is named as unbound rather
+    than silently absent. See docs/claude/input-binding-round-trip.md."""
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        done = _run(seeded, "normalized_knee", pushes)
+    assert done["success"] is True, done
+
+    lines = [ln for ln in caplog.text.splitlines() if "bindings —" in ln]
+    assert lines, "no bindings line was logged"
+    line = lines[-1]
+    for param in ("knee", "walking_speed_mps", "height_cm"):
+        assert f"{param}:" in line, f"{param} missing from: {line}"
+    # The selection half is spelled by scidb.intent.describe_columns, the same
+    # words the canvas chip uses.
+    assert "whole variable" in line or "column" in line

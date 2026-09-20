@@ -50,6 +50,7 @@ __all__ = [
     "GraphRecord",
     "record_run",
     "compute_input_selectors",
+    "check_selector_round_trip",
     "record_direct_save",
     "invocation_id_for_meta",
 ]
@@ -176,6 +177,59 @@ def compute_input_selectors(inputs: dict) -> dict:
         # selection — normalize_columns folds those together.
         out[param] = selector_json(cs) if cs is not None else None
     return out
+
+
+def check_selector_round_trip(
+    fn_name: str,
+    asked: dict | None,
+    recorded: dict | None,
+    *,
+    context: str = "",
+) -> list[str]:
+    """WARN for every param whose column selection was ASKED for and did not
+    reach the recorded provenance edges. Returns the lost param names.
+
+    The write half of the input-binding round trip
+    (``docs/claude/input-binding-round-trip.md`` §5). *asked* is
+    :func:`compute_input_selectors` — what the call requested. *recorded* is
+    what the edges actually carry, ``{param: selector-or-None}``.
+
+    Why this exists at all: :func:`_variable_bindings` prefers
+    ``__graph_var_bindings`` (param, record_id, selector) but falls back to
+    ``__upstream``, which is ``{__rid_<param>: record_id}`` with **nowhere to
+    put a selector**. Aggregation and ``for_columns`` reassembly rows carry no
+    ``__rid_*`` columns, so they take that fallback and every edge is written
+    with ``selector=NULL``. Everything downstream then honestly reports "no
+    selection was used", a GUI re-run binds the whole variable, and the
+    function quietly receives the whole table.
+
+    Log-only, and never raises: a lost selector is a diagnosis, not a reason
+    to fail a run that has already computed its results. Same shape as the
+    ``[coarse-input]`` line — both facts on one line, because a narrowing (or
+    a widening) of what a function receives must never be silent.
+    """
+    from .log import Log
+
+    asked = asked or {}
+    recorded = recorded or {}
+    lost = [
+        param
+        for param, sel in asked.items()
+        if sel and not recorded.get(param)
+    ]
+    if not lost:
+        return []
+    where = f" {context}" if context else ""
+    for param in lost:
+        Log.warning(
+            f"[selector-lost] {fn_name}{where}: input '{param}' was called with "
+            f"{asked[param]} but its provenance edge recorded no selector, so "
+            f"every reader of this run — a GUI re-run, an export, skip_computed "
+            f"— will bind the WHOLE variable. The edge came from "
+            f"__upstream (no selector field) rather than __graph_var_bindings; "
+            f"see docs/claude/input-binding-round-trip.md §4."
+        )
+    return lost
 
 
 # A saved output record awaiting graph insertion. ``meta`` is its

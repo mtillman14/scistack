@@ -599,6 +599,19 @@ def for_each(
 
     fn_name = getattr(fn, "__name__", repr(fn))
 
+    # Read-side round-trip guard: did a selection this function ran with
+    # before fail to reach this run? One query, log-only, at run entry — NOT
+    # in _build_skip_hook, which does the same comparison but only exists when
+    # skip_computed is on. See docs/claude/input-binding-round-trip.md §5.
+    if active_db is not None and not dry_run:
+        try:
+            from .provenance_query import check_recorded_selectors
+            from .provenance_save import compute_input_selectors as _cis
+
+            check_recorded_selectors(active_db._duck, fn_name, _cis(inputs))
+        except Exception as exc:  # diagnostics must never fail a run
+            Log.debug(f"[selector-check] skipped for {fn_name}: {exc}")
+
     # --- Pre-loop preparation. Returns None on dry_run shortcut. ---
     with Log.step(f"for_each_prepare({fn_name})"):
         state = _for_each_prepare(
@@ -5157,6 +5170,13 @@ def _save_results(
 
     # Convert DataFrame to list of dicts for 10-100x faster iteration than iterrows()
     rows = result_tbl.to_dict("records")
+    # Write-side round-trip guard (docs/claude/input-binding-round-trip.md §5):
+    # what the call ASKED for is `input_selectors`; what the edges will RECORD
+    # is only what lands in __graph_var_bindings. Accumulated across rows and
+    # checked once, because the loss is a property of the save PATH, not of any
+    # one row — a per-row warning would print once per record.
+    _selectors_recorded: dict = {}
+    _rows_without_bindings = 0
     for _row_idx, row in enumerate(rows):
         # 1. Collect upstream branch_params via __rid_* columns → rid_to_bp lookup
         merged_bp: dict = {}
@@ -5265,6 +5285,14 @@ def _save_results(
             save_metadata["__graph_var_bindings"] = [
                 (p, r, _sel.get(p)) for p, r in _row_bindings.items()
             ]
+            _selectors_recorded.update(
+                {p: _sel.get(p) for p in _row_bindings if _sel.get(p)}
+            )
+        else:
+            # No __rid_* columns on this row → record_run falls back to the
+            # indexed __upstream, which has no selector field at all. Counted
+            # (not warned per row) so the round-trip guard fires ONCE per run.
+            _rows_without_bindings += 1
 
         # Add upstream record_ids to version_keys so that records from different
         # upstream variants get distinct record_ids even when content is identical.
@@ -5364,6 +5392,22 @@ def _save_results(
             if "__upstream" in meta_copy and isinstance(meta_copy["__upstream"], dict):
                 meta_copy["__upstream"] = dict(meta_copy["__upstream"])
             batch_items[key].append((output_value, meta_copy))
+
+    # Did every selection the call asked for reach an edge? Once per run.
+    if input_selectors and any(input_selectors.values()):
+        from .provenance_save import check_selector_round_trip
+
+        check_selector_round_trip(
+            getattr(getattr(fn, "fcn", fn), "__name__", None) or "<fn>",
+            input_selectors,
+            _selectors_recorded,
+            context=(
+                f"{_rows_without_bindings}/{len(rows)} saved row(s) had no "
+                f"__rid_* columns, so their edges came from __upstream"
+                if _rows_without_bindings
+                else ""
+            ),
+        )
 
     prep_elapsed = time.perf_counter() - prep_start
     Log.info(

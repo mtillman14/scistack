@@ -1820,6 +1820,79 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     return list(configs.values())
 
 
+def check_recorded_selectors(
+    duck,
+    fn_name: str,
+    asked: "dict | None",
+    *,
+    context: str = "",
+) -> list[str]:
+    """Read half of the input-binding round trip: what history RECORDED for
+    this function versus what this run is about to BIND. Returns the params
+    whose recorded selection is being dropped.
+
+    Three outcomes, and only one of them is a problem
+    (``docs/claude/input-binding-round-trip.md`` §5):
+
+    * recorded a selection, this run binds none → **WARN**. The selection was
+      LOST — a GUI re-run that failed to carry it, a node config that was
+      never read — and the function is about to receive the whole variable.
+    * both present and different → **INFO**. A user changing their mind, which
+      ``_build_skip_hook`` already treats as ordinary ("selector for X
+      changed" → recompute).
+    * this run binds one and history has none → silent. A new selection.
+
+    Deliberately NOT part of ``_build_skip_hook``, which does the same
+    comparison per combo: that hook exists only when ``skip_computed and not
+    dry_run and outputs and active_db is not None``, and a lost selection has
+    nothing to do with caching. One query at run entry, log-only, never
+    changes what runs.
+    """
+    from .intent import describe_columns, parse_selector, same_columns
+    from .log import Log
+
+    asked = asked or {}
+    try:
+        configs = function_variant_configs(duck, fn_name)
+    except Exception as exc:  # pragma: no cover - diagnostics must never fail a run
+        Log.debug(f"[selector-check] {fn_name}: no recorded configs ({exc})")
+        return []
+
+    # The union across recorded configs: a param that EVER ran with a
+    # selection is one whose selection this run can lose. Two configs
+    # disagreeing about a param is itself ordinary (the user changed it), so
+    # the first recorded selection is enough to ask the question.
+    recorded: dict = {}
+    for cfg in configs:
+        for param, sel in (cfg.get("selectors") or {}).items():
+            parsed = parse_selector(sel)
+            if parsed:
+                recorded.setdefault(param, parsed)
+
+    where = f" {context}" if context else ""
+    lost = []
+    for param, rec in recorded.items():
+        if param not in asked:
+            continue  # different wiring; not this call site's business
+        current = parse_selector(asked.get(param))
+        if current is None:
+            lost.append(param)
+            Log.warning(
+                f"[selector-dropped] {fn_name}{where}: input '{param}' ran "
+                f"before with {describe_columns(rec)} ({rec}) and this run "
+                f"binds the WHOLE variable. If that is deliberate, nothing is "
+                f"wrong; if not, the selection was lost between history and "
+                f"this call — see docs/claude/input-binding-round-trip.md §4."
+            )
+        elif not same_columns(current, rec):
+            Log.info(
+                f"[selector-changed] {fn_name}{where}: input '{param}' "
+                f"{describe_columns(rec)} → {describe_columns(current)}; "
+                f"this is a different computation and will recompute."
+            )
+    return lost
+
+
 def config_call_id(fn_name: str, cfg: dict) -> str:
     """The call-site id a variant config reconstructs to.
 
