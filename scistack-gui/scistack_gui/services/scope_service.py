@@ -423,6 +423,13 @@ def _clone_nodes(
         config = manual_nodes.get(old_id, {}).get("config")
         if config:
             ps.update_node_config(db, new_id, config)
+        # Statements about the original (column selections, and every aspect
+        # that graduates later) are COPIED, so the duplicate owns them and
+        # configuring it can never reach the original. The line above copies
+        # only the legacy config column, which never held them.
+        from scistack_gui import intent_store
+
+        intent_store.copy_subject(db, old_id, new_id)
 
         real_pos = old_positions.get(old_id)
         pos = real_pos or {"x": 0.0, "y": 0.0}

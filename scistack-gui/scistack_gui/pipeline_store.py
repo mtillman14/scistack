@@ -301,6 +301,14 @@ def _ensure_tables(db) -> None:
         [ROOT_PIPELINE_ID],
     )
 
+    # The intent store (`_intent`): one table, one shape, for statements
+    # about runs — replacing the tables above one ASPECT at a time.
+    # `columns` has moved; the rest still live where they always did. See
+    # docs/claude/intent-and-fact.md and scistack_gui/intent_store.py.
+    from scistack_gui import intent_store
+
+    intent_store.ensure_tables(db)
+
 
 def migrate_from_json(db, layout_path: Path) -> None:
     """One-time migration: move manual_nodes/manual_edges from JSON into DB.
@@ -485,6 +493,18 @@ def update_node_config(db, node_id: str, config: dict) -> None:
         node_id,
         sorted(config),
     )
+    # Aspects that have graduated to the intent store are written THERE and
+    # stripped from the blob, so there is exactly one owner per aspect and
+    # the two can never disagree. The read paths below put them back for
+    # display. See scistack_gui/intent_store.py.
+    from scistack_gui import intent_store
+
+    config = dict(config)
+    for aspect in intent_store.GRADUATED_ASPECTS:
+        blob_key = intent_store.NODE_CONFIG_KEYS[aspect]
+        if blob_key in config:
+            intent_store.SETTERS[aspect](db, node_id, config.pop(blob_key))
+
     _duck(db)._execute(
         """
         INSERT INTO _node_config (node_id, config) VALUES (?, ?)
@@ -509,16 +529,37 @@ def get_node_config(db, node_id: str) -> dict:
         row = _duck(db)._fetchone(
             "SELECT config FROM _pipeline_nodes WHERE node_id = ?", [node_id]
         )
-    if row is None or not row[0]:
-        return {}
-    try:
-        return json.loads(row[0]) or {}
-    except (ValueError, TypeError):
-        logger.warning(
-            "[pipeline_store] node %r has unparseable config JSON — ignoring it",
-            node_id,
-        )
-        return {}
+    config: dict = {}
+    if row is not None and row[0]:
+        try:
+            config = json.loads(row[0]) or {}
+        except (ValueError, TypeError):
+            logger.warning(
+                "[pipeline_store] node %r has unparseable config JSON — ignoring it",
+                node_id,
+            )
+            config = {}
+    return _with_graduated_aspects(db, node_id, config)
+
+
+def _with_graduated_aspects(db, node_id: str, config: dict) -> dict:
+    """*config* plus the aspects now stored in ``_intent``.
+
+    The panel reads a node's settings as one blob, and it still does. What
+    changed is where each part is kept: an aspect that has graduated is read
+    from the intent store and put back here for DISPLAY only — the blob is
+    never the source of truth for it again, and nothing writes it back (see
+    ``update_node_config``, which strips it on the way in).
+    """
+    from scistack_gui import intent_store
+    from scistack_gui.domain.graph_builder import strip_placement
+
+    by_node = intent_store.column_selections_by_node(db)
+    selections = by_node.get(strip_placement(node_id))
+    out = dict(config)
+    if selections:
+        out[intent_store.NODE_CONFIG_KEYS[intent_store.ASPECT_COLUMNS]] = selections
+    return out
 
 
 def get_node_configs(db) -> dict[str, dict]:
@@ -543,6 +584,18 @@ def get_node_configs(db) -> dict[str, dict]:
                 continue
             if parsed:
                 configs[node_id] = parsed
+
+    # Graduated aspects, merged back in for display — including for nodes
+    # that have NO `_node_config` row at all, which is the normal case once
+    # an aspect has moved out of the blob entirely.
+    from scistack_gui import intent_store
+
+    for node_id, selections in intent_store.column_selections_by_node(db).items():
+        if selections:
+            configs.setdefault(node_id, {})[
+                intent_store.NODE_CONFIG_KEYS[intent_store.ASPECT_COLUMNS]
+            ] = selections
+
     logger.debug("[pipeline_store] loaded config for %d node(s)", len(configs))
     return configs
 
@@ -695,6 +748,13 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     the legacy config column with it).
     """
     migrate_node_config(db, old_id, new_id)
+    # The same move, for every aspect that has graduated to the intent store
+    # — ONE call rather than one migration per table, which is the point of
+    # keying statements by a subject rather than by whatever id a table
+    # happened to use.
+    from scistack_gui import intent_store
+
+    intent_store.rekey_subject(db, old_id, new_id)
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id])
     rename_edge_endpoints(db, old_id, new_id)
 
