@@ -246,6 +246,8 @@ execution is scope-aware.
 | 7 `scidb intent` | 2295a70b | `scidb/tests/test_inspect_phase3.py` |
 | 7 plot pins | 6b200788 | `scistack-gui/tests/test_plot_service.py` |
 
+**All listed suites green (user-run, 2026-09-19).**
+
 Not done, by design: dropping the superseded tables (after a real-database
 check of the import), and per-pipeline scope on stored rows (blocked on
 scope-aware execution).
