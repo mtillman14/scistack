@@ -36,7 +36,41 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
-## 0. Intent vs fact: run origin, "not reflected" marker, per-column run option — added 2026-09-19
+## 0b. Run options reach the compiled pipeline and both code exports — added 2026-09-20
+
+A step's saved **run options** (`distribute`, `as_table`) were honoured by the
+single-node **Run** button and by the MATLAB command, but the **compiled
+pipeline** (Run Pipeline / Run Scope) and **both code exports** hardcoded
+`distribute=False, as_table=None`. So a node set to distribute ran
+non-distributed from the pipeline button, and an exported script re-ran the
+pipeline as a *different* call — writing a second record at every location.
+All three now read the node's config (`scidb.foreach_config.RunOptions`).
+
+**Backend**
+1. Nothing special. Keep `scidb.log` open.
+
+**Frontend**
+1. Pick a function node whose output makes sense distributed (a loader that
+   returns one row per trial). Open its settings panel and tick
+   **distribute**.
+2. Click **Run Pipeline** (not the node's own Run button).
+3. In `scidb.log`, find the `resolve_distribute_target: '<key>'` line for that
+   function — that is scifor confirming the option took effect. Before this
+   fix the line was absent on this path.
+4. Now export the pipeline to Python (**Export code**). The generated
+   `for_each(...)` for that step must carry `distribute=True`.
+5. Export to MATLAB. The generated `scidb.for_each(...)` must carry
+   `'distribute', true`.
+6. If the step instead uses `as_table`, the same two exports must carry
+   `as_table=[...]` / `'as_table', ["..."]`.
+
+**What you should see:** the same run options in all four places — the node
+panel, the pipeline run's log, and both exported scripts. A step with no
+options set emits neither argument (unchanged).
+
+---
+
+## 0a. Intent vs fact: run origin, "not reflected" marker, per-column run option — added 2026-09-19
 
 Branch `refactor/intent-and-fact` (Stages 4–6 of `.claude/plan-intent-and-fact.md`;
 model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.

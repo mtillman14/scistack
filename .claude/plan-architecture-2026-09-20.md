@@ -429,3 +429,44 @@ Verify (one package at a time):
 `cd /workspace/scistack-gui && pytest tests/ -q -x`
 `cd /workspace/scistackplotdb && pytest tests/ -q`
 `cd /workspace/tests/integration && pytest -q`
+
+---
+
+## Status 2026-09-20 (end of session): **green on all four suites**
+
+`scidb`, `scistack-gui` (2002 passed), `scimatlab`, `tests/integration` — all
+user-run, all passing, on `refactor/intent-and-fact`.
+
+Done: Stage 1, Stage 2a (typed rid spine + variant groups + `__upstream`
+removed + `AcrossVariants` as a fact), `CallSite`, and the
+duplicated-recipe sweep (signature / bare name / unwrap / variant axes /
+run options).
+
+Open, in the order the plan lists them:
+
+* **2b** — `RunState` retires the remaining containers; extract
+  `_prepare` / `_execute` / `_save`; `_save_results` to
+  `(result_tbl, outputs, state)`.
+* **2c** — scifor asks `RunBindings` instead of reading `__rid_*` /
+  `__vsig_*` columns; retires the column convention. scifor cannot import
+  scidb, so this is the layering question, not a rename.
+* **3** import cycles — the lazy `from .foreach import _is_loadable`
+  inside functions is the symptom; `scidb/input_spec.py` is the shape of
+  the answer (a near-leaf that both sides may import at the top).
+* **4** one handler table for both GUI transports.
+* **5** types for placement ids.
+* **6** scope-awareness (decision first).
+
+Also open, deliberately not done here:
+
+* The **Variant-pin** node-state xfail keeps only its design half: the pin
+  is a load-time filter like `where=`, whose effect is already on the
+  edges, so narrowing the PREDICTION cannot come from recording it as a
+  fact. Stage 4 of `.claude/plan-variant-selection.md`.
+* `variant_resolver.compute_call_id` still exists as a GUI-side entry
+  point, but it now only maps bindings onto `CallSite` — no recipe of its
+  own.
+* The six superseded GUI tables are still in place (drop only after the
+  import has been seen complete on a real database).
+* GUI never visually checked: `docs/gui-manual-testing-todo.md` items 0b
+  and 0a. Branch unmerged.
