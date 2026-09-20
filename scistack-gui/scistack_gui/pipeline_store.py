@@ -359,14 +359,7 @@ def migrate_from_json(db, layout_path: Path) -> None:
     for edge in manual_edges:
         edge_id = edge.get("id", "")
         if edge_id:
-            _upsert_edge(
-                db,
-                edge_id,
-                edge.get("source", ""),
-                edge.get("target", ""),
-                edge.get("sourceHandle"),
-                edge.get("targetHandle"),
-            )
+            write_manual_edge(db, edge)
             migrated_edges += 1
 
     logger.info(
@@ -499,11 +492,7 @@ def update_node_config(db, node_id: str, config: dict) -> None:
     # display. See scistack_gui/intent_store.py.
     from scistack_gui import intent_store
 
-    config = dict(config)
-    for aspect in intent_store.GRADUATED_ASPECTS:
-        blob_key = intent_store.NODE_CONFIG_KEYS[aspect]
-        if blob_key in config:
-            intent_store.SETTERS[aspect](db, node_id, config.pop(blob_key))
+    config = intent_store.split_node_config(db, node_id, dict(config))
 
     _duck(db)._execute(
         """
@@ -554,11 +543,8 @@ def _with_graduated_aspects(db, node_id: str, config: dict) -> dict:
     from scistack_gui import intent_store
     from scistack_gui.domain.graph_builder import strip_placement
 
-    by_node = intent_store.column_selections_by_node(db)
-    selections = by_node.get(strip_placement(node_id))
     out = dict(config)
-    if selections:
-        out[intent_store.NODE_CONFIG_KEYS[intent_store.ASPECT_COLUMNS]] = selections
+    out.update(intent_store.node_config_overlay(db).get(strip_placement(node_id), {}))
     return out
 
 
@@ -590,11 +576,8 @@ def get_node_configs(db) -> dict[str, dict]:
     # an aspect has moved out of the blob entirely.
     from scistack_gui import intent_store
 
-    for node_id, selections in intent_store.column_selections_by_node(db).items():
-        if selections:
-            configs.setdefault(node_id, {})[
-                intent_store.NODE_CONFIG_KEYS[intent_store.ASPECT_COLUMNS]
-            ] = selections
+    for node_id, overlay in intent_store.node_config_overlay(db).items():
+        configs.setdefault(node_id, {}).update(overlay)
 
     logger.debug("[pipeline_store] loaded config for %d node(s)", len(configs))
     return configs
@@ -642,14 +625,9 @@ def rename_edge_endpoints(db, old_id: str, new_id: str) -> None:
     instead of becoming dangling — shared by graduation and by re-keying
     an already-placement-qualified node moved to a new scope (extraction).
     """
-    _duck(db)._execute(
-        "UPDATE _pipeline_edges SET source = ? WHERE source = ?",
-        [new_id, old_id],
-    )
-    _duck(db)._execute(
-        "UPDATE _pipeline_edges SET target = ? WHERE target = ?",
-        [new_id, old_id],
-    )
+    from scistack_gui import intent_store
+
+    intent_store.rename_edge_endpoints(db, old_id, new_id)
 
 
 def migrate_node_config(db, old_id: str, new_id: str) -> dict:
@@ -765,21 +743,12 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
 
 
 def get_manual_edges(db) -> list[dict]:
-    """Return all manual edges as a list of dicts."""
+    """Return all manual edges as a list of dicts (the `wiring` aspect of the
+    intent store — `_pipeline_edges` no longer owns them)."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
-        "SELECT edge_id, source, target, source_handle, target_handle "
-        "FROM _pipeline_edges"
-    )
-    result = []
-    for edge_id, source, target, source_handle, target_handle in rows:
-        entry: dict = {"id": edge_id, "source": source, "target": target}
-        if source_handle is not None:
-            entry["sourceHandle"] = source_handle
-        if target_handle is not None:
-            entry["targetHandle"] = target_handle
-        result.append(entry)
-    return result
+    from scistack_gui import intent_store
+
+    return intent_store.manual_edges(db)
 
 
 def write_manual_edge(db, edge: dict) -> None:
@@ -792,22 +761,19 @@ def write_manual_edge(db, edge: dict) -> None:
         edge.get("targetHandle") or edge.get("target_handle"),
     )
     _ensure_tables(db)
-    logger.info("[pipeline_store] Upserting edge into _pipeline_edges table")
-    _upsert_edge(
-        db,
-        edge["id"],
-        edge.get("source", ""),
-        edge.get("target", ""),
-        edge.get("sourceHandle") or edge.get("source_handle"),
-        edge.get("targetHandle") or edge.get("target_handle"),
-    )
-    logger.info("[pipeline_store] Edge written to DuckDB successfully")
+    from scistack_gui import intent_store
+
+    intent_store.write_manual_edge(db, edge)
+    logger.info("[pipeline_store] Edge written as a wiring statement")
 
 
 def delete_manual_edge(db, edge_id: str) -> None:
     logger.info("[pipeline_store] delete_manual_edge called (edge_id=%r)", edge_id)
-    _duck(db)._execute("DELETE FROM _pipeline_edges WHERE edge_id = ?", [edge_id])
-    logger.info("[pipeline_store] Edge deleted from _pipeline_edges table")
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    intent_store.delete_manual_edge(db, edge_id)
+    logger.info("[pipeline_store] Edge statement deleted")
 
 
 # ---------------------------------------------------------------------------
@@ -822,15 +788,10 @@ def add_pending_constant(db, const_name: str, value: str) -> None:
         value,
     )
     _ensure_tables(db)
-    logger.info(
-        "[pipeline_store] Inserting pending constant into _pipeline_pending_constants table"
-    )
-    _duck(db)._execute(
-        "INSERT INTO _pipeline_pending_constants (constant_name, value) VALUES (?, ?) "
-        "ON CONFLICT DO NOTHING",
-        [const_name, value],
-    )
-    logger.info("[pipeline_store] Pending constant added successfully")
+    from scistack_gui import intent_store
+
+    intent_store.add_pending_constant(db, const_name, value)
+    logger.info("[pipeline_store] Pending constant added as a constants statement")
 
 
 def remove_pending_constant(db, const_name: str, value: str) -> None:
@@ -839,25 +800,20 @@ def remove_pending_constant(db, const_name: str, value: str) -> None:
         const_name,
         value,
     )
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_pending_constants WHERE constant_name = ? AND value = ?",
-        [const_name, value],
-    )
-    logger.info(
-        "[pipeline_store] Pending constant removed from _pipeline_pending_constants table"
-    )
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    intent_store.remove_pending_constant(db, const_name, value)
+    logger.info("[pipeline_store] Pending constant statement removed")
 
 
 def get_pending_constants(db) -> dict[str, set[str]]:
-    """Return {constant_name: {value, ...}} for all pending constant values."""
+    """Return {constant_name: {value, ...}} for all pending constant values
+    (the `constants` aspect of the intent store)."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
-        "SELECT constant_name, value FROM _pipeline_pending_constants"
-    )
-    result: dict[str, set[str]] = {}
-    for const_name, value in rows:
-        result.setdefault(const_name, set()).add(value)
-    return result
+    from scistack_gui import intent_store
+
+    return intent_store.pending_constants(db)
 
 
 # ---------------------------------------------------------------------------
@@ -971,11 +927,10 @@ def _hard_delete_pipeline(db, pipeline_id: str) -> None:
         [pipeline_id],
     )
     node_ids = [r[0] for r in node_rows]
+    from scistack_gui import intent_store
+
     for nid in node_ids:
-        _duck(db)._execute(
-            "DELETE FROM _pipeline_edges WHERE source = ? OR target = ?",
-            [nid, nid],
-        )
+        intent_store.delete_edges_touching(db, nid)
     _duck(db)._execute(
         "DELETE FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id]
     )
@@ -1119,10 +1074,9 @@ def remove_pipeline_use(db, use_id: str) -> None:
     _ensure_tables(db)
     _duck(db)._execute("DELETE FROM _pipeline_uses WHERE use_id = ?", [use_id])
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [use_id])
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_edges WHERE source = ? OR target = ?",
-        [use_id, use_id],
-    )
+    from scistack_gui import intent_store
+
+    intent_store.delete_edges_touching(db, use_id)
     logger.info("[pipeline_store] remove_pipeline_use: %s", use_id)
 
 
@@ -1291,19 +1245,17 @@ def hide_node(db, node_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
     graph_builder.wiring_id) is untouched (plan-scope-hidden-nodes-edges.md).
     """
     _ensure_tables(db)
-    _duck(db)._execute(
-        "INSERT INTO _pipeline_hidden_nodes (pipeline_id, node_id) VALUES (?, ?) "
-        "ON CONFLICT DO NOTHING",
-        [pipeline_id, node_id],
-    )
+    from scistack_gui import intent_store
+
+    intent_store.hide_node(db, node_id, pipeline_id)
 
 
 def unhide_node(db, node_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
     """Remove a node from ``pipeline_id``'s hidden list (e.g. re-added there)."""
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_hidden_nodes WHERE pipeline_id = ? AND node_id = ?",
-        [pipeline_id, node_id],
-    )
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    intent_store.unhide_node(db, node_id, pipeline_id)
 
 
 def unhide_nodes_by_prefix(
@@ -1316,10 +1268,10 @@ def unhide_nodes_by_prefix(
     IDs (``fn__{label}__{call_id}``) don't match a single canonical ID, so
     we unhide every call-site node sharing the prefix.
     """
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_hidden_nodes WHERE pipeline_id = ? AND node_id LIKE ?",
-        [pipeline_id, prefix + "%"],
-    )
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    intent_store.unhide_nodes_by_prefix(db, prefix, pipeline_id)
 
 
 def get_hidden_node_ids(db, pipeline_id: "str | None" = None) -> set[str]:
@@ -1337,17 +1289,9 @@ def get_hidden_node_ids(db, pipeline_id: "str | None" = None) -> set[str]:
     regardless of ``pipeline_id`` so that existing behavior is unchanged.
     """
     _ensure_tables(db)
-    if pipeline_id is None:
-        rows = _duck(db)._fetchall("SELECT node_id FROM _pipeline_hidden_nodes")
-    else:
-        rows = _duck(db)._fetchall(
-            "SELECT node_id FROM _pipeline_hidden_nodes WHERE pipeline_id = ?",
-            [pipeline_id],
-        )
-    hidden = {row[0] for row in rows}
-    combo_rows = _duck(db)._fetchall("SELECT node_id FROM _pipeline_hidden_combos")
-    hidden.update(row[0] for row in combo_rows)
-    return hidden
+    from scistack_gui import intent_store
+
+    return intent_store.hidden_node_ids(db, pipeline_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1363,35 +1307,27 @@ def get_hidden_node_ids(db, pipeline_id: "str | None" = None) -> set[str]:
 def hide_combo(db, node_id: str, function_name: str, variant_key: dict) -> None:
     """Hide one call-site's Cartesian-product row without deleting anything."""
     _ensure_tables(db)
+    from scistack_gui import intent_store
+
     hide_node(db, node_id)
-    _duck(db)._execute(
-        "INSERT INTO _pipeline_hidden_combos (node_id, function_name, variant_key) "
-        "VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-        [node_id, function_name, json.dumps(variant_key, sort_keys=True)],
-    )
+    intent_store.hide_combo(db, node_id, function_name, variant_key)
 
 
 def unhide_combo(db, node_id: str) -> None:
     """Restore a previously hidden combo."""
     _ensure_tables(db)
+    from scistack_gui import intent_store
+
     unhide_node(db, node_id)
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_hidden_combos WHERE node_id = ?", [node_id]
-    )
+    intent_store.unhide_combo(db, node_id)
 
 
 def list_hidden_combos(db, function_name: str) -> list[dict]:
     """Return hidden combos for one function as {"node_id", "variant_key"}."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
-        "SELECT node_id, variant_key FROM _pipeline_hidden_combos "
-        "WHERE function_name = ?",
-        [function_name],
-    )
-    return [
-        {"node_id": node_id, "variant_key": json.loads(variant_key)}
-        for node_id, variant_key in rows
-    ]
+    from scistack_gui import intent_store
+
+    return intent_store.hidden_combos(db, function_name)
 
 
 # ---------------------------------------------------------------------------
@@ -1474,12 +1410,9 @@ def hide_parameter_value(
     """Mark one constant value as excluded from future runs, without
     deleting anything (per-value analog of ``hide_node``)."""
     _ensure_tables(db)
-    _duck(db)._execute(
-        "INSERT INTO _pipeline_hidden_constant_values "
-        "(pipeline_id, const_name, value) VALUES (?, ?, ?) "
-        "ON CONFLICT DO NOTHING",
-        [pipeline_id, const_name, value],
-    )
+    from scistack_gui import intent_store
+
+    intent_store.hide_parameter_values(db, const_name, [value], pipeline_id)
 
 
 def unhide_parameter_value(
@@ -1487,11 +1420,9 @@ def unhide_parameter_value(
 ) -> None:
     """Restore a previously hidden constant value."""
     _ensure_tables(db)
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_hidden_constant_values "
-        "WHERE pipeline_id = ? AND const_name = ? AND value = ?",
-        [pipeline_id, const_name, value],
-    )
+    from scistack_gui import intent_store
+
+    intent_store.unhide_parameter_values(db, const_name, [value], pipeline_id)
 
 
 def hide_parameter_values(
@@ -1507,13 +1438,9 @@ def hide_parameter_values(
     if not values:
         return
     _ensure_tables(db)
-    _duck(db)._execute(
-        "INSERT INTO _pipeline_hidden_constant_values "
-        "(pipeline_id, const_name, value) VALUES "
-        + ", ".join(["(?, ?, ?)"] * len(values))
-        + " ON CONFLICT DO NOTHING",
-        [x for v in values for x in (pipeline_id, const_name, v)],
-    )
+    from scistack_gui import intent_store
+
+    intent_store.hide_parameter_values(db, const_name, values, pipeline_id)
     logger.info(
         "[pipeline_store] hid %d value(s) of parameter %r", len(values), const_name
     )
@@ -1527,13 +1454,9 @@ def unhide_parameter_values(
     if not values:
         return
     _ensure_tables(db)
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_hidden_constant_values "
-        "WHERE pipeline_id = ? AND const_name = ? AND value IN ("
-        + ", ".join(["?"] * len(values))
-        + ")",
-        [pipeline_id, const_name, *values],
-    )
+    from scistack_gui import intent_store
+
+    intent_store.unhide_parameter_values(db, const_name, values, pipeline_id)
     logger.info(
         "[pipeline_store] unhid %d value(s) of parameter %r", len(values), const_name
     )
@@ -1548,17 +1471,9 @@ def list_hidden_parameter_values(
     fail-open convention as ``get_hidden_node_ids``.
     """
     _ensure_tables(db)
-    if pipeline_id is None:
-        rows = _duck(db)._fetchall(
-            "SELECT const_name, value FROM _pipeline_hidden_constant_values"
-        )
-    else:
-        rows = _duck(db)._fetchall(
-            "SELECT const_name, value FROM _pipeline_hidden_constant_values "
-            "WHERE pipeline_id = ?",
-            [pipeline_id],
-        )
-    return [{"const_name": const_name, "value": value} for const_name, value in rows]
+    from scistack_gui import intent_store
+
+    return intent_store.hidden_parameter_values(db, pipeline_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1663,11 +1578,10 @@ def hide_edge(
         pipeline_id,
     )
     _ensure_tables(db)
-    _duck(db)._execute(
-        "INSERT INTO _pipeline_hidden_edges "
-        "(pipeline_id, edge_id, source, target, source_handle, target_handle) "
-        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-        [pipeline_id, edge_id, source, target, source_handle, target_handle],
+    from scistack_gui import intent_store
+
+    intent_store.hide_edge(
+        db, edge_id, source, target, source_handle, target_handle, pipeline_id
     )
 
 
@@ -1678,10 +1592,10 @@ def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_PIPELINE_ID) -> None:
         edge_id,
         pipeline_id,
     )
-    _duck(db)._execute(
-        "DELETE FROM _pipeline_hidden_edges WHERE pipeline_id = ? AND edge_id = ?",
-        [pipeline_id, edge_id],
-    )
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    intent_store.unhide_edge(db, edge_id, pipeline_id)
 
 
 def get_hidden_edge_ids(db, pipeline_id: "str | None" = None) -> set[str]:
@@ -1690,14 +1604,9 @@ def get_hidden_edge_ids(db, pipeline_id: "str | None" = None) -> set[str]:
     ``pipeline_id=None`` (default) returns every scope's hidden ids unioned
     — see get_hidden_node_ids for why (same execution-path caveat)."""
     _ensure_tables(db)
-    if pipeline_id is None:
-        rows = _duck(db)._fetchall("SELECT edge_id FROM _pipeline_hidden_edges")
-    else:
-        rows = _duck(db)._fetchall(
-            "SELECT edge_id FROM _pipeline_hidden_edges WHERE pipeline_id = ?",
-            [pipeline_id],
-        )
-    return {row[0] for row in rows}
+    from scistack_gui import intent_store
+
+    return {e["edge_id"] for e in intent_store.hidden_edges(db, pipeline_id)}
 
 
 def list_hidden_edges(db, pipeline_id: "str | None" = None) -> list[dict]:
@@ -1707,27 +1616,9 @@ def list_hidden_edges(db, pipeline_id: "str | None" = None) -> list[dict]:
     scope to restrict to just that pipeline's own hidden edges (the restore
     panel — see plan-scope-hidden-nodes-edges.md)."""
     _ensure_tables(db)
-    if pipeline_id is None:
-        rows = _duck(db)._fetchall(
-            "SELECT edge_id, source, target, source_handle, target_handle "
-            "FROM _pipeline_hidden_edges"
-        )
-    else:
-        rows = _duck(db)._fetchall(
-            "SELECT edge_id, source, target, source_handle, target_handle "
-            "FROM _pipeline_hidden_edges WHERE pipeline_id = ?",
-            [pipeline_id],
-        )
-    return [
-        {
-            "edge_id": edge_id,
-            "source": source,
-            "target": target,
-            "source_handle": source_handle,
-            "target_handle": target_handle,
-        }
-        for edge_id, source, target, source_handle, target_handle in rows
-    ]
+    from scistack_gui import intent_store
+
+    return intent_store.hidden_edges(db, pipeline_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1817,18 +1708,4 @@ def _upsert_node(
         "ON CONFLICT (node_id) DO UPDATE SET node_type = excluded.node_type, "
         "label = excluded.label, pipeline_id = excluded.pipeline_id",
         [node_id, node_type, label, pipeline_id],
-    )
-
-
-def _upsert_edge(
-    db, edge_id: str, source: str, target: str, source_handle, target_handle
-) -> None:
-    _duck(db)._execute(
-        "INSERT INTO _pipeline_edges "
-        "(edge_id, source, target, source_handle, target_handle) "
-        "VALUES (?, ?, ?, ?, ?) "
-        "ON CONFLICT (edge_id) DO UPDATE SET source = excluded.source, "
-        "target = excluded.target, source_handle = excluded.source_handle, "
-        "target_handle = excluded.target_handle",
-        [edge_id, source, target, source_handle, target_handle],
     )
