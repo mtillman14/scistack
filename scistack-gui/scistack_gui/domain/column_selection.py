@@ -1,5 +1,5 @@
 """
-Pure normalisation of a GUI column selection.
+The GUI's view of a column selection.
 
 A *column selection* is the GUI's way of saying ``MyVar["filename"]`` /
 ``MyVar[["a", "b"]]`` / ``MyVar.for_columns([...])`` for one function
@@ -11,6 +11,18 @@ parameter. It is stored per function node in ``_node_config`` (see
 and rides on the parameter's VARIABLE BINDING from there
 (``edge_resolver.variable_binding``) down to ``build_run_inputs``, MATLAB
 generation and code export.
+
+**The shape is not defined here.** ``scidb.intent`` owns the ``columns``
+aspect — its payload, its ``None``-means-whole-variable rule, its log
+spelling and its stored serialisation — and this module is the GUI's
+adapter onto it: binding-shaped helpers (:func:`from_binding`,
+:func:`apply_to_bindings`) plus re-exports so existing GUI imports keep
+working. Before 2026-09-19 this module and
+``provenance_save.compute_input_selectors`` normalized the same thing
+independently and agreed by convention; that is how a ``for_columns``
+selection reached storage as "no selection". See
+``docs/claude/intent-and-fact.md`` §5 and
+``docs/claude/input-binding-round-trip.md``.
 
 No I/O — everything here works on plain dicts, so the tolerated input shapes
 can be pinned by unit tests without a database.
@@ -33,58 +45,21 @@ from __future__ import annotations
 
 import logging
 
+from scidb.intent import describe_columns as describe
+from scidb.intent import normalize_columns as normalize
+from scidb.intent import parse_selector, same_columns, selector_json
+
 logger = logging.getLogger(__name__)
 
-
-def normalize(raw) -> "dict | None":
-    """``{"columns": [...], "iterate": bool}`` for a stored selection, or
-    ``None`` when there is effectively no selection at all.
-
-    Tolerates every shape the selection can arrive in, because it crosses a
-    JSON boundary written by a frontend that has been through several
-    revisions:
-
-    * ``"filename"`` — a bare column name;
-    * ``["a", "b"]`` — a bare column list;
-    * ``{"columns": [...], "iterate": bool}`` — the canonical dict;
-    * ``{"columns": "a"}`` / ``{"iterate": true}`` — partial dicts;
-    * a binding dict that also carries ``kind``/``ref`` (so
-      :func:`from_binding` is this same function).
-
-    Returns ``None`` for an EMPTY, non-iterate selection. That case must not
-    survive as a ``ColumnSelection`` at all: no columns and no iteration means
-    "the whole variable", which is exactly what binding the bare class already
-    does, and wrapping it anyway would fork the version key for no change in
-    what the function receives.
-
-    An empty selection WITH ``iterate`` is kept — ``MyVar.for_columns()`` means
-    "every data column, one call each", resolved at for_each time.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        columns: list = [raw] if raw else []
-        iterate = False
-    elif isinstance(raw, (list, tuple)):
-        columns = [str(c) for c in raw if c]
-        iterate = False
-    elif isinstance(raw, dict):
-        cols = raw.get("columns")
-        if isinstance(cols, str):
-            cols = [cols] if cols else []
-        columns = [str(c) for c in (cols or []) if c]
-        iterate = bool(raw.get("iterate"))
-    else:
-        logger.warning(
-            "[column_selection] ignoring a selection of unexpected type %s: %r",
-            type(raw).__name__,
-            raw,
-        )
-        return None
-
-    if not columns and not iterate:
-        return None
-    return {"columns": columns, "iterate": iterate}
+__all__ = [
+    "apply_to_bindings",
+    "describe",
+    "from_binding",
+    "normalize",
+    "parse_selector",
+    "same_columns",
+    "selector_json",
+]
 
 
 def from_binding(binding: dict) -> "dict | None":
@@ -98,22 +73,6 @@ def from_binding(binding: dict) -> "dict | None":
     if "columns" not in binding and "iterate" not in binding:
         return None
     return normalize(binding)
-
-
-def describe(sel: "dict | None") -> str:
-    """The ONE spelling of a selection used in logs and in the canvas chip.
-
-    Two spellings of the same thing is how a user ends up reading a log line
-    that does not match what the node shows, so there is exactly one.
-    """
-    if not sel:
-        return "whole variable"
-    columns = sel.get("columns") or []
-    if sel.get("iterate"):
-        return "per column" if not columns else f"per column ({len(columns)})"
-    if len(columns) == 1:
-        return f'"{columns[0]}"'
-    return f"{len(columns)} columns"
 
 
 def apply_to_bindings(

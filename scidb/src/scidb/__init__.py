@@ -102,6 +102,7 @@ from .variant import Variant, branch_param
 # and `from scidb import entities; entities.WINDOW` needs the module object
 # itself -- attribute access on it is what resolves a declared name.
 from . import entities  # noqa: E402
+from . import intent  # noqa: E402
 from . import schema_order  # noqa: E402
 
 __version__ = "0.1.0"
@@ -112,6 +113,8 @@ __all__ = [
     "Parameter",
     # Entities file (TOML) -- the writable declaration surface
     "entities",
+    # Intent vs fact: statements about runs, resolved against provenance
+    "intent",
     "schema_order",
     # Discovery
     "scan_project",

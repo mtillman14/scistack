@@ -146,8 +146,22 @@ def compute_input_selectors(inputs: dict) -> dict:
     columns of the same record is a different computation (§ ColumnSelection
     decision). Fixed/Variant/Merge resolve to whole records and need no selector;
     their effect is captured by *which* record_id the edge points at.
+
+    The shape and the stored spelling belong to ``scidb.intent`` (the
+    ``columns`` aspect): this function decides WHICH inputs carry a selection,
+    ``intent.selector_json`` decides what one looks like. They used to be two
+    independent normalizers — this one and the GUI's — agreeing by convention,
+    which is how a ``for_columns`` selection reached storage as "no selection".
+
+    ``iterate`` (for_columns) rides along since 2026-09-19: a per-column run
+    over every column has no column list, so it had no selector at all and a
+    GUI re-run from history handed the function the whole table (integration
+    suite, test_dag_runs). Only written when set, so an ordinary column
+    selection keeps its old identity.
     """
     from scifor import ColumnSelection, Fixed
+
+    from .intent import selector_json
 
     out: dict = {}
     for param, spec in inputs.items():
@@ -158,23 +172,9 @@ def compute_input_selectors(inputs: dict) -> dict:
             getattr(spec, "data", None), ColumnSelection
         ):
             cs = spec.data
-        if cs is None:
-            out[param] = None
-            continue
-        columns = list(getattr(cs, "columns", None) or [])
-        iterate = bool(getattr(cs, "iterate", False))
-        if not columns and not iterate:
-            out[param] = None  # a plain whole-variable input
-            continue
-        # `iterate` (for_columns) rides along since 2026-09-19: a per-column
-        # run over every column has no column list, so it had no selector
-        # at all and a GUI re-run from history handed the function the
-        # whole table (integration suite, test_dag_runs). Only written when
-        # set, so an ordinary column selection keeps its old identity.
-        selector = {"columns": columns}
-        if iterate:
-            selector["iterate"] = True
-        out[param] = json.dumps(selector, sort_keys=True)
+        # `None` for a whole-variable input, and for an empty non-iterate
+        # selection — normalize_columns folds those together.
+        out[param] = selector_json(cs) if cs is not None else None
     return out
 
 
