@@ -1513,8 +1513,14 @@ def default_schema_level(
             exc_info=True,
         )
         recorded = None
-    if recorded:
-        return recorded, "the level it last ran at"
+    if recorded is not None:
+        # `[]` is a real answer: the last run was one call over the whole
+        # dataset (records with no schema key). Only `None` means no history.
+        return recorded, (
+            "the level it last ran at"
+            if recorded
+            else "the level it last ran at — none: one call over the whole dataset"
+        )
 
     type_names: set[str] = set()
     templates: list[list[str]] = []
@@ -1543,9 +1549,17 @@ def default_schema_level(
                 function_name,
                 exc_info=True,
             )
-    inferred = _pq.finest_schema_keys(levels, schema_keys)
-    if inferred:
-        return inferred, "the finest level its inputs carry"
+    if levels:
+        # At least one bound input has a known level. Their union may be EMPTY
+        # — a PathInput with no placeholder, a variable saved with no key —
+        # and that is a real level, not an absence: once over the whole
+        # dataset, exactly as `for_each(schema_keys=[])` runs.
+        inferred = _pq.finest_schema_keys(levels, schema_keys)
+        return inferred, (
+            "the finest level its inputs carry"
+            if inferred
+            else "the level its inputs carry — none: one call over the whole dataset"
+        )
 
     return schema_keys, "no history and no bound input to read a level from"
 

@@ -492,3 +492,87 @@ class TestDefaultSchemaLevel:
         level, why = default_schema_level(populated_db, "never_ran", [])
         assert level == ["subject", "session"]
         assert "no history" in why
+
+
+class TestDatasetLevelDefault:
+    """A once-per-dataset operation — a PathInput naming no schema key, a
+    variable saved with none — implies NO iteration: one call. That is a
+    level (`[]`), and is not the "nothing to go on" case that means every
+    key. `for_each(schema_keys=[])` pools everything into one call;
+    `schema_keys=None` iterates every key, so the two must never be
+    confused on the way to it."""
+
+    def _target(self, **bindings):
+        return {"constants": {}, "output_type": "X", "bindings": bindings}
+
+    def test_a_path_input_with_no_schema_placeholder_means_one_call(
+        self, populated_db, monkeypatch
+    ):
+        from scistack_gui import registry
+        from scistack_gui.domain.edge_resolver import pathinput_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        class DatasetFile:
+            def placeholder_keys(self):
+                return []
+
+        monkeypatch.setattr(
+            registry, "get_path_inputs_registry", lambda: {"config": DatasetFile()}
+        )
+        level, why = default_schema_level(
+            populated_db, "never_ran", [self._target(f=pathinput_binding("config"))]
+        )
+        assert level == []
+        assert "one call over the whole dataset" in why
+
+    def test_a_dataset_level_variable_means_one_call(self, populated_db):
+        from scidb import BaseVariable
+
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        class WholeDataset(BaseVariable):
+            pass
+
+        WholeDataset.save(np.array([1.0, 2.0, 3.0]))
+        level, why = default_schema_level(
+            populated_db, "never_ran", [self._target(x=variable_binding(["WholeDataset"]))]
+        )
+        assert level == []
+        assert "one call" in why
+
+    def test_a_dataset_level_input_beside_a_finer_one_iterates_the_finer(
+        self, populated_db
+    ):
+        from scidb import BaseVariable
+
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        class WholeDataset2(BaseVariable):
+            pass
+
+        WholeDataset2.save(np.array([1.0]))
+        level, _ = default_schema_level(
+            populated_db,
+            "never_ran",
+            [
+                self._target(
+                    whole=variable_binding(["WholeDataset2"]),
+                    per=variable_binding(["RawSignal"]),
+                )
+            ],
+        )
+        assert level == ["subject", "session"]
+
+    def test_an_unbound_or_recordless_input_is_not_a_level(self, populated_db):
+        """A variable with no records says nothing about level, so with no
+        other input the default is still every key."""
+        from scistack_gui.domain.edge_resolver import variable_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        level, why = default_schema_level(
+            populated_db, "never_ran", [self._target(x=variable_binding(["NoRecordsYet"]))]
+        )
+        assert level == ["subject", "session"]
+        assert "no history" in why

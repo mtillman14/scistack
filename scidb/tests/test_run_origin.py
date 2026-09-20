@@ -183,3 +183,36 @@ class TestInputSchemaKeys:
         assert finest_schema_keys([["subject", "trial"], ["subject", "session"]], keys) == keys
         assert finest_schema_keys([["subject"]], keys) == ["subject"]
         assert finest_schema_keys([], keys) == []
+
+
+class TestDatasetLevel:
+    """No schema key at all is a LEVEL — once over the whole dataset — and
+    must never be mistaken for "no information" (which is `None`)."""
+
+    def test_a_variable_saved_with_no_keys_is_dataset_level(self, db):
+        from scidb.provenance_query import variable_schema_keys
+
+        class Whole(BaseVariable):
+            pass
+
+        Whole.save(pd.DataFrame({"a": [1.0, 2.0]}))
+        assert variable_schema_keys(db._duck, ["Whole"], ["subject", "trial"]) == {"Whole": []}
+
+    def test_a_dataset_level_run_records_an_empty_level(self, db):
+        from scidb.provenance_query import recorded_schema_keys
+
+        class Whole2(BaseVariable):
+            pass
+
+        class Once(BaseVariable):
+            pass
+
+        Whole2.save(pd.DataFrame({"a": [1.0, 2.0]}))
+
+        def count(value):
+            return float(len(value))
+
+        # schema_keys=[]: pool everything into ONE call.
+        for_each(count, {"value": Whole2}, [Once], schema_keys=[])
+        assert len(Once.load(as_df=True, version="all")) == 1
+        assert recorded_schema_keys(db._duck, "count", ["subject", "trial"]) == []

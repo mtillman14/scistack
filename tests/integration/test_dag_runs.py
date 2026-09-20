@@ -403,3 +403,43 @@ def test_the_run_logs_a_bindings_line_naming_every_input(seeded, pipeline, pushe
     # for none. Every input of this step is one column, so the line carries
     # the one-column spelling for each.
     assert 'knee: CycleSymmetry ("knee")' in line, line
+
+
+# --- a once-per-dataset step runs once ------------------------------------------------
+
+
+def test_a_dataset_level_step_reruns_once_from_the_canvas(seeded, pipeline, pushes, caplog):
+    """A function over a whole-dataset variable (saved with no schema key) is
+    a once-per-dataset operation. Its history records an EMPTY level, and a
+    canvas re-run with no Schema Level chosen must iterate nothing — one
+    call, no new records — rather than once per cycle with the same input
+    handed to every call. `[]` is a level; `None` would have meant every key.
+    """
+    import logging
+
+    import numpy as np
+
+    from scistack_gui import registry as _registry
+
+    class DatasetNote(scidb.BaseVariable):
+        pass
+
+    class NoteLength(scidb.BaseVariable):
+        pass
+
+    DatasetNote.save(np.array([1.0, 2.0, 3.0]))  # no schema key at all
+
+    def note_length(note):
+        return float(len(note))
+
+    _registry._functions["note_length"] = note_length
+    # The Python-authored run: once over the dataset.
+    scidb.for_each(note_length, {"note": DatasetNote}, [NoteLength], schema_keys=[])
+    before = _count(NoteLength)
+    assert before == 1
+
+    with caplog.at_level(logging.INFO):
+        done = _run(seeded, "note_length", pushes)
+    assert done["success"] is True, done
+    assert _count(NoteLength) == before, "a faithful re-run adds nothing"
+    assert "iterating [] (" in caplog.text, caplog.text

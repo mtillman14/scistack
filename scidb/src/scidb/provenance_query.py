@@ -1985,7 +1985,10 @@ def recorded_schema_keys(duck, fn_name: str, schema_keys) -> list[str] | None:
     Read off the records that run produced: the schema columns populated on
     their ``_schema`` rows are the keys the run iterated (a ``distribute``
     run saves one level below where it iterated, so its deepest populated
-    key is dropped). This is the ``schema_location`` aspect's FACT — history
+    key is dropped). A run that produced DATASET-level records — no schema
+    key at all, one call over everything — answers ``[]``, which is a real
+    level and not the same as ``None``: ``for_each(schema_keys=[])`` pools
+    every row into one call, ``schema_keys=None`` iterates every key. This is the ``schema_location`` aspect's FACT — history
     as the floor (rule 4 of docs/claude/intent-and-fact.md): a re-run from
     the canvas with no level chosen on the node should run where the
     function ran, not at every key the dataset has. Defaulting to every key
@@ -2005,7 +2008,7 @@ def recorded_schema_keys(duck, fn_name: str, schema_keys) -> list[str] | None:
         "JOIN _invocation inv ON inv.invocation_id = ri.invocation_id "
         "JOIN _invocation_output io ON io.invocation_id = ri.invocation_id "
         "JOIN _record r ON r.record_id = io.output_record_id "
-        "JOIN _schema s ON s.schema_id = r.schema_id "
+        "LEFT JOIN _schema s ON s.schema_id = r.schema_id "
         "WHERE ri.run_id = ?",
         [last["run_id"]],
     )
@@ -2027,7 +2030,9 @@ def variable_schema_keys(duck, type_names, schema_keys) -> dict[str, list[str]]:
     — a variable's inherent LEVEL, read off its records.
 
     A subject-level variable answers ``["subject"]``; a cycle-level one every
-    key. A type with no records is absent. Batched over *type_names* in one
+    key; a DATASET-level one (saved with no keys at all) ``[]``. A type with
+    no records is absent — the two are different answers: "no key" is a
+    level, "no records" is no information. Batched over *type_names* in one
     query, because a canvas render asks this for every input of every node.
     """
     keys = list(schema_keys or [])
@@ -2038,7 +2043,7 @@ def variable_schema_keys(duck, type_names, schema_keys) -> dict[str, list[str]]:
     rows = _chunked_in(
         duck,
         f"SELECT r.type, {cols} "  # noqa: S608 - keys are the dataset's own
-        "FROM _record r JOIN _schema s ON s.schema_id = r.schema_id "
+        "FROM _record r LEFT JOIN _schema s ON s.schema_id = r.schema_id "
         "WHERE r.type IN ({ph}) GROUP BY r.type",
         names,
     )
