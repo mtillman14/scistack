@@ -308,12 +308,42 @@ def test_a_python_column_selection_survives_a_gui_rerun(seeded, pipeline, pushes
     assert done["success"] is True and done.get("failed_combos", 0) == 0, done
 
 
+def _producing_invocations(db, type_name: str) -> dict:
+    """``{invocation_id: signature}`` for every record of *type_name* — the
+    diagnostic for "a faithful re-run adds nothing": if the set grows, the
+    re-run was a DIFFERENT computation (the two signatures say how); if it
+    does not and the count still grew, the same call produced different
+    content."""
+    from scidb import provenance_query as pq
+
+    duck = db._duck
+    out: dict = {}
+    for (rid,) in duck._fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name]):
+        inv = pq.producing_invocation(duck, rid)
+        if inv is None:
+            continue
+        inv_id = inv[0]
+        if inv_id not in out:
+            sig = pq.stored_invocation_signature(duck, rid) or {}
+            out[inv_id] = {
+                "function_hash": sig.get("function_hash"),
+                "var_inputs": sig.get("var_inputs"),
+                "const_hashes": sig.get("const_hashes"),
+                "run_options": duck._fetchone(
+                    "SELECT distribute, as_table, for_columns FROM _invocation WHERE invocation_id = ?",
+                    [inv_id],
+                ),
+            }
+    return out
+
+
 def test_a_python_for_columns_survives_a_gui_rerun(seeded, pipeline, pushes):
     scidb.for_each(
         pipeline.scale_joint, {"value": pipeline.TrialMeanSymmetry.for_columns(), "scale": pipeline.SCALE},
         [pipeline.ScaledTrialSymmetry], subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[],
     )
     before = _count(pipeline.ScaledTrialSymmetry)
+    invocations_before = _producing_invocations(seeded, "ScaledTrialSymmetry")
     # What history says, and what the run will therefore bind:
     from scistack_gui.services.execution_service import derive_fn_targets
 
@@ -321,11 +351,28 @@ def test_a_python_for_columns_survives_a_gui_rerun(seeded, pipeline, pushes):
     targets = derive_fn_targets(seeded, "scale_joint")
     evidence = (
         f"\nvariants[].selectors={[v.get('selectors') for v in variants]}"
+        f"\nvariants[].run_options={[v.get('run_options') for v in variants]}"
         f"\ntargets[].bindings={[t.get('bindings') for t in targets]}"
+        f"\ntargets[].constants={[t.get('constants') for t in targets]}"
     )
     done = _run(seeded, "scale_joint", pushes)
     assert done["success"] is True and done.get("failed_combos", 0) == 0, str(done) + evidence
-    assert _count(pipeline.ScaledTrialSymmetry) == before, "a faithful re-run adds nothing" + evidence
+    after = _count(pipeline.ScaledTrialSymmetry)
+    invocations_after = _producing_invocations(seeded, "ScaledTrialSymmetry")
+    new_invocations = {k: v for k, v in invocations_after.items() if k not in invocations_before}
+    assert after == before, (
+        f"a faithful re-run adds nothing: {before} -> {after} record(s); "
+        f"{len(invocations_before)} -> {len(invocations_after)} producing invocation(s)."
+        + (
+            f"\nNEW invocation(s) — the re-run was a different computation:\n"
+            + "\n".join(f"  {k}: {v}" for k, v in new_invocations.items())
+            + "\nOLD invocation(s):\n"
+            + "\n".join(f"  {k}: {v}" for k, v in invocations_before.items())
+            if new_invocations
+            else "\nSame invocation(s) — same call, different CONTENT (column order? dtype?)."
+        )
+        + evidence
+    )
     one = pipeline.ScaledTrialSymmetry.load(as_df=True).iloc[0]["data"]
     columns = set(one.columns if isinstance(one, pd.DataFrame) else one.keys())
     assert columns >= {"ankle", "knee", "hip"}, columns
@@ -350,6 +397,9 @@ def test_the_run_logs_a_bindings_line_naming_every_input(seeded, pipeline, pushe
     line = lines[-1]
     for param in ("knee", "walking_speed_mps", "height_cm"):
         assert f"{param}:" in line, f"{param} missing from: {line}"
+        assert f"{param}: (unbound)" not in line, f"{param} bound to nothing: {line}"
     # The selection half is spelled by scidb.intent.describe_columns, the same
-    # words the canvas chip uses.
-    assert "whole variable" in line or "column" in line
+    # words the canvas chip uses: `("knee")` for one column, `(whole variable)`
+    # for none. Every input of this step is one column, so the line carries
+    # the one-column spelling for each.
+    assert 'knee: CycleSymmetry ("knee")' in line, line

@@ -87,15 +87,18 @@ class TestRecorded:
         class Summed(BaseVariable):
             pass
 
-        Plain.save(pd.DataFrame({"a": [1.0, 2.0]}), subject="01", trial="1")
+        # Two data columns: a table with ONE data column reaches the function
+        # as that column alone (the 1-D collapse), not as a frame. The body
+        # uses len() so it is indifferent to which shape arrives — this test
+        # is about what gets RECORDED, not about the function's input type.
+        Plain.save(
+            pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]}), subject="01", trial="1"
+        )
 
         def total(value):
-            return float(pd.DataFrame(value)["a"].sum())
+            return float(len(value))
 
-        # Explicit locations, like test_column_selection_lineage's plain-input
-        # case: a bare DataFrame input expands by rid, and an empty-list key
-        # relies on schema discovery rather than the saved record.
-        for_each(total, {"value": Plain}, [Summed], subject=["01"], trial=["1"])
+        for_each(total, {"value": Plain}, [Summed], subject=[], trial=[])
 
         variants = [
             v for v in db.list_pipeline_variants() if v["function_name"] == "total"
