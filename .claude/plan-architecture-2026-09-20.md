@@ -670,3 +670,40 @@ request is refused as such rather than as "database not initialised" /
 "database locked" (ccbdafbc, f675f45f). Every stage of this plan is built
 and passing; the branch is still unmerged and the GUI manual items 0c/0d
 are still unchecked.
+
+### Stage 4, completed — every family in the tables, built 2026-09-21, tests unrun
+
+`Handler` grew what the rest of the API needed: `path=None` (RPC-only —
+the three MATLAB terminal/sidecar methods), path placeholders (the HTTP
+endpoint fills ONE model from path parameters + query string + JSON body,
+path winning, and answers pydantic failures as 422), `body` (must agree
+with `api.ts`; inferred when not given), `notify_dag_updated` (through
+`ws.push_message`, so both transports refresh alike), `wants_transport`
+(the one legitimate difference: the extension can dispatch a MATLAB
+script to the MathWorks terminal). `api/tables.py` is the union;
+`server.py` builds `METHODS` and `SELF_MANAGED_DB_METHODS` from it and
+holds no handler at all.
+
+Drift the migration settled, the same way for both transports: the RPC
+run never passed `node_id` to the run thread (name-scoped derivation — the
+bug `derive_target_for_node` documents) and never refused a glue node;
+the RPC glue mutations never notified `dag_updated`; the browser could not
+cancel a run, restore a hidden hypothesis, open provenance or the node
+location tree (no `api.ts` entry), sent no scope with delete-Parameter /
+PathInput / hide-value (hid in root regardless), and named the pending
+constant methods `*_pending_parameter` (dead entries; the RPC names
+`*_pending_constant` are now the only ones). `api/project.py` keeps the
+scan logic as plain functions; `project_service` no longer wraps dicts.
+
+`tests/test_api_handlers.py` now walks every table: RPC entry, HTTP
+route, `api.ts` path/method/body (a template normaliser turns
+``${encodeURIComponent(p.node_id as string)}`` into ``{node_id}``),
+RPC-only rows absent from `api.ts`, no `api.ts` entry without a row, path
+placeholders present on the model, no `_h_*` and no decorated route for
+a table method anywhere under `api/`, plus the mechanism itself (422,
+400 mapping, path+query+body → one model).
+
+Verify: `cd /workspace/scistack-gui && pytest tests/test_api_handlers.py
+-q`, then the whole GUI suite (test_api.py, test_matlab.py and
+test_plot_service.py exercise most rows), then `tests/integration`. GUI
+manual check: `docs/gui-manual-testing-todo.md` item 0e.

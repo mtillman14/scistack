@@ -92,17 +92,22 @@ Both protocols share the same service layer, allowing the GUI to run either as a
 - Thread-safe stdout with mutex (`_lock`)
 - Supports debugpy attachment for breakpoints
 
-**Method dispatch table** (`server.py` lines 120-140):
+**Method dispatch table** — built, not written (since 2026-09-21):
 ```python
-METHODS = {
-    "get_pipeline": pipeline_service.get_pipeline_graph,
-    "get_info": pipeline_service.get_info,
-    "start_run": run_service.start_run_json_rpc,
-    "cancel_run": run_service.cancel_run,
-    "force_cancel_run": run_service.force_cancel_run,
-    # ... (28 methods total)
-}
+# server.py
+METHODS = rpc_methods(ALL_HANDLERS)                  # api/tables.py
+SELF_MANAGED_DB_METHODS = self_managed(ALL_HANDLERS)
 ```
+Every GUI method is ONE `Handler` row in a table under `scistack_gui/api/`
+(`api/handlers.py` for the shape — name, HTTP path, request model, the
+service call, lock policy, error→status map, `notify_dag_updated`). The
+JSON-RPC methods, the FastAPI routes (`install_routes`, which fills the
+same model from path parameters + query string + JSON body) and the lock
+policy are all derived from the rows; `tests/test_api_handlers.py` checks
+every row against both transports and the frontend's route map
+(`frontend/src/api.ts`). A method with `path=None` is RPC-only (the three
+MATLAB terminal/sidecar methods the browser has no host for). See
+`docs/claude/decisions.md` D-2026-09-20-7.
 
 ---
 

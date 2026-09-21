@@ -1,18 +1,17 @@
 """
-Variable-related API endpoints.
-
-GET  /api/variables/{variable_name}/records — records + variant summary
-POST /api/variables/create                 — define a new BaseVariable subclass
+Variables — the record/plot-data queries the sidebar draws from, and the
+handler table for both transports (``VARIABLE_HANDLERS`` at the bottom;
+``api/handlers.py``).
 """
 
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from scidb.database import DatabaseManager
 
-from scistack_gui.db import get_db
+from scistack_gui.api.handlers import Handler, install_routes
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +56,7 @@ def _format_variant_label(
     return label or "(raw)"
 
 
-@router.get("/variables/{variable_name}/records")
-def get_variable_records(variable_name: str, db: DatabaseManager = Depends(get_db)):
+def get_variable_records(variable_name: str, db: DatabaseManager) -> dict:
     """
     Return all records for a variable type with schema key values and variant info.
 
@@ -233,8 +231,7 @@ def _numeric_plot_kind(sample: object) -> "str | None":
     return None
 
 
-@router.get("/variables/{variable_name}/plot-data")
-def get_variable_plot_data(variable_name: str, db: DatabaseManager = Depends(get_db)):
+def get_variable_plot_data(variable_name: str, db: DatabaseManager) -> dict:
     """
     Raw points for the sidebar's default plot (to-do #4) — every record's
     schema key values + its scalar/1D-numeric value, unaggregated. The
@@ -324,18 +321,45 @@ def get_variable_plot_data(variable_name: str, db: DatabaseManager = Depends(get
     }
 
 
-# ---- Column list -------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# The handler table — both transports (api/handlers.py)
+# ---------------------------------------------------------------------------
+#
+#     GET  /api/variables/{name}/records            get_variable_records
+#     GET  /api/variables/{name}/plot-data          get_variable_plot_data
+#     GET  /api/variables/{variable_type}/columns   get_variable_columns
+#     POST /api/variables/create                    create_variable
 
 
-@router.get("/variables/{variable_name}/columns")
-def get_variable_columns(
-    variable_name: str, db: DatabaseManager = Depends(get_db)
-) -> dict:
-    """Which columns a consumer of this variable receives.
+class VariableName(BaseModel):
+    name: str
 
-    Read live by the function node's Inputs column picker and by the glue
-    panel, on every open — a variable re-saved with a different shape changes
-    this answer, and neither surface caches it.
+
+class VariableColumnsQuery(BaseModel):
+    variable_type: str | None = None
+    #: The older spelling some callers still send.
+    name: str | None = None
+
+
+class CreateVariableRequest(BaseModel):
+    name: str | None = ""
+    docstring: str | None = None
+    language: str | None = "python"
+
+
+def _get_variable_records(db, req: VariableName) -> dict:
+    return get_variable_records(req.name, db)
+
+
+def _get_variable_plot_data(db, req: VariableName) -> dict:
+    return get_variable_plot_data(req.name, db)
+
+
+def _get_variable_columns(db, req: VariableColumnsQuery) -> dict:
+    """Which columns a consumer of this variable receives — the Inputs
+    column picker's live read (and the glue panel's, through the same
+    service), on every open: a variable re-saved with a different shape
+    changes this answer, and neither surface caches it.
 
     Response: ``{"ok", "variable_type", "data_columns", "schema_keys",
     "note"}``. A scalar/array-stored variable reports its single class-named
@@ -344,29 +368,23 @@ def get_variable_columns(
     """
     from scistack_gui.services import variable_service
 
-    return variable_service.input_columns(variable_name, db=db)
+    variable_type = req.variable_type or req.name or ""
+    if not variable_type:
+        return {
+            "ok": False,
+            "error": (
+                "This parameter is not wired to a variable yet, so there are "
+                "no columns to show."
+            ),
+        }
+    return variable_service.input_columns(variable_type, db=db)
 
 
-# ---- Create new variable type -------------------------------------------------
+def _create_variable(req: CreateVariableRequest) -> dict:
+    """Define a new BaseVariable subclass by appending it to the user's
+    module file, then refresh the registry so it's immediately available.
 
-
-class CreateVariableRequest(BaseModel):
-    name: str
-    docstring: str | None = None
-
-
-@router.post("/variables/create")
-async def create_variable(req: CreateVariableRequest) -> dict:
-    """
-    Define a new BaseVariable subclass by appending it to the user's module file,
-    then refresh the registry so it's immediately available.
-
-    Delegates to ``services.variable_service.create_variable`` -- the single
-    source of truth also used by the JSON-RPC (VS Code extension) path in
-    server.py -- so validation/target-file/MATLAB-fallback behavior can't
-    drift between the two transports.
-
-    Deliberately does NOT broadcast ``dag_updated``: a freshly declared type
+    Deliberately does NOT notify ``dag_updated``: a freshly declared type
     has no DB records yet, so it cannot appear as a canvas node (variable
     nodes come from ``list_variables``, not from the type registry — see
     ``graph_builder.build_variable_nodes``), and nothing in the frontend
@@ -375,14 +393,22 @@ async def create_variable(req: CreateVariableRequest) -> dict:
     see ``layout_service.write_manual_node``). Broadcasting here used to
     force every connected client through a full pipeline refetch+relayout
     plus registry/path-input/parameter/hidden-pipeline refetches for a
-    change the canvas can't show — the same "rebuild for nothing" cost the
-    position-only-write guard in ``api/pipeline.py`` exists to avoid. The
-    caller updates its own sidebar registry state directly instead, same as
-    ``create_parameter``/``create_path_input`` already do.
+    change the canvas can't show. The caller updates its own sidebar
+    registry state directly instead, same as ``create_parameter`` /
+    ``create_path_input`` already do.
     """
     from scistack_gui.services.variable_service import create_variable as _create
 
-    name = req.name.strip()
+    name = (req.name or "").strip()
     logger.info("create_variable request: name=%r docstring=%r", name, req.docstring)
+    return _create(name, req.docstring, req.language or "python")
 
-    return _create(name, req.docstring)
+
+VARIABLE_HANDLERS: tuple[Handler, ...] = (
+    Handler("get_variable_records", "/variables/{name}/records", VariableName, _get_variable_records, http_method="GET"),
+    Handler("get_variable_plot_data", "/variables/{name}/plot-data", VariableName, _get_variable_plot_data, http_method="GET"),
+    Handler("get_variable_columns", "/variables/{variable_type}/columns", VariableColumnsQuery, _get_variable_columns, http_method="GET"),
+    Handler("create_variable", "/variables/create", CreateVariableRequest, _create_variable, needs_db=False),
+)
+
+install_routes(router, VARIABLE_HANDLERS)

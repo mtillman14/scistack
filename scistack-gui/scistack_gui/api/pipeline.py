@@ -15,15 +15,15 @@ import inspect
 import logging
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
 from scidb.database import DatabaseManager
 from scidb.roles import endpoint_kind
 
 from scistack_gui import layout as layout_store
 from scistack_gui import registry
-from scistack_gui.api import ws
-from scistack_gui.db import get_db
+from scistack_gui.api.handlers import Handler, install_routes
+from scistack_gui.ids import ROOT_SCOPE
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1394,133 +1394,163 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     return {"nodes": nodes, "edges": edges, "pipeline_id": pipeline_id}
 
 
-@router.get("/pipeline")
-def get_pipeline(pipeline_id: str = "main", db: DatabaseManager = Depends(get_db)):
-    from scistack_gui.services.pipeline_service import get_pipeline_graph
-
-    return get_pipeline_graph(db, pipeline_id)
-
-
-@router.get("/function/{fn_name}/params")
-def get_function_params(fn_name: str):
-    from scistack_gui.services.pipeline_service import get_function_full_info
-
-    return get_function_full_info(fn_name)
-
-
-@router.get("/function/{fn_name}/source")
-def get_function_source(fn_name: str):
-    from scistack_gui.services.pipeline_service import (
-        get_function_source as _get_source,
-    )
-
-    return _get_source(fn_name)
+# ---------------------------------------------------------------------------
+# The handler table — both transports (api/handlers.py)
+# ---------------------------------------------------------------------------
+#
+#     GET    /api/pipeline                                   get_pipeline
+#     GET    /api/function/{name}/params                     get_function_params
+#     GET    /api/function/{name}/source                     get_function_source
+#     GET    /api/function/{name}/doc                        get_function_doc
+#     PUT    /api/parameters/{name}/pending/{value}          put_pending_constant
+#     DELETE /api/parameters/{name}/pending/{value}          delete_pending_constant
+#     POST   /api/functions/{function_name}/hidden_combos    hide_combo
+#     DELETE /api/functions/hidden_combos/{node_id}          unhide_combo
+#     GET    /api/functions/{function_name}/hidden_combos    list_hidden_combos
+#     POST   /api/parameters/{name}/hidden_values/{value}    hide_parameter_value
+#     DELETE /api/parameters/{name}/hidden_values/{value}    unhide_parameter_value
+#     POST   /api/parameters/{name}/group_checked            set_parameter_group_checked
+#     GET    /api/parameters/hidden_values                   list_hidden_parameter_values
 
 
-@router.get("/function/{fn_name}/doc")
-def get_function_doc(fn_name: str):
-    from scistack_gui.services.pipeline_service import get_function_doc as _get_doc
-
-    return _get_doc(fn_name)
+class ScopeQuery(BaseModel):
+    pipeline_id: str | None = ROOT_SCOPE
 
 
-@router.put("/parameters/{name}/pending/{value}")
-async def add_pending_constant_value(name: str, value: str):
-    from scistack_gui.services.layout_service import put_pending_constant
-
-    put_pending_constant(name, value)
-    await ws.broadcast({"type": "dag_updated"})
-    return {"ok": True}
+class FunctionName(BaseModel):
+    name: str
 
 
-@router.delete("/parameters/{name}/pending/{value}")
-async def remove_pending_constant_value(name: str, value: str):
-    from scistack_gui.services.layout_service import delete_pending_constant
-
-    delete_pending_constant(name, value)
-    await ws.broadcast({"type": "dag_updated"})
-    return {"ok": True}
+class PendingValue(BaseModel):
+    name: str
+    value: str
 
 
 class HideComboRequest(BaseModel):
+    function_name: str
     node_id: str | None = None
     variant_key: dict
 
 
-@router.post("/functions/{function_name}/hidden_combos")
-def hide_combo(
-    function_name: str,
-    body: HideComboRequest,
-    db: DatabaseManager = Depends(get_db),
-):
-    from scistack_gui.services.layout_service import hide_variant_combo
-
-    return hide_variant_combo(db, function_name, body.node_id, body.variant_key)
+class NodeRef(BaseModel):
+    node_id: str
 
 
-@router.delete("/functions/hidden_combos/{node_id}")
-def unhide_combo(node_id: str, db: DatabaseManager = Depends(get_db)):
-    from scistack_gui.services.layout_service import unhide_variant_combo
-
-    return unhide_variant_combo(db, node_id)
+class FunctionRef(BaseModel):
+    function_name: str
 
 
-@router.get("/functions/{function_name}/hidden_combos")
-def list_hidden_combos(function_name: str, db: DatabaseManager = Depends(get_db)):
-    from scistack_gui.services.layout_service import get_hidden_combos
-
-    return get_hidden_combos(db, function_name)
-
-
-@router.post("/parameters/{name}/hidden_values/{value}")
-def hide_parameter_value(
-    name: str,
-    value: str,
-    pipeline_id: str = "main",
-    db: DatabaseManager = Depends(get_db),
-):
-    from scistack_gui.services.layout_service import hide_parameter_value as _hide
-
-    return _hide(db, name, value, pipeline_id)
-
-
-@router.delete("/parameters/{name}/hidden_values/{value}")
-def unhide_parameter_value(
-    name: str,
-    value: str,
-    pipeline_id: str = "main",
-    db: DatabaseManager = Depends(get_db),
-):
-    from scistack_gui.services.layout_service import unhide_parameter_value as _unhide
-
-    return _unhide(db, name, value, pipeline_id)
+class ParameterValueInScope(BaseModel):
+    name: str
+    value: str
+    pipeline_id: str | None = ROOT_SCOPE
 
 
 class ParameterGroupChecked(BaseModel):
+    name: str
     values: list[str] = []
     checked: bool = True
+    pipeline_id: str | None = ROOT_SCOPE
 
 
-@router.post("/parameters/{name}/group_checked")
-def set_parameter_group_checked(
-    name: str,
-    body: ParameterGroupChecked,
-    pipeline_id: str = "main",
-    db: DatabaseManager = Depends(get_db),
-):
+def _get_pipeline(db, req: ScopeQuery) -> dict:
+    from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+    return get_pipeline_graph(db, req.pipeline_id or ROOT_SCOPE)
+
+
+def _get_function_params(req: FunctionName) -> dict:
+    from scistack_gui.services.pipeline_service import get_function_full_info
+
+    return get_function_full_info(req.name)
+
+
+def _get_function_source(req: FunctionName) -> dict:
+    from scistack_gui.services.pipeline_service import get_function_source
+
+    return get_function_source(req.name)
+
+
+def _get_function_doc(req: FunctionName) -> dict:
+    from scistack_gui.services.pipeline_service import get_function_doc
+
+    return get_function_doc(req.name)
+
+
+def _put_pending_constant(req: PendingValue) -> dict:
+    from scistack_gui.services.layout_service import put_pending_constant
+
+    put_pending_constant(req.name, req.value)
+    return {"ok": True}
+
+
+def _delete_pending_constant(req: PendingValue) -> dict:
+    from scistack_gui.services.layout_service import delete_pending_constant
+
+    delete_pending_constant(req.name, req.value)
+    return {"ok": True}
+
+
+def _hide_combo(db, req: HideComboRequest) -> dict:
+    from scistack_gui.services.layout_service import hide_variant_combo
+
+    return hide_variant_combo(db, req.function_name, req.node_id, req.variant_key)
+
+
+def _unhide_combo(db, req: NodeRef) -> dict:
+    from scistack_gui.services.layout_service import unhide_variant_combo
+
+    return unhide_variant_combo(db, req.node_id)
+
+
+def _list_hidden_combos(db, req: FunctionRef) -> list:
+    from scistack_gui.services.layout_service import get_hidden_combos
+
+    return get_hidden_combos(db, req.function_name)
+
+
+def _hide_parameter_value(db, req: ParameterValueInScope) -> dict:
+    from scistack_gui.services.layout_service import hide_parameter_value
+
+    return hide_parameter_value(db, req.name, req.value, req.pipeline_id or ROOT_SCOPE)
+
+
+def _unhide_parameter_value(db, req: ParameterValueInScope) -> dict:
+    from scistack_gui.services.layout_service import unhide_parameter_value
+
+    return unhide_parameter_value(db, req.name, req.value, req.pipeline_id or ROOT_SCOPE)
+
+
+def _set_parameter_group_checked(db, req: ParameterGroupChecked) -> dict:
     """Check/uncheck every member of a generated value set in one call —
-    the per-value route above would be one request per value."""
-    from scistack_gui.services.layout_service import (
-        set_parameter_group_checked as _set,
+    the per-value method would be one request per value."""
+    from scistack_gui.services.layout_service import set_parameter_group_checked
+
+    return set_parameter_group_checked(
+        db, req.name, req.values, req.checked, req.pipeline_id or ROOT_SCOPE
     )
 
-    return _set(db, name, body.values, body.checked, pipeline_id)
 
-
-@router.get("/parameters/hidden_values")
-def list_hidden_parameter_values(
-    pipeline_id: str = "main", db: DatabaseManager = Depends(get_db)
-):
+def _list_hidden_parameter_values(db, req: ScopeQuery) -> dict:
     from scistack_gui.services.layout_service import get_hidden_constant_values
 
-    return get_hidden_constant_values(db, pipeline_id)
+    return get_hidden_constant_values(db, req.pipeline_id or ROOT_SCOPE)
+
+
+PIPELINE_HANDLERS: tuple[Handler, ...] = (
+    Handler("get_pipeline", "/pipeline", ScopeQuery, _get_pipeline, http_method="GET"),
+    Handler("get_function_params", "/function/{name}/params", FunctionName, _get_function_params, needs_db=False, http_method="GET"),
+    Handler("get_function_source", "/function/{name}/source", FunctionName, _get_function_source, needs_db=False, http_method="GET"),
+    Handler("get_function_doc", "/function/{name}/doc", FunctionName, _get_function_doc, needs_db=False, http_method="GET"),
+    Handler("put_pending_constant", "/parameters/{name}/pending/{value}", PendingValue, _put_pending_constant, needs_db=False, http_method="PUT", notify_dag_updated=True),
+    Handler("delete_pending_constant", "/parameters/{name}/pending/{value}", PendingValue, _delete_pending_constant, needs_db=False, http_method="DELETE", notify_dag_updated=True),
+    Handler("hide_combo", "/functions/{function_name}/hidden_combos", HideComboRequest, _hide_combo),
+    Handler("unhide_combo", "/functions/hidden_combos/{node_id}", NodeRef, _unhide_combo, http_method="DELETE"),
+    Handler("list_hidden_combos", "/functions/{function_name}/hidden_combos", FunctionRef, _list_hidden_combos, http_method="GET"),
+    Handler("hide_parameter_value", "/parameters/{name}/hidden_values/{value}", ParameterValueInScope, _hide_parameter_value, body=True),
+    Handler("unhide_parameter_value", "/parameters/{name}/hidden_values/{value}", ParameterValueInScope, _unhide_parameter_value, http_method="DELETE", body=True),
+    Handler("set_parameter_group_checked", "/parameters/{name}/group_checked", ParameterGroupChecked, _set_parameter_group_checked),
+    Handler("list_hidden_parameter_values", "/parameters/hidden_values", ScopeQuery, _list_hidden_parameter_values, http_method="GET"),
+)
+
+install_routes(router, PIPELINE_HANDLERS)

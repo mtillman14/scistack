@@ -36,6 +36,41 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0e. Every GUI method through the handler tables — added 2026-09-21
+
+All ~95 GUI methods are now declared once (`scistack_gui/api/*.py` tables)
+and both transports are derived from the rows. Behaviour is meant to be
+identical, except where the two copies had drifted and the table settles
+it the same way for both:
+
+* the extension's single-node **Run** now passes the clicked node id to the
+  run thread (it derived targets by NAME before) and refuses a glue node;
+* the extension's canvas refreshes after **create / save / delete glue**
+  (only the browser did before);
+* the browser can now **cancel / force-cancel a run**, **restore a hidden
+  hypothesis**, open the **Provenance panel** and the node **location
+  tree** (all were "Unknown method" in the browser);
+* the browser now sends the hypothesis scope with **delete Parameter /
+  PathInput** and **hide / unhide a Parameter value** (it hid in root
+  regardless before).
+
+Backend: nothing to configure. Frontend: **rebuild both vite targets**
+(`api.ts` changed; done in the commit, but rebuild if you pull source).
+
+- [ ] VS Code extension: on a hypothesis canvas that has two placements of
+      the same function wiring with different constants, click Run on ONE —
+      only that node's variants run (the log names its node id).
+- [ ] VS Code extension: create a glue node — the canvas shows it without a
+      manual refresh; edit + save its body — the consumer turns red.
+- [ ] Browser build: start a long run and Cancel it; Force cancel a stuck
+      one — both buttons work (they threw "Unknown method" before).
+- [ ] Browser build: delete a hypothesis tab, then restore it from the
+      hidden list.
+- [ ] Browser build: open 🔍 Provenance on a variable node; open View
+      Schema Locations on a function node.
+- [ ] Either: a bad request (e.g. Run with no function) is refused with a
+      message, not "database locked".
+
 ## 0d. Hypothesis-scoped settings and hides — added 2026-09-20
 
 A node's run options / schema level / column selections and a Parameter's

@@ -1,5 +1,5 @@
 """
-Project service — delegates to api/project.py.
+Project service — delegates to api/project.py, which owns the scan.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def get_project_paths() -> dict:
 def add_project_path(path: str) -> dict:
     from scistack_gui.api.project import add_project_path
 
-    return add_project_path({"path": path})
+    return add_project_path(path)
 
 
 def remove_project_path(path: str) -> dict:
@@ -38,7 +38,7 @@ def remove_project_path(path: str) -> dict:
 def set_entities_file(path: "str | None") -> dict:
     from scistack_gui.api.project import set_project_entities_file
 
-    return set_project_entities_file({"path": path})
+    return set_project_entities_file(path)
 
 
 def clear_entities_file() -> dict:

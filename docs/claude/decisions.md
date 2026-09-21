@@ -65,7 +65,11 @@ params, call, holds_db_lock, needs_db, http_errors)` row per operation;
 server-side artefacts from it, and RPC params are validated through the
 same pydantic model as the HTTP body. `tests/test_api_handlers.py` checks
 every row against `server.METHODS`, `create_app().openapi()`, the lock
-policy AND `frontend/src/api.ts`. Migrated family by family; plots first.
+policy AND `frontend/src/api.ts`. Plots first (2026-09-20), every other
+family on 2026-09-21; `server.py` holds no handler at all. Rows that the
+rest of the API needed: `path=None` (RPC-only), path placeholders filled
+from URL + query + body into one model, `notify_dag_updated`,
+`wants_transport`.
 
 **Consequences.** Adding a method is one row. The first run of the test
 found `plot_variant_sets_save` had no browser route.

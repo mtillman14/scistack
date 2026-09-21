@@ -3433,7 +3433,7 @@ class TestSingleNodeMatlabRunRouting:
 
         monkeypatch.setattr(db_mod, "acquire_db_connection", _must_not_acquire)
 
-        result = server._h_start_run(
+        result = server.METHODS["start_run"](
             {"function_name": "loadDelsysEMGOneFile", "run_id": "r4"}
         )
 

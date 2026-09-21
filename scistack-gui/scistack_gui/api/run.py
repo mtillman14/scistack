@@ -26,15 +26,16 @@ from collections.abc import Callable
 from contextlib import redirect_stdout
 from io import StringIO
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 from scidb.database import DatabaseManager
 from scidb.foreach_config import RunOptions
 
 from scidb import for_each
 from scistack_gui import registry
+from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.api.ws import push_message
-from scistack_gui.db import external_db_access, get_db
+from scistack_gui.db import external_db_access
 from scistack_gui.domain.schema_selection import is_empty
 
 # This logger is configured in server.py (FastAPI) / __main__.py (JSON-RPC)
@@ -856,8 +857,7 @@ def _summarize_selection(selection: dict | None) -> str:
 
 
 
-@router.get("/matlab-engine")
-def get_matlab_engine_status():
+def get_matlab_engine_status() -> dict:
     """Engine state for the GUI indicator: ``{state, pid, error}``.
 
     ``state`` is ``unavailable`` / ``stopped`` / ``ready`` / ``busy``.
@@ -870,8 +870,7 @@ def get_matlab_engine_status():
     return matlab_sidecar.get_sidecar().status()
 
 
-@router.post("/matlab-engine/restart")
-def restart_matlab_engine():
+def restart_matlab_engine() -> dict:
     """Kill and relaunch the kept-warm engine — the manual recovery for a
     wedged session. Also runs the health probe, so a restart reports a
     misconfigured ``pyenv`` immediately rather than at the next run."""
@@ -976,9 +975,29 @@ def _refuse_glue_node(node_id: "str | None", function_name: str, db) -> "str | N
     )
 
 
-@router.post("/run")
-def start_run(req: RunRequest, db: DatabaseManager = Depends(get_db)):
-    logger.info("[api/run] POST /api/run - Validating request")
+def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict:
+    """Start a single-function run in a background thread — one function
+    for both transports.
+
+    Until the table (2026-09-21) the HTTP route and the RPC handler were
+    two copies that had drifted: only HTTP refused a glue node and passed
+    the clicked ``node_id`` through to the run thread (so the extension
+    derived targets by NAME and could run a sibling wiring's history — the
+    exact bug ``derive_target_for_node`` documents), and only RPC held the
+    DuckDB connection across the run (a ``per_request``-policy need, no-op
+    under the standalone process's ``persistent`` policy).
+
+    The one thing the transport legitimately decides: the extension's
+    dagPanel.ts can dispatch a MATLAB script to the MathWorks terminal, the
+    browser cannot (``host_can_dispatch_matlab``).
+    """
+    from scistack_gui.db import (
+        acquire_db_connection,
+        connection_policy,
+        release_db_connection,
+    )
+
+    logger.info("[api/run] start_run (%s) - Validating request", transport)
     logger.debug(
         "[api/run] Request: function_name=%s, node_id=%s, variants=%d, run_id=%s, "
         "schema_selection=%s, schema_level=%s, run_options=%s, where_filters=%d, "
@@ -1002,39 +1021,57 @@ def start_run(req: RunRequest, db: DatabaseManager = Depends(get_db)):
     glue_error = _refuse_glue_node(req.node_id, req.function_name, db)
     if glue_error is not None:
         logger.info("[api/run] refused: %s", glue_error)
-        raise HTTPException(status_code=400, detail=glue_error)
+        raise ValueError(glue_error)
 
     run_id = req.run_id or str(uuid.uuid4())[:8]
     logger.info("[api/run] Generated run_id: %s", run_id)
 
-    # Browser/standalone mode: no privileged host exists to intercept this,
-    # so MATLAB functions are driven here through the sidecar.
+    # MATLAB functions can't run through _run_in_thread's Python registry at
+    # all. Decide here, from matlab_registry — not from the caller's
+    # `language` hint. Must happen BEFORE the connection is held below:
+    # MATLAB needs the DuckDB file lock for its own run, and holding it here
+    # for a run this process will never execute would block the very thing
+    # we just dispatched.
     routed = route_matlab_single_run(
         req.function_name,
         req.model_dump(),
         run_id,
         db,
-        host_can_dispatch_matlab=False,
+        host_can_dispatch_matlab=(transport == "rpc"),
     )
     if routed is not None:
         return routed
 
+    # Under the JSON-RPC server's per-request policy the connection closes
+    # whenever its refcount hits zero, so the run thread must hold it for
+    # its whole life — acquired HERE, while the dispatch loop still holds
+    # it, so there is no window in which it closes and MATLAB takes the
+    # file. The standalone process keeps one connection open: no-op.
+    hold = connection_policy() == "per_request"
+    if hold:
+        logger.debug("[api/run] Acquiring DB connection for run thread")
+        acquire_db_connection()
+
+    def _run_wrapper():
+        try:
+            _run_in_thread(
+                run_id,
+                req.function_name,
+                req.variants,
+                db,
+                req.schema_selection,
+                req.schema_level,
+                req.run_options,
+                req.where_filters,
+                req.node_id,
+            )
+        finally:
+            if hold:
+                logger.debug("[api/run] Releasing DB connection (run_id=%s)", run_id)
+                release_db_connection()
+
     logger.info("[api/run] Spawning background thread for run_id=%s", run_id)
-    thread = threading.Thread(
-        target=_run_in_thread,
-        args=(
-            run_id,
-            req.function_name,
-            req.variants,
-            db,
-            req.schema_selection,
-            req.schema_level,
-            req.run_options,
-            req.where_filters,
-            req.node_id,
-        ),
-        daemon=True,
-    )
+    thread = threading.Thread(target=_run_wrapper, daemon=True)
     thread.start()
     logger.info("[api/run] Background thread started for run_id=%s", run_id)
     return {"run_id": run_id}
@@ -1556,6 +1593,8 @@ def start_pipeline_run(
     if mode in ("until", "show") and not target:
         raise ValueError(f"mode={mode!r} requires a target step name")
 
+    from scistack_gui.db import get_db
+
     rid = run_id or str(uuid.uuid4())[:8]
     db = get_db()
     if pipeline_has_matlab_steps(db, pipeline_id):
@@ -1764,3 +1803,106 @@ def force_cancel_run(run_id: str) -> dict:
         "best_effort": True,
         "injected": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# The handler table — both transports (api/handlers.py)
+# ---------------------------------------------------------------------------
+#
+#     POST /api/run                          start_run
+#     POST /api/run/{run_id}/cancel          cancel_run
+#     POST /api/run/{run_id}/force-cancel    force_cancel_run
+#     GET  /api/matlab-engine                get_matlab_engine_status
+#     POST /api/matlab-engine/restart        restart_matlab_engine
+#     (RPC only)                             generate_matlab_command,
+#                                            generate_matlab_pipeline_command,
+#                                            start_matlab_sidecar_run
+#
+# The three RPC-only methods exist for the VS Code extension's dagPanel.ts,
+# which owns the MathWorks-terminal dispatch and the sidecar fallback
+# ladder; the browser has no host that could act on them.
+
+
+class RunRef(BaseModel):
+    run_id: str
+
+
+class MatlabCommandRequest(BaseModel):
+    """The command generators read the raw request dict (``params``) as the
+    single-run/pipeline-run requests do — every field the picker sends is
+    forwarded. Declared open so the model does not have to repeat them."""
+
+    model_config = {"extra": "allow"}
+
+    function_name: str | None = None
+    pipeline_id: str | None = None
+
+
+class SidecarRunRequest(BaseModel):
+    command: str
+    run_id: str
+    warnings: list[str] | None = None
+
+
+def _start_run(db, req: RunRequest, *, transport: str) -> dict:
+    return start_run(db, req, transport=transport)
+
+
+def _cancel_run(req: RunRef) -> dict:
+    logger.info("[api/run] cancel_run for run_id=%s", req.run_id)
+    result = cancel_run(req.run_id)
+    logger.debug("[api/run] cancel_run result: %s (run_id=%s)", result, req.run_id)
+    return result
+
+
+def _force_cancel_run(req: RunRef) -> dict:
+    logger.info("[api/run] force_cancel_run for run_id=%s", req.run_id)
+    result = force_cancel_run(req.run_id)
+    logger.debug("[api/run] force_cancel_run result: %s (run_id=%s)", result, req.run_id)
+    return result
+
+
+def _get_matlab_engine_status() -> dict:
+    return get_matlab_engine_status()
+
+
+def _restart_matlab_engine() -> dict:
+    return restart_matlab_engine()
+
+
+def _generate_matlab_command(db, req: MatlabCommandRequest) -> dict:
+    from scistack_gui.services.matlab_command_service import generate_matlab_command
+
+    if not req.function_name:
+        raise ValueError("generate_matlab_command needs a function_name")
+    return generate_matlab_command(req.function_name, db, req.model_dump())
+
+
+def _generate_matlab_pipeline_command(db, req: MatlabCommandRequest) -> dict:
+    from scistack_gui.services.matlab_command_service import (
+        generate_matlab_pipeline_command,
+    )
+
+    if not req.pipeline_id:
+        raise ValueError("generate_matlab_pipeline_command needs a pipeline_id")
+    return generate_matlab_pipeline_command(req.pipeline_id, db, req.model_dump())
+
+
+def _start_matlab_sidecar_run(req: SidecarRunRequest) -> dict:
+    return start_matlab_sidecar_run(req.command, req.run_id, req.warnings)
+
+
+_NO_DB = {"needs_db": False}
+
+RUN_HANDLERS: tuple[Handler, ...] = (
+    Handler("start_run", "/run", RunRequest, _start_run, http_errors={ValueError: 400}, wants_transport=True),
+    Handler("cancel_run", "/run/{run_id}/cancel", RunRef, _cancel_run, body=False, **_NO_DB),
+    Handler("force_cancel_run", "/run/{run_id}/force-cancel", RunRef, _force_cancel_run, body=False, **_NO_DB),
+    Handler("get_matlab_engine_status", "/matlab-engine", None, _get_matlab_engine_status, http_method="GET", **_NO_DB),
+    Handler("restart_matlab_engine", "/matlab-engine/restart", None, _restart_matlab_engine, **_NO_DB),
+    Handler("generate_matlab_command", None, MatlabCommandRequest, _generate_matlab_command),
+    Handler("generate_matlab_pipeline_command", None, MatlabCommandRequest, _generate_matlab_pipeline_command),
+    Handler("start_matlab_sidecar_run", None, SidecarRunRequest, _start_matlab_sidecar_run, **_NO_DB),
+)
+
+install_routes(router, RUN_HANDLERS)

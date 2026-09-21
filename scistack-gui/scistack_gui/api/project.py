@@ -1,11 +1,17 @@
 """
-Project config panel endpoints.
+Project config panel — the scan logic, and the handler table for both
+transports (``api/handlers.py``; ``PROJECT_HANDLERS`` at the bottom).
 
-GET    /api/project/code    — scanned exports from src/{project}/
-GET    /api/project/paths   — resolved [tool.scistack] path config (Paths popup)
-POST   /api/project/paths   — add a discovery path (loose-script projects only)
-DELETE /api/project/paths   — remove a discovery path (loose-script projects only)
-POST   /api/project/refresh — re-run both scans
+    GET    /api/project/code           get_project_code   — scanned exports from src/{project}/
+    GET    /api/project/paths          get_project_paths  — resolved [tool.scistack] paths (Paths popup)
+    POST   /api/project/paths          add_project_path   — add a discovery path (loose-script projects)
+    DELETE /api/project/paths          remove_project_path
+    POST   /api/project/entities-file  set_entities_file
+    DELETE /api/project/entities-file  clear_entities_file
+    POST   /api/project/refresh        refresh_project    — re-run both scans
+
+Every mutation notifies ``dag_updated`` on success (the row says so), on
+both transports alike.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from scistack_gui.db import get_db_path
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/project", tags=["project"])
+router = APIRouter(tags=["project"])
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +107,6 @@ _last_result = None
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-@router.get("/code")
 def get_project_code() -> dict:
     """Return scanned exports from ``src/{project}/``."""
     global _last_result
@@ -110,7 +115,6 @@ def get_project_code() -> dict:
     return _serialise_package_result(_last_result.project_code)
 
 
-@router.get("/paths")
 def get_project_paths() -> dict:
     """Return the resolved [tool.scistack] paths for the header's Paths popup.
 
@@ -204,14 +208,11 @@ def _reload_config_and_rescan() -> None:
     _run_scan(force_refresh=False)
 
 
-@router.post("/paths")
-def add_project_path(body: dict) -> dict:
+def add_project_path(path_str: str) -> dict:
     """Add a directory to scistack.toml and re-scan (loose-script projects
-    only). Body: ``{"path": "/absolute/path/to/folder"}``.
-    """
+    only)."""
     from scistack_gui.config import add_path
 
-    path_str = body.get("path", "")
     try:
         add_path(get_db_path(), Path(path_str))
     except (ValueError, FileNotFoundError, NotADirectoryError) as e:
@@ -224,10 +225,9 @@ def add_project_path(body: dict) -> dict:
     return result
 
 
-@router.delete("/paths")
 def remove_project_path(path: str) -> dict:
     """Remove a directory from scistack.toml and re-scan (loose-script
-    projects only). ``path`` is a query parameter."""
+    projects only)."""
     from scistack_gui.config import remove_path
 
     try:
@@ -242,17 +242,16 @@ def remove_project_path(path: str) -> dict:
     return result
 
 
-@router.post("/entities-file")
-def set_project_entities_file(body: dict) -> dict:
+def set_project_entities_file(path_str: "str | None") -> dict:
     """Set the TOML file new Variable/Parameter/PathInput declarations are
-    written to (loose-script projects only). Body: ``{"path":
-    "/absolute/path.toml"}`` (also accepts a relative path, resolved
-    against the project root) or ``{"path": null}``/omitted to auto-create
-    the default ``src/scistack_entities.toml`` in the project root.
+    written to (loose-script projects only). An absolute path (or a
+    relative one, resolved against the project root), or ``None`` to
+    auto-create the default ``src/scistack_entities.toml`` in the project
+    root.
     """
     from scistack_gui.config import set_entities_file
 
-    path_str = body.get("path") or None
+    path_str = path_str or None
     try:
         set_entities_file(get_db_path(), Path(path_str) if path_str else None)
     except (ValueError, OSError) as e:
@@ -265,7 +264,6 @@ def set_project_entities_file(body: dict) -> dict:
     return result
 
 
-@router.delete("/entities-file")
 def clear_project_entities_file() -> dict:
     """Clear the configured entities_file (loose-script projects only).
     Never deletes the file itself -- see ``config.clear_entities_file``."""
@@ -291,12 +289,10 @@ def refresh_project_sync() -> dict:
     so "Refresh" here does real work instead of just re-reporting stale
     in-memory state — see ``_run_scan(force_refresh=True)``.
 
-    Transport-agnostic core, deliberately synchronous: the FastAPI route
-    below awaits ``ws.broadcast`` afterward, while the JSON-RPC path (VS
-    Code extension, ``server.py: _h_refresh_project``) calls this same
-    function through ``services/project_service.py`` and notifies via the
-    sync ``notify()`` instead — that path runs in a plain thread with no
-    event loop, so this function itself must never be a coroutine.
+    Transport-agnostic and deliberately synchronous: the handler row
+    (``notify_dag_updated=True``) does the notification through
+    ``ws.push_message`` for both transports, and the RPC path runs in a
+    plain thread with no event loop, so this must never be a coroutine.
     """
     _run_scan(force_refresh=True)
     return {
@@ -306,12 +302,6 @@ def refresh_project_sync() -> dict:
         "libraries_total": len(_last_result.libraries),
     }
 
-
-@router.post("/refresh")
-async def refresh_project() -> dict:
-    result = refresh_project_sync()
-    await ws.broadcast({"type": "dag_updated"})
-    return result
 
 
 def _run_scan(*, force_refresh: bool = False) -> None:
@@ -466,3 +456,56 @@ def _build_registry_backed_result(root: Path):
     project_name = read_project_name(root) or root.name
     project_code = PackageResult(name=project_name, modules=modules, errors=errors)
     return DiscoveryResult(project_code=project_code, libraries={})
+
+
+# ---------------------------------------------------------------------------
+# The handler table
+# ---------------------------------------------------------------------------
+
+
+class PathBody(BaseModel):
+    path: str | None = ""
+
+
+def _get_project_code() -> dict:
+    return get_project_code()
+
+
+def _get_project_paths() -> dict:
+    return get_project_paths()
+
+
+def _add_project_path(req: PathBody) -> dict:
+    return add_project_path(req.path or "")
+
+
+def _remove_project_path(req: PathBody) -> dict:
+    return remove_project_path(req.path or "")
+
+
+def _set_entities_file(req: PathBody) -> dict:
+    return set_project_entities_file(req.path or None)
+
+
+def _clear_entities_file() -> dict:
+    return clear_project_entities_file()
+
+
+def _refresh_project() -> dict:
+    return refresh_project_sync()
+
+
+_NO_DB = {"needs_db": False}
+
+PROJECT_HANDLERS: tuple[Handler, ...] = (
+    Handler("get_project_code", "/project/code", None, _get_project_code, http_method="GET", **_NO_DB),
+    Handler("get_project_paths", "/project/paths", None, _get_project_paths, http_method="GET", **_NO_DB),
+    Handler("add_project_path", "/project/paths", PathBody, _add_project_path, notify_dag_updated=True, **_NO_DB),
+    # The browser sends the path as a query parameter (DELETE without a body).
+    Handler("remove_project_path", "/project/paths", PathBody, _remove_project_path, http_method="DELETE", body=False, notify_dag_updated=True, **_NO_DB),
+    Handler("set_entities_file", "/project/entities-file", PathBody, _set_entities_file, notify_dag_updated=True, **_NO_DB),
+    Handler("clear_entities_file", "/project/entities-file", None, _clear_entities_file, http_method="DELETE", notify_dag_updated=True, **_NO_DB),
+    Handler("refresh_project", "/project/refresh", None, _refresh_project, notify_dag_updated=True, **_NO_DB),
+)
+
+install_routes(router, PROJECT_HANDLERS)
