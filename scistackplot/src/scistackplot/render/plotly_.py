@@ -503,6 +503,23 @@ def _sample_traces(
                     "hovertemplate": "%{text}<br>%{y}<extra>" + label + "</extra>",
                 }
             )
+    # The one line that tells "no lines" apart: joined runs vs one-point runs
+    # (a run is one identity inside one paint group — split per mark colour
+    # unless the overlay has its own colour), and what decided the join.
+    joined = sum(1 for t in traces if t["mode"] == "lines+markers")
+    Log.debug(
+        "sample overlay panel %s: %d run(s), %d joined, %d single-point; "
+        "join=%s (%s), own colour=%r, mark colour=%r",
+        panel.title or "unfaceted",
+        len(traces),
+        joined,
+        sum(1 for t in traces if len(t["x"]) == 1),
+        resolved.sample_join,
+        resolved.sample_join_reason,
+        resolved.sample_color,
+        resolved.encoding.color,
+        layer=LAYER,
+    )
     return traces
 
 
