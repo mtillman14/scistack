@@ -281,7 +281,7 @@ def test_plotly_positions_are_index_plus_the_shared_offset(study_table):
     for trace in payload["data"]:
         if trace.get("mode") != "lines+markers":
             continue
-        subject = trace["text"][0].split("<br>")[-1]
+        subject = trace["customdata"][0].split("<br>")[-1]
         expected = sorted(
             leaf_at[key] + figure.series_offsets[subject]
             for key in frame.loc[frame[SERIES] == subject, X]

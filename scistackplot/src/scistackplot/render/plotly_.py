@@ -414,13 +414,20 @@ def _positional_x(resolved: ResolvedPlot) -> bool:
 
 def _level_hover(subset, resolved: ResolvedPlot, base: dict) -> dict:
     """Hover text naming the LEVEL for a mark drawn at an index position —
-    a nested leaf as ``stim · pre`` — so the hover never shows the index."""
+    a nested leaf as ``stim · pre`` — so the hover never shows the index.
+
+    Carried in ``customdata``, never ``text``: plotly PAINTS a bar trace's
+    ``text`` onto the bars (``textposition`` defaults to ``auto``), so a
+    hover-only string in ``text`` labelled every bar the moment the axis
+    turned positional under a "Show sample" overlay. ``customdata`` is
+    hover-only for every trace type.
+    """
     labels = [
         str(v).replace(LEAF_SEPARATOR, " · ") for v in subset[resolved.encoding.x].to_numpy()
     ]
     return {
-        "text": labels,
-        "hovertemplate": "%{text}<br>%{y}<extra>" + str(base["name"]) + "</extra>",
+        "customdata": labels,
+        "hovertemplate": "%{customdata}<br>%{y}<extra>" + str(base["name"]) + "</extra>",
     }
 
 
@@ -497,10 +504,11 @@ def _sample_traces(
                     },
                     "line": {"color": color, "width": SAMPLE_LINE_WIDTH},
                     "opacity": SAMPLE_ALPHA,
-                    "text": [
+                    # Hover-only (see `_level_hover` on why not `text`).
+                    "customdata": [
                         f"{levels[i]}<br>{hover[i]}" if hover[i] else levels[i] for i in order
                     ],
-                    "hovertemplate": "%{text}<br>%{y}<extra>" + label + "</extra>",
+                    "hovertemplate": "%{customdata}<br>%{y}<extra>" + label + "</extra>",
                 }
             )
     # The one line that tells "no lines" apart: joined runs vs one-point runs
@@ -591,11 +599,12 @@ def _spaghetti_traces(subset, resolved, base, color) -> list[dict]:
                 "opacity": resolved.spec.style.alpha,
                 # The axis shows level labels, but the x values are indices;
                 # hover names the level and the series so neither is lost.
-                "text": [
+                # Hover-only (see `_level_hover` on why not `text`).
+                "customdata": [
                     f"{label}<br>{series_id}" if series_id is not None else label
                     for label in labels
                 ],
-                "hovertemplate": "%{text}<br>%{y}<extra>" + str(base["name"]) + "</extra>",
+                "hovertemplate": "%{customdata}<br>%{y}<extra>" + str(base["name"]) + "</extra>",
             }
         )
     return traces

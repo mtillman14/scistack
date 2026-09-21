@@ -151,7 +151,7 @@ def test_plotly_overlay_is_lines_and_markers_when_joined(unbalanced):
     assert len(traces) == 2
     assert {t["mode"] for t in traces} == {"lines+markers"}
     assert {t["name"] for t in traces} == {"01", "02"}
-    assert all("subject=" in text for t in traces for text in t["text"])
+    assert all("subject=" in text for t in traces for text in t["customdata"])
 
 
 def test_plotly_overlay_is_markers_when_not_joined(unbalanced):
@@ -174,7 +174,7 @@ def test_plotly_marks_are_placed_by_index_on_a_positional_axis(unbalanced):
     payload = render_plotly(_figure(_spec(["subject"]), unbalanced))
     bars = [t for t in payload["data"] if t["type"] == "bar"]
     assert bars and bars[0]["x"] == [0.0, 1.0]
-    assert bars[0]["text"] == ["pre", "post"], "hover names the level, not the index"
+    assert bars[0]["customdata"] == ["pre", "post"], "hover names the level, not the index"
 
 
 def test_plotly_overlay_keeps_the_marks_legend_only(unbalanced):
@@ -214,3 +214,19 @@ def test_a_box_with_an_overlay_still_draws_its_boxes(unbalanced):
     drawn = render_matplotlib(figure)
     assert len(_overlay_points(drawn)) >= 1  # the points, on top of the boxes
     plt.close(drawn)
+
+
+@pytest.mark.parametrize("kind", [PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.STRIP])
+def test_plotly_overlay_never_paints_labels_on_the_marks(unbalanced, kind):
+    """Regression: with the overlay on, hover strings once rode in every
+    trace's ``text``, and plotly paints a bar trace's ``text`` onto the bars.
+    Hover-only content belongs in ``customdata``; no trace of any kind may
+    carry ``text`` (or a mode that would draw it)."""
+    payload = render_plotly(_figure(_spec(["subject"], kind=kind), unbalanced))
+    assert payload["data"], "nothing rendered"
+    for trace in payload["data"]:
+        assert "text" not in trace, f"{trace['type']} trace carries paintable text"
+        assert "text" not in str(trace.get("mode", "")), f"{trace['type']} mode draws text"
+        if "hovertemplate" in trace:
+            assert "%{customdata}" in trace["hovertemplate"]
+            assert "%{text}" not in trace["hovertemplate"]
