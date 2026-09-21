@@ -659,3 +659,14 @@ Verify: `cd /workspace/scistack-gui && pytest tests/test_ids.py
 tests/test_intent_store.py -q`, then the whole GUI suite, then
 `tests/integration`. GUI manual check: `docs/gui-manual-testing-todo.md`
 items 0c and 0d.
+
+### Stages 3–6 — **green** 2026-09-21 (user-run)
+
+Two stale test imports surfaced by the first run (`test_function_role`
+pointed at `scidb.discover.ROLE_PREFIX` / `scidb.foreach._endpoint_kind`,
+both now in `scidb.roles`) and one real ordering fix: `Handler.parse`
+validates RPC params BEFORE the database is acquired, so a malformed
+request is refused as such rather than as "database not initialised" /
+"database locked" (ccbdafbc, f675f45f). Every stage of this plan is built
+and passing; the branch is still unmerged and the GUI manual items 0c/0d
+are still unchecked.
