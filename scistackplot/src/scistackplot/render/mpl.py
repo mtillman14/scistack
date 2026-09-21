@@ -42,6 +42,7 @@ from .base import (
     shows_legend,
     shows_x_labels,
     shows_y_labels,
+    sample_dropped_reason,
     sample_groups,
     sample_hover,
     sample_legend_levels,
@@ -426,7 +427,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     (``_sample_legend_handles``). Drawn after the marks, on top.
     """
     sample = getattr(panel, "sample", None)
-    if sample is None or sample.empty or not is_categorical_x(resolved):
+    if sample is None or sample.empty or sample_dropped_reason(panel, resolved):
         return
     style = resolved.spec.style
     slots = dodge_slots(panel.frame, resolved)

@@ -44,6 +44,15 @@ DASH = "__dash"
 #: a coloured layer groups; no factor is both).
 SAMPLE_COLOR = "__sample_color"
 Z = "__z"
+#: The one x level a categorical figure has when NO tick layer was chosen —
+#: a scalar measure grouped by its colour alone, or not grouped at all. The
+#: mark frame and the overlay frame both write it as their ``__x``
+#: (``reduce._panel_frame`` / ``reduce._overlay_frame``), and
+#: ``ResolvedPlot.x_order`` lists it as the axis' single level so both
+#: renderers read the axis as categorical (``render.base.is_categorical_x``)
+#: — a "Show sample" overlay only draws on a categorical axis, and
+#: ``x_positions`` would coerce the label to NaN on a numeric one.
+UNLABELLED_X = ""
 
 #: The dash cycle, in plotly's names; :data:`MPL_DASHES` is the matplotlib
 #: spelling of the same six. One owner for both renderers and for the

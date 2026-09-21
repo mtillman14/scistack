@@ -14,8 +14,11 @@ from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
+from scistacklog import Log
 
 from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SERIES, ResolvedPlot
+
+LAYER = "scistackplot"
 
 
 class Renderer(Protocol):
@@ -508,6 +511,35 @@ def sample_positions(
     else:
         dodge = np.full(len(rows), dodge_offset(*slots.get("None", (0, 1))), dtype=float)
     return positions + dodge + resolved.sample_offsets.get(str(identity), 0.0)
+
+
+def sample_dropped_reason(panel, resolved: ResolvedPlot) -> str | None:
+    """Why a panel's "Show sample" overlay draws NOTHING, or ``None`` when it
+    draws. One owner for both renderers' guard, and the one place that says
+    so out loud: an overlay the plan built (``reduce`` logged its levels and
+    timed ``sample_panels``) and a renderer then discarded is a silent data
+    loss the log must show. An empty overlay is not one (a panel whose rows
+    all filtered away); a NON-categorical axis is — ``x_positions`` has no
+    slots to place points in — and since ``reduce._unlabelled_x_order`` gave
+    the tick-less figure its one level, no categorical kind should reach it.
+    """
+    sample = getattr(panel, "sample", None)
+    if sample is None or sample.empty:
+        return None
+    if not is_categorical_x(resolved):
+        reason = (
+            f"x axis is not categorical (x_order={resolved.x_order!r}, "
+            f"x={resolved.encoding.x!r}, colour={resolved.encoding.color!r})"
+        )
+        Log.warn(
+            "sample overlay panel %s: %d point(s) NOT drawn — %s",
+            panel.title or "unfaceted",
+            len(sample),
+            reason,
+            layer=LAYER,
+        )
+        return reason
+    return None
 
 
 def sample_hover(rows: pd.DataFrame, resolved: ResolvedPlot) -> list[str]:

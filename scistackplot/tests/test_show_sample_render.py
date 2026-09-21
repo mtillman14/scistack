@@ -230,3 +230,79 @@ def test_plotly_overlay_never_paints_labels_on_the_marks(unbalanced, kind):
         if "hovertemplate" in trace:
             assert "%{customdata}" in trace["hovertemplate"]
             assert "%{text}" not in trace["hovertemplate"]
+
+
+# --- the colour is the ONLY grouping layer ------------------------------------------
+#
+# Regression (scidb.log 2026-09-21): grouping by ColName alone and colouring by
+# ColName leaves no tick layer, so the marks sit at the one unlabelled position
+# (``resolved.UNLABELLED_X``). ``x_order`` used to be ``None`` there, the axis
+# read as numeric, and both renderers dropped the overlay without a word —
+# plotly still drew the bars off the ``""`` strings, so the bars "worked".
+
+
+def _colour_only(show, **kwargs):
+    return _spec(show, color="session", **kwargs)
+
+
+def test_colour_only_figure_has_the_unlabelled_axis_level(unbalanced):
+    from scistackplot.resolved import UNLABELLED_X
+
+    figure = _figure(_colour_only(["subject"]), unbalanced)
+    assert figure.x_order == [UNLABELLED_X]
+    assert figure.encoding.color and figure.color_order == ["pre", "post"]
+
+
+def test_plotly_draws_the_overlay_when_the_colour_is_the_only_grouping(unbalanced):
+    payload = render_plotly(_figure(_colour_only(["subject"]), unbalanced))
+    traces = _overlay_traces(payload)
+    # In the marks' colour a run never crosses colour slots (base.sample_groups):
+    # one single-point run per subject per session, never joined.
+    assert len(traces) == 4
+    assert {t["mode"] for t in traces} == {"markers"}
+    assert sum(len(t["x"]) for t in traces) == 4
+    # Every point sits inside a dodge slot of the single tick at 0.
+    for trace in traces:
+        for x in trace["x"]:
+            assert abs(x) < 0.5
+    bars = [t for t in payload["data"] if t["type"] == "bar"]
+    assert [b["x"] for b in bars] == [[0.0], [0.0]]
+    axis = payload["layout"]["xaxis"]
+    assert axis["tickvals"] == [0] and axis["range"] == [-0.5, 0.5]
+
+
+def test_plotly_draws_the_overlay_with_its_own_colour_and_no_tick_layer(unbalanced):
+    """The reported shape: colour by the grouping, points coloured by subject."""
+    spec = _colour_only(["subject"], sample_color="subject", join_sample=True)
+    payload = render_plotly(_figure(spec, unbalanced))
+    traces = [t for t in payload["data"] if t["type"] == "scatter"]
+    assert len(traces) == 2 and {t["name"] for t in traces} == {"01", "02"}
+    assert {t["mode"] for t in traces} == {"lines+markers"}
+
+
+def test_mpl_draws_the_overlay_when_the_colour_is_the_only_grouping(unbalanced):
+    drawn = render_matplotlib(_figure(_colour_only(["subject"]), unbalanced))
+    # Points only, split per mark colour (see the plotly twin above).
+    assert _overlay_lines(drawn) == []
+    xs = [float(x) for c in _overlay_points(drawn) for x, _ in c.get_offsets()]
+    assert len(xs) == 4
+    for x in xs:
+        assert not np.isnan(x) and abs(x) < 0.5
+    # The bars themselves are placed too (they used to land at NaN on export).
+    bars = [p for p in drawn.axes[0].patches if p.get_height() > 0]
+    assert len(bars) == 2 and all(not np.isnan(p.get_x()) for p in bars)
+    plt.close(drawn)
+
+
+def test_a_dropped_overlay_is_said_out_loud(unbalanced, monkeypatch):
+    """The guard both renderers share names the panel and the axis when it
+    discards points, so a future silent drop shows in scidb.log."""
+    from scistackplot.render import base
+
+    figure = _figure(_colour_only(["subject"]), unbalanced)
+    monkeypatch.setattr(figure, "x_order", None)
+    warned: list[str] = []
+    monkeypatch.setattr(base.Log, "warn", lambda msg, *a, **k: warned.append(msg % a))
+    assert base.sample_dropped_reason(figure.panels[0], figure)
+    assert render_plotly(figure)["data"] and _overlay_traces(render_plotly(figure)) == []
+    assert warned and "NOT drawn" in warned[0] and "x_order=None" in warned[0]

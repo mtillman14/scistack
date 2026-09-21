@@ -37,7 +37,19 @@ from scistacklog import Log
 
 from .framesize import format_extent, frame_extent
 from .numeric import coerce_numeric
-from .resolved import COLOR, DASH, DASH_CYCLE, SAMPLE_COLOR, SERIES, X, Y, Y_HIGH, Y_LOW, Z
+from .resolved import (
+    COLOR,
+    DASH,
+    DASH_CYCLE,
+    SAMPLE_COLOR,
+    SERIES,
+    UNLABELLED_X,
+    X,
+    Y,
+    Y_HIGH,
+    Y_LOW,
+    Z,
+)
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import (
     CollapseSteps,
@@ -1379,7 +1391,7 @@ def _build_figure(
                 else (
                     _level_order(table, x_factor, [p.frame for p in panels], X)
                     if x_factor
-                    else None
+                    else _unlabelled_x_order(panels)
                 )
             ),
             x_plan=x_plan,
@@ -1536,7 +1548,7 @@ def _overlay_frame(
     elif x_layers:
         out[X] = group[x_layers[0]].values
     else:
-        out[X] = ""
+        out[X] = UNLABELLED_X
     out[Y] = coerce_numeric(group[spec.y_measure])
     if color:
         out[COLOR] = group[color].values
@@ -1612,7 +1624,8 @@ def _panel_frame(
     else:
         # No x at all: a single categorical position, matching the proof of
         # concept's "Observation" fallback when no tick factor was chosen.
-        out[X] = ""
+        # `_unlabelled_x_order` reads this back as the axis' one level.
+        out[X] = UNLABELLED_X
 
     out[Y] = coerce_numeric(group[y_measure])
 
@@ -1944,6 +1957,26 @@ def _factor_levels(table: LongTable, name: str) -> list[Any]:
         return table.factor(name).levels
     except KeyError:
         return []
+
+
+def _unlabelled_x_order(panels: list[Panel]) -> list[Any] | None:
+    """``[UNLABELLED_X]`` when the marks sit at the one unlabelled categorical
+    position (no tick layer — the colour is the only grouping, or nothing
+    groups); ``None`` for a numeric x (a 1-D index, an x measure, a 2-D
+    matrix). Read off the panel frames' ``__x`` so the answer is the one the
+    frames were actually built with. Without this the axis had no level
+    order at all and read as NUMERIC: plotly still drew the bars (it builds
+    its own category axis from the ``""`` strings) but every "Show sample"
+    overlay was silently dropped, and the matplotlib export placed the bars
+    at NaN (scidb.log 2026-09-21: colour by ColName with ColName the only
+    grouping layer).
+    """
+    for panel in panels:
+        if X not in panel.frame.columns or panel.frame.empty:
+            continue
+        column = panel.frame[X]
+        return [UNLABELLED_X] if bool((column.astype(str) == UNLABELLED_X).all()) else None
+    return None
 
 
 def _level_order(

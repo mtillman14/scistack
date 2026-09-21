@@ -49,6 +49,7 @@ from .base import (
     sample_hover,
     sample_legend_levels,
     sample_paint,
+    sample_dropped_reason,
     sample_positions,
     sample_series,
     x_positions,
@@ -463,7 +464,7 @@ def _sample_traces(
     subject hides that subject's points and lines in every panel.
     """
     sample = getattr(panel, "sample", None)
-    if sample is None or sample.empty or not _positional_x(resolved):
+    if sample is None or sample.empty or sample_dropped_reason(panel, resolved):
         return []
     seen = seen_legend if seen_legend is not None else set()
     own_color = bool(resolved.sample_color)
