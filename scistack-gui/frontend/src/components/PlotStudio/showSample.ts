@@ -28,6 +28,10 @@ export interface SampleOverlay {
   averaged: string[]
   join: { join: boolean; automatic: boolean; reason: string; setting: boolean | null }
   granularity: string
+  /** `PlotSpec.sample_color`: what the spec asks (`setting`), the key
+   *  colouring the points right now (`active`, null = the mark's colour) and
+   *  the shown keys that could (`options`). */
+  color: { setting: string | null; active: string | null; options: string[] }
 }
 
 /** The Join dropdown's three states, and the spec value each writes. */
@@ -66,4 +70,16 @@ export function isTicked(factor: SampleFactor): boolean {
  *  checked — unticking it would change nothing. */
 export function isLocked(factor: SampleFactor): boolean {
   return factor.shown && !factor.checked
+}
+
+/** The Colour-points-by dropdown's value: `''` for the mark's colour. */
+export const MARK_COLOR = ''
+
+export function sampleColorChoice(setting: string | null | undefined): string {
+  return setting ?? MARK_COLOR
+}
+
+/** `spec.sample_color` for a dropdown choice: null clears it. */
+export function sampleColorSetting(choice: string): string | null {
+  return choice === MARK_COLOR ? null : choice
 }

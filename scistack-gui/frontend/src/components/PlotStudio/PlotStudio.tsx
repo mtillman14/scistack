@@ -35,7 +35,10 @@ import {
   isTicked,
   joinChoice,
   joinSetting,
+  sampleColorChoice,
+  sampleColorSetting,
   toggleShowSample,
+  MARK_COLOR,
   type JoinChoice,
   type SampleOverlay,
 } from './showSample'
@@ -505,6 +508,8 @@ interface Spec {
      deeper key implies the shallower ones. `join_sample` null = automatic. */
   show_sample?: string[]
   join_sample?: boolean | null
+  /** The shown key colouring the overlay points (null: the mark's colour). */
+  sample_color?: string | null
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
@@ -1052,6 +1057,12 @@ export default function PlotStudio({
 
   const setJoinSample = useCallback((choice: JoinChoice) => {
     setSpec(prev => (prev ? { ...prev, join_sample: joinSetting(choice) } : prev))
+  }, [])
+
+  /** Colour the overlay by one of its shown keys, independently of the
+   *  marks' colour; Python says whether the choice is active right now. */
+  const setSampleColor = useCallback((choice: string) => {
+    setSpec(prev => (prev ? { ...prev, sample_color: sampleColorSetting(choice) } : prev))
   }, [])
 
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
@@ -2276,6 +2287,31 @@ export default function PlotStudio({
                           </option>
                           <option value="lines">Lines</option>
                           <option value="points">Points</option>
+                        </select>
+                      </label>
+                      {/* The overlay's own colour — one per level of a shown
+                          key, independent of the Grouping colour (a shown key
+                          is collapsed, a coloured layer groups; no factor is
+                          both). With it, a joined line runs across the marks'
+                          colours: pre → post inside one group. */}
+                      <label
+                        style={styles.factorRow}
+                        title="Colour the points (and their lines) by one of the shown keys, separately from the marks' colour. Lines then join a subject across the coloured bars."
+                      >
+                        <span style={styles.factorName}>Colour points by</span>
+                        <select
+                          value={sampleColorChoice(spec?.sample_color)}
+                          onChange={e => setSampleColor(e.target.value)}
+                          style={styles.select}
+                        >
+                          <option value={MARK_COLOR}>Mark's colour</option>
+                          {capabilities.sample_overlay.color.options.map(name => (
+                            <option key={name} value={name}>{name}</option>
+                          ))}
+                          {spec?.sample_color &&
+                            !capabilities.sample_overlay.color.options.includes(spec.sample_color) && (
+                              <option value={spec.sample_color}>{spec.sample_color} (not shown)</option>
+                            )}
                         </select>
                       </label>
                       <div style={styles.hint}>{capabilities.sample_overlay.granularity}</div>

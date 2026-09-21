@@ -47,6 +47,54 @@ level) across the x positions of one panel — the spaghetti series rule. A
 point with no partner has no line. Forced on below the x depth, the same
 rule applies (trial 1 of subject 01 in pre and post get joined).
 
+## The overlay's own colour (`PlotSpec.sample_color`, since 2026-09-21)
+
+Bars coloured by intervention group, one colour per **subject** on top:
+`sample_color` names a *shown* key whose levels colour the overlay points
+and the lines joining them, independently of the marks' colour. `None` =
+the mark's colour, as before. Same contract as a `show_sample` entry: a
+name that is no factor is refused by `validate`; a factor not shown right
+now is **inert** (kept, reported under `sample_overlay.color`) —
+`roles.overlay_color(spec, steps)` is the ONE reader, and `reduce`,
+`codegen` and `capability` all go through it.
+
+* **Two columns, not one.** `Panel.sample` carries `__color` (the MARK's
+  level — still what places a point in its dodge slot) and
+  `__sample_color` (the point's own level). Independence is structural: a
+  shown key is collapsed, a coloured layer groups, no factor is both.
+* **Palette:** `render.base.SAMPLE_PALETTE` (tab20, twenty entries — a
+  subject key has more levels than a grouping layer), indexed by
+  `ResolvedPlot.sample_color_order` — the key's declared level order across
+  the whole figure, decided once in `reduce` so subject 03 is the same
+  colour in every panel (`sample_palette_for`, never a panel's own
+  enumeration — the same rule as `palette_for`). Past twenty the colours
+  repeat and `reduce` WARNs.
+* **Lines cross the marks' colours.** `render.base.sample_groups` is the
+  one rule: with an own colour the rows split by `__sample_color` and an
+  identity's line runs across the colour levels — from the `pre` slot to
+  the `post` slot inside one tick — each point placed in ITS OWN row's slot
+  (`sample_positions` is per-row). Without it the rows split per mark
+  colour as they always did, because a line crossing two mark colours has
+  no colour to be. This is why Lines / Auto (lines) drew nothing with
+  `session` as the coloured layer: every run was one row long.
+* **Legend:** the levels become a second block in the one legend, the way
+  the dash styles are (`mpl._sample_legend_handles`, plotly `sample:<level>`
+  legend groups with `legendrank` 2000, title `session / subject`);
+  `shows_legend` counts them. Clicking a subject in plotly hides its points
+  and lines in every panel.
+* **Export:** `codegen._sample_draw_lines` emits `_sample_palette` over
+  `_in_order(_sample[key], declared)`, groups the runs by identity alone
+  (not by hue) and appends the levels to seaborn's legend
+  (`_sample_legend_lines`, `Line2D` handles, one merged legend).
+* **The Auto rule was already right** for a depth-less grouping layer
+  (`Demographics.InterventionGroup`): `overlay_join` compares the shown key
+  against the layers that HAVE a depth and ignores the rest, so `subject`
+  above `session` → lines whichever layer is coloured
+  (`test_sample_color.py::test_auto_join_ignores_a_depth_less_grouping_layer`).
+* GUI: **Colour points by** under *Join points* (`showSample.ts`:
+  `sampleColorChoice` / `sampleColorSetting`, `MARK_COLOR = ""`); the
+  report's `color.options` are the shown keys.
+
 ## Placement: no random jitter anywhere
 
 A line must end on its own markers, so every overlay point keeps **one
@@ -80,6 +128,7 @@ hold the three readers to it.
 | export | `codegen._sample_preamble_lines` (before the emitted chain) + `codegen._sample_draw_lines` (after the `catplot`) |
 | report | `capability.sample_overlay_summary` → `sample_overlay {available, reason, factors[{name, checked, shown}], ignored, shown, averaged, join, granularity}` |
 | GUI | `PlotStudio.tsx` "Show sample" section; `showSample.ts` (toggle, join choice, ticked/locked) |
+| the overlay's own colour | `roles.overlay_color` (active?), `resolved.SAMPLE_COLOR`, `reduce._overlay_frame` (column) + `sample_color_order`, `render.base.sample_groups` / `sample_paint` / `sample_palette_for` / `sample_legend_levels`, `codegen._sample_color_of` / `_sample_legend_lines`, `capability … color {setting, active, options}` |
 
 ## Traps
 

@@ -36,6 +36,44 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0f. "Show sample" coloured by its own key — added 2026-09-21
+
+**What changed:** the overlay points (and their lines) can be coloured by one
+of the shown keys, independently of the Grouping colour: bars coloured by
+intervention group, one colour per subject on top. With it, a joined line runs
+ACROSS the marks' colours (pre → post inside one group) — which is what used
+to make Lines / Auto (lines) draw nothing when `session` was the coloured
+layer. Doc: `docs/claude/show-sample-overlay.md` ("The overlay's own colour").
+
+**Backend:** none beyond the common setup. `scidb.log` gets
+`sample overlay coloured by 'subject': N level(s) — joined across colour levels`
+at INFO on every resolve.
+
+**Frontend** (the assignment this was built for)
+1. Plot Studio → a scalar variable → kind **Bar ± error**. Grouping:
+   `session` and `Demographics.InterventionGroup`, `session` ticked as the
+   colour. Factors: `subject` and `trial` **Collapse**, `speed` **Separate
+   figures**, `ColName` **Separate panels**.
+2. Show sample: tick `subject`. Join points: **Auto (lines)**. Before this
+   change nothing was joined; now still nothing — each subject's pre and post
+   points sit in different-coloured bars, and a line has no colour to be.
+3. **Colour points by** → `subject`. Every subject now gets its own colour,
+   the same in every panel, and a line joins its pre bar to its post bar
+   inside each intervention-group tick. The bars keep the session colours.
+4. The legend lists the sessions, then the subjects, titled
+   `session / subject`. Click a subject in the legend: that subject's points
+   and lines vanish in every panel; the bars stay.
+5. Untick the colour on `session` and tick it on `InterventionGroup` instead.
+   The lines now run across the session ticks inside one colour slot; the
+   subjects keep their colours.
+6. **Colour points by** → **Mark's colour**. Back to step 2's figure.
+7. Tick `trial` in Show sample too. The dropdown now offers `trial` as well;
+   pick it — one colour per trial.
+8. **Export code**, save, compare with the preview: same colours per subject,
+   same lines, same two-block legend.
+
+---
+
 ## 0e. Every GUI method through the handler tables — added 2026-09-21
 
 All ~95 GUI methods are now declared once (`scistack_gui/api/*.py` tables)

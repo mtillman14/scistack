@@ -8,8 +8,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  MARK_COLOR,
   isLocked,
   isTicked,
+  sampleColorChoice,
+  sampleColorSetting,
   joinChoice,
   joinSetting,
   toggleShowSample,
@@ -42,4 +45,12 @@ test('an implied key reads ticked and locked; a checked one ticked and free', ()
   assert.equal(isLocked(checked), false)
   assert.equal(isTicked(off), false)
   assert.equal(isLocked(off), false)
+})
+
+test('the Colour-points-by dropdown round-trips: empty is the mark\'s colour, a name is the key', () => {
+  assert.equal(sampleColorChoice(null), MARK_COLOR)
+  assert.equal(sampleColorChoice(undefined), MARK_COLOR)
+  assert.equal(sampleColorChoice('subject'), 'subject')
+  assert.equal(sampleColorSetting(MARK_COLOR), null)
+  assert.equal(sampleColorSetting('subject'), 'subject')
 })
