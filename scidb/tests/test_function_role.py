@@ -14,7 +14,7 @@ is an ordinary process function, whatever the sidebar label says.
 import pytest
 
 from scidb import FUNCTION_ROLES, function_role
-from scidb.discover import ROLE_PREFIX
+from scidb.roles import ROLE_PREFIX
 from scidb.foreach import _endpoint_kind
 
 

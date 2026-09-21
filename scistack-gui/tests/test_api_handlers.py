@@ -120,7 +120,8 @@ def test_the_table_is_the_only_declaration():
 
 def test_rpc_params_are_validated_like_the_http_body():
     """The RPC transport used to read raw dicts; now both transports reject
-    the same request."""
+    the same request — and BEFORE the database is touched (no database is
+    open in this test; a bad request must not read as "not initialised")."""
     from pydantic import ValidationError
 
     methods = rpc_methods(PLOT_HANDLERS)

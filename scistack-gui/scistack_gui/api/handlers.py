@@ -69,13 +69,22 @@ class Handler:
     http_errors: Mapping[type[BaseException], int] = field(default_factory=dict)
     http_method: str = "POST"
 
-    def invoke(self, params: Mapping[str, Any] | None, db: Any) -> Any:
-        """Run the handler on raw ``params`` — the JSON-RPC entry point."""
+    def parse(self, params: Mapping[str, Any] | None) -> Any:
+        """Raw RPC ``params`` as the request model (``None`` for a bodiless
+        method). Validation comes BEFORE the database is touched, so a bad
+        request is refused as such — not as "database not initialised" or
+        "database locked" when it never needed either."""
+        if self.params is None:
+            return None
+        return self.params.model_validate(dict(params or {}))
+
+    def invoke(self, req: Any, db: Any) -> Any:
+        """Run the handler on a parsed request — shared by both transports."""
         args: list[Any] = []
         if self.needs_db:
             args.append(db)
         if self.params is not None:
-            args.append(self.params.model_validate(dict(params or {})))
+            args.append(req)
         return self.call(*args)
 
 
@@ -84,12 +93,13 @@ def rpc_methods(handlers: Iterable[Handler]) -> dict[str, Callable[[dict], Any]]
 
     def _entry(h: Handler) -> Callable[[dict], Any]:
         def rpc(params: dict) -> Any:
+            req = h.parse(params)
             db = None
             if h.needs_db:
                 from scistack_gui.db import get_db
 
                 db = get_db()
-            return h.invoke(params, db)
+            return h.invoke(req, db)
 
         rpc.__name__ = f"rpc_{h.name}"
         rpc.__doc__ = h.call.__doc__
@@ -112,13 +122,8 @@ def install_routes(router: APIRouter, handlers: Iterable[Handler]) -> None:
 
     def _endpoint(h: Handler) -> Callable[..., Any]:
         def _run(db: Any, req: Any) -> Any:
-            args: list[Any] = []
-            if h.needs_db:
-                args.append(db)
-            if h.params is not None:
-                args.append(req)
             try:
-                return h.call(*args)
+                return h.invoke(req, db)
             except BaseException as exc:
                 for exc_type, status in h.http_errors.items():
                     if isinstance(exc, exc_type):
