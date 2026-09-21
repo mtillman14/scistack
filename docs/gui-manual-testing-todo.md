@@ -36,6 +36,66 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0h. "Show sample" survives colouring by the ONLY grouping layer — added 2026-09-21
+
+**What changed:** with one grouping layer (e.g. `ColName`) that is also the
+**Colour by** layer, there is no tick layer left, so the marks sit at one
+unlabelled x position. The figure carried no `x_order` for that position,
+the axis read as numeric, and both renderers dropped the Show-sample overlay
+silently (plotly still drew the bars off the empty-string category; the
+matplotlib export placed them at NaN). `reduce` now lists the single
+unlabelled level as `x_order`, and a shared renderer guard
+(`render.base.sample_dropped_reason`) WARNs in scidb.log whenever an
+overlay is built but not drawn.
+
+**Backend:** `scistackplot.reduce` / `render.base` / `render.mpl` /
+`render.plotly_`; pull and restart the GUI server.
+
+**Frontend:** no rebuild needed.
+
+**Steps (a table-valued variable, Plot Studio):**
+
+1. Bar +/- Error, 2 columns selected, Grouping `ColName` only, Variant and
+   one schema key on Separate figures, `subject` + `trial` collapsed. Tick
+   `subject` under Show sample, Join = Lines. Points + lines appear.
+2. Set **Colour by** to `ColName`. The two bars take two colours at one
+   tick, and the points/lines are **still drawn** inside their bars (this
+   used to make them vanish). Set "Colour points by" `subject`: same, with
+   the overlay in the subject palette and a subject legend.
+3. Set Colour by back to none: overlay unchanged.
+4. Save PNG: the export shows both bars AND the overlay at the single tick.
+5. scidb.log: no `sample overlay panel … NOT drawn` WARN line during any
+   of the above.
+
+---
+
+## 0g. No on-mark labels under a "Show sample" overlay — added 2026-09-21
+
+**What changed:** ticking any Show-sample key on a **Bar +/- Error** plot used
+to label every bar with its level name (`pre`, `post`, `stim · pre`, …).
+That text was the hover payload riding in the plotly trace's `text` field,
+which plotly paints onto bars. Hover content now travels in `customdata`
+(hover-only for every trace type), in the scistackplot renderer.
+
+**Backend:** none — the fix is in `scistackplot.render.plotly_`; pull and
+restart the GUI server.
+
+**Frontend:** no rebuild needed.
+
+**Steps (aim2 example, Plot Studio):**
+
+1. Bar +/- Error, Grouping `session`, nothing ticked under Show sample. The
+   bars carry no text. Hover a bar: the tooltip names the level and value.
+2. Tick `subject` under Show sample. Points appear beside the bars and the
+   bars still carry **no text**. Hover a bar: same tooltip as before. Hover a
+   point: level, `subject=…`, value.
+3. Switch the kind to Box, Violin, Strip, Spaghetti with `subject` still
+   ticked: no level names drawn on or beside any mark in any kind; hover
+   still names the level.
+4. Save PNG (matplotlib path): the export shows no labels on the marks either.
+
+---
+
 ## 0f. "Show sample" coloured by its own key — added 2026-09-21
 
 **What changed:** the overlay points (and their lines) can be coloured by one
@@ -259,6 +319,43 @@ model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.
       stage a pending constant — each behaves as before, and `scidb.log`
       shows `[intent_store] import <name>: N row(s) carried over` once on
       the first start.
+
+---
+
+## 0. Colour is paint + "Show sample" on spaghetti — added 2026-09-21
+
+Backend: `roles.grouping_layers` keeps the coloured layer in the ticks;
+renderers no longer dodge (`render.base.MARK_SPAN`, plotly `offsetgroup`);
+codegen emits `dodge=False`; `OVERLAY_KINDS` includes spaghetti and the
+overlay is placed on each point's line (`SAMPLE_LINE`). Frontend: Grouping
+hint / colour-radio wording only. Bundles rebuilt 2026-09-21.
+
+- [ ] **Colour never moves a bar.** Bar plot, grouping `[ColName, session,
+      subject]` (innermost first), trial collapsed, one figure per speed.
+      Note the bar layout. Tick the colour on `session`, then on `subject`,
+      then off. The bars, brackets and tick labels must not move at all —
+      only the bar colours and the legend change. `scidb.log` shows the new
+      `grouping: ticks=[...] ... colour=X paints only` line with the SAME
+      `ticks=` on every one of those resolves.
+- [ ] **Coloured innermost layer.** Colour the FIRST grouping entry: same
+      layout as uncoloured, bars painted by that layer, legend added.
+- [ ] **Save figure** (matplotlib export) and **Generate code** for the
+      coloured figure: same layout as the preview (one bar per tick, full
+      width). The generated call carries `dodge=False`.
+- [ ] **Show sample on a spaghetti.** Spaghetti, lines = subject, ticks =
+      session, trial + cycle collapsed. The "Show sample" section is now
+      enabled. Tick `trial`: small points appear ON each subject's line
+      (at that subject's sideways shift), not on the tick centre, and not
+      joined (trial belongs to one session). Tick `cycle`: many more points,
+      still on their subject's line.
+- [ ] **Show sample on a spaghetti with subject collapsed** (the "every point
+      is one subject" shape: lines = speed or group across sessions, subject
+      collapsed and drawn one line each): trials land on their subject's own
+      line inside the group.
+- [ ] **Colour points by** still works on a spaghetti overlay (own colour per
+      shown key, second legend block).
+- [ ] **Four grouping layers with one coloured** now says "At most 3 labelled
+      tick layers" (colouring no longer frees a layer) — expected.
 
 ---
 

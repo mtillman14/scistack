@@ -293,8 +293,10 @@ def test_more_than_three_labelled_layers_is_refused(grouped_table):
 
     with pytest.raises(RoleError, match="At most 3 labelled"):
         validate(spec, table)
-    # The coloured layer is labelled by the legend, not the axis.
-    validate(PlotSpec(measures=["StepLength"], roles=roles, color="extra"), table)
+    # Colour is paint: the coloured layer is still a labelled tick, so
+    # colouring one of four does not bring the grouping under the cap.
+    with pytest.raises(RoleError, match="At most 3 labelled"):
+        validate(PlotSpec(measures=["StepLength"], roles=roles, color="extra"), table)
 
 
 def test_grouping_a_1d_measure_makes_series_not_ticks(series_table):
@@ -544,12 +546,10 @@ def test_a_non_bar_figure_states_no_bar_layout(grouped_table):
     assert "barmode" not in layout
 
 
-def test_box_layout_dodges_colour_levels_within_a_group(grouped_table):
-    """
-    plotly's default boxmode is "overlay": every colour level's box lands on
-    the same x position, one on top of the other. The bars are grouped, and
-    so is the matplotlib path, so the boxes must say "group" too.
-    """
+def test_box_layout_is_stated_like_the_bars(grouped_table):
+    """The box layout is stated the way the bar layout is: "group" mode with
+    every trace in one `offsetgroup` (colour is paint — one box per position,
+    full width), never left to plotly's default."""
     from scistackplot import render_plotly
 
     layout = render_plotly(
@@ -563,7 +563,7 @@ def test_box_layout_dodges_colour_levels_within_a_group(grouped_table):
     assert "barmode" not in layout
 
 
-def test_violin_layout_dodges_colour_levels_within_a_group(grouped_table):
+def test_violin_layout_is_stated_like_the_bars(grouped_table):
     from scistackplot import render_plotly
 
     layout = render_plotly(
@@ -577,7 +577,7 @@ def test_violin_layout_dodges_colour_levels_within_a_group(grouped_table):
     assert "barmode" not in layout
 
 
-def test_only_the_drawn_kind_states_a_dodge_layout(grouped_table):
+def test_only_the_drawn_kind_states_a_mark_layout(grouped_table):
     """A bar figure must not carry box/violin layout keys, and vice versa."""
     from scistackplot import render_plotly
 
@@ -767,8 +767,9 @@ def test_a_new_grouping_facets_when_the_labelled_ticks_are_full(depth_table):
     assert role_for_new_grouping(spec, depth_table) is Role.FACET
 
 
-def test_colouring_a_layer_makes_room_for_another(depth_table):
-    """The coloured layer is labelled by the legend, so it does not count."""
+def test_colouring_a_layer_does_not_make_room_for_another(depth_table):
+    """Colour is paint (2026-09-21): the coloured layer keeps its tick labels
+    and still counts against the cap, so a full grouping stays full."""
     from scistackplot import role_for_new_grouping
 
     roles = {name: Role.GROUP for name in ["subject", "session", "InterventionGroup"]}
@@ -776,7 +777,7 @@ def test_colouring_a_layer_makes_room_for_another(depth_table):
         measures=["StepLength"], roles=roles, color="subject", kind=PlotKind.BAR
     )
 
-    assert role_for_new_grouping(spec, depth_table) is Role.GROUP
+    assert role_for_new_grouping(spec, depth_table) is Role.FACET
 
 
 def test_a_new_grouping_groups_a_1d_measure_as_a_series(series_table):

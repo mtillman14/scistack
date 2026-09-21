@@ -459,8 +459,9 @@ def overlay_unavailable(
     """
     if spec.kind not in OVERLAY_KINDS:
         return (
-            f"A {spec.kind} plot draws the sample itself; the overlay is for "
-            f"the summative kinds (bar, box, violin, scatter, strip)."
+            f"A {spec.kind} plot has no categorical mark to place sample points "
+            f"beside; the overlay is for bar, box, violin, scatter, strip and "
+            f"spaghetti."
         )
     if spec.x_measure is not None:
         return "An x-y plot has no categorical slot to place sample points in."
@@ -604,7 +605,9 @@ def overlay_join(
 
     depths = table.factor_depths
     layers = grouping_layers(spec, table, roles)
-    layer_names = [*layers.ticks, *([layers.color] if layers.color else [])]
+    # Every grouping layer places a mark: the ticks (the coloured one is a
+    # tick too — colour is paint) and, on a spaghetti, the lines layer.
+    layer_names = [*layers.ticks, *layers.series]
     shown_depth = depths.get(steps.deepest_shown)
     layer_depths = [depths[name] for name in layer_names if name in depths]
     if shown_depth is None:
@@ -669,11 +672,14 @@ class GroupingLayers:
     order. Nobody reverses either list ad hoc; this is the one place the
     innermost-first spec meets the outermost-first axis.
 
-    The coloured layer is **not a tick**: a mark's colour level is drawn by
-    dodging inside its tick and labelled by the legend (``COLOR`` in the
-    panel frame), never by composing into the leaf key — so ``ticks`` is
-    exactly what the axis labels, and what ``MAX_X_LAYERS`` caps. It IS part
-    of a series id: one line per leaf group needs every layer.
+    **Colour is paint** (user decision, 2026-09-21). The coloured layer is a
+    tick like any other: it keeps the position the grouping list gave it,
+    composes into the leaf key, and is labelled below the axis. Colouring it
+    additionally paints each mark by its level (``COLOR`` in the panel
+    frame) and lists the levels in the legend — nothing moves, nothing is
+    re-partitioned. Until 2026-09-21 the coloured layer was pulled out of the
+    ticks and dodged innermost, so tagging the middle of a three-layer
+    nesting rearranged every bar; that is the behaviour this replaces.
 
     ``units`` are the SAMPLE keys a line / spaghetti draws one polyline each
     for (:data:`UNIT_KINDS`), innermost first like ``series``. They are part
@@ -751,12 +757,14 @@ def grouping_layers(
             units = [name for name in sample if name not in groups]
     if spec.x_measure is not None or shape is Shape.SERIES_1D:
         return GroupingLayers(ticks=[], series=list(groups), color=color, units=units)
+    # Every grouping layer is a tick, the coloured one included: colour
+    # paints, it never moves a mark (see GroupingLayers).
     if kind is PlotKind.SPAGHETTI:
         lines, rest = groups[:1], groups[1:]
-        ticks = [name for name in reversed(rest) if name != color]
-        return GroupingLayers(ticks=ticks, series=list(lines), color=color, units=units)
-    ticks = [name for name in reversed(groups) if name != color]
-    return GroupingLayers(ticks=ticks, series=[], color=color, units=units)
+        return GroupingLayers(
+            ticks=list(reversed(rest)), series=list(lines), color=color, units=units
+        )
+    return GroupingLayers(ticks=list(reversed(groups)), series=[], color=color, units=units)
 
 
 def tick_layers(
@@ -801,8 +809,8 @@ def layer_cap_reason(
         return (
             f"At most {MAX_X_LAYERS} labelled tick layers fit on the x axis; "
             f"got {len(layers.labelled_ticks)}: {layers.labelled_ticks}. A "
-            f"fourth level of nesting cannot be read off an axis -- colour one "
-            f"of them, or move one to 'facet' (separate panels)."
+            f"fourth level of nesting cannot be read off an axis -- move one "
+            f"to 'facet' (separate panels) or 'iterate' (separate figures)."
         )
     return None
 

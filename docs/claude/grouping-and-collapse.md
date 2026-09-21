@@ -36,10 +36,10 @@ nobody reverses `groups` ad hoc.
 
 | kind | the layers become | the coloured layer |
 |---|---|---|
-| bar / box / violin / strip / scatter | nested x ticks, first entry innermost | **not a tick** — it dodges inside its tick and the legend labels it |
+| bar / box / violin / strip / scatter | nested x ticks, first entry innermost | **paint** — the layer keeps its tick position and labels; the marks are painted by its level and the legend lists the levels |
 | scatter with `x_measure` | one point set per leaf group | point colour |
 | line / band (1-D, x = sample index) | one line / band per leaf group | line colour; every *uncoloured* layer gets a **dash style** |
-| spaghetti | **first entry = the lines**; the rest are ticks; a line joins its points across the layer just above it | colour on the first entry = per-subject colours |
+| spaghetti | **first entry = the lines**; the rest are ticks; a line joins its points across the layer just above it | colour on the first entry = per-subject colours; on a tick layer = paint, as above |
 | heatmap (2-D) | nothing may group — use panels / figures | — |
 
 `[subject, session, Intervention]` reads the same for bar and spaghetti: bars
@@ -48,8 +48,19 @@ subject joined across sessions inside Intervention brackets.
 
 Rules that follow:
 
-* `MAX_X_LAYERS = 3` caps the **labelled** tick layers — grouping layers minus
-  the coloured one. Colouring a layer makes room for another.
+* **Colour is paint (user decision, 2026-09-21).** Tagging a grouping layer as
+  the colour changes nothing a reader measures: not the partition, not a
+  position, not a tick label — `roles.grouping_layers` keeps the coloured
+  layer in `ticks`, `_summarize` groups by `__x` alone (`__color` is a
+  function of it), and neither renderer dodges (`render.base.MARK_SPAN`, one
+  mark per position; plotly traces share `MARK_OFFSET_GROUP`; codegen emits
+  `dodge=False`). `test_colour_is_paint.py` holds both backends to it via
+  `tests/plot_geometry.py`, which reads the DRAWN marks back as data. Until
+  2026-09-21 the coloured layer was pulled out of the ticks and dodged
+  innermost, so colouring the middle of a nesting rearranged every bar
+  (scidb.log 2026-09-21 16:00).
+* `MAX_X_LAYERS = 3` caps the tick layers — every grouping layer, coloured
+  or not.
 * Series ids (`__series`, and the exported `_series`) are composed
   **outermost first** — `"pre | 01"` — via `reduce._series_key`; codegen
   mirrors it.
@@ -171,9 +182,10 @@ multi-level variant factor and on `Variable`.
   `cell_statistic`) reduces each 1-D record to one value when a scalar kind
   is chosen; the *collapse role* averages a factor's levels away. "Median
   within each trial, mean across trials" is both at once.
-* **Colour is not a tick.** A coloured layer that also composed into the leaf
-  key gave `01␟pre` ticks and broke every renderer test; the renderers dodge
-  by `COLOR`, so `grouping_layers.ticks` excludes it.
+* **Colour used to be a dodge.** Before 2026-09-21 `grouping_layers.ticks`
+  excluded the coloured layer and the renderers dodged by `COLOR`; a saved
+  spec with a coloured OUTER layer now draws that layer in its list position
+  (labels included) instead of innermost. Same numbers, different layout.
 * **Numbers changed on 2026-09-17** for any saved spec that had ≥2
   `AGGREGATE` keys (pooled → nested) or whose error bars came from a `FREE`
   key that was not the only non-channel key.

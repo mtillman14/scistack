@@ -299,9 +299,9 @@ def test_grouping_reports_the_layers_innermost_first(scalar_table):
     )
     report = grouping_summary(spec, scalar_table)
     assert report["layers"] == ["session", "subject"]
-    assert report["ticks"] == ["subject"], "the coloured layer dodges, it is not a tick"
+    assert report["ticks"] == ["subject", "session"], "colour is paint: the coloured layer is a tick too"
     assert report["color"] == "session"
-    assert report["labelled_layers"] == 1
+    assert report["labelled_layers"] == 2
 
 
 def test_grouping_appears_in_the_capability_report(scalar_table):

@@ -121,6 +121,9 @@ def test_generated_code_keeps_the_legend_for_several_colour_levels(scalar_table)
 
     assert "hue='session'" in source
     assert "legend=False" not in source
+    # Colour is paint: the hue is one of the x layers, so seaborn must not
+    # split each position into per-hue slots (its default).
+    assert "dodge=False" in source
 
 
 def test_generated_code_drops_the_legend_for_one_colour_level(

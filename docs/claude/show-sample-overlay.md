@@ -1,7 +1,24 @@
 # "Show sample" — the collapsed keys' data drawn on top of the marks
 
 **Since:** 2026-09-19 (plan: `.claude/plan-show-sample.md`). Generalises the
-spaghetti idea to every summative categorical kind.
+spaghetti idea to every summative categorical kind — and, since 2026-09-21,
+to the spaghetti itself (plan: `.claude/plan-colour-is-paint-and-spaghetti-sample.md`).
+
+## On a spaghetti (since 2026-09-21)
+
+A spaghetti's mark is a point on a LINE, shifted from its tick by
+`ResolvedPlot.series_offsets`. "Show sample" draws the trials / cycles behind
+each point ON that line: `reduce._overlay_frame` adds `__line`
+(`resolved.SAMPLE_LINE`) — the marks' own series id recomposed on the
+overlay rows (`GroupingLayers.identity`: the lines layer, plus a collapsed
+subject drawn one line each) — and `render.base.sample_positions` places each
+row at tick + `series_offsets[__line]` + its identity offset, with the
+identity offsets scaled to the number of lines (`overlay_offsets(ids,
+n_lines)`) so one subject's trials stay inside that subject's band. The join
+rule counts the lines layer as a grouping layer (`overlay_join` reads
+`ticks + series`), so trials under session ticks are points. Codegen mirrors
+it: `_sample["_line"]`, the preamble's `_offset`, `_n_slots = len(_ids)`.
+`test_show_sample_spaghetti.py`.
 
 ## What it is
 
@@ -59,7 +76,7 @@ now is **inert** (kept, reported under `sample_overlay.color`) —
 `codegen` and `capability` all go through it.
 
 * **Two columns, not one.** `Panel.sample` carries `__color` (the MARK's
-  level — still what places a point in its dodge slot) and
+  level — what paints a point without an own colour) and
   `__sample_color` (the point's own level). Independence is structural: a
   shown key is collapsed, a coloured layer groups, no factor is both.
 * **Palette:** `render.base.SAMPLE_PALETTE` (tab20, twenty entries — a
@@ -71,8 +88,8 @@ now is **inert** (kept, reported under `sample_overlay.color`) —
   repeat and `reduce` WARNs.
 * **Lines cross the marks' colours.** `render.base.sample_groups` is the
   one rule: with an own colour the rows split by `__sample_color` and an
-  identity's line runs across the colour levels — from the `pre` slot to
-  the `post` slot inside one tick — each point placed in ITS OWN row's slot
+  identity's line runs across the colour levels — from the `pre` tick to
+  the `post` tick — each point placed on ITS OWN row's mark
   (`sample_positions` is per-row). Without it the rows split per mark
   colour as they always did, because a line crossing two mark colours has
   no colour to be. This is why Lines / Auto (lines) drew nothing with
@@ -98,16 +115,17 @@ now is **inert** (kept, reported under `sample_overlay.color`) —
 ## Placement: no random jitter anywhere
 
 A line must end on its own markers, so every overlay point keeps **one
-deterministic offset**: `spaghetti.overlay_offsets(ids, n_colors)` =
-`series_offsets` (natural-sorted, evenly spaced over ±0.2) divided by the
-colour count, so the points stay inside their mark's dodge slot. Decided once
-per **figure** (`ResolvedPlot.sample_offsets`), so a subject sits in the same
-place in every panel. Hundreds of cycle points fill the slot evenly and read
-as a strip.
+deterministic offset**: `spaghetti.overlay_offsets(ids, n_slots=1)` =
+`series_offsets` (natural-sorted, evenly spaced over ±0.2, inside a
+0.8-wide mark); on a spaghetti `n_slots` is the number of lines. Decided
+once per **figure** (`ResolvedPlot.sample_offsets`), so a subject sits in
+the same place in every panel. Hundreds of cycle points fill the mark evenly
+and read as a strip.
 
-Position = tick index + `dodge_offset(index, n)` (the mark's own slot, as
-this panel's marks took them — `render.base.dodge_slots`) + the identity's
-offset. `render.base.sample_positions` is the one arithmetic;
+Position = tick index (+ the line's `series_offsets` shift on a spaghetti) +
+the identity's offset. There is no dodge slot: colour is paint
+(`grouping-and-collapse.md`), every colour level has its own tick.
+`render.base.sample_positions` is the one arithmetic;
 `test_show_sample_render.py::test_both_backends_place_every_point_at_the_same_x`
 and `test_show_sample_codegen.py::test_generated_points_land_where_the_preview_draws_them`
 hold the three readers to it.
@@ -123,7 +141,8 @@ hold the three readers to it.
 | the rows | `reduce._build_figure`: `sample_overlay` phase runs `_collapse_levels(frame, averaged, pooled=…)` on the figure's rows BEFORE the marks' chain; `sample_panels` splits by facet → `Panel.sample` (`__x`, `__y`, `__color`, `__series`, the shown key columns) |
 | offsets | `spaghetti.overlay_offsets` → `reduce._overlay_offsets` → `ResolvedPlot.sample_offsets` |
 | y limits | `ExtentMode.overlay` (memo key) + `ylimits._reduced_extents` unions the overlay's raw extents into every return path |
-| dodge arithmetic | `render.base.dodge_width / dodge_offset / dodge_slots` (bars, boxes and points all read it) |
+| mark width | `render.base.MARK_SPAN` / `mark_width` (bars, boxes; plotly traces share `MARK_OFFSET_GROUP`) |
+| a spaghetti point's line | `resolved.SAMPLE_LINE`, `reduce._overlay_frame(line_layers=…)`, `render.base.sample_positions`, `codegen._line_layers` |
 | drawing | `mpl._draw_sample`; `plotly_._sample_traces` (positional axis, see below) |
 | export | `codegen._sample_preamble_lines` (before the emitted chain) + `codegen._sample_draw_lines` (after the `catplot`) |
 | report | `capability.sample_overlay_summary` → `sample_overlay {available, reason, factors[{name, checked, shown}], ignored, shown, averaged, join, granularity}` |
@@ -135,7 +154,7 @@ hold the three readers to it.
 * **plotly draws the whole figure on a positional axis** once an overlay is
   present (`_positional_x`: spaghetti *or* an overlay, on a categorical x).
   The marks are placed by index and get `_level_hover` so hover names the
-  level, not the index; `barmode` / `boxmode: "group"` still dodge by trace.
+  level, not the index; `barmode` / `boxmode: "group"` with one shared `offsetgroup`, one mark per position.
   Box/violin hover on a positional figure shows the index — a known
   limitation; the coloured-box alignment was never visually checked.
 * **`Weight by N` pools the overlay too** — `_collapse_levels(pooled=True)`

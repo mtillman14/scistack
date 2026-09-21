@@ -101,17 +101,19 @@ SCALAR_KINDS = (
 )
 
 #: Kinds that can carry a "Show sample" overlay (:attr:`PlotSpec.show_sample`):
-#: the summative categorical kinds — a bar, box or violin summarises its
-#: sample, and scatter / strip draw one point per sample row — all of which leave
-#: room inside each mark's dodge slot for the underlying points. SPAGHETTI is
-#: already the sample; LINE / BAND have a numeric x (no slot to place a point
-#: in) and HEATMAP has no marks.
+#: the categorical kinds — a bar, box or violin summarises its sample, scatter
+#: / strip draw one point per sample row, and a spaghetti draws one point per
+#: line per tick (since 2026-09-21: the trials and cycles behind each
+#: subject's point, placed on that subject's line) — all of which leave room
+#: beside each mark for the underlying points. LINE / BAND have a numeric x
+#: (no slot to place a point in) and HEATMAP has no marks.
 OVERLAY_KINDS = (
     PlotKind.BAR,
     PlotKind.BOX,
     PlotKind.VIOLIN,
     PlotKind.SCATTER,
     PlotKind.STRIP,
+    PlotKind.SPAGHETTI,
 )
 
 

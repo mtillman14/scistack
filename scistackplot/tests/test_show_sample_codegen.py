@@ -20,6 +20,8 @@ from matplotlib.collections import PathCollection  # noqa: E402
 
 pytest.importorskip("seaborn")
 
+from plot_geometry import despaced  # noqa: E402
+
 from scistackplot import (  # noqa: E402
     Aggregation,
     ErrorBand,
@@ -91,18 +93,20 @@ def _marker_xs(figure) -> list[float]:
 
 
 def _preview_xs(resolved) -> list[float]:
+    """The preview's overlay x positions, spacer slots removed (a nested
+    preview axis has them, the export does not — `plot_geometry.despaced`)."""
     drawn = render_matplotlib(resolved)
     if resolved.sample_join:
         xs = _marker_xs(drawn)
     else:
-        xs = sorted(
-            round(float(x), 6)
+        xs = [
+            float(x)
             for c in drawn.axes[0].collections
             if isinstance(c, PathCollection)
             for x, _ in c.get_offsets()
-        )
+        ]
     plt.close(drawn)
-    return xs
+    return sorted(despaced(xs, resolved))
 
 
 # --- the source -----------------------------------------------------------------
@@ -139,10 +143,9 @@ def test_pooled_is_one_groupby(table):
 
 
 def test_an_inert_selection_emits_nothing(table):
-    spec = _spec(["trial"], kind=PlotKind.SPAGHETTI, roles={
-        "subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE,
-    }, groups=["subject", "session"])
-    assert "_sample = " not in generate_plot_function(spec, table)
+    """A ticked name that is not collapsed (session groups) is inert — no
+    `_sample` in the export, as none is drawn in the preview."""
+    assert "_sample = " not in generate_plot_function(_spec(["session"]), table)
 
 
 # --- run it ---------------------------------------------------------------------------
@@ -159,9 +162,10 @@ def test_generated_points_land_where_the_preview_draws_them(table, frame, show):
     assert len(generated) == (4 if show == ["subject"] else 7)
 
 
-def test_generated_points_dodge_with_the_hue(table, frame):
-    """Colour = subject: subject 02's trials must sit in the second bar's
-    slot in the export exactly as in the preview."""
+def test_generated_points_sit_on_their_hues_own_bar(table, frame):
+    """Colour = subject on a [subject, session] grouping: seaborn is told
+    `dodge=False`, so subject 02's trials sit on subject 02's own bar in
+    the export exactly where the preview draws them."""
     spec = _spec(["trial"], roles={
         "subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE,
     }, groups=["subject", "session"], color="subject")

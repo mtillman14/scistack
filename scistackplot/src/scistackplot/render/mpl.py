@@ -25,14 +25,12 @@ from .base import (
     SAMPLE_LINE_WIDTH,
     SAMPLE_MARKER_FRACTION,
     color_groups,
-    dodge_offset,
-    dodge_slots,
-    dodge_width,
     dash_levels,
     dash_style,
     grid_shape,
     is_categorical_x,
     legend_levels,
+    mark_width,
     palette_for,
     panel_position,
     drawable_limits,
@@ -319,14 +317,19 @@ def _dash_legend_handles(ax, resolved) -> None:
 
 
 def _draw_bars(ax, frame, resolved) -> None:
-    encoding = resolved.encoding
-    groups = color_groups(frame, resolved)
-    n_groups = max(len(groups), 1)
-    width = dodge_width(n_groups)
+    """One bar per x position, painted by its colour level.
 
-    for index, (level, subset) in enumerate(groups):
+    No dodge: colour is paint (``roles.GroupingLayers``), so every colour
+    level already has its own tick and the colour groups here are disjoint
+    sets of x positions — each bar sits ON its tick, ``mark_width`` wide,
+    whichever level paints it. ``test_colour_is_paint.py`` holds the
+    geometry to that.
+    """
+    encoding = resolved.encoding
+    width = mark_width()
+
+    for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         positions, ticks = x_positions(subset[encoding.x], resolved)
-        offset = dodge_offset(index, n_groups)
         centre = subset[encoding.y].to_numpy(dtype=float)
         error = None
         if encoding.has_error:
@@ -334,7 +337,7 @@ def _draw_bars(ax, frame, resolved) -> None:
             high = subset[encoding.y_high].to_numpy(dtype=float)
             error = np.vstack([centre - low, high - centre])
         ax.bar(
-            positions + offset,
+            positions,
             centre,
             width=width,
             yerr=error,
@@ -364,15 +367,13 @@ def _x_levels(frame: pd.DataFrame, resolved: ResolvedPlot) -> list[Any]:
 
 
 def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
-    """Box or violin, dodged by colour level when one is assigned."""
+    """Box or violin, one per x position, painted by its colour level (no
+    dodge — see ``_draw_bars``)."""
     encoding = resolved.encoding
-    groups = color_groups(frame, resolved)
-    n_groups = max(len(groups), 1)
-    width = dodge_width(n_groups)
+    width = mark_width()
     order = _x_levels(frame, resolved)
 
-    for index, (level, subset) in enumerate(groups):
-        offset = dodge_offset(index, n_groups)
+    for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         datasets: list[np.ndarray] = []
         positions: list[float] = []
         for slot, level_value in enumerate(order):
@@ -382,7 +383,7 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
             values = values[~np.isnan(values)]
             if values.size:
                 datasets.append(values)
-                positions.append(slot + offset)
+                positions.append(float(slot))
         if not datasets:
             continue
 
@@ -418,9 +419,9 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     the mark it belongs to, joined into a line per identity when
     ``ResolvedPlot.sample_join`` says so.
 
-    Placement is ``base.sample_positions`` — tick index, each row's own
-    mark's dodge slot (as this panel's marks took them), the identity's
-    offset — so the points sit in the bar or box they were averaged into.
+    Placement is ``base.sample_positions`` — the row's own mark's position
+    (its tick; on a spaghetti its line's shift) plus the identity's offset —
+    so the points sit in the bar, box or line they were averaged into.
     Colour is ``base.sample_groups`` / ``sample_paint``: the mark's, or the
     overlay's own key's (``ResolvedPlot.sample_color``), in which case a
     line runs across the mark colours and the legend lists the levels
@@ -430,12 +431,11 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     if sample is None or sample.empty or sample_dropped_reason(panel, resolved):
         return
     style = resolved.spec.style
-    slots = dodge_slots(panel.frame, resolved)
     size = style.marker_size * SAMPLE_MARKER_FRACTION
     for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
         color = sample_paint(resolved, level, index)
         for identity, rows in sample_series(subset, resolved):
-            positions = sample_positions(rows, resolved, slots, identity)
+            positions = sample_positions(rows, resolved, identity)
             order = np.argsort(positions, kind="stable")
             values = rows[resolved.encoding.y].to_numpy(dtype=float)[order]
             if resolved.sample_join and len(rows) > 1:

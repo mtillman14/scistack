@@ -45,18 +45,20 @@ def series_offsets(series_ids: Iterable[Any]) -> dict[str, float]:
     }
 
 
-def overlay_offsets(series_ids: Iterable[Any], n_colors: int) -> dict[str, float]:
+def overlay_offsets(series_ids: Iterable[Any], n_slots: int = 1) -> dict[str, float]:
     """Offsets for a "Show sample" overlay: :func:`series_offsets` shrunk to
-    fit INSIDE one mark's dodge slot.
+    fit INSIDE the mark the points belong to.
 
-    A bar or box with ``n_colors`` colour levels at a tick occupies a slot of
-    width ``0.8 / n_colors`` (``render.base.dodge_offset``), and the overlay's
-    points must stay inside the mark they belong to — so the spread is divided
-    by the same count. With one colour level this is exactly the spaghetti
-    band; the same rule applies whether or not the points are joined, since a
-    joined point must still end on its own marker.
+    A bar or box occupies its whole tick (``render.base.MARK_SPAN`` — colour
+    is paint, so nothing dodges), and ``n_slots = 1`` is exactly the
+    spaghetti band, ±0.2 inside a 0.8-wide mark. On a spaghetti the marks
+    are points on lines spread over that same band, so the points of one
+    line must stay inside the gap to the next: ``n_slots`` is then the
+    number of lines and the spread is divided by it. The same rule applies
+    whether or not the points are joined, since a joined point must still
+    end on its own marker.
     """
-    scale = 1.0 / max(int(n_colors), 1)
+    scale = 1.0 / max(int(n_slots), 1)
     return {
         key: round(value * scale, 6)
         for key, value in series_offsets(series_ids).items()

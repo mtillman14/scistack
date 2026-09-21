@@ -1,8 +1,8 @@
 """
 "Show sample" — Stage 3: both renderers draw the overlay in the same place.
 
-Placement is one arithmetic (``render.base.sample_positions``): tick index +
-the mark's dodge slot + the identity's offset. Joined identities are lines
+Placement is one arithmetic (``render.base.sample_positions``): the mark's own
+position (its tick; on a spaghetti its line's shift) + the identity's offset. Joined identities are lines
 with markers, others are markers; nothing joins the legend; a plotly figure
 with an overlay is drawn on the positional axis (``_positional_x``).
 """
@@ -29,8 +29,8 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.render.base import dodge_offset, dodge_width
 from scistackplot.resolved import SERIES, X
+from scistackplot.xaxis import LEAF_SEPARATOR
 
 
 @pytest.fixture
@@ -120,9 +120,10 @@ def test_mpl_overlay_never_joins_the_legend(unbalanced):
     plt.close(drawn)
 
 
-def test_mpl_points_sit_inside_their_colour_slot(unbalanced):
-    """Subject is the colour: subject 02's trials must land inside subject
-    02's bar — the second of two dodge slots — never in subject 01's."""
+def test_mpl_points_sit_on_their_own_subjects_tick(unbalanced):
+    """Subject is coloured AND a tick (colour is paint): subject 02's trials
+    land inside subject 02's own bar — at the composed tick whose leaf is
+    02 — never in subject 01's, and never outside a bar's span."""
     spec = _spec(["trial"], roles={
         "subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE,
     }, groups=["subject", "session"], color="subject")
@@ -130,15 +131,22 @@ def test_mpl_points_sit_inside_their_colour_slot(unbalanced):
     drawn = render_matplotlib(figure)
     collections = _overlay_points(drawn)
     assert len(collections) >= 2
-    slot_1 = dodge_offset(1, 2)
-    half = dodge_width(2) / 2
-    # The last collection drawn is subject 02's (colour order), at x=pre (0).
-    xs = [x for c in collections for x, _ in c.get_offsets() if abs(x - slot_1) < half]
-    assert xs, "no point landed in the second slot"
+    subject_at_tick = {
+        index: str(key).split(LEAF_SEPARATOR)[-1] for index, key in enumerate(figure.x_order)
+    }
+    # Every trial value in the fixture is unique, so it names its subject.
+    subject_of_value = {
+        float(value): str(subject)
+        for subject, value in unbalanced.frame[["subject", "M"]].itertuples(index=False)
+    }
+    placed = 0
     for c in collections:
-        for x, _ in c.get_offsets():
+        for x, y in c.get_offsets():
             tick = round(float(x))
             assert abs(x - tick) < 0.4, "a point strayed out of its tick's span"
+            assert subject_at_tick[tick] == subject_of_value[float(y)]
+            placed += 1
+    assert placed == 7, "one point per trial"
     plt.close(drawn)
 
 
@@ -235,43 +243,44 @@ def test_plotly_overlay_never_paints_labels_on_the_marks(unbalanced, kind):
 # --- the colour is the ONLY grouping layer ------------------------------------------
 #
 # Regression (scidb.log 2026-09-21): grouping by ColName alone and colouring by
-# ColName leaves no tick layer, so the marks sit at the one unlabelled position
-# (``resolved.UNLABELLED_X``). ``x_order`` used to be ``None`` there, the axis
-# read as numeric, and both renderers dropped the overlay without a word —
-# plotly still drew the bars off the ``""`` strings, so the bars "worked".
+# ColName used to leave no tick layer (the coloured layer was pulled out of
+# the ticks), so the marks sat at one unlabelled position, ``x_order`` was
+# ``None``, the axis read as numeric, and both renderers dropped the overlay
+# without a word. Since colour became paint the coloured layer IS the tick
+# axis; these tests hold the overlay to it.
 
 
 def _colour_only(show, **kwargs):
     return _spec(show, color="session", **kwargs)
 
 
-def test_colour_only_figure_has_the_unlabelled_axis_level(unbalanced):
-    from scistackplot.resolved import UNLABELLED_X
-
+def test_the_coloured_only_grouping_is_the_tick_axis(unbalanced):
+    """Colour is paint: a grouping of one coloured layer is that layer's
+    ticks, painted — not one unlabelled position with a dodge."""
     figure = _figure(_colour_only(["subject"]), unbalanced)
-    assert figure.x_order == [UNLABELLED_X]
+    assert figure.x_order == ["pre", "post"]
     assert figure.encoding.color and figure.color_order == ["pre", "post"]
 
 
 def test_plotly_draws_the_overlay_when_the_colour_is_the_only_grouping(unbalanced):
     payload = render_plotly(_figure(_colour_only(["subject"]), unbalanced))
     traces = _overlay_traces(payload)
-    # In the marks' colour a run never crosses colour slots (base.sample_groups):
+    # In the marks' colour a run never crosses colour levels (base.sample_groups):
     # one single-point run per subject per session, never joined.
     assert len(traces) == 4
     assert {t["mode"] for t in traces} == {"markers"}
     assert sum(len(t["x"]) for t in traces) == 4
-    # Every point sits inside a dodge slot of the single tick at 0.
+    # Every point sits inside its own session's tick (0 = pre, 1 = post).
     for trace in traces:
         for x in trace["x"]:
-            assert abs(x) < 0.5
+            assert abs(x - round(x)) < 0.5 and round(x) in (0, 1)
     bars = [t for t in payload["data"] if t["type"] == "bar"]
-    assert [b["x"] for b in bars] == [[0.0], [0.0]]
+    assert [b["x"] for b in bars] == [[0.0], [1.0]], "one bar per tick, painted"
     axis = payload["layout"]["xaxis"]
-    assert axis["tickvals"] == [0] and axis["range"] == [-0.5, 0.5]
+    assert axis["tickvals"] == [0, 1] and axis["range"] == [-0.5, 1.5]
 
 
-def test_plotly_draws_the_overlay_with_its_own_colour_and_no_tick_layer(unbalanced):
+def test_plotly_draws_the_overlay_with_its_own_colour_on_a_coloured_only_grouping(unbalanced):
     """The reported shape: colour by the grouping, points coloured by subject."""
     spec = _colour_only(["subject"], sample_color="subject", join_sample=True)
     payload = render_plotly(_figure(spec, unbalanced))
@@ -287,7 +296,7 @@ def test_mpl_draws_the_overlay_when_the_colour_is_the_only_grouping(unbalanced):
     xs = [float(x) for c in _overlay_points(drawn) for x, _ in c.get_offsets()]
     assert len(xs) == 4
     for x in xs:
-        assert not np.isnan(x) and abs(x) < 0.5
+        assert not np.isnan(x) and abs(x - round(x)) < 0.5
     # The bars themselves are placed too (they used to land at NaN on export).
     bars = [p for p in drawn.axes[0].patches if p.get_height() > 0]
     assert len(bars) == 2 and all(not np.isnan(p.get_x()) for p in bars)

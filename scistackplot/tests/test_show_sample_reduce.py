@@ -127,10 +127,10 @@ def test_every_overlay_kind_carries_the_sample(unbalanced):
 
 
 def test_an_inert_selection_carries_nothing(unbalanced):
-    spec = _spec(["trial"], kind=PlotKind.SPAGHETTI, roles={
-        "subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE,
-    }, groups=["subject", "session"])
-    figure = _figure(spec, unbalanced)
+    """A ticked name that is not collapsed right now (session groups here)
+    is inert: no overlay frame at all. (The spaghetti used to be the
+    example; it carries the overlay since 2026-09-21.)"""
+    figure = _figure(_spec(["session"]), unbalanced)
     assert figure.panels[0].sample is None
 
 
@@ -147,7 +147,7 @@ def test_overlay_is_split_by_facet_like_the_marks(unbalanced):
 
 def test_overlay_carries_the_marks_own_colour_and_x(unbalanced):
     """``__x`` and ``__color`` are the MARK's own columns, so a renderer
-    places a point by exactly the mark's position and dodge."""
+    places a point by exactly the mark's position and paints it alike."""
     spec = _spec(["trial"], roles={
         "subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE,
     }, groups=["subject", "session"], color="subject")
@@ -170,9 +170,10 @@ def test_join_is_decided_once_per_figure(unbalanced):
     assert forced.sample_join is True
 
 
-def test_offsets_are_the_spaghetti_rule_inside_the_slot(unbalanced):
-    """One colour level: the whole spaghetti band. Two: half of it, so the
-    points stay inside their own (half-width) mark."""
+def test_offsets_are_the_spaghetti_rule_inside_the_mark(unbalanced):
+    """The whole spaghetti band, whether or not a layer is coloured: colour
+    is paint, every mark has its own tick, so the points spread over ±0.2
+    inside a 0.8-wide bar either way."""
     figure = _figure(_spec(["subject"]), unbalanced)
     assert figure.sample_offsets == series_offsets(["01", "02"])
     assert figure.sample_offsets == {"01": -0.2, "02": 0.2}
@@ -182,12 +183,14 @@ def test_offsets_are_the_spaghetti_rule_inside_the_slot(unbalanced):
     }, groups=["subject", "session"], color="subject")
     figure = _figure(spec, unbalanced)
     ids = sorted(figure.panels[0].sample[SERIES].unique())
-    assert figure.sample_offsets == overlay_offsets(ids, 2)
-    assert max(abs(v) for v in figure.sample_offsets.values()) == pytest.approx(0.1)
+    assert figure.sample_offsets == overlay_offsets(ids, 1)
+    assert max(abs(v) for v in figure.sample_offsets.values()) == pytest.approx(0.2)
 
 
-def test_overlay_offsets_shrink_with_the_colour_count():
-    assert overlay_offsets(["a", "b"], 1) == {"a": -0.2, "b": 0.2}
+def test_overlay_offsets_shrink_with_the_slot_count():
+    """`n_slots` is the number of LINES on a spaghetti (one overlay band per
+    line), 1 everywhere else."""
+    assert overlay_offsets(["a", "b"]) == {"a": -0.2, "b": 0.2}
     assert overlay_offsets(["a", "b"], 4) == {"a": -0.05, "b": 0.05}
     assert overlay_offsets(["a"], 3) == {"a": 0.0}
 
@@ -247,4 +250,4 @@ def test_extent_mode_keys_the_memo_by_the_selection(unbalanced):
     assert ExtentMode.for_spec(_spec([]), roles).overlay == ()
     assert ExtentMode.for_spec(_spec(["trial"]), roles).overlay == ("trial",)
     # An overlay the kind cannot carry does not miss the memo.
-    assert ExtentMode.for_spec(_spec(["trial"], kind=PlotKind.SPAGHETTI), roles).overlay == ()
+    assert ExtentMode.for_spec(_spec(["trial"], kind=PlotKind.LINE), roles).overlay == ()

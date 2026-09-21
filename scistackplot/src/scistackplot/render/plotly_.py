@@ -25,12 +25,12 @@ from ..resolved import ResolvedPlot
 from ..spec import PlotKind
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
+    MARK_OFFSET_GROUP,
     SAMPLE_ALPHA,
     SAMPLE_EDGE_COLOR,
     SAMPLE_LINE_WIDTH,
     SAMPLE_MARKER_FRACTION,
     color_groups,
-    dodge_slots,
     dash_levels,
     dash_style,
     grid_shape,
@@ -133,22 +133,28 @@ def render(resolved: ResolvedPlot) -> dict:
             # the trace. plotly's defaults happen to agree today, but a figure
             # whose bar layout depends on which defaults the bundled plotly.js
             # ships is a figure that can change without anyone editing it.
-            # 0.2/0.0 is also exactly what the matplotlib path draws
-            # (`mpl._draw_bars`: width = 0.8 / n_colour_levels, no inner gap).
+            # 0.2 is also exactly what the matplotlib path draws
+            # (`mpl._draw_bars`: width = MARK_SPAN = 0.8, one bar per tick).
+            #
+            # "group" mode would still reserve one slot per colour TRACE at
+            # every x — a narrow, off-centre bar wherever only one level has a
+            # bar, which since colour became paint is everywhere. Every mark
+            # trace therefore shares `offsetgroup` (`_panel_traces`), so the
+            # single bar at each position draws full width.
             layout["barmode"] = "group"
             layout["bargap"] = 0.2
             layout["bargroupgap"] = 0.0
         elif resolved.kind is PlotKind.BOX:
-            # Same rule as the bars: plotly's default boxmode is "overlay",
-            # which stacks every colour level's box on ONE x position. "group"
-            # dodges them side by side within each x group, as the bars are and
-            # as the matplotlib path draws them (`mpl._draw_distribution`:
-            # slot width 0.8 / n_colour_levels, box width 0.85 of its slot).
+            # Same rule as the bars (`mpl._draw_distribution`: box width 0.85
+            # of the 0.8 mark span). plotly's default boxmode is "overlay",
+            # which would be right for disjoint x sets too, but "group" with
+            # one shared `offsetgroup` states the geometry instead of relying
+            # on the traces never sharing an x.
             layout["boxmode"] = "group"
             layout["boxgap"] = 0.2
             layout["boxgroupgap"] = 0.15
         elif resolved.kind is PlotKind.VIOLIN:
-            # As for boxes; a violin is 0.9 of its slot on the mpl path.
+            # As for boxes; a violin is 0.9 of the mark span on the mpl path.
             layout["violinmode"] = "group"
             layout["violingap"] = 0.2
             layout["violingroupgap"] = 0.1
@@ -364,6 +370,9 @@ def _panel_traces(
                     # which of x/y it recognises, so a panel whose x came out
                     # numeric could silently draw sideways.
                     "orientation": "v",
+                    # One slot for every colour trace: colour is paint, each
+                    # level has its own x, nothing dodges (see `render`).
+                    "offsetgroup": MARK_OFFSET_GROUP,
                     "x": x_values,
                     "y": _values(subset[encoding.y]),
                     "marker": {"color": color},
@@ -377,6 +386,7 @@ def _panel_traces(
                     **base,
                     "type": "box" if kind is PlotKind.BOX else "violin",
                     "orientation": "v",  # see the bar trace above
+                    "offsetgroup": MARK_OFFSET_GROUP,
                     "x": x_values,
                     "y": _values(subset[encoding.y]),
                     "marker": {"color": color},
@@ -398,7 +408,7 @@ def _positional_x(resolved: ResolvedPlot) -> bool:
 
     SPAGHETTI shifts each series a fraction of a tick sideways
     (``ResolvedPlot.series_offsets``), and a "Show sample" overlay shifts its
-    points into the marks' dodge slots (``sample_offsets``) and may join them
+    points beside their marks (``sample_offsets``) and may join them
     with lines. plotly's category axis cannot take either: a number in a
     category trace is stringified and becomes a NEW category, so ``1.15``
     would draw as its own tick. The axis is therefore linear, with the levels'
@@ -406,7 +416,7 @@ def _positional_x(resolved: ResolvedPlot) -> bool:
     ``range`` of ``[-0.5, n - 0.5]`` — the range a category axis has by
     default, which is also the geometry :func:`_add_x_groups` assumes when it
     places brackets at ``i / n``. The marks (bars, boxes) are placed by index
-    too; the ``group`` modes dodge by trace exactly as on a category axis.
+    too, one per position, exactly as on a category axis.
     """
     return (
         resolved.kind is PlotKind.SPAGHETTI or bool(resolved.sample_shown)
@@ -452,7 +462,7 @@ def _sample_traces(
     legend_on: bool = True,
 ) -> list[dict]:
     """The "Show sample" overlay for one panel: markers, or lines+markers when
-    joined, placed by ``base.sample_positions`` inside the marks' dodge slots
+    joined, placed by ``base.sample_positions`` on the marks they belong to
     (the same arithmetic ``mpl._draw_sample`` uses).
 
     Painted by ``base.sample_groups`` / ``sample_paint``. In the mark's
@@ -468,7 +478,6 @@ def _sample_traces(
         return []
     seen = seen_legend if seen_legend is not None else set()
     own_color = bool(resolved.sample_color)
-    slots = dodge_slots(panel.frame, resolved)
     size = 8.0 * float(np.sqrt(SAMPLE_MARKER_FRACTION))  # the marks draw at 8
     traces: list[dict] = []
     for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
@@ -476,7 +485,7 @@ def _sample_traces(
         label = str(level) if level is not None else resolved.labels.y
         legend_group = f"sample:{label}" if own_color else label
         for identity, rows in sample_series(subset, resolved):
-            positions = sample_positions(rows, resolved, slots, identity)
+            positions = sample_positions(rows, resolved, identity)
             order = np.argsort(positions, kind="stable")
             hover = sample_hover(rows, resolved)
             levels = [

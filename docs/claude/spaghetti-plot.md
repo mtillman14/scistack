@@ -95,3 +95,9 @@ averaged). Fixed by adding `_X_NESTED` to `keep`;
 bar/box + `show_sample=["subject"]` + the automatic join draws these same
 lines with a summary behind them. The group-summary overlay above is
 therefore available that way round; whether SPAGHETTI stays a kind is open.
+
+**2026-09-21:** "Show sample" now works ON a spaghetti too — the trials /
+cycles behind each subject's point, placed on that subject's line
+(`show-sample-overlay.md`, "On a spaghetti"). Same day, colour became paint
+(`grouping-and-collapse.md`): colouring a tick layer of a spaghetti paints
+the points without moving them.

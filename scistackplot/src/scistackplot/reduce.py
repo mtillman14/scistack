@@ -42,6 +42,7 @@ from .resolved import (
     DASH,
     DASH_CYCLE,
     SAMPLE_COLOR,
+    SAMPLE_LINE,
     SERIES,
     UNLABELLED_X,
     X,
@@ -1200,6 +1201,20 @@ def _build_figure(
         unit_layers = [name for name in layers.units if name in frame.columns]
         if unit_layers:
             timing.note("one line per %s", " x ".join(reversed(unit_layers)))
+        # What PARTITIONS the marks, stated apart from what PAINTS them: the
+        # coloured layer is one of the ticks / series, so the partition is the
+        # same with the colour tag on or off. A log reader comparing two
+        # resolves that differ only in `color` should see this line unchanged.
+        Log.info(
+            "grouping: ticks=%s (outermost first) series=%s units=%s -> marks "
+            "partitioned by %s; colour=%s paints only",
+            x_layers,
+            series_layers,
+            unit_layers,
+            [*x_layers, *series_layers, *unit_layers],
+            color,
+            layer=LAYER,
+        )
         x_factor = x_layers[0] if x_layers else None
         # Several factors may be faceted at once; their combined levels are the
         # panels, and FacetOptions decides how those panels are arranged.
@@ -1284,6 +1299,13 @@ def _build_figure(
                     color,
                     overlay.shown,
                     sample_color,
+                    # On a spaghetti a point belongs to a LINE, not a tick:
+                    # the marks' own series id, recomposed on the overlay rows.
+                    line_layers=(
+                        [*unit_layers, *series_layers]
+                        if spec.kind is PlotKind.SPAGHETTI
+                        else []
+                    ),
                 )
 
         if summarize_nested:
@@ -1340,8 +1362,14 @@ def _build_figure(
         # The overlay's join decision and offsets, once per FIGURE (see
         # ResolvedPlot.sample_offsets): a subject keeps its place in every panel.
         join = overlay_join(spec, roles, table, overlay) if overlay_frame is not None else None
+        # Once per figure, like the offsets themselves: on a spaghetti the
+        # marks are points on lines spread over the tick, so an overlay point
+        # must stay inside its own line's gap (`spaghetti.overlay_offsets`).
+        line_offsets = (
+            _spaghetti_offsets(panels) if spec.kind is PlotKind.SPAGHETTI else {}
+        )
         sample_offsets = (
-            _overlay_offsets(panels, len(color_order) if color_order else 1)
+            _overlay_offsets(panels, max(len(line_offsets), 1))
             if overlay_frame is not None
             else {}
         )
@@ -1410,9 +1438,7 @@ def _build_figure(
             downsampled_from=(
                 original_rows if max_points and original_rows > max_points else None
             ),
-            series_offsets=(
-                _spaghetti_offsets(panels) if spec.kind is PlotKind.SPAGHETTI else {}
-            ),
+            series_offsets=line_offsets,
             dash_styles=dash_styles,
             sample_shown=list(overlay.shown) if overlay_frame is not None else [],
             sample_join=bool(join.join) if join is not None else False,
@@ -1500,6 +1526,7 @@ def _attach_overlay(
     color: str | None,
     shown: list[str],
     sample_color: str | None = None,
+    line_layers: list[str] = (),
 ) -> None:
     """Split the overlay rows into the panels the marks were split into and
     give each panel its ``sample`` frame (:func:`_overlay_frame`)."""
@@ -1516,10 +1543,12 @@ def _attach_overlay(
             # A panel whose overlay rows all filtered to nothing: no points,
             # not an error — the marks are still drawn.
             panel.sample = _overlay_frame(
-                overlay_frame.iloc[:0], spec, x_layers, color, shown, sample_color
+                overlay_frame.iloc[:0], spec, x_layers, color, shown, sample_color, line_layers
             )
             continue
-        panel.sample = _overlay_frame(group, spec, x_layers, color, shown, sample_color)
+        panel.sample = _overlay_frame(
+            group, spec, x_layers, color, shown, sample_color, line_layers
+        )
         Log.debug(
             "sample overlay: %d point(s) in panel %s",
             len(panel.sample),
@@ -1535,13 +1564,18 @@ def _overlay_frame(
     color: str | None,
     shown: list[str],
     sample_color: str | None = None,
+    line_layers: list[str] = (),
 ) -> pd.DataFrame:
     """The overlay's tidy frame: the SAME ``__x`` / ``__color`` the marks use
-    (so a renderer places a point by the mark's own position and dodge), the
-    value, a ``__series`` id from the shown keys (outermost first, like every
-    other composed id) and the shown key columns themselves for hover.
-    ``__sample_color`` (``sample_color``, a shown key) is the point's OWN
-    colour level, beside the mark's — see ``resolved.SAMPLE_COLOR``."""
+    (so a renderer places a point by the mark's own position and paints it
+    the mark's colour), the value, a ``__series`` id from the shown keys
+    (outermost first, like every other composed id) and the shown key columns
+    themselves for hover. ``__sample_color`` (``sample_color``, a shown key)
+    is the point's OWN colour level, beside the mark's — see
+    ``resolved.SAMPLE_COLOR``. On a spaghetti, ``__line`` (``line_layers``:
+    the marks' units + lines layer, innermost first — ``GroupingLayers.identity``)
+    is the id of the line the point sits on, composed exactly as the marks'
+    ``__series`` is (``_series_key``) so ``series_offsets`` finds it."""
     out = pd.DataFrame(index=group.index)
     if len(x_layers) > 1:
         out[X] = _composed_key(group, x_layers, LEAF_SEPARATOR)
@@ -1558,22 +1592,25 @@ def _overlay_frame(
         out[name] = group[name].values
     if sample_color and sample_color in group.columns:
         out[SAMPLE_COLOR] = group[sample_color].values
+    if line_layers:
+        out[SAMPLE_LINE] = _series_key(group, list(line_layers))
     return out.dropna(subset=[Y]).reset_index(drop=True)
 
 
-def _overlay_offsets(panels: list[Panel], n_colors: int) -> dict[str, float]:
+def _overlay_offsets(panels: list[Panel], n_slots: int) -> dict[str, float]:
     """One offset per overlay identity across the WHOLE figure, inside its
-    mark's slot (``spaghetti.overlay_offsets``)."""
+    mark (``spaghetti.overlay_offsets``): the whole tick, or one line's
+    share of it on a spaghetti (``n_slots`` = the number of lines)."""
     ids: set[str] = set()
     for panel in panels:
         if panel.sample is not None and not panel.sample.empty:
             ids.update(str(v) for v in panel.sample[SERIES].unique())
-    offsets = overlay_offsets(ids, n_colors)
+    offsets = overlay_offsets(ids, n_slots)
     Log.debug(
-        "sample overlay: %d identity offset(s) across %d panel(s), %d colour slot(s)",
+        "sample overlay: %d identity offset(s) across %d panel(s), %d slot(s)",
         len(offsets),
         len(panels),
-        n_colors,
+        n_slots,
         layer=LAYER,
     )
     return offsets
@@ -1788,21 +1825,28 @@ def _summarize(
 ) -> pd.DataFrame:
     """Collapse the sample rows at each mark into centre + error.
 
-    A mark is an x position, a colour and — for a band — a series: the rows
-    that share all three are the sample (the outermost collapsed key's levels,
-    after the inner collapses; or every pooled row). ``carry`` names columns
-    to keep alongside the result — the nested axis's layer columns. They are
+    A mark is an x position and — for a band — a series: the rows that share
+    both are the sample (the outermost collapsed key's levels, after the
+    inner collapses; or every pooled row). ``carry`` names columns to keep
+    alongside the result — the nested axis's layer columns. They are
     functionally determined by ``__x`` (the composed leaf key IS their
     combination), so grouping by them splits nothing that was not already
     split; it only keeps them from being dropped by the ``reset_index`` below,
     which is what the renderers and ``_plan_nested_x`` read the group labels
     from.
 
+    ``__color`` is carried the same way, and for the same reason: the
+    coloured layer is one of the tick layers (colour is paint —
+    ``roles.GroupingLayers``), so its level is a function of ``__x`` and
+    grouping by it splits nothing. It is NOT a partition key of its own;
+    toggling the colour tag must leave every centre and spread untouched
+    (``test_colour_is_paint.py``).
+
     With no sample (nothing collapsed) every group holds one row: the centre
     is the value and the spread is zero — a bar with no error bar.
     """
     group_cols = [X, *(carry or [])]
-    if color:
+    if color and COLOR in frame.columns:
         group_cols.append(COLOR)
     if series and SERIES in frame.columns:
         group_cols.append(SERIES)
@@ -1961,10 +2005,10 @@ def _factor_levels(table: LongTable, name: str) -> list[Any]:
 
 def _unlabelled_x_order(panels: list[Panel]) -> list[Any] | None:
     """``[UNLABELLED_X]`` when the marks sit at the one unlabelled categorical
-    position (no tick layer — the colour is the only grouping, or nothing
-    groups); ``None`` for a numeric x (a 1-D index, an x measure, a 2-D
-    matrix). Read off the panel frames' ``__x`` so the answer is the one the
-    frames were actually built with. Without this the axis had no level
+    position (no tick layer — nothing groups; since colour became paint the
+    coloured layer is a tick too); ``None`` for a numeric x (a 1-D index, an
+    x measure, a 2-D matrix). Read off the panel frames' ``__x`` so the
+    answer is the one the frames were actually built with. Without this the axis had no level
     order at all and read as NUMERIC: plotly still drew the bars (it builds
     its own category axis from the ``""`` strings) but every "Show sample"
     overlay was silently dropped, and the matplotlib export placed the bars

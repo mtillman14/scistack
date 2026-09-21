@@ -37,12 +37,12 @@ from scistackplot import (
 )
 from scistackplot.render.base import (
     SAMPLE_PALETTE,
-    dodge_offset,
     palette_for,
     sample_palette_for,
 )
 from scistackplot.resolved import COLOR, SAMPLE_COLOR, SERIES
 from scistackplot.roles import complete_roles
+from plot_geometry import despaced
 
 # subject x session x trial, plus `group` — a subject property with no
 # schema depth (the user's Demographics.InterventionGroup).
@@ -211,16 +211,22 @@ def test_mpl_one_line_per_subject_in_its_own_colour_across_the_marks(table, colo
     plt.close(drawn)
 
 
-def test_mpl_line_spans_the_two_dodge_slots_when_the_colour_is_session(table):
-    """Colour = session, tick = group: subject 01's line runs from the s1
-    slot to the s2 slot INSIDE the group-A tick (tick 0)."""
+def test_mpl_line_runs_between_the_two_session_ticks_when_the_colour_is_session(table):
+    """Colour = session on a [session, group] grouping: session stays a tick
+    inside its group bracket (colour is paint), so subject 01's line runs
+    from the A·s1 tick to the A·s2 tick, each point on its own bar."""
+    from scistackplot.xaxis import leaf_key
+
     figure = _figure(_spec("session", "subject"), table)
     drawn = render_matplotlib(figure)
     by_colour = {line.get_color(): line for line in _overlay_lines(drawn)}
     line = by_colour[SAMPLE_PALETTE[0]]  # subject 01
     xs = [float(x) for x in line.get_xdata()]
+    order = [str(key) for key in figure.x_order]
     offset = figure.sample_offsets["01"]
-    assert xs == pytest.approx([dodge_offset(0, 2) + offset, dodge_offset(1, 2) + offset])
+    assert xs == pytest.approx(
+        [order.index(leaf_key(("A", "s1"))) + offset, order.index(leaf_key(("A", "s2"))) + offset]
+    )
     plt.close(drawn)
 
 
@@ -321,7 +327,11 @@ def test_generated_lines_land_where_the_preview_draws_them(table, frame, color):
     assert len(lines) == 4, "one run per subject, across the hues"
     generated_xs = sorted(round(float(x), 6) for line in lines for x in line.get_xdata())
     drawn = render_matplotlib(figure)
-    preview_xs = sorted(round(float(x), 6) for line in _overlay_lines(drawn) for x in line.get_xdata())
+    # The preview keeps a spacer slot between the group brackets; the export
+    # cannot (`plot_geometry.despaced`).
+    preview_xs = sorted(
+        despaced([float(x) for line in _overlay_lines(drawn) for x in line.get_xdata()], figure)
+    )
     plt.close(drawn)
     plt.close(generated)
     assert generated_xs == preview_xs

@@ -16,6 +16,7 @@ from scistackplot import (
 )
 from scistackplot.resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW
 from scistackplot.spec import Aggregation
+from scistackplot.xaxis import leaf_key
 
 
 # --- fan-out ---------------------------------------------------------------
@@ -105,8 +106,11 @@ def test_a_scatter_draws_every_sample_row(scalar_table):
     expected = sorted(
         scalar_table.frame.query("subject == '01' and session == 'pre'")["StepLength"]
     )
-    got = sorted(frame[(frame[X] == "01") & (frame[COLOR] == "pre")][Y])
+    # Colour is paint: session is a tick layer inside subject, so the leaf is
+    # composed and `__color` merely repeats its session part.
+    got = sorted(frame[(frame[X] == leaf_key(("01", "pre"))) & (frame[COLOR] == "pre")][Y])
     assert got == pytest.approx(expected)
+    assert len(got) == 4
 
 
 def test_scatter_and_box_draw_the_same_rows(scalar_table):
@@ -388,7 +392,9 @@ def test_resolved_plot_is_json_serializable(scalar_table):
     json.dumps(payload)  # must not raise on numpy scalars
 
     assert payload["kind"] == "box"
-    assert payload["panels"][0]["rows"][0]["__x"] == "01"
+    # session is a tick layer inside subject (colour is paint), so the first
+    # row's `__x` is a composed leaf, serialised as the plain string it is.
+    assert payload["panels"][0]["rows"][0]["__x"] == leaf_key(("01", "pre"))
 
 
 # --- struct/dict fields ----------------------------------------------------

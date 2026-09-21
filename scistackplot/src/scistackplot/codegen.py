@@ -65,6 +65,10 @@ _SEABORN_ERRORBAR = {
 }
 
 _SERIES_COLUMN = "_series"
+#: Column the generated code builds on ``_sample`` for a spaghetti overlay:
+#: the id of the LINE each sample row belongs to (``resolved.SAMPLE_LINE``),
+#: composed exactly as ``_series`` is so the preamble's ``_offset`` finds it.
+_SAMPLE_LINE = "_line"
 #: Column the generated code builds for the UNCOLOURED series layers — what
 #: seaborn's ``style=`` splits on, with ``dashes=`` mapping each level to the
 #: same style the preview drew (``resolved.DASH_CYCLE``, restated below in
@@ -827,10 +831,18 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
 
 
 def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
-    """Draw ``_sample`` on the seaborn grid: each point at its level's index
-    plus its OWN hue's dodge slot plus its identity's offset — the arithmetic
-    of ``render.base.sample_positions`` restated in plain pandas — joined into
-    a line per identity when ``roles.overlay_join`` said so.
+    """Draw ``_sample`` on the seaborn grid: each point at its mark's position
+    plus its identity's offset — the arithmetic of
+    ``render.base.sample_positions`` restated in plain pandas — joined into a
+    line per identity when ``roles.overlay_join`` said so.
+
+    The mark's position is its level's index (colour is paint, so nothing is
+    dodged and no hue slot is added) — except on a spaghetti, where the mark
+    is a point on a line the preamble shifted by ``_offset`` (per
+    ``_series`` id): each sample row is placed at ITS line's shift
+    (``_line``, composed exactly as ``_series`` was), with the identity
+    offsets scaled to the number of lines, as ``reduce._overlay_offsets``
+    scales them.
 
     Painted the way ``render.base.sample_groups`` paints: in the mark's hue
     (one run per identity AND hue, so a line never crosses two mark colours),
@@ -840,9 +852,7 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
 
     The offset rule is restated rather than frozen (see
     ``_spaghetti_position_lines`` for why: under ITERATE the endpoint sees one
-    figure's identities). The dodge is seaborn's own: ``width=0.8`` split
-    evenly over the hue levels, in their order of appearance — which is what
-    ``catplot`` draws, and what ``render.base.dodge_offset`` draws.
+    figure's identities).
     """
     from .render.base import (
         SAMPLE_ALPHA,
@@ -869,13 +879,16 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
     marker = float(spec.style.marker_size * SAMPLE_MARKER_FRACTION) ** 0.5
     linestyle = "-" if join.join else "none"
 
+    spaghetti = spec.kind is PlotKind.SPAGHETTI
+    line_layers = _line_layers(spec, table, roles, shape) if spaghetti else []
     lines = [
         f"# show sample: {'lines join each ' + steps.deepest_shown if join.join else 'points only'}"
         f" — {join.reason}",
-        # The x positions catplot used: the nested order it was given, the
-        # declared order it was given (`_level_order_lines`), or — with neither
-        # — the order of appearance seaborn infers.
-        f"_x_levels = {nested!r}" if nested else (
+        # The x positions the marks used: a spaghetti's preamble index map
+        # (`_order`), the nested order catplot was given, the declared order
+        # it was given (`_level_order_lines`), or — with neither — the order
+        # of appearance seaborn infers.
+        "_x_levels = list(_order)" if spaghetti else f"_x_levels = {nested!r}" if nested else (
             "_x_levels = [str(v) for v in _x_order]"
             if _emits_x_order(spec, table, roles, shape, _seaborn_call(spec, table, roles, shape))
             else f"_x_levels = list(dict.fromkeys(df[{x!r}].astype(str)))"
@@ -884,12 +897,8 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
     if hue:
         lines.extend(
             [
-                # hue_order was stated on the call, so the dodge slots and the
-                # palette follow it too.
+                # hue_order was stated on the call, so the palette follows it.
                 "_hue_levels = [str(v) for v in _hue_order]",
-                "_slot = 0.8 / len(_hue_levels)",
-                "_dodge = {h: (i - (len(_hue_levels) - 1) / 2) * _slot "
-                "for i, h in enumerate(_hue_levels)}",
                 f"_palette = dict(zip(_hue_levels, sns.color_palette({palette!r}, len(_hue_levels))))",
             ]
         )
@@ -929,16 +938,32 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
         [
             "_natural = lambda s: [(0, int(c)) if c.isdigit() else (1, c) "
             'for c in re.split(r"(\\d+)", s) if c]',
-            f"_ids = sorted({_SAMPLE_FRAME}[{_SERIES_COLUMN!r}].astype(str).unique(), key=_natural)",
-            f"_step = {2.0 * SPAGHETTI_SPREAD} / (len(_ids) - 1) if len(_ids) > 1 else 0.0",
-            f"_offset = {{s: round(round({-SPAGHETTI_SPREAD} + i * _step, 6) * (1.0 / len(_hue_levels)), 6) "
-            "for i, s in enumerate(_ids)}",
+            f"_sample_ids = sorted({_SAMPLE_FRAME}[{_SERIES_COLUMN!r}].astype(str).unique(), key=_natural)",
+            f"_sample_step = {2.0 * SPAGHETTI_SPREAD} / (len(_sample_ids) - 1) if len(_sample_ids) > 1 else 0.0",
+            # One slot per LINE on a spaghetti (`_ids` are the preamble's line
+            # ids), the whole tick otherwise — `spaghetti.overlay_offsets`.
+            "_n_slots = max(len(_ids), 1)" if spaghetti else "_n_slots = 1",
+            f"_sample_offset = {{s: round(round({-SPAGHETTI_SPREAD} + i * _sample_step, 6) * (1.0 / _n_slots), 6) "
+            "for i, s in enumerate(_sample_ids)}",
+            *(
+                [
+                    # The line each sample row sits on: the marks' `_series`
+                    # id recomposed on `_sample`, so `_offset` (the preamble's
+                    # per-line shift) finds it.
+                    f"{_SAMPLE_FRAME}[{_SAMPLE_LINE!r}] = "
+                    + _composed(list(reversed(line_layers)), _SAMPLE_FRAME),
+                ]
+                if line_layers
+                else []
+            ),
             f"{_SAMPLE_FRAME}[{_X_POSITION!r}] = ("
             f"{_SAMPLE_FRAME}[{x!r}].astype(str).map({{v: i for i, v in enumerate(_x_levels)}})",
-            f"    + {_SAMPLE_FRAME}[{_SERIES_COLUMN!r}].astype(str).map(_offset)",
             *(
-                [f"    + {_SAMPLE_FRAME}[{hue!r}].astype(str).map(_dodge)"] if hue else []
+                [f"    + {_SAMPLE_FRAME}[{_SAMPLE_LINE!r}].astype(str).map(_offset).fillna(0.0)"]
+                if line_layers
+                else []
             ),
+            f"    + {_SAMPLE_FRAME}[{_SERIES_COLUMN!r}].astype(str).map(_sample_offset)",
             ")",
             "_axes = list(g.axes_dict.items()) if g.axes_dict else [((), g.ax)]",
             f"_facets = {facet_names!r}",
@@ -1173,6 +1198,14 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
             PlotKind.STRIP: "strip",
         }[kind]
         args.append(f'kind="{seaborn_kind}"')
+        if color:
+            # Colour is paint: the hue is one of the x layers (composed into
+            # `_x`, or the x factor itself), so every hue level already has
+            # its own position. seaborn's default `dodge=True` would split
+            # each position into one slot per hue level and draw the single
+            # mark there narrow and off-centre — the preview draws it on its
+            # tick, full width (`render.mpl._draw_bars`).
+            args.append("dodge=False")
         if kind is PlotKind.BAR:
             args.append(f"estimator={estimator}")
             args.append(f"errorbar={errorbar}")
@@ -1534,8 +1567,9 @@ _X_POSITION = "_xpos"
 
 def _tick_layers(spec, table, roles, shape) -> list[str]:
     """The tick layers in drawing order (outermost first) — the grouping
-    list as this kind reads it (``roles.grouping_layers``), minus the
-    coloured layer, which seaborn dodges by ``hue``."""
+    list as this kind reads it (``roles.grouping_layers``), the coloured
+    layer included: it is composed into ``_x`` like any other and seaborn
+    paints by ``hue`` without dodging (``dodge=False`` on the call)."""
     if spec.x_measure or shape is not Shape.SCALAR:
         return []
     layers = grouping_layers(spec, table, roles, spec.kind, shape=shape)
@@ -1551,6 +1585,16 @@ def _nested_x_layers(spec, table, roles, shape) -> list[str]:
 def _color_of(spec, table, roles, shape) -> str | None:
     color = grouping_layers(spec, table, roles, spec.kind, shape=shape).color
     return color if color and table.has_factor(color) else None
+
+
+def _line_layers(spec, table, roles, shape) -> list[str]:
+    """The layers one polyline's id is composed from, innermost first
+    (``GroupingLayers.identity``: units inside the lines layer) — what the
+    preamble writes ``_series`` from, and what a spaghetti overlay recomposes
+    as ``_line`` (``reduce._overlay_frame`` does the same with
+    ``SAMPLE_LINE``)."""
+    grouping = grouping_layers(spec, table, roles, spec.kind, shape=shape)
+    return [name for name in grouping.identity if table.has_factor(name)]
 
 
 def _x_expression(spec, table, roles, shape) -> str:

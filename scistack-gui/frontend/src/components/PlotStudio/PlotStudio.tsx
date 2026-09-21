@@ -3484,13 +3484,14 @@ function sampleNote(capabilities: Capabilities | null | undefined, spec: Spec | 
  *
  * Innermost first — the first row is the mark's own identity, each row below
  * wraps around it. The ↑ arrow moves a layer inward (towards the first row),
- * ↓ outward. One radio column tags the coloured layer: colour never splits
- * data, it labels a split by legend, which is why it is a tag on a row here
- * and not a role in the Factors dropdown.
+ * ↓ outward. One radio column tags the coloured layer: colour is PAINT — it
+ * never splits data and never moves a mark; the layer keeps its place in the
+ * nesting and its tick labels, and the legend names its levels as well
+ * (user decision 2026-09-21, `roles.GroupingLayers`). That is why it is a tag
+ * on a row here and not a role in the Factors dropdown.
  *
- * `maxLabelled` is the backend's cap on LABELLED tick layers (a fourth level
- * of nesting cannot be read off an axis); the coloured layer is labelled by
- * the legend and does not count, so colouring one makes room for another.
+ * `maxLabelled` is the backend's cap on tick layers (a fourth level of
+ * nesting cannot be read off an axis); every layer counts, coloured or not.
  */
 function GroupingList({
   factors,
@@ -3522,7 +3523,7 @@ function GroupingList({
     <>
       <div style={styles.hint}>
         {hint ?? 'One mark per combination of these — first entry innermost.'}
-        {' '}Tick the colour to label a layer by legend instead.
+        {' '}Tick the colour to paint the marks by a layer (the layout does not change).
       </div>
       {layers.map((name, index) => (
         <div key={name} style={styles.xLayerRow}>
@@ -3535,7 +3536,7 @@ function GroupingList({
             style={{ marginRight: 6 }}
           />
           <span style={styles.factorName}>{display(name)}</span>
-          <label style={styles.colorTag} title="Label this layer by legend colour">
+          <label style={styles.colorTag} title="Paint the marks by this layer's level (legend added; nothing moves)">
             <input
               type="radio"
               name="grouping-colour"

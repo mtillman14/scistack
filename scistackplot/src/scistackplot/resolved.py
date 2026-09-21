@@ -39,10 +39,15 @@ SERIES = "__series"
 DASH = "__dash"
 #: The overlay's own colour level (``PlotSpec.sample_color``): the shown key
 #: that colours a "Show sample" point, beside ``__color`` — the MARK's level,
-#: which still places the point in its dodge slot. Two columns because the
-#: two colourings are independent by construction (a shown key is collapsed,
-#: a coloured layer groups; no factor is both).
+#: which paints the point when it has no colour of its own. Two columns
+#: because the two colourings are independent by construction (a shown key
+#: is collapsed, a coloured layer groups; no factor is both).
 SAMPLE_COLOR = "__sample_color"
+#: On a spaghetti figure, the id of the LINE an overlay point belongs to —
+#: the marks' ``__series`` (the lines layer, plus the units when a collapsed
+#: key is drawn one line each) recomposed on the overlay rows, so the point
+#: is placed at its line's ``series_offsets`` shift rather than on the tick.
+SAMPLE_LINE = "__line"
 Z = "__z"
 #: The one x level a categorical figure has when NO tick layer was chosen —
 #: a scalar measure grouped by its colour alone, or not grouped at all. The

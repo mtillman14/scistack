@@ -17,6 +17,7 @@ See docs/claude/grouping-and-collapse.md.
 
 from __future__ import annotations
 
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -188,21 +189,26 @@ def test_only_the_sample_key_widens_the_error_bar(unbalanced):
 # --- colour on an outer layer -------------------------------------------------
 
 
-def test_the_coloured_layer_dodges_inside_the_tick(unbalanced):
-    """Colouring session with subject as the tick: one bar per (subject,
-    session), the session drawn by colour beside its sibling, never composed
-    into the tick label."""
-    spec = PlotSpec(
+def test_the_coloured_layer_keeps_its_place_in_the_nesting(unbalanced):
+    """Colouring session on a `[subject, session]` grouping: the bars are the
+    SAME four bars at the SAME composed ticks as without the colour — colour
+    is paint (2026-09-21) — and `__color` just names what paints each."""
+    plain = PlotSpec(
         measures=["M"],
         roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
         groups=["subject", "session"],
-        color="session",
         kind=PlotKind.BAR,
     )
-    frame = _panel(spec, unbalanced)
-    assert set(frame[X]) == {"01", "02"}, "ticks are subjects only"
-    assert set(frame[COLOR]) == {"pre", "post"}
+    coloured = replace(plain, color="session")
+    frame_plain = _panel(plain, unbalanced)
+    frame = _panel(coloured, unbalanced)
     assert len(frame) == 4, "one bar per (subject, session)"
+    assert set(frame[COLOR]) == {"pre", "post"}
+    keep = [X, Y, Y_LOW, Y_HIGH]
+    pd.testing.assert_frame_equal(
+        frame[keep].sort_values(X).reset_index(drop=True),
+        frame_plain[keep].sort_values(X).reset_index(drop=True),
+    )
 
 
 # --- 1-D: one band per leaf group ---------------------------------------------

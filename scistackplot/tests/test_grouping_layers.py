@@ -142,12 +142,28 @@ def test_an_x_measure_reads_the_list_as_series(scalar_frame):
     assert layers.ticks == [] and layers.series == ["subject"]
 
 
-def test_the_coloured_layer_is_not_a_tick(scalar_table):
-    """It dodges inside its tick and the legend labels it."""
-    layers = grouping_layers(_scalar_spec(color="subject"), scalar_table)
-    assert layers.color == "subject"
-    assert layers.ticks == ["session"]
-    assert layers.labelled_ticks == ["session"]
+def test_the_coloured_layer_is_still_a_tick(scalar_table):
+    """Colour is paint (2026-09-21): tagging a layer changes neither the
+    tick layers nor their order — it only names what paints the marks."""
+    plain = grouping_layers(_scalar_spec(), scalar_table)
+    coloured = grouping_layers(_scalar_spec(color="subject"), scalar_table)
+    assert coloured.color == "subject"
+    assert coloured.ticks == plain.ticks == ["session", "subject"]
+    assert coloured.labelled_ticks == plain.labelled_ticks
+
+
+@pytest.mark.parametrize("kind", [PlotKind.BAR, PlotKind.BOX, PlotKind.SCATTER, PlotKind.SPAGHETTI])
+@pytest.mark.parametrize("color", [None, "subject", "session"])
+def test_colouring_any_layer_leaves_the_partition_alone(scalar_table, kind, color):
+    """The partition of the marks — every tick, series and unit layer — is
+    the same whichever layer is coloured, so a colour tag can never move a
+    mark or change what it summarises."""
+    plain = grouping_layers(_scalar_spec(kind=kind), scalar_table)
+    coloured = grouping_layers(_scalar_spec(kind=kind, color=color), scalar_table)
+    assert (coloured.ticks, coloured.series, coloured.units) == (
+        plain.ticks, plain.series, plain.units
+    )
+    assert coloured.color == color
 
 
 # --- validate ----------------------------------------------------------------
@@ -169,8 +185,13 @@ def test_a_fourth_labelled_layer_is_refused(scalar_frame):
     assert MAX_X_LAYERS == 3
     with pytest.raises(RoleError, match="labelled tick layers"):
         validate(spec, table)
-    # Colouring one of them takes it off the tick labels: now legal.
-    validate(PlotSpec(measures=["StepLength"], roles=roles, color="trial", kind=PlotKind.BAR), table)
+    # Colour is paint: the coloured layer keeps its tick labels and still
+    # counts, so colouring one of the four does not make the spec legal.
+    with pytest.raises(RoleError, match="labelled tick layers"):
+        validate(
+            PlotSpec(measures=["StepLength"], roles=roles, color="trial", kind=PlotKind.BAR),
+            table,
+        )
 
 
 def test_a_2d_measure_cannot_be_grouped(matrix_table):

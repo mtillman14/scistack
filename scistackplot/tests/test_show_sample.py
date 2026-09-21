@@ -249,16 +249,20 @@ def test_no_overlay_means_no_join(gait):
 # --- availability and validation -------------------------------------------
 
 
-def test_overlay_kinds_are_the_summative_categorical_kinds():
+def test_overlay_kinds_are_the_categorical_kinds():
+    """Every kind with a categorical mark to place points beside — the
+    spaghetti included since 2026-09-21 (`test_show_sample_spaghetti.py`)."""
     assert set(OVERLAY_KINDS) == {
-        PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.SCATTER, PlotKind.STRIP
+        PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.SCATTER, PlotKind.STRIP,
+        PlotKind.SPAGHETTI,
     }
 
 
 def test_why_an_overlay_is_unavailable(gait):
     roles = complete_roles(_spec(["subject"]), gait)
     assert overlay_unavailable(_spec([]), roles, Shape.SCALAR) is None
-    assert "summative" in overlay_unavailable(_spec([], kind=PlotKind.SPAGHETTI), roles, Shape.SCALAR)
+    assert "categorical mark" in overlay_unavailable(_spec([], kind=PlotKind.LINE), roles, Shape.SCALAR)
+    assert overlay_unavailable(_spec([], kind=PlotKind.SPAGHETTI), roles, Shape.SCALAR) is None
     assert "x-y" in overlay_unavailable(_spec([], kind=PlotKind.SCATTER, x_measure="M"), roles, Shape.SCALAR)
     assert "one value per row" in overlay_unavailable(_spec([]), roles, Shape.SERIES_1D)
     no_sample = {name: Role.ITERATE for name in SCHEMA}
@@ -321,11 +325,10 @@ def test_capability_report_lists_the_collapsed_keys_as_checkboxes(gait):
 def test_capability_report_says_why_there_is_no_overlay(gait):
     from scistackplot import capabilities
 
-    report = capabilities(_spec([], kind=PlotKind.SPAGHETTI, groups=["subject", "session"], roles={
-        "subject": Role.GROUP, "session": Role.GROUP, "speed": Role.ITERATE,
-        "trial": Role.COLLAPSE, "cycle": Role.COLLAPSE,
-    }), gait)["sample_overlay"]
-    assert report["available"] is False and "summative" in report["reason"]
+    # A line has no categorical mark to place points beside (the spaghetti
+    # used to be the example here; it carries the overlay since 2026-09-21).
+    report = capabilities(_spec([], kind=PlotKind.LINE), gait)["sample_overlay"]
+    assert report["available"] is False and "categorical mark" in report["reason"]
     assert report["factors"] and report["shown"] == [] and report["granularity"] == ""
 
 

@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
-from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SERIES, ResolvedPlot
+from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, SERIES, ResolvedPlot
+from ..spec import PlotKind
 
 LAYER = "scistackplot"
 
@@ -340,13 +341,29 @@ def palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Dodging, and the "Show sample" overlay — one arithmetic for both renderers
+# Mark placement, and the "Show sample" overlay — one arithmetic for both
+# renderers
 # ---------------------------------------------------------------------------
 
-#: The fraction of the gap between two categorical positions that the marks
-#: at one position occupy, split evenly between the colour levels. plotly's
-#: ``bargap`` / ``boxgap`` of 0.2 is the same statement (``plotly_.render``).
-DODGE_SPAN = 0.8
+#: The fraction of the gap between two categorical positions that the ONE
+#: mark at that position occupies. plotly's ``bargap`` / ``boxgap`` of 0.2
+#: is the same statement (``plotly_.render``).
+#:
+#: One mark, never a dodged row of them: since 2026-09-21 colour is paint
+#: (``roles.GroupingLayers``) — the coloured layer is a tick layer like any
+#: other, so every colour level already has its own x position and there is
+#: nothing to dodge. plotly's ``*mode: "group"`` would still reserve a slot
+#: per colour TRACE at every position; ``MARK_OFFSET_GROUP`` puts every
+#: trace in the same slot so the bars draw at ``MARK_SPAN`` wide.
+MARK_SPAN = 0.8
+MARK_OFFSET_GROUP = "marks"
+
+
+def mark_width() -> float:
+    """The width of the mark at a categorical position — :data:`MARK_SPAN`.
+    A function rather than the constant so the two renderers, the overlay
+    and the tests read one name for "how wide is a bar"."""
+    return MARK_SPAN
 
 #: How the overlay's points draw against the marks they sit on: the mark's
 #: colour with a dark edge so they read on top of a bar of the same hue, a
@@ -356,27 +373,6 @@ SAMPLE_ALPHA = 0.7
 SAMPLE_MARKER_FRACTION = 0.45
 SAMPLE_EDGE_COLOR = "#333333"
 SAMPLE_LINE_WIDTH = 1.0
-
-
-def dodge_width(n_levels: int) -> float:
-    """The slot one colour level's mark occupies at a categorical position."""
-    return DODGE_SPAN / max(int(n_levels), 1)
-
-
-def dodge_offset(index: int, n_levels: int) -> float:
-    """Where colour level ``index`` of ``n_levels`` sits relative to its tick —
-    the centre of its slot. One owner: the bars, the boxes and the overlay's
-    points all have to land in the same place, and plotly's ``group`` modes
-    are pinned to the same numbers (``plotly_.render``)."""
-    return (index - (n_levels - 1) / 2) * dodge_width(n_levels)
-
-
-def dodge_slots(frame: pd.DataFrame, resolved: ResolvedPlot) -> dict[str, tuple[int, int]]:
-    """``{colour level: (index, n)}`` — the dodge slot each level's MARKS took
-    in this panel (:func:`color_groups` order and count), so an overlay
-    point lands inside the mark it belongs to."""
-    groups = color_groups(frame, resolved)
-    return {str(level): (index, len(groups)) for index, (level, _) in enumerate(groups)}
 
 
 #: The overlay's OWN palette (``PlotSpec.sample_color``): one colour per
@@ -464,12 +460,12 @@ def sample_groups(
     ONE rule, both renderers and the generated code: with the overlay
     coloured by its own key (``ResolvedPlot.sample_color``) the rows are NOT
     split by the marks' colour first — an identity's line runs across the
-    colour levels, from the ``pre`` slot to the ``post`` slot inside one
-    tick, and its own colour is what makes that unambiguous. Without it a
-    line crossing two mark colours would have no colour to be, so the rows
-    split per mark level as they always did and the points take the mark's
-    colour. Either way the colour level returned is the one to PAINT with;
-    the dodge slot is always the row's own (:func:`sample_positions`).
+    colour levels, from the ``pre`` tick to the ``post`` tick, and its own
+    colour is what makes that unambiguous. Without it a line crossing two
+    mark colours would have no colour to be, so the rows split per mark
+    level as they always did and the points take the mark's colour. Either
+    way the colour level returned is the one to PAINT with; the position is
+    always the row's own mark's (:func:`sample_positions`).
     """
     if resolved.sample_color and SAMPLE_COLOR in sample.columns:
         order = [str(v) for v in resolved.sample_color_order]
@@ -492,25 +488,27 @@ def sample_paint(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
 def sample_positions(
     rows: pd.DataFrame,
     resolved: ResolvedPlot,
-    slots: dict[str, tuple[int, int]],
     identity: Any,
 ) -> np.ndarray:
-    """x positions of overlay rows: the tick, plus EACH ROW's mark's dodge
-    (its ``__color`` level's slot, as this panel's marks took them —
-    :func:`dodge_slots`), plus the identity's own offset inside the slot
-    (``ResolvedPlot.sample_offsets``, already scaled to the slot by
-    ``spaghetti.overlay_offsets``). Per row, not per run, so a line joined
-    across colour levels lands each of its points in the right bar."""
+    """x positions of overlay rows: the mark's position, plus the identity's
+    own offset (``ResolvedPlot.sample_offsets``, ``spaghetti.overlay_offsets``).
+
+    The mark's position is its tick — every colour level has its own tick
+    now that colour is paint, so there is no dodge slot to add — except on
+    a **spaghetti**, where the mark is a point on a LINE shifted by
+    ``series_offsets``: each row is placed at ITS OWN line's shift
+    (``SAMPLE_LINE``), so a subject's trials sit on that subject's line, and
+    the identity offset was scaled to the inter-line spacing by
+    ``reduce._overlay_offsets``. Per row, not per run, so a joined line lands
+    each of its points on the right mark whatever run it belongs to.
+    """
     positions, _ = x_positions(rows[resolved.encoding.x], resolved)
-    color_column = resolved.encoding.color
-    if color_column and color_column in rows.columns:
-        dodge = np.array(
-            [dodge_offset(*slots.get(str(level), (0, 1))) for level in rows[color_column]],
-            dtype=float,
+    if resolved.kind is PlotKind.SPAGHETTI and SAMPLE_LINE in rows.columns:
+        offsets = resolved.series_offsets or {}
+        positions = positions + np.array(
+            [offsets.get(str(line), 0.0) for line in rows[SAMPLE_LINE]], dtype=float
         )
-    else:
-        dodge = np.full(len(rows), dodge_offset(*slots.get("None", (0, 1))), dtype=float)
-    return positions + dodge + resolved.sample_offsets.get(str(identity), 0.0)
+    return positions + resolved.sample_offsets.get(str(identity), 0.0)
 
 
 def sample_dropped_reason(panel, resolved: ResolvedPlot) -> str | None:

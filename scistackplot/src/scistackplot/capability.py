@@ -550,7 +550,8 @@ def grouping_summary(spec: PlotSpec, table: LongTable) -> dict:
     ``ticks`` / ``series`` are how the current kind READS that list
     (``roles.grouping_layers``: nested x ticks, outermost first, or series
     ids), and ``hint`` says so in words. ``labelled_layers`` counts against
-    ``max_labelled_layers`` — the tick layers minus the coloured one.
+    ``max_labelled_layers`` — every tick layer, the coloured one included
+    (colour is paint: it labels a layer by legend AS WELL, never instead).
     """
     shape = table.shape_of(spec.y_measure)
     assignment = complete_assignment(spec, table)
