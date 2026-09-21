@@ -14,8 +14,7 @@ is an ordinary process function, whatever the sidebar label says.
 import pytest
 
 from scidb import FUNCTION_ROLES, function_role
-from scidb.roles import ROLE_PREFIX
-from scidb.foreach import _endpoint_kind
+from scidb.roles import ROLE_PREFIX, endpoint_kind
 
 
 class TestClassification:
@@ -66,4 +65,4 @@ class TestEndpointKindStillAgrees:
         ],
     )
     def test_endpoint_kind(self, name, kind):
-        assert _endpoint_kind(name) == kind
+        assert endpoint_kind(name) == kind
