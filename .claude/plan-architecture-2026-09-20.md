@@ -707,3 +707,10 @@ Verify: `cd /workspace/scistack-gui && pytest tests/test_api_handlers.py
 -q`, then the whole GUI suite (test_api.py, test_matlab.py and
 test_plot_service.py exercise most rows), then `tests/integration`. GUI
 manual check: `docs/gui-manual-testing-todo.md` item 0e.
+
+Full handler-table migration: **green** 2026-09-21 (user-run). Two fixes
+from the first runs: `api/project.py` had lost its `BaseModel` import in
+the rewrite (82a781f2), and the table endpoint's ``request: Request``
+annotation was a string under future-annotations that FastAPI could not
+resolve — it became a required query parameter and every route answered
+422 (116e54ac).
