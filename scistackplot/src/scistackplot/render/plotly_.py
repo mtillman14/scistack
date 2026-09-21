@@ -52,6 +52,7 @@ from .base import (
     sample_dropped_reason,
     sample_positions,
     sample_series,
+    series_runs,
     x_positions,
 )
 
@@ -572,22 +573,18 @@ def _x_ticks(resolved: ResolvedPlot) -> dict:
 
 
 def _spaghetti_traces(subset, resolved, base, color) -> list[dict]:
-    """Markers + one polyline per series, at index-plus-offset positions.
+    """Markers + one polyline per series per bracket (``base.series_runs``),
+    at index-plus-offset positions.
 
     Same placement as ``mpl._draw_spaghetti``: tick index from ``x_order``,
     plus the figure-wide per-series offset, sorted by position so a line runs
     left to right whatever order the rows arrived in.
     """
     encoding = resolved.encoding
-    series_column = encoding.series
     offsets = resolved.series_offsets or {}
-    if series_column and series_column in subset.columns:
-        groups = list(subset.groupby(series_column, sort=False))
-    else:
-        groups = [(None, subset)]
 
     traces = []
-    for position, (series_id, rows) in enumerate(groups):
+    for position, (series_id, rows) in enumerate(series_runs(subset, resolved)):
         positions, _ = x_positions(rows[encoding.x], resolved)
         positions = positions + offsets.get(str(series_id), 0.0)
         order = np.argsort(positions, kind="stable")

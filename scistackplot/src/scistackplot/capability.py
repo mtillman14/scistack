@@ -481,6 +481,7 @@ def sample_overlay_summary(
     order = collapse_order(roles, table)
     steps = overlay_steps(spec, roles, table) if reason is None else None
     join = overlay_join(spec, roles, table, steps) if steps is not None else None
+    layers = grouping_layers(spec, table, roles, shape=shape) if steps is not None else None
     shown = set(steps.shown) if steps is not None else set()
     color = overlay_color(spec, steps) if steps is not None else None
     return {
@@ -504,8 +505,14 @@ def sample_overlay_summary(
             "automatic": join.automatic if join is not None else True,
             "reason": join.reason if join is not None else "",
             "setting": spec.join_sample,
+            # A joined line runs along `span` (the innermost tick) and never
+            # crosses a bracket (`roles.GroupingLayers`, `line_recurrence`).
+            "span": layers.span if layers is not None else None,
+            "brackets": list(layers.brackets) if layers is not None else [],
         },
-        "granularity": overlay_granularity(steps, join) if steps is not None else "",
+        "granularity": (
+            overlay_granularity(steps, join, layers) if steps is not None else ""
+        ),
         # The overlay's own colour: what the spec asks, whether it is active
         # right now (`roles.overlay_color`), and which keys could colour it.
         "color": {

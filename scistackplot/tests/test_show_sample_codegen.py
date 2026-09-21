@@ -201,3 +201,60 @@ def test_generated_overlay_survives_a_facet(table, frame):
     )
     assert counts == [3, 4], "s2 has three trials, s1 four"
     plt.close(figure)
+
+
+# --- the span: one line per bracket (2026-09-21) ---------------------------------
+
+
+def _nested_table():
+    """subject x session x two ColName fields, sessions named for seaborn's
+    order (see ROWS)."""
+    import itertools
+
+    rows = []
+    for subject, session, field in itertools.product(["01", "02"], ["s1", "s2"], ["A", "B"]):
+        rows.append((subject, session, field, float(len(rows))))
+    frame = pd.DataFrame(rows, columns=["subject", "session", "ColName", "M"])
+    table = LongTable.from_frame(
+        frame,
+        factors=["subject", "session", "ColName"],
+        measures=["M"],
+        field_factors=["ColName"],
+        name="M",
+        schema_levels=["subject", "session"],
+    )
+    # The endpoint receives the WIDE frame (one column per field); the
+    # generated code melts it into `ColName` + `M` itself.
+    wide = frame.pivot(index=["subject", "session"], columns="ColName", values="M").reset_index()
+    wide.columns.name = None
+    return table, wide
+
+
+def test_generated_lines_never_leave_their_bracket():
+    """Bars [ColName inner, session outer], subjects joined: the export draws
+    one line per subject per session, each inside that session's two
+    positions — what the preview draws (`render.base.sample_series`)."""
+    table, frame = _nested_table()
+    spec = PlotSpec(
+        measures=["M"],
+        roles={"subject": Role.COLLAPSE, "session": Role.GROUP, "ColName": Role.GROUP},
+        groups=["ColName", "session"],
+        kind=PlotKind.BAR,
+        aggregate=Aggregation(error=ErrorBand.SD),
+        show_sample=["subject"],
+    )
+    source = generate_plot_function(spec, table)
+    assert "'session'" in source.split("groupby(['_series'")[1].split(")")[0], (
+        "the run groups by the bracket"
+    )
+    figure = _run(source, frame)
+    lines = [line for line in figure.axes[0].get_lines() if line.get_marker() == "o"]
+    assert len(lines) == 4, "2 subjects x 2 brackets"
+    brackets = sorted(
+        tuple(sorted({int(round(x)) // 2 for x in line.get_xdata()})) for line in lines
+    )
+    assert brackets == [(0,), (0,), (1,), (1,)], "each line stays inside one session"
+    assert all(len(line.get_xdata()) == 2 for line in lines)
+    (resolved,) = resolve(spec, table)
+    assert _marker_xs(figure) == _preview_xs(resolved)
+    plt.close(figure)

@@ -39,7 +39,7 @@ nobody reverses `groups` ad hoc.
 | bar / box / violin / strip / scatter | nested x ticks, first entry innermost | **paint** — the layer keeps its tick position and labels; the marks are painted by its level and the legend lists the levels |
 | scatter with `x_measure` | one point set per leaf group | point colour |
 | line / band (1-D, x = sample index) | one line / band per leaf group | line colour; every *uncoloured* layer gets a **dash style** |
-| spaghetti | **first entry = the lines**; the rest are ticks; a line joins its points across the layer just above it | colour on the first entry = per-subject colours; on a tick layer = paint, as above |
+| spaghetti | **first entry = the lines**; the rest are ticks; a line joins its points across the layer just above it (the innermost tick, `GroupingLayers.span`) and never crosses a bracket (`brackets`; `resolved.RUN`, since 2026-09-21) | colour on the first entry = per-subject colours; on a tick layer = paint, as above |
 | heatmap (2-D) | nothing may group — use panels / figures | — |
 
 `[subject, session, Intervention]` reads the same for bar and spaghetti: bars
@@ -104,9 +104,10 @@ subjects and a scatter of subjects were drawn from different rows.
 series`, composed outermost first: `"groupA | 01"`) and nothing else. They
 never get a dash style and never appear in the legend.
 
-**The spaghetti exception** (`roles.spaghetti_sample_repeats`, the same
-depth rule as `overlay_join`). A spaghetti line joins one identity across
-the ticks. A subject has a value at every session, so collapsed subjects
+**The spaghetti exception** (`roles.spaghetti_sample_repeats`, reading
+`roles.line_recurrence` — the same rule as `overlay_join`). A spaghetti line
+joins one identity across the innermost tick, inside one bracket of the
+layers above it (`render.base.series_runs`; the export passes `units=_run`). A subject has a value at every session, so collapsed subjects
 under session ticks become one line each. A trial belongs to ONE session,
 so "trial 1 at pre" and "trial 1 at post" are different trials, and a line
 through them would be invented. In that case (the classic "subject lines,

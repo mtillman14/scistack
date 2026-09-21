@@ -420,7 +420,8 @@ def test_generated_code_draws_the_same_lines(study_table, study_frame):
     source = generate_plot_function(spec, study_table)
 
     assert 'kind="line"' in source
-    assert "units='_series'" in source
+    # Sessions nest inside Intervention brackets: the run is what joins.
+    assert "units='_run'" in source
     assert "estimator=None" in source
     figure = _run(source, study_frame, "plot_steplength")
     lines = [line for line in figure.axes[0].get_lines() if line.get_marker() == "o"]
@@ -558,3 +559,104 @@ def test_no_other_kind_averages_the_sample(study_table):
         spec = _study_spec(kind=kind)
         steps = collapse_steps(spec, complete_roles(spec, study_table), study_table)
         assert steps.final == [], kind
+
+
+# --- the span: a polyline never crosses a bracket (2026-09-21) --------------------
+
+
+def _crossed_table():
+    """subject x session x speed — every subject at all FOUR positions of
+    ``[speed | session]``, so a whole-axis line would run slow·post → fast·pre."""
+    import itertools
+
+    rows = []
+    for subject, speed, session in itertools.product(["01", "02"], ["slow", "fast"], SESSIONS):
+        rows.append((subject, speed, session, float(len(rows))))
+    frame = pd.DataFrame(rows, columns=["subject", "speed", "session", "StepLength"])
+    table = LongTable.from_frame(
+        frame,
+        factors=["subject", "speed", "session"],
+        measures=["StepLength"],
+        name="StepLength",
+        level_order={"session": SESSIONS, "speed": ["slow", "fast"]},
+        schema_levels=["subject", "session", "speed"],
+    )
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "speed": Role.GROUP},
+        # subject = the lines, session = the span, speed = the bracket.
+        groups=["subject", "session", "speed"],
+        kind=PlotKind.SPAGHETTI,
+    )
+    return table, frame, spec
+
+
+def _polylines(figure):
+    return [
+        np.asarray(line.get_xdata(), dtype=float)
+        for line in figure.axes[0].get_lines()
+        if line.get_marker() == "o" and len(line.get_xdata())
+    ]
+
+
+def test_the_marks_carry_their_run():
+    from scistackplot.resolved import RUN
+
+    table, _, spec = _crossed_table()
+    frame = resolve(spec, table)[0].panels[0].frame
+    assert set(frame[RUN]) == {"slow", "fast"}
+    assert frame.groupby([SERIES, RUN]).ngroups == 4, "2 subjects x 2 brackets"
+    # A flat axis has no run column: one polyline per series, as before.
+    flat = resolve(
+        PlotSpec(
+            measures=["StepLength"],
+            roles={"subject": Role.GROUP, "session": Role.GROUP, "speed": Role.ITERATE},
+            groups=["subject", "session"],
+            kind=PlotKind.SPAGHETTI,
+        ),
+        table,
+    )[0].panels[0].frame
+    assert RUN not in flat.columns
+
+
+def test_a_polyline_spans_the_innermost_tick_only_in_both_renderers():
+    """The user's rule (2026-09-21): a subject's line joins pre → post inside
+    slow and again inside fast — never slow·post → fast·pre."""
+    from scistackplot import render_matplotlib
+
+    table, _, spec = _crossed_table()
+    figure = resolve(spec, table)[0]
+    drawn = render_matplotlib(figure)
+    lines = _polylines(drawn)
+    matplotlib.pyplot.close(drawn)
+    assert len(lines) == 4, "2 subjects x 2 brackets"
+    for xs in lines:
+        assert len(xs) == len(SESSIONS) and xs.max() - xs.min() < len(SESSIONS), xs
+    traces = [t for t in render_plotly(figure)["data"] if t.get("mode") == "lines+markers"]
+    assert len(traces) == 4
+    assert sorted(sorted(t["x"]) for t in traces) == sorted(sorted(xs.tolist()) for xs in lines)
+    # The offset is per SERIES, not per run: subject 01 sits at the same shift
+    # in every bracket.
+    shifts = {round(float(xs[0]) - round(float(xs[0])), 6) for xs in lines}
+    assert len(shifts) == 2
+
+
+def test_generated_code_joins_by_the_run_on_a_nested_axis():
+    table, frame, spec = _crossed_table()
+    source = generate_plot_function(spec, table)
+    assert "units='_run'" in source and "df['_run'] = df['_series']" in source
+    figure = _run(source, frame, "plot_steplength")
+    lines = _polylines(figure)
+    matplotlib.pyplot.close(figure)
+    assert len(lines) == 4 and all(xs.max() - xs.min() < len(SESSIONS) for xs in lines)
+    # A flat axis still joins by the series alone.
+    flat = generate_plot_function(
+        PlotSpec(
+            measures=["StepLength"],
+            roles={"subject": Role.GROUP, "session": Role.GROUP, "speed": Role.ITERATE},
+            groups=["subject", "session"],
+            kind=PlotKind.SPAGHETTI,
+        ),
+        table,
+    )
+    assert "units='_series'" in flat and "_run" not in flat

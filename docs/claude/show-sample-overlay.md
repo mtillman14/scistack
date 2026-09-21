@@ -15,8 +15,8 @@ subject drawn one line each) — and `render.base.sample_positions` places each
 row at tick + `series_offsets[__line]` + its identity offset, with the
 identity offsets scaled to the number of lines (`overlay_offsets(ids,
 n_lines)`) so one subject's trials stay inside that subject's band. The join
-rule counts the lines layer as a grouping layer (`overlay_join` reads
-`ticks + series`), so trials under session ticks are points. Codegen mirrors
+rule reads the innermost TICK (the span; the point's line is part of its
+`__run` instead), so trials under session ticks are points. Codegen mirrors
 it: `_sample["_line"]`, the preamble's `_offset`, `_n_slots = len(_ids)`.
 `test_show_sample_spaghetti.py`.
 
@@ -48,21 +48,59 @@ are not collapsed right now are **inert** (ignored, listed in the report),
 the same contract as `cell_statistic` on a line — the spec never adjudicates
 a checkbox state. A name that is no factor at all is refused by `validate`.
 
-## The join rule (automatic, overridable)
+## The join rule (automatic, overridable) — and the span (since 2026-09-21)
 
-`PlotSpec.join_sample: bool | None`, `None` = automatic. The rule compares
-hierarchy depths (`LongTable.factor_depths`): when the **deepest shown key**
-sits *above* the **deepest grouping layer** (ticks and colour alike), each
-point identity recurs at every x position — a subject has a value at every
-session — so the points are repeated measures and are joined into a line.
-At or below the layers (a trial belongs to one session) nothing is joined. A
-key with no depth on either side (a field, a derived bucket, the Variant
-axis) cannot be placed and the rule declines: points, with the reason.
+**A joined line spans the innermost tick layer only** (user decision
+2026-09-21, plan `.claude/plan-sample-line-span.md`). Bars grouped
+`[ColName, session]` (ColName innermost, session the bracket above it):
+subject 01's line joins `A → B` inside `pre` and again inside `post`; it
+never runs from `pre·B` on to `post·A`. The outer layers — the **brackets**
+(`GroupingLayers.brackets`, outermost first) — are part of the run's
+identity, never crossed; the layer a line runs along is
+`GroupingLayers.span` (`ticks[-1]`). The same rule confines a spaghetti's
+own polylines (`grouping-and-collapse.md`).
+
+`PlotSpec.join_sample: bool | None`, `None` = automatic. The automatic rule
+is `roles.line_recurrence(table, keys, span, brackets)` — the ONE function
+`overlay_join` and `spaghetti_sample_repeats` both read — asking "does the
+identity have a value at every level of the span, inside one bracket?":
+
+| span (innermost tick) | shown key | answer |
+|---|---|---|
+| a schema key deeper than the shown key (`session`, shown `subject`) | join — a subject has a value at every session (within each bracket) |
+| a schema key at/above the shown key (`session`, shown `trial`) | points — a trial belongs to one session |
+| synthetic, depth-less: `ColName` (`is_field`), a variant / code axis (`is_variant`) | **join** — every record has every column / variant |
+| any other depth-less layer (a derived bucket) | points — cannot be told |
+| the shown key itself depth-less | points — cannot be told |
+| no tick layer at all | points — nothing to join across |
+
+Only the span decides; a deeper bracket changes nothing (`[subject,
+ColName]` with `trial` shown joins trial 1 of subject 01 across the
+columns — the old whole-axis rule refused it as "a trial belongs to one
+subject"). `OverlayJoin.reason` carries the sentence, prefixed
+`Repeated measures:` / `Not repeated measures:`; the capability report's
+`join` block adds `span` and `brackets`, and the GUI's Join-points tooltip
+(`showSample.joinTooltip`) names them.
+
+**The run column.** `reduce._overlay_frame` writes `resolved.RUN`
+(`__run`): the brackets' values and, on a spaghetti, the point's `__line`,
+composed (`_run_key`). `render.base.sample_series` — the one seam both
+renderers read — yields one `(identity, rows)` per `(__series, __run)`;
+the identity returned is `__series` alone because the OFFSET
+(`sample_offsets`) is keyed by it, so a subject keeps its slot in every
+bracket. `codegen._sample_draw_lines` groups by `[_series, hue?,
+*brackets, _line?]` (the `_sample` frame keeps its factor columns).
+`tests/plot_geometry.py` reads the drawn runs back from both backends
+(`mpl_sample_runs` / `plotly_sample_runs` → `Run`, `run_brackets`).
 
 A line joins the points sharing every shown key's value (plus the colour
-level) across the x positions of one panel — the spaghetti series rule. A
-point with no partner has no line. Forced on below the x depth, the same
-rule applies (trial 1 of subject 01 in pre and post get joined).
+level) across the span's positions of one bracket. A point with no partner
+has no line. Forced on below the span's depth, the same run rule applies
+(trial 1 of subject 01 in pre and post get joined — inside the bracket).
+
+**Known, unchanged:** a coloured INNERMOST layer splits the runs per mark
+colour (a line crossing two mark colours has no colour to be), so each run
+is one point unless "Colour points by" is set.
 
 ## The overlay's own colour (`PlotSpec.sample_color`, since 2026-09-21)
 
@@ -137,6 +175,8 @@ hold the three readers to it.
 | availability (kind ∈ `OVERLAY_KINDS`, categorical x, scalar drawn shape, something collapsed) | `roles.overlay_unavailable` — shared by `validate`, `reduce`, `ylimits`, `codegen`, `capability` |
 | the cut (`averaged`, `shown`) | `roles.overlay_steps` → `OverlaySteps` |
 | join decision + reason | `roles.overlay_join` → `OverlayJoin` |
+| the span + brackets, and whether an identity recurs across the span | `GroupingLayers.span` / `.brackets`, `roles.line_recurrence` (shared with `spaghetti_sample_repeats`) |
+| the run a line stays inside | `resolved.RUN`, `reduce._run_key` (overlay + spaghetti marks), `render.base.sample_series` / `series_runs`, codegen `run_keys` / `_spaghetti_units` |
 | the hint sentence | `roles.overlay_granularity` |
 | the rows | `reduce._build_figure`: `sample_overlay` phase runs `_collapse_levels(frame, averaged, pooled=…)` on the figure's rows BEFORE the marks' chain; `sample_panels` splits by facet → `Panel.sample` (`__x`, `__y`, `__color`, `__series`, the shown key columns) |
 | offsets | `spaghetti.overlay_offsets` → `reduce._overlay_offsets` → `ResolvedPlot.sample_offsets` |

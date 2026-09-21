@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
-from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, SERIES, ResolvedPlot
+from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, RUN, SERIES, ResolvedPlot
 from ..spec import PlotKind
 
 LAYER = "scistackplot"
@@ -441,14 +441,50 @@ def sample_legend_levels(resolved: ResolvedPlot) -> list[Any]:
     return ordered
 
 
+def series_runs(subset: pd.DataFrame, resolved: ResolvedPlot) -> list[tuple[Any, pd.DataFrame]]:
+    """``(series id, rows)`` per spaghetti RUN — one polyline each.
+
+    A run is one series (``__series``: the subject's line) inside one bracket
+    (``__run``, the tick layers above the innermost — ``resolved.RUN``,
+    written by ``reduce._panel_frame`` on a nested axis): a spaghetti line
+    spans the innermost tick only, so subject 01 under ``[speed | session]``
+    draws ``pre → post`` once per speed rather than one line across all
+    four positions. The id returned is the series alone — the OFFSET
+    (``ResolvedPlot.series_offsets``) and the legend are keyed by it. The
+    one seam both renderers read; the export passes ``units=_run``.
+    """
+    series_column = resolved.encoding.series
+    if not series_column or series_column not in subset.columns:
+        return [(None, subset)]
+    if RUN in subset.columns:
+        return [
+            (series_id, rows)
+            for (series_id, _run), rows in subset.groupby([series_column, RUN], sort=False)
+        ]
+    return list(subset.groupby(series_column, sort=False))
+
+
 def sample_series(subset: pd.DataFrame, resolved: ResolvedPlot) -> list[tuple[Any, pd.DataFrame]]:
-    """``(identity, rows)`` per overlay identity (``__series``, the shown keys
-    composed) — one polyline when joined, one offset either way — or a single
-    unnamed group when the frame carries no identity column."""
-    column = SERIES
-    if column in subset.columns:
-        return list(subset.groupby(column, sort=False))
-    return [(None, subset)]
+    """``(identity, rows)`` per overlay RUN — one polyline when joined — or a
+    single unnamed group when the frame carries no identity column.
+
+    A run is one identity (``__series``, the shown keys composed) inside one
+    bracket (``__run``: the tick layers above the innermost and, on a
+    spaghetti, the line the point sits on — ``resolved.RUN``): a
+    joined line spans the innermost tick only and never crosses a bracket,
+    so subject 01 yields one run per session when session is the bracket.
+    The identity returned is ``__series`` alone, because that is what the
+    OFFSET is keyed by (``ResolvedPlot.sample_offsets``): the subject keeps
+    its slot in every bracket. The one seam both renderers read.
+    """
+    if SERIES not in subset.columns:
+        return [(None, subset)]
+    if RUN in subset.columns:
+        return [
+            (identity, rows)
+            for (identity, _run), rows in subset.groupby([SERIES, RUN], sort=False)
+        ]
+    return list(subset.groupby(SERIES, sort=False))
 
 
 def sample_groups(

@@ -317,19 +317,70 @@ def sample_key(roles: dict[str, Role], table: LongTable) -> str | None:
 UNIT_KINDS = (PlotKind.LINE, PlotKind.SPAGHETTI)
 
 
+def line_recurrence(
+    table: LongTable, keys: list[str], span: str | None, brackets: list[str] = ()
+) -> tuple[bool | None, str]:
+    """Whether an identity made of ``keys`` recurs across the levels of the
+    ``span`` layer — so its points can be joined into a line — and why.
+
+    THE one rule every line drawn across the x axis reads (``overlay_join``
+    for "Show sample", ``spaghetti_sample_repeats`` for the spaghetti's own
+    polylines). A line spans the **innermost tick layer only** (user
+    decision 2026-09-21, ``.claude/plan-sample-line-span.md``): the outer
+    layers — the ``brackets`` — are part of the identity, never crossed, so
+    the question is only ever "does this identity have a value at every
+    level of the span, inside one bracket?". Answered from the schema
+    hierarchy (``LongTable.factor_depths``):
+
+    * the span is a schema key deeper than the identity's deepest key — a
+      subject has a value at every session: **True**;
+    * at or above it — a trial belongs to one session: **False**;
+    * the span has no depth but is synthetic — ``ColName`` (the fields of
+      one record) or a variant / code axis (the same record, processed
+      again): every record has every level: **True**;
+    * anything else without a depth (a derived bucket, a key with no
+      place, no tick layer at all): **None** — cannot be told, and the
+      caller draws points.
+    """
+    depths = table.factor_depths
+    deepest = max(keys, key=lambda name: depths.get(name, -1)) if keys else None
+    what = " x ".join(keys)
+    within = f" within each {' · '.join(brackets)}" if brackets else ""
+    if span is None:
+        return None, "No x layer to join across."
+    if any(name not in depths for name in keys):
+        return None, (
+            f"{what} has no place in the schema hierarchy, so whether it recurs "
+            f"across {span} cannot be told."
+        )
+    if span not in depths:
+        factor = table.factor(span) if table.has_factor(span) else None
+        if factor is not None and (factor.is_field or factor.is_variant):
+            return True, (
+                f"Every record has every {span}, so each {what} has a value at "
+                f"every {span}{within}."
+            )
+        return None, (
+            f"{span} has no place in the schema hierarchy, so whether a {deepest} "
+            f"recurs across it cannot be told."
+        )
+    if depths[deepest] < depths[span]:
+        return True, f"Each {what} has a value at every {span}{within}."
+    return False, f"A {deepest} belongs to one {span}, so nothing joins it across {span}."
+
+
 def spaghetti_sample_repeats(
     spec: PlotSpec, roles: dict[str, Role], table: LongTable, sample: list[str]
 ) -> tuple[bool, str]:
-    """Whether a spaghetti's SAMPLE recurs across its x ticks — so each sample
-    level can be its own joined line — and why, in words.
+    """Whether a spaghetti's SAMPLE recurs across its innermost x tick — so
+    each sample level can be its own joined line — and why, in words.
 
-    A spaghetti line joins one identity across the tick layers. A subject has
-    a value at every session, so "subject 01" is a real line; a trial belongs
-    to one session, so "trial 1" at pre and "trial 1" at post are different
-    trials and a line through them would be invented. The rule is the one
-    ``overlay_join`` uses for "Show sample": the deepest sample key must sit
-    ABOVE the deepest tick layer in the schema hierarchy. A key with no depth
-    on either side cannot be placed, and the answer is no.
+    A spaghetti line joins one identity across the innermost tick layer,
+    inside one bracket of the layers above it (:func:`line_recurrence`, the
+    one rule "Show sample" reads too). A subject has a value at every
+    session, so "subject 01" is a real line; a trial belongs to one session,
+    so "trial 1" at pre and "trial 1" at post are different trials and a
+    line through them would be invented.
 
     When the answer is no, the sample cannot be drawn as lines and the kind
     averages it into its line instead (``CollapseSteps.final``) — the one
@@ -337,29 +388,16 @@ def spaghetti_sample_repeats(
     """
     if not sample:
         return False, "Nothing is collapsed."
-    depths = table.factor_depths
-    ticks = spec.ordered_groups(roles, depths)[1:]
-    sample_depths = [depths.get(name) for name in sample]
-    tick_depths = [depths[name] for name in ticks if name in depths]
-    if any(depth is None for depth in sample_depths):
-        return False, (
-            f"{' x '.join(sample)} has no place in the schema hierarchy, so whether "
-            f"it recurs across the x axis cannot be told — each line is its mean."
-        )
-    if not tick_depths:
-        return False, (
-            "No x layer is a schema key, so repeated measures cannot be told — "
-            "each line is the sample's mean."
-        )
-    deepest_tick = max(ticks, key=lambda name: depths.get(name, -1))
-    if max(sample_depths) < max(tick_depths):
-        return True, (
-            f"Each {' x '.join(sample)} has a value at every {deepest_tick}: "
-            f"one line each."
-        )
+    ticks = list(reversed(spec.ordered_groups(roles, table.factor_depths)[1:]))
+    span = ticks[-1] if ticks else None
+    recurs, reason = line_recurrence(table, sample, span, ticks[:-1])
+    if recurs:
+        return True, f"{reason} One line each."
+    if span is None:
+        return False, "No x layer to join across — each line is the sample's mean."
     return False, (
-        f"A {sample[-1]} belongs to one {deepest_tick}, so no line can join it "
-        f"across the axis — each line is the mean of its {' x '.join(sample)}."
+        f"{reason} No line can join it across the axis — each line is the mean "
+        f"of its {' x '.join(sample)}."
     )
 
 
@@ -582,15 +620,16 @@ def overlay_join(
 ) -> OverlayJoin:
     """Join the overlay points across x, or leave them as points.
 
-    The automatic rule compares hierarchy depths (``LongTable.factor_depths``):
-    when the **deepest shown key** sits ABOVE the **deepest grouping layer**
-    (ticks and colour alike), each point identity recurs at every x position
-    — a subject has a value at every session — so the points are repeated
-    measures and are joined. When it sits at or below the layers, a point
-    belongs to one x position (a trial is *of* one session) and nothing is
-    joined. A key with no depth on either side (a field, a derived bucket,
-    the Variant axis) cannot be placed, and the rule declines: points only,
-    with the reason. ``PlotSpec.join_sample`` overrides the rule either way.
+    A joined line spans the **innermost tick layer** only
+    (``GroupingLayers.span``); the outer layers (``brackets``) and, on a
+    spaghetti, the line a point sits on are part of the run identity
+    (``resolved.SAMPLE_RUN``) and never crossed. The automatic rule is
+    :func:`line_recurrence`: the deepest shown key recurs across the span —
+    a subject has a value at every session, every record has every
+    ``ColName`` — so the points are repeated measures and are joined; a
+    trial belongs to one session, so nothing is joined; a span or key with
+    no place in the hierarchy cannot be told and the rule declines with the
+    reason. ``PlotSpec.join_sample`` overrides the rule either way.
     """
     if steps is None:
         steps = overlay_steps(spec, roles, table)
@@ -603,57 +642,45 @@ def overlay_join(
             reason="Set by hand." if spec.join_sample else "Points only, set by hand.",
         )
 
-    depths = table.factor_depths
     layers = grouping_layers(spec, table, roles)
-    # Every grouping layer places a mark: the ticks (the coloured one is a
-    # tick too — colour is paint) and, on a spaghetti, the lines layer.
-    layer_names = [*layers.ticks, *layers.series]
-    shown_depth = depths.get(steps.deepest_shown)
-    layer_depths = [depths[name] for name in layer_names if name in depths]
-    if shown_depth is None:
-        return OverlayJoin(
-            join=False,
-            automatic=True,
-            reason=(
-                f"{steps.deepest_shown!r} has no place in the schema hierarchy, so "
-                f"whether its points repeat across the x axis cannot be told."
-            ),
-        )
-    if not layer_depths:
-        return OverlayJoin(
-            join=False,
-            automatic=True,
-            reason="No grouping layer is a schema key, so repeated measures cannot be told.",
-        )
-    deepest_layer = max(layer_names, key=lambda n: depths.get(n, -1))
-    if shown_depth < max(layer_depths):
-        return OverlayJoin(
-            join=True,
-            automatic=True,
-            reason=(
-                f"Repeated measures: each {steps.deepest_shown} has a value at "
-                f"every {deepest_layer}, so its points are joined."
-            ),
-        )
-    return OverlayJoin(
-        join=False,
-        automatic=True,
-        reason=(
-            f"Not repeated measures: a {steps.deepest_shown} belongs to one "
-            f"{deepest_layer}, so nothing joins its points across the axis."
-        ),
+    recurs, reason = line_recurrence(
+        table, [steps.deepest_shown], layers.span, layers.brackets
     )
+    Log.debug(
+        "overlay join: shown=%s span=%r brackets=%s depths=%s -> %s (%s)",
+        steps.shown,
+        layers.span,
+        layers.brackets,
+        {name: table.factor_depths.get(name) for name in [*steps.shown, *layers.ticks]},
+        recurs,
+        reason,
+        layer=LAYER,
+    )
+    if recurs is None:
+        return OverlayJoin(join=False, automatic=True, reason=reason)
+    if recurs:
+        return OverlayJoin(join=True, automatic=True, reason=f"Repeated measures: {reason}")
+    return OverlayJoin(join=False, automatic=True, reason=f"Not repeated measures: {reason}")
 
 
-def overlay_granularity(steps: OverlaySteps, join: OverlayJoin) -> str:
+def overlay_granularity(
+    steps: OverlaySteps, join: OverlayJoin, layers: GroupingLayers | None = None
+) -> str:
     """The sentence the panel shows under the checkboxes: what one point is,
-    what was averaged to get it, and whether the points are joined."""
+    what was averaged to get it, and whether — and across what — the points
+    are joined (the span, inside each bracket)."""
     what = f"One point per {' · '.join(steps.shown)}"
     if steps.averaged:
         text = f"{what}; {', '.join(steps.averaged)} averaged within it."
     else:
         text = f"{what} — the raw data."
-    lines = "Lines join the points." if join.join else "Points only."
+    if not join.join:
+        lines = "Points only."
+    elif layers is not None and layers.span:
+        within = f" within each {' · '.join(layers.brackets)}" if layers.brackets else ""
+        lines = f"Lines join the points across {layers.span}{within}."
+    else:
+        lines = "Lines join the points."
     return f"{text} {lines} {join.reason}"
 
 
@@ -699,6 +726,21 @@ class GroupingLayers:
         the grouping's series layers (``"groupA | 01"`` once composed
         outermost-first)."""
         return [*self.units, *self.series]
+
+    @property
+    def span(self) -> str | None:
+        """The layer a joined line runs along — the INNERMOST tick, whose
+        levels are labelled under the marks — or None with no tick at all.
+        A "Show sample" line and a spaghetti's polyline both span exactly
+        this layer (:func:`line_recurrence`)."""
+        return self.ticks[-1] if self.ticks else None
+
+    @property
+    def brackets(self) -> list[str]:
+        """The tick layers ABOVE the span, outermost first — the brackets
+        drawn over the axis. A line never crosses one: their values are part
+        of the run's identity (``resolved.SAMPLE_RUN``)."""
+        return list(self.ticks[:-1])
 
     @property
     def labelled_ticks(self) -> list[str]:

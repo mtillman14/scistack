@@ -43,6 +43,7 @@ from .resolved import (
     DASH_CYCLE,
     SAMPLE_COLOR,
     SAMPLE_LINE,
+    RUN,
     SERIES,
     UNLABELLED_X,
     X,
@@ -1549,10 +1550,18 @@ def _attach_overlay(
         panel.sample = _overlay_frame(
             group, spec, x_layers, color, shown, sample_color, line_layers
         )
+        # Runs per identity: >1 means the brackets split a subject's line —
+        # the span rule at work; 1 everywhere means a flat axis.
+        runs = panel.sample.groupby([SERIES, RUN], sort=False).ngroups
         Log.debug(
-            "sample overlay: %d point(s) in panel %s",
+            "sample overlay: %d point(s) in panel %s; %d run(s) over %d identity(ies), "
+            "span=%r brackets=%s",
             len(panel.sample),
             panel.title or "unfaceted",
+            runs,
+            panel.sample[SERIES].nunique(),
+            x_layers[-1] if x_layers else None,
+            list(x_layers[:-1]),
             layer=LAYER,
         )
 
@@ -1575,7 +1584,11 @@ def _overlay_frame(
     ``resolved.SAMPLE_COLOR``. On a spaghetti, ``__line`` (``line_layers``:
     the marks' units + lines layer, innermost first — ``GroupingLayers.identity``)
     is the id of the line the point sits on, composed exactly as the marks'
-    ``__series`` is (``_series_key``) so ``series_offsets`` finds it."""
+    ``__series`` is (``_series_key``) so ``series_offsets`` finds it.
+    ``__run`` (``resolved.RUN``) is the bracket layers — ``x_layers``
+    minus the innermost — plus that line, composed: a joined line spans the
+    innermost tick only, so the renderers draw one polyline per
+    ``(__series, __run)``."""
     out = pd.DataFrame(index=group.index)
     if len(x_layers) > 1:
         out[X] = _composed_key(group, x_layers, LEAF_SEPARATOR)
@@ -1594,7 +1607,24 @@ def _overlay_frame(
         out[SAMPLE_COLOR] = group[sample_color].values
     if line_layers:
         out[SAMPLE_LINE] = _series_key(group, list(line_layers))
+    out[RUN] = _run_key(group, x_layers, list(line_layers))
     return out.dropna(subset=[Y]).reset_index(drop=True)
+
+
+def _run_key(
+    group: pd.DataFrame, x_layers: list[str], line_layers: list[str]
+) -> "np.ndarray | str":
+    """``resolved.RUN`` for overlay rows: the bracket layers (every
+    tick above the innermost, outermost first — ``GroupingLayers.brackets``)
+    and, on a spaghetti, the line the point sits on (``line_layers``,
+    innermost first, reversed like ``_series_key``), composed with
+    ``LEAF_SEPARATOR``. ``""`` when nothing splits the runs, so a groupby on
+    it is a no-op rather than a missing column."""
+    brackets = list(x_layers[:-1])
+    parts = [*brackets, *reversed([name for name in line_layers if name in group.columns])]
+    if not parts:
+        return ""
+    return _composed_key(group, parts, LEAF_SEPARATOR)
 
 
 def _overlay_offsets(panels: list[Panel], n_slots: int) -> dict[str, float]:
@@ -1679,6 +1709,10 @@ def _panel_frame(
         # Units inside the grouping layers (`GroupingLayers.identity`): one
         # polyline per subject, within its group's colour and dash.
         out[SERIES] = _series_key(group, [*unit_layers, *series_layers])
+    # A spaghetti polyline spans the innermost tick only: the brackets are
+    # the run it stays inside (`resolved.RUN`; `render.base.series_runs`).
+    if spec.kind is PlotKind.SPAGHETTI and len(x_layers) > 1:
+        out[RUN] = _run_key(group, x_layers, [])
     # The uncoloured part of that identity gets a dash style (D4). Spaghetti
     # is left out: its lines are already one per level, joined by markers.
     if spec.kind in (PlotKind.LINE, PlotKind.BAND):

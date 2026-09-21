@@ -26,7 +26,16 @@ export interface SampleOverlay {
   ignored: string[]
   shown: string[]
   averaged: string[]
-  join: { join: boolean; automatic: boolean; reason: string; setting: boolean | null }
+  /** A joined line runs along `span` (the innermost tick) and never crosses
+   *  a bracket (the tick layers above it) — `roles.GroupingLayers`. */
+  join: {
+    join: boolean
+    automatic: boolean
+    reason: string
+    setting: boolean | null
+    span: string | null
+    brackets: string[]
+  }
   granularity: string
   /** `PlotSpec.sample_color`: what the spec asks (`setting`), the key
    *  colouring the points right now (`active`, null = the mark's colour) and
@@ -82,4 +91,16 @@ export function sampleColorChoice(setting: string | null | undefined): string {
 /** `spec.sample_color` for a dropdown choice: null clears it. */
 export function sampleColorSetting(choice: string): string | null {
   return choice === MARK_COLOR ? null : choice
+}
+
+/** The Join dropdown's tooltip: the rule, naming the layer a line runs
+ *  along (`span`, the innermost grouping layer) and the brackets it never
+ *  crosses — decided in `roles`, displayed here. */
+export function joinTooltip(join: SampleOverlay['join']): string {
+  const span = join.span ? ` (${join.span})` : ''
+  const brackets = join.brackets.length ? ` — never across ${join.brackets.join(' · ')}` : ''
+  return (
+    'Auto joins the points when they are repeated measures: the shown key has a value ' +
+    `at every level of the innermost grouping layer${span}. A line spans that layer only${brackets}.`
+  )
 }

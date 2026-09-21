@@ -147,14 +147,20 @@ def test_validate_refuses_a_name_that_is_no_factor_and_accepts_an_inert_one(tabl
     validate(_spec("session", "trial"), table)  # inert, not an error
 
 
-def test_auto_join_ignores_a_depth_less_grouping_layer(table):
-    """The user's assignment: colour = session, ticks = group (no depth).
-    subject is above session, so the points are repeated measures — the
-    depth-less layer neither blocks the rule nor changes its answer."""
-    for color in ("session", "group"):
-        spec = _spec(color, "subject")
-        join = overlay_join(spec, complete_roles(spec, table), table)
-        assert join.join is True and join.automatic is True, (color, join.reason)
+def test_auto_join_reads_the_span_beside_a_depth_less_bracket(table):
+    """The user's assignment: colour = session (the innermost tick, the span),
+    group the bracket (no depth). subject is above session, so the points
+    are repeated measures — the depth-less bracket neither blocks the rule
+    nor changes its answer. Swapped, group is the span: a subject sits in
+    one group, and whether it recurs across groups cannot be told (points;
+    every run would be one point anyway)."""
+    spec = _spec("session", "subject")
+    join = overlay_join(spec, complete_roles(spec, table), table)
+    assert join.join is True and join.automatic is True, join.reason
+    assert "within each group" in join.reason
+    swapped = _spec("group", "subject")
+    join = overlay_join(swapped, complete_roles(swapped, table), table)
+    assert join.join is False and "group has no place" in join.reason
 
 
 # --- reduce ---------------------------------------------------------------------
@@ -194,10 +200,11 @@ def test_the_palette_is_indexed_by_the_figure_wide_order(table):
 # --- matplotlib ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("color", ["session", "group", ""])
+@pytest.mark.parametrize("color", ["session", ""])
 def test_mpl_one_line_per_subject_in_its_own_colour_across_the_marks(table, color):
-    """Whatever layer is coloured (or none), a subject is ONE polyline in
-    its own palette colour, crossing the marks' colours where it must."""
+    """With session the innermost tick (coloured or not), a subject is ONE
+    polyline in its own palette colour, crossing the marks' colours where it
+    must — inside its group bracket."""
     spec = _spec(color, "subject") if color else _spec("", "subject", groups=["session", "group"])
     figure = _figure(spec, table)
     drawn = render_matplotlib(figure)
@@ -208,6 +215,30 @@ def test_mpl_one_line_per_subject_in_its_own_colour_across_the_marks(table, colo
     for line in lines:
         xs = list(line.get_xdata())
         assert len(xs) == 2 and xs == sorted(xs)
+    plt.close(drawn)
+
+
+def test_mpl_draws_points_only_when_the_coloured_group_is_the_innermost_tick(table):
+    """Colour = group on a [group, session] grouping: group is the innermost
+    tick, so a line would have to run from the s1 bracket to the s2 bracket —
+    across a bracket, which a line never does (2026-09-21). A subject sits in
+    one group, so each run is one point: eight points, no lines, still in
+    the subjects' own colours."""
+    from plot_geometry import mpl_sample_runs
+
+    figure = _figure(_spec("group", "subject"), table)
+    assert figure.sample_join is False and "group has no place" in figure.sample_join_reason
+    drawn = render_matplotlib(figure)
+    runs = mpl_sample_runs(drawn, figure)
+    assert not any(run.joined for run in runs)
+    assert sum(len(run.points) for run in runs) == 8, "4 subjects x 2 sessions"
+    colours = {
+        tuple(c.get_facecolor()[0][:3])
+        for ax in drawn.axes
+        for c in ax.collections
+        if c.get_zorder() == 3
+    }
+    assert len(colours) == 4, "one colour per subject"
     plt.close(drawn)
 
 
@@ -316,7 +347,7 @@ def _run(source: str, frame, function_name: str = "plot_m"):
     return namespace[function_name](frame.copy(), "figure.png")
 
 
-@pytest.mark.parametrize("color", ["session", "group"])
+@pytest.mark.parametrize("color", ["session"])
 def test_generated_lines_land_where_the_preview_draws_them(table, frame, color):
     spec = _spec(color, "subject")
     figure = _figure(spec, table)

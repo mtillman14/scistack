@@ -315,3 +315,109 @@ def test_a_dropped_overlay_is_said_out_loud(unbalanced, monkeypatch):
     assert base.sample_dropped_reason(figure.panels[0], figure)
     assert render_plotly(figure)["data"] and _overlay_traces(render_plotly(figure)) == []
     assert warned and "NOT drawn" in warned[0] and "x_order=None" in warned[0]
+
+
+# --- the span: a line never leaves its bracket (2026-09-21) ----------------------
+
+
+@pytest.fixture
+def nested() -> LongTable:
+    """subject x session x trial, each record two ColName fields — the user's
+    case: bars grouped [ColName, session], subjects shown and joined."""
+    import itertools
+
+    rows = []
+    for subject, session, trial, field in itertools.product(
+        ["01", "02"], ["pre", "post"], ["1", "2"], ["A", "B"]
+    ):
+        rows.append((subject, session, trial, field, float(len(rows))))
+    frame = pd.DataFrame(rows, columns=["subject", "session", "trial", "ColName", "M"])
+    return LongTable.from_frame(
+        frame,
+        factors=["subject", "session", "trial", "ColName"],
+        measures=["M"],
+        field_factors=["ColName"],
+        name="M",
+        schema_levels=["subject", "session", "trial"],
+        level_order={"session": ["pre", "post"]},
+    )
+
+
+def _nested_spec(groups, show=("subject",), **kwargs) -> PlotSpec:
+    roles = {
+        "subject": Role.COLLAPSE, "session": Role.COLLAPSE,
+        "trial": Role.COLLAPSE, "ColName": Role.COLLAPSE,
+    }
+    for name in groups:
+        roles[name] = Role.GROUP
+    base = dict(
+        measures=["M"], roles=roles, groups=list(groups), kind=PlotKind.BAR,
+        aggregate=Aggregation(error=ErrorBand.SD), show_sample=list(show),
+    )
+    base.update(kwargs)
+    return PlotSpec(**base)
+
+
+def _runs(spec, table):
+    from plot_geometry import mpl_sample_runs, plotly_sample_runs
+
+    figure = _figure(spec, table)
+    drawn = render_matplotlib(figure)
+    mpl = mpl_sample_runs(drawn, figure)
+    plt.close(drawn)
+    return figure, mpl, plotly_sample_runs(render_plotly(figure), figure)
+
+
+def test_the_overlay_frame_carries_the_run(nested):
+    """`__run` is the bracket's value: subject 01 has one run per session."""
+    from scistackplot.resolved import RUN
+
+    figure = _figure(_nested_spec(["ColName", "session"]), nested)
+    sample = figure.panels[0].sample
+    assert set(sample[RUN]) == {"pre", "post"}
+    assert sample.groupby([SERIES, RUN]).ngroups == 4, "2 subjects x 2 sessions"
+    flat = _figure(_nested_spec(["session"]), nested).panels[0].sample
+    assert set(flat[RUN]) == {""}, "no bracket: one run per identity"
+
+
+@pytest.mark.parametrize("groups", [["ColName", "session"], ["session", "ColName"]])
+def test_a_joined_line_spans_the_innermost_tick_inside_one_bracket(nested, groups):
+    """Bars nested [inner, outer]: each subject's line joins its two points
+    inside one bracket, and never runs on into the next bracket — the
+    user's ask (2026-09-21). Both backends draw the same runs."""
+    from plot_geometry import run_brackets
+
+    figure, mpl, plotly = _runs(_nested_spec(groups), nested)
+    assert figure.sample_join is True, figure.sample_join_reason
+    assert mpl == plotly
+    assert len(mpl) == 4, "2 subjects x 2 brackets"
+    for run in mpl:
+        assert run.joined and len(run.points) == 2
+        assert len(run_brackets(run, n_layers=2)) == 1, run
+    # A subject keeps its offset in every bracket: the offset is per identity.
+    offsets = {run.points[0][1] for run in mpl}
+    assert offsets == {-0.2, 0.2}
+
+
+def test_a_trial_joins_across_the_columns_of_its_record(nested):
+    """subject the bracket, ColName the span, trial shown: trial 1 of subject
+    01 is one short line A -> B (the old whole-axis rule drew points)."""
+    figure, mpl, plotly = _runs(_nested_spec(["ColName", "subject"], show=("trial",)), nested)
+    assert figure.sample_join is True, figure.sample_join_reason
+    assert mpl == plotly
+    # 2 subjects x 2 sessions x 2 trials, each a 2-point line inside its subject.
+    assert len(mpl) == 8 and all(run.joined and len(run.points) == 2 for run in mpl)
+
+
+def test_points_only_runs_are_unchanged_by_the_bracket(nested):
+    figure, mpl, plotly = _runs(_nested_spec(["session", "ColName"], show=("trial",)), nested)
+    assert figure.sample_join is False
+    assert not any(run.joined for run in mpl)
+    assert sum(len(run.points) for run in mpl) == sum(len(run.points) for run in plotly) == 16
+
+
+def test_a_flat_axis_still_joins_the_whole_axis(nested):
+    """No bracket: the innermost tick is the only tick, so the line spans it all."""
+    figure, mpl, plotly = _runs(_nested_spec(["session"]), nested)
+    assert mpl == plotly and len(mpl) == 2
+    assert all(run.joined and len(run.points) == 2 for run in mpl)

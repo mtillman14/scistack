@@ -14,6 +14,7 @@ import {
   sampleColorChoice,
   sampleColorSetting,
   joinChoice,
+  joinTooltip,
   joinSetting,
   toggleShowSample,
 } from './showSample.js'
@@ -53,4 +54,12 @@ test('the Colour-points-by dropdown round-trips: empty is the mark\'s colour, a 
   assert.equal(sampleColorChoice('subject'), 'subject')
   assert.equal(sampleColorSetting(MARK_COLOR), null)
   assert.equal(sampleColorSetting('subject'), 'subject')
+})
+
+test('the join tooltip names the span and the brackets a line never crosses', () => {
+  const join = { join: true, automatic: true, reason: '', setting: null }
+  assert.match(joinTooltip({ ...join, span: 'ColName', brackets: ['session'] }), /layer \(ColName\)/)
+  assert.match(joinTooltip({ ...join, span: 'ColName', brackets: ['session'] }), /never across session\./)
+  assert.doesNotMatch(joinTooltip({ ...join, span: 'session', brackets: [] }), /never across/)
+  assert.doesNotMatch(joinTooltip({ ...join, span: null, brackets: [] }), /\(/)
 })

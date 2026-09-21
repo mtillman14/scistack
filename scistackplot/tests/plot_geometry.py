@@ -295,3 +295,74 @@ def despaced(positions, resolved: ResolvedPlot) -> list[float]:
         tick = int(round(float(x)))
         out.append(_r(leaves_before[tick] + (float(x) - tick)) if order else _r(x))
     return out
+
+
+# --- the "Show sample" overlay's runs -------------------------------------------
+
+
+@dataclass(frozen=True, order=True)
+class Run:
+    """One drawn "Show sample" run — the points ONE polyline joins, or a set
+    of lone points when nothing is joined — each point as ``(tick label,
+    offset, y)`` in drawn order. A joined line spans the innermost tick only
+    (``render.base.sample_series``), so a subject under a bracket reads back
+    as one run per bracket."""
+
+    panel: int
+    joined: bool
+    points: tuple[tuple[str, float, float], ...]
+
+
+def _run_points(resolved, xs, ys) -> tuple[tuple[str, float, float], ...]:
+    points = []
+    for x, y in zip(xs, ys, strict=True):
+        label, offset = _label_at(resolved, x)
+        points.append((label, offset, _r(y)))
+    return tuple(points)
+
+
+def mpl_sample_runs(figure, resolved: ResolvedPlot) -> list[Run]:
+    """The overlay runs a matplotlib figure draws (``mpl._draw_sample``:
+    ``ax.plot`` with markers when joined, ``ax.scatter`` otherwise — both at
+    zorder 3, above the marks). Legend proxies carry no data and are skipped."""
+    from matplotlib.collections import PathCollection
+
+    runs: list[Run] = []
+    for panel, ax in enumerate(ax for ax in figure.axes if ax.get_visible()):
+        for line in ax.lines:
+            if line.get_zorder() != 3 or len(line.get_xdata()) == 0:
+                continue
+            runs.append(Run(panel, True, _run_points(resolved, line.get_xdata(), line.get_ydata())))
+        for collection in ax.collections:
+            if not isinstance(collection, PathCollection) or collection.get_zorder() != 3:
+                continue
+            offsets = collection.get_offsets()
+            runs.append(Run(panel, False, _run_points(resolved, offsets[:, 0], offsets[:, 1])))
+    return sorted(runs)
+
+
+def plotly_sample_runs(payload: dict, resolved: ResolvedPlot) -> list[Run]:
+    """The overlay runs a plotly payload draws (``plotly_._sample_traces``:
+    one trace per run, ``legendrank`` 2000) — the same shape as
+    :func:`mpl_sample_runs`."""
+    runs: list[Run] = []
+    axes = sorted({trace.get("xaxis", "x") for trace in payload["data"]})
+    for trace in payload["data"]:
+        if trace.get("legendrank") != 2000:
+            continue
+        panel = axes.index(trace.get("xaxis", "x"))
+        xs = [float(v) for v in trace["x"]]
+        ys = [float(v) for v in trace["y"]]
+        runs.append(Run(panel, trace["mode"] == "lines+markers", _run_points(resolved, xs, ys)))
+    return sorted(runs)
+
+
+def run_brackets(run: Run, n_layers: int) -> set[str]:
+    """The bracket part of every tick a run touches — the composed leaf key
+    minus its innermost layer — so ``len(run_brackets(...)) == 1`` says the
+    run never left its bracket."""
+    from scistackplot.xaxis import LEAF_SEPARATOR
+
+    return {
+        LEAF_SEPARATOR.join(label.split(LEAF_SEPARATOR)[: n_layers - 1]) for label, _, _ in run.points
+    }

@@ -65,6 +65,10 @@ _SEABORN_ERRORBAR = {
 }
 
 _SERIES_COLUMN = "_series"
+#: A spaghetti polyline's RUN on a nested axis: its series id plus the bracket
+#: layers (every tick above the innermost) — what `units=` joins by, so a line
+#: spans the innermost tick only (`render.base.series_runs`, `resolved.RUN`).
+_RUN_COLUMN = "_run"
 #: Column the generated code builds on ``_sample`` for a spaghetti overlay:
 #: the id of the LINE each sample row belongs to (``resolved.SAMPLE_LINE``),
 #: composed exactly as ``_series`` is so the preamble's ``_offset`` finds it.
@@ -682,6 +686,16 @@ def _preamble(spec, table, roles, shape) -> list[str]:
         )
 
     if spec.kind is PlotKind.SPAGHETTI:
+        brackets = _nested_x_layers(spec, table, roles, shape)[:-1]
+        if brackets:
+            # The run a polyline stays inside: never across a bracket.
+            lines.extend(
+                [
+                    f"# one polyline per series within each {' · '.join(brackets)}",
+                    f"df[{_RUN_COLUMN!r}] = {_composed([_SERIES_COLUMN, *brackets])}",
+                    "",
+                ]
+            )
         lines.extend(_spaghetti_position_lines(spec, table, roles, shape))
 
     return lines
@@ -834,7 +848,10 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
     """Draw ``_sample`` on the seaborn grid: each point at its mark's position
     plus its identity's offset — the arithmetic of
     ``render.base.sample_positions`` restated in plain pandas — joined into a
-    line per identity when ``roles.overlay_join`` said so.
+    line per identity when ``roles.overlay_join`` said so, one line per
+    BRACKET (the tick layers above the innermost; ``render.base.sample_series``
+    groups the preview by ``__run`` the same way), so a subject's line spans
+    the innermost tick only.
 
     The mark's position is its level's index (colour is paint, so nothing is
     dodged and no hue slot is added) — except on a spaghetti, where the mark
@@ -926,8 +943,15 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
             ]
         )
     # Group by hue too only when a line must not cross the mark colours —
-    # with its own colour, an identity's run spans them.
+    # with its own colour, an identity's run spans them. Hue stays at index
+    # 1: `paint` reads `_id[1]`.
     run_keys = [_SERIES_COLUMN, *([hue] if hue and not sample_color else [])]
+    # A run never leaves its bracket (the tick layers above the innermost)
+    # nor, on a spaghetti, its line — `reduce._run_key` / `SAMPLE_RUN`; the
+    # `_sample` frame still carries the factor columns, so group by name.
+    tick_layers = _nested_x_layers(spec, table, roles, shape)  # outermost first
+    brackets = [name for name in tick_layers[:-1] if name not in run_keys]
+    run_keys = [*run_keys, *brackets, *([_SAMPLE_LINE] if line_layers else [])]
     if sample_color:
         paint = f"_sample_palette[str(_part[{sample_color!r}].iloc[0])]"
     elif hue:
@@ -1217,7 +1241,7 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
             [
                 'kind="line"',
                 "estimator=None",
-                f"units={_SERIES_COLUMN!r}",
+                f"units={_spaghetti_units(spec, table, roles, shape)!r}",
                 'marker="o"',
             ]
         )
@@ -1585,6 +1609,12 @@ def _nested_x_layers(spec, table, roles, shape) -> list[str]:
 def _color_of(spec, table, roles, shape) -> str | None:
     color = grouping_layers(spec, table, roles, spec.kind, shape=shape).color
     return color if color and table.has_factor(color) else None
+
+
+def _spaghetti_units(spec, table, roles, shape) -> str:
+    """The column seaborn joins a spaghetti polyline by: the run (series +
+    brackets) on a nested axis, the series alone on a flat one."""
+    return _RUN_COLUMN if _nested_x_layers(spec, table, roles, shape)[:-1] else _SERIES_COLUMN
 
 
 def _line_layers(spec, table, roles, shape) -> list[str]:

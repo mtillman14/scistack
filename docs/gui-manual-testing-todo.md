@@ -36,6 +36,54 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0i. Lines span the innermost grouping layer only — added 2026-09-21
+
+**What changed:** a joined line — a "Show sample" line and a spaghetti's own
+polyline alike — now runs along the **innermost** grouping layer only and
+never crosses a bracket (the layers above it). Before, a subject's line ran
+across every x position of the panel: bars grouped `[ColName, session]`
+joined `pre·A → pre·B → post·A → post·B`. The auto-join rule now asks
+"does the shown key recur across the innermost layer?" (`roles.
+line_recurrence`), so a synthetic innermost layer (`ColName`, `Variant`)
+joins where it used to refuse ("no grouping layer is a schema key").
+Plan: `.claude/plan-sample-line-span.md`.
+
+**Backend:** `scistackplot.roles` / `reduce` / `render.*` / `codegen` /
+`capability`; pull and restart the GUI server.
+
+**Frontend:** both bundles rebuilt (the Join tooltip names the span and the
+brackets); pull, rebuild if you build locally.
+
+**Steps (a table-valued variable, Plot Studio):**
+
+1. Bar +/- Error, 2+ columns selected, Grouping `ColName` (first / innermost)
+   then `session`; `subject` + `trial` collapsed. Tick `subject` under Show
+   sample, Join = Auto. The Auto option reads "(lines)"; each subject's
+   line joins its columns **inside one session bracket** and stops there —
+   no line runs from the last column of `pre` to the first of `post`.
+   Hover the Join points label: the tooltip names `ColName` as the layer a
+   line spans and `session` as what it never crosses.
+2. Move `session` above `ColName` in the Grouping list (session innermost).
+   Lines now run `pre → post` inside each column bracket. The granularity
+   sentence under the checkboxes reads "Lines join the points across
+   session within each ColName."
+3. Grouping `ColName` only: lines across the columns (this used to be
+   points with "no grouping layer is a schema key").
+4. Set **Colour by** on the OUTER layer (the bracket): lines unchanged, bars
+   painted. Colour by the INNER layer: the runs split per colour, so with
+   two colour levels each run is one point (known, unchanged; set "Colour
+   points by" `subject` to get lines across the colours).
+5. Save PNG: the export draws the same runs (one per subject per bracket).
+6. Spaghetti kind, Grouping `subject` (lines), `session`, then a third
+   layer every subject has at every level (a speed, a variant, `ColName`):
+   each subject's polyline is drawn once per bracket, never across it.
+   Save PNG: same (`units=_run` in the generated code).
+7. scidb.log at DEBUG: `overlay join: shown=[…] span='ColName'
+   brackets=['session'] … -> True (…)` and `sample overlay: N point(s) in
+   panel …; R run(s) over S identity(ies), span=… brackets=…` with
+   R = S × number of brackets.
+
+---
 ## 0h. "Show sample" survives colouring by the ONLY grouping layer — added 2026-09-21
 
 **What changed:** with one grouping layer (e.g. `ColName`) that is also the

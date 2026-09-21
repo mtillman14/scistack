@@ -41,6 +41,7 @@ import {
   MARK_COLOR,
   type JoinChoice,
   type SampleOverlay,
+  joinTooltip,
 } from './showSample'
 import {
   type AspectPreset,
@@ -2272,7 +2273,7 @@ export default function PlotStudio({
                     <>
                       <label
                         style={styles.factorRow}
-                        title="Auto joins the points when they are repeated measures: the shown key sits above the x axis's key in the schema, so each has a value at every position"
+                        title={joinTooltip(capabilities.sample_overlay.join)}
                       >
                         <span style={styles.factorName}>Join points</span>
                         <select

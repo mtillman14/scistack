@@ -48,6 +48,15 @@ SAMPLE_COLOR = "__sample_color"
 #: key is drawn one line each) recomposed on the overlay rows, so the point
 #: is placed at its line's ``series_offsets`` shift rather than on the tick.
 SAMPLE_LINE = "__line"
+#: The RUN a joined point belongs to — the bracket a polyline stays inside.
+#: A line spans the innermost tick only and never crosses a bracket (every
+#: tick layer above the innermost, ``roles.GroupingLayers.brackets``; user
+#: decision 2026-09-21), so a spaghetti's marks carry the brackets' values
+#: composed, and a "Show sample" point the brackets plus, on a spaghetti, its
+#: ``__line``. Renderers and the generated code draw one polyline per
+#: ``(__series, __run)``; the OFFSET stays keyed by ``__series`` alone, so a
+#: subject keeps its slot in every bracket. Empty when nothing splits the runs.
+RUN = "__run"
 Z = "__z"
 #: The one x level a categorical figure has when NO tick layer was chosen —
 #: a scalar measure grouped by its colour alone, or not grouped at all. The

@@ -48,6 +48,7 @@ from .base import (
     sample_palette_for,
     sample_positions,
     sample_series,
+    series_runs,
     x_positions,
 )
 
@@ -205,7 +206,9 @@ def _draw_points(ax, frame, resolved, *, jitter: bool) -> None:
 
 
 def _draw_spaghetti(ax, frame, resolved) -> None:
-    """Markers plus one polyline per series (subject) across the x positions.
+    """Markers plus one polyline per series (subject) across the x positions
+    of ONE bracket (``base.series_runs``: a line spans the innermost tick
+    only, so a nested axis gets one polyline per series per bracket).
 
     The x axis is categorical, so each series is placed at its tick INDEX plus
     the figure-wide offset ``ResolvedPlot.series_offsets`` gave it — the same
@@ -216,15 +219,10 @@ def _draw_spaghetti(ax, frame, resolved) -> None:
     """
     style = resolved.spec.style
     encoding = resolved.encoding
-    series_column = encoding.series
     offsets = resolved.series_offsets or {}
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         color = palette_for(resolved, level, index)
-        if series_column and series_column in subset.columns:
-            series_groups = list(subset.groupby(series_column, sort=False))
-        else:
-            series_groups = [(None, subset)]
-        for position, (series_id, rows) in enumerate(series_groups):
+        for position, (series_id, rows) in enumerate(series_runs(subset, resolved)):
             positions, _ = x_positions(rows[encoding.x], resolved)
             positions = positions + offsets.get(str(series_id), 0.0)
             order = np.argsort(positions, kind="stable")
