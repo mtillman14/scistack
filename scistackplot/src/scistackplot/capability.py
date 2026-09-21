@@ -24,6 +24,7 @@ from .roles import (
     grouping_layers,
     has_sample,
     overlay_granularity,
+    overlay_color,
     overlay_join,
     overlay_steps,
     overlay_unavailable,
@@ -481,6 +482,7 @@ def sample_overlay_summary(
     steps = overlay_steps(spec, roles, table) if reason is None else None
     join = overlay_join(spec, roles, table, steps) if steps is not None else None
     shown = set(steps.shown) if steps is not None else set()
+    color = overlay_color(spec, steps) if steps is not None else None
     return {
         "available": reason is None,
         "reason": reason,
@@ -504,6 +506,13 @@ def sample_overlay_summary(
             "setting": spec.join_sample,
         },
         "granularity": overlay_granularity(steps, join) if steps is not None else "",
+        # The overlay's own colour: what the spec asks, whether it is active
+        # right now (`roles.overlay_color`), and which keys could colour it.
+        "color": {
+            "setting": spec.sample_color,
+            "active": color,
+            "options": list(steps.shown) if steps is not None else [],
+        },
     }
 
 

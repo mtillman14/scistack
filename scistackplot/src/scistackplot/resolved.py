@@ -37,6 +37,12 @@ SERIES = "__series"
 #: told apart by a dash style (docs/claude/grouping-and-collapse.md, D4),
 #: which is what a scientist reads off a printed figure without hovering.
 DASH = "__dash"
+#: The overlay's own colour level (``PlotSpec.sample_color``): the shown key
+#: that colours a "Show sample" point, beside ``__color`` — the MARK's level,
+#: which still places the point in its dodge slot. Two columns because the
+#: two colourings are independent by construction (a shown key is collapsed,
+#: a coloured layer groups; no factor is both).
+SAMPLE_COLOR = "__sample_color"
 Z = "__z"
 
 #: The dash cycle, in plotly's names; :data:`MPL_DASHES` is the matplotlib
@@ -90,6 +96,9 @@ class Labels:
     #: What the dash styles tell apart — the uncoloured series layers'
     #: display names, outermost first — for the legend's second block.
     dash: str | None = None
+    #: The overlay's own colour key (``PlotSpec.sample_color``), display
+    #: name, for the legend's block of overlay levels.
+    sample: str | None = None
     title: str | None = None
 
 
@@ -215,6 +224,14 @@ class ResolvedPlot:
     sample_join: bool = False
     sample_join_reason: str = ""
     sample_offsets: dict[str, float] = field(default_factory=dict)
+    #: The shown key colouring the overlay (``roles.overlay_color``), None
+    #: when a point takes its mark's colour; and that key's levels in
+    #: declared order across the WHOLE figure — the same rule as
+    #: ``color_order``, so subject 03 is the same colour in every panel
+    #: (``render.base.sample_palette_for`` indexes it, never a panel's own
+    #: enumeration).
+    sample_color: str | None = None
+    sample_color_order: list[Any] = field(default_factory=list)
 
     @property
     def figure_label(self) -> str:
@@ -248,6 +265,7 @@ class ResolvedPlot:
                 "y": self.labels.y,
                 "color": self.labels.color,
                 "dash": self.labels.dash,
+                "sample": self.labels.sample,
                 "title": self.labels.title,
             },
             "grid": {
@@ -280,6 +298,8 @@ class ResolvedPlot:
                 "join": self.sample_join,
                 "join_reason": self.sample_join_reason,
                 "offsets": dict(self.sample_offsets),
+                "color": self.sample_color,
+                "color_order": [_jsonable(v) for v in self.sample_color_order],
             },
             "panels": [
                 {

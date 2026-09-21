@@ -37,7 +37,7 @@ from scistacklog import Log
 
 from .framesize import format_extent, frame_extent
 from .numeric import coerce_numeric
-from .resolved import COLOR, DASH, DASH_CYCLE, SERIES, X, Y, Y_HIGH, Y_LOW, Z
+from .resolved import COLOR, DASH, DASH_CYCLE, SAMPLE_COLOR, SERIES, X, Y, Y_HIGH, Y_LOW, Z
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import (
     CollapseSteps,
@@ -46,6 +46,7 @@ from .roles import (
     complete_roles,
     fanout_keys,
     grouping_layers,
+    overlay_color,
     overlay_join,
     overlay_steps,
     overlay_unavailable,
@@ -1258,10 +1259,19 @@ def _build_figure(
                     )
                 )
 
+        sample_color = overlay_color(spec, overlay) if overlay_frame is not None else None
         if overlay_frame is not None:
             with timing.phase("sample_panels", extra=f"{len(panels)} panel(s)"):
                 _attach_overlay(
-                    panels, overlay_frame, facet_names, table, spec, x_layers, color, overlay.shown
+                    panels,
+                    overlay_frame,
+                    facet_names,
+                    table,
+                    spec,
+                    x_layers,
+                    color,
+                    overlay.shown,
+                    sample_color,
                 )
 
         if summarize_nested:
@@ -1297,6 +1307,7 @@ def _build_figure(
             labels = _labels_for(
                 spec, table, x_layers, color, index_column, figure_key,
                 dash_layers=dash_layers if dash_styles else [],
+                sample_color=sample_color,
             )
 
             # A nested axis is composed once, here, from labels only — so both
@@ -1312,7 +1323,7 @@ def _build_figure(
         # the panels got, and `None` here now means "the panels differ", which
         # is exactly when a renderer must stop sharing an axis.
         figure_limits = _figure_limits(panels)
-        color_order = _level_order(table, color, panels, COLOR) if color else None
+        color_order = _level_order(table, color, [p.frame for p in panels], COLOR) if color else None
 
         # The overlay's join decision and offsets, once per FIGURE (see
         # ResolvedPlot.sample_offsets): a subject keeps its place in every panel.
@@ -1322,6 +1333,38 @@ def _build_figure(
             if overlay_frame is not None
             else {}
         )
+        # The overlay's own palette order, figure-wide (see
+        # ResolvedPlot.sample_color_order): read off the panels' SAMPLE
+        # frames the way color_order reads off their mark frames.
+        sample_color_order = (
+            _level_order(
+                table,
+                sample_color,
+                [p.sample for p in panels if p.sample is not None],
+                SAMPLE_COLOR,
+            )
+            if sample_color
+            else None
+        )
+        if sample_color:
+            from .render.base import SAMPLE_PALETTE
+
+            Log.info(
+                "sample overlay coloured by %r: %d level(s)%s",
+                sample_color,
+                len(sample_color_order or []),
+                " — joined across colour levels" if join is not None and join.join else "",
+                layer=LAYER,
+            )
+            if len(sample_color_order or []) > len(SAMPLE_PALETTE):
+                Log.warn(
+                    "%d %s level(s) share %d overlay colours — colours will repeat; "
+                    "filter the locations or separate panels to tell them apart",
+                    len(sample_color_order or []),
+                    sample_color,
+                    len(SAMPLE_PALETTE),
+                    layer=LAYER,
+                )
 
         return ResolvedPlot(
             kind=spec.kind,
@@ -1333,7 +1376,11 @@ def _build_figure(
             x_order=(
                 list(x_plan.order)
                 if x_plan
-                else (_level_order(table, x_factor, panels, X) if x_factor else None)
+                else (
+                    _level_order(table, x_factor, [p.frame for p in panels], X)
+                    if x_factor
+                    else None
+                )
             ),
             x_plan=x_plan,
             color_order=color_order,
@@ -1359,6 +1406,8 @@ def _build_figure(
             sample_join=bool(join.join) if join is not None else False,
             sample_join_reason=join.reason if join is not None else "",
             sample_offsets=sample_offsets,
+            sample_color=sample_color,
+            sample_color_order=list(sample_color_order or []),
         )
 
 
@@ -1438,6 +1487,7 @@ def _attach_overlay(
     x_layers: list[str],
     color: str | None,
     shown: list[str],
+    sample_color: str | None = None,
 ) -> None:
     """Split the overlay rows into the panels the marks were split into and
     give each panel its ``sample`` frame (:func:`_overlay_frame`)."""
@@ -1453,9 +1503,11 @@ def _attach_overlay(
         if group is None or group.empty:
             # A panel whose overlay rows all filtered to nothing: no points,
             # not an error — the marks are still drawn.
-            panel.sample = _overlay_frame(overlay_frame.iloc[:0], spec, x_layers, color, shown)
+            panel.sample = _overlay_frame(
+                overlay_frame.iloc[:0], spec, x_layers, color, shown, sample_color
+            )
             continue
-        panel.sample = _overlay_frame(group, spec, x_layers, color, shown)
+        panel.sample = _overlay_frame(group, spec, x_layers, color, shown, sample_color)
         Log.debug(
             "sample overlay: %d point(s) in panel %s",
             len(panel.sample),
@@ -1470,11 +1522,14 @@ def _overlay_frame(
     x_layers: list[str],
     color: str | None,
     shown: list[str],
+    sample_color: str | None = None,
 ) -> pd.DataFrame:
     """The overlay's tidy frame: the SAME ``__x`` / ``__color`` the marks use
     (so a renderer places a point by the mark's own position and dodge), the
     value, a ``__series`` id from the shown keys (outermost first, like every
-    other composed id) and the shown key columns themselves for hover."""
+    other composed id) and the shown key columns themselves for hover.
+    ``__sample_color`` (``sample_color``, a shown key) is the point's OWN
+    colour level, beside the mark's — see ``resolved.SAMPLE_COLOR``."""
     out = pd.DataFrame(index=group.index)
     if len(x_layers) > 1:
         out[X] = _composed_key(group, x_layers, LEAF_SEPARATOR)
@@ -1489,6 +1544,8 @@ def _overlay_frame(
     out[SERIES] = _composed_key(group, present, SERIES_SEPARATOR) if present else ""
     for name in present:
         out[name] = group[name].values
+    if sample_color and sample_color in group.columns:
+        out[SAMPLE_COLOR] = group[sample_color].values
     return out.dropna(subset=[Y]).reset_index(drop=True)
 
 
@@ -1890,14 +1947,16 @@ def _factor_levels(table: LongTable, name: str) -> list[Any]:
 
 
 def _level_order(
-    table: LongTable, column: str | None, panels: list[Panel], frame_column: str
+    table: LongTable, column: str | None, frames: list[pd.DataFrame], frame_column: str
 ) -> list[Any] | None:
+    """The levels of ``column`` present across ``frames`` (the panels' mark
+    frames, or their sample frames), in the declared level order."""
     if not column:
         return None
     present: list[Any] = []
-    for panel in panels:
-        if frame_column in panel.frame.columns:
-            present.extend(panel.frame[frame_column].dropna().unique().tolist())
+    for frame in frames:
+        if frame_column in frame.columns:
+            present.extend(frame[frame_column].dropna().unique().tolist())
     unique = list(dict.fromkeys(present))
     return sorted(unique, key=lambda v: _level_rank(table, column, v))
 
@@ -2179,6 +2238,7 @@ def _labels_for(
     index_column: str | None,
     figure_key: dict[str, Any],
     dash_layers: list[str] = (),
+    sample_color: str | None = None,
 ) -> Labels:
     style = spec.style
     if style.x_label:
@@ -2213,6 +2273,7 @@ def _labels_for(
             " / ".join(table.factor(name).display for name in reversed(list(dash_layers)))
             or None
         ),
+        sample=table.factor(sample_color).display if sample_color else None,
         title=title,
     )
 

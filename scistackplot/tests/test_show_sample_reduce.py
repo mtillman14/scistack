@@ -202,6 +202,8 @@ def test_to_dict_carries_the_overlay(unbalanced):
         "join": True,
         "join_reason": payload["sample"]["join_reason"],
         "offsets": {"01": -0.2, "02": 0.2},
+        "color": None,
+        "color_order": [],
     }
     rows = payload["panels"][0]["sample"]
     assert len(rows) == 4

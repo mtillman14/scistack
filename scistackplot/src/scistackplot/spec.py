@@ -849,6 +849,14 @@ class PlotSpec:
     #: are not. ``roles.overlay_join`` is the one statement of that rule;
     #: ``True`` / ``False`` override it.
     join_sample: bool | None = None
+    #: The SHOWN key whose levels colour the overlay points (and the lines
+    #: joining them), independently of the marks' colour: bars coloured by
+    #: intervention group, one colour per subject on top. ``None`` (the
+    #: default) paints a point in its mark's colour. Inert, like a
+    #: :attr:`show_sample` entry, when the key is not shown right now;
+    #: ``roles.overlay_color`` is the one reader, ``validate`` refuses a name
+    #: that is no factor at all.
+    sample_color: str | None = None
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
@@ -1022,6 +1030,7 @@ class PlotSpec:
             index_column=raw.get("index_column"),
             show_sample=[str(n) for n in (raw.get("show_sample") or [])],
             join_sample=_optional_bool(raw.get("join_sample")),
+            sample_color=raw.get("sample_color"),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions(**(raw.get("style") or {})),

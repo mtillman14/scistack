@@ -538,6 +538,31 @@ def overlay_steps(
     return steps
 
 
+def overlay_color(spec: PlotSpec, steps: OverlaySteps | None) -> str | None:
+    """The shown key colouring the overlay (``PlotSpec.sample_color``), or
+    None when the points take their mark's colour.
+
+    The ONE statement of when the setting is active: the key must be one of
+    the overlay's shown keys right now. A setting that names a key not shown
+    (unticked, or no longer collapsed) is inert — kept in the spec, listed by
+    the capability report — the same contract as ``show_sample`` entries,
+    so the dropdown's state is never something the spec must adjudicate.
+    ``reduce``, ``codegen`` and ``capability`` all read this, never the
+    field.
+    """
+    if spec.sample_color is None or steps is None:
+        return None
+    if spec.sample_color not in steps.shown:
+        Log.debug(
+            "sample_color %r not shown right now (shown: %s), inert",
+            spec.sample_color,
+            steps.shown,
+            layer=LAYER,
+        )
+        return None
+    return spec.sample_color
+
+
 @dataclass(frozen=True)
 class OverlayJoin:
     """Whether overlay points are joined into lines, and why."""
@@ -881,6 +906,13 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
         reason = overlay_unavailable(spec, roles, effective_shape(spec, table))
         if reason is not None:
             Log.debug("show_sample %s inert: %s", spec.show_sample, reason, layer=LAYER)
+    # Same split for the overlay's own colour: a typo is refused, a key that
+    # is a factor but not shown right now is inert (`overlay_color`).
+    if spec.sample_color is not None and not table.has_factor(spec.sample_color):
+        raise RoleError(
+            f"sample_color names unknown factor {spec.sample_color!r}. "
+            f"Table factors: {table.factor_names}"
+        )
 
     # --- variants are never replicates -----------------------------------
     #

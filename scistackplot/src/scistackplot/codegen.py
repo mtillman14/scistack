@@ -28,6 +28,7 @@ from .roles import (
     complete_roles,
     fanout_keys,
     grouping_layers,
+    overlay_color,
     overlay_join,
     overlay_steps,
     overlay_unavailable,
@@ -129,6 +130,11 @@ def generate_plot_function(
         f"def {name}({', '.join(function_params(spec))}):",
         f'    """{_docstring(spec, table, roles)}"""',
         "    import matplotlib.pyplot as plt",
+        *(
+            ["    from matplotlib.lines import Line2D"]
+            if _sample_color_of(spec, table, roles, shape)
+            else []
+        ),
         *(["    import numpy as np"] if collapsing else []),
         *(
             ["    import re"]
@@ -760,6 +766,17 @@ def _overlay_of(spec, table: LongTable, roles, shape):
     return steps, overlay_join(spec, roles, table, steps)
 
 
+def _sample_color_of(spec, table: LongTable, roles, shape) -> str | None:
+    """The overlay's own colour key for the export (``roles.overlay_color``),
+    None when the points take their mark's colour — the same answer the
+    figure path gives."""
+    found = _overlay_of(spec, table, roles, shape)
+    if found is None:
+        return None
+    key = overlay_color(spec, found[0])
+    return key if key is not None and table.has_factor(key) else None
+
+
 def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list[str]:
     """``_sample``: the overlay chain restated as groupby means, mirroring the
     marks' chain emitted just below it — nested (one groupby per averaged
@@ -811,9 +828,15 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
 
 def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
     """Draw ``_sample`` on the seaborn grid: each point at its level's index
-    plus its hue's dodge slot plus its identity's offset — the arithmetic of
-    ``render.base.sample_positions`` restated in plain pandas — joined into a
-    line per identity when ``roles.overlay_join`` said so.
+    plus its OWN hue's dodge slot plus its identity's offset — the arithmetic
+    of ``render.base.sample_positions`` restated in plain pandas — joined into
+    a line per identity when ``roles.overlay_join`` said so.
+
+    Painted the way ``render.base.sample_groups`` paints: in the mark's hue
+    (one run per identity AND hue, so a line never crosses two mark colours),
+    or — with the overlay's own colour key (``roles.overlay_color``) — from a
+    ``_sample_palette`` over that key's levels, one run per identity across
+    the hues, and the key's levels appended to the grid's legend.
 
     The offset rule is restated rather than frozen (see
     ``_spaghetti_position_lines`` for why: under ITERATE the endpoint sees one
@@ -826,6 +849,7 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
         SAMPLE_EDGE_COLOR,
         SAMPLE_LINE_WIDTH,
         SAMPLE_MARKER_FRACTION,
+        SAMPLE_PALETTE,
     )
     from .spaghetti import SPAGHETTI_SPREAD
 
@@ -836,6 +860,7 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
     y = spec.y_measure
     x = _x_expression(spec, table, roles, shape)
     hue = _color_of(spec, table, roles, shape)
+    sample_color = _sample_color_of(spec, table, roles, shape)
     facets = [name for name, role in roles.items() if role is Role.FACET]
     # seaborn keys `axes_dict` by (row, col) when both are set, else by the one.
     facet_names = [facets[1], facets[0]] if len(facets) > 1 else facets[:1]
@@ -875,6 +900,31 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
                 f"_color = sns.color_palette({palette!r})[0]",
             ]
         )
+    if sample_color:
+        # The overlay's own palette (render.base.SAMPLE_PALETTE), keyed by
+        # the key's levels in the order the preview used (`_level_rank`):
+        # the declared order, a level it never named last — `_in_order`,
+        # the helper every emitted order goes through.
+        declared = _declared_levels(table, sample_color)
+        lines.extend(
+            [
+                f"# overlay colour: one per {sample_color} (independent of the marks' hue)",
+                f"_sample_levels = [str(v) for v in {_IN_ORDER}("
+                f"{_SAMPLE_FRAME}[{sample_color!r}], {declared!r})]",
+                f"_sample_cycle = {list(SAMPLE_PALETTE)!r}",
+                "_sample_palette = {lvl: _sample_cycle[i % len(_sample_cycle)] "
+                "for i, lvl in enumerate(_sample_levels)}",
+            ]
+        )
+    # Group by hue too only when a line must not cross the mark colours —
+    # with its own colour, an identity's run spans them.
+    run_keys = [_SERIES_COLUMN, *([hue] if hue and not sample_color else [])]
+    if sample_color:
+        paint = f"_sample_palette[str(_part[{sample_color!r}].iloc[0])]"
+    elif hue:
+        paint = "_palette[str(_id[1])]"
+    else:
+        paint = "_color"
     lines.extend(
         [
             "_natural = lambda s: [(0, int(c)) if c.isdigit() else (1, c) "
@@ -896,24 +946,46 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
             f"    _rows = {_SAMPLE_FRAME}",
             "    for _name, _value in zip(_facets, _key if isinstance(_key, tuple) else (_key,)):",
             "        _rows = _rows[_rows[_name].astype(str) == str(_value)]",
-            f"    for _id, _part in _rows.groupby({[_SERIES_COLUMN, *([hue] if hue else [])]!r}):",
+            f"    for _id, _part in _rows.groupby({run_keys!r}):",
             f"        _part = _part.sort_values({_X_POSITION!r})",
             "        _ax.plot(",
             f"            _part[{_X_POSITION!r}], _part[{y!r}],",
             f"            linestyle={linestyle!r}, marker='o', markersize={marker:.3f},",
             f"            markeredgecolor={SAMPLE_EDGE_COLOR!r}, markeredgewidth=0.5,",
-            (
-                f"            color=_palette[str(_id[1])], alpha={SAMPLE_ALPHA}, "
-                f"linewidth={SAMPLE_LINE_WIDTH}, zorder=3,"
-                if hue else
-                f"            color=_color, alpha={SAMPLE_ALPHA}, linewidth={SAMPLE_LINE_WIDTH}, zorder=3,"
-            ),
+            f"            color={paint}, alpha={SAMPLE_ALPHA}, "
+            f"linewidth={SAMPLE_LINE_WIDTH}, zorder=3,",
             "        )",
         ]
     )
+    if sample_color:
+        lines.extend(_sample_legend_lines(spec, sample_color, hue, linestyle))
     return lines
 
 
+def _sample_legend_lines(spec, sample_color: str, hue: str | None, linestyle: str) -> list[str]:
+    """Append the overlay's colour levels to the grid's legend, after the
+    hue entries — what ``mpl._sample_legend_handles`` draws. seaborn's own
+    legend is rebuilt with the entries merged rather than a second legend
+    added beside it, and the title names both keys (``a / b``)."""
+    from .render.base import SAMPLE_EDGE_COLOR
+
+    title = f"{hue} / {sample_color}" if hue else sample_color
+    return [
+        "# overlay legend: the marks' hue entries, then one per "
+        f"{sample_color} (render.base.shows_legend: only past one level)",
+        "if len(_sample_levels) > 1:",
+        "    _legend = g.legend",
+        "    _entries = {}",
+        "    if _legend is not None:",
+        "        _handles = getattr(_legend, 'legend_handles', None) or _legend.legendHandles",
+        "        _entries = dict(zip([t.get_text() for t in _legend.get_texts()], _handles))",
+        "        _legend.remove()",
+        "    for _lvl in _sample_levels:",
+        "        _entries[_lvl] = Line2D([], [], color=_sample_palette[_lvl], "
+        f"linestyle={linestyle!r}, marker='o', markeredgecolor={SAMPLE_EDGE_COLOR!r}, "
+        "markeredgewidth=0.5)",
+        f"    g.add_legend(legend_data=_entries, title={title!r})",
+    ]
 
 
 def _location_lines(spec: PlotSpec) -> list[str]:

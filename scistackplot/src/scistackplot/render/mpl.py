@@ -42,7 +42,11 @@ from .base import (
     shows_legend,
     shows_x_labels,
     shows_y_labels,
+    sample_groups,
     sample_hover,
+    sample_legend_levels,
+    sample_paint,
+    sample_palette_for,
     sample_positions,
     sample_series,
     x_positions,
@@ -413,11 +417,13 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     the mark it belongs to, joined into a line per identity when
     ``ResolvedPlot.sample_join`` says so.
 
-    Placement is ``base.sample_positions`` — tick index, the mark's own dodge
-    slot (as this panel's marks took them), the identity's offset — so the
-    points sit in the bar or box they were averaged into. Drawn after the
-    marks, on top; never in the legend (the marks' colours already name the
-    levels, and a point is not a level).
+    Placement is ``base.sample_positions`` — tick index, each row's own
+    mark's dodge slot (as this panel's marks took them), the identity's
+    offset — so the points sit in the bar or box they were averaged into.
+    Colour is ``base.sample_groups`` / ``sample_paint``: the mark's, or the
+    overlay's own key's (``ResolvedPlot.sample_color``), in which case a
+    line runs across the mark colours and the legend lists the levels
+    (``_sample_legend_handles``). Drawn after the marks, on top.
     """
     sample = getattr(panel, "sample", None)
     if sample is None or sample.empty or not is_categorical_x(resolved):
@@ -425,11 +431,10 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     style = resolved.spec.style
     slots = dodge_slots(panel.frame, resolved)
     size = style.marker_size * SAMPLE_MARKER_FRACTION
-    for index, (level, subset) in enumerate(color_groups(sample, resolved)):
-        color = palette_for(resolved, level, index)
-        slot = slots.get(str(level), (0, 1))
+    for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
+        color = sample_paint(resolved, level, index)
         for identity, rows in sample_series(subset, resolved):
-            positions = sample_positions(rows, resolved, slot, identity)
+            positions = sample_positions(rows, resolved, slots, identity)
             order = np.argsort(positions, kind="stable")
             values = rows[resolved.encoding.y].to_numpy(dtype=float)[order]
             if resolved.sample_join and len(rows) > 1:
@@ -456,6 +461,28 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
                     linewidths=0.5,
                     zorder=3,
                 )
+    _sample_legend_handles(ax, resolved)
+
+
+def _sample_legend_handles(ax, resolved: ResolvedPlot) -> None:
+    """Empty markers, one per overlay colour level, so `_apply_legend` lists
+    the overlay's levels after the marks' — the dash-style block's pattern.
+    Only when the overlay has its own colour: painted in the mark's colour
+    the points add nothing a legend could say."""
+    levels = sample_legend_levels(resolved)
+    if len(levels) < 2:
+        return
+    for index, level in enumerate(levels):
+        ax.plot(
+            [],
+            [],
+            color=sample_palette_for(resolved, level, index),
+            linestyle="-" if resolved.sample_join else "none",
+            marker="o",
+            markeredgecolor=SAMPLE_EDGE_COLOR,
+            markeredgewidth=0.5,
+            label=str(level),
+        )
 
 
 def _draw_heatmap(ax, frame, resolved) -> None:
@@ -602,9 +629,24 @@ def _apply_legend(fig, resolved: ResolvedPlot) -> float:
             unique.setdefault(label, handle)
     if not unique:
         return 0.0
+    # The overlay's block goes LAST, in its levels' order. matplotlib lists
+    # an axes' Line2D handles before its bar containers, so gathered as-is
+    # the subjects would precede the bars they sit on.
+    sample_labels = [str(level) for level in sample_legend_levels(resolved)]
+    if len(sample_labels) > 1:
+        unique = {
+            **{k: v for k, v in unique.items() if k not in sample_labels},
+            **{k: unique[k] for k in sample_labels if k in unique},
+        }
 
-    # One title naming both blocks when the dash styles are listed too.
-    title = " / ".join(t for t in (resolved.labels.color, resolved.labels.dash) if t) or None
+    # One title naming every block: the colours, the dash styles, and the
+    # overlay's own colour key when its levels are listed too.
+    blocks = (
+        resolved.labels.color,
+        resolved.labels.dash,
+        resolved.labels.sample if len(sample_legend_levels(resolved)) > 1 else None,
+    )
+    title = " / ".join(t for t in blocks if t) or None
     legend = fig.legend(
         unique.values(),
         unique.keys(),

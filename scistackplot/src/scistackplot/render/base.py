@@ -15,7 +15,7 @@ from typing import Any, Protocol
 import numpy as np
 import pandas as pd
 
-from ..resolved import DASH_CYCLE, SERIES, ResolvedPlot
+from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SERIES, ResolvedPlot
 
 
 class Renderer(Protocol):
@@ -286,11 +286,16 @@ def shows_legend(resolved: ResolvedPlot) -> bool:
 
     ONE rule, shared by both renderers and mirrored by the generated seaborn
     code (``codegen``): the legend exists only to tell series apart — by
-    colour, or by dash style — so a single level of each makes it pure noise:
+    colour, by dash style, or by the overlay's own colour — so a single level
+    of each makes it pure noise:
     it restates the one thing every mark on the figure already has in common,
     and it costs the panels width.
     """
-    return len(legend_levels(resolved)) > 1 or len(dash_levels(resolved)) > 1
+    return (
+        len(legend_levels(resolved)) > 1
+        or len(dash_levels(resolved)) > 1
+        or len(sample_legend_levels(resolved)) > 1
+    )
 
 
 #: A colour-blind-safe qualitative palette, used when the spec names none.
@@ -371,6 +376,72 @@ def dodge_slots(frame: pd.DataFrame, resolved: ResolvedPlot) -> dict[str, tuple[
     return {str(level): (index, len(groups)) for index, (level, _) in enumerate(groups)}
 
 
+#: The overlay's OWN palette (``PlotSpec.sample_color``): one colour per
+#: level of the shown key that colours the points, separate from the marks'
+#: :data:`DEFAULT_PALETTE` so subjects on top of intervention-group bars
+#: read as a second family. Twenty entries — a subject key has more levels
+#: than a grouping layer does; past twenty the colours repeat and
+#: ``reduce`` warns. (matplotlib's tab20, as hex.)
+SAMPLE_PALETTE = (
+    "#1f77b4",
+    "#aec7e8",
+    "#ff7f0e",
+    "#ffbb78",
+    "#2ca02c",
+    "#98df8a",
+    "#d62728",
+    "#ff9896",
+    "#9467bd",
+    "#c5b0d5",
+    "#8c564b",
+    "#c49c94",
+    "#e377c2",
+    "#f7b6d2",
+    "#7f7f7f",
+    "#c7c7c7",
+    "#bcbd22",
+    "#dbdb8d",
+    "#17becf",
+    "#9edae5",
+)
+
+
+def sample_palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
+    """The colour an overlay level carries — the same one in every panel.
+
+    Indexed by the level's position in ``ResolvedPlot.sample_color_order``,
+    never by a panel's own enumeration, for the reason :func:`palette_for`
+    gives: a subject absent from one panel must not shift every other
+    subject's colour there.
+    """
+    for position, candidate in enumerate(resolved.sample_color_order):
+        if str(candidate) == str(level):
+            return palette_color(position, SAMPLE_PALETTE)
+    return palette_color(fallback, SAMPLE_PALETTE)
+
+
+def sample_legend_levels(resolved: ResolvedPlot) -> list[Any]:
+    """The overlay's colour levels a legend would list, in drawn order —
+    empty when the overlay takes its mark's colour. Read off the panels'
+    sample frames, like :func:`legend_levels` off their mark frames, so a
+    level this figure never draws is not listed."""
+    if not resolved.sample_color:
+        return []
+    present: dict[str, Any] = {}
+    for panel in resolved.panels:
+        sample = getattr(panel, "sample", None)
+        if sample is None or SAMPLE_COLOR not in sample.columns:
+            continue
+        for value in sample[SAMPLE_COLOR].dropna().unique():
+            present.setdefault(str(value), value)
+    ordered = [
+        present[str(level)] for level in resolved.sample_color_order if str(level) in present
+    ]
+    seen = {str(level) for level in ordered}
+    ordered.extend(value for key, value in present.items() if key not in seen)
+    return ordered
+
+
 def sample_series(subset: pd.DataFrame, resolved: ResolvedPlot) -> list[tuple[Any, pd.DataFrame]]:
     """``(identity, rows)`` per overlay identity (``__series``, the shown keys
     composed) — one polyline when joined, one offset either way — or a single
@@ -381,18 +452,62 @@ def sample_series(subset: pd.DataFrame, resolved: ResolvedPlot) -> list[tuple[An
     return [(None, subset)]
 
 
+def sample_groups(
+    sample: pd.DataFrame, resolved: ResolvedPlot
+) -> list[tuple[Any, pd.DataFrame]]:
+    """How a panel's overlay rows split into runs that share one colour and
+    are joined into one line: ``(colour level, rows)``.
+
+    ONE rule, both renderers and the generated code: with the overlay
+    coloured by its own key (``ResolvedPlot.sample_color``) the rows are NOT
+    split by the marks' colour first — an identity's line runs across the
+    colour levels, from the ``pre`` slot to the ``post`` slot inside one
+    tick, and its own colour is what makes that unambiguous. Without it a
+    line crossing two mark colours would have no colour to be, so the rows
+    split per mark level as they always did and the points take the mark's
+    colour. Either way the colour level returned is the one to PAINT with;
+    the dodge slot is always the row's own (:func:`sample_positions`).
+    """
+    if resolved.sample_color and SAMPLE_COLOR in sample.columns:
+        order = [str(v) for v in resolved.sample_color_order]
+        groups = list(sample.groupby(SAMPLE_COLOR, sort=False))
+        return sorted(
+            groups,
+            key=lambda item: order.index(str(item[0])) if str(item[0]) in order else len(order),
+        )
+    return color_groups(sample, resolved)
+
+
+def sample_paint(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
+    """The colour a :func:`sample_groups` run is painted: the overlay's own
+    palette when it has one, else its mark's."""
+    if resolved.sample_color:
+        return sample_palette_for(resolved, level, fallback)
+    return palette_for(resolved, level, fallback)
+
+
 def sample_positions(
     rows: pd.DataFrame,
     resolved: ResolvedPlot,
-    slot: tuple[int, int],
+    slots: dict[str, tuple[int, int]],
     identity: Any,
 ) -> np.ndarray:
-    """x positions of overlay rows: the tick, plus the mark's dodge, plus the
-    identity's own offset inside the slot (``ResolvedPlot.sample_offsets``,
-    already scaled to the slot by ``spaghetti.overlay_offsets``)."""
+    """x positions of overlay rows: the tick, plus EACH ROW's mark's dodge
+    (its ``__color`` level's slot, as this panel's marks took them —
+    :func:`dodge_slots`), plus the identity's own offset inside the slot
+    (``ResolvedPlot.sample_offsets``, already scaled to the slot by
+    ``spaghetti.overlay_offsets``). Per row, not per run, so a line joined
+    across colour levels lands each of its points in the right bar."""
     positions, _ = x_positions(rows[resolved.encoding.x], resolved)
-    index, n_levels = slot
-    return positions + dodge_offset(index, n_levels) + resolved.sample_offsets.get(str(identity), 0.0)
+    color_column = resolved.encoding.color
+    if color_column and color_column in rows.columns:
+        dodge = np.array(
+            [dodge_offset(*slots.get(str(level), (0, 1))) for level in rows[color_column]],
+            dtype=float,
+        )
+    else:
+        dodge = np.full(len(rows), dodge_offset(*slots.get("None", (0, 1))), dtype=float)
+    return positions + dodge + resolved.sample_offsets.get(str(identity), 0.0)
 
 
 def sample_hover(rows: pd.DataFrame, resolved: ResolvedPlot) -> list[str]:

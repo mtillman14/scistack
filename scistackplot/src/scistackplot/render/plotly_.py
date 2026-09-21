@@ -45,7 +45,10 @@ from .base import (
     shows_legend,
     shows_x_labels,
     shows_y_labels,
+    sample_groups,
     sample_hover,
+    sample_legend_levels,
+    sample_paint,
     sample_positions,
     sample_series,
     x_positions,
@@ -74,7 +77,7 @@ def render(resolved: ResolvedPlot) -> dict:
         layout: dict[str, Any] = {
             "showlegend": legend_on,
             "legend": {
-                "title": {"text": resolved.labels.color or ""},
+                "title": {"text": _legend_title(resolved)},
                 # Stated, not defaulted: outside the plotting area on the right
                 # and vertically centred, which is exactly where the matplotlib
                 # export puts it. The margin below reserves the room it sits in
@@ -165,7 +168,7 @@ def render(resolved: ResolvedPlot) -> dict:
                     panel.frame, resolved, x_axis, y_axis, seen_legend, legend_on
                 )
             )
-            traces.extend(_sample_traces(panel, resolved, x_axis, y_axis))
+            traces.extend(_sample_traces(panel, resolved, x_axis, y_axis, seen_legend, legend_on))
             _add_axes(
                 layout,
                 resolved,
@@ -421,37 +424,68 @@ def _level_hover(subset, resolved: ResolvedPlot, base: dict) -> dict:
     }
 
 
-def _sample_traces(panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> list[dict]:
+def _legend_title(resolved: ResolvedPlot) -> str:
+    """The marks' colour key, and the overlay's own colour key when its
+    levels are listed too — the same ``a / b`` title ``mpl._apply_legend``
+    writes."""
+    blocks = (
+        resolved.labels.color,
+        resolved.labels.sample if len(sample_legend_levels(resolved)) > 1 else None,
+    )
+    return " / ".join(t for t in blocks if t)
+
+
+def _sample_traces(
+    panel,
+    resolved: ResolvedPlot,
+    x_axis: str,
+    y_axis: str,
+    seen_legend: set[str] | None = None,
+    legend_on: bool = True,
+) -> list[dict]:
     """The "Show sample" overlay for one panel: markers, or lines+markers when
     joined, placed by ``base.sample_positions`` inside the marks' dodge slots
-    (the same arithmetic ``mpl._draw_sample`` uses). Never in the legend;
-    ``legendgroup`` ties each point set to its colour level so hiding a level
-    from the legend hides its points too.
+    (the same arithmetic ``mpl._draw_sample`` uses).
+
+    Painted by ``base.sample_groups`` / ``sample_paint``. In the mark's
+    colour the points are never in the legend, and ``legendgroup`` ties each
+    point set to its colour level so hiding a level hides its points too.
+    With the overlay's own colour (``ResolvedPlot.sample_color``) each level
+    gets ONE legend entry (the first trace that draws it, figure-wide via
+    ``seen_legend``) and its own ``sample:`` legend group, so clicking a
+    subject hides that subject's points and lines in every panel.
     """
     sample = getattr(panel, "sample", None)
     if sample is None or sample.empty or not _positional_x(resolved):
         return []
+    seen = seen_legend if seen_legend is not None else set()
+    own_color = bool(resolved.sample_color)
     slots = dodge_slots(panel.frame, resolved)
     size = 8.0 * float(np.sqrt(SAMPLE_MARKER_FRACTION))  # the marks draw at 8
     traces: list[dict] = []
-    for index, (level, subset) in enumerate(color_groups(sample, resolved)):
-        color = palette_for(resolved, level, index)
+    for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
+        color = sample_paint(resolved, level, index)
         label = str(level) if level is not None else resolved.labels.y
-        slot = slots.get(str(level), (0, 1))
+        legend_group = f"sample:{label}" if own_color else label
         for identity, rows in sample_series(subset, resolved):
-            positions = sample_positions(rows, resolved, slot, identity)
+            positions = sample_positions(rows, resolved, slots, identity)
             order = np.argsort(positions, kind="stable")
             hover = sample_hover(rows, resolved)
             levels = [
                 str(v).replace(LEAF_SEPARATOR, " · ") for v in rows[resolved.encoding.x].to_numpy()
             ]
+            show_legend = own_color and legend_on and legend_group not in seen
+            if show_legend:
+                seen.add(legend_group)
             traces.append(
                 {
                     "type": "scatter",
                     "mode": "lines+markers" if resolved.sample_join and len(rows) > 1 else "markers",
-                    "name": str(identity) if identity is not None else label,
-                    "legendgroup": label,
-                    "showlegend": False,
+                    "name": label if own_color else (str(identity) if identity is not None else label),
+                    "legendgroup": legend_group,
+                    "showlegend": show_legend,
+                    # After every mark entry whatever panel first drew it.
+                    "legendrank": 2000,
                     "xaxis": x_axis,
                     "yaxis": y_axis,
                     "x": [None if np.isnan(v) else float(v) for v in positions[order]],
