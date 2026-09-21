@@ -20,8 +20,9 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
-from scistack_gui.api import ws
+from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.db import get_db_path
 
 logger = logging.getLogger(__name__)
