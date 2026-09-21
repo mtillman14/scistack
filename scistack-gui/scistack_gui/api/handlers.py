@@ -222,6 +222,12 @@ def install_routes(router: APIRouter, handlers: Iterable[Handler]) -> None:
 
             return await run_in_threadpool(_run)
 
+        # A real class, not the string this module's `from __future__ import
+        # annotations` would leave: FastAPI resolves annotations against the
+        # endpoint's globals, where `Request` (imported above, locally) is not
+        # — and an unresolved "Request" became a required QUERY parameter named
+        # `request`, so every route answered 422 (first run, 2026-09-21).
+        endpoint.__annotations__ = {"request": Request}
         endpoint.__name__ = h.name
         endpoint.__doc__ = h.call.__doc__
         return endpoint

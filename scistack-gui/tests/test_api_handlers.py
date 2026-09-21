@@ -52,7 +52,8 @@ def _template_to_path(template: str) -> str:
                         break
                 j += 1
             block = template[i + 2 : j]
-            if "?" not in block:
+            # `??` is a JS default, not a query string
+            if "?" not in block.replace("??", ""):
                 m = re.search(r"\bp\.(\w+)", block)
                 out.append("{" + (m.group(1) if m else "?") + "}")
             i = j + 1
