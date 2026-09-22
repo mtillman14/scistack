@@ -3,6 +3,16 @@ JSON-RPC over stdin/stdout server for the VS Code extension.
 
 Usage:
     python -m scistack_gui.server --db experiment.duckdb [--module pipeline.py]
+    python -m scistack_gui.server --plot-only [--log-file path]
+
+One process per open database: the GUI's state below this module is all
+process-global (``db._db``, ``registry._functions``, ``scifor.set_schema``),
+so the VS Code extension opens a second database by spawning a second server
+rather than by teaching this one to hold two (see
+``extension/src/session.ts``).
+
+``--plot-only`` is the exception that has no database at all: it serves the
+plot methods that read a CSV file, for Explorer ▸ Plot CSV.
 
 Protocol:
     - Reads newline-delimited JSON-RPC requests from stdin
@@ -93,10 +103,26 @@ def _send_progress(message: str) -> None:
 # frontend's route map is checked against them (tests/test_api_handlers.py).
 # Nothing about a method is written here.
 
-from scistack_gui.api.handlers import rpc_methods, self_managed  # noqa: E402
+from scistack_gui.api.handlers import (  # noqa: E402
+    rpc_methods,
+    self_managed,
+    without_database,
+)
 from scistack_gui.api.tables import ALL_HANDLERS  # noqa: E402
 
 METHODS = rpc_methods(ALL_HANDLERS)
+
+#: The methods a ``--plot-only`` server can serve — see
+#: :func:`~scistack_gui.api.handlers.without_database`. Every other method is
+#: refused by name, up front, so "there is no database in this session" is
+#: what the caller is told instead of whatever a service happens to raise
+#: three layers down when handed ``None``.
+WITHOUT_DB_METHODS = without_database(ALL_HANDLERS)
+
+#: Set by :func:`_run_plot_only`. Module state rather than a parameter
+#: because :func:`_handle_request` is a thread target reached from the
+#: dispatch loop, and the mode is a property of the whole process.
+_PLOT_ONLY = False
 
 #: Methods that acquire the DuckDB connection themselves, for as long as they
 #: actually need it, instead of letting :func:`_handle_request` hold it across
@@ -260,6 +286,21 @@ def _handle_request(req: dict) -> None:
             _respond_error(req_id, -32601, f"Method not found: {method}")
         return
 
+    if _PLOT_ONLY and method not in WITHOUT_DB_METHODS:
+        # A plot tab opened on a CSV has no project and no database behind
+        # it. Say that, rather than letting the call reach `get_db()` and
+        # come back as "Database not initialised. Call init_db() first.",
+        # which reads like a bug in a session that never had one.
+        logger.info("[plot-only] refused %s — this session has no database", method)
+        if req_id is not None:
+            _respond_error(
+                req_id,
+                -32000,
+                f"'{method}' needs a database. This plot tab was opened on a "
+                f"file, not a project — open a pipeline to use it.",
+            )
+        return
+
     summary = _summarize_params(params)
     Log.debug(f"RPC >> {method}({summary})")
     t0 = time.monotonic()
@@ -349,10 +390,113 @@ def _handle_request(req: dict) -> None:
             )
 
 
+def _fatal(message: str) -> None:
+    """Report a startup failure the way the extension host expects, and exit.
+
+    The extension's readiness handshake listens for an ``error``
+    notification; anything written to stderr alone shows up only as a
+    non-zero exit code with no cause (see ``gui-extension-startup-path.md``).
+    """
+    _send({"jsonrpc": "2.0", "method": "error", "params": {"message": message}})
+    sys.exit(1)
+
+
+def _serve_stdin() -> None:
+    """Read one JSON-RPC request per line from stdin until it closes.
+
+    Each request is handled in its own thread so a long call (``start_run``,
+    a figure save) doesn't stop the loop reading the next one.
+    """
+    logger.info("Server ready, waiting for requests on stdin...")
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError as e:
+            logger.warning("Invalid JSON on stdin: %s", e)
+            continue
+        threading.Thread(target=_handle_request, args=(req,), daemon=True).start()
+
+    logger.info("stdin closed, shutting down.")
+
+
+def _run_plot_only(t0: float, log_file: "Path | None") -> None:
+    """Serve CSV plotting with no database and no project.
+
+    Right-click ▸ Plot CSV needs neither: ``plot_service.get_source`` builds
+    a ``scistackplot`` ``CsvSource`` from the path, and every plot entry
+    point is written as ``db_connection(..., needed=not csv_path)`` so the
+    DuckDB connection is never asked for. What used to make it need a
+    pipeline anyway was startup, not plotting — ``--db`` was required — so a
+    CSV tab had to borrow an open project's server and died with it.
+
+    Everything the database path does here is skipped: no project-file init,
+    no code discovery, no MATLAB registry, no ``configure_database``. The
+    startup that remains is importing this module.
+    """
+    global _PLOT_ONLY
+    _PLOT_ONLY = True
+
+    if log_file is not None:
+        # No database means no `scidb.log` beside one, so the caller says
+        # where. Without a path the file sink stays off and stderr — which
+        # the extension forwards to its Output Channel at DEBUG — is the
+        # whole record.
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        _Log.set_path(str(log_file))
+
+    from scidb.log import Log
+
+    Log.bridge_python_logging()
+
+    from scistack_gui.notify import enable
+
+    enable()
+
+    logger.info(
+        "[startup] plot-only server ready in %.2fs — no database, %d method(s) served",
+        time.monotonic() - t0,
+        len(WITHOUT_DB_METHODS),
+    )
+    _send(
+        {
+            "jsonrpc": "2.0",
+            "method": "ready",
+            # The extension prints these; name the mode rather than leaving
+            # an empty database name to be read as a failed open.
+            "params": {"db_name": "(no database)", "schema_keys": [], "db_loaded": False},
+        }
+    )
+    _serve_stdin()
+
+
 def main():
     t0 = time.monotonic()
     parser = argparse.ArgumentParser(prog="scistack-gui-server")
-    parser.add_argument("--db", type=Path, required=True, help="Path to .duckdb file")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Path to .duckdb file. Required unless --plot-only.",
+    )
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="Start with NO database and NO project: serve only the plot "
+        "methods that work from a CSV file (Explorer -> Plot CSV). Skips "
+        "project-file init, code discovery and configure_database.",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="Where the file log sink writes. Defaults to scidb.log beside "
+        "the database; a plot-only server has no database to sit beside, so "
+        "the caller supplies a path (the extension uses its own storage "
+        "rather than scattering logs into the user's data folders).",
+    )
     parser.add_argument(
         "--module",
         "-m",
@@ -386,6 +530,14 @@ def main():
         "resort, which is usually a datasets folder.",
     )
     args = parser.parse_args()
+
+    if args.plot_only:
+        if args.db is not None:
+            _fatal("--plot-only takes no --db: it is the mode that has none.")
+        _run_plot_only(t0, args.log_file)
+        return
+    if args.db is None:
+        _fatal("--db is required (or pass --plot-only to start without one).")
 
     # This process drops the DuckDB lock between requests (see the dispatch
     # loop below and close_initial_connection). Declaring it lets db.py's
@@ -440,7 +592,11 @@ def main():
     # so the later configure_database() call is a no-op.
     from scidb.log import attach_log_file
 
-    attach_log_file(db_path)
+    if args.log_file is not None:
+        args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        _Log.set_path(str(args.log_file))
+    else:
+        attach_log_file(db_path)
     logger.info(
         "[startup] log file attached: db=%s create_new=%s — discovery follows",
         db_path,
@@ -675,23 +831,7 @@ def main():
     close_initial_connection()
     logger.info("DB connection released after startup — MATLAB can now access the file")
 
-    # Main request loop — read one JSON-RPC request per line from stdin
-    logger.info("Server ready, waiting for requests on stdin...")
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except json.JSONDecodeError as e:
-            logger.warning("Invalid JSON on stdin: %s", e)
-            continue
-
-        # Handle each request in a thread so long-running calls (like start_run)
-        # don't block the main loop from reading the next request.
-        threading.Thread(target=_handle_request, args=(req,), daemon=True).start()
-
-    logger.info("stdin closed, shutting down.")
+    _serve_stdin()
 
 
 if __name__ == "__main__":

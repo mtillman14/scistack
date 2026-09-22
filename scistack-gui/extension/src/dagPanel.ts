@@ -10,12 +10,15 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { PythonProcess } from './pythonProcess';
+import type { Session } from './session';
+import { LogSink, sessionSlug } from './sessionCore';
 import { runInMatlabTerminal, isMatlabExtensionAvailable, isMatlabTerminalOpen } from './matlabTerminal';
 import { MatlabRunTracker } from './matlabRunTracker';
-import { needsMatlabConnectionPrompt } from './matlabConnectionGate';
+import { matlabHolder, needsMatlabConnectionPrompt } from './matlabConnectionGate';
 
-const DEBUG_SESSION_NAME = 'Attach to scistack-gui server';
+// One debug session per database: `findExistingDebugSession` matches by
+// name, so a shared name would let one canvas adopt the other's debugger.
+const DEBUG_SESSION_BASE = 'Attach to scistack-gui server';
 
 export class DagPanel {
   private panel: vscode.WebviewPanel;
@@ -23,9 +26,10 @@ export class DagPanel {
   private disposeCallbacks: (() => void)[] = [];
   private debugSession: vscode.DebugSession | undefined;
   /**
-   * Which MATLAB runs currently own the DuckDB file lock. Shared with
-   * `extension.ts`'s DB file-watcher, which must not refresh the DAG while
-   * MATLAB has the database — see MatlabRunTracker.
+   * Which MATLAB runs currently own the DuckDB file lock. Shared with this
+   * session's DB file-watcher, which must not refresh the DAG while MATLAB
+   * has the database — see MatlabRunTracker. Per panel, i.e. per database:
+   * a MATLAB run against one database must not defer the other's refreshes.
    */
   readonly matlabRuns = new MatlabRunTracker();
 
@@ -39,14 +43,25 @@ export class DagPanel {
     return this.panel.viewColumn;
   }
 
+  /** Called when this panel gains or loses focus — see `onDidChangeActive`. */
+  private activeCallbacks: ((active: boolean) => void)[] = [];
+
   constructor(
     private context: vscode.ExtensionContext,
-    private pythonProcess: PythonProcess,
-    private outputChannel: vscode.OutputChannel,
+    /**
+     * The database this canvas shows. Read through, never copied: the
+     * session's `python` is replaced by a restart, and a panel holding its
+     * own reference would keep writing to the old process's destroyed stdin.
+     */
+    private session: Session,
+    private outputChannel: LogSink,
   ) {
     this.panel = vscode.window.createWebviewPanel(
       'scistack.dag',
-      'SciStack Pipeline',
+      // The database is in the tab title because there can be several: with
+      // two canvases both called "SciStack Pipeline" the tab bar says
+      // nothing about which is which.
+      `SciStack — ${session.label}`,
       vscode.ViewColumn.One,
       {
         enableScripts: true,
@@ -58,6 +73,16 @@ export class DagPanel {
     );
 
     this.panel.webview.html = this.getHtml();
+
+    // Which canvas the user is looking at decides which database a command
+    // from the Command Palette or the status bar means.
+    this.panel.onDidChangeViewState(
+      (e) => {
+        for (const cb of this.activeCallbacks) cb(e.webviewPanel.active);
+      },
+      undefined,
+      this.disposables,
+    );
 
     // Forward messages from Webview → Python (or handle host-side methods).
     this.panel.webview.onDidReceiveMessage(
@@ -81,10 +106,12 @@ export class DagPanel {
           // the webview cannot create one, and the modal it used to show made
           // the canvas unreachable while a figure was open.
           try {
-            await vscode.commands.executeCommand(
-              'scistack.openPlotPanel',
-              (msg.params ?? {}) as Record<string, unknown>,
-            );
+            await vscode.commands.executeCommand('scistack.openPlotPanel', {
+              ...((msg.params ?? {}) as Record<string, unknown>),
+              // Name the database outright. A plot opened from THIS canvas
+              // must read THIS database, whatever tab was focused last.
+              sessionId: this.session.id,
+            });
             this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
           } catch (err) {
             this.panel.webview.postMessage({
@@ -162,7 +189,7 @@ export class DagPanel {
             await this.ensureDebugAttached();
           }
           try {
-            const result = (await this.pythonProcess.request(
+            const result = (await this.session.python.request(
               method,
               params,
             )) as { run_id: string; host_execution_required?: boolean; language?: string };
@@ -189,7 +216,7 @@ export class DagPanel {
         // terminal dispatch).
         if (method === 'start_pipeline_run') {
           try {
-            const result = (await this.pythonProcess.request(
+            const result = (await this.session.python.request(
               method,
               (msg.params ?? {}) as Record<string, unknown>,
             )) as { run_id: string; host_execution_required?: boolean; language?: string };
@@ -209,7 +236,7 @@ export class DagPanel {
           return;
         }
         try {
-          const result = await this.pythonProcess.request(
+          const result = await this.session.python.request(
             method,
             (msg.params ?? {}) as Record<string, unknown>,
           );
@@ -344,6 +371,69 @@ export class DagPanel {
   }
 
   /**
+   * Refuse a MATLAB run while another database owns the engine.
+   *
+   * There is one MATLAB process per VS Code window, and a SciStack run
+   * points it at one database with `configure_database` before doing
+   * anything else — so two sessions dispatching at once do not run in
+   * parallel. The second script repoints the engine mid-run and the first
+   * run's remaining `for_each` calls write into the other project's
+   * database. Both writes are well-formed, so nothing downstream can
+   * detect it; the only place to stop it is before the script is generated.
+   *
+   * Returns true when the caller must stop (having told the user which
+   * database to wait for). The decision itself is
+   * `matlabConnectionGate.matlabHolder`, which is unit-tested.
+   *
+   * **Only the shared engine is gated.** MATLAB is not one process per
+   * window in general — `matlab_sidecar._sidecar` is a *process* singleton
+   * and every session has its own Python server, so every session already
+   * has its own sidecar MATLAB. Two databases running through sidecars are
+   * as independent as two Python runs and are never blocked here. What IS
+   * shared is the MathWorks extension's terminal: it owns one MATLAB per
+   * VS Code window, which is its design, not ours. Hence
+   * `MatlabRunTracker.sharedEngineActive` rather than `isActive`.
+   *
+   * **Coverage, for the tier that is gated.** `handleMatlabRun` calls
+   * `finish(true)` as soon as a terminal-tier script is sent, because
+   * nothing tells the extension when a MATLAB *terminal* run ends. So two
+   * Run clicks in quick succession are caught; clicking Run in database B
+   * ten seconds into a two-minute terminal run in A is not, and B's
+   * `configure_database` will repoint the engine under A. The real fix is
+   * run markers written by MATLAB itself — Stage 2 of
+   * `.claude/plan-matlab-terminal-run-tracking.md`, still deferred. A user
+   * who needs genuinely parallel MATLAB runs today can have them: that is
+   * what the sidecar tier already is.
+   *
+   * The separate half of this problem — two sessions writing one temp
+   * script file — is fixed unconditionally by the per-session filename
+   * (`sessionCore.sessionSlug`), which needs no tracking at all.
+   */
+  private async refuseIfMatlabBusyElsewhere(): Promise<boolean> {
+    const holder = matlabHolder(
+      this.session.manager.everything().map((s) => ({
+        id: s.id,
+        label: s.label,
+        // The SHARED engine only — a sidecar run is this session's own
+        // MATLAB process and blocks nobody.
+        matlabBusy: s.dagPanel?.matlabRuns.sharedEngineActive ?? false,
+      })),
+      this.session.id,
+    );
+    if (!holder) return false;
+
+    const message =
+      `SciStack: MATLAB is running ${holder} right now. ` +
+      `One MATLAB session can only be pointed at one database at a time — ` +
+      `wait for that run to finish, then click Run again.`;
+    this.outputChannel.appendLine(
+      `refuseIfMatlabBusyElsewhere: ${this.session.label} blocked — MATLAB is held by ${holder}`,
+    );
+    await vscode.window.showWarningMessage(message);
+    return true;
+  }
+
+  /**
    * Stage 4 fallback ladder for an already-generated MATLAB command:
    * MathWorks terminal (Tier 2 — real breakpoint debugging) -> standalone
    * sidecar (Tier 3 — Python-driven, real run_output/run_done via the
@@ -362,8 +452,15 @@ export class DagPanel {
     runId: string | undefined,
     warnings: string[] | undefined,
   ): Promise<'terminal' | 'sidecar' | 'clipboard'> {
-    const sent = await runInMatlabTerminal(command, this.outputChannel);
+    const sent = await runInMatlabTerminal(
+      command,
+      this.outputChannel,
+      sessionSlug(this.session.id),
+    );
     if (sent) {
+      // The window's one MathWorks MATLAB is now this database's, as far as
+      // anything here can tell — see MatlabRunTracker.noteSharedEngine.
+      if (runId) this.matlabRuns.noteSharedEngine(runId);
       this.outputChannel.appendLine('dispatchMatlabCommand: sent to MATLAB terminal');
       vscode.window.showInformationMessage('Running in MATLAB terminal...');
       return 'terminal';
@@ -371,7 +468,7 @@ export class DagPanel {
 
     if (runId) {
       try {
-        const sidecarResult = await this.pythonProcess.request(
+        const sidecarResult = await this.session.python.request(
           'start_matlab_sidecar_run',
           { command, run_id: runId, warnings: warnings ?? [] },
         ) as { run_id: string; sidecar_available: boolean };
@@ -394,6 +491,9 @@ export class DagPanel {
       }
     }
 
+    // Destined for the same shared MATLAB the terminal tier uses — the
+    // user pastes it there — so it counts as occupying it.
+    if (runId) this.matlabRuns.noteSharedEngine(runId);
     await vscode.env.clipboard.writeText(command);
     this.outputChannel.appendLine(
       'dispatchMatlabCommand: no MATLAB terminal or sidecar available, copied to clipboard',
@@ -433,10 +533,14 @@ export class DagPanel {
       finish(false, true);
       return;
     }
+    if (await this.refuseIfMatlabBusyElsewhere()) {
+      finish(false, true);
+      return;
+    }
 
     this.beginMatlabRun(runId);
     try {
-      const result = await this.pythonProcess.request(
+      const result = await this.session.python.request(
         'generate_matlab_command',
         params,
       ) as { command: string };
@@ -522,10 +626,15 @@ export class DagPanel {
       finish(false, true);
       return;
     }
+    if (await this.refuseIfMatlabBusyElsewhere()) {
+      emit('MATLAB is busy with another database — wait for that run to finish.\n');
+      finish(false, true);
+      return;
+    }
 
     this.beginMatlabRun(runId);
     try {
-      const result = await this.pythonProcess.request(
+      const result = await this.session.python.request(
         'generate_matlab_pipeline_command',
         params,
       ) as { command: string; warnings?: string[] };
@@ -561,14 +670,6 @@ export class DagPanel {
   }
 
   /**
-   * Update the PythonProcess reference after a restart, so requests from the
-   * webview are routed to the new process instead of the killed one.
-   */
-  updatePythonProcess(proc: PythonProcess): void {
-    this.pythonProcess = proc;
-  }
-
-  /**
    * Post a notification message to the Webview (from Python push notifications).
    */
   postMessage(msg: Record<string, unknown>): void {
@@ -593,10 +694,14 @@ export class DagPanel {
       return;
     }
 
-    const port = cfg.get<number>('debugPort', 5678);
-    const folder = vscode.workspace.workspaceFolders?.[0];
+    // This session's own port, not the configured base: two servers cannot
+    // share one debugpy listener, so SessionManager gives each its own.
+    const port = this.session.debugPort ?? cfg.get<number>('debugPort', 5678);
+    const folder = this.session.projectRoot
+      ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.session.projectRoot))
+      : vscode.workspace.workspaceFolders?.[0];
     const started = await vscode.debug.startDebugging(folder, {
-      name: DEBUG_SESSION_NAME,
+      name: this.debugSessionName(),
       type: 'debugpy',
       request: 'attach',
       connect: { host: '127.0.0.1', port },
@@ -627,15 +732,29 @@ export class DagPanel {
 
   private findExistingDebugSession(): vscode.DebugSession | undefined {
     const active = vscode.debug.activeDebugSession;
-    if (active && active.name === DEBUG_SESSION_NAME) return active;
+    if (active && active.name === this.debugSessionName()) return active;
     return undefined;
+  }
+
+  /** This canvas's debug session name — see DEBUG_SESSION_BASE. */
+  private debugSessionName(): string {
+    return `${DEBUG_SESSION_BASE} (${this.session.label})`;
   }
 
   /**
    * Reveal the panel if it's hidden.
+   *
+   * In its own column, not ViewColumn.One: with several canvases open the
+   * user may well have dragged one into a split, and revealing it into
+   * column one would move their tab for them.
    */
   reveal(): void {
-    this.panel.reveal(vscode.ViewColumn.One);
+    this.panel.reveal(this.panel.viewColumn ?? vscode.ViewColumn.One);
+  }
+
+  /** Close this canvas. Its dispose callbacks close the session with it. */
+  dispose(): void {
+    this.panel.dispose();
   }
 
   /**
@@ -643,6 +762,17 @@ export class DagPanel {
    */
   onDidDispose(callback: () => void): void {
     this.disposeCallbacks.push(callback);
+  }
+
+  /**
+   * Register a callback for when this panel gains or loses focus.
+   *
+   * This is how a Command Palette invocation finds its database: with two
+   * canvases open, "the one you are looking at" is the only sensible
+   * default, and nothing else in VS Code reports it for a webview.
+   */
+  onDidChangeActive(callback: (active: boolean) => void): void {
+    this.activeCallbacks.push(callback);
   }
 
   private getHtml(): string {
@@ -660,6 +790,19 @@ export class DagPanel {
     // CSP nonce for inline scripts
     const nonce = getNonce();
 
+    // Which database this canvas belongs to, injected rather than fetched.
+    // The header used to learn the name from a single `get_info` on mount,
+    // so a panel that was re-pointed at another database kept showing the
+    // old filename (reported 2026-09-22). One canvas per database makes that
+    // impossible, and reading the name from here makes it impossible twice
+    // over — plus there is no "loading…" flash. JSON.stringify, not
+    // interpolation: a path must not be able to break out of the script tag.
+    const session = JSON.stringify({
+      id: this.session.id,
+      dbName: this.session.label,
+      dbPath: this.session.dbPath,
+    });
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -672,7 +815,7 @@ export class DagPanel {
                  img-src ${webview.cspSource} data:;
                  font-src ${webview.cspSource};" />
   <link rel="stylesheet" href="${styleUri}" />
-  <title>SciStack Pipeline</title>
+  <title>SciStack — ${this.session.label}</title>
   <style>
     html, body, #root {
       margin: 0;
@@ -685,6 +828,7 @@ export class DagPanel {
 </head>
 <body>
   <div id="root"></div>
+  <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

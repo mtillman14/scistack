@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-cartesian-dist-min'
 import { callBackend, isVSCodeMode } from '../../api'
+import { injectedDbName } from '../../session'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import VariantDagPopup from './VariantDagPopup'
 import GroupingDagPopup from './GroupingDagPopup'
@@ -732,6 +733,11 @@ export default function PlotStudio({
   // A CSV has no variable type; name the file instead.
   const title = describe?.variable ?? variable ?? (csvPath ? csvPath.split('/').pop() ?? 'CSV' : '')
 
+  // Which database this figure is drawn from. A CSV tab is already named by
+  // its file, and the browser build has one database per process, so both
+  // leave this undefined rather than badge something that says nothing.
+  const sourceName = csvPath ? undefined : injectedDbName() || undefined
+
   // Plotly needs a definite pixel height, so measure the canvas rather than
   // hardcoding one: a maximized panel should give the figure the extra space.
   //
@@ -784,10 +790,11 @@ export default function PlotStudio({
       })
       .catch(err => !cancelled && setLoadError((err as Error).message))
     return () => { cancelled = true }
-    // `initialLocation` is deliberately NOT a dependency: it is what the panel
-    // OPENED on, and re-running describe because it changed would throw away
-    // every edit made since. PlotRoot remounts on retarget, which is how a
-    // second location from the canvas arrives.
+    // `initialLocation` is deliberately NOT a dependency: it is what the
+    // panel OPENED on, and re-running describe because it changed would
+    // throw away every edit made since. It never does change — every plot
+    // opens its own tab, so a second location from the canvas arrives as a
+    // new webview rather than as a new prop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variable, sourceParams])
 
@@ -798,7 +805,9 @@ export default function PlotStudio({
   // is a no-op, and a CSV source has no database to state anything in.
   const variantSetsJson = JSON.stringify(spec?.variant_sets ?? null)
   const openedVariantSets = useRef<string | null>(null)
-  // A retarget opens on another variable's stored pins: start the baseline over.
+  // Kept keyed on `variable` for the browser build, where this component
+  // is a modal that really can be reopened on another variable in place. In
+  // the extension each plot is its own tab, so this fires once.
   useEffect(() => { openedVariantSets.current = null }, [variable])
   useEffect(() => {
     if (!spec || !variable || csvPath) return
@@ -1800,14 +1809,14 @@ export default function PlotStudio({
   // --- render -------------------------------------------------------------
   if (loadError) {
     return (
-      <Shell variable={title} shape={shapeBadge(capabilities)} onClose={onClose} embedded={embedded}>
+      <Shell variable={title} shape={shapeBadge(capabilities)} source={sourceName} onClose={onClose} embedded={embedded}>
         <div style={styles.error}>Could not open the plot panel: {loadError}</div>
       </Shell>
     )
   }
   if (!describe) {
     return (
-      <Shell variable={title} shape={shapeBadge(capabilities)} onClose={onClose} embedded={embedded}>
+      <Shell variable={title} shape={shapeBadge(capabilities)} source={sourceName} onClose={onClose} embedded={embedded}>
         <div style={styles.note}>Loading…</div>
       </Shell>
     )
@@ -1815,7 +1824,7 @@ export default function PlotStudio({
   if (describe.eligible === false) {
     // The empty state the design doc insists on: say why, never draw blank axes.
     return (
-      <Shell variable={title} shape={shapeBadge(capabilities)} onClose={onClose} embedded={embedded}>
+      <Shell variable={title} shape={shapeBadge(capabilities)} source={sourceName} onClose={onClose} embedded={embedded}>
         <div style={styles.note}>{describe.reason}</div>
       </Shell>
     )
@@ -1838,6 +1847,7 @@ export default function PlotStudio({
       // The measure's shape used to head its own sidebar section, which spent a
       // whole block restating the title. It belongs to the title.
       shape={shapeBadge(capabilities)}
+      source={sourceName}
       onClose={onClose}
       embedded={embedded}
       panelRef={panelRef}
@@ -2455,9 +2465,16 @@ export default function PlotStudio({
             <button type="button" style={styles.button} onClick={handleExport}>
               Export code
             </button>
-            <button type="button" style={styles.primaryButton} onClick={handleAddToPipeline}>
-              Add to pipeline
-            </button>
+            {/* A CSV tab has no project to write an endpoint into — and on
+                the database-less plot-only server the call is refused
+                outright, so offering the button would only produce an
+                error. "Export code" stays: plot_export is db_optional and
+                works from a CSV. */}
+            {!csvPath && (
+              <button type="button" style={styles.primaryButton} onClick={handleAddToPipeline}>
+                Add to pipeline
+              </button>
+            )}
           </div>
           {dataChooser && capabilities?.data_export?.available && (
             <div style={styles.dataChooser}>
@@ -2747,6 +2764,11 @@ interface ShellProps {
   variable: string
   /** The measure's shape (`scalar`, `series_1d`, …), badged beside the title. */
   shape?: string
+  /**
+   * Which database this figure is drawn from, badged after the shape.
+   * Undefined for a CSV tab, whose filename is already the title.
+   */
+  source?: string
   onClose: () => void
   embedded?: boolean
   /** The controls rail. It sits under the header, in the same narrow column. */
@@ -2761,6 +2783,7 @@ interface ShellProps {
 function Shell({
   variable,
   shape,
+  source,
   onClose,
   embedded,
   sidebar,
@@ -2794,9 +2817,17 @@ function Shell({
               {/* A collapsed rail is only as wide as its buttons, so the title
                   would be the one thing keeping it wide. */}
               {!controlsHidden && (
-                <span style={styles.title} title={`Plot — ${variable}`}>
+                <span
+                  style={styles.title}
+                  title={source ? `Plot — ${variable} · ${source}` : `Plot — ${variable}`}
+                >
                   Plot — {variable}
                   {shape && <span style={styles.shapeTag}>{shape}</span>}
+                  {/* Which database this figure is drawn from. With plot tabs
+                      open across two databases, the variable name alone does
+                      not say which one you are looking at — and a figure you
+                      cannot attribute is a figure you cannot use. */}
+                  {source && <span style={styles.sourceTag}>{source}</span>}
                 </span>
               )}
             </div>
@@ -3793,6 +3824,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderTop: '1px solid #333', paddingTop: 4,
   },
   shapeTag: { fontSize: 9, color: '#67e8f9', marginLeft: 6 },
+  sourceTag: { fontSize: 9, color: '#8b8ba7', marginLeft: 6 },
   readonlyValue: { fontSize: 12, fontFamily: 'monospace', color: '#eee' },
   select: {
     background: '#22223a', color: '#ddd', border: '1px solid #3a3a5a',

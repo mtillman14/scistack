@@ -88,3 +88,55 @@ test('run_done for a Python run is not mistaken for a MATLAB one', () => {
   assert.equal(tracker.end('matlab-run'), true);
   assert.equal(fired, 1);
 });
+
+// --- shared engine vs this session's own MATLAB ---------------------------
+// MATLAB is NOT one process per window. `matlab_sidecar._sidecar` is a
+// process singleton and every session has its own Python server, so every
+// session already has its own sidecar MATLAB — two databases running through
+// sidecars are as independent as two Python runs. Only the MathWorks
+// terminal is shared (one MATLAB per VS Code window, its design).
+//
+// The bug this locks down: gating on `isActive` was exactly backwards. A
+// sidecar run holds the mark for its whole duration (Python pushes a real
+// run_done) and would block the other database pointlessly, while a terminal
+// run — the one that genuinely shares an engine — clears it milliseconds
+// after dispatch.
+
+test('a sidecar run never claims the shared engine', () => {
+  const tracker = new MatlabRunTracker();
+  tracker.begin('run-sidecar');
+  // No noteSharedEngine call: dispatchMatlabCommand only makes it for the
+  // terminal and clipboard tiers.
+  assert.equal(tracker.isActive, true, 'it still owns its own database');
+  assert.equal(tracker.sharedEngineActive, false, 'but not the shared MATLAB');
+});
+
+test('a terminal run claims the shared engine until it ends', () => {
+  const tracker = new MatlabRunTracker();
+  tracker.begin('run-terminal');
+  tracker.noteSharedEngine('run-terminal');
+  assert.equal(tracker.sharedEngineActive, true);
+
+  tracker.end('run-terminal');
+  assert.equal(tracker.sharedEngineActive, false);
+  assert.equal(tracker.isActive, false);
+});
+
+test('one session can hold the engine while another sidecar run proceeds', () => {
+  const shared = new MatlabRunTracker();
+  shared.begin('a');
+  shared.noteSharedEngine('a');
+  const own = new MatlabRunTracker();
+  own.begin('b');
+
+  assert.equal(shared.sharedEngineActive, true, 'A holds the MathWorks terminal');
+  assert.equal(own.sharedEngineActive, false, "B's sidecar holds nothing shared");
+});
+
+test('the shared mark is ignored for a run that is not in flight', () => {
+  // A run_done that arrived first must not leave a permanent claim behind,
+  // which would wedge every later MATLAB run in every other database.
+  const tracker = new MatlabRunTracker();
+  tracker.noteSharedEngine('never-begun');
+  assert.equal(tracker.sharedEngineActive, false);
+});

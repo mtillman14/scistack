@@ -10,10 +10,11 @@
  * server always takes `bootstrap.open_or_create_project`'s auto-discovery
  * branch. Which directory that scans is decided by
  * `config.resolve_project_root`, and with no `--project` the answer is
- * `--project-root` (the VS Code workspace folder) — see the rule list in
- * that docstring. Callers must therefore pass `projectRoot` whenever a
- * workspace folder exists, or discovery silently falls back to the
- * extension host's cwd.
+ * `--project-root` — see the rule list in that docstring. Callers must
+ * therefore pass `projectRoot`, and with several databases open it must be
+ * the folder containing THIS database (`sessionCore.projectRootForDb`), not
+ * `workspaceFolders[0]`, or the second session discovers the first
+ * project's code.
  */
 
 export interface ServerArgsOptions {
@@ -21,14 +22,22 @@ export interface ServerArgsOptions {
   dbPath: string;
   /** Top-down schema keys. Only meaningful when creating a new database. */
   schemaKeys?: string[];
-  /** The VS Code workspace folder, i.e. "the project the user opened". */
+  /** The workspace folder this database belongs to, i.e. "its project". */
   projectRoot?: string;
+  /**
+   * Where the file sink should write. Only the plot-only session passes it:
+   * with no database there is no `scidb.log` to sit beside, and scattering
+   * one into whichever folder a CSV happens to live in is worse than
+   * putting it in the extension's own storage.
+   */
+  logFile?: string;
 }
 
 export function buildServerArgs({
   dbPath,
   schemaKeys,
   projectRoot,
+  logFile,
 }: ServerArgsOptions): string[] {
   const args = ['-m', 'scistack_gui.server', '--db', dbPath];
   if (schemaKeys && schemaKeys.length > 0) {
@@ -40,6 +49,27 @@ export function buildServerArgs({
   // would be written next to the data instead of in the project.
   if (projectRoot) {
     args.push('--project-root', projectRoot);
+  }
+  if (logFile) {
+    args.push('--log-file', logFile);
+  }
+  return args;
+}
+
+/**
+ * Argv for a **plot-only** server: no database, no project, no discovery.
+ *
+ * Right-click ▸ Plot CSV needs neither — `plot_service.get_source` builds a
+ * `CsvSource` and every plot entry point is already written as
+ * `db_connection(..., needed=not csv_path)`. What used to block it was
+ * startup, not plotting: `--db` was required, so a CSV could only be
+ * plotted by borrowing a pipeline session's server, and closing that
+ * pipeline took the CSV tab's backend with it.
+ */
+export function buildPlotOnlyServerArgs(options: { logFile?: string } = {}): string[] {
+  const args = ['-m', 'scistack_gui.server', '--plot-only'];
+  if (options.logFile) {
+    args.push('--log-file', options.logFile);
   }
   return args;
 }

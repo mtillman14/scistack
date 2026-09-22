@@ -4,13 +4,24 @@
  * It started life as a modal overlay inside the DAG webview, which meant the
  * pipeline canvas was unreachable while a figure was open. As a separate
  * WebviewPanel it becomes a full-width sibling tab in the SAME editor group as
- * "SciStack Pipeline" — switch with the tab bar, or split them yourself by
+ * its pipeline canvas: switch with the tab bar, or split them yourself by
  * dragging a tab, exactly like any other pair of editors. (Opening at
  * `ViewColumn.Beside` instead would force a permanent 50/50 split, which is a
  * layout decision that belongs to the user, not to this panel.)
  *
- * One tab is reused: plotting a second variable retargets the existing panel
- * (revealing it) rather than accumulating tabs. Pass `newTab` to override.
+ * **Every plot tab belongs to a session.** It issues `plot_*` RPCs to that
+ * session's server and receives that session's `plot_save_*` notifications,
+ * and nothing else: a save completing in one database must not re-enable the
+ * Save button of a tab plotting another. The registry that used to hold every
+ * plot tab in the window now hangs off `Session.plots` for exactly that
+ * reason. The one exception is a CSV tab, whose "session" is the
+ * database-less plot-only server (`SessionManager.openPlotOnly`).
+ *
+ * **Every plot opens its own tab.** There used to be one reused tab, and
+ * plotting a second variable retargeted it — which quietly destroyed the
+ * figure you were looking at, and made "compare these two" impossible
+ * without saving one to disk first. Comparing figures is the normal reason
+ * to open two, so a new tab is the normal outcome; closing one is a click.
  *
  * The webview loads the SAME React bundle as the DAG and is switched into plot
  * mode by an injected `window.__SCISTACK_VIEW__` (see frontend/src/main.tsx).
@@ -19,8 +30,7 @@
 
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { PanelRegistry } from './panelRegistry';
-import { PythonProcess } from './pythonProcess';
+import type { Session } from './session';
 
 export interface PlotTarget {
   variable?: string;
@@ -34,77 +44,45 @@ export interface PlotTarget {
    * well as from inside the panel.
    */
   location?: [string, string][];
+  /**
+   * Which database to plot from, as a session id. The canvas stamps its own
+   * (see `dagPanel.ts`), so a plot opened from one pipeline reads that
+   * pipeline's database even when another tab was focused last.
+   */
+  sessionId?: string;
 }
 
 export class PlotPanel {
-  /** The reused panel, if one is open. */
-  private static current: PlotPanel | undefined;
-
-  /**
-   * Every open plot tab, including the `newTab` ones `current` does not track.
-   * Push notifications go here — see `broadcast`.
-   */
-  private static openPanels = new PanelRegistry<PythonProcess>();
-
   private panel: vscode.WebviewPanel;
   private disposables: vscode.Disposable[] = [];
   private unregister: () => void = () => {};
 
-  /**
-   * Deliver a push notification from Python to every open plot tab.
-   *
-   * The Plot Studio is a sibling of the DAG webview, not a child of it, so the
-   * extension's `onNotification` forwarding reaches it only through here. The
-   * long-running save is a background job that reports `plot_save_progress` /
-   * `plot_save_complete` / `plot_save_failed`, and the panel disables its save
-   * buttons until one of the last two arrives — a notification that stops at
-   * the DAG panel leaves the tab saying "Saving…" for the rest of the session.
-   *
-   * Returns the number of panels that received it, for the caller's log.
-   */
-  static broadcast(msg: Record<string, unknown>): number {
-    return PlotPanel.openPanels.send(msg);
-  }
-
-  /**
-   * The server was restarted: every open plot tab must talk to the NEW
-   * process. Returns how many did. Called from `startPipeline` beside
-   * `dagPanel.updatePythonProcess` — a tab that keeps the old handle writes
-   * to a destroyed stdin and every `plot_*` RPC fails with
-   * ERR_STREAM_DESTROYED (2026-09-15).
-   */
-  static updatePythonProcess(proc: PythonProcess): number {
-    return PlotPanel.openPanels.rebind(proc);
-  }
-
   static show(
     context: vscode.ExtensionContext,
-    pythonProcess: PythonProcess,
-    outputChannel: vscode.OutputChannel,
+    session: Session,
     target: PlotTarget,
-    options: { newTab?: boolean; column?: vscode.ViewColumn } = {},
+    options: { column?: vscode.ViewColumn } = {},
   ): PlotPanel {
-    if (!options.newTab && PlotPanel.current) {
-      // The reused tab may predate the process it is being shown with.
-      PlotPanel.current.updatePythonProcess(pythonProcess);
-      PlotPanel.current.retarget(target);
-      return PlotPanel.current;
-    }
-    const panel = new PlotPanel(
+    return new PlotPanel(
       context,
-      pythonProcess,
-      outputChannel,
+      session,
       target,
-      options.column ?? vscode.ViewColumn.One,
+      // This session's pipeline group, so the figure is a sibling tab of the
+      // canvas it came from rather than a split the user did not ask for.
+      options.column ?? session.dagPanel?.viewColumn ?? vscode.ViewColumn.One,
     );
-    if (!options.newTab) PlotPanel.current = panel;
-    return panel;
   }
 
   private constructor(
     private context: vscode.ExtensionContext,
-    private pythonProcess: PythonProcess,
-    private outputChannel: vscode.OutputChannel,
+    /**
+     * The database this figure is drawn from. Read through, never copied:
+     * `Restart Python` replaces `session.python`, and a tab holding its own
+     * reference would keep writing to the old process's destroyed stdin
+     * (ERR_STREAM_DESTROYED, seen 2026-09-15 as "Could not open the plot
+     * panel").
+     */
+    private session: Session,
     private target: PlotTarget,
     column: vscode.ViewColumn,
   ) {
@@ -126,7 +104,16 @@ export class PlotPanel {
     );
 
     this.panel.webview.html = this.getHtml();
-    this.unregister = PlotPanel.openPanels.add(this);
+    this.unregister = this.session.plots.add(this);
+
+    // Focusing a plot tab says which database later Palette commands mean.
+    this.panel.onDidChangeViewState(
+      (e) => {
+        if (e.webviewPanel.active) this.session.manager.setActive(this.session.id);
+      },
+      undefined,
+      this.disposables,
+    );
 
     this.panel.webview.onDidReceiveMessage(
       async (msg: Record<string, unknown>) => {
@@ -188,16 +175,16 @@ export class PlotPanel {
           }
           return;
         }
-        // Everything else is a plot_* RPC for the shared Python process — the
-        // same one the DAG uses, never a second database connection.
+        // Everything else is a plot_* RPC for this session's Python process —
+        // the same one its canvas uses, never a second database connection.
         try {
-          const result = await this.pythonProcess.request(
+          const result = await this.session.python.request(
             method,
             (msg.params ?? {}) as Record<string, unknown>,
           );
           this.panel.webview.postMessage({ id: msg.id, result });
         } catch (err) {
-          this.outputChannel.appendLine(`plot panel: ${method} failed — ${err}`);
+          this.session.log.appendLine(`plot panel: ${method} failed — ${err}`);
           this.panel.webview.postMessage({
             id: msg.id,
             error: { message: String(err) },
@@ -211,42 +198,31 @@ export class PlotPanel {
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
   }
 
-  /** Point the open panel at a different variable or file. */
-  retarget(target: PlotTarget): void {
-    this.target = target;
-    this.panel.title = this.title();
-    this.panel.reveal(this.panel.viewColumn, false);
-    this.postMessage({
-      method: 'open_plot_studio',
-      params: {
-        variable: target.variable,
-        csv_path: target.csvPath,
-        location: target.location,
-      },
-    });
-  }
-
   /** Post a message into this panel's webview (the `MessageSink` contract). */
   postMessage(msg: Record<string, unknown>): void {
     this.panel.webview.postMessage(msg);
   }
 
-  /** The other half of `MessageSink`: route later RPCs to a new server. */
-  updatePythonProcess(proc: PythonProcess): void {
-    if (proc === this.pythonProcess) return;
-    this.outputChannel.appendLine(
-      `plot panel: rebound to the restarted Python server (${this.title()})`,
-    );
-    this.pythonProcess = proc;
+  /**
+   * Close this tab. Called when its session closes: a plot tab cannot
+   * outlive the server it sends every `plot_*` RPC to.
+   */
+  close(): void {
+    this.panel.dispose();
   }
 
+  /**
+   * The tab title. It names the database as well as the variable: with plot
+   * tabs open across two databases, "Plot — StepLength" twice over says
+   * nothing about which is which.
+   */
   private title(): string {
     if (this.target.csvPath) return `Plot — ${path.basename(this.target.csvPath)}`;
-    return this.target.variable ? `Plot — ${this.target.variable}` : 'Plot';
+    const variable = this.target.variable ? `Plot — ${this.target.variable}` : 'Plot';
+    return this.session.isPlotOnly ? variable : `${variable} · ${this.session.label}`;
   }
 
   private dispose(): void {
-    if (PlotPanel.current === this) PlotPanel.current = undefined;
     this.unregister();
     while (this.disposables.length) this.disposables.pop()?.dispose();
   }
@@ -268,6 +244,13 @@ export class PlotPanel {
       variable: this.target.variable ?? null,
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,
+    });
+    // Which database this figure is drawn from, so the studio can say so —
+    // a figure is only interpretable if you know its source.
+    const session = JSON.stringify({
+      id: this.session.id,
+      dbName: this.session.isPlotOnly ? null : this.session.label,
+      dbPath: this.session.dbPath || null,
     });
 
     return `<!DOCTYPE html>
@@ -296,6 +279,7 @@ export class PlotPanel {
 <body>
   <div id="root"></div>
   <script nonce="${nonce}">window.__SCISTACK_VIEW__ = ${target};</script>
+  <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

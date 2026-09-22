@@ -13,6 +13,7 @@
     "src/serverArgs.ts",
     "src/matlabConnectionGate.ts",
     "src/panelRegistry.ts",
+    "src/sessionCore.ts",
     "src/*.test.ts"
   ]
 }

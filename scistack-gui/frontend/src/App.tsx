@@ -42,7 +42,8 @@ import { SidebarSelectionProvider } from "./context/SidebarSelectionContext";
 import { ScopeProvider } from "./context/ScopeContext";
 import { PlanRunProvider } from "./context/PlanRunContext";
 import { ClipboardProvider } from "./context/ClipboardContext";
-import { callBackend, isVSCodeMode } from "./api";
+import { addNotificationHandler, callBackend, isVSCodeMode } from "./api";
+import { injectedDbName } from "./session";
 import * as modalStyles from "./components/modalStyles";
 import ProjectBootstrapWizard from "./components/Bootstrap/ProjectBootstrapWizard";
 
@@ -194,7 +195,11 @@ const styles: Record<string, React.CSSProperties> = {
 
 export default function App() {
   const [schema, setSchema] = useState<{ keys: string[] }>({ keys: [] });
-  const [dbName, setDbName] = useState("");
+  // Seeded from the value the extension injected into this webview, so the
+  // header names the right database from the first frame — no "loading…"
+  // flash, and no way for it to disagree with the server this tab talks to.
+  // The browser build has no injected session and falls back to get_info.
+  const [dbName, setDbName] = useState(injectedDbName);
   // null = info not fetched yet; false = no project open (browser wizard);
   // true = normal DAG shell. VS Code always has a project open by the time
   // its webview mounts, so it never observes `false` here.
@@ -284,6 +289,19 @@ export default function App() {
   useEffect(() => {
     refreshInfo();
   }, [refreshInfo]);
+
+  // A restarted server may be a different database (or the same one with a
+  // changed schema), and this panel's React state survives the swap because
+  // of retainContextWhenHidden. Re-ask rather than keep what we had: a
+  // header showing a database the backend is not serving is the 2026-09-22
+  // bug, and it was invisible precisely because nothing ever re-fetched.
+  useEffect(
+    () =>
+      addNotificationHandler((msg) => {
+        if (msg.method === "db_changed") refreshInfo();
+      }),
+    [refreshInfo]
+  );
 
   // Only fetch schema/etc. once a project is actually open — before that,
   // every other endpoint 500s on the missing db singleton (harmless, but

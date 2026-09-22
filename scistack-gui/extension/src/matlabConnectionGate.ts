@@ -28,3 +28,29 @@ export function needsMatlabConnectionPrompt(
 ): boolean {
   return matlabExtensionAvailable && !matlabTerminalAlreadyOpen;
 }
+
+/**
+ * Which OTHER database currently owns MATLAB, if any.
+ *
+ * There is one MATLAB process per VS Code window, and a SciStack run
+ * configures it against one database (`configure_database` in the generated
+ * script) before doing anything else. Two sessions dispatching at once
+ * therefore do not run in parallel — the second `configure_database`
+ * repoints the engine mid-run, and the first run's remaining `for_each`
+ * calls write into the *other* project's database.
+ *
+ * Nothing downstream can detect that: both writes are well-formed, they
+ * just land in the wrong place. So it is refused here, by name, before the
+ * script is generated.
+ *
+ * Returns the label of the database holding MATLAB, or undefined when the
+ * engine is free. A session never blocks itself: several MATLAB runs
+ * against ONE database are the existing, supported case (MatlabRunTracker
+ * already counts them).
+ */
+export function matlabHolder(
+  sessions: readonly { id: string; label: string; matlabBusy: boolean }[],
+  selfId: string,
+): string | undefined {
+  return sessions.find((s) => s.id !== selfId && s.matlabBusy)?.label;
+}

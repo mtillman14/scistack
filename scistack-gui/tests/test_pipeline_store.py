@@ -527,11 +527,39 @@ class TestGraduationMovesNodeConfig:
         )
 
     def test_scope_qualified_source_key_moves_too(self, populated_db):
+        """A config written through a ``::scope``-qualified id is found and
+        moved — and it lands on the canvas it was MADE on.
+
+        Both halves matter, and the second one changed under us. While a
+        config was a blob, ``fn__x::sub1`` was just another spelling of the
+        key, so migration carried it wholesale onto the graduated id
+        whatever canvas that id named. Since scope became a column of its
+        own (``intent_store.scope_of_node``, commit a5de1c0d — "a statement
+        is made on a canvas and applies there"), ``rekey_subject`` moves the
+        SUBJECT and leaves the scope alone: the statement is still about
+        canvas ``sub1`` afterwards, and reading the graduated node on
+        ``main`` must not see it.
+
+        This test still asserted the blob-era outcome and had been failing
+        since that commit.
+        """
+        from scistack_gui.ids import strip_placement
+
         db = populated_db
+        bare_new = strip_placement(self.NEW)
         self._fresh(db, config={"whereFilters": [{"a": 1}]}, key=f"{self.OLD}::sub1")
+
         pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
-        assert pipeline_store.get_node_config(db, self.NEW)["whereFilters"] == [{"a": 1}]
-        assert pipeline_store.get_node_config(db, f"{self.OLD}::sub1") == {}
+
+        assert pipeline_store.get_node_config(db, f"{bare_new}::sub1")[
+            "whereFilters"
+        ] == [{"a": 1}], "the qualified source key was not found, or not moved"
+        assert "whereFilters" not in pipeline_store.get_node_config(db, self.NEW), (
+            "a statement made on sub1 must not apply on main"
+        )
+        assert pipeline_store.get_node_config(db, f"{self.OLD}::sub1") == {}, (
+            "a move, not a copy — the orphan WARN must stop naming this id"
+        )
 
     def test_a_setting_is_keyed_by_the_node_not_its_placement(self, populated_db):
         """A statement's subject is the BARE node id (``rekey_subject``

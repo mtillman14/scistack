@@ -11,7 +11,7 @@
 
 import { test } from 'node:test';
 import * as assert from 'node:assert';
-import { buildServerArgs } from './serverArgs';
+import { buildPlotOnlyServerArgs, buildServerArgs } from './serverArgs';
 
 const DB = '/data/experiment.duckdb';
 const ROOT = '/home/u/my_study';
@@ -64,4 +64,37 @@ test('omits --project-root when no folder is open in the window', () => {
   const args = buildServerArgs({ dbPath: DB });
   assert.ok(!args.includes('--project-root'));
   assert.deepStrictEqual(args, ['-m', 'scistack_gui.server', '--db', DB]);
+});
+
+test('passes the project root it is given, not the first workspace folder', () => {
+  // With two databases open from a multi-root workspace, each server must be
+  // told ITS OWN project (sessionCore.projectRootForDb picks it). Handing
+  // both `workspaceFolders[0]` made the second session read the first
+  // project's scistack.toml and discover the wrong code.
+  const args = buildServerArgs({ dbPath: '/studies/emg/emg.duckdb', projectRoot: '/studies/emg' });
+  const i = args.indexOf('--project-root');
+  assert.strictEqual(args[i + 1], '/studies/emg');
+});
+
+test('passes --log-file only when one is asked for', () => {
+  assert.ok(!buildServerArgs({ dbPath: DB, projectRoot: ROOT }).includes('--log-file'));
+  const args = buildServerArgs({ dbPath: DB, projectRoot: ROOT, logFile: '/tmp/s.log' });
+  assert.strictEqual(args[args.indexOf('--log-file') + 1], '/tmp/s.log');
+});
+
+test('a plot-only server takes no database, project root or schema keys', () => {
+  const args = buildPlotOnlyServerArgs();
+  assert.deepStrictEqual(args, ['-m', 'scistack_gui.server', '--plot-only']);
+  // The whole point: a CSV plot needs no project and no DuckDB, so passing
+  // either would reintroduce the startup it is trying to skip.
+  for (const flag of ['--db', '--project-root', '--schema-keys', '--module', '--project']) {
+    assert.ok(!args.includes(flag), `${flag} in a plot-only start`);
+  }
+});
+
+test('a plot-only server logs to the file it is given', () => {
+  // It has no database to anchor scidb.log to, so the extension supplies a
+  // path in its own storage rather than scattering logs beside CSVs.
+  const args = buildPlotOnlyServerArgs({ logFile: '/ext/storage/plot-session.log' });
+  assert.strictEqual(args[args.indexOf('--log-file') + 1], '/ext/storage/plot-session.log');
 });

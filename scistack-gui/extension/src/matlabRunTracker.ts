@@ -17,6 +17,11 @@
 
 export class MatlabRunTracker {
   private inFlight = new Set<string>();
+  /**
+   * The subset of in-flight runs that occupy the window's ONE MathWorks
+   * MATLAB — see `noteSharedEngine`.
+   */
+  private sharedEngine = new Set<string>();
   private refreshPending = false;
   private finishedCallbacks: (() => void)[] = [];
 
@@ -26,12 +31,45 @@ export class MatlabRunTracker {
   }
 
   /**
+   * Record that this run went to the **shared** MATLAB — the MathWorks
+   * terminal, or the clipboard destined for it — rather than to this
+   * session's own sidecar.
+   *
+   * The distinction exists because only one of the two tiers is shared
+   * between databases:
+   *
+   * - **sidecar** — `scistack_gui.matlab_sidecar._sidecar` is a *process*
+   *   singleton, and every session has its own Python server process, so
+   *   every session already has its own MATLAB. Two databases running
+   *   through sidecars are as independent as two Python runs and must not
+   *   block each other.
+   * - **terminal / clipboard** — the MathWorks extension owns one MATLAB
+   *   per VS Code window, and a SciStack script points it at one database
+   *   with `configure_database` before doing anything else.
+   *
+   * Without this split the gate was exactly backwards: a sidecar run held
+   * the mark for its whole duration (Python pushes a real `run_done`) and
+   * blocked the other database pointlessly, while a terminal run — the one
+   * that genuinely shares an engine — cleared it milliseconds after
+   * dispatch.
+   */
+  noteSharedEngine(runId: string): void {
+    if (this.inFlight.has(runId)) this.sharedEngine.add(runId);
+  }
+
+  /** Whether a run is currently occupying the window's shared MATLAB. */
+  get sharedEngineActive(): boolean {
+    return this.sharedEngine.size > 0;
+  }
+
+  /**
    * Clear a run's mark. Safe to call for every run_done — Python runs are
    * simply absent from the set. Returns whether this was a tracked MATLAB
    * run, and fires the finished callbacks once the last one clears.
    */
   end(runId: string | undefined): boolean {
     if (!runId) return false;
+    this.sharedEngine.delete(runId);
     const wasTracked = this.inFlight.delete(runId);
     if (wasTracked && this.inFlight.size === 0) {
       this.finishedCallbacks.forEach(cb => cb());

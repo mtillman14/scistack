@@ -276,18 +276,30 @@ def _client_error(req: ClientErrorRequest) -> dict:
     return report_client_error(req.model_dump())
 
 
+# ``db_optional=True`` on every row whose request model carries a
+# ``csv_path``: with one set, the service builds a ``CsvSource`` and the
+# database is never opened (each entry point is already written as
+# ``db_connection(..., needed=not csv_path)``). That declaration is what lets
+# a **plot-only** server — started with no ``--db`` for Explorer ▸ Plot CSV —
+# serve these methods at all: the dispatch would otherwise call ``get_db()``
+# and raise before the handler ever saw the request saying it needed none.
+#
+# ``plot_add_to_pipeline``, ``plot_variant_sets_save`` and ``plot_invalidate``
+# are deliberately NOT marked: writing an endpoint into the project, saving
+# variant sets and dropping the cache are all things a CSV has nowhere to put.
 PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_describe", "/plot/describe", DescribeRequest, _describe,
-        holds_db_lock=False, http_errors=_NOT_INSTALLED,
+        holds_db_lock=False, http_errors=_NOT_INSTALLED, db_optional=True,
     ),
     Handler(
         "plot_capabilities", "/plot/capabilities", SpecRequest, _capabilities,
-        holds_db_lock=False, http_errors=_BAD_REQUEST,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
     ),
     Handler(
         "plot_variant_graph", "/plot/variant-graph", VariantGraphRequest,
         _variant_graph, holds_db_lock=False, http_errors=_BAD_REQUEST,
+        db_optional=True,
     ),
     # Read-only picker calls that take the connection inside the service for
     # exactly as long as the query needs it. `plot_grouping_columns` is the
@@ -295,29 +307,30 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_grouping_graph", "/plot/grouping-graph", GroupingGraphRequest,
         _grouping_graph, holds_db_lock=False, http_errors=_BAD_REQUEST,
+        db_optional=True,
     ),
     Handler(
         "plot_grouping_columns", "/plot/grouping-columns",
         GroupingColumnsRequest, _grouping_columns,
-        holds_db_lock=False, http_errors=_BAD_REQUEST,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
     ),
     Handler(
         "plot_grouping_default_variant", "/plot/grouping-default-variant",
         GroupingDefaultVariantRequest, _grouping_default_variant,
-        holds_db_lock=False, http_errors=_BAD_REQUEST,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
     ),
     Handler(
         "plot_location_tree", "/plot/locations", LocationTreeRequest,
         _location_tree, holds_db_lock=False,
-        http_errors={**_BAD_REQUEST, **_NOT_INSTALLED},
+        http_errors={**_BAD_REQUEST, **_NOT_INSTALLED}, db_optional=True,
     ),
     Handler(
         "plot_resolve", "/plot/resolve", SpecRequest, _resolve,
-        holds_db_lock=False, http_errors=_BAD_REQUEST,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
     ),
     Handler(
         "plot_export", "/plot/export", ExportRequest, _export,
-        holds_db_lock=False, http_errors=_BAD_REQUEST,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
     ),
     Handler(
         "plot_add_to_pipeline", "/plot/add-to-pipeline", ExportRequest,
@@ -334,6 +347,7 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_save_start", "/plot/save", SaveRequest, _save_start,
         holds_db_lock=False, http_errors={**_BAD_REQUEST, OSError: 400},
+        db_optional=True,
     ),
     Handler("plot_invalidate", "/plot/invalidate", None, _invalidate),
     # Touches no database at all — it only writes a log line, and must still

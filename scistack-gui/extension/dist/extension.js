@@ -34,325 +34,347 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var path4 = __toESM(require("path"));
-var vscode5 = __toESM(require("vscode"));
+var path6 = __toESM(require("path"));
+var vscode6 = __toESM(require("vscode"));
 
-// src/pythonProcess.ts
-var import_child_process = require("child_process");
-var readline = __toESM(require("readline"));
+// src/plotPanel.ts
+var path = __toESM(require("path"));
 var vscode = __toESM(require("vscode"));
-
-// src/serverArgs.ts
-function buildServerArgs({
-  dbPath,
-  schemaKeys,
-  projectRoot
-}) {
-  const args = ["-m", "scistack_gui.server", "--db", dbPath];
-  if (schemaKeys && schemaKeys.length > 0) {
-    args.push("--schema-keys", schemaKeys.join(","));
-  }
-  if (projectRoot) {
-    args.push("--project-root", projectRoot);
-  }
-  return args;
-}
-
-// src/pythonProcess.ts
-var STDERR_TAIL_LINES = 200;
-var PythonProcess = class {
-  constructor(pythonPath, dbPath, outputChannel2, schemaKeys) {
-    this.pythonPath = pythonPath;
-    this.outputChannel = outputChannel2;
-    this.nextId = 1;
-    this.pending = /* @__PURE__ */ new Map();
-    this.notificationHandlers = [];
-    this.readyResolve = null;
-    this.readyReject = null;
-    this.readyTimer = null;
-    this.readyTimeoutMs = 0;
-    /** Ring of recent stderr lines, so a failed start can report why. */
-    this.stderrTail = [];
-    this.exitCode = null;
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const args = buildServerArgs({ dbPath, schemaKeys, projectRoot: workspaceFolder });
-    this.args = args;
-    this.outputChannel.appendLine(`Spawning: ${pythonPath} ${args.join(" ")}`);
-    const cfg = vscode.workspace.getConfiguration("scistack");
-    const debugEnabled = cfg.get("debug", false);
-    const debugPort = cfg.get("debugPort", 5678);
-    const childEnv = { ...process.env };
-    if (debugEnabled) {
-      childEnv.SCISTACK_GUI_DEBUG = "1";
-      childEnv.SCISTACK_GUI_DEBUG_PORT = String(debugPort);
-      this.outputChannel.appendLine(
-        `debugpy listener will start on 127.0.0.1:${debugPort} (attach via "Attach to scistack-gui server" launch config)`
-      );
-    }
-    this.proc = (0, import_child_process.spawn)(pythonPath, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: childEnv,
-      cwd: workspaceFolder
-    });
-    this.closed = new Promise((resolve) => {
-      this.proc.on("close", () => resolve());
-    });
-    const rl = readline.createInterface({ input: this.proc.stdout });
-    rl.on("line", (line) => this.handleLine(line));
-    this.proc.stderr?.on("data", (data) => {
-      const text = data.toString().trimEnd();
-      this.outputChannel.appendLine(text);
-      for (const line of text.split("\n")) {
-        this.stderrTail.push(line);
+var PlotPanel = class _PlotPanel {
+  constructor(context, session, target, column) {
+    this.context = context;
+    this.session = session;
+    this.target = target;
+    this.disposables = [];
+    this.unregister = () => {
+    };
+    this.panel = vscode.window.createWebviewPanel(
+      "scistack.plot",
+      this.title(),
+      // The pipeline's own group: a sibling tab at full width, not a split.
+      { viewColumn: column, preserveFocus: false },
+      {
+        enableScripts: true,
+        // Plot state (spec, role assignments) is expensive to rebuild and has
+        // no persistence of its own, so keep the webview alive when the tab is
+        // in the background.
+        retainContextWhenHidden: true,
+        localResourceRoots: [
+          vscode.Uri.file(path.join(context.extensionPath, "dist", "webview"))
+        ]
       }
-      if (this.stderrTail.length > STDERR_TAIL_LINES) {
-        this.stderrTail.splice(0, this.stderrTail.length - STDERR_TAIL_LINES);
-      }
-    });
-    this.proc.on("exit", (code, signal) => {
-      this.exitCode = code;
-      const msg = `Python process exited (code=${code}, signal=${signal})`;
-      this.outputChannel.appendLine(msg);
-      for (const [, pending] of this.pending) {
-        pending.reject(new Error(msg));
-      }
-      this.pending.clear();
-      if (this.readyReject) {
-        if (this.readyTimer) {
-          clearTimeout(this.readyTimer);
-          this.readyTimer = null;
-        }
-        this.readyReject(new Error(msg));
-        this.readyResolve = null;
-        this.readyReject = null;
-      }
-    });
-    this.proc.on("error", (err) => {
-      this.outputChannel.appendLine(`Python process error: ${err.message}`);
-      if (this.readyReject) {
-        if (this.readyTimer) {
-          clearTimeout(this.readyTimer);
-          this.readyTimer = null;
-        }
-        this.readyReject(err);
-        this.readyResolve = null;
-        this.readyReject = null;
-      }
-    });
-  }
-  /**
-   * Wait until the child has closed its stdio, or `timeoutMs` elapses.
-   *
-   * The ready promise can reject (on 'exit', or on the inactivity timer)
-   * while the last stderr chunk is still queued, so a diagnostic report must
-   * wait for 'close' or it can quote an empty traceback.
-   */
-  whenClosed(timeoutMs = 2e3) {
-    return Promise.race([
-      this.closed,
-      new Promise((resolve) => setTimeout(resolve, timeoutMs))
-    ]);
-  }
-  /** Recent stderr from the child process (oldest first). */
-  getStderr() {
-    return this.stderrTail.join("\n");
-  }
-  /** Exit code, or null while the process is still running. */
-  getExitCode() {
-    return this.exitCode;
-  }
-  /** Why this process can no longer take a request, or null while it can. */
-  deadReason() {
-    if (this.exitCode !== null)
-      return `it exited with code ${this.exitCode}`;
-    if (this.proc.killed)
-      return "it was stopped";
-    if (!this.proc.stdin || this.proc.stdin.destroyed)
-      return "its input stream is closed";
-    return null;
-  }
-  /**
-   * Wait for the Python server to signal readiness.
-   * Returns the ready notification params (db_name, schema_keys).
-   *
-   * The ``timeoutMs`` is an *inactivity* timeout: it resets whenever a
-   * ``progress`` notification arrives from the server. This lets slow-but-
-   * progressing startups (e.g. projects on network drives) complete
-   * without falsely timing out, while still killing a truly stuck server.
-   */
-  waitForReady(timeoutMs) {
-    this.readyTimeoutMs = timeoutMs;
-    return new Promise((resolve, reject) => {
-      this.readyResolve = resolve;
-      this.readyReject = reject;
-      this.resetReadyTimer(timeoutMs);
-    });
-  }
-  resetReadyTimer(timeoutMs) {
-    if (this.readyTimer) {
-      clearTimeout(this.readyTimer);
-    }
-    this.readyTimer = setTimeout(() => {
-      this.readyTimer = null;
-      if (this.readyReject) {
-        this.readyReject(new Error(
-          `Python server did not become ready within ${timeoutMs}ms of silence (no progress notification received).`
-        ));
-        this.readyResolve = null;
-        this.readyReject = null;
-      }
-    }, timeoutMs);
-  }
-  /**
-   * Send a JSON-RPC request and return a promise for the result.
-   *
-   * Every request carries a timeout. The server is supposed to answer every
-   * request exactly once — long work is reported asynchronously through
-   * run_output/run_done notifications, not by holding an RPC open — so a
-   * response that never arrives means the server lost the request, and
-   * without a timeout that wedges the caller permanently with no error
-   * anywhere. (That is precisely how a MATLAB-locked database used to hang
-   * the whole GUI; see scistack_gui/server.py::_handle_request.) The
-   * timeout is a backstop, not a work limit: it is deliberately generous
-   * and configurable via `scistack.rpcTimeoutMs`.
-   */
-  request(method, params) {
-    const gone = this.deadReason();
-    if (gone) {
-      this.outputChannel.appendLine(`RPC refused: ${method} \u2014 ${gone}`);
-      return Promise.reject(new Error(
-        `SciStack: the Python server is not running (${gone}). Reopen the pipeline (or run "SciStack: Restart Python") and try again.`
-      ));
-    }
-    const id = this.nextId++;
-    const timeoutMs = vscode.workspace.getConfiguration("scistack").get("rpcTimeoutMs", 3e5);
-    return new Promise((resolve, reject) => {
-      const settle = (fn) => {
-        const pending = this.pending.get(id);
-        if (pending?.timer)
-          clearTimeout(pending.timer);
-        this.pending.delete(id);
-        fn();
-      };
-      const timer = timeoutMs > 0 ? setTimeout(() => {
-        const pending = this.pending.get(id);
-        if (!pending)
-          return;
-        const elapsed = Date.now() - pending.startedAt;
-        this.outputChannel.appendLine(
-          `RPC timeout: ${method} (id=${id}) got no response in ${elapsed}ms. The Python server may have dropped the request \u2014 check the stderr above for a traceback.`
-        );
-        settle(() => reject(new Error(
-          `SciStack: no response from the Python server for '${method}' after ${Math.round(elapsed / 1e3)}s.`
-        )));
-      }, timeoutMs) : null;
-      this.pending.set(id, {
-        resolve: (value) => settle(() => resolve(value)),
-        reject: (reason) => settle(() => reject(reason)),
-        method,
-        startedAt: Date.now(),
-        timer
-      });
-      const msg = JSON.stringify({ jsonrpc: "2.0", method, params, id });
-      this.proc.stdin?.write(msg + "\n", (err) => {
-        if (err) {
-          this.outputChannel.appendLine(`RPC write failed: ${method} \u2014 ${err.message}`);
-          const pending = this.pending.get(id);
-          if (pending) {
-            pending.reject(new Error(
-              `SciStack: could not send '${method}' to the Python server (${err.message}). It may have exited \u2014 check the SciStack output channel.`
-            ));
+    );
+    this.panel.webview.html = this.getHtml();
+    this.unregister = this.session.plots.add(this);
+    this.panel.onDidChangeViewState(
+      (e) => {
+        if (e.webviewPanel.active)
+          this.session.manager.setActive(this.session.id);
+      },
+      void 0,
+      this.disposables
+    );
+    this.panel.webview.onDidReceiveMessage(
+      async (msg) => {
+        const method = msg.method;
+        if (method === "pick_save_path") {
+          try {
+            const params = msg.params ?? {};
+            const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+            const uri = await vscode.window.showSaveDialog({
+              defaultUri: folder ? vscode.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
+              // The panel sends the ONE format its dropdown selected, so the
+              // dialog cannot offer a second answer to a question already
+              // asked — the backend honours the dropdown either way.
+              filters: { [params.filterName ?? "Images"]: params.formats ?? ["png"] }
+            });
+            this.panel.webview.postMessage({
+              id: msg.id,
+              result: { path: uri?.fsPath ?? null }
+            });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) }
+            });
           }
+          return;
         }
-      });
-    });
-  }
-  /**
-   * Register a handler for push notifications from Python.
-   */
-  onNotification(handler) {
-    this.notificationHandlers.push(handler);
-  }
-  /**
-   * Kill the Python process.
-   */
-  kill() {
-    this.proc.kill();
-  }
-  handleLine(line) {
-    let msg;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      this.outputChannel.appendLine(`[stdout non-JSON] ${line}`);
-      return;
-    }
-    if ("id" in msg && msg.id !== null && msg.id !== void 0) {
-      const id = msg.id;
-      const pending = this.pending.get(id);
-      if (pending) {
-        if ("error" in msg) {
-          const err = msg.error;
-          this.outputChannel.appendLine(
-            `RPC error: ${pending.method} (id=${id}, ${Date.now() - pending.startedAt}ms): ${err.message}`
+        if (method === "pick_save_folder") {
+          try {
+            const uris = await vscode.window.showOpenDialog({
+              canSelectFiles: false,
+              canSelectFolders: true,
+              canSelectMany: false,
+              defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+              openLabel: "Save figures here"
+            });
+            this.panel.webview.postMessage({
+              id: msg.id,
+              result: { path: uris?.[0]?.fsPath ?? null }
+            });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) }
+            });
+          }
+          return;
+        }
+        try {
+          const result = await this.session.python.request(
+            method,
+            msg.params ?? {}
           );
-          pending.reject(new Error(err.message));
-        } else {
-          pending.resolve(msg.result);
+          this.panel.webview.postMessage({ id: msg.id, result });
+        } catch (err) {
+          this.session.log.appendLine(`plot panel: ${method} failed \u2014 ${err}`);
+          this.panel.webview.postMessage({
+            id: msg.id,
+            error: { message: String(err) }
+          });
         }
-      } else {
-        this.outputChannel.appendLine(
-          `[stdout] response for unknown/expired request id=${id} \u2014 ignored`
-        );
-      }
-      return;
+      },
+      void 0,
+      this.disposables
+    );
+    this.panel.onDidDispose(() => this.dispose(), void 0, this.disposables);
+  }
+  static show(context, session, target, options = {}) {
+    return new _PlotPanel(
+      context,
+      session,
+      target,
+      // This session's pipeline group, so the figure is a sibling tab of the
+      // canvas it came from rather than a split the user did not ask for.
+      options.column ?? session.dagPanel?.viewColumn ?? vscode.ViewColumn.One
+    );
+  }
+  /** Post a message into this panel's webview (the `MessageSink` contract). */
+  postMessage(msg) {
+    this.panel.webview.postMessage(msg);
+  }
+  /**
+   * Close this tab. Called when its session closes: a plot tab cannot
+   * outlive the server it sends every `plot_*` RPC to.
+   */
+  close() {
+    this.panel.dispose();
+  }
+  /**
+   * The tab title. It names the database as well as the variable: with plot
+   * tabs open across two databases, "Plot — StepLength" twice over says
+   * nothing about which is which.
+   */
+  title() {
+    if (this.target.csvPath)
+      return `Plot \u2014 ${path.basename(this.target.csvPath)}`;
+    const variable = this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
+    return this.session.isPlotOnly ? variable : `${variable} \xB7 ${this.session.label}`;
+  }
+  dispose() {
+    this.unregister();
+    while (this.disposables.length)
+      this.disposables.pop()?.dispose();
+  }
+  getHtml() {
+    const webviewDir = path.join(this.context.extensionPath, "dist", "webview");
+    const webview = this.panel.webview;
+    const scriptUri = webview.asWebviewUri(
+      vscode.Uri.file(path.join(webviewDir, "index.js"))
+    );
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.file(path.join(webviewDir, "index.css"))
+    );
+    const nonce = getNonce();
+    const target = JSON.stringify({
+      view: "plot",
+      variable: this.target.variable ?? null,
+      csvPath: this.target.csvPath ?? null,
+      location: this.target.location ?? null
+    });
+    const session = JSON.stringify({
+      id: this.session.id,
+      dbName: this.session.isPlotOnly ? null : this.session.label,
+      dbPath: this.session.dbPath || null
+    });
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none';
+                 style-src ${webview.cspSource} 'unsafe-inline';
+                 script-src 'nonce-${nonce}';
+                 img-src ${webview.cspSource} data:;
+                 font-src ${webview.cspSource};" />
+  <link rel="stylesheet" href="${styleUri}" />
+  <title>${this.title()}</title>
+  <style>
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
     }
-    const method = msg.method;
-    const params = msg.params ?? {};
-    if (method === "progress") {
-      this.outputChannel.appendLine(`  ${params.message}`);
-      if (this.readyResolve) {
-        this.resetReadyTimer(this.readyTimeoutMs);
-      }
-      return;
-    }
-    if (method === "ready" && this.readyResolve) {
-      if (this.readyTimer) {
-        clearTimeout(this.readyTimer);
-        this.readyTimer = null;
-      }
-      this.readyResolve(params);
-      this.readyResolve = null;
-      this.readyReject = null;
-      return;
-    }
-    if (method === "error") {
-      this.outputChannel.appendLine(`Server error: ${params.message}`);
-      if (this.readyReject) {
-        if (this.readyTimer) {
-          clearTimeout(this.readyTimer);
-          this.readyTimer = null;
-        }
-        this.readyReject(new Error(params.message));
-        this.readyResolve = null;
-        this.readyReject = null;
-      }
-      return;
-    }
-    for (const handler of this.notificationHandlers) {
-      handler(method, params);
-    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script nonce="${nonce}">window.__SCISTACK_VIEW__ = ${target};</script>
+  <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
   }
 };
+function getNonce() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let text = "";
+  for (let i = 0; i < 32; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return text;
+}
+
+// src/session.ts
+var path5 = __toESM(require("path"));
+var vscode5 = __toESM(require("vscode"));
 
 // src/dagPanel.ts
 var vscode3 = __toESM(require("vscode"));
+var path4 = __toESM(require("path"));
+
+// src/sessionCore.ts
 var path2 = __toESM(require("path"));
+function prefixedLog(sink, prefix) {
+  return {
+    appendLine(line) {
+      for (const one of line.split("\n")) {
+        sink.appendLine(`[${prefix}] ${one}`);
+      }
+    }
+  };
+}
+function sessionIdForDb(dbPath, platform = process.platform) {
+  const resolved = path2.resolve(dbPath);
+  return platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+function sessionLabel(dbPath) {
+  return path2.basename(dbPath);
+}
+function sessionSlug(id) {
+  let hash = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+function projectRootForDb(dbPath, folders, platform = process.platform) {
+  if (folders.length === 0)
+    return void 0;
+  const db = sessionIdForDb(dbPath, platform);
+  let best;
+  for (const folder of folders) {
+    const root = sessionIdForDb(folder, platform);
+    const prefix = root.endsWith(path2.sep) ? root : root + path2.sep;
+    if (!db.startsWith(prefix))
+      continue;
+    if (best === void 0 || folder.length > best.length)
+      best = folder;
+  }
+  return best ?? folders[0];
+}
+var SessionRegistry = class {
+  constructor() {
+    this.sessions = /* @__PURE__ */ new Map();
+  }
+  get size() {
+    return this.sessions.size;
+  }
+  /** Every open session, in the order they were opened. */
+  all() {
+    return [...this.sessions.values()];
+  }
+  get(id) {
+    return this.sessions.get(id);
+  }
+  /** The session for a database path, whatever spelling it arrives in. */
+  byDbPath(dbPath) {
+    return this.sessions.get(sessionIdForDb(dbPath));
+  }
+  /** Register a session and make it the active one (it was just opened). */
+  add(session) {
+    this.sessions.set(session.id, session);
+    this.activeId = session.id;
+  }
+  /**
+   * Forget a session. If it was the active one, the most recently added
+   * survivor takes over — never a dangling id, which would make `resolve`
+   * report 'active' and hand back undefined.
+   */
+  remove(id) {
+    this.sessions.delete(id);
+    if (this.activeId !== id)
+      return;
+    const survivors = this.all();
+    this.activeId = survivors.length ? survivors[survivors.length - 1].id : void 0;
+  }
+  /** Note that a session's panel was focused. Unknown ids are ignored. */
+  setActive(id) {
+    if (this.sessions.has(id))
+      this.activeId = id;
+  }
+  get active() {
+    return this.activeId ? this.sessions.get(this.activeId) : void 0;
+  }
+  /**
+   * Which session a command means — explicit id first, then "there is only
+   * one", then the last focused panel.
+   *
+   * The 'only' step is not redundant with 'active': a command can arrive
+   * before any panel has ever been focused (the Explorer context menu at
+   * startup), and with a single session open there is nothing to be
+   * ambiguous about.
+   */
+  resolve(explicitId) {
+    if (explicitId) {
+      const session = this.sessions.get(explicitId);
+      if (session) {
+        return {
+          session,
+          source: "explicit",
+          detail: `named by the calling panel (${session.dbPath})`
+        };
+      }
+    }
+    const all = this.all();
+    if (all.length === 1) {
+      return {
+        session: all[0],
+        source: "only",
+        detail: `the only open database (${all[0].dbPath})`
+      };
+    }
+    const active = this.active;
+    if (active) {
+      return {
+        session: active,
+        source: "active",
+        detail: `the last focused pipeline (${active.dbPath})`
+      };
+    }
+    return { session: void 0, source: "none", detail: "no database is open" };
+  }
+};
 
 // src/matlabTerminal.ts
 var fs = __toESM(require("fs"));
 var os = __toESM(require("os"));
-var path = __toESM(require("path"));
+var path3 = __toESM(require("path"));
 var vscode2 = __toESM(require("vscode"));
 function formatStamp(d) {
   const p = (n, w = 2) => String(n).padStart(w, "0");
@@ -364,13 +386,16 @@ function isMatlabExtensionAvailable() {
 function isMatlabTerminalOpen() {
   return vscode2.window.terminals.some((t) => t.name === "MATLAB");
 }
-async function runInMatlabTerminal(command, outputChannel2) {
+async function runInMatlabTerminal(command, outputChannel2, sessionSlug2) {
   if (!isMatlabExtensionAvailable()) {
     return false;
   }
   try {
     const t0 = Date.now();
-    const scriptPath = path.join(os.tmpdir(), "scistack_run.m");
+    const scriptPath = path3.join(
+      os.tmpdir(),
+      sessionSlug2 ? `scistack_run_${sessionSlug2}.m` : "scistack_run.m"
+    );
     fs.writeFileSync(scriptPath, command, "utf-8");
     const tWritten = Date.now();
     outputChannel2?.appendLine(
@@ -408,12 +433,48 @@ async function runInMatlabTerminal(command, outputChannel2) {
 var MatlabRunTracker = class {
   constructor() {
     this.inFlight = /* @__PURE__ */ new Set();
+    /**
+     * The subset of in-flight runs that occupy the window's ONE MathWorks
+     * MATLAB — see `noteSharedEngine`.
+     */
+    this.sharedEngine = /* @__PURE__ */ new Set();
     this.refreshPending = false;
     this.finishedCallbacks = [];
   }
   /** Mark a MATLAB run as owning the database from now until its run_done. */
   begin(runId) {
     this.inFlight.add(runId);
+  }
+  /**
+   * Record that this run went to the **shared** MATLAB — the MathWorks
+   * terminal, or the clipboard destined for it — rather than to this
+   * session's own sidecar.
+   *
+   * The distinction exists because only one of the two tiers is shared
+   * between databases:
+   *
+   * - **sidecar** — `scistack_gui.matlab_sidecar._sidecar` is a *process*
+   *   singleton, and every session has its own Python server process, so
+   *   every session already has its own MATLAB. Two databases running
+   *   through sidecars are as independent as two Python runs and must not
+   *   block each other.
+   * - **terminal / clipboard** — the MathWorks extension owns one MATLAB
+   *   per VS Code window, and a SciStack script points it at one database
+   *   with `configure_database` before doing anything else.
+   *
+   * Without this split the gate was exactly backwards: a sidecar run held
+   * the mark for its whole duration (Python pushes a real `run_done`) and
+   * blocked the other database pointlessly, while a terminal run — the one
+   * that genuinely shares an engine — cleared it milliseconds after
+   * dispatch.
+   */
+  noteSharedEngine(runId) {
+    if (this.inFlight.has(runId))
+      this.sharedEngine.add(runId);
+  }
+  /** Whether a run is currently occupying the window's shared MATLAB. */
+  get sharedEngineActive() {
+    return this.sharedEngine.size > 0;
   }
   /**
    * Clear a run's mark. Safe to call for every run_done — Python runs are
@@ -423,6 +484,7 @@ var MatlabRunTracker = class {
   end(runId) {
     if (!runId)
       return false;
+    this.sharedEngine.delete(runId);
     const wasTracked = this.inFlight.delete(runId);
     if (wasTracked && this.inFlight.size === 0) {
       this.finishedCallbacks.forEach((cb) => cb());
@@ -465,35 +527,52 @@ var MatlabRunTracker = class {
 function needsMatlabConnectionPrompt(matlabExtensionAvailable, matlabTerminalAlreadyOpen) {
   return matlabExtensionAvailable && !matlabTerminalAlreadyOpen;
 }
+function matlabHolder(sessions2, selfId) {
+  return sessions2.find((s) => s.id !== selfId && s.matlabBusy)?.label;
+}
 
 // src/dagPanel.ts
-var DEBUG_SESSION_NAME = "Attach to scistack-gui server";
+var DEBUG_SESSION_BASE = "Attach to scistack-gui server";
 var DagPanel = class {
-  constructor(context, pythonProcess2, outputChannel2) {
+  constructor(context, session, outputChannel2) {
     this.context = context;
-    this.pythonProcess = pythonProcess2;
+    this.session = session;
     this.outputChannel = outputChannel2;
     this.disposables = [];
     this.disposeCallbacks = [];
     /**
-     * Which MATLAB runs currently own the DuckDB file lock. Shared with
-     * `extension.ts`'s DB file-watcher, which must not refresh the DAG while
-     * MATLAB has the database — see MatlabRunTracker.
+     * Which MATLAB runs currently own the DuckDB file lock. Shared with this
+     * session's DB file-watcher, which must not refresh the DAG while MATLAB
+     * has the database — see MatlabRunTracker. Per panel, i.e. per database:
+     * a MATLAB run against one database must not defer the other's refreshes.
      */
     this.matlabRuns = new MatlabRunTracker();
+    /** Called when this panel gains or loses focus — see `onDidChangeActive`. */
+    this.activeCallbacks = [];
     this.panel = vscode3.window.createWebviewPanel(
       "scistack.dag",
-      "SciStack Pipeline",
+      // The database is in the tab title because there can be several: with
+      // two canvases both called "SciStack Pipeline" the tab bar says
+      // nothing about which is which.
+      `SciStack \u2014 ${session.label}`,
       vscode3.ViewColumn.One,
       {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [
-          vscode3.Uri.file(path2.join(context.extensionPath, "dist", "webview"))
+          vscode3.Uri.file(path4.join(context.extensionPath, "dist", "webview"))
         ]
       }
     );
     this.panel.webview.html = this.getHtml();
+    this.panel.onDidChangeViewState(
+      (e) => {
+        for (const cb of this.activeCallbacks)
+          cb(e.webviewPanel.active);
+      },
+      void 0,
+      this.disposables
+    );
     this.panel.webview.onDidReceiveMessage(
       async (msg) => {
         const method = msg.method;
@@ -511,10 +590,12 @@ var DagPanel = class {
         }
         if (method === "open_plot_panel") {
           try {
-            await vscode3.commands.executeCommand(
-              "scistack.openPlotPanel",
-              msg.params ?? {}
-            );
+            await vscode3.commands.executeCommand("scistack.openPlotPanel", {
+              ...msg.params ?? {},
+              // Name the database outright. A plot opened from THIS canvas
+              // must read THIS database, whatever tab was focused last.
+              sessionId: this.session.id
+            });
             this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
           } catch (err) {
             this.panel.webview.postMessage({
@@ -571,7 +652,7 @@ var DagPanel = class {
             await this.ensureDebugAttached();
           }
           try {
-            const result = await this.pythonProcess.request(
+            const result = await this.session.python.request(
               method,
               params
             );
@@ -589,7 +670,7 @@ var DagPanel = class {
         }
         if (method === "start_pipeline_run") {
           try {
-            const result = await this.pythonProcess.request(
+            const result = await this.session.python.request(
               method,
               msg.params ?? {}
             );
@@ -609,7 +690,7 @@ var DagPanel = class {
           return;
         }
         try {
-          const result = await this.pythonProcess.request(
+          const result = await this.session.python.request(
             method,
             msg.params ?? {}
           );
@@ -738,6 +819,65 @@ var DagPanel = class {
     return true;
   }
   /**
+   * Refuse a MATLAB run while another database owns the engine.
+   *
+   * There is one MATLAB process per VS Code window, and a SciStack run
+   * points it at one database with `configure_database` before doing
+   * anything else — so two sessions dispatching at once do not run in
+   * parallel. The second script repoints the engine mid-run and the first
+   * run's remaining `for_each` calls write into the other project's
+   * database. Both writes are well-formed, so nothing downstream can
+   * detect it; the only place to stop it is before the script is generated.
+   *
+   * Returns true when the caller must stop (having told the user which
+   * database to wait for). The decision itself is
+   * `matlabConnectionGate.matlabHolder`, which is unit-tested.
+   *
+   * **Only the shared engine is gated.** MATLAB is not one process per
+   * window in general — `matlab_sidecar._sidecar` is a *process* singleton
+   * and every session has its own Python server, so every session already
+   * has its own sidecar MATLAB. Two databases running through sidecars are
+   * as independent as two Python runs and are never blocked here. What IS
+   * shared is the MathWorks extension's terminal: it owns one MATLAB per
+   * VS Code window, which is its design, not ours. Hence
+   * `MatlabRunTracker.sharedEngineActive` rather than `isActive`.
+   *
+   * **Coverage, for the tier that is gated.** `handleMatlabRun` calls
+   * `finish(true)` as soon as a terminal-tier script is sent, because
+   * nothing tells the extension when a MATLAB *terminal* run ends. So two
+   * Run clicks in quick succession are caught; clicking Run in database B
+   * ten seconds into a two-minute terminal run in A is not, and B's
+   * `configure_database` will repoint the engine under A. The real fix is
+   * run markers written by MATLAB itself — Stage 2 of
+   * `.claude/plan-matlab-terminal-run-tracking.md`, still deferred. A user
+   * who needs genuinely parallel MATLAB runs today can have them: that is
+   * what the sidecar tier already is.
+   *
+   * The separate half of this problem — two sessions writing one temp
+   * script file — is fixed unconditionally by the per-session filename
+   * (`sessionCore.sessionSlug`), which needs no tracking at all.
+   */
+  async refuseIfMatlabBusyElsewhere() {
+    const holder = matlabHolder(
+      this.session.manager.everything().map((s) => ({
+        id: s.id,
+        label: s.label,
+        // The SHARED engine only — a sidecar run is this session's own
+        // MATLAB process and blocks nobody.
+        matlabBusy: s.dagPanel?.matlabRuns.sharedEngineActive ?? false
+      })),
+      this.session.id
+    );
+    if (!holder)
+      return false;
+    const message = `SciStack: MATLAB is running ${holder} right now. One MATLAB session can only be pointed at one database at a time \u2014 wait for that run to finish, then click Run again.`;
+    this.outputChannel.appendLine(
+      `refuseIfMatlabBusyElsewhere: ${this.session.label} blocked \u2014 MATLAB is held by ${holder}`
+    );
+    await vscode3.window.showWarningMessage(message);
+    return true;
+  }
+  /**
    * Stage 4 fallback ladder for an already-generated MATLAB command:
    * MathWorks terminal (Tier 2 — real breakpoint debugging) -> standalone
    * sidecar (Tier 3 — Python-driven, real run_output/run_done via the
@@ -752,15 +892,21 @@ var DagPanel = class {
    * before it's actually done.
    */
   async dispatchMatlabCommand(command, runId, warnings) {
-    const sent = await runInMatlabTerminal(command, this.outputChannel);
+    const sent = await runInMatlabTerminal(
+      command,
+      this.outputChannel,
+      sessionSlug(this.session.id)
+    );
     if (sent) {
+      if (runId)
+        this.matlabRuns.noteSharedEngine(runId);
       this.outputChannel.appendLine("dispatchMatlabCommand: sent to MATLAB terminal");
       vscode3.window.showInformationMessage("Running in MATLAB terminal...");
       return "terminal";
     }
     if (runId) {
       try {
-        const sidecarResult = await this.pythonProcess.request(
+        const sidecarResult = await this.session.python.request(
           "start_matlab_sidecar_run",
           { command, run_id: runId, warnings: warnings ?? [] }
         );
@@ -782,6 +928,8 @@ var DagPanel = class {
         );
       }
     }
+    if (runId)
+      this.matlabRuns.noteSharedEngine(runId);
     await vscode3.env.clipboard.writeText(command);
     this.outputChannel.appendLine(
       "dispatchMatlabCommand: no MATLAB terminal or sidecar available, copied to clipboard"
@@ -816,9 +964,13 @@ var DagPanel = class {
       finish(false, true);
       return;
     }
+    if (await this.refuseIfMatlabBusyElsewhere()) {
+      finish(false, true);
+      return;
+    }
     this.beginMatlabRun(runId);
     try {
-      const result = await this.pythonProcess.request(
+      const result = await this.session.python.request(
         "generate_matlab_command",
         params
       );
@@ -889,9 +1041,14 @@ var DagPanel = class {
       finish(false, true);
       return;
     }
+    if (await this.refuseIfMatlabBusyElsewhere()) {
+      emit("MATLAB is busy with another database \u2014 wait for that run to finish.\n");
+      finish(false, true);
+      return;
+    }
     this.beginMatlabRun(runId);
     try {
-      const result = await this.pythonProcess.request(
+      const result = await this.session.python.request(
         "generate_matlab_pipeline_command",
         params
       );
@@ -921,13 +1078,6 @@ var DagPanel = class {
     }
   }
   /**
-   * Update the PythonProcess reference after a restart, so requests from the
-   * webview are routed to the new process instead of the killed one.
-   */
-  updatePythonProcess(proc) {
-    this.pythonProcess = proc;
-  }
-  /**
    * Post a notification message to the Webview (from Python push notifications).
    */
   postMessage(msg) {
@@ -949,10 +1099,10 @@ var DagPanel = class {
       this.debugSession = existing;
       return;
     }
-    const port = cfg.get("debugPort", 5678);
-    const folder = vscode3.workspace.workspaceFolders?.[0];
+    const port = this.session.debugPort ?? cfg.get("debugPort", 5678);
+    const folder = this.session.projectRoot ? vscode3.workspace.getWorkspaceFolder(vscode3.Uri.file(this.session.projectRoot)) : vscode3.workspace.workspaceFolders?.[0];
     const started = await vscode3.debug.startDebugging(folder, {
-      name: DEBUG_SESSION_NAME,
+      name: this.debugSessionName(),
       type: "debugpy",
       request: "attach",
       connect: { host: "127.0.0.1", port },
@@ -978,15 +1128,27 @@ var DagPanel = class {
   }
   findExistingDebugSession() {
     const active = vscode3.debug.activeDebugSession;
-    if (active && active.name === DEBUG_SESSION_NAME)
+    if (active && active.name === this.debugSessionName())
       return active;
     return void 0;
   }
+  /** This canvas's debug session name — see DEBUG_SESSION_BASE. */
+  debugSessionName() {
+    return `${DEBUG_SESSION_BASE} (${this.session.label})`;
+  }
   /**
    * Reveal the panel if it's hidden.
+   *
+   * In its own column, not ViewColumn.One: with several canvases open the
+   * user may well have dragged one into a split, and revealing it into
+   * column one would move their tab for them.
    */
   reveal() {
-    this.panel.reveal(vscode3.ViewColumn.One);
+    this.panel.reveal(this.panel.viewColumn ?? vscode3.ViewColumn.One);
+  }
+  /** Close this canvas. Its dispose callbacks close the session with it. */
+  dispose() {
+    this.panel.dispose();
   }
   /**
    * Register a callback for when the panel is disposed.
@@ -994,16 +1156,31 @@ var DagPanel = class {
   onDidDispose(callback) {
     this.disposeCallbacks.push(callback);
   }
+  /**
+   * Register a callback for when this panel gains or loses focus.
+   *
+   * This is how a Command Palette invocation finds its database: with two
+   * canvases open, "the one you are looking at" is the only sensible
+   * default, and nothing else in VS Code reports it for a webview.
+   */
+  onDidChangeActive(callback) {
+    this.activeCallbacks.push(callback);
+  }
   getHtml() {
-    const webviewDir = path2.join(this.context.extensionPath, "dist", "webview");
+    const webviewDir = path4.join(this.context.extensionPath, "dist", "webview");
     const webview = this.panel.webview;
     const scriptUri = webview.asWebviewUri(
-      vscode3.Uri.file(path2.join(webviewDir, "index.js"))
+      vscode3.Uri.file(path4.join(webviewDir, "index.js"))
     );
     const styleUri = webview.asWebviewUri(
-      vscode3.Uri.file(path2.join(webviewDir, "index.css"))
+      vscode3.Uri.file(path4.join(webviewDir, "index.css"))
     );
-    const nonce = getNonce();
+    const nonce = getNonce2();
+    const session = JSON.stringify({
+      id: this.session.id,
+      dbName: this.session.label,
+      dbPath: this.session.dbPath
+    });
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1016,7 +1193,7 @@ var DagPanel = class {
                  img-src ${webview.cspSource} data:;
                  font-src ${webview.cspSource};" />
   <link rel="stylesheet" href="${styleUri}" />
-  <title>SciStack Pipeline</title>
+  <title>SciStack \u2014 ${this.session.label}</title>
   <style>
     html, body, #root {
       margin: 0;
@@ -1029,12 +1206,13 @@ var DagPanel = class {
 </head>
 <body>
   <div id="root"></div>
+  <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
   }
 };
-function getNonce() {
+function getNonce2() {
   let text = "";
   const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   for (let i = 0; i < 32; i++) {
@@ -1043,27 +1221,31 @@ function getNonce() {
   return text;
 }
 
-// src/plotPanel.ts
-var path3 = __toESM(require("path"));
-var vscode4 = __toESM(require("vscode"));
-
 // src/panelRegistry.ts
 var PanelRegistry = class {
   constructor() {
-    this.sinks = /* @__PURE__ */ new Set();
+    this.panels = /* @__PURE__ */ new Set();
   }
   /** Number of panels currently registered. */
   get size() {
-    return this.sinks.size;
+    return this.panels.size;
+  }
+  /**
+   * The registered panels, for a caller that must act on each one (closing
+   * a session's plot tabs). A snapshot, because disposing a panel
+   * unregisters it and would otherwise mutate the set mid-iteration.
+   */
+  sinks() {
+    return [...this.panels];
   }
   /**
    * Register a panel. Returns the function that removes it again — call it
    * from the panel's dispose, or a closed tab keeps receiving messages.
    */
   add(sink) {
-    this.sinks.add(sink);
+    this.panels.add(sink);
     return () => {
-      this.sinks.delete(sink);
+      this.panels.delete(sink);
     };
   }
   /**
@@ -1077,7 +1259,7 @@ var PanelRegistry = class {
    */
   send(msg) {
     let delivered = 0;
-    for (const sink of this.sinks) {
+    for (const sink of this.panels) {
       try {
         sink.postMessage(msg);
         delivered += 1;
@@ -1086,265 +1268,318 @@ var PanelRegistry = class {
     }
     return delivered;
   }
-  /**
-   * Hand every registered panel the process that replaced the last one.
-   * Returns how many panels took it, for the same reason `send` counts:
-   * "restarted, 0 panels rebound" while a plot tab is open is this bug.
-   *
-   * The DAG panel is rebound by name in `startPipeline`; plot tabs are
-   * created after the fact and can only be reached through here.
-   */
-  rebind(proc) {
-    let rebound = 0;
-    for (const sink of this.sinks) {
-      if (!sink.updatePythonProcess)
-        continue;
-      try {
-        sink.updatePythonProcess(proc);
-        rebound += 1;
-      } catch {
-      }
+};
+
+// src/pythonProcess.ts
+var import_child_process = require("child_process");
+var readline = __toESM(require("readline"));
+var vscode4 = __toESM(require("vscode"));
+var STDERR_TAIL_LINES = 200;
+var PythonProcess = class {
+  constructor(pythonPath, args, outputChannel2, options = {}) {
+    this.pythonPath = pythonPath;
+    this.outputChannel = outputChannel2;
+    this.nextId = 1;
+    this.pending = /* @__PURE__ */ new Map();
+    this.notificationHandlers = [];
+    this.readyResolve = null;
+    this.readyReject = null;
+    this.readyTimer = null;
+    this.readyTimeoutMs = 0;
+    /** Ring of recent stderr lines, so a failed start can report why. */
+    this.stderrTail = [];
+    this.exitCode = null;
+    this.args = args;
+    this.outputChannel.appendLine(`Spawning: ${pythonPath} ${args.join(" ")}`);
+    const childEnv = { ...process.env };
+    if (options.debugPort !== void 0) {
+      childEnv.SCISTACK_GUI_DEBUG = "1";
+      childEnv.SCISTACK_GUI_DEBUG_PORT = String(options.debugPort);
+      this.outputChannel.appendLine(
+        `debugpy listener will start on 127.0.0.1:${options.debugPort} (attach via "Attach to scistack-gui server" launch config)`
+      );
     }
-    return rebound;
+    this.proc = (0, import_child_process.spawn)(pythonPath, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: childEnv,
+      cwd: options.cwd
+    });
+    this.closed = new Promise((resolve2) => {
+      this.proc.on("close", () => resolve2());
+    });
+    const rl = readline.createInterface({ input: this.proc.stdout });
+    rl.on("line", (line) => this.handleLine(line));
+    this.proc.stderr?.on("data", (data) => {
+      const text = data.toString().trimEnd();
+      this.outputChannel.appendLine(text);
+      for (const line of text.split("\n")) {
+        this.stderrTail.push(line);
+      }
+      if (this.stderrTail.length > STDERR_TAIL_LINES) {
+        this.stderrTail.splice(0, this.stderrTail.length - STDERR_TAIL_LINES);
+      }
+    });
+    this.proc.on("exit", (code, signal) => {
+      this.exitCode = code;
+      const msg = `Python process exited (code=${code}, signal=${signal})`;
+      this.outputChannel.appendLine(msg);
+      for (const [, pending] of this.pending) {
+        pending.reject(new Error(msg));
+      }
+      this.pending.clear();
+      if (this.readyReject) {
+        if (this.readyTimer) {
+          clearTimeout(this.readyTimer);
+          this.readyTimer = null;
+        }
+        this.readyReject(new Error(msg));
+        this.readyResolve = null;
+        this.readyReject = null;
+      }
+    });
+    this.proc.on("error", (err) => {
+      this.outputChannel.appendLine(`Python process error: ${err.message}`);
+      if (this.readyReject) {
+        if (this.readyTimer) {
+          clearTimeout(this.readyTimer);
+          this.readyTimer = null;
+        }
+        this.readyReject(err);
+        this.readyResolve = null;
+        this.readyReject = null;
+      }
+    });
+  }
+  /**
+   * Wait until the child has closed its stdio, or `timeoutMs` elapses.
+   *
+   * The ready promise can reject (on 'exit', or on the inactivity timer)
+   * while the last stderr chunk is still queued, so a diagnostic report must
+   * wait for 'close' or it can quote an empty traceback.
+   */
+  whenClosed(timeoutMs = 2e3) {
+    return Promise.race([
+      this.closed,
+      new Promise((resolve2) => setTimeout(resolve2, timeoutMs))
+    ]);
+  }
+  /** Recent stderr from the child process (oldest first). */
+  getStderr() {
+    return this.stderrTail.join("\n");
+  }
+  /** Exit code, or null while the process is still running. */
+  getExitCode() {
+    return this.exitCode;
+  }
+  /** Why this process can no longer take a request, or null while it can. */
+  deadReason() {
+    if (this.exitCode !== null)
+      return `it exited with code ${this.exitCode}`;
+    if (this.proc.killed)
+      return "it was stopped";
+    if (!this.proc.stdin || this.proc.stdin.destroyed)
+      return "its input stream is closed";
+    return null;
+  }
+  /**
+   * Wait for the Python server to signal readiness.
+   * Returns the ready notification params (db_name, schema_keys).
+   *
+   * The ``timeoutMs`` is an *inactivity* timeout: it resets whenever a
+   * ``progress`` notification arrives from the server. This lets slow-but-
+   * progressing startups (e.g. projects on network drives) complete
+   * without falsely timing out, while still killing a truly stuck server.
+   */
+  waitForReady(timeoutMs) {
+    this.readyTimeoutMs = timeoutMs;
+    return new Promise((resolve2, reject) => {
+      this.readyResolve = resolve2;
+      this.readyReject = reject;
+      this.resetReadyTimer(timeoutMs);
+    });
+  }
+  resetReadyTimer(timeoutMs) {
+    if (this.readyTimer) {
+      clearTimeout(this.readyTimer);
+    }
+    this.readyTimer = setTimeout(() => {
+      this.readyTimer = null;
+      if (this.readyReject) {
+        this.readyReject(new Error(
+          `Python server did not become ready within ${timeoutMs}ms of silence (no progress notification received).`
+        ));
+        this.readyResolve = null;
+        this.readyReject = null;
+      }
+    }, timeoutMs);
+  }
+  /**
+   * Send a JSON-RPC request and return a promise for the result.
+   *
+   * Every request carries a timeout. The server is supposed to answer every
+   * request exactly once — long work is reported asynchronously through
+   * run_output/run_done notifications, not by holding an RPC open — so a
+   * response that never arrives means the server lost the request, and
+   * without a timeout that wedges the caller permanently with no error
+   * anywhere. (That is precisely how a MATLAB-locked database used to hang
+   * the whole GUI; see scistack_gui/server.py::_handle_request.) The
+   * timeout is a backstop, not a work limit: it is deliberately generous
+   * and configurable via `scistack.rpcTimeoutMs`.
+   */
+  request(method, params) {
+    const gone = this.deadReason();
+    if (gone) {
+      this.outputChannel.appendLine(`RPC refused: ${method} \u2014 ${gone}`);
+      return Promise.reject(new Error(
+        `SciStack: the Python server is not running (${gone}). Reopen the pipeline (or run "SciStack: Restart Python") and try again.`
+      ));
+    }
+    const id = this.nextId++;
+    const timeoutMs = vscode4.workspace.getConfiguration("scistack").get("rpcTimeoutMs", 3e5);
+    return new Promise((resolve2, reject) => {
+      const settle = (fn) => {
+        const pending = this.pending.get(id);
+        if (pending?.timer)
+          clearTimeout(pending.timer);
+        this.pending.delete(id);
+        fn();
+      };
+      const timer = timeoutMs > 0 ? setTimeout(() => {
+        const pending = this.pending.get(id);
+        if (!pending)
+          return;
+        const elapsed = Date.now() - pending.startedAt;
+        this.outputChannel.appendLine(
+          `RPC timeout: ${method} (id=${id}) got no response in ${elapsed}ms. The Python server may have dropped the request \u2014 check the stderr above for a traceback.`
+        );
+        settle(() => reject(new Error(
+          `SciStack: no response from the Python server for '${method}' after ${Math.round(elapsed / 1e3)}s.`
+        )));
+      }, timeoutMs) : null;
+      this.pending.set(id, {
+        resolve: (value) => settle(() => resolve2(value)),
+        reject: (reason) => settle(() => reject(reason)),
+        method,
+        startedAt: Date.now(),
+        timer
+      });
+      const msg = JSON.stringify({ jsonrpc: "2.0", method, params, id });
+      this.proc.stdin?.write(msg + "\n", (err) => {
+        if (err) {
+          this.outputChannel.appendLine(`RPC write failed: ${method} \u2014 ${err.message}`);
+          const pending = this.pending.get(id);
+          if (pending) {
+            pending.reject(new Error(
+              `SciStack: could not send '${method}' to the Python server (${err.message}). It may have exited \u2014 check the SciStack output channel.`
+            ));
+          }
+        }
+      });
+    });
+  }
+  /**
+   * Register a handler for push notifications from Python.
+   */
+  onNotification(handler) {
+    this.notificationHandlers.push(handler);
+  }
+  /**
+   * Kill the Python process.
+   */
+  kill() {
+    this.proc.kill();
+  }
+  handleLine(line) {
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      this.outputChannel.appendLine(`[stdout non-JSON] ${line}`);
+      return;
+    }
+    if ("id" in msg && msg.id !== null && msg.id !== void 0) {
+      const id = msg.id;
+      const pending = this.pending.get(id);
+      if (pending) {
+        if ("error" in msg) {
+          const err = msg.error;
+          this.outputChannel.appendLine(
+            `RPC error: ${pending.method} (id=${id}, ${Date.now() - pending.startedAt}ms): ${err.message}`
+          );
+          pending.reject(new Error(err.message));
+        } else {
+          pending.resolve(msg.result);
+        }
+      } else {
+        this.outputChannel.appendLine(
+          `[stdout] response for unknown/expired request id=${id} \u2014 ignored`
+        );
+      }
+      return;
+    }
+    const method = msg.method;
+    const params = msg.params ?? {};
+    if (method === "progress") {
+      this.outputChannel.appendLine(`  ${params.message}`);
+      if (this.readyResolve) {
+        this.resetReadyTimer(this.readyTimeoutMs);
+      }
+      return;
+    }
+    if (method === "ready" && this.readyResolve) {
+      if (this.readyTimer) {
+        clearTimeout(this.readyTimer);
+        this.readyTimer = null;
+      }
+      this.readyResolve(params);
+      this.readyResolve = null;
+      this.readyReject = null;
+      return;
+    }
+    if (method === "error") {
+      this.outputChannel.appendLine(`Server error: ${params.message}`);
+      if (this.readyReject) {
+        if (this.readyTimer) {
+          clearTimeout(this.readyTimer);
+          this.readyTimer = null;
+        }
+        this.readyReject(new Error(params.message));
+        this.readyResolve = null;
+        this.readyReject = null;
+      }
+      return;
+    }
+    for (const handler of this.notificationHandlers) {
+      handler(method, params);
+    }
   }
 };
 
-// src/plotPanel.ts
-var PlotPanel = class _PlotPanel {
-  constructor(context, pythonProcess2, outputChannel2, target, column) {
-    this.context = context;
-    this.pythonProcess = pythonProcess2;
-    this.outputChannel = outputChannel2;
-    this.target = target;
-    this.disposables = [];
-    this.unregister = () => {
-    };
-    this.panel = vscode4.window.createWebviewPanel(
-      "scistack.plot",
-      this.title(),
-      // The pipeline's own group: a sibling tab at full width, not a split.
-      { viewColumn: column, preserveFocus: false },
-      {
-        enableScripts: true,
-        // Plot state (spec, role assignments) is expensive to rebuild and has
-        // no persistence of its own, so keep the webview alive when the tab is
-        // in the background.
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode4.Uri.file(path3.join(context.extensionPath, "dist", "webview"))
-        ]
-      }
-    );
-    this.panel.webview.html = this.getHtml();
-    this.unregister = _PlotPanel.openPanels.add(this);
-    this.panel.webview.onDidReceiveMessage(
-      async (msg) => {
-        const method = msg.method;
-        if (method === "pick_save_path") {
-          try {
-            const params = msg.params ?? {};
-            const folder = vscode4.workspace.workspaceFolders?.[0]?.uri;
-            const uri = await vscode4.window.showSaveDialog({
-              defaultUri: folder ? vscode4.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
-              // The panel sends the ONE format its dropdown selected, so the
-              // dialog cannot offer a second answer to a question already
-              // asked — the backend honours the dropdown either way.
-              filters: { [params.filterName ?? "Images"]: params.formats ?? ["png"] }
-            });
-            this.panel.webview.postMessage({
-              id: msg.id,
-              result: { path: uri?.fsPath ?? null }
-            });
-          } catch (err) {
-            this.panel.webview.postMessage({
-              id: msg.id,
-              error: { message: String(err) }
-            });
-          }
-          return;
-        }
-        if (method === "pick_save_folder") {
-          try {
-            const uris = await vscode4.window.showOpenDialog({
-              canSelectFiles: false,
-              canSelectFolders: true,
-              canSelectMany: false,
-              defaultUri: vscode4.workspace.workspaceFolders?.[0]?.uri,
-              openLabel: "Save figures here"
-            });
-            this.panel.webview.postMessage({
-              id: msg.id,
-              result: { path: uris?.[0]?.fsPath ?? null }
-            });
-          } catch (err) {
-            this.panel.webview.postMessage({
-              id: msg.id,
-              error: { message: String(err) }
-            });
-          }
-          return;
-        }
-        try {
-          const result = await this.pythonProcess.request(
-            method,
-            msg.params ?? {}
-          );
-          this.panel.webview.postMessage({ id: msg.id, result });
-        } catch (err) {
-          this.outputChannel.appendLine(`plot panel: ${method} failed \u2014 ${err}`);
-          this.panel.webview.postMessage({
-            id: msg.id,
-            error: { message: String(err) }
-          });
-        }
-      },
-      void 0,
-      this.disposables
-    );
-    this.panel.onDidDispose(() => this.dispose(), void 0, this.disposables);
+// src/serverArgs.ts
+function buildServerArgs({
+  dbPath,
+  schemaKeys,
+  projectRoot,
+  logFile
+}) {
+  const args = ["-m", "scistack_gui.server", "--db", dbPath];
+  if (schemaKeys && schemaKeys.length > 0) {
+    args.push("--schema-keys", schemaKeys.join(","));
   }
-  static {
-    /**
-     * Every open plot tab, including the `newTab` ones `current` does not track.
-     * Push notifications go here — see `broadcast`.
-     */
-    this.openPanels = new PanelRegistry();
+  if (projectRoot) {
+    args.push("--project-root", projectRoot);
   }
-  /**
-   * Deliver a push notification from Python to every open plot tab.
-   *
-   * The Plot Studio is a sibling of the DAG webview, not a child of it, so the
-   * extension's `onNotification` forwarding reaches it only through here. The
-   * long-running save is a background job that reports `plot_save_progress` /
-   * `plot_save_complete` / `plot_save_failed`, and the panel disables its save
-   * buttons until one of the last two arrives — a notification that stops at
-   * the DAG panel leaves the tab saying "Saving…" for the rest of the session.
-   *
-   * Returns the number of panels that received it, for the caller's log.
-   */
-  static broadcast(msg) {
-    return _PlotPanel.openPanels.send(msg);
+  if (logFile) {
+    args.push("--log-file", logFile);
   }
-  /**
-   * The server was restarted: every open plot tab must talk to the NEW
-   * process. Returns how many did. Called from `startPipeline` beside
-   * `dagPanel.updatePythonProcess` — a tab that keeps the old handle writes
-   * to a destroyed stdin and every `plot_*` RPC fails with
-   * ERR_STREAM_DESTROYED (2026-09-15).
-   */
-  static updatePythonProcess(proc) {
-    return _PlotPanel.openPanels.rebind(proc);
+  return args;
+}
+function buildPlotOnlyServerArgs(options = {}) {
+  const args = ["-m", "scistack_gui.server", "--plot-only"];
+  if (options.logFile) {
+    args.push("--log-file", options.logFile);
   }
-  static show(context, pythonProcess2, outputChannel2, target, options = {}) {
-    if (!options.newTab && _PlotPanel.current) {
-      _PlotPanel.current.updatePythonProcess(pythonProcess2);
-      _PlotPanel.current.retarget(target);
-      return _PlotPanel.current;
-    }
-    const panel = new _PlotPanel(
-      context,
-      pythonProcess2,
-      outputChannel2,
-      target,
-      options.column ?? vscode4.ViewColumn.One
-    );
-    if (!options.newTab)
-      _PlotPanel.current = panel;
-    return panel;
-  }
-  /** Point the open panel at a different variable or file. */
-  retarget(target) {
-    this.target = target;
-    this.panel.title = this.title();
-    this.panel.reveal(this.panel.viewColumn, false);
-    this.postMessage({
-      method: "open_plot_studio",
-      params: {
-        variable: target.variable,
-        csv_path: target.csvPath,
-        location: target.location
-      }
-    });
-  }
-  /** Post a message into this panel's webview (the `MessageSink` contract). */
-  postMessage(msg) {
-    this.panel.webview.postMessage(msg);
-  }
-  /** The other half of `MessageSink`: route later RPCs to a new server. */
-  updatePythonProcess(proc) {
-    if (proc === this.pythonProcess)
-      return;
-    this.outputChannel.appendLine(
-      `plot panel: rebound to the restarted Python server (${this.title()})`
-    );
-    this.pythonProcess = proc;
-  }
-  title() {
-    if (this.target.csvPath)
-      return `Plot \u2014 ${path3.basename(this.target.csvPath)}`;
-    return this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
-  }
-  dispose() {
-    if (_PlotPanel.current === this)
-      _PlotPanel.current = void 0;
-    this.unregister();
-    while (this.disposables.length)
-      this.disposables.pop()?.dispose();
-  }
-  getHtml() {
-    const webviewDir = path3.join(this.context.extensionPath, "dist", "webview");
-    const webview = this.panel.webview;
-    const scriptUri = webview.asWebviewUri(
-      vscode4.Uri.file(path3.join(webviewDir, "index.js"))
-    );
-    const styleUri = webview.asWebviewUri(
-      vscode4.Uri.file(path3.join(webviewDir, "index.css"))
-    );
-    const nonce = getNonce2();
-    const target = JSON.stringify({
-      view: "plot",
-      variable: this.target.variable ?? null,
-      csvPath: this.target.csvPath ?? null,
-      location: this.target.location ?? null
-    });
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none';
-                 style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';
-                 img-src ${webview.cspSource} data:;
-                 font-src ${webview.cspSource};" />
-  <link rel="stylesheet" href="${styleUri}" />
-  <title>${this.title()}</title>
-  <style>
-    html, body, #root {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-    }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script nonce="${nonce}">window.__SCISTACK_VIEW__ = ${target};</script>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
-  }
-};
-function getNonce2() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
+  return args;
 }
 
 // src/startupDiagnostics.ts
@@ -1373,14 +1608,14 @@ var PROBE_SCRIPT = [
   "print(json.dumps(info))"
 ].join("\n");
 function probeInterpreter(pythonPath, timeoutMs = 1e4) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     let settled = false;
     const done = (probe) => {
       if (settled)
         return;
       settled = true;
       clearTimeout(timer);
-      resolve(probe);
+      resolve2(probe);
     };
     let proc;
     try {
@@ -1388,7 +1623,7 @@ function probeInterpreter(pythonPath, timeoutMs = 1e4) {
         stdio: ["ignore", "pipe", "pipe"]
       });
     } catch (err) {
-      resolve({ ok: false, spawnError: String(err) });
+      resolve2({ ok: false, spawnError: String(err) });
       return;
     }
     const timer = setTimeout(() => {
@@ -1536,260 +1771,487 @@ ${probe.raw ?? ""}`);
   );
 }
 
-// src/extension.ts
-var pythonProcess = null;
-var dagPanel = null;
-var outputChannel;
-var dbWatcher = null;
-var dbWatcherDebounce = null;
-var lastStartArgs = null;
-var warnedNoWorkspaceFolder = false;
-function activate(context) {
-  outputChannel = vscode5.window.createOutputChannel("SciStack");
-  const openPipeline = vscode5.commands.registerCommand(
-    "scistack.openPipeline",
-    async () => {
-      const dbChoice = await vscode5.window.showQuickPick(
-        ["Open existing database", "Create new database"],
-        { placeHolder: "SciStack: Open or create a .duckdb file?" }
-      );
-      if (!dbChoice)
-        return;
-      let dbPath;
-      let schemaKeys;
-      if (dbChoice === "Open existing database") {
-        const dbUris = await vscode5.window.showOpenDialog({
-          canSelectFiles: true,
-          canSelectFolders: false,
-          canSelectMany: false,
-          filters: { "DuckDB Database": ["duckdb"] },
-          title: "Select SciStack Database",
-          defaultUri: vscode5.workspace.workspaceFolders?.[0]?.uri
-        });
-        if (!dbUris || dbUris.length === 0)
-          return;
-        dbPath = dbUris[0].fsPath;
-      } else {
-        const folderUris = await vscode5.window.showOpenDialog({
-          canSelectFiles: false,
-          canSelectFolders: true,
-          canSelectMany: false,
-          title: "Select folder for new SciStack database",
-          openLabel: "Select Folder",
-          defaultUri: vscode5.workspace.workspaceFolders?.[0]?.uri
-        });
-        if (!folderUris || folderUris.length === 0)
-          return;
-        const folderPath = folderUris[0].fsPath;
-        const nameInput = await vscode5.window.showInputBox({
-          prompt: "Database filename",
-          placeHolder: "e.g. my_pipeline.duckdb",
-          validateInput: (v) => {
-            const trimmed = v.trim();
-            if (!trimmed)
-              return "Provide a filename";
-            if (trimmed.includes("/") || trimmed.includes("\\")) {
-              return "Filename must not contain path separators";
-            }
-            return null;
-          }
-        });
-        if (!nameInput)
-          return;
-        const fileName = nameInput.trim().endsWith(".duckdb") ? nameInput.trim() : `${nameInput.trim()}.duckdb`;
-        dbPath = path4.join(folderPath, fileName);
-        const keysInput = await vscode5.window.showInputBox({
-          prompt: "Schema keys (comma-separated, top-down)",
-          placeHolder: "e.g. subject, session",
-          validateInput: (v) => {
-            const parts = v.split(",").map((s) => s.trim()).filter(Boolean);
-            return parts.length === 0 ? "Provide at least one schema key" : null;
-          }
-        });
-        if (!keysInput)
-          return;
-        schemaKeys = keysInput.split(",").map((s) => s.trim()).filter(Boolean);
-      }
-      await startPipeline(context, dbPath, schemaKeys);
-    }
-  );
-  const restartPython = vscode5.commands.registerCommand(
-    "scistack.restartPython",
-    async () => {
-      if (!lastStartArgs) {
-        vscode5.window.showWarningMessage(
-          'SciStack: No pipeline has been opened yet \u2014 run "SciStack: Open Pipeline" first.'
-        );
-        return;
-      }
-      outputChannel.appendLine("Restarting Python process...");
-      try {
-        await startPipeline(
-          context,
-          lastStartArgs.dbPath,
-          // Don't re-pass schemaKeys: the DB already exists on restart.
-          void 0
-        );
-        vscode5.window.showInformationMessage("SciStack: Python process restarted.");
-      } catch (err) {
-        vscode5.window.showErrorMessage(`SciStack: Restart failed \u2014 ${err}`);
-      }
-    }
-  );
-  const openPlotPanel = vscode5.commands.registerCommand(
-    "scistack.openPlotPanel",
-    (target = {}) => {
-      if (!pythonProcess) {
-        vscode5.window.showWarningMessage(
-          "SciStack: Open a pipeline first \u2014 plotting needs the server process."
-        );
-        return;
-      }
-      PlotPanel.show(context, pythonProcess, outputChannel, target, {
-        // Same editor group as the pipeline canvas, so the plot is a
-        // full-width tab beside "SciStack Pipeline" in the tab bar.
-        column: dagPanel?.viewColumn ?? vscode5.ViewColumn.One
-      });
-    }
-  );
-  const plotVariable = vscode5.commands.registerCommand(
-    "scistack.plotVariable",
-    async () => {
-      const variable = await vscode5.window.showInputBox({
-        prompt: "Variable type to plot",
-        placeHolder: "e.g. StepLength"
-      });
-      if (!variable)
-        return;
-      await vscode5.commands.executeCommand("scistack.openPlotPanel", {
-        variable: variable.trim()
-      });
-    }
-  );
-  const plotCsv = vscode5.commands.registerCommand(
-    "scistack.plotCsv",
-    async (uri) => {
-      const target = uri?.fsPath ?? (await vscode5.window.showOpenDialog({
-        canSelectMany: false,
-        filters: { "CSV files": ["csv"] }
-      }))?.[0]?.fsPath;
-      if (!target)
-        return;
-      await vscode5.commands.executeCommand("scistack.openPlotPanel", {
-        csvPath: target
-      });
-    }
-  );
-  context.subscriptions.push(
-    openPipeline,
-    restartPython,
-    openPlotPanel,
-    plotVariable,
-    plotCsv,
-    outputChannel
-  );
-}
-async function startPipeline(context, dbPath, schemaKeys) {
-  lastStartArgs = {
-    dbPath,
-    schemaKeys: schemaKeys ?? lastStartArgs?.schemaKeys
-  };
-  warnIfNoWorkspaceFolder();
-  if (pythonProcess) {
-    pythonProcess.kill();
-    pythonProcess = null;
+// src/session.ts
+var DB_WATCH_DEBOUNCE_MS = 2e3;
+var PLOT_ONLY_LABEL = "plot-only";
+var Session = class _Session {
+  constructor(manager, id, dbPath, label, projectRoot, log, debugPort, python) {
+    this.manager = manager;
+    this.id = id;
+    this.dbPath = dbPath;
+    this.label = label;
+    this.projectRoot = projectRoot;
+    this.log = log;
+    this.debugPort = debugPort;
+    this.python = python;
+    /**
+     * The plot tabs opened from this session.
+     *
+     * Per session, not static: a `plot_save_complete` from one database
+     * delivered into another database's tab would re-enable the wrong Save
+     * button. That is the same failure `panelRegistry.ts` documents, one level
+     * up — a registry with nothing to scope it to.
+     */
+    this.plots = new PanelRegistry();
+    this.disposed = false;
   }
-  const interpreter = await resolvePythonPath();
-  if (!interpreter) {
-    vscode5.window.showErrorMessage(
-      "SciStack: Could not find a Python interpreter. Install the Python extension or set scistack.pythonPath in settings."
+  get isPlotOnly() {
+    return this.dbPath === "";
+  }
+  /** Build a session around an already-ready server process. */
+  static adopt(args) {
+    return new _Session(
+      args.manager,
+      args.id,
+      args.dbPath,
+      args.label,
+      args.projectRoot,
+      args.log,
+      args.debugPort,
+      args.python
     );
-    return;
   }
-  const { path: pythonPath, source: interpreterSource } = interpreter;
-  outputChannel.appendLine(`Starting SciStack server...`);
-  outputChannel.appendLine(`  Python: ${pythonPath} (from ${interpreterSource})`);
-  outputChannel.appendLine(`  DB: ${dbPath}`);
-  outputChannel.appendLine(
-    `  Project root: ${workspaceFolderPath() ?? "(none \u2014 server will fall back, see above)"}`
-  );
-  if (schemaKeys)
-    outputChannel.appendLine(`  Schema keys: [${schemaKeys.join(", ")}] (new DB)`);
-  pythonProcess = new PythonProcess(pythonPath, dbPath, outputChannel, schemaKeys);
-  try {
-    const cfg = vscode5.workspace.getConfiguration("scistack");
-    const startupTimeoutMs = cfg.get("startupTimeoutMs", 6e4);
-    const readyParams = await pythonProcess.waitForReady(startupTimeoutMs);
-    outputChannel.appendLine(
-      `Server ready \u2014 DB: ${readyParams.db_name}, schema: [${readyParams.schema_keys.join(", ")}]`
-    );
-  } catch (err) {
-    const failed = pythonProcess;
-    pythonProcess = null;
-    failed.kill();
-    await reportStartupFailure(failed, interpreterSource, err);
-    return;
-  }
-  const reboundPlots = PlotPanel.updatePythonProcess(pythonProcess);
-  if (reboundPlots > 0) {
-    outputChannel.appendLine(`Rebound ${reboundPlots} plot panel(s) to the new server`);
-  }
-  if (dagPanel) {
-    dagPanel.updatePythonProcess(pythonProcess);
-    dagPanel.reveal();
-    dagPanel.postMessage({ method: "dag_updated", params: {} });
-  } else {
-    dagPanel = new DagPanel(context, pythonProcess, outputChannel);
-    dagPanel.onDidDispose(() => {
-      dagPanel = null;
-      if (pythonProcess) {
-        pythonProcess.kill();
-        pythonProcess = null;
-      }
-    });
-    dagPanel.matlabRuns.onAllFinished(flushDeferredDagRefresh);
-  }
-  pythonProcess.onNotification((method, params) => {
-    const plotPanels = PlotPanel.broadcast({ method, params });
+  /**
+   * Deliver a push notification from this session's server to this
+   * session's panels — and to nothing else.
+   */
+  route(method, params) {
+    const plotPanels = this.plots.send({ method, params });
     if (method.startsWith("plot_save_")) {
-      outputChannel.appendLine(
+      this.log.appendLine(
         `[notify] ${method} (job=${params.job_id}) \u2192 ${plotPanels} plot panel(s)`
       );
     }
-    if (dagPanel) {
-      dagPanel.postMessage({ method, params });
-      if (method === "run_done") {
-        dagPanel.stopDebugSession();
-        dagPanel.matlabRuns.end(params.run_id);
-      }
+    if (!this.dagPanel)
+      return;
+    this.dagPanel.postMessage({ method, params });
+    if (method === "run_done") {
+      this.dagPanel.stopDebugSession();
+      this.dagPanel.matlabRuns.end(params.run_id);
     }
-  });
-  setupDbWatcher(dbPath);
-  const statusItem = vscode5.window.createStatusBarItem(
-    vscode5.StatusBarAlignment.Left,
-    100
-  );
-  statusItem.text = `$(database) SciStack: ${dbPath.split("/").pop()}`;
-  statusItem.tooltip = dbPath;
-  statusItem.show();
-}
-function workspaceFolderPath() {
-  return vscode5.workspace.workspaceFolders?.[0]?.uri.fsPath;
-}
-function warnIfNoWorkspaceFolder() {
-  if (workspaceFolderPath())
-    return;
-  const message = 'SciStack: no folder is open in this window, so there is no project to discover pipeline code from. Open your project folder and run "SciStack: Open Pipeline" again, or add paths from the Paths popup.';
-  outputChannel.appendLine(message);
-  if (!warnedNoWorkspaceFolder) {
+  }
+  /**
+   * Watch this session's `.duckdb` for external writes (MATLAB, another
+   * tool) and refresh the canvas when they settle.
+   */
+  startDbWatcher() {
+    if (this.isPlotOnly)
+      return;
+    this.stopDbWatcher();
+    const pattern = new vscode5.RelativePattern(
+      path5.dirname(this.dbPath),
+      path5.basename(this.dbPath) + "*"
+    );
+    this.watcher = vscode5.workspace.createFileSystemWatcher(pattern);
+    const onChange = () => this.onDbFileChanged();
+    this.watcher.onDidChange(onChange);
+    this.watcher.onDidCreate(onChange);
+  }
+  onDbFileChanged() {
+    if (this.watchDebounce)
+      clearTimeout(this.watchDebounce);
+    this.watchDebounce = setTimeout(() => {
+      this.watchDebounce = void 0;
+      if (!this.dagPanel)
+        return;
+      if (!this.dagPanel.matlabRuns.noteDbChange()) {
+        this.log.appendLine(
+          "DuckDB file changed while MATLAB owns the database \u2014 deferring DAG refresh until the run finishes"
+        );
+        return;
+      }
+      this.log.appendLine("DuckDB file changed externally \u2014 refreshing DAG");
+      this.dagPanel.postMessage({ method: "dag_updated", params: {} });
+    }, DB_WATCH_DEBOUNCE_MS);
+  }
+  /** Emit the DAG refresh withheld while MATLAB owned the database. */
+  flushDeferredDagRefresh() {
+    if (!this.dagPanel)
+      return;
+    if (!this.dagPanel.matlabRuns.takeDeferredRefresh())
+      return;
+    this.log.appendLine("MATLAB run finished \u2014 applying the deferred DAG refresh");
+    this.dagPanel.postMessage({ method: "dag_updated", params: {} });
+  }
+  stopDbWatcher() {
+    this.watcher?.dispose();
+    this.watcher = void 0;
+    if (this.watchDebounce)
+      clearTimeout(this.watchDebounce);
+    this.watchDebounce = void 0;
+  }
+  /**
+   * Replace the server process, keeping the panels.
+   *
+   * Panels read `session.python` at call time rather than holding their own
+   * reference, so nothing has to be "rebound" — the class of bug where a
+   * plot tab kept writing to a destroyed stdin (ERR_STREAM_DESTROYED,
+   * 2026-09-15) cannot arise.
+   */
+  adoptProcess(python) {
+    this.python = python;
+    this.log.appendLine("server replaced \u2014 panels now talk to the new process");
+  }
+  /**
+   * Stop this session's server and wait for it to let go of the database.
+   *
+   * A restart must do this BEFORE spawning the replacement. The server
+   * drops the DuckDB file lock between requests, but it holds it for the
+   * whole of `init_db` — so a new server started while the old one is
+   * mid-request loses the race and dies on "Could not set lock on file".
+   * `whenClosed` also gives the old process time to flush its last log
+   * lines under its own prefix.
+   */
+  async stopProcess() {
+    this.python.kill();
+    await this.python.whenClosed();
+  }
+  /** Close everything this session owns. Idempotent. */
+  dispose() {
+    if (this.disposed)
+      return;
+    this.disposed = true;
+    this.log.appendLine("session closing");
+    this.stopDbWatcher();
+    this.closePlots();
+    this.dagPanel?.dispose();
+    this.python.kill();
+    this.manager.forget(this);
+  }
+  closePlots() {
+    for (const panel of this.plots.sinks()) {
+      panel.close();
+    }
+  }
+};
+var SessionManager = class {
+  constructor(context, channel) {
+    this.context = context;
+    this.channel = channel;
+    this.registry = new SessionRegistry();
+    this.changeHandlers = [];
+  }
+  /** Called whenever the set of sessions, or the active one, changes. */
+  onDidChange(handler) {
+    this.changeHandlers.push(handler);
+  }
+  announceChange() {
+    for (const handler of this.changeHandlers)
+      handler();
+  }
+  get size() {
+    return this.registry.size;
+  }
+  /** The open databases — what every command acts on. */
+  all() {
+    return this.registry.all();
+  }
+  /**
+   * Every live server, the database-less CSV one included. For diagnostics
+   * and for anything that must not collide across processes (debugpy ports).
+   */
+  everything() {
+    return this.plotOnly ? [...this.registry.all(), this.plotOnly] : this.registry.all();
+  }
+  get active() {
+    return this.registry.active;
+  }
+  resolve(explicitId) {
+    return this.registry.resolve(explicitId);
+  }
+  /**
+   * Resolve a session for a command, logging which rule decided.
+   *
+   * "The command went to the other database" and "the command did nothing"
+   * are indistinguishable from the outside, so the rule is always recorded.
+   */
+  resolveForCommand(command, explicitId) {
+    const { session, source, detail } = this.registry.resolve(explicitId);
+    this.channel.appendLine(`[session] ${command} \u2192 ${source}: ${detail}`);
+    return session;
+  }
+  setActive(id) {
+    if (this.registry.active?.id === id)
+      return;
+    this.registry.setActive(id);
+    this.channel.appendLine(`[session] active: ${this.registry.active?.label ?? "(none)"}`);
+    this.announceChange();
+  }
+  /** Remove a disposed session. Called by `Session.dispose`, not directly. */
+  forget(session) {
+    if (this.plotOnly === session)
+      this.plotOnly = void 0;
+    this.registry.remove(session.id);
+    this.channel.appendLine(
+      `[session] closed ${session.label} \u2014 ${this.registry.size} still open`
+    );
+    this.announceChange();
+  }
+  disposeAll() {
+    for (const session of this.registry.all())
+      session.dispose();
+    this.plotOnly?.dispose();
+  }
+  /**
+   * Open a database, or reveal the session that already has it open.
+   *
+   * DuckDB is single-writer: a second server on the same file would lose the
+   * lock race and report it as a mysterious `DatabaseLockedError`, so the
+   * answer to "open this again" is "here it is".
+   */
+  async open(dbPath, schemaKeys) {
+    const id = sessionIdForDb(dbPath);
+    const existing = this.registry.get(id);
+    if (existing) {
+      this.channel.appendLine(
+        `[session] ${existing.label} is already open \u2014 revealing its tab`
+      );
+      existing.dagPanel?.reveal();
+      this.setActive(existing.id);
+      return existing;
+    }
+    const label = sessionLabel(dbPath);
+    const log = prefixedLog(this.channel, label);
+    const folders = (vscode5.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const projectRoot = projectRootForDb(dbPath, folders);
+    this.warnIfNoProjectRoot(projectRoot, label);
+    const debugPort = this.allocateDebugPort();
+    const args = buildServerArgs({ dbPath, schemaKeys, projectRoot });
+    const python = await this.spawnReady(args, {
+      log,
+      label,
+      cwd: projectRoot,
+      debugPort,
+      describe: [
+        `  DB: ${dbPath}`,
+        `  Project root: ${projectRoot ?? "(none \u2014 server will fall back, see above)"}`,
+        ...schemaKeys ? [`  Schema keys: [${schemaKeys.join(", ")}] (new DB)`] : []
+      ]
+    });
+    if (!python)
+      return void 0;
+    const session = Session.adopt({
+      manager: this,
+      id,
+      dbPath,
+      label,
+      projectRoot,
+      log,
+      debugPort,
+      python
+    });
+    this.registry.add(session);
+    session.dagPanel = new DagPanel(this.context, session, log);
+    session.dagPanel.onDidDispose(() => session.dispose());
+    session.dagPanel.onDidChangeActive((active) => {
+      if (active)
+        this.setActive(session.id);
+    });
+    session.dagPanel.matlabRuns.onAllFinished(() => session.flushDeferredDagRefresh());
+    python.onNotification((method, params) => session.route(method, params));
+    session.startDbWatcher();
+    this.channel.appendLine(
+      `[session] opened ${label} (id=${id}, ${this.registry.size} open)`
+    );
+    this.announceChange();
+    return session;
+  }
+  /**
+   * The database-less session that serves CSV plot tabs.
+   *
+   * At most one, shared by every CSV tab and started on first use: a CSV
+   * plot needs no project and no DuckDB (`plot_service` threads `csv_path`
+   * through and every entry point is `db_connection(..., needed=not
+   * csv_path)`), so there is nothing to keep separate between two of them.
+   */
+  async openPlotOnly() {
+    if (this.plotOnly)
+      return this.plotOnly;
+    const log = prefixedLog(this.channel, PLOT_ONLY_LABEL);
+    const debugPort = this.allocateDebugPort();
+    const python = await this.spawnReady(
+      buildPlotOnlyServerArgs({ logFile: this.plotOnlyLogFile() }),
+      {
+        log,
+        label: PLOT_ONLY_LABEL,
+        debugPort,
+        describe: ["  No database \u2014 CSV plotting only"]
+      }
+    );
+    if (!python)
+      return void 0;
+    const session = Session.adopt({
+      manager: this,
+      id: PLOT_ONLY_LABEL,
+      dbPath: "",
+      label: PLOT_ONLY_LABEL,
+      projectRoot: void 0,
+      log,
+      debugPort,
+      python
+    });
+    this.plotOnly = session;
+    python.onNotification((method, params) => session.route(method, params));
+    this.channel.appendLine("[session] opened the plot-only server (no database)");
+    this.announceChange();
+    return session;
+  }
+  /**
+   * Where a plot-only server writes its log.
+   *
+   * It has no database, so `scidb.log`'s "beside the .duckdb" convention has
+   * no anchor, and dropping a log into whichever folder the user's CSV
+   * happens to live in would scatter logs through their data. The
+   * extension's own storage is the one place that is neither.
+   */
+  plotOnlyLogFile() {
+    const dir = this.context.logUri?.fsPath ?? this.context.globalStorageUri?.fsPath;
+    return dir ? path5.join(dir, "scistack-plot-session.log") : void 0;
+  }
+  /** Restart a session's server in place, keeping its panels and tabs. */
+  async restart(session) {
+    await session.stopProcess();
+    if (session.isPlotOnly) {
+      const python2 = await this.spawnReady(
+        buildPlotOnlyServerArgs({ logFile: this.plotOnlyLogFile() }),
+        { log: session.log, label: session.label, debugPort: session.debugPort, describe: [] }
+      );
+      if (!python2)
+        return this.reportDeadAfterRestart(session);
+      session.adoptProcess(python2);
+      python2.onNotification((method, params) => session.route(method, params));
+      return true;
+    }
+    const args = buildServerArgs({
+      dbPath: session.dbPath,
+      projectRoot: session.projectRoot
+    });
+    const python = await this.spawnReady(args, {
+      log: session.log,
+      label: session.label,
+      cwd: session.projectRoot,
+      debugPort: session.debugPort,
+      describe: [`  DB: ${session.dbPath}`]
+    });
+    if (!python)
+      return this.reportDeadAfterRestart(session);
+    session.adoptProcess(python);
+    python.onNotification((method, params) => session.route(method, params));
+    session.dagPanel?.reveal();
+    session.dagPanel?.postMessage({ method: "dag_updated", params: {} });
+    session.dagPanel?.postMessage({ method: "db_changed", params: {} });
+    return true;
+  }
+  /**
+   * The replacement server never started, and the old one is already
+   * stopped. Say so: every later RPC from the still-open panels will fail,
+   * and without this line that reads like a crash rather than a restart
+   * that did not come back.
+   */
+  reportDeadAfterRestart(session) {
+    const message = `SciStack: ${session.label} has no server after the restart. Close its tab and open the database again.`;
+    session.log.appendLine(message);
+    vscode5.window.showErrorMessage(message);
+    return false;
+  }
+  /**
+   * Spawn a server and wait for its `ready`, or report why it never came.
+   *
+   * Returns undefined on failure, having already told the user; the caller
+   * simply does not create a session.
+   */
+  async spawnReady(args, opts) {
+    const interpreter = await resolvePythonPath();
+    if (!interpreter) {
+      vscode5.window.showErrorMessage(
+        "SciStack: Could not find a Python interpreter. Install the Python extension or set scistack.pythonPath in settings."
+      );
+      return void 0;
+    }
+    const { path: pythonPath, source: interpreterSource } = interpreter;
+    opts.log.appendLine("Starting SciStack server...");
+    opts.log.appendLine(`  Python: ${pythonPath} (from ${interpreterSource})`);
+    for (const line of opts.describe)
+      opts.log.appendLine(line);
+    const python = new PythonProcess(pythonPath, args, opts.log, {
+      cwd: opts.cwd,
+      debugPort: opts.debugPort
+    });
+    try {
+      const timeout = vscode5.workspace.getConfiguration("scistack").get("startupTimeoutMs", 6e4);
+      const ready = await python.waitForReady(timeout);
+      opts.log.appendLine(
+        `Server ready \u2014 DB: ${ready.db_name}, schema: [${(ready.schema_keys ?? []).join(", ")}]`
+      );
+      return python;
+    } catch (err) {
+      python.kill();
+      await reportStartupFailure(opts.log, this.channel, python, interpreterSource, err);
+      return void 0;
+    }
+  }
+  /**
+   * A debugpy port no other session is using.
+   *
+   * `debugpy.listen` on a port another server already holds fails, and the
+   * server treats that as a warning — so with one fixed port the second
+   * session silently has no debugger at all.
+   */
+  allocateDebugPort() {
+    const cfg = vscode5.workspace.getConfiguration("scistack");
+    if (!cfg.get("debug", false))
+      return void 0;
+    const base = cfg.get("debugPort", 5678);
+    const taken = new Set(this.everything().map((s) => s.debugPort));
+    for (let offset = 0; offset < 64; offset++) {
+      if (!taken.has(base + offset))
+        return base + offset;
+    }
+    return void 0;
+  }
+  /**
+   * Warn when a database has no project folder to discover code from.
+   *
+   * With no `--project-root` the server falls back to the extension host's
+   * working directory (`config.resolve_project_root` rule 3), which is
+   * almost never where the user's code lives — so discovery comes back
+   * empty and the canvas is unexplainedly bare.
+   */
+  warnIfNoProjectRoot(projectRoot, label) {
+    if (projectRoot)
+      return;
+    const message = `SciStack: no folder is open in this window, so there is no project to discover pipeline code from for ${label}. Open your project folder and run "SciStack: Open Pipeline" again, or add paths from the Paths popup.`;
+    this.channel.appendLine(message);
+    if (warnedNoWorkspaceFolder)
+      return;
     warnedNoWorkspaceFolder = true;
     vscode5.window.showWarningMessage(message);
   }
+};
+var warnedNoWorkspaceFolder = false;
+async function resolvePythonPath() {
+  const config = vscode5.workspace.getConfiguration("scistack");
+  const configured = config.get("pythonPath");
+  if (configured)
+    return { path: configured, source: "scistack.pythonPath setting" };
+  const pythonExt = vscode5.extensions.getExtension("ms-python.python");
+  if (pythonExt) {
+    if (!pythonExt.isActive)
+      await pythonExt.activate();
+    const api = pythonExt.exports;
+    if (api?.environments?.getActiveEnvironmentPath) {
+      const envPath = api.environments.getActiveEnvironmentPath();
+      if (envPath?.path) {
+        return { path: envPath.path, source: "active interpreter from the Python extension" };
+      }
+    }
+  }
+  return { path: "python3", source: "PATH fallback (no Python extension interpreter)" };
 }
-async function reportStartupFailure(failed, interpreterSource, err) {
+async function reportStartupFailure(log, channel, failed, interpreterSource, err) {
   const errorMessage = err instanceof Error ? err.message : String(err);
-  outputChannel.appendLine(`Server failed to start: ${errorMessage}`);
-  outputChannel.appendLine(`Probing interpreter ${failed.pythonPath}...`);
+  log.appendLine(`Server failed to start: ${errorMessage}`);
+  log.appendLine(`Probing interpreter ${failed.pythonPath}...`);
   await failed.whenClosed();
   const probe = await probeInterpreter(failed.pythonPath);
   const diagnosis = diagnoseStartupFailure({
@@ -1801,14 +2263,14 @@ async function reportStartupFailure(failed, interpreterSource, err) {
     exitCode: failed.getExitCode(),
     probe
   });
-  outputChannel.appendLine("");
-  outputChannel.appendLine(`=== SciStack startup failure (${diagnosis.kind}) ===`);
-  outputChannel.appendLine(diagnosis.detail);
+  log.appendLine("");
+  log.appendLine(`=== SciStack startup failure (${diagnosis.kind}) ===`);
+  log.appendLine(diagnosis.detail);
   if (diagnosis.installCommand) {
-    outputChannel.appendLine(`Install with: ${diagnosis.installCommand}`);
+    log.appendLine(`Install with: ${diagnosis.installCommand}`);
   }
-  outputChannel.appendLine("=== end of startup failure report ===");
-  await showDiagnosisMessage(diagnosis);
+  log.appendLine("=== end of startup failure report ===");
+  await showDiagnosisMessage(diagnosis, channel);
 }
 var ACTION_LABELS = {
   showOutput: "Show Details",
@@ -1816,7 +2278,7 @@ var ACTION_LABELS = {
   openSettings: "Open Settings",
   copyInstallCommand: "Copy Install Command"
 };
-async function showDiagnosisMessage(diagnosis) {
+async function showDiagnosisMessage(diagnosis, channel) {
   const labels = diagnosis.actions.map((a) => ACTION_LABELS[a]);
   const picked = await vscode5.window.showErrorMessage(diagnosis.message, ...labels);
   if (!picked)
@@ -1824,7 +2286,7 @@ async function showDiagnosisMessage(diagnosis) {
   const action = diagnosis.actions.find((a) => ACTION_LABELS[a] === picked);
   switch (action) {
     case "showOutput":
-      outputChannel.show(true);
+      channel.show(true);
       break;
     case "selectInterpreter":
       await vscode5.commands.executeCommand("python.setInterpreter");
@@ -1845,82 +2307,227 @@ async function showDiagnosisMessage(diagnosis) {
       break;
   }
 }
-async function resolvePythonPath() {
-  const config = vscode5.workspace.getConfiguration("scistack");
-  const configured = config.get("pythonPath");
-  if (configured)
-    return { path: configured, source: "scistack.pythonPath setting" };
-  const pythonExt = vscode5.extensions.getExtension("ms-python.python");
-  if (pythonExt) {
-    if (!pythonExt.isActive)
-      await pythonExt.activate();
-    const api = pythonExt.exports;
-    if (api?.environments?.getActiveEnvironmentPath) {
-      const envPath = api.environments.getActiveEnvironmentPath();
-      if (envPath?.path) {
-        return { path: envPath.path, source: "active interpreter from the Python extension" };
-      }
-    }
-  }
-  return { path: "python3", source: "PATH fallback (no Python extension interpreter)" };
-}
-function flushDeferredDagRefresh() {
-  if (!dagPanel)
-    return;
-  if (!dagPanel.matlabRuns.takeDeferredRefresh())
-    return;
-  outputChannel.appendLine(
-    "MATLAB run finished \u2014 applying the deferred DAG refresh"
-  );
-  dagPanel.postMessage({ method: "dag_updated", params: {} });
-}
-function setupDbWatcher(dbPath) {
-  if (dbWatcher) {
-    dbWatcher.dispose();
-    dbWatcher = null;
-  }
-  if (dbWatcherDebounce) {
-    clearTimeout(dbWatcherDebounce);
-    dbWatcherDebounce = null;
-  }
-  const dbDir = path4.dirname(dbPath);
-  const dbBase = path4.basename(dbPath);
-  const pattern = new vscode5.RelativePattern(dbDir, dbBase + "*");
-  dbWatcher = vscode5.workspace.createFileSystemWatcher(pattern);
-  const onDbChange = () => {
-    if (dbWatcherDebounce) {
-      clearTimeout(dbWatcherDebounce);
-    }
-    dbWatcherDebounce = setTimeout(() => {
-      dbWatcherDebounce = null;
-      if (!dagPanel)
+
+// src/extension.ts
+var sessions;
+var outputChannel;
+var statusItem = null;
+function activate(context) {
+  outputChannel = vscode6.window.createOutputChannel("SciStack");
+  sessions = new SessionManager(context, outputChannel);
+  sessions.onDidChange(updateStatusBar);
+  const openPipeline = vscode6.commands.registerCommand(
+    "scistack.openPipeline",
+    async () => {
+      const dbChoice = await vscode6.window.showQuickPick(
+        ["Open existing database", "Create new database"],
+        { placeHolder: "SciStack: Open or create a .duckdb file?" }
+      );
+      if (!dbChoice)
         return;
-      if (!dagPanel.matlabRuns.noteDbChange()) {
-        outputChannel.appendLine(
-          "DuckDB file changed while MATLAB owns the database \u2014 deferring DAG refresh until the run finishes"
+      let dbPath;
+      let schemaKeys;
+      if (dbChoice === "Open existing database") {
+        const dbUris = await vscode6.window.showOpenDialog({
+          canSelectFiles: true,
+          canSelectFolders: false,
+          canSelectMany: false,
+          filters: { "DuckDB Database": ["duckdb"] },
+          title: "Select SciStack Database",
+          defaultUri: vscode6.workspace.workspaceFolders?.[0]?.uri
+        });
+        if (!dbUris || dbUris.length === 0)
+          return;
+        dbPath = dbUris[0].fsPath;
+      } else {
+        const folderUris = await vscode6.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          title: "Select folder for new SciStack database",
+          openLabel: "Select Folder",
+          defaultUri: vscode6.workspace.workspaceFolders?.[0]?.uri
+        });
+        if (!folderUris || folderUris.length === 0)
+          return;
+        const folderPath = folderUris[0].fsPath;
+        const nameInput = await vscode6.window.showInputBox({
+          prompt: "Database filename",
+          placeHolder: "e.g. my_pipeline.duckdb",
+          validateInput: (v) => {
+            const trimmed = v.trim();
+            if (!trimmed)
+              return "Provide a filename";
+            if (trimmed.includes("/") || trimmed.includes("\\")) {
+              return "Filename must not contain path separators";
+            }
+            return null;
+          }
+        });
+        if (!nameInput)
+          return;
+        const fileName = nameInput.trim().endsWith(".duckdb") ? nameInput.trim() : `${nameInput.trim()}.duckdb`;
+        dbPath = path6.join(folderPath, fileName);
+        const keysInput = await vscode6.window.showInputBox({
+          prompt: "Schema keys (comma-separated, top-down)",
+          placeHolder: "e.g. subject, session",
+          validateInput: (v) => {
+            const parts = v.split(",").map((s) => s.trim()).filter(Boolean);
+            return parts.length === 0 ? "Provide at least one schema key" : null;
+          }
+        });
+        if (!keysInput)
+          return;
+        schemaKeys = keysInput.split(",").map((s) => s.trim()).filter(Boolean);
+      }
+      await sessions.open(dbPath, schemaKeys);
+      updateStatusBar();
+    }
+  );
+  const restartPython = vscode6.commands.registerCommand(
+    "scistack.restartPython",
+    async () => {
+      const session = sessions.resolveForCommand("restartPython");
+      if (!session) {
+        vscode6.window.showWarningMessage(
+          'SciStack: No pipeline has been opened yet \u2014 run "SciStack: Open Pipeline" first.'
         );
         return;
       }
-      outputChannel.appendLine("DuckDB file changed externally \u2014 refreshing DAG");
-      dagPanel.postMessage({ method: "dag_updated", params: {} });
-    }, 2e3);
-  };
-  dbWatcher.onDidChange(onDbChange);
-  dbWatcher.onDidCreate(onDbChange);
+      outputChannel.appendLine(`Restarting the Python process for ${session.label}...`);
+      const ok = await sessions.restart(session);
+      if (ok) {
+        vscode6.window.showInformationMessage(
+          `SciStack: Python process restarted for ${session.label}.`
+        );
+      }
+    }
+  );
+  const switchSession = vscode6.commands.registerCommand(
+    "scistack.switchSession",
+    async () => {
+      const open = sessions.all();
+      if (open.length === 0) {
+        vscode6.window.showInformationMessage(
+          'SciStack: no database is open \u2014 run "SciStack: Open Pipeline".'
+        );
+        return;
+      }
+      const active = sessions.active;
+      const picked = await vscode6.window.showQuickPick(
+        open.map((s) => ({
+          label: s === active ? `$(check) ${s.label}` : s.label,
+          description: s.dbPath,
+          detail: `project: ${s.projectRoot ?? "(none)"}`,
+          session: s
+        })),
+        { placeHolder: "Switch to which SciStack database?" }
+      );
+      if (!picked)
+        return;
+      picked.session.dagPanel?.reveal();
+      sessions.setActive(picked.session.id);
+    }
+  );
+  const showSessions = vscode6.commands.registerCommand(
+    "scistack.showSessions",
+    () => {
+      outputChannel.appendLine("");
+      outputChannel.appendLine(
+        `=== SciStack sessions (${sessions.size} database, ${sessions.everything().length - sessions.size} plot-only) ===`
+      );
+      const active = sessions.active;
+      for (const s of sessions.everything()) {
+        outputChannel.appendLine(
+          `${s === active ? "*" : " "} ${s.label}  db=${s.dbPath || "(none \u2014 plot only)"}  project=${s.projectRoot ?? "(none)"}  debugPort=${s.debugPort ?? "(off)"}  canvas=${s.dagPanel ? "open" : "none"}  plotTabs=${s.plots.size}`
+        );
+      }
+      outputChannel.appendLine("=== end of session list ===");
+      outputChannel.show(true);
+    }
+  );
+  const openPlotPanel = vscode6.commands.registerCommand(
+    "scistack.openPlotPanel",
+    async (target = {}) => {
+      const session = await sessionForPlot(target);
+      if (!session)
+        return;
+      PlotPanel.show(context, session, target);
+    }
+  );
+  const plotVariable = vscode6.commands.registerCommand(
+    "scistack.plotVariable",
+    async () => {
+      const variable = await vscode6.window.showInputBox({
+        prompt: "Variable type to plot",
+        placeHolder: "e.g. StepLength"
+      });
+      if (!variable)
+        return;
+      await vscode6.commands.executeCommand("scistack.openPlotPanel", {
+        variable: variable.trim()
+      });
+    }
+  );
+  const plotCsv = vscode6.commands.registerCommand(
+    "scistack.plotCsv",
+    async (uri) => {
+      const target = uri?.fsPath ?? (await vscode6.window.showOpenDialog({
+        canSelectMany: false,
+        filters: { "CSV files": ["csv"] }
+      }))?.[0]?.fsPath;
+      if (!target)
+        return;
+      await vscode6.commands.executeCommand("scistack.openPlotPanel", {
+        csvPath: target
+      });
+    }
+  );
+  context.subscriptions.push(
+    openPipeline,
+    restartPython,
+    switchSession,
+    showSessions,
+    openPlotPanel,
+    plotVariable,
+    plotCsv,
+    outputChannel
+  );
+}
+async function sessionForPlot(target) {
+  if (target.csvPath && !target.sessionId) {
+    return sessions.openPlotOnly();
+  }
+  const session = sessions.resolveForCommand("openPlotPanel", target.sessionId);
+  if (!session) {
+    vscode6.window.showWarningMessage(
+      "SciStack: Open a pipeline first \u2014 plotting a variable needs its database."
+    );
+    return void 0;
+  }
+  return session;
+}
+function updateStatusBar() {
+  const active = sessions.active ?? sessions.all()[0];
+  if (!active) {
+    statusItem?.dispose();
+    statusItem = null;
+    return;
+  }
+  if (!statusItem) {
+    statusItem = vscode6.window.createStatusBarItem(vscode6.StatusBarAlignment.Left, 100);
+    statusItem.command = "scistack.switchSession";
+  }
+  const others = sessions.size - 1;
+  statusItem.text = `$(database) SciStack: ${active.label}` + (others > 0 ? ` (+${others})` : "");
+  statusItem.tooltip = others > 0 ? `${active.dbPath}
+Click to switch between ${others + 1} open databases` : active.dbPath;
+  statusItem.show();
 }
 function deactivate() {
-  if (dbWatcher) {
-    dbWatcher.dispose();
-    dbWatcher = null;
-  }
-  if (dbWatcherDebounce) {
-    clearTimeout(dbWatcherDebounce);
-    dbWatcherDebounce = null;
-  }
-  if (pythonProcess) {
-    pythonProcess.kill();
-    pythonProcess = null;
-  }
+  sessions?.disposeAll();
+  statusItem?.dispose();
+  statusItem = null;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

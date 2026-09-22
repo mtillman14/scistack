@@ -80,59 +80,43 @@ test('registering the same panel twice delivers once', () => {
 });
 
 // --- server restart -------------------------------------------------------
-// A plot tab outlives the Python process it was opened with. After
-// `startPipeline` respawns the server, every open tab must take the new
-// handle, or its next RPC writes to the old process's destroyed stdin
-// ("Could not open the plot panel: Error [ERR_STREAM_DESTROYED]", 2026-09-15).
+// A plot tab outlives the Python process it was opened with: `Restart Python`
+// respawns the server while the tab stays open. The registry used to carry a
+// `rebind` half for that — every panel held its own PythonProcess reference
+// and had to be handed the replacement, or its next RPC wrote to the old
+// process's destroyed stdin ("Could not open the plot panel: Error
+// [ERR_STREAM_DESTROYED]", 2026-09-15).
+//
+// That half is gone, and so is the bug's cause: a panel now belongs to a
+// Session and reads `session.python` at call time, so a restart that swaps
+// the process is invisible to every tab. There is nothing left to rebind, and
+// a registry with no backend handle in it cannot hand out a stale one.
 
-class RebindablePanel extends FakePanel {
-  backend: unknown = 'old';
-  updatePythonProcess(proc: unknown): void {
-    if (this.throws) throw new Error('webview disposed');
-    this.backend = proc;
-  }
-}
+test('the registry carries no backend handle to go stale', () => {
+  const registry = new PanelRegistry();
+  const panel = new FakePanel();
+  registry.add(panel);
 
-test('a restart rebinds every open panel to the new process', () => {
-  const registry = new PanelRegistry<string>();
-  const a = new RebindablePanel();
-  const b = new RebindablePanel();
-  registry.add(a);
+  // A message sink is the whole contract. If this ever grows a second
+  // method, the "which process does this tab talk to" question has come
+  // back and Session should answer it, not the registry.
+  assert.deepEqual(Object.keys(registry.sinks()[0]), Object.keys(panel));
+});
+
+test('sinks() is a snapshot, so a panel may close while it is walked', () => {
+  // Closing a session disposes its plot tabs, and each dispose unregisters
+  // itself — iterating the live set would skip panels.
+  const registry = new PanelRegistry();
+  const a = new FakePanel();
+  const b = new FakePanel();
+  const removeA = registry.add(a);
   registry.add(b);
 
-  assert.equal(registry.rebind('new'), 2);
-  assert.equal(a.backend, 'new');
-  assert.equal(b.backend, 'new');
-});
-
-test('a closed panel is not rebound', () => {
-  const registry = new PanelRegistry<string>();
-  const closed = new RebindablePanel();
-  const open = new RebindablePanel();
-  const remove = registry.add(closed);
-  registry.add(open);
-  remove();
-
-  assert.equal(registry.rebind('new'), 1);
-  assert.equal(closed.backend, 'old');
-  assert.equal(open.backend, 'new');
-});
-
-test('a panel that cannot be rebound does not block the rest', () => {
-  const registry = new PanelRegistry<string>();
-  const dead = new RebindablePanel();
-  dead.throws = true;
-  const alive = new RebindablePanel();
-  registry.add(dead);
-  registry.add(alive);
-
-  assert.equal(registry.rebind('new'), 1);
-  assert.equal(alive.backend, 'new');
-});
-
-test('a post-only panel is skipped, and counted out, by rebind', () => {
-  const registry = new PanelRegistry<string>();
-  registry.add(new FakePanel());
-  // Zero here with a plot tab open is the bug's signature in the output channel.
-  assert.equal(registry.rebind('new'), 0);
+  const walked: MessageSink[] = [];
+  for (const sink of registry.sinks()) {
+    walked.push(sink);
+    if (sink === a) removeA();
+  }
+  assert.deepEqual(walked, [a, b]);
+  assert.equal(registry.size, 1);
 });

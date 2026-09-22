@@ -2,19 +2,25 @@
  * PythonProcess — manages the child Python JSON-RPC server.
  *
  * Responsibilities:
- *   - Spawns `python -m scistack_gui.server --db <path> [--project-root <path>]`
- *     (argv built by `serverArgs.buildServerArgs`)
+ *   - Spawns `python -m scistack_gui.server ...` (argv built by
+ *     `serverArgs.buildServerArgs` / `buildPlotOnlyServerArgs`)
  *   - Parses newline-delimited JSON-RPC from stdout
  *   - Routes responses (have `id`) back to pending request promises
  *   - Routes notifications (no `id`) to registered listeners
- *   - Logs stderr to the VS Code Output Channel
+ *   - Logs stderr to the session's log sink
  *   - Handles process crash/exit
+ *
+ * One of these per open database. It takes its argv, its cwd and its debug
+ * port rather than reading them from `vscode.workspace` itself, because with
+ * several sessions open those answers differ per session: the project root is
+ * the folder containing THIS database, and two servers cannot share one
+ * debugpy port.
  */
 
 import { spawn, ChildProcess } from 'child_process';
 import * as readline from 'readline';
 import * as vscode from 'vscode';
-import { buildServerArgs } from './serverArgs';
+import { LogSink } from './sessionCore';
 
 type NotificationHandler = (method: string, params: Record<string, unknown>) => void;
 
@@ -28,7 +34,21 @@ interface PendingRequest {
 
 interface ReadyParams {
   db_name: string;
-  schema_keys: string[];
+  schema_keys?: string[];
+  /** False for a plot-only server: no database, only the `plot_*` methods. */
+  db_loaded?: boolean;
+}
+
+export interface PythonProcessOptions {
+  /** Run the server from here — the session's own project folder. */
+  cwd?: string;
+  /**
+   * Port for this server's debugpy listener, or undefined to start without
+   * one. Each session needs its own: `debugpy.listen` on a port another
+   * session already holds fails, and the failure is only a warning in the
+   * server's log.
+   */
+  debugPort?: number;
 }
 
 /** How many stderr lines to keep for startup diagnostics. */
@@ -53,12 +73,10 @@ export class PythonProcess {
 
   constructor(
     readonly pythonPath: string,
-    dbPath: string,
-    private outputChannel: vscode.OutputChannel,
-    schemaKeys?: string[],
+    args: string[],
+    private outputChannel: LogSink,
+    options: PythonProcessOptions = {},
   ) {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const args = buildServerArgs({ dbPath, schemaKeys, projectRoot: workspaceFolder });
     this.args = args;
 
     this.outputChannel.appendLine(`Spawning: ${pythonPath} ${args.join(' ')}`);
@@ -66,15 +84,12 @@ export class PythonProcess {
     // If the user enabled scistack.debug, pass env vars so server.py starts a
     // debugpy listener that VS Code can attach to (so breakpoints inside user
     // functions invoked by DAG Run buttons get hit).
-    const cfg = vscode.workspace.getConfiguration('scistack');
-    const debugEnabled = cfg.get<boolean>('debug', false);
-    const debugPort = cfg.get<number>('debugPort', 5678);
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
-    if (debugEnabled) {
+    if (options.debugPort !== undefined) {
       childEnv.SCISTACK_GUI_DEBUG = '1';
-      childEnv.SCISTACK_GUI_DEBUG_PORT = String(debugPort);
+      childEnv.SCISTACK_GUI_DEBUG_PORT = String(options.debugPort);
       this.outputChannel.appendLine(
-        `debugpy listener will start on 127.0.0.1:${debugPort} ` +
+        `debugpy listener will start on 127.0.0.1:${options.debugPort} ` +
         `(attach via "Attach to scistack-gui server" launch config)`
       );
     }
@@ -83,12 +98,12 @@ export class PythonProcess {
     // child inherits the extension host's working directory (typically
     // VS Code's own install directory), which makes cwd meaningless as a
     // project-root signal — see config.resolve_project_root, where cwd is
-    // the fallback for non-VS-Code callers. --project-root above remains
-    // the explicit signal; this just makes the two agree.
+    // the fallback for non-VS-Code callers. --project-root in the argv
+    // remains the explicit signal; this just makes the two agree.
     this.proc = spawn(pythonPath, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: childEnv,
-      cwd: workspaceFolder,
+      cwd: options.cwd,
     });
 
     this.closed = new Promise((resolve) => {

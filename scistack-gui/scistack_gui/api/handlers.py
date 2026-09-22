@@ -81,6 +81,19 @@ class Handler:
     #: False = the call never sees the database (a log line, say) and must
     #: work while MATLAB holds the file.
     needs_db: bool = True
+    #: True = the call takes the database when there is one and works
+    #: without it when there is not, deciding for itself from its own
+    #: request (every plot method: a ``csv_path`` reads a file through
+    #: ``scistackplot``'s ``CsvSource`` and never touches DuckDB, which is
+    #: why they are already written as
+    #: ``db_connection(..., needed=not csv_path)``).
+    #:
+    #: This is what a **plot-only** server is made of: with no ``--db`` there
+    #: is no connection to hand over, so ``get_db()`` would raise before the
+    #: handler ever saw the request that says it did not need one. These
+    #: methods get ``None`` instead, and ``server.py`` refuses every other
+    #: method in that mode by name rather than letting it fail deeper down.
+    db_optional: bool = False
     #: Exception type → HTTP status, for the browser transport. The RPC
     #: transport reports every exception through the dispatch loop's one
     #: error frame, message intact, so nothing is mapped there.
@@ -149,9 +162,16 @@ def rpc_methods(handlers: Iterable[Handler]) -> dict[str, Callable[[dict], Any]]
             req = h.parse(params)
             db = None
             if h.needs_db:
-                from scistack_gui.db import get_db
+                from scistack_gui.db import get_db, is_loaded
 
-                db = get_db()
+                # A db_optional method in a plot-only server: there is no
+                # connection to give it, and it is written to work without
+                # one. Anything else still raises "Database not initialised",
+                # which is the truthful answer.
+                if h.db_optional and not is_loaded():
+                    db = None
+                else:
+                    db = get_db()
             return h.invoke(req, db, transport="rpc")
 
         rpc.__name__ = f"rpc_{h.name}"
@@ -165,6 +185,19 @@ def rpc_methods(handlers: Iterable[Handler]) -> dict[str, Callable[[dict], Any]]
 def self_managed(handlers: Iterable[Handler]) -> frozenset[str]:
     """The names that take the DuckDB connection themselves."""
     return frozenset(h.name for h in handlers if not h.holds_db_lock)
+
+
+def without_database(handlers: Iterable[Handler]) -> frozenset[str]:
+    """The names a server with no ``--db`` can still serve.
+
+    Both kinds: the methods that never wanted a database (``needs_db=False``)
+    and the ones that work without it when the request says so
+    (``db_optional``). ``server.py`` answers everything else in plot-only
+    mode with one clear refusal instead of a failure from three layers down.
+    """
+    return frozenset(
+        h.name for h in handlers if not h.needs_db or h.db_optional
+    )
 
 
 def install_routes(router: APIRouter, handlers: Iterable[Handler]) -> None:
@@ -207,9 +240,11 @@ def install_routes(router: APIRouter, handlers: Iterable[Handler]) -> None:
                 raise HTTPException(status_code=422, detail=json.loads(exc.json()))
             db = None
             if h.needs_db:
-                from scistack_gui.db import get_db
+                from scistack_gui.db import get_db, is_loaded
 
-                db = get_db()
+                # Same rule as the RPC transport above — the two must not
+                # differ on when a handler gets a connection.
+                db = None if (h.db_optional and not is_loaded()) else get_db()
 
             def _run() -> Any:
                 try:

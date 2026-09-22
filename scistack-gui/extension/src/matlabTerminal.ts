@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { LogSink } from './sessionCore';
 
 /**
  * Local wall-clock stamp as `yyyy-mm-dd HH:MM:SS.mmm`.
@@ -65,7 +66,15 @@ export function isMatlabTerminalOpen(): boolean {
  */
 export async function runInMatlabTerminal(
   command: string,
-  outputChannel?: vscode.OutputChannel,
+  outputChannel?: LogSink,
+  /**
+   * A token unique to the calling session (`sessionCore.sessionSlug`), so
+   * each database writes its own script file. With one fixed name, two
+   * sessions dispatching close together raced: the second write landed
+   * before the first `run('…')` read it, and one canvas ran the other's
+   * script. Optional so the browser build and tests need not supply one.
+   */
+  sessionSlug?: string,
 ): Promise<boolean> {
   if (!isMatlabExtensionAvailable()) {
     return false;
@@ -83,10 +92,17 @@ export async function runInMatlabTerminal(
     // neither side can see alone.
     const t0 = Date.now();
 
-    // Stable filename (overwritten each invocation) so we don't clutter
-    // the temp dir. `run` evaluates the script in the caller's workspace,
-    // so variables defined in the script remain visible after it returns.
-    const scriptPath = path.join(os.tmpdir(), 'scistack_run.m');
+    // Stable per session (overwritten each invocation) so we don't clutter
+    // the temp dir, but never shared between sessions — see `sessionSlug`.
+    // `run` evaluates the script in the caller's workspace, so variables
+    // defined in the script remain visible after it returns.
+    //
+    // MATLAB identifiers: the name must start with a letter and hold only
+    // word characters, or `run` cannot resolve it as a script.
+    const scriptPath = path.join(
+      os.tmpdir(),
+      sessionSlug ? `scistack_run_${sessionSlug}.m` : 'scistack_run.m',
+    );
     fs.writeFileSync(scriptPath, command, 'utf-8');
     const tWritten = Date.now();
     outputChannel?.appendLine(

@@ -24,8 +24,16 @@
         "title": "SciStack: Restart Python Process"
       },
       {
+        "command": "scistack.switchSession",
+        "title": "SciStack: Switch Database"
+      },
+      {
+        "command": "scistack.showSessions",
+        "title": "SciStack: Show Open Sessions"
+      },
+      {
         "command": "scistack.plotVariable",
-        "title": "SciStack: Plot Variable\u2026"
+        "title": "SciStack: Plot Variable…"
       },
       {
         "command": "scistack.plotCsv",
@@ -48,7 +56,7 @@
         "scistack.debugPort": {
           "type": "number",
           "default": 5678,
-          "description": "Port for the debugpy listener when scistack.debug is enabled."
+          "description": "Base port for the debugpy listener when scistack.debug is enabled. Each open database gets its own port, counting up from this one: two servers cannot share one listener, and the second would silently start without a debugger."
         },
         "scistack.startupTimeoutMs": {
           "type": "number",

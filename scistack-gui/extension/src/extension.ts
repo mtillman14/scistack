@@ -3,41 +3,29 @@
  *
  * activate() is called when the user first triggers a SciStack command.
  * deactivate() is called when the extension is unloaded.
+ *
+ * This file is the command layer and nothing else. Everything that used to
+ * live here at module scope — the Python process, the canvas, the `.duckdb`
+ * watcher, the status bar item, `lastStartArgs` — belongs to a `Session`
+ * (see `session.ts`), because there can now be one per open database. While
+ * those were singletons, "Open Pipeline" on a second database killed the
+ * first one's server and reused its canvas: the graph changed but the
+ * header did not, since nothing re-fetches `get_info` (reported 2026-09-22).
  */
 
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { PythonProcess } from './pythonProcess';
-import { DagPanel } from './dagPanel';
 import { PlotPanel, PlotTarget } from './plotPanel';
-import {
-  diagnoseStartupFailure,
-  probeInterpreter,
-  StartupAction,
-  StartupDiagnosis,
-} from './startupDiagnostics';
+import { Session, SessionManager } from './session';
 
-let pythonProcess: PythonProcess | null = null;
-let dagPanel: DagPanel | null = null;
+let sessions: SessionManager;
 let outputChannel: vscode.OutputChannel;
-let dbWatcher: vscode.FileSystemWatcher | null = null;
-let dbWatcherDebounce: ReturnType<typeof setTimeout> | null = null;
-
-// Remember the most recent start args so we can restart the Python process
-// (e.g. after editing scistack_gui source code) without re-prompting the user.
-interface LastStartArgs {
-  dbPath: string;
-  schemaKeys?: string[];
-}
-let lastStartArgs: LastStartArgs | null = null;
-
-// The "no workspace folder open" warning is shown once per session: it is
-// advice about how the window is set up, not about this particular start,
-// and "Restart Python Process" is hit repeatedly while iterating on code.
-let warnedNoWorkspaceFolder = false;
+let statusItem: vscode.StatusBarItem | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('SciStack');
+  sessions = new SessionManager(context, outputChannel);
+  sessions.onDidChange(updateStatusBar);
 
   const openPipeline = vscode.commands.registerCommand(
     'scistack.openPipeline',
@@ -105,33 +93,96 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       // No "how should SciStack discover your code?" step: pipeline code is
-      // discovered from the workspace folder once the database is open (see
-      // startPipeline's warnIfNoWorkspaceFolder and serverArgs.ts).
-      await startPipeline(context, dbPath, schemaKeys);
+      // discovered from the workspace folder containing this database once
+      // it is open (see SessionManager.open and serverArgs.ts).
+      await sessions.open(dbPath, schemaKeys);
+      updateStatusBar();
     }
   );
 
   const restartPython = vscode.commands.registerCommand(
     'scistack.restartPython',
     async () => {
-      if (!lastStartArgs) {
+      // The ACTIVE session, not a remembered set of start args: with two
+      // databases open, "restart" can only sensibly mean the one you are
+      // looking at.
+      const session = sessions.resolveForCommand('restartPython');
+      if (!session) {
         vscode.window.showWarningMessage(
           'SciStack: No pipeline has been opened yet — run "SciStack: Open Pipeline" first.'
         );
         return;
       }
-      outputChannel.appendLine('Restarting Python process...');
-      try {
-        await startPipeline(
-          context,
-          lastStartArgs.dbPath,
-          // Don't re-pass schemaKeys: the DB already exists on restart.
-          undefined,
+      outputChannel.appendLine(`Restarting the Python process for ${session.label}...`);
+      const ok = await sessions.restart(session);
+      if (ok) {
+        vscode.window.showInformationMessage(
+          `SciStack: Python process restarted for ${session.label}.`,
         );
-        vscode.window.showInformationMessage('SciStack: Python process restarted.');
-      } catch (err) {
-        vscode.window.showErrorMessage(`SciStack: Restart failed — ${err}`);
       }
+    }
+  );
+
+  /**
+   * List the open databases, and switch to one.
+   *
+   * With several sessions open, "which one am I about to act on?" needs an
+   * answer that is visible rather than inferred — this command is it, and
+   * the status bar item runs it.
+   */
+  const switchSession = vscode.commands.registerCommand(
+    'scistack.switchSession',
+    async () => {
+      const open = sessions.all();
+      if (open.length === 0) {
+        vscode.window.showInformationMessage(
+          'SciStack: no database is open — run "SciStack: Open Pipeline".',
+        );
+        return;
+      }
+      const active = sessions.active;
+      const picked = await vscode.window.showQuickPick(
+        open.map((s) => ({
+          label: s === active ? `$(check) ${s.label}` : s.label,
+          description: s.dbPath,
+          detail: `project: ${s.projectRoot ?? '(none)'}`,
+          session: s,
+        })),
+        { placeHolder: 'Switch to which SciStack database?' },
+      );
+      if (!picked) return;
+      picked.session.dagPanel?.reveal();
+      sessions.setActive(picked.session.id);
+    }
+  );
+
+  /**
+   * Report what is open, for when a tab misbehaves.
+   *
+   * The question a multi-session bug always starts with is "which server is
+   * that tab actually talking to?", and nothing in VS Code shows it.
+   */
+  const showSessions = vscode.commands.registerCommand(
+    'scistack.showSessions',
+    () => {
+      outputChannel.appendLine('');
+      outputChannel.appendLine(
+        `=== SciStack sessions (${sessions.size} database, ` +
+        `${sessions.everything().length - sessions.size} plot-only) ===`,
+      );
+      const active = sessions.active;
+      for (const s of sessions.everything()) {
+        outputChannel.appendLine(
+          `${s === active ? '*' : ' '} ${s.label}` +
+          `  db=${s.dbPath || '(none — plot only)'}` +
+          `  project=${s.projectRoot ?? '(none)'}` +
+          `  debugPort=${s.debugPort ?? '(off)'}` +
+          `  canvas=${s.dagPanel ? 'open' : 'none'}` +
+          `  plotTabs=${s.plots.size}`,
+        );
+      }
+      outputChannel.appendLine('=== end of session list ===');
+      outputChannel.show(true);
     }
   );
 
@@ -143,18 +194,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   const openPlotPanel = vscode.commands.registerCommand(
     'scistack.openPlotPanel',
-    (target: PlotTarget = {}) => {
-      if (!pythonProcess) {
-        vscode.window.showWarningMessage(
-          'SciStack: Open a pipeline first — plotting needs the server process.'
-        );
-        return;
-      }
-      PlotPanel.show(context, pythonProcess, outputChannel, target, {
-        // Same editor group as the pipeline canvas, so the plot is a
-        // full-width tab beside "SciStack Pipeline" in the tab bar.
-        column: dagPanel?.viewColumn ?? vscode.ViewColumn.One,
-      });
+    async (target: PlotTarget = {}) => {
+      const session = await sessionForPlot(target);
+      if (!session) return;
+      PlotPanel.show(context, session, target);
     }
   );
 
@@ -174,7 +217,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Right-click a .csv in the Explorer. This deliberately needs NO project and
   // NO database: it routes to scistackplot's CsvSource, which is the same
-  // DataSource protocol the scidb path implements.
+  // DataSource protocol the scidb path implements. With no pipeline open it
+  // starts the database-less plot-only server rather than refusing.
   const plotCsv = vscode.commands.registerCommand(
     'scistack.plotCsv',
     async (uri?: vscode.Uri) => {
@@ -196,6 +240,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     openPipeline,
     restartPython,
+    switchSession,
+    showSessions,
     openPlotPanel,
     plotVariable,
     plotCsv,
@@ -203,341 +249,56 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-async function startPipeline(
-  context: vscode.ExtensionContext,
-  dbPath: string,
-  schemaKeys?: string[],
-) {
-  // Remember args so "Restart Python" can respawn without re-prompting.
-  // Preserve the prior schemaKeys if this call didn't supply them (e.g. restart).
-  lastStartArgs = {
-    dbPath,
-    schemaKeys: schemaKeys ?? lastStartArgs?.schemaKeys,
-  };
-
-  warnIfNoWorkspaceFolder();
-
-  // Kill existing process if any
-  if (pythonProcess) {
-    pythonProcess.kill();
-    pythonProcess = null;
+/**
+ * Which session a plot tab should talk to.
+ *
+ * A CSV needs no database at all, so it gets the plot-only server unless a
+ * pipeline explicitly asked for it (plotting a CSV from inside a project is
+ * still just a CSV, but the tab is then part of that project's session and
+ * closes with it). Everything else needs a real database.
+ */
+async function sessionForPlot(target: PlotTarget): Promise<Session | undefined> {
+  if (target.csvPath && !target.sessionId) {
+    return sessions.openPlotOnly();
   }
-
-  // Resolve Python interpreter
-  const interpreter = await resolvePythonPath();
-  if (!interpreter) {
-    vscode.window.showErrorMessage(
-      'SciStack: Could not find a Python interpreter. ' +
-      'Install the Python extension or set scistack.pythonPath in settings.'
+  const session = sessions.resolveForCommand('openPlotPanel', target.sessionId);
+  if (!session) {
+    vscode.window.showWarningMessage(
+      'SciStack: Open a pipeline first — plotting a variable needs its database.'
     );
+    return undefined;
+  }
+  return session;
+}
+
+/**
+ * One status bar item, showing the session a Palette command would act on.
+ *
+ * Not one item per database: three open databases would crowd out everything
+ * else in the bar. The previous code created a NEW item on every open and
+ * never disposed the old one, so stale database names accumulated there.
+ */
+function updateStatusBar(): void {
+  const active = sessions.active ?? sessions.all()[0];
+  if (!active) {
+    statusItem?.dispose();
+    statusItem = null;
     return;
   }
-  const { path: pythonPath, source: interpreterSource } = interpreter;
-
-  // Start the Python JSON-RPC server
-  outputChannel.appendLine(`Starting SciStack server...`);
-  outputChannel.appendLine(`  Python: ${pythonPath} (from ${interpreterSource})`);
-  outputChannel.appendLine(`  DB: ${dbPath}`);
-  outputChannel.appendLine(
-    `  Project root: ${workspaceFolderPath() ?? '(none — server will fall back, see above)'}`
-  );
-  if (schemaKeys) outputChannel.appendLine(`  Schema keys: [${schemaKeys.join(', ')}] (new DB)`);
-
-  pythonProcess = new PythonProcess(pythonPath, dbPath, outputChannel, schemaKeys);
-
-  try {
-    const cfg = vscode.workspace.getConfiguration('scistack');
-    const startupTimeoutMs = cfg.get<number>('startupTimeoutMs', 60000);
-    const readyParams = await pythonProcess.waitForReady(startupTimeoutMs);
-    outputChannel.appendLine(
-      `Server ready — DB: ${readyParams.db_name}, schema: [${readyParams.schema_keys.join(', ')}]`
-    );
-  } catch (err) {
-    const failed = pythonProcess;
-    pythonProcess = null;
-    failed.kill();
-    await reportStartupFailure(failed, interpreterSource, err);
-    return;
+  if (!statusItem) {
+    statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusItem.command = 'scistack.switchSession';
   }
-
-  // Create or reveal the DAG Webview panel
-  // Plot tabs outlive the process they were opened with (retainContextWhenHidden),
-  // so they must be rebound too, or their next RPC hits a destroyed stdin.
-  const reboundPlots = PlotPanel.updatePythonProcess(pythonProcess);
-  if (reboundPlots > 0) {
-    outputChannel.appendLine(`Rebound ${reboundPlots} plot panel(s) to the new server`);
-  }
-  if (dagPanel) {
-    dagPanel.updatePythonProcess(pythonProcess);
-    dagPanel.reveal();
-    // Trigger the webview to re-fetch the registry (and DAG) so any new
-    // functions/variables added since the last start are reflected.
-    dagPanel.postMessage({ method: 'dag_updated', params: {} });
-  } else {
-    dagPanel = new DagPanel(context, pythonProcess, outputChannel);
-    dagPanel.onDidDispose(() => {
-      dagPanel = null;
-      if (pythonProcess) {
-        pythonProcess.kill();
-        pythonProcess = null;
-      }
-    });
-    // MATLAB has released the database — replay whatever the file-watcher
-    // withheld while it was running. Registered here (once per panel)
-    // rather than in the run_done branch below, because the terminal and
-    // clipboard tiers finish inside DagPanel and never emit a Python
-    // notification at all.
-    dagPanel.matlabRuns.onAllFinished(flushDeferredDagRefresh);
-  }
-
-  // Forward push notifications from Python → Webviews
-  pythonProcess.onNotification((method, params) => {
-    // The Plot Studio opens as its own editor tab, so it is NOT reached by
-    // posting to the DAG panel. Its long-running save is a background job that
-    // announces itself only through `plot_save_*` notifications; without this
-    // line the tab that started the save never hears it finish and its Save
-    // button stays on "Saving…" forever.
-    const plotPanels = PlotPanel.broadcast({ method, params });
-    if (method.startsWith('plot_save_')) {
-      // Logged because "backend emitted it, 0 panels received it" is the only
-      // visible symptom of a routing regression here — the Python side always
-      // reports a clean send.
-      outputChannel.appendLine(
-        `[notify] ${method} (job=${params.job_id}) → ${plotPanels} plot panel(s)`,
-      );
-    }
-    if (dagPanel) {
-      dagPanel.postMessage({ method, params });
-      // When a run finishes, auto-detach the debugger if we auto-attached it.
-      if (method === 'run_done') {
-        dagPanel.stopDebugSession();
-        // Sidecar-driven MATLAB runs end here; the tracker fires the
-        // callback registered above once the last one clears.
-        dagPanel.matlabRuns.end(params.run_id as string | undefined);
-      }
-    }
-  });
-
-  // Watch the DuckDB file for external changes (e.g. MATLAB writes).
-  // Debounce with a 2-second window so rapid writes don't flood the UI.
-  setupDbWatcher(dbPath);
-
-  // Status bar
-  const statusItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left, 100
-  );
-  statusItem.text = `$(database) SciStack: ${dbPath.split('/').pop()}`;
-  statusItem.tooltip = dbPath;
+  const others = sessions.size - 1;
+  statusItem.text = `$(database) SciStack: ${active.label}` + (others > 0 ? ` (+${others})` : '');
+  statusItem.tooltip = others > 0
+    ? `${active.dbPath}\nClick to switch between ${others + 1} open databases`
+    : active.dbPath;
   statusItem.show();
 }
 
-function workspaceFolderPath(): string | undefined {
-  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-}
-
-/**
- * Warn when there is no folder open in this VS Code window.
- *
- * The extension no longer asks the user to point at a project or module up
- * front; the server auto-discovers pipeline code from the project root, and
- * with no `--project` that root is the workspace folder
- * (`config.resolve_project_root` rule 2). With no folder open, rule 3 takes
- * over and the root becomes the extension host's working directory — almost
- * never where the user's code lives, so discovery comes back empty. That is
- * the one case the removed picker used to cover, so name it explicitly
- * rather than leaving an empty canvas unexplained.
- */
-function warnIfNoWorkspaceFolder() {
-  if (workspaceFolderPath()) return;
-
-  const message =
-    'SciStack: no folder is open in this window, so there is no project to ' +
-    'discover pipeline code from. Open your project folder and run ' +
-    '"SciStack: Open Pipeline" again, or add paths from the Paths popup.';
-  outputChannel.appendLine(message);
-  if (!warnedNoWorkspaceFolder) {
-    warnedNoWorkspaceFolder = true;
-    vscode.window.showWarningMessage(message);
-  }
-}
-
-/**
- * Explain a failed server start.
- *
- * The bare rejection reason ("Python process exited (code=1)") never says
- * which interpreter was used or what it was missing, which is the whole
- * question when scistack_gui simply is not installed in the environment
- * VS Code picked. So: probe the interpreter, classify, and offer the fix.
- */
-async function reportStartupFailure(
-  failed: PythonProcess,
-  interpreterSource: string,
-  err: unknown,
-): Promise<void> {
-  const errorMessage = err instanceof Error ? err.message : String(err);
-  outputChannel.appendLine(`Server failed to start: ${errorMessage}`);
-  outputChannel.appendLine(`Probing interpreter ${failed.pythonPath}...`);
-
-  // Let the dying child flush its stderr before we quote it.
-  await failed.whenClosed();
-  const probe = await probeInterpreter(failed.pythonPath);
-  const diagnosis = diagnoseStartupFailure({
-    pythonPath: failed.pythonPath,
-    interpreterSource,
-    args: failed.args,
-    errorMessage,
-    stderr: failed.getStderr(),
-    exitCode: failed.getExitCode(),
-    probe,
-  });
-
-  outputChannel.appendLine('');
-  outputChannel.appendLine(`=== SciStack startup failure (${diagnosis.kind}) ===`);
-  outputChannel.appendLine(diagnosis.detail);
-  if (diagnosis.installCommand) {
-    outputChannel.appendLine(`Install with: ${diagnosis.installCommand}`);
-  }
-  outputChannel.appendLine('=== end of startup failure report ===');
-
-  await showDiagnosisMessage(diagnosis);
-}
-
-const ACTION_LABELS: Record<StartupAction, string> = {
-  showOutput: 'Show Details',
-  selectInterpreter: 'Select Interpreter',
-  openSettings: 'Open Settings',
-  copyInstallCommand: 'Copy Install Command',
-};
-
-async function showDiagnosisMessage(diagnosis: StartupDiagnosis): Promise<void> {
-  const labels = diagnosis.actions.map((a) => ACTION_LABELS[a]);
-  const picked = await vscode.window.showErrorMessage(diagnosis.message, ...labels);
-  if (!picked) return;
-
-  const action = diagnosis.actions.find((a) => ACTION_LABELS[a] === picked);
-  switch (action) {
-    case 'showOutput':
-      outputChannel.show(true);
-      break;
-    case 'selectInterpreter':
-      await vscode.commands.executeCommand('python.setInterpreter');
-      break;
-    case 'openSettings':
-      await vscode.commands.executeCommand(
-        'workbench.action.openSettings', 'scistack.pythonPath'
-      );
-      break;
-    case 'copyInstallCommand':
-      if (diagnosis.installCommand) {
-        await vscode.env.clipboard.writeText(diagnosis.installCommand);
-        vscode.window.showInformationMessage(
-          `SciStack: copied to clipboard — ${diagnosis.installCommand}`
-        );
-      }
-      break;
-  }
-}
-
-interface ResolvedInterpreter {
-  path: string;
-  /** Human-readable origin, so an error message can say where to change it. */
-  source: string;
-}
-
-async function resolvePythonPath(): Promise<ResolvedInterpreter | undefined> {
-  // 1. Check extension setting
-  const config = vscode.workspace.getConfiguration('scistack');
-  const configured = config.get<string>('pythonPath');
-  if (configured) return { path: configured, source: 'scistack.pythonPath setting' };
-
-  // 2. Try the VS Code Python extension
-  const pythonExt = vscode.extensions.getExtension('ms-python.python');
-  if (pythonExt) {
-    if (!pythonExt.isActive) await pythonExt.activate();
-    // The Python extension exports an API to get the active interpreter
-    const api = pythonExt.exports;
-    if (api?.environments?.getActiveEnvironmentPath) {
-      const envPath = api.environments.getActiveEnvironmentPath();
-      if (envPath?.path) {
-        return { path: envPath.path, source: 'active interpreter from the Python extension' };
-      }
-    }
-  }
-
-  // 3. Fallback to "python3" on PATH
-  return { path: 'python3', source: 'PATH fallback (no Python extension interpreter)' };
-}
-
-/**
- * Emit the DAG refresh that was withheld while MATLAB owned the database.
- *
- * No-op when nothing was withheld: a MATLAB run that wrote nothing (or that
- * failed before writing) shouldn't cost a full graph re-fetch.
- */
-function flushDeferredDagRefresh(): void {
-  if (!dagPanel) return;
-  if (!dagPanel.matlabRuns.takeDeferredRefresh()) return;
-  outputChannel.appendLine(
-    'MATLAB run finished — applying the deferred DAG refresh',
-  );
-  dagPanel.postMessage({ method: 'dag_updated', params: {} });
-}
-
-function setupDbWatcher(dbPath: string): void {
-  // Dispose any previous watcher.
-  if (dbWatcher) {
-    dbWatcher.dispose();
-    dbWatcher = null;
-  }
-  if (dbWatcherDebounce) {
-    clearTimeout(dbWatcherDebounce);
-    dbWatcherDebounce = null;
-  }
-
-  const dbDir = path.dirname(dbPath);
-  const dbBase = path.basename(dbPath);
-  // Watch for .duckdb and .duckdb.wal files.
-  const pattern = new vscode.RelativePattern(dbDir, dbBase + '*');
-  dbWatcher = vscode.workspace.createFileSystemWatcher(pattern);
-
-  const onDbChange = () => {
-    if (dbWatcherDebounce) {
-      clearTimeout(dbWatcherDebounce);
-    }
-    dbWatcherDebounce = setTimeout(() => {
-      dbWatcherDebounce = null;
-      if (!dagPanel) return;
-      // MATLAB writes to the WAL throughout a run, not just at the end. A
-      // refresh now would fire graph RPCs at a database MATLAB currently
-      // holds the file lock on, and every one of them can only fail — so
-      // the tracker remembers the change and we refresh once it lets go.
-      if (!dagPanel.matlabRuns.noteDbChange()) {
-        outputChannel.appendLine(
-          'DuckDB file changed while MATLAB owns the database — ' +
-          'deferring DAG refresh until the run finishes',
-        );
-        return;
-      }
-      outputChannel.appendLine('DuckDB file changed externally — refreshing DAG');
-      dagPanel.postMessage({ method: 'dag_updated', params: {} });
-    }, 2000);
-  };
-
-  dbWatcher.onDidChange(onDbChange);
-  dbWatcher.onDidCreate(onDbChange);
-}
-
 export function deactivate() {
-  if (dbWatcher) {
-    dbWatcher.dispose();
-    dbWatcher = null;
-  }
-  if (dbWatcherDebounce) {
-    clearTimeout(dbWatcherDebounce);
-    dbWatcherDebounce = null;
-  }
-  if (pythonProcess) {
-    pythonProcess.kill();
-    pythonProcess = null;
-  }
+  sessions?.disposeAll();
+  statusItem?.dispose();
+  statusItem = null;
 }
