@@ -8,6 +8,98 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-09-22-2 — How a node claims an invocation
+
+**Context.** D-2026-09-22-1 gives a function node an allocated id and demotes
+`wiring_id` to an attribute. Hash equality then stops answering "which node
+does this recorded invocation belong to", which it answered for free before,
+and two nodes become able to share a wiring for the first time. Those were
+listed as gating the implementation.
+
+**Decision, three parts.**
+
+*Attribution is recorded, not inferred, wherever it can be.* A GUI-started run
+already carries the node id in its request — `matlab_command_service.
+scope_variants_to_node` depends on it — so it writes the
+`(node_id, wiring_id, run_id, first_seen, last_seen)` association at dispatch.
+Only runs the GUI did not originate are inferred, on the next graph build:
+one node in the scope **states** W → it; else one node has **previously run
+as** W → it; else allocate. The first rule is what stops a node duplicating
+after a run through a drawn edge, and it does so from the *stated* wiring —
+what the user controls — rather than by repairing afterwards. The association
+lives beside `_intent`, never in provenance (`intent-and-fact.md` §8; fact is
+never edited). `run_id` is carried so the row also says *when and under which
+run*, which makes a node's wiring chronology a query.
+
+*Ambiguity resolves by scope, then history, then age — and raises a popup.*
+Different scopes are already separated (D-2026-09-20-9). Within one scope,
+prefer a node that has already run as W, else the oldest; either way warn the
+user in the GUI, not only in `scidb.log`, because two nodes stating identical
+wiring compute identical things and the state is almost certainly unintended.
+**Not auto-merged**: silently collapsing two nodes a person created is worse
+than a message they can act on, and the existing
+`_wiring_conflicts_with_candidate` already declines to merge nodes the user
+distinguished.
+
+*Cross-database identity is a non-issue.* `portability_service` already mints
+fresh node ids on import and remaps through `node_id_map`; DB-derived nodes
+are not exported at all. The surviving constraint is intra-database: ids are
+persisted and never re-derived, so reopening cannot churn them.
+
+**Consequences.** D-2026-09-22-1 is no longer gated. The bootstrap doubles as
+the migration: first open allocates one node per distinct `(wiring, scope)` in
+history and seeds the association, which is today's derived behaviour
+persisted once. A new GUI popup is needed for the ambiguity case. The
+association table gives `scidb variants`' chronology (plan Problem 9) most of
+what it needs for free. `docs/claude/node-identity.md` §7.
+
+## D-2026-09-22-1 — Facts get computed ids, intents get allocated ids
+
+**Context.** A `grSides` node duplicated itself after a run. The node id is
+`fn__{fn}__{wiring_id}`, and `wiring_id` hashes the function's *recorded*
+input bindings, so drawing an edge leaves the id alone (deliberate — position,
+scope and config key off it) but *running* the node records that edge and
+moves the id. Same canvas picture, two ids, depending on whether you have run
+yet. The duplicate is the visible half; the invisible half is that every
+statement keyed by the id is orphaned when it moves, and only
+`columnSelections` is migrated — the user in that session silently lost
+`schemaLevel` and re-entered it six minutes later.
+
+The system already has two kinds of id and has never named the difference.
+Content-derived ids (`record_id`, `invocation_id`, `function_hash`, `call_id`,
+`wiring_id`) answer *"same content?"* and must be independently recomputable —
+node state literally predicts `invocation_id`s forward and checks which are
+present. Allocated ids (`run_id`, `pipeline_id`, manual node ids, edge ids)
+answer *"same thing a person made?"* and must survive their content changing.
+
+**Decision.** The two kinds are distinct and are assigned by the intent/fact
+cut: **a fact is identified by its content; an intent is identified by
+allocation.** A canvas function node is an intent entity — created,
+configured and rewired by a person — and is therefore misclassified today. It
+gains an allocated id, minted once. `wiring_id` is not removed: it stays a
+content id answering "what shape did this run have?", demoted from *identity*
+to *attribute*, with a node ↔ wiring association carrying the link that the
+id used to carry implicitly.
+
+This is the same decision already taken for Parameters (`ids.py`,
+`PARAM_ID_PREFIX`: "the id no longer encodes which form the source currently
+uses") and already true of manual nodes, which carry allocated ids until
+graduation swaps them for a hash.
+
+**Consequences.** `intent-and-fact.md` §3's "`subject_ref` is a STABLE id — a
+`wiring_id`" is the assumption this corrects; §5's `wiring` aspect stops being
+circular, because the statement that sets the wiring is no longer keyed by the
+wiring. "I drew this" and "this has run" become the same node in two states
+rather than two nodes, reportable through the `Decision` object and the
+existing `mark_unused_intent` chip.
+
+Three sub-decisions followed — attribution, ambiguity and cross-database
+identity — and were **taken the same day in D-2026-09-22-2**
+(`node-identity.md` §7). Implementation is not gated.
+
+Argued in full: `docs/claude/node-identity.md`. Symptom it came from:
+`.claude/plan-run-state-and-duplicate-nodes.md` Problem 3.
+
 ## D-2026-09-20-9 — A statement is made on a canvas and applies there
 
 **Context.** `_intent` rows carried `scope` from the start, but every

@@ -146,13 +146,89 @@ as the `is_latest` signature component, as the `Run:<fn>` level, and as the
   the option set of the function's most recently saved invocation; both
   `variant_identity_batch.is_latest` and `_find_record`'s collapse apply it
   after their per-location rules. The older run remains reachable by pin.
+  **There is a third consumer** — see below; it was missed here, and the
+  sentence "both ... apply it" is how the omission stayed invisible for eight
+  days.
+
+## The third consumer: node state (2026-09-22)
+
+The bullet above names two places that apply the global rule. There are three.
+The third is **node state**, and it never got it.
+
+`provenance_query.current_records_by_schema_batch` is where
+`check_node_state` gets the input records it predicts expected work from. It
+applied the per-`(location, variant)` collapse and stopped. So it kept
+enumerating records the load path drops, the predictor built an expected
+invocation from each of them, those invocations could never be written — no
+run would ever read the record they were built from — and the node reported
+red forever. Observed on a real project as
+
+```
+node grSides: red — 130 expected invocation(s) not present
+```
+
+unchanged across four clean re-runs (`completed=420, failed=0` each time).
+Re-running cannot help: every re-run does all the real work and the same dead
+items stay on the list.
+
+**One owner now**: `provenance_query.run_option_superseded_records(duck,
+record_ids, *, inv_map=None, run_map=None) -> set[record_id]`. Both
+`_find_record`'s global pass and `current_records_by_schema_batch` call it;
+`_find_record` hands over the `inv_map` / `run_map` it has already batched,
+since that is the collapse hot path.
+
+Three boundaries, all stated in the helper's docstring because each one is a
+decision someone will want to revisit:
+
+- **The per-LOCATION family rule stays in `_find_record`** and is not shared.
+  That caller's variant key splits the two option sets apart (a distributed
+  run's `output_num` is the slice index), so it has to reconcile them within a
+  location before the global rule applies.
+  `current_records_by_schema_batch` keys more coarsely — both option sets share
+  a variant key there — so at a location holding both, the newest already wins,
+  and only the global rule can see a location the newer run never produced.
+- **Scope is the record's DIRECT producer**, matching the load path exactly.
+  Node state's whole job is to predict what a load will hand the next run, so a
+  broader rule would make it disagree in the other direction.
+  `variant_identity_batch` deliberately applies the same test over the whole
+  upstream *chain*, because it answers a display question ("may these coexist
+  on screen?") where an upstream flip does make a record stale. Do not merge
+  the two without deciding which question node state is asking.
+- **The helper logs at DEBUG.** Node state calls it per variable per canvas
+  refresh; an INFO line there is a per-refresh multiple, which is the shape
+  that made one project's `scidb.log` 24 MB. Callers that want a summary log
+  their own, once.
+
+One other consumer moved with it: `locations._present_by_location` (the
+location picker). Its docstring already claimed to use "the same
+latest-per-(location, producing variant) collapse the load path uses ... so the
+picker and a `Variant(...).load()` cannot disagree" — it was wrong in the same
+way and is now right. Consequence: pinning a *superseded* run in the picker
+returns nothing rather than one stray orphan record. More consistent, but a
+behaviour change with no test covering it yet.
+
+The invariant is now executable — see `test_identity_parity.py`'s fourth
+identity in Tests below.
 
 ## Tests
 
 - `scidb/tests/test_run_option_variants.py` — label, chain, axis presence,
   load-path supersession (both orders, single-set untouched, downstream
   fan-out), `is_latest`, `Variant(run_options=)` incl. superseded-run pin,
-  unknown label, bare-pin ambiguity.
+  unknown label, bare-pin ambiguity. Plus
+  `TestNodeStateAgreesWithTheLoadPath` (2026-09-22): the third consumer,
+  reusing `TestCurrencyIsPerFunctionNotPerLocation`'s orphaned-trial-4 shape
+  because it is the same seven records — node state counts nothing the load
+  path drops, counts 3 not 4, and a downstream step that ran to completion
+  reads green.
+- `scidb/tests/test_identity_parity.py` — the **fourth identity**, "current
+  records": does the set a load returns agree, about staleness, with the set
+  node state counts as expected work? Stated as an inclusion, not an equality:
+  the two keys differ in scope by design (variant-space.md §4), so they need
+  not partition records identically, but node state may never count work
+  against a record a load will not read. The cases there are the guard against
+  over-correcting — coexisting constant variants must survive on both sides,
+  and an ordinary re-save must supersede on both.
 - `scistackplotdb/tests/test_run_option_variants.py` — `Run:` column, axis
   descriptor, latest flag, default pin, pooling refusal, explicit older-run
   selection, `variant_graph` levels, both translations, endpoint expression.

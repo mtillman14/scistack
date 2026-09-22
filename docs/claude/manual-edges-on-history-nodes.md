@@ -49,7 +49,7 @@ scope placement and node config all key off `fn__{fn}__{wiring_id}` (see
 `placement-id lookup trap`), so the overlay lives on the built node data
 and the derived run targets only.
 
-## One owner, three consumers
+## One owner, four consumers
 
 `graph_builder.manual_input_overrides(fn, wid, input_params, const_names,
 manual_index, manual_nodes, hidden_edge_ids)` → `{param: type | [types]}`.
@@ -77,6 +77,11 @@ edge is not in the result; a list value is `EachOf`.
    node that actively binds a variable to a param the candidate has no
    variable on is a *different wiring* and stays its own node. A bare
    (unwired) fresh node still graduates into its single candidate.
+4. **Colour** (added 2026-09-22) —
+   `graph_builder.input_params_with_manual_edges` returns a COPY of
+   `fn_input_params` with the overrides folded in, and that copy goes to
+   `run_state.propagate_run_states` and nowhere else. See §Colour below for
+   why it was missing and why it is a copy.
 
 Why one pass in (2): substituting changes the wiring id, so a second pass
 keyed on the new id misses both the remaining hidden edges (re-admitting a
@@ -120,6 +125,57 @@ history source's wiring is the old node itself).
 The absence of the `[variant_resolver] ... override` line when a manual
 edge is visible on a history node is the diagnostic.
 
+## Colour: red must cross a drawn edge
+
+Added 2026-09-22, from a real session. `loadGaitRiteOneFile` was red and
+`grSides` and `calculateSymmetryOneVector` downstream of it were green — three
+red nodes out of fifteen, where the chain should have carried it to every one.
+
+Node colours are computed from the **recorded** wiring, about 200 lines before
+the display overlay reaches the built nodes (`api/pipeline._build_graph`:
+run states at the "Computing run states" step, overlay at "manual input
+overlay applied to N history node(s)"). So when the cascade asked `grSides`
+"what feeds `grTableIn`?", history answered "nothing" — that connection exists
+only as an edge the user drew — and a step with no upstream has nothing to
+inherit red from.
+
+The arithmetic is the proof: 8 call sites + 7 variables = 15 nodes, 3 red =
+the two `loadGaitRiteOneFile` call sites plus `var__GAITRiteLoaded`, and then
+it stops at the first drawn edge. After wiring grouping the two call sites
+merge and it reads 2 red, which is what the log showed.
+
+**Applied at BOTH propagation passes.** There are two and each rebuilds its
+input mapping from the recorded call sites, so fixing only the first would
+leave the pass that decides the node's final colour still blind:
+
+| pass | where | keyed by |
+|---|---|---|
+| 1 — per call site | `api/pipeline._compute_run_states(..., propagation_input_params=)` | `(fn, call_id)` |
+| 2 — on the grouped wiring | `graph_builder.group_call_sites_by_wiring` | `(fn, wiring_id)` |
+
+No flag distinguishes them: the helper recomputes the wiring id from each
+entry, which for a call-site key derives the group it belongs to and for an
+already-grouped key returns that key's own wid — members of a group share
+their params, because the id hashes exactly those.
+
+Two things it must not touch, both load-bearing:
+
+- **Identity.** `wiring_id` hashes `input_params`, so folding an override into
+  the dict node ids derive from would rename the node and orphan its saved
+  position, scope membership and config (the placement-id lookup trap). This
+  is the same rule as §"Node identity does not change", one layer down, and it
+  is why the helper returns a copy. `TestRunStatePropagationFollowsManualEdges::
+  test_identity_is_untouched` pins it.
+- **The own-state check.** Pass 1 asks scidb "has this call site done its
+  recorded work", and a drawn edge does not change that question.
+  `check_multiple_nodes_state` never sees the overlay.
+
+One supporting change: `propagate_run_states` now flattens a LIST binding.
+A manual edge beside a still-visible history edge is an `EachOf`, and
+`set(params.values())` raised on an unhashable list — a path that was
+unreachable until the overlay made it reachable. Every source counts: if any
+producer of any of them is red, the consumer cannot be current.
+
 ## Known limitations
 
 - `manual_edge_handle_index` keeps one manual edge per `(fn, wid, handle)`;
@@ -129,9 +185,13 @@ edge is visible on a history node is the diagnostic.
   column set applies to every source (column-selection.md).
 - A manual variable edge onto a param history bound as a **constant**
   (`param__` handle) is a different handle kind and is not covered.
-- The run state of a node with an overlay still reflects its history
-  (green) although the effective wiring never ran; a "needs run" badge is
-  a follow-up.
+- ~~The run state of a node with an overlay still reflects its history
+  (green) although the effective wiring never ran~~ — half fixed 2026-09-22
+  (§Colour). The overlay now feeds the DAG *cascade*, so an overlaid node
+  inherits red from whatever its drawn edge points at, and red no longer
+  stops at the last history edge. Its OWN state is still its history's, which
+  is a different question ("has this call site done its recorded work"); the
+  "needs run" badge for "the effective wiring never ran" is still a follow-up.
 - ~~Node config is not migrated on graduation~~ — fixed the same day:
   `pipeline_store.migrate_node_config` (see `gui-run-options-flow.md`
   §Where the config is stored). Orphans from BEFORE the fix (the
@@ -140,7 +200,11 @@ edge is visible on a history node is the diagnostic.
 ## Tests
 
 - `tests/test_graph_builder.py`: `TestManualInputOverrides`,
-  `TestOverlayManualInputs`, `TestSupersededManualInputOverrides`.
+  `TestOverlayManualInputs`, `TestSupersededManualInputOverrides`,
+  `TestRunStatePropagationFollowsManualEdges` (the colour consumer — the old
+  behaviour pinned, red crossing the drawn edge and on downstream, identity
+  untouched, no-edges short-circuit, and an `EachOf` list not breaking the
+  cascade).
 - `tests/test_variant_resolver.py`: `TestReconcileManualInputsHiddenEdges`
   (the former reconnect suite; the multitype case now expects `EachOf`),
   `TestReconcileManualInputsUnboundParams`.

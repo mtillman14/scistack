@@ -27,6 +27,7 @@ import pytest
 import scifor as _scifor
 from scidb import BaseVariable, Variant, configure_database, for_each
 from scidb.exceptions import AmbiguousParamError
+from scidb.foreach_config import ForEachConfig
 from scidb.provenance_query import (
     run_option_axes,
     run_options_batch,
@@ -434,6 +435,108 @@ class TestCurrencyIsPerFunctionNotPerLocation:
             branch_params_filter={"__run__.make_rows": "distribute=false"},
         )
         assert len(frame) == 4
+
+
+class TestNodeStateAgreesWithTheLoadPath:
+    """The third consumer of the run-option rule, and the one that never got
+    it (2026-09-22).
+
+    `docs/claude/variant-space.md` §4 lists four answers to "which variant is
+    this record?". Three are supersession-ish and are meant to agree about
+    staleness:
+
+    * `database._find_record`'s latest-collapse  — the LOAD path
+    * `provenance_query.variant_identity_batch`  — the DISPLAY path
+    * `provenance_query.current_records_by_schema_batch` — the NODE STATE path
+
+    `TestCurrencyIsPerFunctionNotPerLocation` above already pins the first two
+    against the orphaned trial-4 record. The third still enumerates it, so the
+    expected-invocation predictor builds work from a record no run will ever
+    read, that work can never be done, and the node is red forever. Observed on
+    a real project as `node grSides: red — 130 expected invocation(s) not
+    present`, unchanged across four clean re-runs.
+
+    Same fixture as the class above, because it is the same seven records: the
+    whole-file run wrote trials 1-4, the distributed re-run produced three
+    slices, and trial 4 is the orphan.
+    """
+
+    @pytest.fixture
+    def stale_trial(self, db):
+        for_each(make_rows, {}, [Loaded], subject=["SS01"], trial=[1, 2, 3, 4])
+        for_each(make_rows, {}, [Loaded], distribute=True, subject=["SS01"])
+        return db
+
+    def _current_for_node_state(self, db) -> set:
+        from scidb.provenance_query import current_records_by_schema_batch
+
+        by_schema = current_records_by_schema_batch(db._duck, "Loaded")
+        return {rid for rids in by_schema.values() for rid in rids}
+
+    def _current_for_load(self, db) -> set:
+        return set(db._find_record("Loaded", version_id="latest")["record_id"])
+
+    def test_node_state_counts_no_record_the_load_path_drops(self, stale_trial):
+        """The invariant, stated as an inclusion rather than an equality.
+
+        The two keys differ in SCOPE by design — the load path keys on
+        `(fn_name, branch_params, consumed locations)`, node state on the
+        directly producing invocation's constants (one hop) — so they are not
+        obliged to partition records identically. What they ARE obliged to
+        agree on is staleness: node state must never count work against a
+        record a load will not read.
+        """
+        for_view = self._current_for_load(stale_trial)
+        for_state = self._current_for_node_state(stale_trial)
+        assert for_state <= for_view, (
+            f"node state counts {len(for_state - for_view)} record(s) the load "
+            f"path drops as superseded: {sorted(for_state - for_view)} — "
+            f"expected work that can never be done"
+        )
+
+    def test_the_orphaned_record_is_the_one_it_counts(self, stale_trial):
+        """Names the record, so a failure says WHICH one rather than how many.
+
+        Four survive the per-(location, variant) collapse — the three slices
+        plus the trial-4 whole-file record, which is the newest thing at its
+        own location. Only the global per-function rule can drop it, and that
+        rule is what node state is missing.
+        """
+        for_state = self._current_for_node_state(stale_trial)
+        assert len(for_state) == 3, (
+            f"got {len(for_state)} current record(s); the extra one is the "
+            f"trial-4 whole-file record the distributed re-run never replaced"
+        )
+
+    def test_a_downstream_step_that_ran_completely_is_green(self, stale_trial):
+        """The symptom the user sees.
+
+        `consume` runs over every trial the load path offers — three, because
+        trial 4 holds only the superseded record and loads empty. Nothing
+        failed and nothing is left to do, so the node is done. It reads red
+        because the predictor built a fourth invocation from the stale record.
+        """
+        from scidb.state import check_node_state
+
+        def consume(loaded):
+            return _total(loaded)
+
+        for_each(
+            consume, inputs={"loaded": Loaded}, outputs=[Consumed], subject=[], trial=[]
+        )
+        assert _records(stale_trial, "Consumed") == 3, (
+            "the downstream step should have produced one record per trial the "
+            "load path offers"
+        )
+
+        forward = ForEachConfig(consume, {"loaded": Loaded}).to_call_id()
+        node = check_node_state(
+            consume, [Consumed], inputs={"loaded": Loaded}, db=stale_trial, call_id=forward
+        )
+        assert node["state"] == "green", (
+            f"{node['counts']['missing']} invocation(s) counted missing after a "
+            f"complete run — built from input records no load returns"
+        )
 
 
 class TestRunOptionsValue:

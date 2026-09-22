@@ -94,6 +94,17 @@ round-trip guards are all reports on a `Decision`.
 * `subject_ref` is a STABLE id — a `wiring_id`, a declared name — never a
   placement-qualified canvas id. Placement (`::{pipeline_id}`) is a display
   attribute, not identity (`docs/claude/placement-qualified-ids.md`).
+
+  > **A `wiring_id` is not stable, and this line is the assumption that
+  > corrects to** (2026-09-22, D-2026-09-22-1). It is invariant under
+  > *drawing* an edge and not under *running* one: a run records the drawn
+  > binding, the hash moves, and every statement keyed by it is orphaned at
+  > once. It also makes §5's `wiring` aspect circular — the statement that
+  > sets the wiring is keyed by the wiring. A function node gains an
+  > allocated id and `wiring_id` becomes an attribute of it; see
+  > `docs/claude/node-identity.md`. The rest of this document is unaffected:
+  > a declared name is stable, and the five rules do not depend on which
+  > kind of id `subject_ref` holds.
 * `scope` is on EVERY row. Today three of the seven execution-intent tables
   scope and four do not, and no one can say why from the table alone.
 * `origin` records which surface a statement came from, so precedence is data

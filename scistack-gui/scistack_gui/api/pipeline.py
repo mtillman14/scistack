@@ -245,54 +245,72 @@ def _find_db_fn_candidate(
     return agg.fn_input_params.get(key, {}), agg.fn_outputs.get(key, set())
 
 
-def _migrate_column_selections(
+def _migrate_node_statements(
     db, node_configs: dict[str, dict], old_id: str, new_id: str
 ) -> dict | None:
-    """Carry ``columnSelections`` from the node a manual input overlay was
-    configured on to the node its run produced (graph_builder.
-    superseded_manual_input_overrides), unless the new node already has its
-    own. Returns the map that was copied, or None.
+    """Carry EVERY statement from the node a manual input overlay was
+    configured on to the node its run produced
+    (``graph_builder.superseded_manual_input_overrides``). Returns the new
+    node's ``columnSelections`` if it has any, for the caller's node data.
 
-    Config keys may be bare or placement-qualified (``::scope``); the copy
-    keeps whatever suffix the source key had. ``node_configs`` is updated in
-    place so ``apply_placement_configs`` later in the same build rehydrates
-    a qualified copy without a second fetch.
+    Until 2026-09-22 only ``columnSelections`` moved, deliberately: it is the
+    one setting the run actually USED (``_attach_column_selections`` reads it
+    off the old node id), so leaving it behind made the new node's next run
+    silently load whole tables. The reasoning stopped there — "the other saved
+    settings were never applied to that run and stay where they were" — which
+    is true and is not a reason to strand them. A run moves the node's id
+    (``wiring_id`` hashes the recorded bindings, so recording a drawn edge
+    rehashes it), and everything keyed by the old id goes with it:
+    ``schemaLevel``, ``runOptions``, ``whereFilters``, hidden values. The user
+    is told nothing; the node simply behaves as if it had never been
+    configured. Seen 2026-09-22: `schemaLevel` re-entered by hand six minutes
+    after the run that dropped it.
 
-    Only the column selection moves. It is the one setting the run that
-    created the new node actually USED (``_attach_column_selections`` reads
-    it off the old node id), so leaving it behind would make the new node's
-    next run silently load whole tables — the trap column-selection.md
-    documents. The other saved settings were never applied to that run and
-    stay where they were.
+    ``intent_store.rekey_subject`` is that move, and it already existed for
+    GRADUATION — the same id change, from the other direction. One call, every
+    aspect, old rows deleted, so a repeat build moves nothing.
+
+    ``old_wins=False``: keep anything the new node already has. At migration
+    time it cannot have any (it came into existence with the run that
+    triggered this), so the two settings agree in practice — but a repair path
+    that can only ever ADD is the safer default if that assumption breaks.
+
+    Statements carry their scope in a column, so placement (``::scope``) needs
+    no special handling here; ``rekey_subject`` strips it from both refs.
+    ``node_configs`` is refreshed in place so ``apply_placement_configs``
+    later in the same build sees the moved values without a second fetch.
+
+    This becomes redundant under D-2026-09-22-1 (an allocated node id does not
+    move when a run records a wiring) — but that is a larger change, and until
+    it lands this is what stops a run silently dropping settings.
     """
+    from scistack_gui import intent_store
     from scistack_gui import pipeline_store as _store
     from scistack_gui.ids import strip_placement
 
-    old_bare, new_bare = strip_placement(old_id), strip_placement(new_id)
-    if any(
-        cfg.get("columnSelections")
-        for nid, cfg in node_configs.items()
-        if strip_placement(nid) == new_bare
-    ):
+    moved = intent_store.rekey_subject(db, old_id, new_id, old_wins=False)
+    if not moved:
         return None
-    for nid, cfg in list(node_configs.items()):
-        if strip_placement(nid) != old_bare:
-            continue
-        selections = cfg.get("columnSelections")
-        if not selections:
-            continue
-        target_key = new_bare + nid[len(old_bare) :]
-        merged = {**node_configs.get(target_key, {}), "columnSelections": selections}
-        _store.update_node_config(db, target_key, merged)
-        node_configs[target_key] = merged
-        logger.info(
-            "[pipeline] column selection %s migrated from %s to %s (the run that "
-            "created the new node used it)",
-            selections,
-            nid,
-            target_key,
-        )
-        return selections
+
+    new_bare = strip_placement(new_id)
+    old_bare = strip_placement(old_id)
+    refreshed = _store.get_node_configs(db)
+    for nid in [k for k in node_configs if strip_placement(k) == old_bare]:
+        node_configs.pop(nid, None)
+    for nid, cfg in refreshed.items():
+        if strip_placement(nid) == new_bare:
+            node_configs[nid] = cfg
+    logger.info(
+        "[pipeline] migrated %d statement(s) from %s to %s — the run that "
+        "created the new node moved its id, and everything keyed by the old "
+        "one would otherwise stop applying",
+        moved,
+        old_id,
+        new_id,
+    )
+    for nid, cfg in node_configs.items():
+        if strip_placement(nid) == new_bare and cfg.get("columnSelections"):
+            return cfg["columnSelections"]
     return None
 
 
@@ -886,7 +904,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
             )
         for old_id, new_id in superseded_overlays.items():
             input_overrides.pop(old_id, None)
-            migrated = _migrate_column_selections(db, node_configs, old_id, new_id)
+            migrated = _migrate_node_statements(db, node_configs, old_id, new_id)
             if migrated:
                 for n in nodes:
                     if n["id"] == new_id and "columnSelections" not in n["data"]:

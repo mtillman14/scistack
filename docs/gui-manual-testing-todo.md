@@ -36,6 +36,278 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0n. Node colours: correct, cascading, and refreshed — added 2026-09-22
+
+**What changed:** three separate defects that together made the canvas
+colours untrustworthy. Found by reading `scidb.log` from the 2026-09-22
+session. Plan: `.claude/plan-run-state-and-duplicate-nodes.md` (Problems 1, 2
+and 4). Docs: `run-option-variants.md` §"The third consumer",
+`manual-edges-on-history-nodes.md` §Colour, `matlab-run-completion.md` §5.
+
+1. **A finished step could be red forever.** If a function had ever been run
+   under different `distribute`/`as_table` settings, the colour check kept
+   counting work against records no run would ever load. `grSides` sat at
+   `red — 130 expected invocation(s) not present` through four clean re-runs.
+2. **Red did not spread across an edge you drew.** Colours were computed from
+   the recorded wiring only, so a step fed by a hand-drawn edge had no
+   upstream to inherit from. `loadGaitRiteOneFile` red, everything downstream
+   of it green.
+3. **Terminal MATLAB runs never asked the canvas to repaint.** 4 refresh
+   messages in a 55-minute session against 9 runs, none after a run.
+
+**Backend:** `scidb/provenance_query.py`, `scidb/database.py`,
+`scistack_gui/domain/graph_builder.py`, `domain/run_state.py`,
+`api/pipeline.py`, `api/run.py`, `matlab_run_watch.py`. Pull and reload the
+VS Code window. **No frontend change — no rebuild needed.**
+
+**Steps:**
+
+1. Open the Stroke-R01-Aim-2 database. Look at `grSides`. It should now be
+   **green** if its work is complete. In `scidb.log`, the line
+   `node grSides: red — 130 expected invocation(s) not present` should be
+   gone. *(If it is red with a different, smaller number, that is a real
+   shortfall — tell me the number.)*
+2. Run a MATLAB node from the canvas and **do not touch anything**. When
+   MATLAB finishes, the canvas should repaint on its own — the node's colour
+   should update without you clicking Refresh or switching tabs. In
+   `scidb.log` look for `[notify] Emitting dag_updated` immediately after the
+   run's verdict.
+3. Open a plot of a variable the run just wrote. It should show the **new**
+   data without you reopening the tab (the plot cache is dropped by the same
+   announcement).
+4. Make something upstream go red on purpose — the easiest is to add a new
+   subject folder on disk that a loader has not loaded yet. The loader should
+   go red, **and so should every step downstream of it**, including ones
+   connected by edges you drew by hand. Before this change red stopped at the
+   first drawn edge.
+5. Check the location picker on a loader node still lists what you expect. It
+   now uses the same "which records count" rule as loading, so it may show
+   slightly fewer entries than before if your database has mixed-run records.
+   *(This one is a behaviour change with no automated test — worth a look.)*
+
+**What is NOT fixed yet:** the duplicated `grSides` node is still there
+(Problem 3), so grSides still runs twice per click and still blocks the
+database while it does. Expect that to look wrong; it is next.
+
+---
+
+## 0m. MATLAB runs report when they actually end — added 2026-09-22
+
+**What changed:** the big one. A MATLAB run dispatched to the MathWorks
+terminal used to report **success the instant the script was sent** — before
+MATLAB had run a line, and whether or not it then failed. It now reports
+what actually happened, via two signals: markers the script writes
+(`<db stem>.runs/`), and who holds the DuckDB file. Doc:
+`docs/claude/matlab-run-completion.md`; plan:
+`.claude/plan-matlab-run-completion.md`.
+
+**Expect this to feel slower, and that is the fix:** the node stays on
+"⏳ Running in MATLAB…" for the real duration instead of flicking green.
+
+**Backend:** new `scidb/run_markers.py`, new
+`scimatlab/.../+scidb/run_marker.m`, new `scistack_gui/matlab_run_watch.py`,
+plus `api/matlab_command.py`, `api/run.py`, `db.py`, `server.py`. Pull,
+**reinstall/refresh so MATLAB sees the new `+scidb/run_marker.m`** (it is on
+the addpath the generated script sets, so a normal pull is enough), and
+reload the VS Code window.
+
+**Frontend:** both bundles rebuilt — new `unknown` run status, and a
+✕ stop-waiting control on running MATLAB nodes.
+
+**Steps — the happy path:**
+
+1. Run a MATLAB node. While it runs, check `<your db stem>.runs/` next to
+   the `.duckdb`: a `<run_id>.started` file should appear almost
+   immediately, with MATLAB's PID in it.
+2. The node should stay "⏳ Running in MATLAB…" for the whole run, then go
+   green **when MATLAB finishes** — not before. The `.runs` folder should be
+   empty again afterwards (reported markers are cleaned up).
+3. While it is running, click around the GUI. Requests that need the
+   database should now report "MATLAB has the database" in well under a
+   second instead of hanging for five. *(This is the papercut; tell me if it
+   still feels slow.)*
+4. Also while it runs: the canvas should NOT keep refreshing. One refresh
+   should land after the run finishes.
+
+**Steps — the paths that used to lie:**
+
+5. **A failing run.** Break a MATLAB function (a typo is fine) and run it.
+   The node must go **red**, and the run's row should carry MATLAB's own
+   error — e.g. `MATLAB:undefinedFunction: Unrecognized function...`.
+   Previously this showed green.
+6. **Ctrl-C mid-run** in the MATLAB Command Window. Within ~20 s the node
+   should resolve to **`?` unknown** (amber), saying MATLAB stopped without
+   reporting and that whatever it wrote is still in the database. It must
+   NOT say success, and should not say a plain failure either.
+7. **Close MATLAB entirely** mid-run. Same as 6, and the message should add
+   "the MATLAB process is gone".
+8. **A pyenv failure.** If you can, point `scistack.pythonPath` at a broken
+   interpreter and run. After ~2 minutes the node should say **"MATLAB never
+   started this run"** — distinguishable from 6/7, which is the reason
+   `.started` is written before the preamble.
+9. **Stop waiting.** Start a run, then close MATLAB, then click the ✕ on the
+   node before the grace expires. The node should resolve immediately as
+   cancelled. Confirm the tooltip is accurate: it stops the GUI waiting, it
+   does not stop MATLAB.
+10. **Clipboard tier.** If you have no MathWorks extension, run a node so
+    the script goes to the clipboard, then paste it into MATLAB yourself.
+    The node should still report properly when it finishes — previously this
+    was a black hole.
+
+**Diagnostics if anything sticks:** Command Palette ▸ **SciStack: Show
+MATLAB Run State**. It prints the marker directory, whether each marker
+exists, MATLAB's PID and the last lock probe for every run being watched.
+Please paste that output if a node hangs.
+
+---
+
+## 0l. Every plot opens its own tab + MATLAB across databases — added 2026-09-22
+
+**What changed:** two things, both from the same multi-session work
+(`.claude/plan-multi-session-tabs.md` stages 4 and 5).
+
+1. **Plot tabs no longer reuse one tab.** Plotting a second variable used to
+   retarget the open Plot Studio, destroying the figure you were looking at.
+   Every plot now opens its own tab, titled with its database.
+2. **MATLAB is treated as the one shared resource it is.** Each database
+   writes its own generated script file, and a Run is refused while another
+   database's MATLAB run is being dispatched.
+
+**Backend:** `extension/src/{plotPanel,dagPanel,matlabTerminal,
+matlabConnectionGate,sessionCore,session}.ts`; bundles rebuilt. Pull and
+**reload the VS Code window**.
+
+**Frontend:** `PlotRoot.tsx` simplified (no retarget path);
+`PlotStudio.tsx` badges its database beside the title.
+
+**Steps — plot tabs:**
+
+1. On one database, right-click a Variable ▸ **Plot**. Then plot a *second*
+   variable. You should now have **two** plot tabs, both open, the first
+   figure untouched. (Before: one tab, first figure gone.)
+2. Each tab's title reads `Plot — <Variable> · <db>.duckdb`, and the
+   studio's own header shows the database in grey after the shape badge.
+3. With two databases open, plot from each. Start a **Save** in one — only
+   that tab shows "Saving…", and only that tab returns to normal when it
+   finishes. (The notification must not cross databases.)
+4. Close a canvas tab — its plot tabs close with it; the other database's
+   plot tabs stay.
+
+**Steps — MATLAB (only if you use the MATLAB path):**
+
+5. Run a MATLAB node. In the SciStack Output Channel, the dispatch line
+   should name a per-database script:
+   `wrote N-char script to …/scistack_run_<8 hex chars>.m`. Two databases
+   must show two different filenames.
+6. **Only the MathWorks terminal is shared.** If your MATLAB runs go through
+   the *sidecar* (no MathWorks extension, or no MATLAB terminal open), each
+   database has its OWN MATLAB process already — start a long run in A, then
+   run in B: both should proceed in parallel, neither blocked. This is the
+   case that matters most; an earlier version of the gate wrongly blocked it.
+7. **If you do use the MathWorks terminal:** with a MATLAB run just
+   dispatched from database A, immediately click Run on a MATLAB node in
+   database B. You should get: *"MATLAB is running A.duckdb right now… wait
+   for that run to finish"*, and B's node must return to idle rather than
+   sticking on "running".
+8. **Known limit, please confirm it behaves as described rather than
+   worse:** that refusal covers the dispatch window only. Clicking Run in B
+   well into a long MATLAB *terminal* run in A is NOT refused — nothing
+   tells VS Code when a terminal run ends. If you hit this in practice, say
+   so; the fix is run markers written by MATLAB itself
+   (`.claude/plan-matlab-terminal-run-tracking.md` Stage 2).
+
+---
+
+## 0k. Several databases open at once — added 2026-09-22
+
+**What changed:** the extension now opens **one tab per database**. Each open
+`.duckdb` gets its own Python server, its own canvas tab, its own plot tabs
+and its own file watcher. Before, opening a second database killed the first
+one's server and reused its canvas — the graph changed but the header kept
+the **old** filename (this is the bug you reported). Doc:
+`docs/claude/gui-multi-session.md`; plan:
+`.claude/plan-multi-session-tabs.md` (Stages 0-2).
+
+**Backend:** `extension/src/{session,sessionCore,extension,dagPanel,plotPanel,
+pythonProcess,serverArgs,panelRegistry}.ts`; both vite bundles and
+`dist/extension.js` rebuilt. Pull, then **reload the VS Code window** (not
+just Restart Python — the extension host itself changed).
+
+**Frontend:** the canvas header reads the database name injected into the
+webview instead of fetching it once on mount.
+
+**Steps:**
+
+1. **Open Pipeline** on database A. Note the tab title: it should now read
+   `SciStack — A.duckdb`, not `SciStack Pipeline`. The header inside the
+   canvas should name A with no "loading…" flash.
+2. **Open Pipeline** again, on a *different* database B. You should get a
+   **second tab**, `SciStack — B.duckdb`, with A's tab still open and still
+   showing A's graph and A's name. *(This is the reported bug: before, there
+   was one tab and it showed B's graph under A's name.)*
+3. Switch back to A's tab. Its graph, its Runs dock and its header must all
+   still be A's. Run something small in A, then in B — neither run should
+   appear in the other's console.
+4. **Open Pipeline** on A a third time. No new tab and no new server: A's
+   existing tab is revealed. The Output Channel says
+   `[session] A.duckdb is already open — revealing its tab`.
+5. Bottom-left status bar: one `$(database) SciStack: <name> (+1)` item that
+   follows whichever tab you are looking at. Click it — you get a database
+   picker. (Before, every open left a stale item behind.)
+6. Command Palette ▸ **SciStack: Show Open Sessions**. The Output Channel
+   lists both databases with their project roots, debug ports, and plot-tab
+   counts, the focused one marked `*`.
+7. Check the Output Channel generally: every line should be prefixed
+   `[A.duckdb]` or `[B.duckdb]` so the two servers can be told apart.
+8. Plot a variable from A's canvas and one from B's. Each plot tab's title
+   ends with its database (`Plot — StepLength · A.duckdb`) and each talks to
+   its own server. Save a figure from A's tab — only that tab leaves
+   "Saving…".
+9. Close A's canvas tab. A's server and A's plot tabs close with it; B is
+   untouched. The status bar drops to B alone.
+10. **If you use a multi-root workspace:** open a database from each folder
+    and confirm in **Show Open Sessions** that each one's `project=` is its
+    *own* folder. Previously both got the first folder, so the second
+    discovered the wrong code.
+
+**What to look for:** any place that still says the wrong database name —
+that is the class of bug this change is about.
+
+---
+
+## 0j. Plot a CSV with no database open — added 2026-09-22
+
+**What changed:** right-click ▸ **Plot CSV** no longer needs a pipeline open.
+It starts a database-less `--plot-only` server (no project init, no code
+discovery, no `configure_database`) shared by every CSV tab. Plan Stage 6.
+
+**Backend:** `scistack_gui/server.py` (`--plot-only`, `--log-file`, `--db`
+now optional), `api/handlers.py` (`Handler.db_optional`), `api/plot.py`.
+Pull and reload the window.
+
+**Frontend:** "Add to pipeline" is hidden on a CSV tab.
+
+**Steps:**
+
+1. With **no** pipeline open, right-click a `.csv` in the Explorer ▸
+   **Plot CSV**. A plot tab opens and draws. (Before: "Open a pipeline
+   first".) The Output Channel shows `[plot-only] Spawning: … --plot-only`
+   and `No database — CSV plotting only`.
+2. In that tab: picking axes, changing the plot kind, **Export code** and
+   **Save** all work. **Add to pipeline** is absent — a CSV has no project to
+   write an endpoint into.
+3. Right-click a second `.csv`. It reuses the same plot-only server (no
+   second `Spawning` line).
+4. Now open a real pipeline as well, and check **Show Open Sessions**: the
+   plot-only server is listed with `db=(none — plot only)` and is *not*
+   offered by **SciStack: Switch Database**.
+5. Command Palette ▸ **SciStack: Plot Variable…** with only CSV tabs open
+   should say a database is needed, not fail obscurely.
+6. The plot-only server's log goes to the extension's own storage folder, not
+   next to your CSV. Check no stray `scidb.log` appears beside the data.
+
+---
+
 ## 0i. Lines span the innermost grouping layer only — added 2026-09-21
 
 **What changed:** a joined line — a "Show sample" line and a spaghetti's own

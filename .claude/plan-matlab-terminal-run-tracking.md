@@ -1,5 +1,33 @@
 # Plan: knowing when a MathWorks-terminal MATLAB run starts and ends
 
+> **SUPERSEDED and DONE (2026-09-22).** Both stages below were finally built,
+> but not as written here — see `.claude/plan-matlab-run-completion.md` for
+> the plan that shipped and `docs/claude/matlab-run-completion.md` for how it
+> works. The substantive differences:
+>
+> * **The liveness signal is the DuckDB lock holder, not a heartbeat or a
+>   timestamp hint.** `db.py` already parsed the holder's PID out of DuckDB's
+>   conflict message, so "is MATLAB still running" is answerable with no
+>   cooperation from MATLAB at all. That was not noticed when this plan was
+>   written, and it is what made Stage 2 tractable.
+> * **The watcher lives in Python, not the extension host.** Terminal runs
+>   now finish through the same `run_done` notification the sidecar already
+>   emitted, so the frontend and `MatlabRunTracker` needed no new concepts.
+> * **Markers sit beside the database** (`<stem>.runs/`), not in the OS temp
+>   directory — per-database, and they survive MATLAB running on another
+>   machine.
+> * **`onCleanup` is a net, not the mechanism.** Under `run('<file>.m')` the
+>   script shares the caller's workspace, so the cleanup object does not fire
+>   at script end; the deterministic report is an explicit `finish` call on
+>   both the success and the catch paths.
+> * The per-run script filename (item 7 below) was fixed as *per session*
+>   during the multi-session work, then narrowed no further — two runs in one
+>   database are serialised by the engine gate.
+>
+> Kept for the failure-mode table and the "deliberately not doing" note about
+> `external_db_access`, both of which still hold.
+
+
 ## Why
 
 When SciStack dispatches a script to the MathWorks MATLAB terminal (Tier 2

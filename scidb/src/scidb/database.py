@@ -2162,35 +2162,35 @@ class DatabaseManager:
                     f"keeping {newest_run!r}, superseding {dropped} "
                     f"record(s) from the other option set(s)"
                 )
-            # Second, GLOBAL rule (same as variant_identity_batch.is_latest):
-            # a record whose producing invocation ran under an option set other
-            # than the one its function was most recently run under is stale
-            # even where it is the only record — the family rule above cannot
-            # see a location the newer run never produced (a trial that only
-            # existed under the old option set). Cheap gate first: only
-            # functions that ever ran more than one way are consulted.
-            multi_way = provenance_query.run_option_axes(
-                self._duck, {inv[1] for inv in inv_map.values()}
+            # Second, GLOBAL rule: a record whose producing invocation ran under
+            # an option set other than the one its function was most recently
+            # run under is stale even where it is the only record — the family
+            # rule above cannot see a location the newer run never produced (a
+            # trial that only existed under the old option set).
+            #
+            # ONE OWNER since 2026-09-22: node state needs exactly this test and
+            # had its own answer (none), which is how a completed step could
+            # read red forever. The rule now lives in
+            # provenance_query.run_option_superseded_records and both callers
+            # ask it. The maps are handed over rather than rebuilt — this is the
+            # collapse hot path.
+            stale_rids = provenance_query.run_option_superseded_records(
+                self._duck, all_rids, inv_map=inv_map, run_map=run_map
             )
-            if multi_way:
-                current_run = provenance_query.current_run_options(
-                    self._duck, multi_way
-                )
+            if stale_rids:
+                # record_id → row indices: `df` is the save LOG, so one record
+                # can hold several rows and every one of them is superseded.
                 stale_global = 0
                 for row in df.itertuples(index=True):
-                    inv = inv_map.get(row.record_id)
-                    if inv is None or row.Index in superseded_idx:
+                    if row.Index in superseded_idx:
                         continue
-                    label = run_map.get(inv[0])
-                    wanted = current_run.get(inv[1])
-                    if label is not None and wanted is not None and label != wanted:
+                    if row.record_id in stale_rids:
                         superseded_idx.add(row.Index)
                         stale_global += 1
                 if stale_global:
                     Log.info(
-                        f"_find_record({type_name}, latest): {stale_global} record(s) "
-                        f"built under a superseded run-option set dropped "
-                        f"(current: {current_run})"
+                        f"_find_record({type_name}, latest): {stale_global} row(s) "
+                        f"built under a superseded run-option set dropped"
                     )
             if superseded_idx:
                 Log.info(

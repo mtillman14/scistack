@@ -646,6 +646,89 @@ def current_run_options(duck, fn_names) -> dict:
     return {fn: label for fn, (_ts, label) in newest.items()}
 
 
+def run_option_superseded_records(
+    duck, record_ids, *, inv_map: dict | None = None, run_map: dict | None = None
+) -> set:
+    """Which of ``record_ids`` were built under a run-option set their producing
+    function has since been re-run away from — ``{record_id, ...}``.
+
+    **One owner for the global run-option rule.** It was written out twice and
+    needed in three places, and the third (node state) never got it: until
+    2026-09-22 ``current_records_by_schema_batch`` enumerated records that
+    :meth:`database.DatabaseManager._find_record` drops, so the expected-
+    invocation predictor built work from records no run would ever load, that
+    work could never be done, and a step that had run to completion read red
+    forever (`node grSides: red — 130 expected invocation(s) not present`,
+    unchanged across four clean re-runs).
+
+    Judged **per function, globally** — see :func:`current_run_options` for why
+    that is the right scope and the opposite of the code-version rule. The
+    per-LOCATION family rule in ``_find_record`` is a separate, finer thing that
+    only that caller needs: its variant key splits the two option sets apart
+    (a distributed run's ``output_num`` is the slice index), so it must
+    reconcile them within a location before this rule ever applies.
+    ``current_records_by_schema_batch`` keys more coarsely and needs only this.
+
+    Scope is the record's **direct producer**, matching the load path exactly —
+    node state's whole job is to predict what a load will hand the next run, so
+    a broader rule here would make it disagree in the other direction.
+    :func:`variant_identity_batch` deliberately applies the same test over the
+    whole upstream *chain*: it answers a display question ("may these two
+    coexist on screen?"), where an upstream flip does make a record stale. That
+    difference is intentional; do not merge them without deciding which
+    question node state is asking.
+
+    ``inv_map`` / ``run_map`` let a caller that has already batched
+    :func:`producing_invocation_batch` and :func:`invocation_run_options_batch`
+    pass them in rather than pay for them twice (the collapse hot path —
+    ``project_batched_provenance_hot_paths``).
+    """
+    rids = list(dict.fromkeys(record_ids))
+    if not rids:
+        return set()
+    if inv_map is None:
+        inv_map = producing_invocation_batch(duck, rids)
+    if not inv_map:
+        return set()
+    if run_map is None:
+        run_map = invocation_run_options_batch(
+            duck, [inv[0] for inv in inv_map.values()]
+        )
+
+    # Cheap gate: only functions that ever ran more than one way can have a
+    # superseded set at all, and that is the ordinary case for every project
+    # that has never flipped a flag.
+    multi_way = run_option_axes(duck, {inv[1] for inv in inv_map.values()})
+    if not multi_way:
+        return set()
+    current = current_run_options(duck, multi_way)
+    if not current:
+        return set()
+
+    stale = set()
+    for rid in rids:
+        inv = inv_map.get(rid)
+        if inv is None:  # a raw save has no producing invocation and no options
+            continue
+        label = run_map.get(inv[0])
+        wanted = current.get(inv[1])
+        if label is not None and wanted is not None and label != wanted:
+            stale.add(rid)
+    if stale:
+        # DEBUG, not INFO: node state calls this per variable per canvas
+        # refresh, so an INFO line here is a per-refresh multiple — the shape
+        # that made scidb.log 24 MB (2026-09-22). Callers that want a summary
+        # at INFO log their own, once, for the whole collapse (`_find_record`).
+        logger.debug(
+            "run_option_supersession: %d of %d record(s) were built under a "
+            "superseded run-option set (current: %s)",
+            len(stale),
+            len(rids),
+            current,
+        )
+    return stale
+
+
 def chain_batch(duck, record_ids, max_depth: int = 20) -> dict:
     """``{record_id: {"code": {fn_name: fn_hash}, "run": {fn_name: label}}}`` —
     every function in a record's upstream chain, including the one that
@@ -2380,6 +2463,17 @@ def current_records_by_schema_batch(duck, variable_name: str) -> dict:
     instead of two per candidate record. This is the "optimization later" the
     per-record docstring anticipated; it arrived when the location picker made
     the cost visible on every popup open.
+
+    Records superseded by a run-option flip are dropped
+    (:func:`run_option_superseded_records`), because this function's whole
+    purpose is to say what the next run will consume and the load path drops
+    them. The per-``(location, variant)`` collapse below cannot: both option
+    sets share a variant key here, so at a location holding both, the newest
+    already wins — but a location the newer run never produced keeps its stale
+    record as the newest thing present, and only the global rule can see that.
+    Missing it is what kept a completed step red forever (2026-09-22; the
+    reproduction is ``test_run_option_variants.py::
+    TestNodeStateAgreesWithTheLoadPath``).
     """
     rows = duck._fetchall(
         "SELECT rm.record_id, r.schema_id, rm.timestamp FROM _record_save rm "
@@ -2389,10 +2483,14 @@ def current_records_by_schema_batch(duck, variable_name: str) -> dict:
     )
     if not rows:
         return {}
-    vkeys = variant_keys_batch(duck, [rid for rid, _sid, _ts in rows])
+    all_rids = [rid for rid, _sid, _ts in rows]
+    vkeys = variant_keys_batch(duck, all_rids)
+    superseded = run_option_superseded_records(duck, all_rids)
 
     best: dict = {}  # (schema_id, variant_key) -> (timestamp, record_id)
     for rid, sid, ts in rows:
+        if rid in superseded:
+            continue
         key = (sid, vkeys.get(rid))
         prev = best.get(key)
         if prev is None or ts > prev[0]:

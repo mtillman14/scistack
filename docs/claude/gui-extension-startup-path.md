@@ -14,9 +14,18 @@ has no meaning below the GUI layer.
 
 ## 1. The startup sequence
 
-`startPipeline()` in `extension.ts` is the single entry point — both the
-**Open Pipeline** command and **Restart Python Process** go through it
-(restart replays `lastStartArgs`).
+> **Since 2026-09-22 this path is per session.** The extension opens one
+> server process per database (`gui-multi-session.md`), so what was one
+> `startPipeline()` at module scope is now `SessionManager.open()` ->
+> `spawnReady()` in `extension/src/session.ts`. The sequence below is
+> unchanged; it just runs once per open database, and `--project-root` is
+> now the workspace folder containing THAT database rather than
+> `workspaceFolders[0]`. A `--plot-only` server takes the same path with no
+> database at all.
+
+`SessionManager.open()` is the single entry point — both the **Open
+Pipeline** command and **Restart Python Process** go through `spawnReady`
+(restart reuses the session's own dbPath and project root).
 
 ```
 resolvePythonPath()            -> { path, source }

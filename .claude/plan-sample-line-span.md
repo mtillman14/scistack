@@ -87,6 +87,5 @@ unchanged from `docs/claude/show-sample-overlay.md`.
 ## Status 2026-09-21
 
 All five stages built (user approved stage 5 too). Frontend: `tsc` clean,
-`npm test` 90/90, both vite bundles rebuilt. Python: syntax-compiled only —
-pytest to be run by the user (`scistackplot` package alone). Uncommitted.
+`npm test` 90/90, both vite bundles rebuilt. Python: scistackplot pytest all pass (user-run). Uncommitted.
 Not visually checked (manual test §0i in `docs/gui-manual-testing-todo.md`).

@@ -6,7 +6,7 @@ convention — and this is the test tier that would have caught each of them
 at authoring time: run something for REAL, reconstruct its identity from
 what provenance recorded, and assert the two are the same bytes.
 
-Three identities, three questions:
+Four identities, four questions:
 
 * **invocation_id** — is the id reconstructible from the stored graph alone
   (function hash, run options, edges with selectors, constants)? If not,
@@ -18,6 +18,13 @@ Three identities, three questions:
   that can never plan green.
 * **selector** — is what a call ASKED for per parameter what the edges
   RECORD?
+* **current records** — does the set of records a LOAD returns agree, about
+  staleness, with the set NODE STATE counts as expected work? Added
+  2026-09-22: ``docs/claude/variant-space.md`` §4 names four answers to "which
+  variant is this record?", three of them supersession-ish and obliged to
+  agree here. The run-option rule reached two of the three, and the third
+  went on building expected work from records no load returns — a node that
+  had run to completion read red forever.
 
 A shape whose two sides are KNOWN to disagree is pinned as
 ``xfail(strict=True)`` with the disagreement stated, so the decision it
@@ -782,3 +789,89 @@ class TestAFixedInputArrivesLikeAnyOther:
             if isinstance(ref, pd.DataFrame):
                 assert not any(str(c).startswith("__") for c in ref.columns), list(ref.columns)
             assert float(ref if not isinstance(ref, pd.DataFrame) else ref["r"].iloc[0]) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# current records: the load path == node state, about staleness
+# ---------------------------------------------------------------------------
+
+
+def _current_for_load(db, type_name: str) -> set:
+    """The records a ``latest`` load returns — ``database._find_record``'s
+    collapse key, ``(fn_name, branch_params, consumed input locations)``, plus
+    the run-option rules."""
+    return set(db._find_record(type_name, version_id="latest")["record_id"])
+
+
+def _current_for_node_state(db, type_name: str) -> set:
+    """The records node state builds expected work from —
+    ``provenance_query.current_records_by_schema_batch``, keyed on the
+    directly producing invocation's constants (one hop)."""
+    by_schema = pq.current_records_by_schema_batch(db._duck, type_name)
+    return {rid for rids in by_schema.values() for rid in rids}
+
+
+def assert_current_records_agree(db, type_name: str) -> None:
+    """Node state may never count work against a record a load will not read.
+
+    An INCLUSION, not an equality, and deliberately so. The two keys differ in
+    SCOPE by design (variant-space.md §4): the load path keys on the whole
+    upstream chain plus the locations consumed, node state on one hop. They are
+    not obliged to partition records the same way. They ARE obliged to agree on
+    which records are dead, because every record node state counts and the load
+    path drops becomes an expected invocation that can never be satisfied.
+    """
+    for_view = _current_for_load(db, type_name)
+    for_state = _current_for_node_state(db, type_name)
+    extra = for_state - for_view
+    assert not extra, (
+        f"{type_name}: node state counts {len(extra)} record(s) that a latest "
+        f"load drops as superseded: {sorted(extra)} — each one becomes expected "
+        f"work that can never be done, and the node reads red forever"
+    )
+
+
+class TestCurrentRecordsAgreeAboutStaleness:
+    """The fourth identity.
+
+    The *reproduction* of the 2026-09-22 divergence lives in
+    ``test_run_option_variants.py::TestNodeStateAgreesWithTheLoadPath``, beside
+    the two sibling assertions that already pin the load and display paths
+    against the same seven records. Kept there rather than copied here so the
+    orphaned-record shape has one owner.
+
+    What lives here is the general invariant, and the guard that matters while
+    Problem 2 is being fixed: coexisting variants are LEGITIMATE, and a
+    supersession rule made too aggressive would silently drop half of them.
+    Both sides must keep them.
+    """
+
+    def test_a_single_version_agrees(self, db):
+        _seed()
+        for_each(first_a, {"value": Wide}, [Out], subject=[], trial=[], cycle=[])
+        assert_current_records_agree(db, "Out")
+
+    def test_two_constant_variants_both_stay_current_on_both_sides(self, db):
+        """`Scaled` exists at factor 2 and factor 3 — two records at every
+        location that are not versions of each other. Neither side may collapse
+        them, and they must not diverge about which survive."""
+        _seed_variants()
+        assert len(_current_for_load(db, "Scaled")) == 16, "2 factors x 8 locations"
+        assert_current_records_agree(db, "Scaled")
+
+    def test_a_re_save_supersedes_on_both_sides(self, db):
+        """The ordinary supersession both keys already implement: re-running
+        the same call writes a newer record at the same location and variant,
+        and the older one is current to neither."""
+        _seed()
+        for_each(first_a, {"value": Wide}, [Out], subject=[], trial=[], cycle=[])
+        before = _current_for_load(db, "Out")
+        Wide.save(
+            pd.DataFrame({"a": [9.0, 9.0], "b": [9.0, 9.0]}),
+            subject="01", trial="1", cycle="1",
+        )
+        for_each(first_a, {"value": Wide}, [Out], subject=[], trial=[], cycle=[])
+        after = _current_for_load(db, "Out")
+        assert len(after) == len(before), "one record per location, still"
+        assert after != before, "the re-run should have superseded a record"
+        assert_current_records_agree(db, "Out")

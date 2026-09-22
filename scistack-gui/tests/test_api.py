@@ -1908,6 +1908,108 @@ class TestManualInputEdgesOnHistoryNodes:
             "side": {"columns": ["age"], "iterate": False}
         }
 
+    # --- every setting follows the id, not just the columns ----------------
+    #
+    # `wiring_id` hashes the RECORDED bindings, so the run above rehashes the
+    # node. Until 2026-09-22 only `columnSelections` was carried across, on
+    # the reasoning that it was the one setting the run had actually used;
+    # `schemaLevel`, `runOptions` and `whereFilters` were left on an id
+    # nothing resolves to, with no warning. Observed in a real session: the
+    # user re-entered `schemaLevel` on the new node six minutes after the run
+    # that dropped it. The move is `intent_store.rekey_subject`, which already
+    # existed for GRADUATION — the same id change from the other direction.
+
+    def _run_the_overlaid_wiring(self, side_var):
+        for_each(
+            _registry._functions["bandpass_filter"],
+            inputs={"signal": RawSignal, "low_hz": 20, "side": side_var},
+            outputs=[FilteredSignal],
+            subject=[1],
+            session=["pre"],
+        )
+
+    def _superseding_id(self):
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
+
+        return fn_node_id(
+            "bandpass_filter",
+            wiring_id(
+                "bandpass_filter",
+                {"signal": "RawSignal", "side": "SideTable"},
+                {"FilteredSignal"},
+                {},
+            ),
+        )
+
+    def test_every_setting_follows_the_id_not_just_the_columns(
+        self, wide, side_var, bp_node_id
+    ):
+        from scistack_gui import pipeline_store
+
+        db = _gui_db.get_db()
+        self._wire_side(wide, bp_node_id)
+        pipeline_store.update_node_config(
+            db,
+            bp_node_id,
+            {
+                "columnSelections": {"side": {"columns": ["age"], "iterate": False}},
+                "schemaLevel": ["subject"],
+                "runOptions": {"distribute": True},
+            },
+        )
+        self._run_the_overlaid_wiring(side_var)
+        wide.get("/api/pipeline")
+
+        moved = pipeline_store.get_node_config(db, self._superseding_id())
+        assert moved.get("columnSelections") == {
+            "side": {"columns": ["age"], "iterate": False}
+        }
+        assert moved.get("schemaLevel") == ["subject"], (
+            "schemaLevel was stranded on the old id — the node now runs at a "
+            "level the user never chose, and nothing said so"
+        )
+        assert moved.get("runOptions") == {"distribute": True}, (
+            "runOptions was stranded on the old id"
+        )
+
+    def test_the_superseded_id_keeps_nothing(self, wide, side_var, bp_node_id):
+        """Statements left behind are what produced the "saved node config(s)
+        match no node in the resolved graph" warning."""
+        from scistack_gui import intent_store, pipeline_store
+
+        db = _gui_db.get_db()
+        self._wire_side(wide, bp_node_id)
+        pipeline_store.update_node_config(db, bp_node_id, {"schemaLevel": ["subject"]})
+        self._run_the_overlaid_wiring(side_var)
+        wide.get("/api/pipeline")
+
+        left = intent_store.load_statements(db, subject_refs=[bp_node_id])
+        assert not left, f"{len(left)} statement(s) stranded on the superseded id"
+
+    def test_a_second_build_does_not_overwrite_the_new_nodes_own_setting(
+        self, wide, side_var, bp_node_id
+    ):
+        """rekey_subject deletes the old rows, so the migration is one-shot —
+        a rebuild must not re-run it over what the user has since set."""
+        from scistack_gui import pipeline_store
+
+        db = _gui_db.get_db()
+        self._wire_side(wide, bp_node_id)
+        pipeline_store.update_node_config(db, bp_node_id, {"schemaLevel": ["subject"]})
+        self._run_the_overlaid_wiring(side_var)
+        wide.get("/api/pipeline")
+
+        new_id = self._superseding_id()
+        current = pipeline_store.get_node_config(db, new_id)
+        pipeline_store.update_node_config(
+            db, new_id, {**current, "schemaLevel": ["session"]}
+        )
+        wide.get("/api/pipeline")
+        assert pipeline_store.get_node_config(db, new_id)["schemaLevel"] == [
+            "session"
+        ], "a rebuild overwrote the user's newer setting with the stale one"
+
 
 class TestGraduationCarriesNodeConfig:
     """Settings made on a fresh node must survive its graduation into the

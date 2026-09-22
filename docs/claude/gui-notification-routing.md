@@ -202,6 +202,40 @@ panel *and* every plot tab; is the terminal message guaranteed on all paths;
 does the frontend normalize `type`/`method`; and is there a log line on the
 *receiving* side that would show a count of zero.
 
+## The second instance: a missing sender, not a broken route
+
+2026-09-22, and worth recording because it failed the same checklist at a
+different line — "is the terminal message guaranteed on all paths".
+
+MATLAB runs dispatched to the terminal never emitted `dag_updated`. Not a
+routing failure: nothing was ever sent. `_start_matlab_run` returns
+`host_execution_required` and exits without spawning a thread, so the
+`api/run._notify_records_changed()` that every in-process path ends with had
+no caller on that side, and `matlab_run_watch._finish` — written later, for
+the terminal path — pushed its verdict and stopped.
+
+**The signature is different from §"The bug this document exists for" and
+worth knowing apart.** That one shows up at step 3 of the diagnosis above:
+`→ 0 plot panel(s)`, a frame sent and delivered nowhere. This one shows up as
+**the absence of step 2** — no `[notify] Emitting dag_updated` line at all.
+Counting is the way to see it: 4 `dag_updated` in a 55-minute session against
+9 runs, and none of the 4 following a run.
+
+So when the UI is stale rather than stuck, add a step 0 to the list above:
+*was the notification sent as often as the thing it reports happened?* A log
+that only shows what did happen cannot show you a sender that never fired; you
+have to compare its count against the events it is supposed to track.
+
+The guard is structural, in
+`scistack-gui/tests/test_matlab_run_markers.py`: any function in
+`matlab_run_watch` that emits `run_done` must also call
+`_notify_records_changed`, and there must be exactly one such function. A new
+completion path cannot be added without either carrying the announcement over
+or failing that test — which is precisely how this gap appeared.
+
+Ordering matters too and is asserted: the verdict goes out **before** the
+refresh, so a refetch cannot race the run's own result.
+
 ## See also
 
 - `docs/claude/gui-vscode-extension.md` — panel/process lifecycle
