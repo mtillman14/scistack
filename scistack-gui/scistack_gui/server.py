@@ -788,6 +788,16 @@ def main():
     except Exception:
         logger.exception("Failed to restore builtin function references")
 
+    # Sweep stale run markers. A MATLAB run whose terminal was killed leaves
+    # its .started behind for ever, in a directory sitting next to the
+    # user's database where they will see it. Once per session is enough.
+    try:
+        from scidb.run_markers import marker_dir, sweep
+
+        sweep(marker_dir(db_path), older_than_s=7 * 24 * 3600, now=time.time())
+    except Exception:
+        logger.debug("[startup] run-marker sweep failed", exc_info=True)
+
     # Bridge Python logging → scidb.log so that scihist/scistack_gui logger
     # calls appear in the unified log file.
     from scidb.log import Log

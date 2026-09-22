@@ -627,6 +627,37 @@ var DagPanel = class {
           }
           return;
         }
+        if (method === "stop_waiting_for_matlab") {
+          try {
+            const params = msg.params ?? {};
+            const runId = params.run_id;
+            if (runId) {
+              await this.session.python.request("stop_watching_matlab_run", {
+                run_id: runId
+              });
+              this.matlabRuns.end(runId);
+              this.panel.webview.postMessage({
+                method: "run_done",
+                params: {
+                  run_id: runId,
+                  success: false,
+                  cancelled: true,
+                  duration_ms: 0
+                }
+              });
+              this.outputChannel.appendLine(
+                `stop_waiting_for_matlab: stopped watching ${runId} on request`
+              );
+            }
+            this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) }
+            });
+          }
+          return;
+        }
         if (method === "reveal_in_editor") {
           try {
             const params = msg.params ?? {};
@@ -878,6 +909,38 @@ var DagPanel = class {
     return true;
   }
   /**
+   * Hand the run to Python's watcher, which is the thing that will tell us
+   * how it ended.
+   *
+   * This is what replaces `finish(true)` on dispatch. Until now a terminal
+   * or clipboard run reported success the moment the text left here — before
+   * MATLAB had executed a line, and whether or not it then failed. Python
+   * watches two signals it can actually observe (the run's own markers, and
+   * who holds the DuckDB file) and pushes a real `run_done` on the same
+   * run_id, through the same channel the sidecar tier already uses.
+   *
+   * Returns whether the run is now being watched. False means we must fall
+   * back to the old behaviour rather than leave the node spinning for ever —
+   * a node that never resolves is worse than one that resolves optimistically.
+   */
+  async watchMatlabRun(runId, label) {
+    try {
+      await this.session.python.request("watch_matlab_terminal_run", {
+        run_id: runId,
+        label
+      });
+      this.outputChannel.appendLine(
+        `watchMatlabRun: ${runId} handed to the run watcher \u2014 the node resolves when MATLAB reports, not now`
+      );
+      return true;
+    } catch (err) {
+      this.outputChannel.appendLine(
+        `watchMatlabRun: could not watch ${runId} (${err}) \u2014 falling back to resolving on dispatch`
+      );
+      return false;
+    }
+  }
+  /**
    * Stage 4 fallback ladder for an already-generated MATLAB command:
    * MathWorks terminal (Tier 2 — real breakpoint debugging) -> standalone
    * sidecar (Tier 3 — Python-driven, real run_output/run_done via the
@@ -972,7 +1035,10 @@ var DagPanel = class {
     try {
       const result = await this.session.python.request(
         "generate_matlab_command",
-        params
+        // run_id is what makes the generated script report for itself: the
+        // generator emits scidb.run_marker calls only for a run something
+        // is watching (a preview or a clipboard copy passes none).
+        { ...params, run_id: runId }
       );
       const command = result.command;
       this.outputChannel.appendLine(
@@ -980,7 +1046,9 @@ var DagPanel = class {
       );
       const tier = await this.dispatchMatlabCommand(command, runId, void 0);
       if (tier !== "sidecar") {
-        finish(true);
+        const watched = await this.watchMatlabRun(runId, functionName ?? runId);
+        if (!watched)
+          finish(true);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1050,7 +1118,7 @@ var DagPanel = class {
     try {
       const result = await this.session.python.request(
         "generate_matlab_pipeline_command",
-        params
+        { ...params, run_id: runId }
       );
       const command = result.command;
       this.outputChannel.appendLine(
@@ -1067,7 +1135,9 @@ var DagPanel = class {
         } else {
           emit("MATLAB pipeline script copied to clipboard. Paste into MATLAB to run.\n");
         }
-        finish(true);
+        const watched = await this.watchMatlabRun(runId, pipelineId ?? runId);
+        if (!watched)
+          finish(true);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2446,6 +2516,38 @@ function activate(context) {
       outputChannel.show(true);
     }
   );
+  const showMatlabRuns = vscode6.commands.registerCommand(
+    "scistack.showMatlabRuns",
+    async () => {
+      const session = sessions.resolveForCommand("showMatlabRuns");
+      if (!session) {
+        vscode6.window.showInformationMessage(
+          "SciStack: no database is open."
+        );
+        return;
+      }
+      try {
+        const result = await session.python.request(
+          "get_matlab_run_state",
+          {}
+        );
+        outputChannel.appendLine("");
+        outputChannel.appendLine(
+          `=== MATLAB runs being watched by ${session.label} (${result.runs.length}) ===`
+        );
+        if (result.runs.length === 0) {
+          outputChannel.appendLine("  (none \u2014 no terminal-dispatched run is in flight)");
+        }
+        for (const run of result.runs) {
+          outputChannel.appendLine(`  ${JSON.stringify(run)}`);
+        }
+        outputChannel.appendLine("=== end of MATLAB run state ===");
+        outputChannel.show(true);
+      } catch (err) {
+        vscode6.window.showErrorMessage(`SciStack: could not read MATLAB run state \u2014 ${err}`);
+      }
+    }
+  );
   const openPlotPanel = vscode6.commands.registerCommand(
     "scistack.openPlotPanel",
     async (target = {}) => {
@@ -2488,6 +2590,7 @@ function activate(context) {
     restartPython,
     switchSession,
     showSessions,
+    showMatlabRuns,
     openPlotPanel,
     plotVariable,
     plotCsv,

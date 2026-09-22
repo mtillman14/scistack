@@ -186,6 +186,48 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  /**
+   * Report what the run watcher believes about every MATLAB run in flight.
+   *
+   * "Why is this node still spinning?" has no other answer: the run is in
+   * another process, behind a terminal nothing can query. This prints the
+   * markers it is waiting for, whether each exists, MATLAB's PID, and the
+   * last lock probe — which between them identify every failure mode the
+   * watcher has.
+   */
+  const showMatlabRuns = vscode.commands.registerCommand(
+    'scistack.showMatlabRuns',
+    async () => {
+      const session = sessions.resolveForCommand('showMatlabRuns');
+      if (!session) {
+        vscode.window.showInformationMessage(
+          'SciStack: no database is open.',
+        );
+        return;
+      }
+      try {
+        const result = (await session.python.request(
+          'get_matlab_run_state',
+          {},
+        )) as { runs: Record<string, unknown>[] };
+        outputChannel.appendLine('');
+        outputChannel.appendLine(
+          `=== MATLAB runs being watched by ${session.label} (${result.runs.length}) ===`,
+        );
+        if (result.runs.length === 0) {
+          outputChannel.appendLine('  (none — no terminal-dispatched run is in flight)');
+        }
+        for (const run of result.runs) {
+          outputChannel.appendLine(`  ${JSON.stringify(run)}`);
+        }
+        outputChannel.appendLine('=== end of MATLAB run state ===');
+        outputChannel.show(true);
+      } catch (err) {
+        vscode.window.showErrorMessage(`SciStack: could not read MATLAB run state — ${err}`);
+      }
+    }
+  );
+
   // --- Plot Studio -------------------------------------------------------
   // The studio is its own editor tab (see plotPanel.ts) so the pipeline canvas
   // stays visible beside it. Every entry point — the DAG's right-click, the
@@ -242,6 +284,7 @@ export function activate(context: vscode.ExtensionContext) {
     restartPython,
     switchSession,
     showSessions,
+    showMatlabRuns,
     openPlotPanel,
     plotVariable,
     plotCsv,

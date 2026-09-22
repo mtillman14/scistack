@@ -152,6 +152,41 @@ export class DagPanel {
           }
           return;
         }
+        if (method === 'stop_waiting_for_matlab') {
+          // The user has decided a run is not coming back. Drop the watcher
+          // (no verdict — theirs stands) and resolve the node here, because
+          // Python deliberately emits nothing for a run it was told to stop
+          // watching.
+          try {
+            const params = (msg.params ?? {}) as { run_id?: string };
+            const runId = params.run_id;
+            if (runId) {
+              await this.session.python.request('stop_watching_matlab_run', {
+                run_id: runId,
+              });
+              this.matlabRuns.end(runId);
+              this.panel.webview.postMessage({
+                method: 'run_done',
+                params: {
+                  run_id: runId,
+                  success: false,
+                  cancelled: true,
+                  duration_ms: 0,
+                },
+              });
+              this.outputChannel.appendLine(
+                `stop_waiting_for_matlab: stopped watching ${runId} on request`,
+              );
+            }
+            this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) },
+            });
+          }
+          return;
+        }
         if (method === 'reveal_in_editor') {
           try {
             const params = (msg.params ?? {}) as { file?: string; line?: number };
@@ -434,6 +469,41 @@ export class DagPanel {
   }
 
   /**
+   * Hand the run to Python's watcher, which is the thing that will tell us
+   * how it ended.
+   *
+   * This is what replaces `finish(true)` on dispatch. Until now a terminal
+   * or clipboard run reported success the moment the text left here — before
+   * MATLAB had executed a line, and whether or not it then failed. Python
+   * watches two signals it can actually observe (the run's own markers, and
+   * who holds the DuckDB file) and pushes a real `run_done` on the same
+   * run_id, through the same channel the sidecar tier already uses.
+   *
+   * Returns whether the run is now being watched. False means we must fall
+   * back to the old behaviour rather than leave the node spinning for ever —
+   * a node that never resolves is worse than one that resolves optimistically.
+   */
+  private async watchMatlabRun(runId: string, label: string): Promise<boolean> {
+    try {
+      await this.session.python.request('watch_matlab_terminal_run', {
+        run_id: runId,
+        label,
+      });
+      this.outputChannel.appendLine(
+        `watchMatlabRun: ${runId} handed to the run watcher — ` +
+        `the node resolves when MATLAB reports, not now`,
+      );
+      return true;
+    } catch (err) {
+      this.outputChannel.appendLine(
+        `watchMatlabRun: could not watch ${runId} (${err}) — ` +
+        `falling back to resolving on dispatch`,
+      );
+      return false;
+    }
+  }
+
+  /**
    * Stage 4 fallback ladder for an already-generated MATLAB command:
    * MathWorks terminal (Tier 2 — real breakpoint debugging) -> standalone
    * sidecar (Tier 3 — Python-driven, real run_output/run_done via the
@@ -542,7 +612,10 @@ export class DagPanel {
     try {
       const result = await this.session.python.request(
         'generate_matlab_command',
-        params,
+        // run_id is what makes the generated script report for itself: the
+        // generator emits scidb.run_marker calls only for a run something
+        // is watching (a preview or a clipboard copy passes none).
+        { ...params, run_id: runId },
       ) as { command: string };
       const command = result.command;
       this.outputChannel.appendLine(
@@ -551,13 +624,14 @@ export class DagPanel {
 
       const tier = await this.dispatchMatlabCommand(command, runId, undefined);
 
-      // Terminal/clipboard dispatch aren't tracked by anything else — treat
-      // "dispatched" as "done" from the GUI's perspective (the DB file
-      // watcher triggers a dag_updated once MATLAB actually writes
-      // results). The sidecar tier pushes its own real run_done — see
-      // dispatchMatlabCommand's docstring.
+      // Hand it to the watcher rather than declaring it done. A terminal or
+      // clipboard run that Python is watching resolves when MATLAB actually
+      // reports; only a run nobody can watch falls back to the old
+      // resolve-on-dispatch, because a node that never resolves is worse
+      // than one that resolves optimistically.
       if (tier !== 'sidecar') {
-        finish(true);
+        const watched = await this.watchMatlabRun(runId, functionName ?? runId);
+        if (!watched) finish(true);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -636,7 +710,7 @@ export class DagPanel {
     try {
       const result = await this.session.python.request(
         'generate_matlab_pipeline_command',
-        params,
+        { ...params, run_id: runId },
       ) as { command: string; warnings?: string[] };
       const command = result.command;
       this.outputChannel.appendLine(
@@ -649,17 +723,15 @@ export class DagPanel {
       const tier = await this.dispatchMatlabCommand(command, runId, result.warnings);
 
       if (tier !== 'sidecar') {
-        // Terminal/clipboard dispatch aren't tracked by anything else —
-        // treat "dispatched" as "done" from the GUI's perspective; the DB
-        // file watcher triggers dag_updated once MATLAB writes results.
-        // The sidecar tier pushes its own real run_output/run_done via the
-        // notify channel — see dispatchMatlabCommand's docstring.
         if (tier === 'terminal') {
           emit('▶ Sent whole-pipeline script to MATLAB terminal...\n');
         } else {
           emit('MATLAB pipeline script copied to clipboard. Paste into MATLAB to run.\n');
         }
-        finish(true);
+        // Same as the single-node path: the watcher owns the verdict now.
+        // The sidecar tier reports for itself through the notify channel.
+        const watched = await this.watchMatlabRun(runId, pipelineId ?? runId);
+        if (!watched) finish(true);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

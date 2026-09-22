@@ -301,6 +301,8 @@ def _compute_run_states(
     fn_input_params: dict[tuple, dict],
     fn_outputs: dict[tuple, set],
     disconnected_fkeys: set[tuple] | None = None,
+    *,
+    propagation_input_params: dict[tuple, dict] | None = None,
 ) -> dict[str, str]:
     """
     Compute run_state for every function and variable node.
@@ -317,6 +319,13 @@ def _compute_run_states(
       edge — see domain.graph_builder.hidden_wirings/wiring_disconnected_fkeys)
       forces those call sites red regardless of DB freshness, cascading
       downstream through the same propagation.
+
+      ``propagation_input_params`` is ``fn_input_params`` with manual variable
+      edges folded in (graph_builder.input_params_with_manual_edges), and it is
+      used for the CASCADE only. Pass 1's own-state check never sees it — that
+      question is "has this call site done its recorded work", which the drawn
+      edge does not change — and neither does anything that derives an id, since
+      ``wiring_id`` hashes these params. Defaults to ``fn_input_params``.
 
     Returns {node_id: "green"|"red"} for fn__ and var__ nodes — real,
     recorded call sites only. "pending" (an unrun staged constant value)
@@ -399,7 +408,9 @@ def _compute_run_states(
     # --- Pass 2: DAG propagation (pure) ---
     result = propagate_run_states(
         fn_own_state,
-        fn_input_params,
+        propagation_input_params
+        if propagation_input_params is not None
+        else fn_input_params,
         fn_outputs,
         disconnected_fkeys,
     )
@@ -593,8 +604,12 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     # manual_edges is fetched here (rather than further down, where it used
     # to be the first read) so a manual reconnect onto a previously-hidden
     # handle can clear the disconnected state in the same pass — see
-    # graph_builder.hidden_wirings' manual_edges param.
+    # graph_builder.hidden_wirings' manual_edges param. manual_nodes moved up
+    # beside it 2026-09-22: run-state propagation now follows manual edges, and
+    # resolving one whose source is a hand-dragged node needs this map.
     manual_edges_for_fn_lookup = layout_store.read_manual_edges()
+    manual_nodes = _ps.get_manual_nodes(db)
+    logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
     disconnected_wirings = gb.hidden_wirings(
         agg.fn_input_params,
         agg.fn_outputs,
@@ -614,12 +629,27 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         )
 
     # --- Compute run states (per call site — state never blurs) ---
+    # Propagation follows the edges that are VISIBLE, which includes the ones
+    # the user drew; without this, red stops at the last history edge and every
+    # step fed by a drawn edge reads green under a red upstream (2026-09-22).
+    # The overlay goes to the DAG cascade ONLY — never to agg.fn_input_params,
+    # which wiring_id hashes into node identity.
+    state_input_params = gb.input_params_with_manual_edges(
+        agg.fn_input_params,
+        agg.fn_outputs,
+        agg.fn_constants,
+        agg.path_inputs,
+        manual_edges_for_fn_lookup,
+        manual_nodes,
+        hidden_edge_ids,
+    )
     logger.info("[pipeline] Computing run states (delegating to run_state)")
     run_states = _compute_run_states(
         db,
         agg.fn_input_params,
         agg.fn_outputs,
         disconnected_fkeys,
+        propagation_input_params=state_input_params,
     )
     logger.info("[pipeline] computed run states for %d nodes", len(run_states))
 
@@ -628,7 +658,12 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     # chips) inside one node; staged pending values get synthesized rows.
     logger.info("[pipeline] Grouping call sites by wiring")
     agg, run_states, wiring_member_map = gb.group_call_sites_by_wiring(
-        agg, run_states, pending_constants
+        agg,
+        run_states,
+        pending_constants,
+        manual_edges=manual_edges_for_fn_lookup,
+        manual_nodes=manual_nodes,
+        hidden_edge_ids=hidden_edge_ids,
     )
     # Hidden-id filtering ran pre-grouping for LEGACY per-call-site ids;
     # run it again now so deletions of wiring-grouped nodes (hidden id =
@@ -649,9 +684,6 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
             fn_params_map[fn] = list(_mr.get_matlab_function(fn).params)
         else:
             fn_params_map[fn] = _fn_params_from_registry(fn)
-
-    manual_nodes = _ps.get_manual_nodes(db)
-    logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
 
     # Config keyed by node_id -- the authoritative store, and the only one that
     # can hold a setting for a node that has already run (a DB-derived node has

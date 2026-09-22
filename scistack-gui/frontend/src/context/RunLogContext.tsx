@@ -28,7 +28,14 @@ export interface RunEntry {
   records_done: number
   records_skipped: number
   current_combo?: Record<string, string>  // live schema combo being processed
-  status: 'running' | 'cancelling' | 'cancelled' | 'done' | 'error'
+  /**
+   * `unknown` is not a dressed-up failure. It means the run stopped
+   * reporting and we could not find out how it ended — MATLAB killed,
+   * Ctrl-C'd, or a marker lost to a network share. Saying ‘failed’ would
+   * send you to debug an analysis that may well have been fine; saying
+   * ‘done’ is the bug this whole mechanism exists to fix.
+   */
+  status: 'running' | 'cancelling' | 'cancelled' | 'done' | 'error' | 'unknown'
   error_summary?: string
   lines: string[]                 // raw log, hidden by default
 }
@@ -54,7 +61,7 @@ interface RunLogContextValue {
   runs: RunEntry[]
   startRun: (run_id: string, function_name: string, kind?: 'function' | 'pipeline') => void
   appendLine: (run_id: string, line: string) => void
-  finishRun: (run_id: string, success: boolean, duration_ms?: number, cancelled?: boolean, error?: string) => void
+  finishRun: (run_id: string, success: boolean, duration_ms?: number, cancelled?: boolean, error?: string, unknown?: boolean) => void
   markCancelling: (run_id: string) => void
   setRunMeta: (run_id: string, meta: RunMeta) => void
   updateProgress: (run_id: string, progress: RunProgress) => void
@@ -88,12 +95,17 @@ export function RunLogProvider({ children }: { children: React.ReactNode }) {
     ))
   }, [])
 
-  const finishRun = useCallback((run_id: string, success: boolean, duration_ms?: number, cancelled?: boolean, error?: string) => {
+  const finishRun = useCallback((run_id: string, success: boolean, duration_ms?: number, cancelled?: boolean, error?: string, unknown?: boolean) => {
     setRuns(prev => prev.map(r => {
       if (r.run_id !== run_id) return r
       let status: RunEntry['status']
       if (cancelled) {
         status = 'cancelled'
+      } else if (unknown) {
+        // Checked before `success` can be consulted: an unknown outcome is
+        // reported with success=false, and collapsing it into 'error' would
+        // throw away the one distinction that matters here.
+        status = 'unknown'
       } else if (success) {
         status = 'done'
       } else {

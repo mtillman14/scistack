@@ -3311,3 +3311,142 @@ class TestSupersededManualInputOverrides:
         )
         assert superseded == {old_id: new_id}
         assert rewrites[0]["target"] == new_id
+
+
+class TestRunStatePropagationFollowsManualEdges:
+    """Red must cross an edge the user drew.
+
+    `docs/claude/manual-edges-on-history-nodes.md`: **the edges visible on the
+    DAG are the ground truth, for display and for execution.** Colour is the
+    third consumer and never got the rule — it is computed from the recorded
+    wiring ~200 lines before the overlay reaches the built nodes. So a step fed
+    only by a drawn edge had no upstream at all as far as the cascade could see.
+
+    Observed 2026-09-22: `loadGaitRiteOneFile` red, `grSides` and
+    `calculateSymmetryOneVector` downstream of it green, because both read
+    their inputs through drawn edges. Three red nodes out of fifteen, where the
+    chain should have carried it to every one.
+    """
+
+    LOADER = "loadGaitRiteOneFile"
+    MID = "grSides"
+
+    def _graph(self):
+        """loader → GAITRiteLoaded → mid → GAITRiteLoaded_UA, where `mid`'s
+        input exists ONLY as a manual edge (history never bound it — the
+        parameter was added to the signature after the recorded runs)."""
+        loader_key = (self.LOADER, "call_loader")
+        mid_key = (self.MID, "call_mid")
+        fn_input_params = {loader_key: {}, mid_key: {}}
+        fn_outputs = {
+            loader_key: {"GAITRiteLoaded"},
+            mid_key: {"GAITRiteLoaded_UA"},
+        }
+        return loader_key, mid_key, fn_input_params, fn_outputs
+
+    def _manual_edge(self, fn, wid, source, handle):
+        from scistack_gui.ids import fn_node_id
+
+        return [
+            {
+                "id": "manual__1",
+                "source": source,
+                "target": fn_node_id(fn, wid) + "::main",
+                "targetHandle": handle,
+            }
+        ]
+
+    def test_without_the_overlay_red_stops_at_the_history_edge(self):
+        """The old behaviour, pinned so the fix cannot be mistaken for noise."""
+        from scistack_gui.domain.run_state import propagate_run_states
+
+        loader_key, mid_key, fn_input_params, fn_outputs = self._graph()
+        states = propagate_run_states(
+            {loader_key: "red", mid_key: "green"}, fn_input_params, fn_outputs
+        )
+        assert states[f"fn__{self.LOADER}__call_loader"] == "red"
+        assert states[f"fn__{self.MID}__call_mid"] == "green", (
+            "with no recorded input, the mid step has no upstream to inherit from"
+        )
+
+    def test_the_overlay_carries_red_across_the_drawn_edge(self):
+        from scistack_gui.domain.graph_builder import (
+            input_params_with_manual_edges,
+            wiring_id,
+        )
+        from scistack_gui.domain.run_state import propagate_run_states
+
+        loader_key, mid_key, fn_input_params, fn_outputs = self._graph()
+        mid_wid = wiring_id(self.MID, {}, {"GAITRiteLoaded_UA"}, {})
+        overlaid = input_params_with_manual_edges(
+            fn_input_params,
+            fn_outputs,
+            {loader_key: set(), mid_key: set()},
+            {},
+            self._manual_edge(
+                self.MID, mid_wid, "var__GAITRiteLoaded::main", "in__grTableIn"
+            ),
+        )
+        assert overlaid[mid_key] == {"grTableIn": "GAITRiteLoaded"}
+
+        states = propagate_run_states(
+            {loader_key: "red", mid_key: "green"}, overlaid, fn_outputs
+        )
+        assert states[f"fn__{self.MID}__call_mid"] == "red", (
+            "the drawn edge is visible on the canvas, so red travels along it"
+        )
+        assert states["var__GAITRiteLoaded_UA"] == "red", "and on downstream"
+
+    def test_identity_is_untouched(self):
+        """The overlay may never reach the dict `wiring_id` hashes: a renamed
+        node orphans its saved position, scope and config (the placement-id
+        lookup trap). The input mapping is returned as a COPY."""
+        from scistack_gui.domain.graph_builder import (
+            input_params_with_manual_edges,
+            wiring_id,
+        )
+
+        loader_key, mid_key, fn_input_params, fn_outputs = self._graph()
+        mid_wid = wiring_id(self.MID, {}, {"GAITRiteLoaded_UA"}, {})
+        input_params_with_manual_edges(
+            fn_input_params,
+            fn_outputs,
+            {loader_key: set(), mid_key: set()},
+            {},
+            self._manual_edge(
+                self.MID, mid_wid, "var__GAITRiteLoaded::main", "in__grTableIn"
+            ),
+        )
+        assert fn_input_params[mid_key] == {}, "the caller's dict was mutated"
+        assert wiring_id(self.MID, fn_input_params[mid_key], {"GAITRiteLoaded_UA"}, {}) == mid_wid
+
+    def test_no_manual_edges_is_the_identity_function(self):
+        from scistack_gui.domain.graph_builder import input_params_with_manual_edges
+
+        loader_key, mid_key, fn_input_params, fn_outputs = self._graph()
+        assert (
+            input_params_with_manual_edges(
+                fn_input_params, fn_outputs, {}, {}, []
+            )
+            is fn_input_params
+        )
+
+    def test_an_each_of_binding_does_not_break_the_cascade(self):
+        """A manual edge beside a still-visible history edge is an EachOf — a
+        LIST. `set(params.values())` raised on it before; every source counts,
+        so the worst of them wins."""
+        from scistack_gui.domain.run_state import propagate_run_states
+
+        consumer = ("consume", "call_c")
+        producer_a = ("make_a", "call_a")
+        producer_b = ("make_b", "call_b")
+        states = propagate_run_states(
+            {producer_a: "green", producer_b: "red", consumer: "green"},
+            {
+                producer_a: {},
+                producer_b: {},
+                consumer: {"v": ["A", "B"]},
+            },
+            {producer_a: {"A"}, producer_b: {"B"}, consumer: {"C"}},
+        )
+        assert states["fn__consume__call_c"] == "red"

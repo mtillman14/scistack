@@ -162,7 +162,10 @@ function PipelineFunctionNode({ id, data }: Props) {
       const durationMs = params.duration_ms as number | undefined
       const cancelled = (params.cancelled ?? false) as boolean
       const error = params.error as string | undefined
-      finishRun(runId!, success, durationMs, cancelled, error)
+      // A terminal MATLAB run whose outcome could not be established. NOT a
+      // failure — see RunLogContext.RunEntry.status.
+      const unknown = (params.unknown ?? false) as boolean
+      finishRun(runId!, success, durationMs, cancelled, error, unknown)
       setRunning(false)
       setCancelling(false)
     }
@@ -275,6 +278,30 @@ function PipelineFunctionNode({ id, data }: Props) {
       }
     }
   }, [cancelling, markCancelling])
+  /**
+   * Stop waiting for a MATLAB terminal run.
+   *
+   * Not a cancel: nothing here can reach into the MATLAB terminal and stop
+   * it. It stops the GUI *waiting* — the node resolves and the watcher is
+   * dropped. Needed because the node now genuinely stays on "Running…" for
+   * the whole run, so a MATLAB that was killed (or a marker lost to a
+   * network share) would otherwise leave it spinning until the ceiling.
+   */
+  const handleStopWaiting = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const runId = runIdRef.current
+    if (!runId) return
+    try {
+      await callBackend('stop_waiting_for_matlab', { run_id: runId })
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`stop_waiting_for_matlab failed for ${runId}:`, err)
+      // The user asked to stop waiting; honour that locally even if the
+      // host call failed, or the node is stuck for the wrong reason.
+      finishRun(runId, false, undefined, true)
+      setRunning(false)
+    }
+  }, [finishRun])
 
   const handleOpenSource = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -522,13 +549,40 @@ function PipelineFunctionNode({ id, data }: Props) {
             </button>
           )
         }
-        // MATLAB: no cancel — the run is in the MATLAB terminal, not the
-        // Python worker thread. Keep the plain disabled button.
+        // MATLAB: there is no cancel — the run is in the MATLAB terminal,
+        // not in a Python worker thread we control. What there IS now is a
+        // real end signal (scidb.run_marker + the database lock), so the
+        // node stays here for the actual run instead of flicking green on
+        // dispatch. That makes "stop waiting" necessary: a killed MATLAB
+        // reports nothing, and only the user knows they gave up on it.
         if (isMatlab) {
+          if (!isVSCodeMode) {
+            // The browser build runs MATLAB through the sidecar, which
+            // Python drives and reports on; there is nothing to wait out.
+            return (
+              <button style={styles.buttonRunning} disabled>
+                ⏳ Running…
+              </button>
+            )
+          }
           return (
-            <button style={styles.buttonRunning} disabled>
-              ⏳ Running…
-            </button>
+            <div style={styles.splitButton}>
+              <button style={styles.splitButtonLeft} disabled type="button">
+                ⏳ Running in MATLAB…
+              </button>
+              <button
+                style={styles.splitButtonRight}
+                onClick={handleStopWaiting}
+                title={
+                  'Stop waiting for this run. It does NOT stop MATLAB — use the '
+                  + 'MATLAB Command Window for that. Use this when MATLAB was '
+                  + 'closed or interrupted and will never report back.'
+                }
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
           )
         }
         // Python: split button with cancel / force-cancel segments.

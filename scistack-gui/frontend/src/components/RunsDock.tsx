@@ -34,6 +34,9 @@ export default function RunsDock() {
     ? '✗'
     : latest.status === 'cancelled'
     ? '⊘'
+    // Its own mark, deliberately not '✗': we do not know that it failed.
+    : latest.status === 'unknown'
+    ? '?'
     : '✓'
   const statusColor = !latest
     ? '#555'
@@ -43,6 +46,8 @@ export default function RunsDock() {
     ? '#e06060'
     : latest.status === 'cancelled'
     ? '#888'
+    : latest.status === 'unknown'
+    ? '#d9a441'
     : '#6be16b'
 
   return (

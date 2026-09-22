@@ -32,6 +32,10 @@
         "title": "SciStack: Show Open Sessions"
       },
       {
+        "command": "scistack.showMatlabRuns",
+        "title": "SciStack: Show MATLAB Run State"
+      },
+      {
         "command": "scistack.plotVariable",
         "title": "SciStack: Plot Variable…"
       },

@@ -779,10 +779,12 @@ def _run_in_thread(
 def _notify_records_changed() -> None:
     """Announce that a run has finished and may have written records.
 
-    Two things have to happen together, which is why they are one call:
+    Three things have to happen together, which is why they are one call:
 
     1. the canvas re-fetches the DAG (``dag_updated``);
-    2. Plot Studio drops its cached frames.
+    2. Plot Studio drops its cached frames;
+    3. scidb forgets its cached filesystem walks
+       (``scidb.state.clear_discovery_cache``).
 
     ``ScidbSource`` caches whole variable frames, so skipping (2) leaves the
     plot panel serving PRE-RUN data — a figure that silently disagrees with the
@@ -790,6 +792,13 @@ def _notify_records_changed() -> None:
     to end, but nothing ever called it; this is that missing call, put on the
     backend so the web GUI and the VS Code extension cannot drift (CLAUDE.md
     NOTE 3).
+
+    (3) has the same history. A loader's discovery cache holds "files on disk
+    minus locations already realized", and a run changes the second half while
+    the filesystem sits still — so a 5-second TTL expiring on its own is the
+    only thing that ever refreshed it. ``clear_discovery_cache``'s docstring
+    has said "For tests, and after a run" since it was written; until
+    2026-09-22 only the tests called it.
 
     Takes no database handle deliberately. The cache is keyed by file path, and
     the MATLAB run threads have released their connection to the sidecar by the
@@ -805,6 +814,13 @@ def _notify_records_changed() -> None:
         # A cache we failed to drop is a stale figure, not a failed run: the
         # user's data is already written. Never let this bury the run result.
         logger.exception("[run] could not invalidate the plot source cache")
+    try:
+        from scidb.state import clear_discovery_cache
+
+        clear_discovery_cache()
+    except Exception:
+        # Same reasoning: a stale walk is a badge that lags by a few seconds.
+        logger.exception("[run] could not clear the discovery cache")
     push_message({"type": "dag_updated"})
 
 
@@ -1843,6 +1859,51 @@ class SidecarRunRequest(BaseModel):
     run_id: str
     warnings: list[str] | None = None
 
+class MatlabTerminalRunRequest(BaseModel):
+    """A run the host handed to the MathWorks terminal, for us to watch.
+
+    The host cannot see the run end — that is the whole problem — so it
+    tells us the run_id and we watch the markers and the database lock. See
+    ``scistack_gui.matlab_run_watch``.
+    """
+
+    run_id: str
+    #: What to call it in the log. Optional; the run_id is a usable fallback.
+    label: str | None = None
+
+
+def _watch_matlab_terminal_run(db, req: MatlabTerminalRunRequest) -> dict:
+    """Start watching a terminal-dispatched MATLAB run.
+
+    Needs the database only for its PATH — the watcher polls markers beside
+    it and probes its file lock, both from its own thread, and must not hold
+    the connection while it does (that would be holding it against MATLAB
+    for the whole run, which is what ``holds_db_lock=False`` prevents).
+    """
+    from scistack_gui.db import get_db_path
+    from scistack_gui.matlab_run_watch import track
+
+    return track(req.run_id, str(get_db_path()), req.label or req.run_id)
+
+
+def _stop_watching_matlab_run(req: RunRef) -> dict:
+    """The user pressed "stop waiting": drop the watcher, emit no verdict."""
+    from scistack_gui.matlab_run_watch import stop
+
+    return {"ok": stop(req.run_id)}
+
+
+def _matlab_run_state() -> dict:
+    """Every run being watched, and what the watcher believes about it.
+
+    The diagnostics surface for "why is this node still spinning?" — there
+    is no other way to see it, since the run lives in another process behind
+    a terminal nothing can query.
+    """
+    from scistack_gui.matlab_run_watch import tracked_runs
+
+    return {"runs": tracked_runs()}
+
 
 def _start_run(db, req: RunRequest, *, transport: str) -> dict:
     return start_run(db, req, transport=transport)
@@ -1903,6 +1964,18 @@ RUN_HANDLERS: tuple[Handler, ...] = (
     Handler("generate_matlab_command", None, MatlabCommandRequest, _generate_matlab_command),
     Handler("generate_matlab_pipeline_command", None, MatlabCommandRequest, _generate_matlab_pipeline_command),
     Handler("start_matlab_sidecar_run", None, SidecarRunRequest, _start_matlab_sidecar_run, **_NO_DB),
+    # Terminal-run tracking. `watch` needs the db PATH only, and declares
+    # holds_db_lock=False so the dispatch does not hold the connection
+    # MATLAB is about to want; the other two never touch the database.
+    Handler(
+        "watch_matlab_terminal_run", None, MatlabTerminalRunRequest,
+        _watch_matlab_terminal_run, holds_db_lock=False,
+    ),
+    Handler("stop_watching_matlab_run", None, RunRef, _stop_watching_matlab_run, **_NO_DB),
+    # RPC-only: the terminal tier exists only under the VS Code host, so the
+    # browser build has nothing to show here (its MATLAB runs go through the
+    # sidecar, which Python drives and already reports on).
+    Handler("get_matlab_run_state", None, None, _matlab_run_state, **_NO_DB),
 )
 
 install_routes(router, RUN_HANDLERS)

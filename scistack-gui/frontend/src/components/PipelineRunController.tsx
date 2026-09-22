@@ -46,7 +46,9 @@ export default function PipelineRunController() {
       const success = (params.success ?? true) as boolean
       const durationMs = params.duration_ms as number | undefined
       const cancelled = (params.cancelled ?? false) as boolean
-      finishRun(runId, success, durationMs, cancelled)
+      const error = params.error as string | undefined
+      const unknown = (params.unknown ?? false) as boolean
+      finishRun(runId, success, durationMs, cancelled, error, unknown)
       activeRuns.current.delete(runId)
     }
   }, [appendLine, finishRun]))

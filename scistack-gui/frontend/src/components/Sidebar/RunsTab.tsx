@@ -95,10 +95,13 @@ function RunCard({ run }: { run: RunEntry }) {
 
   const statusIcon =
     run.status === 'running' ? '⏳' :
-    run.status === 'error' ? '✗' : '✓'
+    run.status === 'error' ? '✗' :
+    // '?' and not '✗': an unknown outcome is not a known failure.
+    run.status === 'unknown' ? '?' : '✓'
   const statusColor =
     run.status === 'running' ? '#f0c040' :
-    run.status === 'error' ? '#e06060' : '#6be16b'
+    run.status === 'error' ? '#e06060' :
+    run.status === 'unknown' ? '#d9a441' : '#6be16b'
 
   // Build per-repetition display from variants array.
   // Fall back to flat display if no variants tracked yet (e.g. legacy/in-flight).
@@ -210,6 +213,15 @@ function RunCard({ run }: { run: RunEntry }) {
       {/* Error summary */}
       {run.status === 'error' && run.error_summary && (
         <div style={styles.errorRow}>{run.error_summary}</div>
+      )}
+
+      {/* Unknown outcome. Its own row, worded so it cannot be read as a
+          failure: whatever MATLAB wrote before it stopped is still in the
+          database, and the question is what is MISSING, not what is wrong. */}
+      {run.status === 'unknown' && (
+        <div style={styles.unknownRow}>
+          {run.error_summary ?? 'This run stopped reporting; its outcome is unknown.'}
+        </div>
       )}
 
       {/* Log toggle */}
@@ -347,6 +359,13 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e06060',
     marginTop: 3,
     paddingLeft: 20,
+  },
+  unknownRow: {
+    fontSize: 11,
+    color: '#d9a441',
+    marginTop: 3,
+    paddingLeft: 20,
+    lineHeight: 1.4,
   },
   logToggle: {
     background: 'transparent',

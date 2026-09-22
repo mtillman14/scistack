@@ -213,6 +213,10 @@ def group_call_sites_by_wiring(
     agg: AggregatedData,
     run_states: dict[str, str],
     pending_constants: dict[str, set] | None = None,
+    *,
+    manual_edges: "list[dict] | tuple" = (),
+    manual_nodes: "dict[str, dict] | None" = None,
+    hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
 ) -> tuple[AggregatedData, dict[str, str], dict[str, list[str]]]:
     """Re-key the aggregated call-site data to (fn_name, wiring_id) groups.
 
@@ -330,8 +334,24 @@ def group_call_sites_by_wiring(
         for gkey, states in group_member_states.items()
         if states
     }
+    # Same rule as pass 1 (api/pipeline._build_graph): the cascade follows the
+    # edges visible on the canvas, drawn ones included. Applied again here
+    # because this pass re-propagates on the GROUPED wiring, which is rebuilt
+    # from the recorded call sites and so carries no manual bindings either.
+    # `grouped.fn_input_params` itself is left alone — it is what the node ids
+    # were derived from.
     node_states = propagate_run_states(
-        group_own_states, grouped.fn_input_params, grouped.fn_outputs
+        group_own_states,
+        input_params_with_manual_edges(
+            grouped.fn_input_params,
+            grouped.fn_outputs,
+            grouped.fn_constants,
+            grouped.path_inputs,
+            manual_edges,
+            manual_nodes,
+            hidden_edge_ids,
+        ),
+        grouped.fn_outputs,
     )
 
     n_groups = len(grouped.fn_input_params)
@@ -1813,6 +1833,77 @@ def manual_input_overrides(
             sorted(hidden_handles),
         )
     return overrides
+
+
+def input_params_with_manual_edges(
+    fn_input_params: dict[FnKey, dict],
+    fn_outputs: dict[FnKey, set],
+    fn_constants: dict[FnKey, set],
+    path_inputs: dict,
+    manual_edges: "list[dict] | tuple",
+    manual_nodes: "dict[str, dict] | None" = None,
+    hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
+) -> dict[FnKey, dict]:
+    """``fn_input_params`` with manual variable edges folded in — **for run-state
+    propagation only**.
+
+    The third consumer of "the edges visible on the DAG are the ground truth"
+    (docs/claude/manual-edges-on-history-nodes.md). Display got it
+    (``overlay_manual_inputs``) and execution got it
+    (``variant_resolver.reconcile_manual_inputs``); COLOUR did not, and colour
+    is computed from the recorded wiring ~200 lines before the overlay is
+    applied to the built nodes. So a step fed only by an edge the user drew had
+    no upstream at all as far as ``propagate_run_states`` could see, and red
+    stopped dead at the last history edge: on 2026-09-22 ``loadGaitRiteOneFile``
+    was red while ``grSides`` and ``calculateSymmetryOneVector`` downstream of
+    it stayed green, because both read their inputs through drawn edges.
+
+    **Never use this for identity.** ``wiring_id`` hashes ``input_params``, so
+    folding an override into the dict a node id is derived from would rename the
+    node, orphaning its saved position, scope membership and config (the
+    placement-id lookup trap). The doc's rule is explicit — node identity does
+    not change when an edge is drawn — and it is why this returns a copy that
+    goes to ``propagate_run_states`` and nowhere else.
+
+    Works on both run-state passes without a flag: the wiring id is recomputed
+    from each entry, which for a per-call-site key derives the group it belongs
+    to, and for an already-grouped key returns that same key's wid (members of a
+    group share their params, because the id hashes exactly those).
+    """
+    if not manual_edges:
+        return fn_input_params
+    manual_index = manual_edge_handle_index(manual_edges)
+    if not manual_index:
+        return fn_input_params
+
+    pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
+    out: dict[FnKey, dict] = {}
+    applied: dict[str, dict] = {}
+    for fkey, params in fn_input_params.items():
+        fn, _ = fkey
+        wid = wiring_id(
+            fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
+        )
+        overrides = manual_input_overrides(
+            fn,
+            wid,
+            params,
+            fn_constants.get(fkey, set()),
+            manual_index,
+            manual_nodes,
+            hidden_edge_ids,
+        )
+        out[fkey] = {**params, **overrides} if overrides else params
+        if overrides:
+            applied[fn_node_id(fn, wid)] = overrides
+    if applied:
+        logger.info(
+            "[graph_builder] run-state propagation follows %d manual edge "
+            "binding(s): %s",
+            len(applied),
+            applied,
+        )
+    return out
 
 
 def collect_manual_input_overrides(

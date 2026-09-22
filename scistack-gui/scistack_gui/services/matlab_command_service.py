@@ -317,6 +317,53 @@ def _collect_edge_path_inputs(
     }
 
 
+def scope_variants_to_node(
+    fn_variants: list[dict],
+    targets: list[dict],
+    node_id: "str | None",
+    function_name: str,
+) -> list[dict]:
+    """Which variant rows the generated script should actually run.
+
+    WHICH variants is a wiring question, not a name question, and this route
+    asked it by name: ``[v for v in all_variants if v["function_name"] ==
+    function_name]``. That spans every wiring the function has ever had, and
+    ``api.matlab_command._group_variants`` emits one ``for_each`` per distinct
+    ``(input_types, constants)`` — so one click ran them all.
+
+    Seen 2026-09-22: ``grSides`` gained a second wiring after a run through a
+    manual-edge overlay, ``_group_variants: 391 variant row(s) -> 2 for_each
+    call(s)``, and every later run executed the function twice — the second
+    pass saving ``0 new rows`` — while holding the DuckDB lock across both,
+    which then made the GUI's own refreshes fail with ``DB LOCKED``. The
+    node-scoped derivation was already being computed a few lines below and
+    was correct (``1 target(s)`` in the same log); only the bindings used it.
+
+    ``targets`` is ``execution_service.derive_target_for_node``'s answer — the
+    same derivation the Python run path uses, and the only one that applies
+    hidden constant values and manual-edge reconciliation, so deferring to it
+    closes those gaps on this route too. The Python path has drawn this
+    distinction since the RawVO2/RawHeartRate bug; MATLAB never did.
+
+    Falls back to the name-scoped list when the request names no node (a
+    "run this function" request with no canvas behind it) or when the node
+    derives nothing at all (never run, no edges) — there, history is still
+    the best guess and refusing to run would be a regression.
+    """
+    if not node_id or not targets:
+        return fn_variants
+    if len(targets) != len(fn_variants):
+        logger.info(
+            "generate_matlab_command: fn=%s scoped to node %s — %d of %d "
+            "variant row(s) belong to this node's wiring",
+            function_name,
+            node_id,
+            len(targets),
+            len(fn_variants),
+        )
+    return targets
+
+
 def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     """Generate a ready-to-paste MATLAB command for a pipeline function.
 
@@ -359,9 +406,45 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
             "scihist.* / scidb.* may be unavailable in MATLAB"
         )
 
-    # Resolve variants from DB history.
+    # Variable bindings come from the ONE derivation the Python run uses
+    # (execution_service.derive_*: history with its recorded selectors, the
+    # node's own statements on top, manual edges reconciled) and are only
+    # RENDERED here. This route used to assemble its own map from edges plus
+    # the node config, so a selection recorded in history — a Python-authored
+    # `Var["knee"]` step — reached a Python re-run and not a MATLAB one.
+    # Node-scoped when the request names a node, name-scoped otherwise —
+    # the same distinction the Python run draws.
+    from scistack_gui.services.execution_service import (
+        derive_fn_targets,
+        derive_target_for_node,
+        variable_inputs_view,
+    )
+
+    _node_id = params.get("node_id")
+    try:
+        _targets = (
+            derive_target_for_node(db, _node_id)
+            if _node_id
+            else derive_fn_targets(db, function_name)
+        )
+    except Exception:
+        logger.warning(
+            "generate_matlab_command: target derivation failed for '%s' — "
+            "falling back to canvas edges alone",
+            function_name,
+            exc_info=True,
+        )
+        _targets = []
+
+    # Resolve variants from DB history, scoped to the node that was clicked —
+    # see scope_variants_to_node for why the name-only filter was wrong.
     all_variants = db.list_pipeline_variants()
-    fn_variants = [v for v in all_variants if v["function_name"] == function_name]
+    fn_variants = scope_variants_to_node(
+        [v for v in all_variants if v["function_name"] == function_name],
+        _targets,
+        _node_id,
+        function_name,
+    )
 
     # Collect PathInput param mappings.
     path_input_params: dict[str, dict] = {}
@@ -394,35 +477,10 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         function_name, saved_sweeps, manual_edges, manual_nodes
     )
 
-    # Variable bindings come from the ONE derivation the Python run uses
-    # (execution_service.derive_*: history with its recorded selectors, the
-    # node's own statements on top, manual edges reconciled) and are only
+    # Bindings come from the same `_targets` derived above, and are only
     # RENDERED here. This route used to assemble its own map from edges plus
     # the node config, so a selection recorded in history — a Python-authored
     # `Var["knee"]` step — reached a Python re-run and not a MATLAB one.
-    # Node-scoped when the request names a node, name-scoped otherwise —
-    # the same distinction the Python run draws.
-    from scistack_gui.services.execution_service import (
-        derive_fn_targets,
-        derive_target_for_node,
-        variable_inputs_view,
-    )
-
-    _node_id = params.get("node_id")
-    try:
-        _targets = (
-            derive_target_for_node(db, _node_id)
-            if _node_id
-            else derive_fn_targets(db, function_name)
-        )
-    except Exception:
-        logger.warning(
-            "generate_matlab_command: target derivation failed for '%s' — "
-            "falling back to canvas edges alone",
-            function_name,
-            exc_info=True,
-        )
-        _targets = []
     variable_inputs = variable_inputs_view(_targets, function_name)
     if not variable_inputs:
         # No derivable target (never run, and no output wired yet): the
@@ -534,6 +592,11 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         variable_inputs=variable_inputs if variable_inputs else None,
         glue=glue_chains if glue_chains else None,
         run_options=run_options,
+        # Markers are only written for a run something is watching. The
+        # caller (the VS Code host, via generate_matlab_command) passes the
+        # run_id it got from start_run; a preview or a copy-to-clipboard
+        # with no run behind it passes none and the script writes none.
+        run_id=params.get("run_id"),
     )
     logger.info(
         "generate_matlab_command: fn=%s, command_length=%d", function_name, len(cmd)
@@ -803,6 +866,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         project_root=project_root,
         entities_script=_entities_script(),
         entities_file=_entities_file(),
+        run_id=params.get("run_id"),
     )
     logger.info(
         "generate_matlab_pipeline_command: pipeline=%s, command_length=%d",

@@ -4189,3 +4189,100 @@ class TestVariableInputsView:
             )
         assert out["a"]["columns"] == ["x"]
         assert "bound differently" in caplog.text
+
+
+class TestScopeVariantsToNode:
+    """One click must run one wiring.
+
+    `matlab_command_service` chose the variants for the generated script by
+    function NAME, while the node-scoped derivation it computes a few lines
+    later — the same one the Python run path uses — was spent only on variable
+    bindings. A function with two wirings on the canvas therefore ran both.
+
+    Observed 2026-09-22 on `grSides`, which gained a second wiring after a run
+    through a manual-edge overlay: `_group_variants: 391 variant row(s) -> 2
+    for_each call(s)`, the second pass saving `0 new rows`, ~75s per run wasted
+    and the DuckDB lock held across both — which made the GUI's own refreshes
+    fail with `DB LOCKED` and left stale colours on the canvas. The same log
+    line shows the node-scoped derivation getting it right at the time:
+    `'side' restricted to "PareticSide" on 1 target(s)`.
+    """
+
+    NAME = "grSides"
+
+    def _by_name(self):
+        """Two wirings of one function, as `list_pipeline_variants` returns
+        them: the old one (history never bound `side`) and the one a run
+        through the overlay recorded."""
+        old = [
+            {
+                "function_name": self.NAME,
+                "input_types": {"grTableIn": "GAITRiteLoaded"},
+                "constants": {},
+                "output_type": "GAITRiteLoaded_UA",
+            }
+        ] * 3
+        new = [
+            {
+                "function_name": self.NAME,
+                "input_types": {
+                    "grTableIn": "GAITRiteLoaded",
+                    "side": "Demographics",
+                },
+                "constants": {},
+                "output_type": "GAITRiteLoaded_UA",
+            }
+        ]
+        return old + new, new
+
+    def test_a_node_scoped_request_runs_only_its_own_wiring(self):
+        from scistack_gui.services.matlab_command_service import scope_variants_to_node
+
+        by_name, targets = self._by_name()
+        scoped = scope_variants_to_node(
+            by_name, targets, "fn__grSides__f99f8a48833ed7ee", self.NAME
+        )
+        assert scoped == targets
+
+    def test_that_is_one_for_each_call_not_two(self):
+        """The consequence, through the function that actually emits them."""
+        from scistack_gui.api.matlab_command import _group_variants
+        from scistack_gui.services.matlab_command_service import scope_variants_to_node
+
+        by_name, targets = self._by_name()
+        assert len(_group_variants(by_name)) == 2, "the bug, pinned"
+        scoped = scope_variants_to_node(
+            by_name, targets, "fn__grSides__f99f8a48833ed7ee", self.NAME
+        )
+        assert len(_group_variants(scoped)) == 1
+
+    def test_a_request_with_no_node_keeps_the_name_scoped_list(self):
+        """"Run this function", with no canvas behind it — the Python path
+        makes the same distinction (`derive_fn_targets` vs
+        `derive_target_for_node`)."""
+        from scistack_gui.services.matlab_command_service import scope_variants_to_node
+
+        by_name, targets = self._by_name()
+        assert scope_variants_to_node(by_name, targets, None, self.NAME) == by_name
+
+    def test_a_node_that_derives_nothing_falls_back_rather_than_refusing(self):
+        """Never run, no edges to infer from. History is still the best guess,
+        and returning nothing here would turn a working run into a no-op."""
+        from scistack_gui.services.matlab_command_service import scope_variants_to_node
+
+        by_name, _ = self._by_name()
+        assert (
+            scope_variants_to_node(by_name, [], "fn__grSides__abc", self.NAME)
+            == by_name
+        )
+
+    def test_the_single_wiring_case_is_unchanged(self):
+        """The ordinary project, where name and wiring coincide: same rows in,
+        same rows out, no log line."""
+        from scistack_gui.services.matlab_command_service import scope_variants_to_node
+
+        _, targets = self._by_name()
+        assert (
+            scope_variants_to_node(targets, targets, "fn__grSides__abc", self.NAME)
+            == targets
+        )

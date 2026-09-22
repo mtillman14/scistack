@@ -107,9 +107,22 @@ def propagate_run_states(
     fn_effective_state: dict[FnKey, str] = {}
     var_state: dict[str, str] = {}
 
-    fn_input_types: dict[FnKey, set] = {
-        fkey: set(params.values()) for fkey, params in fn_input_params.items()
-    }
+    # A binding may be a LIST — EachOf, which a manual edge drawn beside a
+    # still-visible history edge produces (graph_builder.manual_input_overrides).
+    # Every source counts: if any producer of any of them is red, the consumer
+    # cannot be current. Empty strings are unwired params and are dropped rather
+    # than treated as a root variable; both spellings resolved to "green" before,
+    # so this changes nothing except that `set(params.values())` no longer
+    # raises on an unhashable list.
+    fn_input_types: dict[FnKey, set] = {}
+    for fkey, params in fn_input_params.items():
+        types: set = set()
+        for value in params.values():
+            if isinstance(value, (list, set, tuple)):
+                types.update(vt for vt in value if vt)
+            elif value:
+                types.add(value)
+        fn_input_types[fkey] = types
 
     remaining = set(fn_own_state.keys())
     logger.debug(

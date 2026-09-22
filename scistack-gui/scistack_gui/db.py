@@ -6,6 +6,7 @@ and shared by all API endpoints.
 """
 
 import logging
+import os
 import re
 import threading
 import time
@@ -168,6 +169,51 @@ def _as_locked_error(exc: Exception) -> "DatabaseLockedError | None":
     )
 
 
+#: Backoff ceiling while a MATLAB run is known to be in flight.
+#:
+#: ACQUIRE_RETRY_TIMEOUT's five seconds are right for what it was written
+#: for: MATLAB's own short writes clear well under a second, so retrying
+#: turns most conflicts into a pause nobody notices. They are wrong against
+#: a twenty-minute run, where every GUI click that touches the database
+#: burns five seconds and *then* reports a conflict that was knowable at
+#: t=0. Clicking around during a run cost ~5 s per click.
+#:
+#: Not zero. If the hint is ever wrong, a 200 ms MATLAB write that would
+#: have succeeded must not start reporting failures — this is "5 s to
+#: 0.5 s", not "5 s to instant". And it only changes how long we WAIT,
+#: never whether we ATTEMPT: the acquire always tries at least once, so a
+#: database that is actually free is always opened.
+ACQUIRE_RETRY_TIMEOUT_TRACKED = 0.5
+
+
+def _matlab_run_in_flight() -> bool:
+    """Whether a watched MATLAB run currently believes it owns a database.
+
+    Never raises: this only tunes a timeout, and a failure to answer must
+    fall back to the patient default rather than break an acquire.
+    """
+    try:
+        from scistack_gui.matlab_run_watch import any_run_in_flight
+
+        return any_run_in_flight()
+    except Exception:  # noqa: BLE001 — a hint is not worth an exception
+        return False
+
+
+def _effective_acquire_timeout(timeout: float) -> float:
+    """How long to keep retrying, given what we know about MATLAB."""
+    if not _matlab_run_in_flight():
+        return timeout
+    shortened = min(timeout, ACQUIRE_RETRY_TIMEOUT_TRACKED)
+    if shortened < timeout:
+        logger.debug(
+            "[db] a MATLAB run is in flight — backing off %.1fs instead of %.1fs",
+            shortened,
+            timeout,
+        )
+    return shortened
+
+
 def acquire_db_connection(timeout: float = ACQUIRE_RETRY_TIMEOUT) -> None:
     """Increment the holder count and reopen the connection if needed.
 
@@ -192,6 +238,7 @@ def acquire_db_connection(timeout: float = ACQUIRE_RETRY_TIMEOUT) -> None:
     GUI hang (see .claude/plan-matlab-run-hang-fix.md).
     """
     global _db_open, _db_refcount
+    timeout = _effective_acquire_timeout(timeout)
     started = time.monotonic()
     deadline = started + max(0.0, timeout)
     attempt = 0
@@ -562,3 +609,167 @@ def get_db() -> DatabaseManager:
     if _db is None:
         raise RuntimeError("Database not initialised. Call init_db() first.")
     return _db
+
+
+# ---------------------------------------------------------------------------
+# Who has the database, and are they still alive?
+#
+# This is the half of MATLAB run tracking that needs no cooperation from
+# MATLAB. A marker file tells us how a run ENDED (see
+# ``scidb.run_markers``), but a killed or Ctrl-C'd MATLAB writes nothing, so
+# a missing marker is ambiguous on its own: still running, or gone.
+#
+# DuckDB answers it for us. Its lock-conflict message names the process
+# holding the file — ``_LOCK_HOLDER_RE`` / ``_LOCK_PID_RE`` above already
+# parse both the POSIX and the Windows spelling — so a failed open tells us
+# *which* process owns the database, and the OS tells us whether that
+# process still exists.
+# ---------------------------------------------------------------------------
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether process *pid* currently exists.
+
+    **When in doubt, say alive.** Every caller uses this to decide whether a
+    run that has not reported is dead, and a false "dead" ends a run that is
+    still working — the worse error by far, since the user then re-runs work
+    that is already in flight against the same database. A false "alive"
+    only delays the verdict until the ceiling.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # Could be "gone", could be "access denied". A denied handle for
+            # a live process is possible when MATLAB runs elevated, so ask
+            # once more in a way that does not need the handle.
+            return _nt_pid_in_snapshot(pid)
+        try:
+            code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return True
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # It exists; it just is not ours to signal.
+        return True
+    except OSError as exc:
+        logger.debug(
+            "[db] pid_alive(%d): undecidable (%s) — assuming alive", pid, exc
+        )
+        return True
+    return True
+
+
+def _nt_pid_in_snapshot(pid: int) -> bool:
+    """Windows fallback: is *pid* in the process list?
+
+    Used only when ``OpenProcess`` fails, which conflates "gone" with
+    "access denied" — and MATLAB started elevated is a real case.
+    """
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return str(pid) in (out.stdout or "")
+    except Exception as exc:  # noqa: BLE001 — a probe must never raise
+        logger.debug(
+            "[db] _nt_pid_in_snapshot(%d) failed (%s) — assuming alive", pid, exc
+        )
+        return True
+
+
+class LockHolder:
+    """The answer to "who has this database, and are they still there?"."""
+
+    __slots__ = ("free", "holder", "pid", "alive", "raw")
+
+    def __init__(
+        self,
+        free: bool,
+        holder: "str | None" = None,
+        pid: "int | None" = None,
+        alive: bool = False,
+        raw: str = "",
+    ):
+        #: Nothing holds the file — we were able to open it.
+        self.free = free
+        #: The executable path DuckDB named, when it named one.
+        self.holder = holder
+        self.pid = pid
+        #: Whether that process still exists. Meaningless when ``free``.
+        self.alive = alive
+        self.raw = raw
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        if self.free:
+            return "LockHolder(free)"
+        return (
+            f"LockHolder(holder={self.holder!r}, pid={self.pid}, alive={self.alive})"
+        )
+
+
+def probe_lock_holder(db_path=None) -> LockHolder:
+    """Who currently holds *db_path*, without disturbing our own connection.
+
+    Opens a throwaway **read-only** connection: DuckDB allows many readers
+    or one writer, so this succeeds exactly when no other process is writing
+    — and fails with the lock message we already know how to parse when one
+    is. It touches neither ``_db`` nor the refcount, so it is safe to call
+    from a watcher thread at any time.
+
+    Returns ``free`` when *we* are the holder: this process having the
+    database open is not an answer to "is MATLAB still running", and
+    reporting ourselves would make every probe look busy.
+    """
+    path = Path(db_path) if db_path is not None else _db_path
+    if path is None:
+        return LockHolder(free=True)
+    if _db_open:
+        # We hold it. Nothing to learn, and the probe would only conflict
+        # with ourselves.
+        return LockHolder(free=True)
+    try:
+        con = duckdb.connect(str(path), read_only=True)
+        con.close()
+        return LockHolder(free=True)
+    except Exception as exc:  # noqa: BLE001 — classified below
+        locked = _as_locked_error(exc)
+        if locked is None:
+            # Not a lock conflict (a missing file, a corrupt database). That
+            # is not this function's question, and guessing "busy" from it
+            # would keep a finished run pending for ever.
+            logger.debug("[db] probe_lock_holder: %s is not a lock conflict", exc)
+            return LockHolder(free=True)
+        pid: "int | None"
+        try:
+            pid = int(locked.pid) if locked.pid else None
+        except (TypeError, ValueError):
+            pid = None
+        # No PID in the message means we know it is held but not by whom —
+        # "held" is the safe reading, since something clearly has it.
+        alive = pid_alive(pid) if pid is not None else True
+        return LockHolder(
+            free=False,
+            holder=locked.holder,
+            pid=pid,
+            alive=alive,
+            raw=locked.raw,
+        )
