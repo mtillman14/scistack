@@ -30,6 +30,8 @@ from .api import (
     SchemaTree,
     VariableDetail,
     VariableSummary,
+    location_sample,
+    variant_verdict,
 )
 from .graph import FunctionNode, PipelineGraph, VariantSummary, parse_path_input
 from .mutate import MutationResult
@@ -446,16 +448,8 @@ def render_topologies(name: str, topologies: list, db=None, max_locations: int =
                     else ""
                 )
             )
-            if v.current:
-                verdict = "load: CURRENT"
-            elif v.current_record_count:
-                verdict = (
-                    f"load: PARTIALLY SUPERSEDED "
-                    f"({v.current_record_count} of {v.record_count} still returned)"
-                )
-            else:
-                verdict = "load: SUPERSEDED (an older run-option set)"
-            lines.append(f"        {verdict}")
+            _verdict, verdict_label = variant_verdict(v)
+            lines.append(f"        {verdict_label}")
             if v.schema_ids:
                 lines.append(
                     f"        {len(v.schema_ids)} location(s)"
@@ -467,25 +461,18 @@ def render_topologies(name: str, topologies: list, db=None, max_locations: int =
 def _location_sample(schema_ids, db, limit: int) -> str:
     """``   subject/session — S01/BL, S01/MID24, … (+18)``, or just a count.
 
-    Sampled rather than dumped: a loader with 450 locations would otherwise
-    bury the thing the reader came for. ``--locations`` and ``--json`` carry
-    the full set.
+    The SAMPLING is ``api.location_sample``'s, shared with the GUI's Variants
+    panel; this function is only the text form of it. Two surfaces that each
+    decided for themselves which locations to show would be two answers to
+    "where is this variant" (CLAUDE.md NOTE 3).
     """
-    if db is None:
-        return ""
-    try:
-        from scidb.state import _schema_id_to_combo
-
-        combos = [_schema_id_to_combo(db, sid) for sid in schema_ids[:limit]]
-    except Exception:  # pragma: no cover - a label is never worth a failure
-        return ""
-    combos = [{k: v for k, v in (c or {}).items() if v is not None} for c in combos]
-    combos = [c for c in combos if c]
+    sample = location_sample(db, schema_ids, limit)
+    combos = sample["sample"]
     if not combos:
         return ""
-    keys = "/".join(combos[0])
+    keys = "/".join(sample["keys"])
     shown = ", ".join("/".join(str(v) for v in c.values()) for c in combos)
-    more = len(schema_ids) - len(combos)
+    more = sample["total"] - len(combos)
     return f"   {keys} — {shown}" + (f", … (+{more})" if more > 0 else "")
 
 

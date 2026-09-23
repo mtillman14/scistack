@@ -14,9 +14,9 @@ steps (clicks in the GUI), and what you should see.
 ## Before any session: common setup
 
 **Backend**
-1. Make sure the committed bundles are current. Every item below is in commit
-   `72a7b938` or earlier, and those bundles were rebuilt before committing. If
-   you have pulled frontend changes since then, rebuild both targets:
+1. Make sure the committed bundles are current. Items 0q and 0p (2026-09-22)
+   are the newest; both vite targets were rebuilt for them before committing.
+   If you have pulled frontend changes since, rebuild both targets:
    ```
    cd scistack-gui/frontend
    npm run build
@@ -33,6 +33,124 @@ steps (clicks in the GUI), and what you should see.
 - Plot Studio opens from a Variable node on the DAG canvas (**📈 Plot**).
 - If a panel goes blank, the render error is reported to `scidb.log` by
   `ClientErrorBoundary`. Search for `report_client_error`.
+
+---
+
+## 0q. Variants panel — "why does this variable have more variants than I expected?" — added 2026-09-22
+
+**What changed:** `Inspector.topologies` (already in the Python API and behind
+`scidb variants <name>`) now has a GUI surface. It is **bottom-up**, where the
+existing Provenance panel is top-down: you cannot pin a variant you do not know
+exists. The `load:` line is the reason it exists — it is the only place in the
+GUI where "this variant is not what a run will read" is visible. Plan:
+`.claude/plan-topologies-panel.md`.
+
+**Backend:** `scistack_gui/services/variants_service.py`,
+`api/provenance.py` (`variable_topologies`), plus `variant_verdict` /
+`location_sample` moved into `scidb/inspect/api.py` so the terminal and the
+panel share one owner. **Frontend:** `components/Variants/TopologiesPanel.tsx`
++ `topologies.ts`. Both bundles rebuilt.
+
+**Steps:**
+
+1. Open the Stroke-R01-Aim-2 database. Click **🧬 Variants** in the toolbar and
+   pick `GAITRiteLoaded`.
+2. You should see **one topology** — `loadGaitRiteOneFile(...) → GAITRiteLoaded`
+   — with **two variants** under it, differing in their `run` chip
+   (`distribute=false` / `distribute=true`).
+3. **The check that matters:** the older one should read
+   `load: SUPERSEDED (an older run-option set)`, greyed and struck through, and
+   the newer one `load: CURRENT`. Two variants that look equally alive is the
+   bug this panel exists for — *tell me if they read the same*.
+4. Compare with the terminal: run the `scidb variants GAITRiteLoaded` line the
+   panel prints. The two must agree, variant for variant.
+5. Tick **Show every location** and confirm the location lines grow from a
+   sample (`subject/session/speed — SS01/BL/SSV, … (+417)`) to the full set,
+   and that the panel stays responsive with 450 of them.
+6. Right-click a **variable node** on the canvas → **🧬 Variants…**. The panel
+   should open already on that variable. Confirm this is a *separate* menu
+   entry from Provenance — they answer opposite questions.
+7. Pick a variable with no producing steps (a raw-saved one). It should say so
+   in words, not show an error.
+8. `scidb.log` should carry `[variants] <name>: N topology/ies, M variant(s),
+   K not current`.
+
+---
+
+## 0p. A node that is rewired and run stays ONE node — added 2026-09-22, revised 2026-09-23
+
+**What changed:** a canvas function node's id is no longer
+`fn__{fn}__{wiring_id}` — a hash of its *recorded* input bindings. It is
+allocated once (`fn__{fn}__{random}`) and remembered in a new `_node_wiring`
+table, with `wiring_id` demoted from identity to attribute. Plan:
+`.claude/plan-node-identity.md`; argument: `docs/claude/node-identity.md`.
+
+This is the fix for the 2026-09-22 session where drawing
+`Demographics → grSides.side` and running produced **two** `grSides` nodes, and
+where `schemaLevel` silently stopped applying and had to be re-entered.
+
+**Backend:** `scistack_gui/node_wiring.py`, `domain/node_identity.py`,
+`api/pipeline.py`, `domain/graph_builder.py`, `services/execution_service.py`,
+`services/matlab_command_service.py`.
+**Frontend:** the ambiguity dialog in `components/DAG/PipelineDAG.tsx`.
+
+**Read this first — this one is a CLEAN BREAK.** There is no migration. On the
+first build of an existing database every function node gets a brand-new id,
+so **saved positions, node settings, hides and hypothesis membership keyed by
+the old ids stop resolving**. Expect the canvas to re-lay-out and expect to
+re-set node settings, once. That is intended (D-2026-09-22-3/-4).
+
+Do this on a **copy** of the real database first, or on a scratch project, so
+you can see what the churn actually costs before paying it on Stroke-R01-Aim-2.
+
+**Steps:**
+
+1. **The first open.** Open a copy of the real project. `scidb.log` should show
+   `[node_identity] allocated N node id(s)` once, then
+   `[node_wiring] <node> now runs as wiring <W>` per wiring — and **nothing**
+   on later refreshes. Nodes will be re-laid-out; note anything else that
+   looks lost so we can decide whether it should have been.
+2. **Ids do not churn.** Refresh, switch hypothesis tabs, come back. The node
+   ids must be identical every time. *Any churn here is a bug, not the break.*
+3. **The grSides shape.** Draw an edge onto an unbound parameter of a node that
+   has already run (`Demographics → grSides.side`). Set something distinctive on
+   that node first — a **schema level** and a **column selection**.
+4. Run the node from the canvas.
+5. **The check that matters:** afterwards there should be **ONE** node, in the
+   same place, still carrying the schema level and the column selection you set.
+   Not two. *Tell me if a second one appears.*
+6. **Its handles show the NEW shape only.** The node should show `side` bound,
+   and should NOT have grown an extra handle or edge for the shape it had
+   before. `scidb.log` says `[pipeline] N wiring(s) are history rather than a
+   node's current shape` when that has happened.
+7. **Run it again.** It must run the shape it has now — not also re-run the
+   records it produced before you drew the edge. Check the run's target count.
+8. `scidb.log` should carry `[execution] run <id> on node <n> ('grSides') claims
+   N wiring(s) … recorded at dispatch` before the run, and NOT
+   `[pipeline] manual edge … moved onto …` (that repair path is deleted).
+9. **The same, from the terminal.** Repeat on a MATLAB node run through the
+   MathWorks terminal, and again by running the pipeline (not the single node).
+   Same answer: one node.
+10. **A script run.** Draw an edge, then run the equivalent `for_each` from a
+    Python script instead of the GUI. On the next canvas refresh it must still
+    be one node — this is the inference path rather than the dispatch record,
+    and `[node_identity] wiring <W> of 'grSides' attributed to <node> — that
+    node STATES it` is the line that proves it fired.
+11. **A genuinely new node is still new.** Drag a fresh function node in, wire
+    it to *different* inputs, run it. It must be its own node, not merged into
+    anything.
+12. **The ambiguity popup.** Drag a second copy of a node and wire it identically
+    to the first. On the next build a dialog should say they are wired the same,
+    name both, and say runs go to one of them until they differ — and that
+    nothing was merged. Dismiss it; it must not come back on every refresh.
+    *Tell me if it nags.*
+13. **A previously-duplicated node.** If the real database still has the two
+    `grSides` nodes from 2026-09-22, they stay two nodes — there is no absorb.
+    Hide or rewire one. It must not come back.
+14. **Failures are loud now.** If the identity machinery ever cannot answer,
+    the build fails rather than drawing something unverified. If you see the
+    canvas refuse to load with a `_node_wiring` traceback, that is the design
+    working — send me the traceback.
 
 ---
 

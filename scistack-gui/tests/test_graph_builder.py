@@ -25,6 +25,7 @@ from scistack_gui.domain.graph_builder import (
     filter_hidden,
     find_cycle,
     hidden_wirings,
+    identity_token,
     inbound_edge_candidates,
     is_manual_edge,
     merge_manual_nodes,
@@ -39,6 +40,19 @@ from scistack_gui.domain.graph_builder import (
     wirings_downstream_of,
 )
 from scistack_gui.ids import fn_node_id
+
+
+def _all_current(_fn_name: str, _wiring: str) -> bool:
+    """Every wiring is its node's current shape.
+
+    The pure-domain counterpart of `identity_token`: with no database there
+    are no nodes, so no wiring can be one a node was rewired away from. Passed
+    explicitly rather than defaulted, for the reason `identity_token`'s
+    docstring gives — a default that silently derived identity would make a
+    regression invisible.
+    """
+    return True
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1817,6 +1831,7 @@ class TestHiddenWirings:
             fn_constants={},
             path_inputs={},
             hidden_edge_ids={f"e__Raw__f__{wid}"},
+            token_for=identity_token,
         )
         assert result == {("f", wid)}
 
@@ -1828,6 +1843,7 @@ class TestHiddenWirings:
             fn_constants={self.F_KEY: {"hz"}},
             path_inputs={},
             hidden_edge_ids={f"e__hz__f__{wid}"},
+            token_for=identity_token,
         )
         assert result == {("f", wid)}
 
@@ -1842,6 +1858,7 @@ class TestHiddenWirings:
             fn_constants={},
             path_inputs={"mypath": {"functions": {(self.F_KEY, "filepath")}}},
             hidden_edge_ids={f"e__mypath__filepath__f__{wid}"},
+            token_for=identity_token,
         )
         assert result == {("f", wid)}
 
@@ -1854,6 +1871,7 @@ class TestHiddenWirings:
             fn_constants={},
             path_inputs={},
             hidden_edge_ids={f"e__f__{wid}__Out"},
+            token_for=identity_token,
         )
         assert result == set()
 
@@ -1864,6 +1882,7 @@ class TestHiddenWirings:
             fn_constants={},
             path_inputs={},
             hidden_edge_ids=set(),
+            token_for=identity_token,
         )
         assert result == set()
 
@@ -1878,6 +1897,7 @@ class TestHiddenWirings:
             fn_constants={},
             path_inputs={},
             hidden_edge_ids={f"e__Raw__f__{wid}"},
+            token_for=identity_token,
         )
         assert result == {("f", wid)}
 
@@ -1899,6 +1919,7 @@ class TestHiddenWirings:
                     "source": "var__Other",
                 }
             ],
+            token_for=identity_token,
         )
         assert result == set()
 
@@ -1919,6 +1940,7 @@ class TestHiddenWirings:
                     "source": "var__Other",
                 }
             ],
+            token_for=identity_token,
         )
         assert result == {("f", wid)}
 
@@ -1939,6 +1961,7 @@ class TestHiddenWirings:
                     "source": "var__Other",
                 }
             ],
+            token_for=identity_token,
         )
         assert result == {("f", wid)}
 
@@ -1959,6 +1982,7 @@ class TestHiddenWirings:
                     "source": "var__Other",
                 }
             ],
+            token_for=identity_token,
         )
         assert result == set()
 
@@ -1972,6 +1996,7 @@ class TestWiringDisconnectedFkeys:
             fn_outputs={},
             wirings={("f", wid)},
             path_inputs={},
+            token_for=identity_token,
         )
         assert result == {ka, kb}
 
@@ -1983,6 +2008,7 @@ class TestWiringDisconnectedFkeys:
             fn_outputs={},
             wirings={("f", other_wid)},
             path_inputs={},
+            token_for=identity_token,
         )
         assert result == set()
 
@@ -1992,6 +2018,7 @@ class TestWiringDisconnectedFkeys:
             fn_outputs={},
             wirings=set(),
             path_inputs={},
+            token_for=identity_token,
         )
         assert result == set()
 
@@ -2006,6 +2033,7 @@ class TestWiringsDownstreamOf:
             fn_outputs={a_key: {"Out"}, b_key: set()},
             seed_wirings={("A", wid_a)},
             path_inputs={},
+            token_for=identity_token,
         )
         assert result == {("B", wid_b)}
 
@@ -2021,6 +2049,7 @@ class TestWiringsDownstreamOf:
             fn_outputs={a_key: {"Mid"}, b_key: {"Final"}, c_key: set()},
             seed_wirings={("A", wid_a)},
             path_inputs={},
+            token_for=identity_token,
         )
         assert result == {("B", wid_b), ("C", wid_c)}
 
@@ -2034,6 +2063,7 @@ class TestWiringsDownstreamOf:
             fn_outputs={a_key: {"Out"}},
             seed_wirings={("A", wid_a)},
             path_inputs={},
+            token_for=identity_token,
         )
         assert result == set()
 
@@ -2047,11 +2077,12 @@ class TestWiringsDownstreamOf:
             fn_outputs={a_key: {"Out"}, unrelated_key: {"Unrelated"}},
             seed_wirings={("A", wid_a)},
             path_inputs={},
+            token_for=identity_token,
         )
         assert ("U", wid_u) not in result
 
     def test_empty_seed_is_empty(self):
-        assert wirings_downstream_of({}, {}, set(), {}) == set()
+        assert wirings_downstream_of({}, {}, set(), {}, token_for=identity_token) == set()
 
 
 class TestCandidateEdgeId:
@@ -2527,7 +2558,9 @@ class TestGroupCallSitesByWiring:
             "var__Filtered": "red",
         }
 
-        grouped, node_states, member_map = group_call_sites_by_wiring(agg, states)
+        grouped, node_states, member_map = group_call_sites_by_wiring(
+            agg, states, token_for=identity_token, is_current=_all_current
+        )
 
         wid = wiring_id("bp", {"signal": "Raw"}, {"Filtered"}, {})
         gkey = ("bp", wid)
@@ -2557,7 +2590,9 @@ class TestGroupCallSitesByWiring:
         agg.fn_input_params[k2] = {"signal": "Other"}
         agg.fn_outputs[k2] = {"Filtered"}
 
-        grouped, _, _ = group_call_sites_by_wiring(agg, {})
+        grouped, _, _ = group_call_sites_by_wiring(
+            agg, {}, token_for=identity_token, is_current=_all_current
+        )
 
         assert len(grouped.fn_input_params) == 2
 
@@ -2566,7 +2601,11 @@ class TestGroupCallSitesByWiring:
         states = {fn_node_id(*a): "green", fn_node_id(*b): "green"}
 
         grouped, node_states, _ = group_call_sites_by_wiring(
-            agg, states, pending_constants={"low_hz": {"99"}}
+            agg,
+            states,
+            pending_constants={"low_hz": {"99"}},
+            token_for=identity_token,
+            is_current=_all_current,
         )
 
         wid = wiring_id("bp", {"signal": "Raw"}, {"Filtered"}, {})
@@ -2600,7 +2639,11 @@ class TestGroupCallSitesByWiring:
         states = {fn_node_id(*vo2): "green", fn_node_id(*hr): "green"}
 
         grouped, node_states, _ = group_call_sites_by_wiring(
-            agg, states, pending_constants={"window_seconds": {"25"}}
+            agg,
+            states,
+            pending_constants={"window_seconds": {"25"}},
+            token_for=identity_token,
+            is_current=_all_current,
         )
 
         vo2_wid = wiring_id(
@@ -3224,95 +3267,6 @@ class TestOverlayManualInputs:
         assert "manual_inputs" not in nodes[0]["data"]
 
 
-class TestSupersededManualInputOverrides:
-    FN = "grSides"
-
-    def _wid(self, inputs):
-        from scistack_gui.domain.graph_builder import wiring_id
-
-        return wiring_id(self.FN, inputs, {"GRTable"}, {})
-
-    def test_overlay_whose_wiring_has_run_moves_the_edge(self):
-        from scistack_gui.domain.graph_builder import superseded_manual_input_overrides
-        from scistack_gui.ids import fn_node_id
-
-        old_wid = self._wid({"gr": "GAITRiteLoaded"})
-        new_wid = self._wid({"gr": "GAITRiteLoaded", "side": "Demographics"})
-        old_id, new_id = fn_node_id(self.FN, old_wid), fn_node_id(self.FN, new_wid)
-        fn_input_params = {
-            (self.FN, old_wid): {"gr": "GAITRiteLoaded"},
-            (self.FN, new_wid): {"gr": "GAITRiteLoaded", "side": "Demographics"},
-        }
-        fn_outputs = {(self.FN, old_wid): {"GRTable"}, (self.FN, new_wid): {"GRTable"}}
-        edge = {
-            "id": "manual__juqmgq",
-            "source": "var__Demographics::main",
-            "target": old_id + "::main",
-            "targetHandle": "in__side",
-        }
-        rewrites, superseded = superseded_manual_input_overrides(
-            {old_id: {"side": "Demographics"}}, fn_input_params, fn_outputs, {}, [edge]
-        )
-        assert superseded == {old_id: new_id}
-        assert rewrites == [{**edge, "target": new_id + "::main"}], (
-            "placement suffix preserved; the rewritten edge now duplicates the "
-            "DB-derived edge on the new node and build_edges' dedup folds it"
-        )
-
-    def test_overlay_whose_wiring_has_not_run_is_kept(self):
-        from scistack_gui.domain.graph_builder import superseded_manual_input_overrides
-        from scistack_gui.ids import fn_node_id
-
-        old_wid = self._wid({"gr": "GAITRiteLoaded"})
-        old_id = fn_node_id(self.FN, old_wid)
-        fn_input_params = {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}}
-        edge = {
-            "id": "manual__1",
-            "source": "var__Demographics",
-            "target": old_id,
-            "targetHandle": "in__side",
-        }
-        rewrites, superseded = superseded_manual_input_overrides(
-            {old_id: {"side": "Demographics"}},
-            fn_input_params,
-            {(self.FN, old_wid): {"GRTable"}},
-            {},
-            [edge],
-        )
-        assert rewrites == [] and superseded == {}
-
-    def test_each_of_overlay_is_superseded_by_the_manual_variables_wiring(self):
-        # An EachOf run records one wiring per source; the history source's
-        # wiring is this node already, so the wiring to look for is history
-        # with the MANUAL edge's variable.
-        from scistack_gui.domain.graph_builder import superseded_manual_input_overrides
-        from scistack_gui.ids import fn_node_id
-
-        old_wid = self._wid({"gr": "GAITRiteLoaded"})
-        new_wid = self._wid({"gr": "OtherGR"})
-        old_id, new_id = fn_node_id(self.FN, old_wid), fn_node_id(self.FN, new_wid)
-        fn_input_params = {
-            (self.FN, old_wid): {"gr": "GAITRiteLoaded"},
-            (self.FN, new_wid): {"gr": "OtherGR"},
-        }
-        fn_outputs = {(self.FN, old_wid): {"GRTable"}, (self.FN, new_wid): {"GRTable"}}
-        edge = {
-            "id": "manual__1",
-            "source": "var__OtherGR",
-            "target": old_id,
-            "targetHandle": "in__gr",
-        }
-        rewrites, superseded = superseded_manual_input_overrides(
-            {old_id: {"gr": ["GAITRiteLoaded", "OtherGR"]}},
-            fn_input_params,
-            fn_outputs,
-            {},
-            [edge],
-        )
-        assert superseded == {old_id: new_id}
-        assert rewrites[0]["target"] == new_id
-
-
 class TestRunStatePropagationFollowsManualEdges:
     """Red must cross an edge the user drew.
 
@@ -3386,6 +3340,7 @@ class TestRunStatePropagationFollowsManualEdges:
             self._manual_edge(
                 self.MID, mid_wid, "var__GAITRiteLoaded::main", "in__grTableIn"
             ),
+            token_for=identity_token,
         )
         assert overlaid[mid_key] == {"grTableIn": "GAITRiteLoaded"}
 
@@ -3416,6 +3371,7 @@ class TestRunStatePropagationFollowsManualEdges:
             self._manual_edge(
                 self.MID, mid_wid, "var__GAITRiteLoaded::main", "in__grTableIn"
             ),
+            token_for=identity_token,
         )
         assert fn_input_params[mid_key] == {}, "the caller's dict was mutated"
         assert wiring_id(self.MID, fn_input_params[mid_key], {"GAITRiteLoaded_UA"}, {}) == mid_wid
@@ -3426,7 +3382,7 @@ class TestRunStatePropagationFollowsManualEdges:
         loader_key, mid_key, fn_input_params, fn_outputs = self._graph()
         assert (
             input_params_with_manual_edges(
-                fn_input_params, fn_outputs, {}, {}, []
+                fn_input_params, fn_outputs, {}, {}, [], identity_token
             )
             is fn_input_params
         )
@@ -3539,103 +3495,192 @@ class TestManualEdgeHandleIndexKeepsEveryEdge:
         }
 
 
-class TestSupersessionMigratesInOnePass:
-    """Every edge on the handle moves at once, and a rebuild moves nothing.
 
-    Observed 2026-09-22: the migration wrote two edges at 13:51:40 and two
-    more at 13:51:54, fourteen seconds apart, because the index only surfaced
-    one edge per handle at a time.
+
+class TestStatedWiringClaims:
+    """A node STATES the wiring its drawn edges give it — rule 2 of
+    ``domain.node_identity``.
+
+    This replaces ``superseded_manual_input_overrides`` (deleted 2026-09-22,
+    Stage 6 of ``.claude/plan-node-identity.md``). That function detected,
+    AFTER a run, that a second node now held the wiring the overlay described
+    — and then rewrote the manual edge onto it and carried every ``_intent``
+    statement across. Under allocated node ids the second node never forms:
+    the wiring the run records is claimed by the node that already stated it,
+    so there is nothing to detect, rewrite or carry.
+
+    The claim is computed from the STATED wiring, which is what the user
+    controls, rather than from a repair applied to what happened.
     """
 
     FN = "grSides"
 
-    def _setup(self, n_edges_per_handle: int):
+    def _wid(self, inputs):
         from scistack_gui.domain.graph_builder import wiring_id
+
+        return wiring_id(self.FN, inputs, {"GRTable"}, {})
+
+    def _claims(self, fn_input_params, fn_outputs, edges, current_by_node):
+        from scistack_gui.domain.graph_builder import stated_wiring_claims
+
+        return stated_wiring_claims(
+            fn_input_params,
+            fn_outputs,
+            {},
+            {},
+            edges,
+            {},
+            frozenset(),
+            current_by_node,
+        )
+
+    def test_the_node_the_edge_was_drawn_on_claims_the_wiring_a_run_records(self):
         from scistack_gui.ids import fn_node_id
 
-        history = {"grTableIn": "GAITRiteLoaded"}
-        effective = {"grTableIn": "GAITRiteLoaded", "side": "Demographics"}
-        outs = {"GAITRiteLoaded_UA"}
-        old_wid = wiring_id(self.FN, history, outs, {})
-        new_wid = wiring_id(self.FN, effective, outs, {})
-        fn_input_params = {
-            (self.FN, old_wid): history,
-            (self.FN, new_wid): effective,
-        }
-        fn_outputs = {(self.FN, old_wid): outs, (self.FN, new_wid): outs}
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        new_wid = self._wid({"gr": "GAITRiteLoaded", "side": "Demographics"})
+        old_id = fn_node_id(self.FN, old_wid)
+        claims = self._claims(
+            {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}},
+            {(self.FN, old_wid): {"GRTable"}},
+            [
+                {
+                    "id": "manual__juqmgq",
+                    "source": "var__Demographics::main",
+                    "target": old_id + "::main",
+                    "targetHandle": "in__side",
+                }
+            ],
+            {old_id: old_wid},
+        )
+
+        assert claims == {(self.FN, new_wid): [old_id]}, (
+            "the node with the drawn edge must claim the wiring its own run "
+            "will record, or that run produces a second node"
+        )
+
+    def test_a_node_with_no_drawn_edge_claims_nothing(self):
+        from scistack_gui.ids import fn_node_id
+
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        assert (
+            self._claims(
+                {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}},
+                {(self.FN, old_wid): {"GRTable"}},
+                [],
+                {fn_node_id(self.FN, old_wid): old_wid},
+            )
+            == {}
+        )
+
+    def test_a_wiring_with_no_node_yet_cannot_claim(self):
+        """Nothing is stated by a node that does not exist.
+
+        This is what makes ``resolve_identities`` a single pass: a node whose
+        id did not exist a moment ago has no edges drawn onto it, so nothing
+        minted in a pass can claim anything in the same pass.
+        """
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        assert (
+            self._claims(
+                {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}},
+                {(self.FN, old_wid): {"GRTable"}},
+                [
+                    {
+                        "id": "manual__1",
+                        "source": "var__Demographics",
+                        "target": f"fn__{self.FN}__{old_wid}",
+                        "targetHandle": "in__side",
+                    }
+                ],
+                {},
+            )
+            == {}
+        )
+
+    def test_an_each_of_overlay_claims_every_sources_wiring(self):
+        """Provenance stores one variable type per input, so an EachOf run
+        splits into ONE WIRING PER SOURCE — and the node states every one.
+
+        Claiming only the first is how the second source's run would still
+        fork a node: the run writes both shapes and only one is spoken for.
+        This is the case the deleted ``superseded_manual_input_overrides``
+        handled by reading the variable off the edge rather than off the
+        override list.
+        """
+        from scistack_gui.ids import fn_node_id
+
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        other_wid = self._wid({"gr": "OtherGR"})
+        old_id = fn_node_id(self.FN, old_wid)
+        claims = self._claims(
+            {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}},
+            {(self.FN, old_wid): {"GRTable"}},
+            [
+                {
+                    "id": "manual__1",
+                    "source": "var__OtherGR",
+                    "target": old_id,
+                    "targetHandle": "in__gr",
+                }
+            ],
+            {old_id: old_wid},
+        )
+
+        # The node's OWN wiring is not a claim (it is already its key); the
+        # other source's is.
+        assert claims == {(self.FN, other_wid): [old_id]}
+
+    def test_every_edge_on_a_handle_is_considered_in_one_pass(self):
+        """Observed 2026-09-22: the handle index surfaced one edge at a time,
+        so a node with two edges per handle needed two builds and did half the
+        work each time. The claim must be reached in ONE pass."""
+        from scistack_gui.ids import fn_node_id
+
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        new_wid = self._wid({"gr": "GAITRiteLoaded", "side": "Demographics"})
+        old_id = fn_node_id(self.FN, old_wid)
         edges = [
             {
                 "id": f"manual__{i}",
                 "source": "var__Demographics::main",
-                "target": fn_node_id(self.FN, old_wid) + "::main",
+                "target": old_id + "::main",
                 "targetHandle": "in__side",
             }
-            for i in range(n_edges_per_handle)
+            for i in range(2)
         ]
-        overrides = {fn_node_id(self.FN, old_wid): {"side": "Demographics"}}
-        return (
-            overrides,
-            fn_input_params,
-            fn_outputs,
+        claims = self._claims(
+            {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}},
+            {(self.FN, old_wid): {"GRTable"}},
             edges,
-            fn_node_id(self.FN, new_wid),
+            {old_id: old_wid},
         )
 
-    def test_both_edges_move_in_the_same_build(self):
-        from scistack_gui.domain.graph_builder import (
-            superseded_manual_input_overrides,
+        assert claims == {(self.FN, new_wid): [old_id]}
+        assert len(claims[(self.FN, new_wid)]) == 1, "one node, not one per edge"
+
+    def test_two_nodes_sharing_a_current_shape_both_claim(self):
+        """§7b, seen from here. Two nodes with the same current wiring and the
+        same edge drawn on each both claim — and the resolution is supposed to
+        REPORT that, so collapsing them to one node here would hide it."""
+        from scistack_gui.ids import fn_node_id
+
+        old_wid = self._wid({"gr": "GAITRiteLoaded"})
+        new_wid = self._wid({"gr": "GAITRiteLoaded", "side": "Demographics"})
+        first, second = fn_node_id(self.FN, "a" * 16), fn_node_id(self.FN, "b" * 16)
+        claims = self._claims(
+            {(self.FN, old_wid): {"gr": "GAITRiteLoaded"}},
+            {(self.FN, old_wid): {"GRTable"}},
+            [
+                {
+                    "id": f"manual__{i}",
+                    "source": "var__Demographics",
+                    "target": node_id,
+                    "targetHandle": "in__side",
+                }
+                for i, node_id in enumerate((first, second))
+            ],
+            {first: old_wid, second: old_wid},
         )
 
-        overrides, params, outputs, edges, new_id = self._setup(2)
-        rewrites, superseded = superseded_manual_input_overrides(
-            overrides, params, outputs, {}, edges
-        )
-        assert len(rewrites) == 2, (
-            "one build moved only some of the edges — the rest need another "
-            "build, which is what made this look like a retry loop"
-        )
-        assert all(r["target"] == new_id + "::main" for r in rewrites)
-        assert superseded
-
-    def test_a_rebuild_finds_nothing_left_to_migrate(self):
-        """Idempotence, through the path a real build takes.
-
-        The migrated edges name the NEW node, so the old wiring has no manual
-        edge on any handle — `manual_input_overrides` returns nothing, the old
-        node never enters `overrides_by_node`, and the migration cannot run a
-        second time. Asserting that via the real derivation rather than by
-        re-passing a stale overrides dict is the difference between testing
-        the behaviour and testing a hand-made input: the first version of this
-        test did the latter, and its failure is what exposed a dead guard in
-        the code.
-        """
-        from scistack_gui.domain.graph_builder import (
-            manual_edge_handle_index,
-            manual_input_overrides,
-            superseded_manual_input_overrides,
-            wiring_id,
-        )
-
-        overrides, params, outputs, edges, new_id = self._setup(2)
-        rewrites, _ = superseded_manual_input_overrides(
-            overrides, params, outputs, {}, edges
-        )
-        migrated = [{**e, "target": r["target"]} for e, r in zip(edges, rewrites)]
-
-        history = {"grTableIn": "GAITRiteLoaded"}
-        old_wid = wiring_id(self.FN, history, {"GAITRiteLoaded_UA"}, {})
-        assert (
-            manual_input_overrides(
-                self.FN,
-                old_wid,
-                history,
-                set(),
-                manual_edge_handle_index(migrated),
-            )
-            == {}
-        ), "the old wiring still appears to carry a drawn edge"
-
-        again, _ = superseded_manual_input_overrides(
-            {}, params, outputs, {}, migrated
-        )
-        assert again == [], "a rebuild re-wrote edges that had already moved"
+        assert sorted(claims[(self.FN, new_wid)]) == sorted([first, second])

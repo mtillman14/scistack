@@ -210,3 +210,93 @@ Both vite bundles were rebuilt 2026-09-15 (see memory
   matched" view would be a tree per record; not built.
 - The MATLAB bridge has no `provenance` entry yet (same gap as
   `Variant(run_options=)` there).
+
+---
+
+## The bottom-up view — `scidb variants` and the Variants panel
+
+*Added 2026-09-22 (`.claude/plan-topologies-panel.md`).*
+
+`provenance` and `topologies` are the **two directions**, and neither answers
+the other's question:
+
+|  | `Inspector.provenance` | `Inspector.topologies` |
+|---|---|---|
+| direction | top-down | bottom-up |
+| question | "where did **this** variant come from?" | "what is in here, and which of it is still live?" |
+| you must already know | which variant you mean | nothing but the variable's name |
+| surfaces | `scidb trace`, `ProvenancePanel` | `scidb variants`, `TopologiesPanel` |
+
+**You cannot pin a variant you do not know exists.** That is the whole reason
+the second one exists: on 2026-09-22 a run split `grSides` into two nodes and
+the existing tooling could not say so — the flat variants table shows variants,
+and a second *topology* (a node the user did not know existed) looks exactly
+like a second *variant* (a run they forgot about).
+
+### The two levels
+
+A **topology** is `(function_name, input_types, output_type)` — which
+function, fed by what, producing what, independent of constants, run options,
+code version and schema location. It is the level a user reasons about when
+they look at the canvas: **one node**. Within a topology, the variants are the
+runs of it.
+
+No wiring id is computed in `topologies`: the GUI has one
+(`graph_builder.wiring_id`) and scidb's nearest equivalent (`call_id`) folds in
+constants and run options, so inventing a third answer to "which node is this"
+is exactly the failure mode `docs/claude/node-identity.md` is about.
+
+### `load:` is the column that matters
+
+Everything above it is context the reader wanted anyway. That line is the only
+place in the GUI where *"this variant is not what a run will read"* is visible,
+and two variants that look equally alive is the shape of the bug. The
+vocabulary is closed (`scidb.inspect.api.VERDICT_*`) and the GUI styles off the
+code, never off the wording:
+
+* `current` — a `latest` load returns these records;
+* `partially_superseded` — some locations still returned, some not. **Not a
+  rounding of the other two**: run options are judged per function, globally,
+  so a variant can lose some locations and keep others — the trial-4 orphan
+  that started the investigation;
+* `superseded` — an older run-option set; nothing here reaches a load.
+
+### One owner per rule, across both surfaces
+
+`variant_verdict` and `location_sample` live in `scidb/inspect/api.py`, beside
+the method that produces the summaries. `render._location_sample` is the text
+form of the second; `services/variants_service.py` ships both to the panel.
+Neither surface decides for itself what "SUPERSEDED" means or which locations
+to show (CLAUDE.md NOTE 3).
+
+The GUI calls the shared API rather than shelling out to `scidb variants
+--json` for the reason `provenance_service` states: a subprocess would open a
+second connection to a single-writer DuckDB file.
+
+### GUI
+
+* RPC `variable_topologies(variable, all_locations, max_locations)` and
+  `POST /api/provenance/variable-topologies` → `variants_service.
+  variable_topologies`. `NotFoundError` → HTTP 400: a name that is not a
+  variable is a typo in the box, not a server fault. A real variable with no
+  producing pipeline steps returns zero topologies, which is the true answer,
+  not an error.
+* `schema_ids` is dropped from the reply and replaced by `locations` (its
+  sampled view) — a loader has hundreds and the panel never shows the ids.
+* `TopologiesPanel` reaches the user two ways, deliberately kept apart from
+  Provenance: the header's 🧬 **Variants** button, and **🧬 Variants…** on a
+  variable node's context menu — *the question arises at a node*.
+* Read-only by design. No "delete this variant", no "re-run under these
+  options": the project's ethos is hide, never delete, and hiding a variant is
+  a separate decision with its own consequences for node state.
+
+### Tests
+
+* `scistack-gui/tests/test_variants_service.py` — grouping ≡
+  `Inspector.topologies`, field-for-field; the verdict is scidb's verdict; the
+  run-option flip leaving an older variant superseded; location sampling; an
+  unknown name as a 400; a raw-saved variable as zero topologies; both
+  transports.
+* `frontend/src/components/Variants/topologies.test.ts` — the wording rules
+  over a fixture shaped like the reply (one topology, two variants, one
+  superseded), run by `npm test` under `node --test`.

@@ -302,3 +302,168 @@ them. That is a storage requirement, not a design question.
 | the partial migration today | `api/pipeline._migrate_column_selections` |
 | the same decision, for Parameters | `ids.py`, `PARAM_ID_PREFIX` |
 | the symptom this came from | `.claude/plan-run-state-and-duplicate-nodes.md` Problem 3 |
+
+---
+
+## 10. What was built — 2026-09-22/23
+
+`.claude/plan-node-identity.md`, all six stages but one piece of Stage 6.
+The full `scistack-gui` suite passes as of 2026-09-23; the canvas has not been
+looked at (`docs/gui-manual-testing-todo.md` item 0p).
+
+### The table
+
+`_node_wiring (node_id, wiring_id, run_id, first_seen, last_seen, scope)`,
+primary key `(node_id, wiring_id)`, append-only. Created by
+`pipeline_store._ensure_tables` beside `_intent`, never in provenance (§7a).
+Accessors in `scistack_gui/node_wiring.py`; a repeat advances `last_seen` and
+leaves `first_seen` alone, because rewriting it would erase the chronology
+that makes *"what did it run as before?"* answerable.
+
+### Two questions, two answers
+
+Attribution gives a node a growing list of wirings. That list is **history**.
+The node's shape on the canvas is its **current** wiring — the latest one it
+ran as, plus any edge drawn since.
+
+| | current wiring | every wiring |
+|---|---|---|
+| lookup | `node_wiring.current_wiring` | `node_wiring.wirings_for_node` |
+| decides | handles, edges, constants, what a Run executes | attribution, the Variants view, provenance |
+
+Conflating them is how a node ends up drawing a handle for a shape the user
+rewired away from, or re-running records it deliberately moved on from. The
+graph build takes a node's shape from its current wiring only
+(`IdentityPlan.is_current` → `group_call_sites_by_wiring`), and
+`derive_target_for_node` runs that one wiring, not the union.
+
+### The id that is minted
+
+`fn__{fn}__{uuid4[:16]}`, always (D-2026-09-22-3). The only readable thing in
+a node id is the function it runs. Sixteen hex because `ids.parse_fn_node_id`
+recognises a DB-derived function node by exactly that, in ~40 places — a
+contract with the id grammar, not part of the decision.
+
+**There is no migration.** A database built before this change has no
+associations, so the first build mints a fresh id for every function node and
+every saved position, node config, hide and scope membership keyed by
+`fn__{fn}__{wiring_id}` stops resolving. Paid once, deliberately: an id that
+*looks* like a wiring hash and is not one is the confusion §1 is about.
+`node_wiring.forget_all` pays it again on purpose; nothing calls it.
+
+### The seam
+
+`graph_builder`'s node-deriving functions no longer spell
+`fn__{fn}__{wiring_id}`. They take **`token_for(fn_name, wiring) -> token`**
+(and `group_call_sites_by_wiring` also takes `is_current`), and both are
+**REQUIRED, with no default**. Deriving a node id from its wiring is the bug
+this removes; a default that quietly did it would make the regression
+invisible — no error, no log line, just the old behaviour. A missing argument
+is a `TypeError` at the call site instead. `identity_token` and the test
+helper `_all_current` exist for callers where the equivalence is TRUE and
+worth stating: the pure-domain tests, which have no nodes and no database and
+are testing graph shape rather than identity.
+
+The seam covers:
+
+| function | what the token keys |
+|---|---|
+| `group_call_sites_by_wiring` | the canvas node each call site lands in |
+| `hidden_wirings` / `wiring_disconnected_fkeys` | reconstructed edge ids vs stored hidden edge ids |
+| `input_params_with_manual_edges` | the manual-edge handle index |
+| `wirings_downstream_of` | the cascade, keyed the same as its seed |
+
+`manual_edge_handle_index`'s key was ALWAYS the node's token — it is read off
+the edge's `target` — which is why the parameter was called `wid` everywhere.
+Outside the build, `node_wiring.token_resolver(db)` is the same seam read from
+the table, and `variant_resolver.reconcile_manual_inputs` takes a `token_for`
+too — the name-scoped run path has no node id, so it maps each target's wiring
+to whichever node holds it. Without that, a drawn edge is looked for under the
+wiring rather than the node id it was stored against, finds nothing, and the
+run silently ignores it.
+
+**A caller that needs node ids but not the graph** asks
+`api/pipeline.ensure_node_identities(db)`, which runs the same one resolution
+`_build_graph` does and is idempotent. `execution_service._scope_function_node_ids`
+is the case: it lists the nodes a scope compiles, from HISTORY, and history can
+hold a wiring written since the canvas last refreshed. Fabricating an id there
+would be two surfaces inventing an id for one node — the bug this removes — and
+under allocation a fabricated id names no node at all, so the step compiles to
+nothing.
+
+### Attribution
+
+`domain/node_identity.resolve_identities` — pure, no database, returns an
+`IdentityPlan` the caller persists. In order: recorded association → stated by
+exactly one existing node → stated by several (§7b) → mint.
+
+**One pass, no ordering.** A node can only state a wiring if it already
+exists, and it exists exactly when `_node_wiring` knows it — so rule 2's
+candidates are read from the table (`stated_by`, built by
+`graph_builder.stated_wiring_claims` from `current_wiring_by_node`), never
+from the assignment being built. Nothing minted in a pass can claim anything
+in the same pass, because a node whose id did not exist a moment ago has no
+edges drawn onto it.
+
+An earlier draft minted one wiring at a time so a freshly minted node could
+absorb a wiring in the next round. That existed only to fold in a duplicate
+formed *before* this change — a migration — and dropping it (D-2026-09-22-4)
+removed the iteration, the ordering, and the `first_saved` field it had been
+reading out of `scidb.get_aggregated_variants`.
+
+An `EachOf` overlay claims **every** source's wiring, not just the first: a
+run splits into one wiring per source, and claiming only the first would let
+the second fork a node.
+
+Dispatch recording (`execution_service.record_dispatch_wirings`) covers the
+Python run thread, the pipeline compiler and both MATLAB command routes.
+
+### Nothing is silent
+
+Neither half swallows a failure (D-2026-09-22-5). `node_wiring`'s reads raise,
+`_resolve_node_identity` raises, `record_dispatch_wirings` raises. If identity
+cannot be resolved the GUI cannot say which node a run belongs to, and node
+state, the Run button and every saved setting are then describing something
+unverified — a canvas that draws but cannot be trusted is worse than an error,
+because the user cannot tell the two apart.
+
+### Ambiguity
+
+`Ambiguity` rides out of the plan and onto the graph response as
+`warnings: [{kind: "wiring_ambiguity", ...}]`. `PipelineDAG` raises a dialog
+naming both nodes and saying runs go to one of them until they differ;
+dismissal is per tab and per pair. The log says it once per process per pair
+(`_should_log_ambiguity`) — a repeated warning buries the next one. Nothing is
+merged. The tie-break is: a node that has already run as that wiring, else the
+oldest by `first_seen` in `_node_wiring`, else the id.
+
+### What was retired
+
+`graph_builder.superseded_manual_input_overrides` and
+`api/pipeline._migrate_node_statements` are **deleted**. Under allocated ids
+the wiring a run records is claimed by the node that stated it, so there is no
+second node to detect, no edge to rewrite and no statement to carry.
+
+### Deliberately NOT retired: the graduation id-swap
+
+Stage 6 also listed it (D-2026-09-22-4). What was added instead is
+`node_wiring.rekey_node`, called from `pipeline_store.graduate_manual_node`, so
+a manual node that was RUN before it graduated takes its dispatch record with
+it. Do this one on its own, after the suite is green and the canvas has been
+looked at.
+
+### Tests
+
+| file | what it pins |
+|---|---|
+| `scistack-gui/tests/test_node_wiring.py` | the table: round trip, append-only, current-shape vs history, the mint rule, re-keying |
+| `scistack-gui/tests/test_node_identity.py` | the rule (pure), current-vs-history, the grSides shape end to end, dispatch recording, and that the repair paths are gone |
+| `scistack-gui/tests/test_wiring_parity.py` | the fifth identity — a node's stated wiring, computed forward, equals the wiring its run recorded |
+| `scistack-gui/tests/test_graph_builder.py::TestStatedWiringClaims` | rule 2's input, including the EachOf case |
+| `scistack-gui/tests/test_api.py::TestManualInputEdgesOnHistoryNodes` | "nothing to carry, because the id did not move" |
+
+`tests/conftest.py::bp_node_id` no longer computes an id — it LOOKS ONE UP
+(and allocates if the GUI has not opened the database yet). Any test that
+spells `fn_node_id(fn, wiring_id(...))` against a real database has to do the
+same; the pure-domain tests, which use the default `token_for`, are unaffected
+because there the token still is the wiring.

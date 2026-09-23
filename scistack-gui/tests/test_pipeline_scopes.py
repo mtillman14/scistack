@@ -2388,13 +2388,19 @@ class TestDeriveTargetForNode:
         """The flip side: an already-graduated node's own wiring must
         resolve to ITS real DB history, not get confused by an unrelated
         manual node sharing the same label."""
+        from scistack_gui import node_wiring
         from scistack_gui.db import get_db
         from scistack_gui.domain.graph_builder import wiring_id
-        from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import derive_target_for_node
 
+        # The node's id is allocated, not derived, so it is LOOKED UP by the
+        # wiring rather than spelled (docs/claude/node-identity.md).
         real_wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
-        real_node_id = fn_node_id("bandpass_filter", real_wid)
+        node_wiring.ensure_tables(get_db())
+        real_node_id = node_wiring.node_for_wiring(get_db(), real_wid)
+        if real_node_id is None:
+            real_node_id = str(node_wiring.mint_node_id("bandpass_filter"))
+            node_wiring.record(get_db(), real_node_id, real_wid)
 
         targets = derive_target_for_node(get_db(), real_node_id)
 
@@ -2418,8 +2424,8 @@ class TestDeriveTargetForNode:
         from scistack_gui import layout as layout_store
         from scistack_gui import pipeline_store
         from scistack_gui.db import get_db
+        from scistack_gui import node_wiring
         from scistack_gui.domain.graph_builder import wiring_id
-        from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import derive_target_for_node
 
         class OtherSignal7(BaseVariable):
@@ -2427,13 +2433,21 @@ class TestDeriveTargetForNode:
 
         OtherSignal7.save(np.zeros(5), subject=1, session="pre")
 
-        real_wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
-        real_node_id = fn_node_id("bandpass_filter", real_wid)
         db = get_db()
+        # The node id is allocated, and the hidden-edge id is built FROM it —
+        # both sides of that lookup are keyed by the node, not by the wiring
+        # (docs/claude/node-identity.md).
+        real_wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
+        node_wiring.ensure_tables(db)
+        real_node_id = node_wiring.node_for_wiring(db, real_wid)
+        if real_node_id is None:
+            real_node_id = str(node_wiring.mint_node_id("bandpass_filter"))
+            node_wiring.record(db, real_node_id, real_wid)
+        real_token = real_node_id.split("__", 2)[2]
 
         pipeline_store.hide_edge(
             db,
-            f"e__RawSignal__bandpass_filter__{real_wid}",
+            f"e__RawSignal__bandpass_filter__{real_token}",
             "var__RawSignal",
             real_node_id,
             None,

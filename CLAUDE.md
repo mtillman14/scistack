@@ -1,8 +1,10 @@
-NOTE: You do not have access to Python, it is not installed! Please give me Python commands in copy and paste to Terminal format. Multi-line commands should be given in a form that I can use in a tmp.py file or split into separate copy-pasteable individual lines.
+NOTE 1: You do not have access to Python, it is not installed! Please give me Python commands in copy and paste to Terminal format. Multi-line commands should be given in a form that I can use in a tmp.py file or split into separate copy-pasteable individual lines.
 
-NOTE 2: It is extremely important that whenever an issue is encountered, we prioritize adding logging to observe the internals related to the issue, and tests to prevent regression. This could be an error, or just an architectural decision.
+NOTE 2: Whenever an issue is encountered, we prioritize adding logging to observe the internals related to the issue, and tests to prevent regression. This could be an error, or just an architectural decision.
 
 NOTE 3: As much as possible and as appropriate, solutions to problems should live in the corresponding scistack layer. Only GUI-related issues should live in the GUI layer.
+
+NOTE 4: It is extremely important that one concept should have one owner, and one or more consumers. Divergence betweeen multiple owners for identical concepts has been one of the most frequent sources of bugs in this project. To fix that, please make sure that every concept has only one owner, so no readers can diverge.
 
 This is a software package to facilitate scientific data processing. You should learn more about it by reading the README.md
 
@@ -37,11 +39,8 @@ Prefer LSP over Grep/Glob/Read for code navigation:
 - `hover` for type info without reading the file
 - `incomingCalls` / `outgoingCalls` for call hierarchy
 
-Before renaming or changing a function signature, use
-`findReferences` to find all call sites first.
+Before renaming or changing a function signature, use `findReferences` to find all call sites first.
 
-Use Grep/Glob only for text/pattern searches (comments,
-strings, config values) where LSP doesn't help.
+Use Grep/Glob only for text/pattern searches (comments, strings, config values) where LSP doesn't help.
 
-After writing or editing code, check LSP diagnostics before
-moving on. Fix any type errors or missing imports immediately.
+After writing or editing code, check LSP diagnostics before moving on. Fix any type errors or missing imports immediately.

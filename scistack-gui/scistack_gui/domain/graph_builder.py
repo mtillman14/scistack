@@ -17,6 +17,7 @@ from scidb.provenance import parse_path_input_spec as _parse_path_input_spec
 from scidb.provenance import strip_path_input_specs as _strip_path_input_specs
 
 from scistack_gui.ids import (
+    FN_ID_PREFIX,
     PARAM_ID_PREFIX,
     PATH_INPUT_ID_PREFIX,
     ROOT_SCOPE,
@@ -194,6 +195,32 @@ def wiring_id(fn_name: str, input_params: dict, out_types, path_inputs: dict) ->
     return _compute_wiring_id(fn_name, input_params, out_types, path_inputs)
 
 
+def identity_token(fn_name: str, wiring: str) -> str:
+    """A ``token_for`` that says a node's identity token IS its wiring.
+
+    **The seam for allocated node ids** (D-2026-09-22-1,
+    ``docs/claude/node-identity.md``). Every function below that used to
+    derive a node id as ``fn__{fn}__{wiring_id}`` now asks a ``token_for``
+    callable for the trailing segment instead.
+
+    **``token_for`` is a REQUIRED parameter and this is not its default.**
+    Deriving a node id from its wiring is the bug the whole change removes;
+    if forgetting to pass the mapping silently fell back to doing exactly
+    that, the regression would be invisible — no error, no log line, just the
+    old behaviour. A missing argument is a ``TypeError`` at the call site
+    instead (user decision 2026-09-23, the same reasoning as D-2026-09-22-5).
+
+    So this exists for callers for which the equivalence is TRUE and worth
+    stating: the pure-domain tests, which have no nodes and no database and
+    are testing the graph shape rather than identity. Passing it there reads
+    as an assumption declared, not a default inherited.
+
+    Why a callable rather than a dict: the mapping is per graph build, is
+    computed from the database, and is not available to the pure layer.
+    """
+    return wiring
+
+
 def path_input_bindings_by_fkey(path_inputs: dict) -> dict[FnKey, dict[str, str]]:
     """Invert ``AggregatedData.path_inputs`` into ``{fkey: {param: declared
     PathInput name}}`` — the per-call-site shape ``wiring_id`` needs.
@@ -214,11 +241,13 @@ def group_call_sites_by_wiring(
     run_states: dict[str, str],
     pending_constants: dict[str, set] | None = None,
     *,
+    token_for,
+    is_current,
     manual_edges: "list[dict] | tuple" = (),
     manual_nodes: "dict[str, dict] | None" = None,
     hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
 ) -> tuple[AggregatedData, dict[str, str], dict[str, list[str]]]:
-    """Re-key the aggregated call-site data to (fn_name, wiring_id) groups.
+    """Re-key the aggregated call-site data to (fn_name, node token) groups.
 
     User decision 2026-07-18: one canvas node per function + wiring;
     constant-value call sites become variant rows INSIDE the node (each row
@@ -244,6 +273,19 @@ def group_call_sites_by_wiring(
          just the group it was staged on,
          member_map — {group_node_id: [legacy member node ids]} for the
          one-time position/edge adoption).
+
+    ``token_for(fn_name, wiring_id) -> token`` decides the id the group is
+    keyed by, and ``is_current(fn_name, wiring_id)`` says whether that wiring
+    is the node's shape NOW or one it merely used to run as. Both come from
+    the build's ``IdentityPlan`` and both are REQUIRED — deriving a node id
+    from its wiring is the bug this removes, and a default that quietly did it
+    would make the regression invisible (see ``identity_token``).
+
+    Under allocation, TWO wirings can map to ONE token — a node that was
+    rewired and then run. Its call sites all land in one group, so it keeps
+    its saved position, config and scope membership instead of a second node
+    appearing beside it; but only the CURRENT wiring's call sites contribute
+    its inputs, outputs and constants (``docs/claude/node-identity.md``).
     """
     pending_constants = pending_constants or {}
     grouped = AggregatedData()
@@ -264,12 +306,29 @@ def group_call_sites_by_wiring(
             agg.fn_outputs.get(fkey, set()),
             pi_by_fkey.get(fkey, {}),
         )
-        gkey = (fn, wid)
+        token = token_for(fn, wid)
+        gkey = (fn, token)
         fkey_to_gkey[fkey] = gkey
 
-        grouped.fn_input_params[gkey].update(agg.fn_input_params[fkey])
-        grouped.fn_outputs[gkey] |= set(agg.fn_outputs.get(fkey, set()))
-        grouped.fn_constants[gkey] |= set(agg.fn_constants.get(fkey, set()))
+        # A node's SHAPE comes from its current wiring only — never the union
+        # of every shape it has ever run as. A node that was rewired owns its
+        # older wirings (they are its history, and its variant rows below
+        # carry them), but drawing handles and edges for a shape the user
+        # rewired away from would put a node on the canvas that is not the
+        # node they see. `is_current` is the identity plan's answer; with the
+        # default `token_for` every wiring is its own token and so always
+        # current, which is the pre-allocation behaviour exactly.
+        if is_current(fn, wid):
+            grouped.fn_input_params[gkey].update(agg.fn_input_params[fkey])
+            grouped.fn_outputs[gkey] |= set(agg.fn_outputs.get(fkey, set()))
+            grouped.fn_constants[gkey] |= set(agg.fn_constants.get(fkey, set()))
+        else:
+            # Still reserve the group, so a node whose every call site is
+            # historical does not vanish from the canvas between the run that
+            # rewired it and the next one.
+            grouped.fn_input_params.setdefault(gkey, {})
+            grouped.fn_outputs.setdefault(gkey, set())
+            grouped.fn_constants.setdefault(gkey, set())
 
         member_state = run_states.get(fn_node_id(fn, cid))
         if member_state:
@@ -283,7 +342,7 @@ def group_call_sites_by_wiring(
                 }
             )
 
-        member_map.setdefault(fn_node_id(fn, wid), []).append(fn_node_id(fn, cid))
+        member_map.setdefault(fn_node_id(fn, token), []).append(fn_node_id(fn, cid))
 
     # const/path-input edge targets follow their call sites into the groups.
     for const_name, fkeys in agg.const_fns.items():
@@ -348,8 +407,9 @@ def group_call_sites_by_wiring(
             grouped.fn_constants,
             grouped.path_inputs,
             manual_edges,
-            manual_nodes,
-            hidden_edge_ids,
+            token_for,
+            manual_nodes=manual_nodes,
+            hidden_edge_ids=hidden_edge_ids,
         ),
         grouped.fn_outputs,
     )
@@ -1724,7 +1784,7 @@ def inbound_edge_candidates_by_handle(
 def manual_edge_handle_index(
     manual_edges: "list[dict] | tuple",
 ) -> dict[tuple[str, str, str], dict]:
-    """Index manual edges by the (fn_name, wiring_id, target_handle) call
+    """Index manual edges by the (fn_name, node token, target_handle) call
     site they currently feed — the "is this exact input handle covered by
     a manual reconnect?" lookup used by hidden_wirings/
     reconcile_manual_inputs to stop treating a hidden DB-derived edge
@@ -1733,7 +1793,14 @@ def manual_edge_handle_index(
     way execution_service.derive_fn_targets already matches manual edges
     to function nodes (parse_fn_node_id, which strips any placement
     suffix first) — so a bare, wiring-grouped, or scope-placed target id
-    all resolve to the same (fn_name, wiring_id) key.
+    all resolve to the same key.
+
+    **The key's second element is the NODE's token, not a wiring id.** It
+    always was — it is read off the ``target`` node id — and until
+    2026-09-22 the two were the same string, which is why the parameter was
+    called ``wid`` everywhere. Under allocated node ids they can differ, and
+    every caller that computes a wiring must map it through ``token_for``
+    before looking in here (``docs/claude/node-identity.md``).
 
     **Every** edge on a handle, not the last one scanned (2026-09-22). The
     index used to hold one edge per key, which silently lost the others: two
@@ -1773,6 +1840,12 @@ def manual_input_overrides(
     """``{param: variable_type_or_list}`` — the VISIBLE variable sources of
     every ``in__<param>`` handle of the ``(fn, wid)`` call site that a manual
     variable edge lands on.
+
+    ``wid`` is the **node's token** — the trailing segment of its id, which
+    is what ``manual_index`` and the reconstructed edge ids are keyed by. It
+    equalled the wiring id until allocated node ids (2026-09-22) and still
+    does for every node that has not been rewired; a caller holding a WIRING
+    must map it through ``token_for`` first.
 
     This is the one owner of the rule (docs/claude/manual-edges-on-history-
     nodes.md): **the edges visible on the DAG are the ground truth**, for
@@ -1866,6 +1939,7 @@ def input_params_with_manual_edges(
     fn_constants: dict[FnKey, set],
     path_inputs: dict,
     manual_edges: "list[dict] | tuple",
+    token_for,
     manual_nodes: "dict[str, dict] | None" = None,
     hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
 ) -> dict[FnKey, dict]:
@@ -1891,9 +1965,13 @@ def input_params_with_manual_edges(
     goes to ``propagate_run_states`` and nowhere else.
 
     Works on both run-state passes without a flag: the wiring id is recomputed
-    from each entry, which for a per-call-site key derives the group it belongs
-    to, and for an already-grouped key returns that same key's wid (members of a
-    group share their params, because the id hashes exactly those).
+    from each entry and then mapped through ``token_for``, which for a
+    per-call-site key derives the group it belongs to and for an already-grouped
+    key returns that same key's token. Under allocated node ids the second case
+    is what needs the mapping rather than the identity: a grouped key's params
+    are the UNION of the wirings the node has run as, so recomputing gives the
+    node's STATED wiring, and only ``token_for`` knows that this is still the
+    same node (``docs/claude/node-identity.md``).
     """
     if not manual_edges:
         return fn_input_params
@@ -1906,12 +1984,15 @@ def input_params_with_manual_edges(
     applied: dict[str, dict] = {}
     for fkey, params in fn_input_params.items():
         fn, _ = fkey
-        wid = wiring_id(
-            fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
+        token = token_for(
+            fn,
+            wiring_id(
+                fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
+            ),
         )
         overrides = manual_input_overrides(
             fn,
-            wid,
+            token,
             params,
             fn_constants.get(fkey, set()),
             manual_index,
@@ -1920,7 +2001,7 @@ def input_params_with_manual_edges(
         )
         out[fkey] = {**params, **overrides} if overrides else params
         if overrides:
-            applied[fn_node_id(fn, wid)] = overrides
+            applied[fn_node_id(fn, token)] = overrides
     if applied:
         logger.info(
             "[graph_builder] run-state propagation follows %d manual edge "
@@ -1929,6 +2010,152 @@ def input_params_with_manual_edges(
             applied,
         )
     return out
+
+
+def stated_wiring_claims(
+    fn_input_params: dict[FnKey, dict],
+    fn_outputs: dict[FnKey, set],
+    fn_constants: dict[FnKey, set],
+    path_inputs: dict,
+    manual_edges: "list[dict] | tuple",
+    manual_nodes: "dict[str, dict] | None",
+    hidden_edge_ids: "set[str] | frozenset[str]",
+    current_by_node: dict,
+) -> dict[tuple[str, str], list[str]]:
+    """``{(fn_name, stated_wiring): [node_id, ...]}`` — rule 2 of
+    ``domain.node_identity``.
+
+    A node's **stated** wiring is its recorded bindings with the edges the
+    user has DRAWN folded in: the shape a run of it would record. So this
+    answers "which node, if run right now, would produce that wiring?" —
+    which is how a wiring appearing in history for the first time is
+    recognised as a node that already exists rather than as a new one.
+
+    It is deliberately computed from the stated wiring and not from a repair
+    applied afterwards: before the run the node states W2 (the drawn edge is
+    part of what it states), the run records W2, same node. The duplicate
+    never forms, and it is prevented by the thing the user controls
+    (``docs/claude/node-identity.md`` §7a).
+
+    Only nodes that ALREADY EXIST can state anything — ``current_by_node`` is
+    ``{node_id: its current wiring}`` straight from ``_node_wiring``, not an
+    assignment being built. That is what makes ``resolve_identities`` a single
+    pass: nothing minted in a pass can claim anything in the same pass,
+    because a node whose id did not exist a moment ago has no edges drawn onto
+    it.
+
+    The node's CURRENT wiring is the one its drawn edges are folded into — not
+    every shape it has ever run as. A node rewired twice states one wiring,
+    the one it would record if run now.
+
+    Pure: computes, never writes. A claim whose stated wiring equals the
+    recorded one is dropped, since that is the node's own key and claiming it
+    would say nothing.
+    """
+    if not manual_edges or not current_by_node:
+        return {}
+    manual_index = manual_edge_handle_index(manual_edges)
+    if not manual_index:
+        return {}
+    # A LIST per wiring, not one node: two nodes can share a current shape
+    # (the §7b ambiguity), and collapsing them here would hide it from the
+    # resolution that is supposed to report it.
+    nodes_of_wiring: dict[str, list[str]] = {}
+    for node_id, wiring in sorted(current_by_node.items()):
+        nodes_of_wiring.setdefault(wiring, []).append(node_id)
+
+    pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
+    claims: dict[tuple[str, str], list[str]] = {}
+    for fkey, params in fn_input_params.items():
+        fn, _cid = fkey
+        recorded = wiring_id(
+            fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
+        )
+        prefix = f"{FN_ID_PREFIX}{fn}__"
+        for node_id in nodes_of_wiring.get(recorded, ()):
+            # A node id names its function: one that does not start with this
+            # prefix runs something else (a wiring reused after a rename).
+            if not str(node_id).startswith(prefix):
+                continue
+            token = str(node_id)[len(prefix) :]
+            _claim_stated_wirings(
+                claims,
+                fn,
+                token,
+                node_id,
+                params,
+                recorded,
+                fn_outputs.get(fkey, set()),
+                fn_constants.get(fkey, set()),
+                pi_by_fkey.get(fkey, {}),
+                manual_index,
+                manual_nodes,
+                hidden_edge_ids,
+            )
+    if claims:
+        logger.debug("[graph_builder] stated_wiring_claims: %s", claims)
+    return claims
+
+
+def _claim_stated_wirings(
+    claims: dict,
+    fn: str,
+    token: str,
+    node_id: str,
+    params: dict,
+    recorded: str,
+    outputs,
+    const_names,
+    path_input_bindings: dict,
+    manual_index: dict,
+    manual_nodes,
+    hidden_edge_ids,
+) -> None:
+    """One node's claims, appended to *claims* in place.
+
+    Split out of :func:`stated_wiring_claims` so the per-node body reads as
+    one thing: what does the run of THIS node, with the edges drawn on it,
+    record?
+    """
+    overrides = manual_input_overrides(
+        fn,
+        token,
+        params,
+        const_names,
+        manual_index,
+        manual_nodes,
+        hidden_edge_ids,
+    )
+    if not overrides:
+        return
+    # provenance records ONE variable type per input, so an EachOf override
+    # splits into ONE WIRING PER SOURCE — and the node states every one of
+    # them, not just the first. Claiming only the first is how the second
+    # source's run would still fork a node: the run writes both shapes and
+    # only one of them is spoken for.
+    as_list = {
+        param: (list(sources) if isinstance(sources, list) else [sources])
+        for param, sources in overrides.items()
+    }
+    base = {**params, **{param: s[0] for param, s in as_list.items()}}
+    stated_wirings = {wiring_id(fn, base, outputs, path_input_bindings)}
+    # One param varied at a time rather than the full Cartesian product: a
+    # drawn edge is per handle, and the product of several EachOf handles is a
+    # combinatorial claim over shapes nothing has run.
+    for param, sources in as_list.items():
+        for source in sources:
+            stated_wirings.add(
+                wiring_id(
+                    fn, {**base, param: source}, outputs, path_input_bindings
+                )
+            )
+    for stated in stated_wirings:
+        if stated == recorded:
+            # The node's own key. Claiming it would say nothing.
+            continue
+        holders = claims.setdefault((fn, stated), [])
+        if str(node_id) not in holders:
+            holders.append(str(node_id))
 
 
 def collect_manual_input_overrides(
@@ -1970,105 +2197,6 @@ def collect_manual_input_overrides(
         if overrides:
             result[node["id"]] = overrides
     return result
-
-
-def superseded_manual_input_overrides(
-    overrides_by_node: dict[str, dict],
-    fn_input_params: dict[FnKey, dict],
-    fn_outputs: dict[FnKey, set],
-    path_inputs: dict[str, dict],
-    manual_edges: "list[dict] | tuple",
-    manual_nodes: "dict[str, dict] | None" = None,
-) -> tuple[list[dict], dict[str, str]]:
-    """Which overlays have been made redundant by a run.
-
-    A run through an overlay records provenance under the EFFECTIVE wiring
-    (history inputs ∪ overrides), so afterwards a second node
-    ``fn__{fn}__{W2}`` exists with a DB-derived edge for the very same
-    connection. Left alone, node A would keep the overlay and the manual
-    edge forever — two runnable copies of one wiring, and the column
-    selection saved on A never reaching B. So: for every node whose
-    effective wiring already exists in this graph, return
-
-    - edge rewrites: the manual edges behind those overrides with their
-      ``target`` moved from A to B (placement suffix preserved). Persisted by
-      the caller exactly like legacy_edge_rewrites; the rewritten edge is
-      then an endpoint-duplicate of B's DB-derived edge and build_edges'
-      dedup drops it (the row stays — hide, never delete).
-    - ``{A: B}`` so the caller can drop A's overlay (A reverts to its true
-      history) and migrate A's node config onto B.
-
-    Pure: computes, never writes.
-    """
-    if not overrides_by_node:
-        return [], {}
-    pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
-    manual_index = manual_edge_handle_index(manual_edges)
-    rewrites: list[dict] = []
-    superseded: dict[str, str] = {}
-    for node_id, overrides in overrides_by_node.items():
-        parsed = parse_fn_node_id(node_id)
-        if parsed is None:
-            continue
-        fn, wid = parsed
-        fkey: FnKey = (fn, wid)
-        # The wiring a run through this overlay records is history with the
-        # MANUAL edge's variable on each overridden param — never a list:
-        # provenance stores one variable type per input, so an EachOf run
-        # splits into one wiring per source, and the history source's own
-        # wiring is this node already. Read the variable off the edge itself.
-        from scistack_gui.domain.edge_resolver import node_id_to_var_label
-
-        manual_vars: dict[str, str] = {}
-        edges_by_param: dict[str, list] = {}
-        for param in overrides:
-            for edge in manual_index.get((fn, wid, f"in__{param}"), []):
-                label = node_id_to_var_label(
-                    edge.get("source", ""), {}, manual_nodes or {}
-                )
-                if not label:
-                    continue
-                # The FIRST variable decides the effective wiring (provenance
-                # stores one type per input; an EachOf run splits into one
-                # wiring per source). But EVERY edge on the handle has to be
-                # moved — the index kept only one before 2026-09-22, so a
-                # handle with two edges took two builds to migrate and did
-                # half the work, and logged it, each time.
-                manual_vars.setdefault(param, label)
-                edges_by_param.setdefault(param, []).append(edge)
-        if not manual_vars:
-            continue
-        effective = {**fn_input_params.get(fkey, {}), **manual_vars}
-        new_wid = wiring_id(
-            fn, effective, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
-        )
-        if new_wid == wid or (fn, new_wid) not in fn_input_params:
-            continue
-        new_id = fn_node_id(fn, new_wid)
-        superseded[node_id] = new_id
-        # Every edge on every overridden handle, in one pass. Idempotence does
-        # not need a guard here: these edges were found under the OLD wiring's
-        # key, so none of them can already name the new node. Once they have
-        # moved, `manual_input_overrides` finds nothing on the old wiring, the
-        # node is not in `overrides_by_node` at all, and this loop never runs
-        # for it again. (A `target == moved` skip was written here first and
-        # was dead code — a test asserting the rebuild case proved it.)
-        node_rewrites: list[dict] = []
-        for param_edges in edges_by_param.values():
-            for edge in param_edges:
-                target = edge.get("target", "")
-                suffix = target[len(strip_placement(target)) :]
-                node_rewrites.append({**edge, "target": new_id + suffix})
-        rewrites.extend(node_rewrites)
-        logger.info(
-            "[graph_builder] manual input overlay on %s (%s) is superseded by "
-            "%s — that wiring has run; rewriting %d manual edge(s) onto it",
-            node_id,
-            overrides,
-            new_id,
-            len(node_rewrites),
-        )
-    return rewrites, superseded
 
 
 def overlay_manual_inputs(nodes: list[dict], overrides_by_node: dict[str, dict]) -> int:
@@ -2130,10 +2258,18 @@ def hidden_wirings(
     fn_constants: dict[FnKey, set],
     path_inputs: dict[str, dict],
     hidden_edge_ids: set[str],
+    token_for,
     manual_edges: "list[dict] | tuple" = (),
 ) -> set[tuple[str, str]]:
-    """(fn_name, wiring_id) pairs with at least one hidden inbound edge that
+    """(fn_name, node token) pairs with at least one hidden inbound edge that
     is NOT currently covered by a manual reconnect.
+
+    The second element is the NODE TOKEN, not the wiring — the two coincide
+    unless the node was rewired and run (``identity_token`` /
+    ``docs/claude/node-identity.md``). It has to be the token, because both
+    things compared here are keyed by the node id: the reconstructed edge ids
+    (``build_edges`` builds them from the post-grouping node id) and the
+    manual-edge index (keyed by each edge's ``target``).
 
     Reconstructs each call site's candidate inbound edge ids the same way
     build_edges does (without needing edges to already exist) and checks
@@ -2156,7 +2292,10 @@ def hidden_wirings(
     result: set[tuple[str, str]] = set()
     for fkey, params in fn_input_params.items():
         fn, _cid = fkey
-        wid = wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {}))
+        wid = token_for(
+            fn,
+            wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})),
+        )
         handle_map = inbound_edge_candidates_by_handle(
             fn, wid, params, const_names=fn_constants.get(fkey, set())
         )
@@ -2177,11 +2316,14 @@ def hidden_wirings(
     for pi_name, pi in path_inputs.items():
         for fkey, param_name in pi["functions"]:
             fn, _cid = fkey
-            wid = wiring_id(
+            wid = token_for(
                 fn,
-                fn_input_params.get(fkey, {}),
-                fn_outputs.get(fkey, set()),
-                pi_by_fkey.get(fkey, {}),
+                wiring_id(
+                    fn,
+                    fn_input_params.get(fkey, {}),
+                    fn_outputs.get(fkey, set()),
+                    pi_by_fkey.get(fkey, {}),
+                ),
             )
             handle = f"in__{param_name}"
             if f"e__{pi_name}__{param_name}__{fn}__{wid}" not in hidden_edge_ids:
@@ -2206,17 +2348,26 @@ def wiring_disconnected_fkeys(
     fn_outputs: dict[FnKey, set],
     wirings: set[tuple[str, str]],
     path_inputs: dict[str, dict],
+    token_for,
 ) -> set[FnKey]:
-    """Map a (fn_name, wiring_id) set back to raw pre-grouping call-site
+    """Map a (fn_name, node token) set back to raw pre-grouping call-site
     FnKeys — for feeding domain.run_state.propagate_run_states, which
-    still operates per real call site at the point it runs."""
+    still operates per real call site at the point it runs.
+
+    ``token_for`` must be the SAME one ``hidden_wirings`` was given, or the
+    two sides of the comparison are keyed differently and every call site
+    reads as connected.
+    """
     if not wirings:
         return set()
     pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
     result: set[FnKey] = set()
     for fkey, params in fn_input_params.items():
         fn, _cid = fkey
-        wid = wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {}))
+        wid = token_for(
+            fn,
+            wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})),
+        )
         if (fn, wid) in wirings:
             result.add(fkey)
     return result
@@ -2227,6 +2378,7 @@ def wirings_downstream_of(
     fn_outputs: dict[FnKey, set],
     seed_wirings: set[tuple[str, str]],
     path_inputs: dict[str, dict],
+    token_for,
 ) -> set[tuple[str, str]]:
     """Every wiring that transitively consumes a seed wiring's output —
     used to report which OTHER functions become un-runnable as a
@@ -2240,7 +2392,10 @@ def wirings_downstream_of(
     wiring_inputs: dict[tuple[str, str], set] = {}
     for fkey, params in fn_input_params.items():
         fn, _cid = fkey
-        wid = wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {}))
+        wid = token_for(
+            fn,
+            wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})),
+        )
         wiring_inputs.setdefault((fn, wid), set()).update(params.values())
         wiring_outputs.setdefault((fn, wid), set()).update(fn_outputs.get(fkey, set()))
 

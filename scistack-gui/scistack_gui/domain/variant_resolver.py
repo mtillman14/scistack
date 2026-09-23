@@ -539,9 +539,10 @@ def filter_hidden_constant_value_targets(
 def reconcile_manual_inputs(
     targets: list[dict],
     function_name: str,
-    hidden_edge_ids: "set[str] | None" = None,
-    manual_edges: "list[dict] | tuple" = (),
-    manual_nodes: "dict[str, dict] | None" = None,
+    hidden_edge_ids: "set[str] | None",
+    manual_edges: "list[dict] | tuple",
+    manual_nodes: "dict[str, dict] | None",
+    token_for,
 ) -> list[dict]:
     """Reconcile each target's RECORDED wiring with the manual edges the
     user has drawn onto its node, in one pass per target.
@@ -580,6 +581,20 @@ def reconcile_manual_inputs(
     candidate inbound edge ids directly per target rather than going through
     graph_builder.hidden_wirings' multi-call-site grouping (that path is for
     the GUI graph endpoint, which has a full agg).
+
+    ``token_for(fn_name, wiring) -> token`` maps a target's wiring to the
+    CANVAS NODE's identity token — the trailing segment of its id, which is
+    what hidden edge ids and the manual-edge index are keyed by. Under
+    allocated node ids the two are different strings
+    (``docs/claude/node-identity.md``), and a lookup keyed on the target's own
+    wiring finds neither the node's hidden edges nor the edge the user drew on
+    it — silently, because "no manual edge on this handle" is a legitimate
+    answer.
+
+    Required, with no default, for the reason ``graph_builder.identity_token``
+    gives. ``derive_target_for_node`` knows the node and passes a constant;
+    the name-scoped ``derive_fn_targets`` passes
+    ``node_wiring.token_resolver(db)`` and looks each one up.
     """
     hidden_edge_ids = hidden_edge_ids or set()
     if not targets or (not hidden_edge_ids and not manual_edges):
@@ -614,11 +629,14 @@ def reconcile_manual_inputs(
         # DB history spells single types bare.
         input_types = variable_types_view(bindings)
         const_names = list((t.get("constants") or {}).keys())
-        wid = wiring_id(
+        wid = token_for(
             function_name,
-            input_types,
-            {t.get("output_type")},
-            bindings_of_kind(bindings, BINDING_PATHINPUT),
+            wiring_id(
+                function_name,
+                input_types,
+                {t.get("output_type")},
+                bindings_of_kind(bindings, BINDING_PATHINPUT),
+            ),
         )
         handle_map = inbound_edge_candidates_by_handle(
             function_name, wid, input_types, const_names=const_names

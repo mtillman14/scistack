@@ -296,15 +296,46 @@ def glue_project(client, tmp_path):
 
 @pytest.fixture
 def bp_node_id(populated_db):
-    """The composite ``fn__bandpass_filter__{wiring_id}`` ID for the seeded
-    bandpass node.  Canvas nodes group call sites by WIRING (fn + loadable
-    inputs + outputs — constants excluded), so the node id suffix is the
-    wiring_id, not any single call site's call_id."""
-    from scistack_gui.domain.graph_builder import wiring_id
-    from scistack_gui.ids import fn_node_id
+    """The ALLOCATED id of the seeded bandpass node.
 
-    wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
-    return fn_node_id("bandpass_filter", wid)
+    Since 2026-09-22 a function node's id is minted once and remembered in
+    ``_node_wiring`` — it is not derived from anything, so it cannot be
+    computed (``docs/claude/node-identity.md``). This looks it up, and
+    allocates one if the GUI has not opened this database yet, so a test can
+    name the node before the first graph build the way it always could.
+
+    Canvas nodes still group call sites by WIRING (fn + loadable inputs +
+    outputs — constants excluded); what changed is that the wiring is the
+    LOOKUP KEY rather than the id itself.
+    """
+    from scistack_gui.domain.graph_builder import wiring_id
+
+    return node_id_for_wiring(
+        populated_db,
+        "bandpass_filter",
+        wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {}),
+    )
+
+
+def node_id_for_wiring(db, fn_name: str, wiring: str) -> str:
+    """The allocated node id for a wiring, allocating one if the GUI has not
+    opened this database yet.
+
+    Since 2026-09-22 a function node's id is minted once and remembered; it is
+    not derived from anything, so a test cannot compute it
+    (``docs/claude/node-identity.md``). Every test that used to spell
+    ``fn_node_id(fn, wiring_id(...))`` against a real database asks this
+    instead — and allocating when nothing has yet is what the first graph
+    build would have done, so the test can name the node before it builds.
+    """
+    from scistack_gui import node_wiring
+
+    node_wiring.ensure_tables(db)
+    node_id = node_wiring.node_for_wiring(db, wiring)
+    if node_id is None:
+        node_id = str(node_wiring.mint_node_id(fn_name))
+        node_wiring.record(db, node_id, wiring)
+    return node_id
 
 
 def find_fn_node_id_by_label(nodes, label: str) -> str:

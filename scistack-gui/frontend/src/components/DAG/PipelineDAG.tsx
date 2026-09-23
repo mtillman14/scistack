@@ -40,6 +40,7 @@ import RunsDock from '../RunsDock'
 import GlueNode from './GlueNode'
 import PlotStudio from '../PlotStudio/PlotStudio'
 import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
+import TopologiesPanel from '../Variants/TopologiesPanel'
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/useSourceEdit'
@@ -92,6 +93,25 @@ interface HiddenPorts {
   output: string[]
 }
 
+/**
+ * A warning the graph build wants the user to see.
+ *
+ * `wiring_ambiguity` is the only kind today: two or more function nodes in
+ * one scope state identical wiring, so they compute the same thing and runs
+ * are attributed to one of them. Never auto-merged — silently collapsing two
+ * nodes a person created is a worse failure than a message they can act on
+ * (docs/claude/node-identity.md §7b).
+ */
+interface GraphWarning {
+  kind: string
+  signature: string
+  message: string
+  function_name?: string
+  chosen?: string
+  others?: string[]
+  scope?: string
+}
+
 interface HiddenEdge {
   edge_id: string
   source: string
@@ -137,6 +157,11 @@ export default function PipelineDAG() {
   // from plotTarget: looking at integrity is not the same act as opening a
   // figure, and one leads to the other rather than replacing it.
   const [locationTarget, setLocationTarget] = useState<string | null>(null)
+  // The variable the Variants panel is open on. Separate from "Provenance":
+  // they are opposite directions (bottom-up "what is in here" vs top-down
+  // "where did this pinned variant come from"), and one entry would hide the
+  // one that answers the question a user asks AT a node.
+  const [variantsTarget, setVariantsTarget] = useState<string | null>(null)
   const [sourceLoc, setSourceLoc] = useState<SourceLocation | null>(null)
   const [runFinalized, setRunFinalized] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -146,12 +171,31 @@ export default function PipelineDAG() {
   const [hiddenEdges, setHiddenEdges] = useState<HiddenEdge[]>([])
   const [showHiddenEdges, setShowHiddenEdges] = useState(false)
   const [hiddenPorts, setHiddenPorts] = useState<HiddenPorts>({ input: [], output: [] })
+  // Build-time warnings the backend wants the user to SEE, not just log.
+  // Today there is one kind (`wiring_ambiguity`); the shape is deliberately
+  // generic so the next one does not need a second channel.
+  const [graphWarnings, setGraphWarnings] = useState<GraphWarning[]>([])
+  const dismissedWarnings = useRef<Set<string>>(new Set())
 
   const fetchPipeline = useCallback(async () => {
     // Fetch pipeline first — _build_graph has a side effect (graduate_manual_node)
     // that writes to layout.json. Layout must be read AFTER that write, otherwise
     // savedPositions will have stale keys and dagre will recalculate positions.
-    const data = await callBackend('get_pipeline', { pipeline_id: currentScope }) as { nodes: Node[]; edges: Edge[] }
+    const data = await callBackend('get_pipeline', { pipeline_id: currentScope }) as { nodes: Node[]; edges: Edge[]; warnings?: GraphWarning[] }
+    // §7b of docs/claude/node-identity.md: two nodes wired identically
+    // compute the same thing, so runs are attributed to one of them until
+    // they differ. That is surprising and recoverable, so it is a popup and
+    // not a log line — but only once per distinct pair per tab, since the
+    // build repeats it on every refresh.
+    setGraphWarnings(prev => {
+      const fresh = (data.warnings ?? []).filter(
+        w => !dismissedWarnings.current.has(w.signature)
+      )
+      const sameAsBefore =
+        fresh.length === prev.length &&
+        fresh.every((w, i) => w.signature === prev[i]?.signature)
+      return sameAsBefore ? prev : fresh
+    })
     const layoutData = await callBackend('get_layout', { pipeline_id: currentScope }) as Record<string, unknown>
     const savedPositions =
       (layoutData.positions ?? layoutData) as Record<string, { x: number; y: number }>  // handle both new and legacy format
@@ -897,6 +941,14 @@ export default function PipelineDAG() {
             >
               🗂 View Schema Locations
             </button>
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => { setVariantsTarget(varType); setContextMenu(null) }}
+              type="button"
+              title="Every shape that has produced this variable, and every run of each — with whether a load would still return its records (`scidb variants`)"
+            >
+              🧬 Variants…
+            </button>
             {direction && (
               <button style={styles.contextMenuItem} onClick={() => handleTogglePort(direction)} type="button">
                 {hiddenPorts[direction].includes(varType)
@@ -941,11 +993,95 @@ export default function PipelineDAG() {
           </button>
         </div>
       )}
+      {graphWarnings.length > 0 && (
+        <GraphWarningDialog
+          warnings={graphWarnings}
+          onDismiss={() => {
+            for (const w of graphWarnings) dismissedWarnings.current.add(w.signature)
+            setGraphWarnings([])
+          }}
+        />
+      )}
+      {variantsTarget && (
+        <TopologiesPanel
+          variable={variantsTarget}
+          onClose={() => setVariantsTarget(null)}
+        />
+      )}
       {sourceLoc && (
         <SourceLocationDialog location={sourceLoc} onClose={() => setSourceLoc(null)} />
       )}
     </div>
   )
+}
+
+/**
+ * The §7b popup: "two nodes are wired identically".
+ *
+ * A dialog rather than a log line because the state is almost certainly
+ * unintended (two nodes computing the same thing) and because it is
+ * recoverable — rewire one and it resolves itself. Nothing is merged: a
+ * silent collapse of two nodes a person created is a worse failure than a
+ * message they can act on. Dismissal is per tab and per pair, so the same
+ * ambiguity does not re-open on every `dag_updated`.
+ */
+function GraphWarningDialog({
+  warnings,
+  onDismiss,
+}: {
+  warnings: GraphWarning[]
+  onDismiss: () => void
+}) {
+  return (
+    <div style={warningStyles.overlay} onClick={onDismiss}>
+      <div style={warningStyles.dialog} onClick={e => e.stopPropagation()}>
+        <div style={warningStyles.title}>
+          {warnings.length === 1 ? 'Two nodes are wired the same' : 'Nodes are wired the same'}
+        </div>
+        {warnings.map(w => (
+          <div key={w.signature} style={warningStyles.item}>
+            <div>{w.message}</div>
+            {w.others && w.others.length > 0 && (
+              <div style={warningStyles.ids}>
+                runs go to <code>{w.chosen}</code>; also wired the same:{' '}
+                {w.others.map(id => (
+                  <code key={id} style={warningStyles.other}>
+                    {id}
+                  </code>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <div style={warningStyles.footer}>
+          <button type="button" style={warningStyles.button} onClick={onDismiss}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const warningStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000,
+  },
+  dialog: {
+    background: '#1a1a2e', color: '#ddd', border: '1px solid #e0b050',
+    borderRadius: 6, padding: '16px 20px', width: 'min(560px, 88vw)',
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+  },
+  title: { fontSize: 14, fontWeight: 600, color: '#e0b050', marginBottom: 10 },
+  item: { fontSize: 12, lineHeight: 1.55, marginBottom: 10 },
+  ids: { fontSize: 11, color: '#9a9ab0', marginTop: 4 },
+  other: { marginRight: 6 },
+  footer: { display: 'flex', justifyContent: 'flex-end' },
+  button: {
+    padding: '5px 14px', background: '#2a2a4a', color: '#ccc',
+    border: '1px solid #3a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 12,
+  },
 }
 
 const styles: Record<string, React.CSSProperties> = {

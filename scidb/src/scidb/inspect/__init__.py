@@ -12,6 +12,9 @@ where the CLI, the GUI's picker and any library caller reach one definition.
 
 from ..locations import LocationNode, LocationState, LocationTree
 from .api import (
+    VERDICT_CURRENT,
+    VERDICT_PARTIAL,
+    VERDICT_SUPERSEDED,
     DbOverview,
     ExclusionRecord,
     Inspector,
@@ -29,6 +32,8 @@ from .api import (
     TraceNode,
     VariableDetail,
     VariableSummary,
+    location_sample,
+    variant_verdict,
 )
 from .graph import (
     FunctionNode,
@@ -71,4 +76,12 @@ __all__ = [
     "Mutator",
     "MutationResult",
     "PickCandidate",
+    # Shared readings of a VariantSummary — the terminal and the GUI import
+    # these rather than each deciding what "SUPERSEDED" means or which
+    # locations to show (CLAUDE.md NOTE 3).
+    "variant_verdict",
+    "location_sample",
+    "VERDICT_CURRENT",
+    "VERDICT_PARTIAL",
+    "VERDICT_SUPERSEDED",
 ]

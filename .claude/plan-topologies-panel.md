@@ -154,3 +154,38 @@ One open item it inherits: `pipeline_variants` groups by `(output_type, fn,
 inputs, constants, glue, run options)` since Problem 11. If a variable turns
 out to have more variants on screen than that key explains, the key is wrong
 again — that is the thing to check first.
+
+---
+
+## Status — BUILT 2026-09-22
+
+All four stages. **Tests pass (2026-09-23). Uncommitted, and the GUI has not
+been looked at.**
+
+| stage | what landed |
+|---|---|
+| 1 | `services/variants_service.py::variable_topologies`; handler `variable_topologies` + `POST /api/provenance/variable-topologies` in `api/provenance.py`; route-map entry in `frontend/src/api.ts`. `NotFoundError` → 400. |
+| 2 | `components/Variants/TopologiesPanel.tsx` (+ the React-free `topologies.ts` it renders from), mounted from `App.tsx` behind a 🧬 **Variants** toolbar button. |
+| 3 | **🧬 Variants…** on a variable node's context menu, mounting the same panel from `PipelineDAG`. Kept separate from Provenance — opposite directions. |
+| 4 | `docs/claude/variant-provenance-introspection.md` §"The bottom-up view"; `docs/gui-manual-testing-todo.md` item 0q. |
+
+### Two deviations, both deliberate
+
+**The verdict and the location sample moved into scidb.** The plan says
+nothing is computed in TSX; the same argument applies one layer further down,
+so `variant_verdict` and `location_sample` are now
+`scidb/inspect/api.py`'s and `render._location_sample` is the text form of the
+second. The CLI output is unchanged, byte for byte.
+
+**The render test is over the wording module, not the component.** The
+frontend has no React test runner — `npm test` is `tsc -p tsconfig.test.json &&
+node --test` over an explicit include-list of React-free modules. So the
+renderable rules live in `topologies.ts` and are tested there (14 cases,
+including the two-variants-one-superseded fixture the plan asks for). The
+component is covered by manual item 0q.
+
+### The open item it inherited
+
+`pipeline_variants` groups by `(output_type, fn, inputs, constants, glue, run
+options)`. Nothing here revisits that; if a variable shows more variants than
+that key explains, it is still the first thing to check.

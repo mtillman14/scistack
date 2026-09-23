@@ -593,8 +593,19 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
     hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
     if fn_variants and (hidden_edge_ids or all_edges):
         before = len(fn_variants)
+        from scistack_gui.node_wiring import token_resolver
+
         fn_variants = reconcile_manual_inputs(
-            fn_variants, function_name, hidden_edge_ids, all_edges, manual_nodes
+            fn_variants,
+            function_name,
+            hidden_edge_ids,
+            all_edges,
+            manual_nodes,
+            # Name-scoped: no node is named, so each target's wiring is mapped
+            # to whichever node holds it. Without this the drawn edge is looked
+            # for under the wiring rather than the node id it was stored
+            # against, finds nothing, and the run silently ignores it.
+            token_resolver(db),
         )
         if len(fn_variants) != before:
             logger.info(
@@ -719,7 +730,40 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         function_name = meta["label"]
         node_wiring = None  # resolved from this node's own edges, below
     elif parsed is not None:
-        function_name, node_wiring = parsed
+        function_name = parsed[0]
+        from scistack_gui import node_wiring as _node_wiring_store
+
+        # The node's CURRENT wiring — the shape it most recently ran as, which
+        # is also the shape the canvas draws. NOT every wiring it has ever run
+        # as: a node the user rewired away from GAITRite-only should not
+        # re-run GAITRite-only records from its own Run button just because it
+        # once did (docs/claude/node-identity.md, "what a node IS versus what
+        # it HAS RUN AS"). Its older shapes stay its history — provenance and
+        # the Variants panel show them.
+        node_wiring = _node_wiring_store.current_wiring(db, node_id)
+        if node_wiring is None:
+            # The id no longer encodes a wiring, so there is nothing to fall
+            # back to: a function node with no association is one this GUI has
+            # never seen run, and deriving targets for it by guessing is how
+            # a click on one node silently executed another node's history.
+            logger.info(
+                "[execution] node %s ('%s'): no recorded wiring — this node has "
+                "never run and nothing in _node_wiring claims it",
+                node_id,
+                function_name,
+            )
+            return []
+        history = _node_wiring_store.wirings_for_node(db, node_id)
+        if len(history) > 1:
+            logger.info(
+                "[execution] node %s ('%s') has run as %d shape(s) %s — running "
+                "its current one, %s",
+                node_id,
+                function_name,
+                len(history),
+                sorted(history),
+                node_wiring,
+            )
     else:
         return []
 
@@ -798,8 +842,17 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
 
         before = len(matching)
+        # THIS node's token — the id's trailing segment, which is what the
+        # hidden-edge ids and the drawn edges on it are keyed by. Every target
+        # here is already scoped to this one node, so the mapping is constant.
+        _node_token = parsed[1] if parsed is not None else None
         matching = reconcile_manual_inputs(
-            matching, function_name, hidden_edge_ids, all_edges, manual_nodes
+            matching,
+            function_name,
+            hidden_edge_ids,
+            all_edges,
+            manual_nodes,
+            (lambda _fn, wiring: _node_token or wiring),
         )
         if len(matching) != before:
             logger.info(
@@ -857,6 +910,78 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     )
 
 
+def record_dispatch_wirings(
+    db, node_id: "str | None", function_name: str, targets: list[dict], run_id: "str | None"
+) -> int:
+    """Record, at dispatch, which wiring(s) the node being run will produce.
+
+    **The first half of D-2026-09-22-2.** For a GUI-started run there is
+    nothing to infer: the GUI already holds the node id — it is in the run
+    request — so the association is written now, and the graph build that
+    happens after the run finds the new wiring already claimed. No duplicate
+    node can form, no statement is stranded, and no repair path runs.
+
+    Inference (``domain.node_identity`` rule 2) exists only for what this
+    cannot cover: a script or a terminal MATLAB run, which carries no node id.
+
+    Computed from the targets AFTER reconciliation, so it is the wiring the
+    run will actually record — history's bindings with the edges the user drew
+    substituted in — rather than the one history currently holds.
+
+    **It raises.** An unrecorded dispatch means the next build cannot tell
+    which node produced these records, and the answer it reaches instead is a
+    guess — about which node is green, which one a click runs, and which one
+    your settings apply to. Letting the run proceed anyway would write records
+    nothing can attribute; refusing is the honest outcome.
+    """
+    if not node_id or not targets:
+        return 0
+    from scistack_gui import intent_store
+    from scistack_gui import node_wiring as _node_wiring_store
+    from scistack_gui.domain.edge_resolver import (
+        BINDING_PATHINPUT,
+        bindings_of_kind,
+        variable_types_view,
+    )
+    from scistack_gui.domain.graph_builder import wiring_id
+    from scistack_gui.ids import FN_ID_PREFIX, strip_placement
+
+    # A function node, DB-derived or manual. A manual node's id is already its
+    # own allocated id (it got one when the user dragged it in), so it claims
+    # its wiring here exactly as a graduated node does — and
+    # `graduate_manual_node` carries the row across when it graduates.
+    # Anything else (a variable, a Parameter, a glue node) has no wiring.
+    if not str(strip_placement(node_id)).startswith(FN_ID_PREFIX):
+        return 0
+
+    scope = intent_store.scope_of_node(db, node_id)
+    wirings = {
+        wiring_id(
+            function_name,
+            variable_types_view(target.get("bindings") or {}),
+            {target.get("output_type")},
+            bindings_of_kind(target.get("bindings") or {}, BINDING_PATHINPUT),
+        )
+        for target in targets
+    }
+    written = 0
+    for wiring in sorted(wirings):
+        if _node_wiring_store.record(db, node_id, wiring, run_id=run_id, scope=scope):
+            written += 1
+    logger.info(
+        "[execution] run %s on node %s ('%s') claims %d wiring(s) %s "
+        "(%d new) — recorded at dispatch so the next graph build attributes "
+        "the run to THIS node",
+        run_id,
+        node_id,
+        function_name,
+        len(wirings),
+        sorted(wirings),
+        written,
+    )
+    return written
+
+
 def disconnected_reason(db, function_name: str, node_id: "str | None" = None) -> "str | None":
     """Human-readable reason *function_name* (or one specific node's own
     wiring, if ``node_id`` is given) can't run right now because a
@@ -879,11 +1004,29 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
 
     manual_index = manual_edge_handle_index(pipeline_store.get_manual_edges(db))
 
-    node_wiring = None
+    # Hidden edge ids and drawn edges are keyed by the NODE, which no longer
+    # encodes its wiring (docs/claude/node-identity.md) — so every lookup below
+    # needs the node's TOKEN, not the variant's wiring.
+    #
+    # Node-scoped: the node is named, so its token is its id's suffix and it is
+    # asked about its CURRENT wiring only — the same pair
+    # `derive_target_for_node` runs with, so "why can't this run" is answered
+    # about the shape that would actually run.
+    #
+    # Name-scoped: no node is named, so each variant's wiring is mapped to
+    # whichever node holds it. Without that the candidate edge ids are built
+    # under the wiring, match no stored hide, and the caller reports "no
+    # pipeline history" for a function that is in fact disconnected.
+    from scistack_gui import node_wiring as _node_wiring_store
+
+    node_wiring_now: "str | None" = None
+    node_token = None
+    token_for = _node_wiring_store.token_resolver(db)
     if node_id:
         parsed = parse_fn_node_id(node_id)
         if parsed is not None:
-            node_wiring = parsed[1]
+            node_token = parsed[1]
+            node_wiring_now = _node_wiring_store.current_wiring(db, node_id)
 
     all_variants = db.list_pipeline_variants()
     pi_by_call = _db_path_input_params(db, function_name)
@@ -896,15 +1039,16 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
             {v["output_type"]},
             pi_by_call.get(v.get("call_id"), {}),
         )
-        if node_wiring is not None and wid != node_wiring:
+        if node_wiring_now is not None and wid != node_wiring_now:
             continue
+        key = node_token or token_for(function_name, wid)
         for pname, vtype in v["input_types"].items():
-            candidate = f"e__{vtype}__{function_name}__{wid}"
-            if candidate in hidden_edge_ids and (function_name, wid, f"in__{pname}") not in manual_index:
+            candidate = f"e__{vtype}__{function_name}__{key}"
+            if candidate in hidden_edge_ids and (function_name, key, f"in__{pname}") not in manual_index:
                 return f"input '{pname}' is disconnected — reconnect it before running"
         for cname in v.get("constants", {}).keys():
-            candidate = f"e__{cname}__{function_name}__{wid}"
-            if candidate in hidden_edge_ids and (function_name, wid, f"{_PARAM_PREFIX}{cname}") not in manual_index:
+            candidate = f"e__{cname}__{function_name}__{key}"
+            if candidate in hidden_edge_ids and (function_name, key, f"{_PARAM_PREFIX}{cname}") not in manual_index:
                 return f"input '{cname}' is disconnected — reconnect it before running"
     return None
 
@@ -919,46 +1063,43 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     (this "disconnected" concept is GUI-authored state, scistack-gui's own
     layer — see plan-edge-hide-delete.md).
     """
-    from scistack_gui import pipeline_store, registry
-    from scistack_gui.domain.graph_builder import (
-        convert_scidb_path_inputs,
-        hidden_wirings,
-        wirings_downstream_of,
-    )
+    from scistack_gui import pipeline_store
+    from scistack_gui.api.pipeline import build_aggregate, ensure_node_identities
+    from scistack_gui.domain.graph_builder import hidden_wirings, wirings_downstream_of
 
     hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
     if not hidden_edge_ids:
         return []
 
-    scidb_agg = db.get_aggregated_variants()
-    fn_input_params: dict = {}
-    fn_outputs: dict = {}
-    fn_constants: dict = {}
-    for (fn_name, call_id), fn_data in scidb_agg["functions"].items():
-        fkey = (fn_name, call_id)
-        fn_input_params[fkey] = fn_data["input_params"]
-        fn_outputs[fkey] = set(fn_data["outputs"])
-        fn_constants[fkey] = set(fn_data["constants"].keys())
-    # Resolved by registry name (not param name) — must match how
-    # build_edges actually keys its pathInput__ edges, or hidden-edge-id
-    # lookups below silently never match (see convert_scidb_path_inputs).
-    path_inputs = convert_scidb_path_inputs(
-        scidb_agg["path_inputs"],
-        registry.get_path_inputs_registry(),
-        pipeline_store.path_input_history_index(db),
-        registry.get_project_root(),
-    )
+    # The SAME aggregate `_build_graph` uses. A narrower hand-rolled copy sat
+    # here and omitted nothing important by accident — the PathInput
+    # resolution was already duplicated line for line — but two copies of a
+    # conversion is two chances to drift, and the hidden-edge lookups below
+    # only match if this side keys PathInputs exactly as `build_edges` does.
+    agg = build_aggregate(db, db.get_aggregated_variants())
+    fn_input_params = agg.fn_input_params
+    fn_outputs = agg.fn_outputs
+    fn_constants = agg.fn_constants
+    path_inputs = agg.path_inputs
 
     manual_edges = pipeline_store.get_manual_edges(db)
+    # Hidden edge ids were stored against the NODE's id, so both sides of
+    # every lookup below have to be keyed by the node's token rather than by
+    # the wiring — they differ for a node that was rewired and run.
+    identity = ensure_node_identities(db)
+    token_for = identity.token
     seed = hidden_wirings(
         fn_input_params, fn_outputs, fn_constants, path_inputs, hidden_edge_ids,
+        token_for,
         manual_edges=manual_edges,
     )
     if not seed:
         return []
-    downstream = wirings_downstream_of(fn_input_params, fn_outputs, seed, path_inputs)
+    downstream = wirings_downstream_of(
+        fn_input_params, fn_outputs, seed, path_inputs, token_for
+    )
 
-    scope_labels = set(_scope_function_labels(db, pipeline_id))
+    scope_labels = set(_scope_function_labels(db, pipeline_id, identity))
 
     def _entry(fn: str, reason: str) -> dict:
         return {
@@ -1683,7 +1824,7 @@ def _matlab_glue_sources():
         return set(), (lambda name: name)
 
 
-def _scope_function_node_ids(db, pipeline_id: str) -> list[tuple[str, str]]:
+def _scope_function_node_ids(db, pipeline_id: str, identity=None) -> list[tuple[str, str]]:
     """Distinct (node_id, function_label) pairs whose nodes live in
     ``pipeline_id`` — manual function nodes by pipeline_id, DB-derived
     fn__ nodes by where their position is saved (same membership rule as
@@ -1739,29 +1880,50 @@ def _scope_function_node_ids(db, pipeline_id: str) -> list[tuple[str, str]]:
     # not one per fn_name (a name can have several unplaced wirings at
     # once, each needing its own step).
     if pipeline_id == "main":
+        from scistack_gui.api.pipeline import ensure_node_identities
+
+        # The node id a wiring belongs to is LOOKED UP, never spelled. Two
+        # wirings can share one node (it was rewired and run), so deriving an
+        # id from each would give that node two steps; and under allocated ids
+        # a derived id names no node at all, so the step would compile to
+        # nothing (docs/claude/node-identity.md).
+        #
+        # `ensure_node_identities` rather than a plain read: this list is
+        # built from HISTORY, and history can hold a wiring written since the
+        # canvas last refreshed — a script run, a terminal MATLAB run, another
+        # window. Asking the one resolver to settle it is the alternative to
+        # inventing an id here, which is the bug this change removes.
+        identity = identity or ensure_node_identities(db)
         pi_by_fn: dict[str, dict] = {}
         for v in db.list_pipeline_variants():
             fn = v["function_name"]
             if fn not in pi_by_fn:
                 pi_by_fn[fn] = _db_path_input_params(db, fn)
-            wid = wiring_id(
+            wiring = wiring_id(
                 fn,
                 v["input_types"],
                 {v["output_type"]},
                 pi_by_fn[fn].get(v.get("call_id"), {}),
             )
+            # Only the node's CURRENT shape compiles a step. A wiring it used
+            # to run as is history: compiling it would re-run something the
+            # user rewired away from, and under the same node id, so the two
+            # steps would collide.
+            if not identity.is_current(fn, wiring):
+                continue
+            wid = identity.token(fn, wiring)
             if (fn, wid) not in placed_wirings:
                 _add(fn_node_id(fn, wid), fn)
     return node_ids
 
 
-def _scope_function_labels(db, pipeline_id: str) -> list[str]:
+def _scope_function_labels(db, pipeline_id: str, identity=None) -> list[str]:
     """Distinct function labels represented in ``pipeline_id`` — for
     reporting only (e.g. the disconnected-steps summary), where
     collapsing sibling wirings of the same name to one label is fine.
     Execution must stay wiring-scoped — see _scope_function_node_ids."""
     labels: list[str] = []
-    for _nid, label in _scope_function_node_ids(db, pipeline_id):
+    for _nid, label in _scope_function_node_ids(db, pipeline_id, identity):
         if label not in labels:
             labels.append(label)
     return labels
@@ -1881,6 +2043,10 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
             pending_consts,
             step_options,
         )
+        # Same dispatch record as the single-node Run path (D-2026-09-22-2):
+        # a pipeline run is still a GUI-started run and still holds the node
+        # id, so nothing about it needs inferring afterwards.
+        record_dispatch_wirings(db, node_id, fn_label, targets, None)
         seen_target_keys: set = set()
         for target in targets:
             target_key = (

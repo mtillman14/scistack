@@ -162,3 +162,77 @@ are follow-ons, not part of this.
 `.claude/plan-run-state-and-duplicate-nodes.md` still has Problems 5, 6, 7, 8
 and 9 outstanding. None depend on this. Problem 3b-ii (the visible duplicate)
 **is** this — do not build the absorb patch.
+
+---
+
+## Status — BUILT 2026-09-22, revised 2026-09-23
+
+Stages 1–5 in full; Stage 6 all but the graduation id-swap. **The full
+`scistack-gui` suite passes (2026-09-23). Uncommitted, and the GUI has not been
+looked at.** What landed is
+written up in `docs/claude/node-identity.md` §10; the decisions the
+implementation had to take are `docs/claude/decisions.md` D-2026-09-22-3, -4
+and -5.
+
+| stage | what landed |
+|---|---|
+| 1 | `scistack_gui/node_wiring.py` — `_node_wiring` + accessors, created from `pipeline_store._ensure_tables`. Tests: `tests/test_node_wiring.py`. |
+| 2 | Allocation in `api/pipeline._resolve_node_identity`. **No bootstrap and no migration**: an existing database mints fresh ids on first build (D-2026-09-22-3). |
+| 3 | Dispatch recording (`execution_service.record_dispatch_wirings`) on the Python run thread, the pipeline compiler and both MATLAB routes; inference in `domain/node_identity.resolve_identities` + `graph_builder.stated_wiring_claims`. |
+| 4 | `Ambiguity` → `warnings` on the graph response → a dialog in `PipelineDAG`. Logged once per pair per process; never auto-merged. |
+| 5 | The `token_for` seam through `graph_builder`, `variant_resolver.reconcile_manual_inputs`, `derive_target_for_node`, `disconnected_reason`, `disconnected_report_entries`, `_scope_function_node_ids`. Parity test: `tests/test_wiring_parity.py`. |
+| 6 | `superseded_manual_input_overrides` and `_migrate_node_statements` **deleted**, their tests rewritten. The graduation id-swap **kept** — D-2026-09-22-4. |
+
+### Deviations from the plan as written
+
+1. **`parse_fn_node_id` was not changed** to return `(fn, node_id)`. It still
+   returns `(fn, suffix)` — and the suffix IS the node's identity token, which
+   is what every one of its ~40 callers actually wanted. The seam is instead a
+   `token_for(fn, wiring) -> token` parameter on the functions that DERIVE a
+   node id from a wiring, defaulting to the identity so nothing that never
+   heard of allocation changed behaviour. Smaller blast radius, same cut.
+2. **A node's CURRENT wiring is distinguished from its history.** The plan
+   says a node "has one stated wiring and a history of wirings it has run as",
+   and the first implementation missed the first half: it unioned every shape
+   a node had run as into its canvas inputs and matched all of them at Run
+   time. Now `node_wiring.current_wiring` (the latest) decides handles, edges,
+   constants and what a Run executes, and `wirings_for_node` (all of them) is
+   history, for attribution and the Variants view.
+3. **The graduation id-swap stays** (D-2026-09-22-4) — the one piece of Stage 6
+   deliberately not done, with its reason recorded and its follow-on named.
+
+### Reversed on 2026-09-23, after review
+
+Three things the first implementation added and this one removes. Each is
+worth reading as a warning about the same instinct — softening a clean break.
+
+* **The derived-spelling mint.** Minting `fn__{fn}__{wiring_id}` when free
+  made an existing database open unchanged, at the cost of ids that look like
+  wiring hashes forever. Reverted to always-random (D-2026-09-22-3). It also
+  took the mint-one-then-re-resolve loop and the `first_saved` field added to
+  `scidb.get_aggregated_variants` with it — both existed only to serve it.
+* **The absorb.** `_absorb_derived_ids` folded a pre-existing duplicate back
+  together and carried its statements. That is a migration; the project takes
+  clean breaks. Deleted (D-2026-09-22-4).
+* **The silent fallbacks.** Both halves caught `Exception` and fell back to
+  the derived id. There is no correct fallback — the derivation was removed
+  for being wrong — and a canvas that draws but cannot say which node owns
+  what is worse than an error. Deleted (D-2026-09-22-5).
+
+### Risks that are still risks
+
+**Every function node id changes on the first build of an existing database.**
+Saved positions, node config, hides and scope membership keyed by the old
+`fn__{fn}__{wiring_id}` stop resolving. This is the intended clean break and
+is paid once, but it is the thing to look at first on a real project — item 0p
+of `docs/gui-manual-testing-todo.md`.
+
+**Node identity is resolved per BUILD, and a build is per SCOPE**, so a node
+hidden in the scope that happens to build first cannot state anything on that
+pass. Deterministic and persisted either way, but it is the corner to look at
+if a node appears twice in one hypothesis and once in another.
+
+**Tests that spell a node id from a wiring** (`fn_node_id(fn, wiring_id(...))`
+against a real database) now have to look it up instead. `conftest.bp_node_id`
+and `test_pipeline_scopes.py` were converted; the pure-domain tests are
+unaffected because there the token still is the wiring.

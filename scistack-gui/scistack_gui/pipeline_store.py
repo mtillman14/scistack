@@ -310,6 +310,14 @@ def _ensure_tables(db) -> None:
 
     intent_store.ensure_tables(db)
 
+    # `_node_wiring`: which canvas node has run as which wiring — the table
+    # that lets a function node's id be ALLOCATED once instead of re-derived
+    # from its recorded bindings on every build. Beside `_intent` and never in
+    # provenance (intent-and-fact.md §8); see docs/claude/node-identity.md.
+    from scistack_gui import node_wiring
+
+    node_wiring.ensure_tables(db)
+
 
 def migrate_from_json(db, layout_path: Path) -> None:
     """One-time migration: move manual_nodes/manual_edges from JSON into DB.
@@ -781,6 +789,14 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     from scistack_gui import intent_store
 
     intent_store.rekey_subject(db, old_id, new_id)
+    # …and for the wiring associations, which are keyed by node id too. A
+    # manual node that was RUN before it graduated has a dispatch record
+    # (D-2026-09-22-2); leaving it behind would strand the one row that says
+    # which wiring this node means, and the next build would re-mint a second
+    # node for it (docs/claude/node-identity.md).
+    from scistack_gui import node_wiring
+
+    node_wiring.rekey_node(db, old_id, new_id)
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id])
     rename_edge_endpoints(db, old_id, new_id)
 

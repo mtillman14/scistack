@@ -6,6 +6,7 @@ All functions are pure — no DB or fixtures required.
 
 from scidb.foreach_config import RunOptions
 
+from scistack_gui.domain.graph_builder import identity_token
 from scistack_gui.domain.variant_resolver import (
     build_inferred_variants,
     build_schema_kwargs,
@@ -558,7 +559,7 @@ class TestReconcileManualInputsHiddenEdges:
 
     def test_no_hidden_edges_returns_unchanged(self):
         targets = [self._target()]
-        assert reconcile_manual_inputs(targets, "fn", set()) == targets
+        assert reconcile_manual_inputs(targets, "fn", set(), (), None, identity_token) == targets
 
     def test_disconnected_var_input_dropped(self):
         from scistack_gui.domain.graph_builder import wiring_id
@@ -566,7 +567,7 @@ class TestReconcileManualInputsHiddenEdges:
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         hidden = {f"e__RawEMG__fn__{wid}"}
-        assert reconcile_manual_inputs([target], "fn", hidden) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, (), None, identity_token) == []
 
     def test_disconnected_constant_input_dropped(self):
         from scistack_gui.domain.graph_builder import wiring_id
@@ -574,11 +575,11 @@ class TestReconcileManualInputsHiddenEdges:
         target = self._target({}, constants={"low_hz": 20})
         wid = wiring_id("fn", {}, {"Out"}, {})
         hidden = {f"e__low_hz__fn__{wid}"}
-        assert reconcile_manual_inputs([target], "fn", hidden) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, (), None, identity_token) == []
 
     def test_unrelated_hidden_edge_keeps_target(self):
         target = self._target({"signal": "RawEMG"})
-        assert reconcile_manual_inputs([target], "fn", {"e__Other__fn__deadbeef"}) == [
+        assert reconcile_manual_inputs([target], "fn", {"e__Other__fn__deadbeef"}, (), None, identity_token) == [
             target
         ]
 
@@ -591,7 +592,7 @@ class TestReconcileManualInputsHiddenEdges:
         t2 = self._target({"signal": "RawEMG"}, constants={"hz": 20})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         hidden = {f"e__RawEMG__fn__{wid}"}
-        assert reconcile_manual_inputs([t1, t2], "fn", hidden) == []
+        assert reconcile_manual_inputs([t1, t2], "fn", hidden, (), None, identity_token) == []
 
     def test_different_wiring_of_same_function_name_unaffected(self):
         # compute_rolling_vo2 fed by RawVO2 in one wiring, RawHeartRate in
@@ -602,7 +603,7 @@ class TestReconcileManualInputsHiddenEdges:
         hr = self._target({"signal": "RawHeartRate"})
         wid_vo2 = wiring_id("fn", {"signal": "RawVO2"}, {"Out"}, {})
         hidden = {f"e__RawVO2__fn__{wid_vo2}"}
-        assert reconcile_manual_inputs([vo2, hr], "fn", hidden) == [hr]
+        assert reconcile_manual_inputs([vo2, hr], "fn", hidden, (), None, identity_token) == [hr]
 
     def test_multitype_input_list_checked_per_element(self):
         from scistack_gui.domain.graph_builder import wiring_id
@@ -610,10 +611,10 @@ class TestReconcileManualInputsHiddenEdges:
         target = self._target({"signal": ["A", "B"]})
         wid = wiring_id("fn", {"signal": ["A", "B"]}, {"Out"}, {})
         hidden = {f"e__B__fn__{wid}"}
-        assert reconcile_manual_inputs([target], "fn", hidden) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, (), None, identity_token) == []
 
     def test_empty_targets_returns_empty(self):
-        assert reconcile_manual_inputs([], "fn", {"anything"}) == []
+        assert reconcile_manual_inputs([], "fn", {"anything"}, (), None, identity_token) == []
 
     def test_manual_reconnect_substitutes_new_input_type(self):
         # A manual edge onto the SAME handle a hidden inbound edge fed,
@@ -633,7 +634,7 @@ class TestReconcileManualInputsHiddenEdges:
                 "source": "var__OtherEMG",
             }
         ]
-        result = reconcile_manual_inputs([target], "fn", hidden, manual_edges)
+        result = reconcile_manual_inputs([target], "fn", hidden, manual_edges, None, identity_token)
         assert result == [
             {
                 "bindings": {"signal": {"kind": "variable", "ref": ["OtherEMG"]}},
@@ -659,7 +660,7 @@ class TestReconcileManualInputsHiddenEdges:
                 "source": "var__OtherEMG",
             }
         ]
-        assert reconcile_manual_inputs([target], "fn", hidden, manual_edges) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, manual_edges, None, identity_token) == []
 
     def test_partial_reconnection_multi_handle_still_drops(self):
         # Hidden var input AND hidden constant; manual edge covers only the
@@ -677,7 +678,7 @@ class TestReconcileManualInputsHiddenEdges:
                 "source": "var__OtherEMG",
             }
         ]
-        assert reconcile_manual_inputs([target], "fn", hidden, manual_edges) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, manual_edges, None, identity_token) == []
 
     def test_manual_reconnect_covers_one_of_multitype_list_elements(self):
         # Multitype ["A", "B"] input, B's edge hidden, C wired manually onto
@@ -695,7 +696,7 @@ class TestReconcileManualInputsHiddenEdges:
         manual_edges = [
             {"target": fn_node_id("fn", wid), "targetHandle": "in__signal", "source": "var__C"}
         ]
-        result = reconcile_manual_inputs([target], "fn", hidden, manual_edges)
+        result = reconcile_manual_inputs([target], "fn", hidden, manual_edges, None, identity_token)
         assert result == [
             {
                 "bindings": {"signal": {"kind": "variable", "ref": ["A", "C"]}},
@@ -736,7 +737,7 @@ class TestReconcileManualInputsUnboundParams:
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         edges = [self._edge(wid, "in__side", "var__Demographics")]
 
-        result = reconcile_manual_inputs([target], "fn", set(), edges)
+        result = reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token)
 
         assert len(result) == 1
         assert result[0]["bindings"]["side"] == {"kind": "variable", "ref": ["Demographics"]}
@@ -753,7 +754,7 @@ class TestReconcileManualInputsUnboundParams:
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         edges = [self._edge(wid, "in__side", "var__Demographics")]
-        assert reconcile_manual_inputs([target], "fn", None, edges)[0]["bindings"]["side"][
+        assert reconcile_manual_inputs([target], "fn", None, edges, None, identity_token)[0]["bindings"]["side"][
             "ref"
         ] == ["Demographics"]
 
@@ -770,7 +771,7 @@ class TestReconcileManualInputsUnboundParams:
                 "source": "var__Demographics::main",
             }
         ]
-        result = reconcile_manual_inputs([target], "fn", set(), edges)
+        result = reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token)
         assert result[0]["bindings"]["side"]["ref"] == ["Demographics"]
 
     def test_manual_edge_beside_visible_history_edge_is_each_of(self):
@@ -781,7 +782,7 @@ class TestReconcileManualInputsUnboundParams:
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         edges = [self._edge(wid, "in__signal", "var__OtherEMG")]
-        result = reconcile_manual_inputs([target], "fn", set(), edges)
+        result = reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token)
         assert result[0]["bindings"]["signal"] == {
             "kind": "variable",
             "ref": ["RawEMG", "OtherEMG"],
@@ -800,7 +801,7 @@ class TestReconcileManualInputsUnboundParams:
             self._edge(wid, "in__signal", "var__OtherEMG"),
             self._edge(wid, "in__side", "var__Demographics"),
         ]
-        result = reconcile_manual_inputs([target], "fn", hidden, edges)
+        result = reconcile_manual_inputs([target], "fn", hidden, edges, None, identity_token)
         assert result[0]["input_types"] == {"signal": "OtherEMG", "side": "Demographics"}
 
     def test_unbound_override_never_readmits_uncovered_hidden_handle(self):
@@ -812,7 +813,7 @@ class TestReconcileManualInputsUnboundParams:
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         hidden = {f"e__low_hz__fn__{wid}"}
         edges = [self._edge(wid, "in__side", "var__Demographics")]
-        assert reconcile_manual_inputs([target], "fn", hidden, edges) == []
+        assert reconcile_manual_inputs([target], "fn", hidden, edges, None, identity_token) == []
 
     def test_non_variable_source_is_not_an_override(self):
         # PathInput / Parameter sources have their own binding rules.
@@ -821,7 +822,7 @@ class TestReconcileManualInputsUnboundParams:
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         edges = [self._edge(wid, "in__side", "pathInput__files")]
-        result = reconcile_manual_inputs([target], "fn", set(), edges)
+        result = reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token)
         assert result == [target]
 
     def test_edge_on_another_wiring_does_not_leak(self):
@@ -830,7 +831,7 @@ class TestReconcileManualInputsUnboundParams:
         target = self._target({"signal": "RawEMG"})
         other_wid = wiring_id("fn", {"signal": "Other"}, {"Out"}, {})
         edges = [self._edge(other_wid, "in__side", "var__Demographics")]
-        assert reconcile_manual_inputs([target], "fn", set(), edges) == [target]
+        assert reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token) == [target]
 
 
 class TestBuildSchemaKwargs:

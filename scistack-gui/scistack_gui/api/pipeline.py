@@ -245,73 +245,228 @@ def _find_db_fn_candidate(
     return agg.fn_input_params.get(key, {}), agg.fn_outputs.get(key, set())
 
 
-def _migrate_node_statements(
-    db, node_configs: dict[str, dict], old_id: str, new_id: str
-) -> dict | None:
-    """Carry EVERY statement from the node a manual input overlay was
-    configured on to the node its run produced
-    (``graph_builder.superseded_manual_input_overrides``). Returns the new
-    node's ``columnSelections`` if it has any, for the caller's node data.
+#: Ambiguity signatures already reported in this process, so "two nodes are
+#: wired identically" is said ONCE rather than on every graph build. The popup
+#: still arrives with every response (the panel that shows it may have mounted
+#: since), but the log — where a repeated warning is noise that buries the next
+#: one — records it the first time only.
+_AMBIGUITIES_LOGGED: set[str] = set()
 
-    Until 2026-09-22 only ``columnSelections`` moved, deliberately: it is the
-    one setting the run actually USED (``_attach_column_selections`` reads it
-    off the old node id), so leaving it behind made the new node's next run
-    silently load whole tables. The reasoning stopped there — "the other saved
-    settings were never applied to that run and stay where they were" — which
-    is true and is not a reason to strand them. A run moves the node's id
-    (``wiring_id`` hashes the recorded bindings, so recording a drawn edge
-    rehashes it), and everything keyed by the old id goes with it:
-    ``schemaLevel``, ``runOptions``, ``whereFilters``, hidden values. The user
-    is told nothing; the node simply behaves as if it had never been
-    configured. Seen 2026-09-22: `schemaLevel` re-entered by hand six minutes
-    after the run that dropped it.
 
-    ``intent_store.rekey_subject`` is that move, and it already existed for
-    GRADUATION — the same id change, from the other direction. One call, every
-    aspect, old rows deleted, so a repeat build moves nothing.
+def _should_log_ambiguity(signature: str) -> bool:
+    """True the FIRST time this exact ambiguity is seen in this process.
 
-    ``old_wins=False``: keep anything the new node already has. At migration
-    time it cannot have any (it came into existence with the run that
-    triggered this), so the two settings agree in practice — but a repair path
-    that can only ever ADD is the safer default if that assumption breaks.
-
-    Statements carry their scope in a column, so placement (``::scope``) needs
-    no special handling here; ``rekey_subject`` strips it from both refs.
-    ``node_configs`` is refreshed in place so ``apply_placement_configs``
-    later in the same build sees the moved values without a second fetch.
-
-    This becomes redundant under D-2026-09-22-1 (an allocated node id does not
-    move when a run records a wiring) — but that is a larger change, and until
-    it lands this is what stops a run silently dropping settings.
+    The popup is per response; the log line is per process. A graph build runs
+    on every refresh and on every ``dag_updated``, so logging the same pair
+    each time would bury whatever came next under a warning the reader has
+    already acted on (or decided not to).
     """
+    if signature in _AMBIGUITIES_LOGGED:
+        return False
+    _AMBIGUITIES_LOGGED.add(signature)
+    return True
+
+
+def _node_scope(db, node_id: str) -> str:
+    """The scope a node sits in, for the ambiguity report."""
     from scistack_gui import intent_store
+
+    return intent_store.scope_of_node(db, node_id)
+
+
+def ensure_node_identities(db):
+    """Resolve and persist a node id for every wiring in history, for a
+    caller that needs node ids WITHOUT building the whole graph. Returns the
+    :class:`~scistack_gui.domain.node_identity.IdentityPlan`.
+
+    **Why a Run path needs this.** A node id is no longer derivable from a
+    wiring (D-2026-09-22-3), so anything that used to spell
+    ``fn__{fn}__{wiring_id}`` now has to look one up — and a lookup only
+    answers for a wiring some build has already seen.
+    ``execution_service._scope_function_node_ids`` is the case: it lists the
+    nodes a scope compiles, from history, and can legitimately reach a wiring
+    written since the canvas last refreshed (a script run, a terminal MATLAB
+    run, another window).
+
+    Fabricating an id there would be the old bug wearing a new hat — two
+    surfaces inventing an id for one node — so it asks here instead, and this
+    runs the same ONE resolution `_build_graph` does. Idempotent: on the
+    common path every wiring is already associated and nothing is written.
+    """
+    from scistack_gui import layout as _layout
     from scistack_gui import pipeline_store as _store
-    from scistack_gui.ids import strip_placement
 
-    moved = intent_store.rekey_subject(db, old_id, new_id, old_wins=False)
-    if not moved:
-        return None
-
-    new_bare = strip_placement(new_id)
-    old_bare = strip_placement(old_id)
-    refreshed = _store.get_node_configs(db)
-    for nid in [k for k in node_configs if strip_placement(k) == old_bare]:
-        node_configs.pop(nid, None)
-    for nid, cfg in refreshed.items():
-        if strip_placement(nid) == new_bare:
-            node_configs[nid] = cfg
-    logger.info(
-        "[pipeline] migrated %d statement(s) from %s to %s — the run that "
-        "created the new node moved its id, and everything keyed by the old "
-        "one would otherwise stop applying",
-        moved,
-        old_id,
-        new_id,
+    plan, _warnings = _resolve_node_identity(
+        db,
+        build_aggregate(db, db.get_aggregated_variants()),
+        _layout.read_manual_edges(),
+        _store.get_manual_nodes(db),
+        _store.get_hidden_edge_ids(db),
     )
-    for nid, cfg in node_configs.items():
-        if strip_placement(nid) == new_bare and cfg.get("columnSelections"):
-            return cfg["columnSelections"]
-    return None
+    return plan
+
+
+def build_aggregate(db, scidb_agg: dict):
+    """``get_aggregated_variants()`` → :class:`graph_builder.AggregatedData`.
+
+    ONE conversion. It was written inline in ``_build_graph`` and again, in a
+    narrower form, in ``execution_service.disconnected_report_entries`` — and
+    the narrow copy silently omitted the PathInput resolution, which is the
+    difference between a hidden PathInput edge matching and not
+    (``convert_scidb_path_inputs``). Identity resolution needs the same shape
+    as both, so this is the moment to have one of it.
+
+    PathInputs are keyed by DECLARED name, not by the parameter they fill:
+    a PathInput's identity is its source declaration (see
+    ``docs/claude/code-discovery-categories.md``), and the raw DB extraction
+    knows nothing about source.
+    """
+    from scistack_gui import pipeline_store as _store
+    from scistack_gui.domain import graph_builder as gb
+
+    agg = gb.AggregatedData()
+    for (fn_name, call_id), fn_data in scidb_agg["functions"].items():
+        fkey = (fn_name, call_id)
+        agg.fn_input_params[fkey] = fn_data["input_params"]
+        agg.fn_outputs[fkey] = set(fn_data["outputs"])
+        for const_name, values in fn_data["constants"].items():
+            agg.fn_constants[fkey].add(const_name)
+            for val in values:
+                # No per-value record counts in this projection; const_counts
+                # is display-only, so an approximation is honest here and the
+                # real counts land from scidb_agg["constants"] below.
+                agg.const_counts[const_name][str(val)] = 1
+        agg.fn_variants_map[fkey] = fn_data["variants"]
+
+    for const_name, const_data in scidb_agg["constants"].items():
+        for val_entry in const_data["values"]:
+            agg.const_counts[const_name][val_entry["value"]] = val_entry["record_count"]
+        for fkey in const_data["functions"]:
+            agg.const_fns[const_name].add(tuple(fkey))
+
+    agg.all_var_types = set(scidb_agg["variables"].keys())
+
+    path_input_registry = registry.get_path_inputs_registry()
+    agg.path_inputs = gb.convert_scidb_path_inputs(
+        scidb_agg["path_inputs"],
+        path_input_registry,
+        _store.path_input_history_index(db),
+        registry.get_project_root(),
+    )
+    gb.seed_undiscovered_path_inputs(agg.path_inputs, path_input_registry)
+    return agg
+
+
+def _resolve_node_identity(
+    db: DatabaseManager,
+    agg,
+    manual_edges,
+    manual_nodes: dict,
+    hidden_edge_ids,
+):
+    """Assign a node id to every wiring in history (D-2026-09-22-1/-2).
+
+    Returns ``(IdentityPlan, warnings)``. The plan's ``token`` is handed to
+    every ``token_for=`` seam in ``graph_builder``; the warnings ride out on
+    the graph response so the GUI can raise the §7b popup.
+
+    One pass, reading two things: which nodes already exist (the association
+    table) and which wiring each of them currently STATES (its latest recorded
+    shape with the user's drawn edges folded in). A wiring history holds is
+    that node's if either says so, and otherwise it is a node nobody has seen
+    before and gets an id.
+
+    **It does not migrate.** On the first build of an existing database the
+    table is empty, so every wiring in history mints a fresh id and every
+    setting keyed by an old ``fn__{fn}__{wiring_id}`` stops resolving. That is
+    the clean break, taken deliberately (D-2026-09-22-3/-4): the alternative —
+    minting the old spelling so the rows still match — is a compatibility shim
+    that leaves node ids looking like wiring hashes forever, which is the
+    confusion this whole change exists to end.
+
+    **It does not swallow failures.** If identity cannot be resolved, the GUI
+    cannot say which node a run belongs to, and node state, the Run button and
+    every saved setting are then describing something unverified. The build
+    fails, loudly, rather than falling back to a derivation that has just been
+    removed for being wrong.
+    """
+    from scistack_gui import node_wiring
+    from scistack_gui.domain import graph_builder as gb
+    from scistack_gui.domain import node_identity
+
+    pi_by_fkey = gb.path_input_bindings_by_fkey(agg.path_inputs)
+
+    # Every distinct wiring history holds.
+    history: set[tuple[str, str]] = set()
+    for fkey, params in agg.fn_input_params.items():
+        fn, _cid = fkey
+        history.add(
+            (
+                fn,
+                gb.wiring_id(
+                    fn,
+                    params,
+                    agg.fn_outputs.get(fkey, set()),
+                    pi_by_fkey.get(fkey, {}),
+                ),
+            )
+        )
+
+    associations = node_wiring.associations(db)
+    current_by_node = node_wiring.current_wiring_by_node(db)
+    stated_by = gb.stated_wiring_claims(
+        agg.fn_input_params,
+        agg.fn_outputs,
+        agg.fn_constants,
+        agg.path_inputs,
+        manual_edges,
+        manual_nodes,
+        hidden_edge_ids,
+        current_by_node,
+    )
+    plan = node_identity.resolve_identities(
+        history,
+        associations=associations,
+        stated_by=stated_by,
+        current_by_node=current_by_node,
+        scope_of=lambda node_id: _node_scope(db, node_id),
+    )
+    for node_id, wiring, scope in plan.to_record:
+        node_wiring.record(db, node_id, wiring, scope=scope)
+
+    warnings = []
+    for ambiguity in plan.ambiguities:
+        warnings.append(
+            {
+                "kind": "wiring_ambiguity",
+                "function_name": ambiguity.function_name,
+                "wiring_id": ambiguity.wiring_id,
+                "chosen": ambiguity.chosen,
+                "others": list(ambiguity.others),
+                "scope": ambiguity.scope,
+                "signature": ambiguity.signature,
+                "message": ambiguity.message(),
+            }
+        )
+        if _should_log_ambiguity(ambiguity.signature):
+            logger.warning("[pipeline] %s", ambiguity.message())
+
+    superseded = [
+        (fn, wiring)
+        for (fn, wiring) in sorted(plan.node_by_wiring)
+        if not plan.is_current(fn, wiring)
+    ]
+    if superseded:
+        # The shapes a node has run as but no longer HAS. Its handles, edges
+        # and Run button follow its current wiring only; these stay visible as
+        # history, in the Variants panel and in provenance.
+        logger.info(
+            "[pipeline] %d wiring(s) are history rather than a node's current "
+            "shape: %s",
+            len(superseded),
+            superseded,
+        )
+    return plan, warnings
 
 
 def _compute_run_states(
@@ -583,49 +738,11 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         len(scidb_agg["path_inputs"]),
     )
 
-    # Convert scidb format to AggregatedData format for compatibility
+    # Convert scidb format to AggregatedData format. ONE conversion, shared
+    # with `ensure_node_identities` and `disconnected_report_entries` — see
+    # `build_aggregate`.
     logger.info("[pipeline] Converting to AggregatedData format")
-    agg = gb.AggregatedData()
-
-    # Convert functions dict
-    for (fn_name, call_id), fn_data in scidb_agg["functions"].items():
-        fkey = (fn_name, call_id)
-        agg.fn_input_params[fkey] = fn_data["input_params"]
-        agg.fn_outputs[fkey] = set(fn_data["outputs"])
-        # Convert constants from list to dict for const_counts
-        for const_name, values in fn_data["constants"].items():
-            agg.fn_constants[fkey].add(const_name)
-            for val in values:
-                # Note: we don't have per-value record counts from scidb_agg,
-                # but const_counts is used for display, so we can approximate
-                agg.const_counts[const_name][str(val)] = 1
-        agg.fn_variants_map[fkey] = fn_data["variants"]
-
-    # Convert constants
-    for const_name, const_data in scidb_agg["constants"].items():
-        for val_entry in const_data["values"]:
-            agg.const_counts[const_name][val_entry["value"]] = val_entry["record_count"]
-        for fkey in const_data["functions"]:
-            agg.const_fns[const_name].add(tuple(fkey))
-
-    # Convert variables
-    agg.all_var_types = set(scidb_agg["variables"].keys())
-
-    # Convert path_inputs — scidb_agg is keyed by PARAM NAME (it's a raw
-    # DB-history extraction with no knowledge of source code), but a
-    # PathInput's real identity is its source-declared name (see
-    # docs/claude/code-discovery-categories.md), which can differ from the
-    # parameter it happens to fill. Resolve each by content match against
-    # the registry (shared with execution_service.disconnected_report_entries
-    # — see graph_builder.convert_scidb_path_inputs).
-    path_input_registry = registry.get_path_inputs_registry()
-    agg.path_inputs = gb.convert_scidb_path_inputs(
-        scidb_agg["path_inputs"],
-        path_input_registry,
-        _ps.path_input_history_index(db),
-        registry.get_project_root(),
-    )
-    gb.seed_undiscovered_path_inputs(agg.path_inputs, path_input_registry)
+    agg = build_aggregate(db, scidb_agg)
 
     logger.info("[pipeline] Filtering hidden nodes")
     # strip_var_type_values=False: this pre-grouping pass must NOT scrub
@@ -671,6 +788,22 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     manual_edges_for_fn_lookup = layout_store.read_manual_edges()
     manual_nodes = _ps.get_manual_nodes(db)
     logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
+
+    # --- Node identity (D-2026-09-22-1) -----------------------------------
+    # BEFORE anything derives a node id from a wiring. Every call below that
+    # used to spell `fn__{fn}__{wiring_id}` now asks `identity.token` for the
+    # trailing segment, so a node that was rewired and run keeps its id (and
+    # its position, config, scope membership and every `_intent` statement)
+    # instead of a second node appearing beside it.
+    identity, identity_warnings = _resolve_node_identity(
+        db,
+        agg,
+        manual_edges_for_fn_lookup,
+        manual_nodes,
+        hidden_edge_ids,
+    )
+    token_for = identity.token
+
     disconnected_wirings = gb.hidden_wirings(
         agg.fn_input_params,
         agg.fn_outputs,
@@ -678,9 +811,14 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         agg.path_inputs,
         hidden_edge_ids,
         manual_edges=manual_edges_for_fn_lookup,
+        token_for=token_for,
     )
     disconnected_fkeys = gb.wiring_disconnected_fkeys(
-        agg.fn_input_params, agg.fn_outputs, disconnected_wirings, agg.path_inputs
+        agg.fn_input_params,
+        agg.fn_outputs,
+        disconnected_wirings,
+        agg.path_inputs,
+        token_for=token_for,
     )
     if disconnected_wirings:
         logger.info(
@@ -701,8 +839,9 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         agg.fn_constants,
         agg.path_inputs,
         manual_edges_for_fn_lookup,
-        manual_nodes,
-        hidden_edge_ids,
+        token_for,
+        manual_nodes=manual_nodes,
+        hidden_edge_ids=hidden_edge_ids,
     )
     logger.info("[pipeline] Computing run states (delegating to run_state)")
     run_states = _compute_run_states(
@@ -725,6 +864,8 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         manual_edges=manual_edges_for_fn_lookup,
         manual_nodes=manual_nodes,
         hidden_edge_ids=hidden_edge_ids,
+        token_for=token_for,
+        is_current=identity.is_current,
     )
     # Hidden-id filtering ran pre-grouping for LEGACY per-call-site ids;
     # run it again now so deletions of wiring-grouped nodes (hidden id =
@@ -911,12 +1052,16 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     # owner) will not use. Node identity is untouched: the overlay is on the
     # built node data only.
     #
-    # Once the overlaid wiring has actually RUN, history carries it under a
-    # second node id, so the overlay is superseded: the manual edge is moved
-    # onto that node (where build_edges' endpoint dedup folds it into the
-    # DB-derived edge — the row stays, hide never delete), this node reverts
-    # to its true history, and the column selection saved here follows the
-    # edge so the new node's next run does not silently load whole tables.
+    # **Nothing is repaired afterwards any more** (Stage 6 of
+    # `.claude/plan-node-identity.md`). Until 2026-09-22 a run through an
+    # overlay produced a SECOND node — history recorded the effective wiring,
+    # and the id was a hash of the recorded wiring — so the build had to
+    # detect that, rewrite the manual edge onto the new node and carry every
+    # `_intent` statement across (`superseded_manual_input_overrides` +
+    # `_migrate_node_statements`). Under allocated ids the run's wiring is
+    # claimed by the node that STATED it (`_resolve_node_identity`), so there
+    # is no new node, nothing to rewrite and nothing to carry. Both functions
+    # are gone rather than left as dead paths.
     input_overrides = gb.collect_manual_input_overrides(
         nodes,
         agg.fn_input_params,
@@ -926,32 +1071,6 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         hidden_edge_ids,
     )
     if input_overrides:
-        overlay_rewrites, superseded_overlays = gb.superseded_manual_input_overrides(
-            input_overrides,
-            agg.fn_input_params,
-            agg.fn_outputs,
-            agg.path_inputs,
-            manual_edges_for_fn_lookup,
-            manual_nodes,
-        )
-        for rewritten in overlay_rewrites:
-            _ps.write_manual_edge(db, rewritten)
-            for me in manual_edges_for_fn_lookup:
-                if me["id"] == rewritten["id"]:
-                    me["target"] = rewritten["target"]
-            logger.info(
-                "[pipeline] manual edge %s moved onto %s — its overlaid wiring "
-                "has run and is now history there",
-                rewritten["id"],
-                rewritten["target"],
-            )
-        for old_id, new_id in superseded_overlays.items():
-            input_overrides.pop(old_id, None)
-            migrated = _migrate_node_statements(db, node_configs, old_id, new_id)
-            if migrated:
-                for n in nodes:
-                    if n["id"] == new_id and "columnSelections" not in n["data"]:
-                        n["data"]["columnSelections"] = migrated
         overlaid = gb.overlay_manual_inputs(nodes, input_overrides)
         if overlaid:
             logger.info(
@@ -961,9 +1080,10 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
             )
 
     # --- Tag disconnected function nodes ---
-    # By this point agg is wiring-grouped, so function node ids are exactly
-    # fn__{fn_name}__{wiring_id} — directly comparable to disconnected_wirings
-    # with no further translation. Visual/state only (see run_state above
+    # By this point agg is grouped by NODE, so a function node id's trailing
+    # segment is the same token `hidden_wirings` was given `token_for` for —
+    # directly comparable to disconnected_wirings with no further translation.
+    # Visual/state only (see run_state above
     # for the actual color); execution_service enforces un-runnability
     # independently at run time.
     if disconnected_wirings:
@@ -1093,11 +1213,18 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         if not resolved.output_types:
             still_to_add.append(node_id)
             continue
-        my_wiring = gb.wiring_id(
+        # The node id's trailing segment is the node's TOKEN, which is the
+        # wiring only for a node that has never been rewired — so the manual
+        # node's own computed wiring has to go through the same mapping the
+        # graph was built with before it can be compared with one.
+        my_wiring = token_for(
             meta["label"],
-            inferred_inputs,
-            set(resolved.output_types),
-            resolved.path_input_params,
+            gb.wiring_id(
+                meta["label"],
+                inferred_inputs,
+                set(resolved.output_types),
+                resolved.path_input_params,
+            ),
         )
         matches = [
             n["id"]
@@ -1484,7 +1611,15 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         len(edges),
     )
 
-    return {"nodes": nodes, "edges": edges, "pipeline_id": pipeline_id}
+    result = {"nodes": nodes, "edges": edges, "pipeline_id": pipeline_id}
+    if identity_warnings:
+        # §7b: a popup, not just a log line. Two nodes stating identical
+        # wiring compute identical things, so the state is almost certainly
+        # unintended — and a warning buried in scidb.log is a warning nobody
+        # reads. It is also recoverable (rewire one), which is why nothing is
+        # merged and the message says what will happen until they differ.
+        result["warnings"] = identity_warnings
+    return result
 
 
 # ---------------------------------------------------------------------------

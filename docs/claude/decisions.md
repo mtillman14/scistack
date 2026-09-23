@@ -8,6 +8,106 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-09-22-3 — A minted node id says only which function it runs
+
+**Context.** D-2026-09-22-1 says a function node's id is allocated, and its
+table proposes `fn__{label}__{uuid4[:8]}` — the shape manual nodes use. The
+first implementation (2026-09-22) instead minted the *derived* spelling
+`fn__{fn}__{wiring_id}` when it was free, reasoning that what is load-bearing
+is that the id is minted once and **persisted**, not that it is random — and
+that keeping the old spelling made an existing database open to exactly the
+ids it already had.
+
+**Decision.** Reverted the same day. `node_wiring.mint_node_id` mints
+`fn__{fn}__{uuid4[:16]}`, always. The only readable thing in a node id is the
+function it runs; its wiring, its constants and its scope are all looked up,
+because every one of them can change while the node stays the same node.
+
+Sixteen hex, not eight: `ids.parse_fn_node_id` recognises a DB-derived
+function node by a 16-hex trailing segment in roughly forty places. That
+length is a contract with the id grammar, not part of the decision.
+
+**Consequences.** There is **no migration**. A database built before this
+change has no associations, so the first build mints a fresh id for every
+function node and every saved position, node config, hide and scope membership
+keyed by `fn__{fn}__{wiring_id}` stops resolving. That churn is paid once and
+is the point of the clean break: the alternative leaves ids that *look* like
+wiring hashes and are not, which is exactly the confusion
+`node-identity.md` §1 is about and exactly the mistake a reader would make in
+six months. `node_wiring.forget_all` is the deliberate, manual way to pay it
+again; nothing calls it.
+
+The rejected alternative also cost more than compatibility. Minting the old
+spelling only helps if the oldest wiring mints first, which forced
+`resolve_identities` into a mint-one-then-re-resolve loop and made it read
+`first_saved` out of `scidb.get_aggregated_variants` — a field added to a
+shared layer on the canvas's hottest read purely to serve the shim. All three
+went away with it.
+
+## D-2026-09-22-4 — No absorb, and the graduation id-swap stays
+
+**Context.** Stage 6 of `.claude/plan-node-identity.md` lists three repairs to
+retire once identity stops moving: `superseded_manual_input_overrides`,
+`_migrate_node_statements`, and the graduation id-swap — a manual node's
+allocated id could simply *stay* its id once it has history, removing the
+other half of the two-schemes problem (`node-identity.md` §4). The plan also
+says, of the duplicate `grSides` already on a real canvas, *"do not build the
+absorb patch."*
+
+**Decision.** The first two are deleted. **No absorb was kept**: a first
+implementation folded a pre-existing duplicate back together and carried its
+statements over, and that is a migration — this is a beta project that takes
+clean breaks (`feedback_beta_no_deprecation`), and under D-2026-09-22-3 there
+is nothing to fold into anyway, since every node gets a fresh id on first
+build. The graduation id-swap is **kept**, with `node_wiring.rekey_node` added
+beside `intent_store.rekey_subject` in `pipeline_store.graduate_manual_node`
+so a manual node that was RUN before it graduated carries its dispatch record
+across.
+
+**Consequences.** A duplicate that formed before this change stays two nodes
+until the user hides or rewires one; it can no longer form again. Dropping the
+absorb also removed the reason `resolve_identities` needed chronology: nothing
+minted in a pass can claim anything in the same pass, so the whole thing is
+one pass with no ordering.
+
+A manual node still swaps identity once, at graduation, and that swap is still
+where a pre-graduation id can be orphaned. Against that: `graduate_manual_node`
+is asserted by roughly 130 assertions across twelve test files, and rewriting
+them blind — in the same change as the identity model itself, before the suite
+has been run and the canvas looked at — trades a known, contained defect for an
+unknown one. Reopen this as its own change once `plan-node-identity.md`'s tests
+are green and item 0p of `docs/gui-manual-testing-todo.md` has been checked.
+
+## D-2026-09-22-5 — Identity failures stop the GUI
+
+**Context.** The first implementation wrapped both halves of the identity
+machinery — resolution on the graph build, recording at dispatch — in
+`except Exception`, falling back to the derived id and logging a warning. The
+reasoning was that a canvas that will not draw is worse than a node id that
+moves.
+
+**Decision.** Reverted (user decision 2026-09-23). Nothing swallows anything.
+`node_wiring`'s reads raise, `_resolve_node_identity` raises, and
+`record_dispatch_wirings` raises rather than letting a run write records that
+nothing can attribute — and the identity seam takes no defaults, so a caller
+that forgets to pass the mapping fails loudly too.
+
+**Consequences.** If the association table cannot be read, the GUI cannot say
+which node a run belongs to — and node state, the Run button, the variant rows
+and every saved setting are then describing something unverified. Presenting
+that as a working canvas is worse than presenting an error, because the user
+has no way to tell the two apart. There is also no "old behaviour" left to
+fall back to: the derivation the fallback used has been removed for being
+wrong, so it would have been a fallback onto the bug.
+
+The same reasoning reaches a **default argument**, which is a silent fallback
+with no exception to catch. `token_for` and `is_current` on `graph_builder`'s
+node-deriving functions are therefore required: forgetting one is a
+`TypeError` at the call site, not a quiet return to deriving ids from wirings.
+`identity_token` and the tests' `_all_current` are passed explicitly wherever
+the equivalence genuinely holds — a stated assumption rather than an inherited
+default.
+
 ## D-2026-09-22-2 — How a node claims an invocation
 
 **Context.** D-2026-09-22-1 gives a function node an allocated id and demotes

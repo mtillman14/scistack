@@ -1852,23 +1852,28 @@ class TestManualInputEdgesOnHistoryNodes:
         ids = {n["id"] for n in wide.get("/api/pipeline").json()["nodes"]}
         assert "mf_bare" not in ids
 
-    def test_after_the_wiring_has_run_the_edge_moves_and_the_selection_follows(
-        self, wide, side_var, bp_node_id
-    ):
-        from scistack_gui import pipeline_store
-        from scistack_gui.domain.graph_builder import wiring_id
-        from scistack_gui.ids import fn_node_id, strip_placement
+    # --- the id does not move, so there is nothing to carry ----------------
+    #
+    # Until 2026-09-22 a run through the overlay produced a SECOND node:
+    # `wiring_id` hashed the RECORDED bindings, and recording the drawn edge
+    # rehashed them. The build then had to notice, rewrite the manual edge
+    # onto the new node, and carry every `_intent` statement across
+    # (`superseded_manual_input_overrides` + `_migrate_node_statements`, both
+    # deleted). Only `columnSelections` had moved before that, so
+    # `schemaLevel`, `runOptions` and `whereFilters` were stranded on an id
+    # nothing resolved to, with no warning — a real user re-entered
+    # `schemaLevel` six minutes after the run that dropped it.
+    #
+    # Under allocated node ids (D-2026-09-22-1) the node keeps its id and
+    # absorbs the new wiring, because it STATED that wiring before the run
+    # (domain.node_identity rule 2). These tests assert the absence of the
+    # whole problem: one node, nothing moved, nothing stranded.
 
-        db = _gui_db.get_db()
-        self._wire_side(wide, bp_node_id)
-        pipeline_store.update_node_config(
-            db,
-            bp_node_id,
-            {"columnSelections": {"side": {"columns": ["age"], "iterate": False}}},
-        )
-
-        # The run the overlay describes, done for real: history now carries
-        # the effective wiring under a second node id.
+    def _run_the_overlaid_wiring(self, side_var):
+        """The run the overlay describes, done for real — and deliberately
+        NOT through the GUI's run path, so there is no dispatch record and
+        attribution has to fall back to inference. That is the script /
+        terminal-MATLAB case (`node-identity.md` §7a rule 1)."""
         for_each(
             _registry._functions["bandpass_filter"],
             inputs={"signal": RawSignal, "low_hz": 20, "side": side_var},
@@ -1876,75 +1881,99 @@ class TestManualInputEdgesOnHistoryNodes:
             subject=[1],
             session=["pre"],
         )
-        new_wid = wiring_id(
+
+    def _effective_wiring_id(self):
+        """The wiring the run above records — what the node's id USED to
+        become, and what it must merely be associated with now."""
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        return wiring_id(
             "bandpass_filter",
             {"signal": "RawSignal", "side": "SideTable"},
             {"FilteredSignal"},
             {},
         )
-        new_id = fn_node_id("bandpass_filter", new_wid)
+
+    def _would_be_id(self):
+        """The id the run's wiring would have been DERIVED into before
+        2026-09-22. Nothing should answer to it any more — neither a node nor
+        a statement — which is what "the id did not move" means."""
+        from scistack_gui.ids import fn_node_id
+
+        return fn_node_id("bandpass_filter", self._effective_wiring_id())
+
+    def test_running_the_overlaid_wiring_does_not_fork_a_second_node(
+        self, wide, side_var, bp_node_id
+    ):
+        """The grSides shape, end to end: draw an edge onto an unbound param,
+        run, and there is still ONE node."""
+        self._wire_side(wide, bp_node_id)
+        self._run_the_overlaid_wiring(side_var)
 
         data = wide.get("/api/pipeline").json()
-        by_id = {n["id"]: n for n in data["nodes"]}
-        assert new_id in by_id
-        # The old node reverts to its true history.
-        assert by_id[bp_node_id]["data"]["input_params"]["side"] == ""
-        assert "manual_inputs" not in by_id[bp_node_id]["data"]
-        # The manual edge row now names the new node and is folded into the
-        # DB-derived edge there — drawn once, not twice.
-        stored = next(e for e in pipeline_store.get_manual_edges(db) if e["id"] == "manual__side")
-        assert strip_placement(stored["target"]) == new_id
+        bandpass = [
+            n
+            for n in data["nodes"]
+            if n.get("type") == "functionNode"
+            and n["data"]["label"] == "bandpass_filter"
+        ]
+
+        assert len(bandpass) == 1, (
+            f"the run forked a second node: {[n['id'] for n in bandpass]}"
+        )
+        assert bandpass[0]["id"] == bp_node_id, "the node's id moved"
+        assert self._would_be_id() not in {n["id"] for n in data["nodes"]}
+
+    def test_the_node_carries_the_run_it_produced(
+        self, wide, side_var, bp_node_id
+    ):
+        """One node, two wirings: the association records what it ran as, and
+        the node's own inputs show the binding the run used."""
+        from scistack_gui import node_wiring
+
+        db = _gui_db.get_db()
+        self._wire_side(wide, bp_node_id)
+        self._run_the_overlaid_wiring(side_var)
+        wide.get("/api/pipeline")
+
+        assert self._effective_wiring_id() in node_wiring.wirings_for_node(
+            db, bp_node_id
+        ), "the node does not claim the wiring its own run recorded"
+        node = self._node(wide, bp_node_id)
+        assert node["data"]["input_params"]["side"] == "SideTable"
+
+    def test_the_manual_edge_stays_where_it_was_drawn(
+        self, wide, side_var, bp_node_id
+    ):
+        """No rewrite: the edge already names the node that ran, and the
+        DB-derived edge for the same connection dedups against it, so the
+        canvas draws it once."""
+        from scistack_gui import pipeline_store
+        from scistack_gui.ids import strip_placement
+
+        db = _gui_db.get_db()
+        self._wire_side(wide, bp_node_id)
+        self._run_the_overlaid_wiring(side_var)
+        data = wide.get("/api/pipeline").json()
+
+        stored = next(
+            e for e in pipeline_store.get_manual_edges(db) if e["id"] == "manual__side"
+        )
+        assert strip_placement(stored["target"]) == bp_node_id, (
+            "the edge was moved — the repair path is supposed to be gone"
+        )
         side_edges = [
             e
             for e in data["edges"]
-            if e["target"] == new_id and e.get("targetHandle") == "in__side"
+            if e["target"] == bp_node_id and e.get("targetHandle") == "in__side"
         ]
-        assert len(side_edges) == 1
-        # The column selection used by that run follows it.
-        assert by_id[new_id]["data"]["columnSelections"] == {
-            "side": {"columns": ["age"], "iterate": False}
-        }
-        assert pipeline_store.get_node_config(db, new_id)["columnSelections"] == {
-            "side": {"columns": ["age"], "iterate": False}
-        }
+        assert len(side_edges) == 1, f"drawn twice: {side_edges}"
 
-    # --- every setting follows the id, not just the columns ----------------
-    #
-    # `wiring_id` hashes the RECORDED bindings, so the run above rehashes the
-    # node. Until 2026-09-22 only `columnSelections` was carried across, on
-    # the reasoning that it was the one setting the run had actually used;
-    # `schemaLevel`, `runOptions` and `whereFilters` were left on an id
-    # nothing resolves to, with no warning. Observed in a real session: the
-    # user re-entered `schemaLevel` on the new node six minutes after the run
-    # that dropped it. The move is `intent_store.rekey_subject`, which already
-    # existed for GRADUATION — the same id change from the other direction.
-
-    def _run_the_overlaid_wiring(self, side_var):
-        for_each(
-            _registry._functions["bandpass_filter"],
-            inputs={"signal": RawSignal, "low_hz": 20, "side": side_var},
-            outputs=[FilteredSignal],
-            subject=[1],
-            session=["pre"],
-        )
-
-    def _superseding_id(self):
-        from scistack_gui.domain.graph_builder import wiring_id
-        from scistack_gui.ids import fn_node_id
-
-        return fn_node_id(
-            "bandpass_filter",
-            wiring_id(
-                "bandpass_filter",
-                {"signal": "RawSignal", "side": "SideTable"},
-                {"FilteredSignal"},
-                {},
-            ),
-        )
-
-    def test_every_setting_follows_the_id_not_just_the_columns(
+    def test_every_setting_still_applies_after_the_run(
         self, wide, side_var, bp_node_id
     ):
+        """The symptom that started this: settings that silently stop
+        applying. Nothing is migrated, because nothing moved."""
         from scistack_gui import pipeline_store
 
         db = _gui_db.get_db()
@@ -1961,19 +1990,23 @@ class TestManualInputEdgesOnHistoryNodes:
         self._run_the_overlaid_wiring(side_var)
         wide.get("/api/pipeline")
 
-        moved = pipeline_store.get_node_config(db, self._superseding_id())
-        assert moved.get("columnSelections") == {
+        config = pipeline_store.get_node_config(db, bp_node_id)
+        assert config.get("columnSelections") == {
             "side": {"columns": ["age"], "iterate": False}
         }
-        assert moved.get("schemaLevel") == ["subject"], (
-            "schemaLevel was stranded on the old id — the node now runs at a "
-            "level the user never chose, and nothing said so"
+        assert config.get("schemaLevel") == ["subject"], (
+            "schemaLevel stopped applying — the node now runs at a level the "
+            "user never chose, and nothing said so"
         )
-        assert moved.get("runOptions") == {"distribute": True}, (
-            "runOptions was stranded on the old id"
-        )
+        assert config.get("runOptions") == {"distribute": True}
+        # And it reaches the node data the canvas renders.
+        assert self._node(wide, bp_node_id)["data"]["columnSelections"] == {
+            "side": {"columns": ["age"], "iterate": False}
+        }
 
-    def test_the_superseded_id_keeps_nothing(self, wide, side_var, bp_node_id):
+    def test_no_statement_is_stranded_on_an_id_nothing_resolves_to(
+        self, wide, side_var, bp_node_id
+    ):
         """Statements left behind are what produced the "saved node config(s)
         match no node in the resolved graph" warning."""
         from scistack_gui import intent_store, pipeline_store
@@ -1984,29 +2017,32 @@ class TestManualInputEdgesOnHistoryNodes:
         self._run_the_overlaid_wiring(side_var)
         wide.get("/api/pipeline")
 
-        left = intent_store.load_statements(db, subject_refs=[bp_node_id])
-        assert not left, f"{len(left)} statement(s) stranded on the superseded id"
+        assert intent_store.load_statements(db, subject_refs=[bp_node_id]), (
+            "the statements moved off the node the user set them on"
+        )
+        assert not intent_store.load_statements(
+            db, subject_refs=[self._would_be_id()]
+        ), "a statement landed on the id the node would once have become"
 
-    def test_a_second_build_does_not_overwrite_the_new_nodes_own_setting(
+    def test_a_rebuild_keeps_the_same_node_and_the_users_newer_setting(
         self, wide, side_var, bp_node_id
     ):
-        """rekey_subject deletes the old rows, so the migration is one-shot —
-        a rebuild must not re-run it over what the user has since set."""
+        """Attribution is persisted, so a second build re-reads it rather than
+        re-deciding — the id is stable and nothing overwrites what the user
+        has since set."""
         from scistack_gui import pipeline_store
 
         db = _gui_db.get_db()
         self._wire_side(wide, bp_node_id)
         pipeline_store.update_node_config(db, bp_node_id, {"schemaLevel": ["subject"]})
         self._run_the_overlaid_wiring(side_var)
-        wide.get("/api/pipeline")
+        first = {n["id"] for n in wide.get("/api/pipeline").json()["nodes"]}
 
-        new_id = self._superseding_id()
-        current = pipeline_store.get_node_config(db, new_id)
-        pipeline_store.update_node_config(
-            db, new_id, {**current, "schemaLevel": ["session"]}
-        )
-        wide.get("/api/pipeline")
-        assert pipeline_store.get_node_config(db, new_id)["schemaLevel"] == [
+        pipeline_store.update_node_config(db, bp_node_id, {"schemaLevel": ["session"]})
+        second = {n["id"] for n in wide.get("/api/pipeline").json()["nodes"]}
+
+        assert first == second, "the node set churned between builds"
+        assert pipeline_store.get_node_config(db, bp_node_id)["schemaLevel"] == [
             "session"
         ], "a rebuild overwrote the user's newer setting with the stale one"
 

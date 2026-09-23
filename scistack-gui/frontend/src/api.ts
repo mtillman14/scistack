@@ -238,6 +238,7 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     start_pipeline_run:     { path: (p) => `/api/pipelines/${encodeURIComponent(p.pipeline_id as string)}/run`, method: 'POST', body: true },
     // Provenance panel and the canvas node's location tree.
     variable_provenance:    { path: '/api/provenance/variable', method: 'POST', body: true },
+    variable_topologies:    { path: '/api/provenance/variable-topologies', method: 'POST', body: true },
     node_location_tree:     { path: '/api/provenance/node-location-tree', method: 'POST', body: true },
     // Endpoint presentation (plot_/stat_ artifacts, report)
     get_endpoint_artifacts: { path: (p) => `/api/endpoints/${encodeURIComponent(p.fn_name as string)}/artifacts` },

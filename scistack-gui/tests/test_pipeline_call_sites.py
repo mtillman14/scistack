@@ -68,13 +68,24 @@ def two_call_sites_client(tmp_path):
     db.close()
 
 
-def _bp_group_node_id() -> str:
-    """Both call sites share one wiring (same fn, loadable inputs, outputs),
-    so they group into a single node id."""
-    return fn_node_id(
-        "bandpass_filter",
-        wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {}),
+def _bp_group_node_id(db=None) -> str:
+    """The node both call sites group into.
+
+    They share one wiring (same fn, loadable inputs, outputs), so they are one
+    node — but since 2026-09-22 that node's id is ALLOCATED, not derived from
+    the wiring, so it has to be looked up (``docs/claude/node-identity.md``).
+    """
+    from scistack_gui import node_wiring
+    from scistack_gui.db import get_db
+
+    db = db or get_db()
+    wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
+    node_id = node_wiring.node_for_wiring(db, wid)
+    assert node_id is not None, (
+        "no node has been allocated for the bandpass wiring — build the graph "
+        "(GET /api/pipeline) before asking for its id"
     )
+    return node_id
 
 
 def _bp_nodes(nodes) -> list[dict]:
@@ -213,6 +224,9 @@ def test_legacy_call_site_position_is_adopted(two_call_sites_client):
         inputs={"signal": RawSignal, "low_hz": 20},
     ).to_call_id()
     legacy_id = fn_node_id("bandpass_filter", cid)
+    # Build once so the node exists: its id is allocated, not derived, so
+    # there is nothing to name before something has named it.
+    two_call_sites_client.get("/api/pipeline")
     group_id = _bp_group_node_id()
 
     # Simulate a pre-grouping document: position keyed by the call-site id.

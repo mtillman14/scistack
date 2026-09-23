@@ -315,6 +315,15 @@ def _run_in_thread(
         run_id,
     )
 
+    # D-2026-09-22-2: a GUI-started run records which node it belongs to NOW,
+    # while the node id is in hand. Without it, the wiring this run is about
+    # to write appears in history unclaimed and the next graph build has to
+    # infer an owner — which is what used to produce a second node beside the
+    # one the user clicked (docs/claude/node-identity.md).
+    from scistack_gui.services.execution_service import record_dispatch_wirings
+
+    record_dispatch_wirings(db, node_id, function_name, unique_targets, run_id)
+
     # Extract run options (dry_run, save, distribute, as_table).
     logger.info("[run_thread] Extracting run options (run_id=%s)", run_id)
     opts = run_options or {}

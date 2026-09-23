@@ -89,26 +89,50 @@ partially reconnected wiring) and any further manual edge on the same node.
 
 ## Lifecycle: what happens after the run
 
-Provenance records the run under the **effective** wiring, so a second
-node `fn__{fn}__W2` appears with a DB-derived `in__side` edge. On the next
-build, `graph_builder.superseded_manual_input_overrides` notices that the
-old node's effective wiring already exists and:
+**Nothing moves any more.** Rewritten 2026-09-22 for allocated node ids
+(`docs/claude/node-identity.md`, D-2026-09-22-1).
 
-- rewrites the manual edge's `target` from the old node to the new one
-  (`pipeline_store.write_manual_edge`, placement suffix preserved). The
-  edge is now an endpoint-duplicate of the DB-derived one, so `build_edges`'
-  dedup draws it once; the row stays (hide, never delete — if the DB edge
-  ever disappears, the manual one renders again);
-- drops the old node's overlay — it reverts to its true history;
-- copies `columnSelections` from any config keyed on the old node to the
-  same key on the new one, if the new one has none
-  (`api/pipeline._migrate_column_selections`). That is the one setting the
-  run actually used; without it the new node's next run would silently load
-  whole tables.
+Provenance still records the run under the **effective** wiring `W2`. What
+changed is what that means for identity. The node id is no longer a hash of
+the recorded bindings, so `W2` does not name a new node: it is attributed to
+the node that already **stated** it — the drawn edge is part of what the node
+states, so before the run the node states `W2`, the run records `W2`, and it
+is the same node (`domain/node_identity.py` rule 2; a GUI-started run does not
+even need the inference, because it records the association at dispatch).
 
-For an `EachOf` overlay the run splits into one wiring per source; the
-wiring looked for is history with the *manual edge's* variable (the
-history source's wiring is the old node itself).
+Afterwards:
+
+- the node keeps its id, its saved position, its scope membership and every
+  `_intent` statement keyed on it — including `schemaLevel`, `runOptions` and
+  `whereFilters`, which used to be stranded silently;
+- `_node_wiring` holds two rows for it, one per shape it has run as. That is
+  the honest description of what happened: one node, rewired. `W2` is its
+  **current** shape and `W1` is history — the canvas draws the first, and a
+  Run executes the first, because re-running a shape the user deliberately
+  moved away from is not what clicking their node means;
+- its recorded `input_params` now carry the binding, so
+  `manual_input_overrides` finds nothing new to overlay and the manual edge
+  and the DB-derived edge dedup to one line on the canvas;
+- the manual edge row is **not** rewritten. It already names the node that ran.
+
+For an `EachOf` overlay the run splits into one wiring per source, and the
+node states **every** one of them (`graph_builder.stated_wiring_claims`), so
+neither source forks a node.
+
+### What this replaced
+
+Until 2026-09-22 a second node `fn__{fn}__W2` appeared, and the next build had
+to repair it: `graph_builder.superseded_manual_input_overrides` detected the
+overlap, rewrote the manual edge's `target` onto the new node, dropped the old
+node's overlay, and carried its statements across
+(`api/pipeline._migrate_node_statements`). Before that, only `columnSelections`
+was carried at all — so every other setting silently stopped applying, and a
+real user re-entered `schemaLevel` six minutes after the run that dropped it.
+
+Both functions are **deleted**, not left as dead paths. A duplicate that formed
+BEFORE this change stays two nodes until you hide or rewire one — there is no
+absorb, because that would be a migration and this is a clean break
+(D-2026-09-22-4). It can no longer form again.
 
 ## Reading scidb.log
 
@@ -118,8 +142,10 @@ history source's wiring is the old node itself).
 | `[graph_builder] <node> input_params after manual overlay: {...} (origins={param: history/manual/unbound}, manual_inputs=..., constants=...)` (DEBUG) | what each handle says and why |
 | `[pipeline] manual input overlay applied to N history node(s): {...}` (INFO) | per build summary |
 | `[variant_resolver] target for 'fn' (wiring W): manual edge(s) override {...} — substituting bindings=... (call_id recomputed)` (INFO) | the run will use the drawn edge |
-| `[graph_builder] manual input overlay on <A> (...) is superseded by <B> — that wiring has run` (INFO) | lifecycle step above |
-| `[pipeline] manual edge <id> moved onto <B>` / `column selection {...} migrated from <A> to <B>` (INFO) | the two side effects |
+| `[node_wiring] <node> now runs as wiring <W> (run_id=..., scope=...)` (INFO) | the node claimed the shape it was rewired into — its ABSENCE is why a duplicate appeared |
+| `[node_identity] wiring <W> of '<fn>' attributed to <node> — that node STATES it` (INFO) | a script/terminal run was inferred (rule 2) |
+| `[execution] run <id> on node <n> claims N wiring(s)` (INFO) | a GUI-started run recorded its association at dispatch |
+| `[pipeline] N wiring(s) are history rather than a node's current shape` (INFO) | the node was rewired; its older shapes stay as history |
 | `[pipeline] graduation candidate ... rejected: manual node's own wiring ... conflicts` (WARN) | fresh node kept separate |
 
 The absence of the `[variant_resolver] ... override` line when a manual
@@ -200,7 +226,8 @@ producer of any of them is red, the consumer cannot be current.
 ## Tests
 
 - `tests/test_graph_builder.py`: `TestManualInputOverrides`,
-  `TestOverlayManualInputs`, `TestSupersededManualInputOverrides`,
+  `TestOverlayManualInputs`, `TestStatedWiringClaims` (which replaced
+  `TestSupersededManualInputOverrides`),
   `TestRunStatePropagationFollowsManualEdges` (the colour consumer — the old
   behaviour pinned, red crossing the drawn edge and on downstream, identity
   untouched, no-edges short-circuit, and an `EachOf` list not breaking the
@@ -210,7 +237,10 @@ producer of any of them is red, the consumer cannot be current.
   `TestReconcileManualInputsUnboundParams`.
 - `tests/test_api.py`: `TestManualInputEdgesOnHistoryNodes` — display, both
   run paths, column selection reaching the binding, graduation refusal,
-  bare-node graduation kept, and the post-run supersession end to end.
+  bare-node graduation kept, and the post-run case end to end: ONE node, the
+  edge where it was drawn, every setting still applying, nothing stranded.
+- `tests/test_node_identity.py`, `tests/test_node_wiring.py`,
+  `tests/test_wiring_parity.py` — the identity model underneath all of it.
 
 ## See also
 

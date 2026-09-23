@@ -1573,3 +1573,80 @@ class Inspector:
             copy_artifacts=copy_artifacts,
             embed=embed,
         )
+
+
+# ---------------------------------------------------------------------------
+# Shared readings of a VariantSummary — one owner for the terminal and the GUI
+# ---------------------------------------------------------------------------
+#
+# `render.render_topologies` prints these and `scistack_gui.services.
+# variants_service` ships them to the Variants panel. They live HERE, beside
+# the method that produces the summaries, so the two surfaces cannot disagree
+# about what "SUPERSEDED" means or which locations a variant sits at
+# (CLAUDE.md NOTE 3: the solution lives in the owning layer).
+
+#: ``load:`` verdicts, as a closed vocabulary. The GUI keys its styling off
+#: these rather than parsing the label, so re-wording the label is not a
+#: behaviour change.
+VERDICT_CURRENT = "current"
+VERDICT_PARTIAL = "partially_superseded"
+VERDICT_SUPERSEDED = "superseded"
+
+
+def variant_verdict(summary) -> tuple[str, str]:
+    """``(verdict, label)`` — **whether a ``latest`` load would still return
+    this variant's records**, and the sentence to print.
+
+    The column that makes the variants view a diagnostic rather than a
+    description. Two variants that look equally alive are the shape of the
+    2026-09-22 bug, where node state counted records the load path had
+    already dropped.
+
+    Partial is not a rounding of the other two: run options are judged per
+    function, globally, so a variant can lose some locations and keep others
+    — the trial-4 orphan that started the investigation.
+    """
+    if getattr(summary, "current", True):
+        return VERDICT_CURRENT, "load: CURRENT"
+    live = int(getattr(summary, "current_record_count", 0) or 0)
+    total = int(getattr(summary, "record_count", 0) or 0)
+    if live:
+        return (
+            VERDICT_PARTIAL,
+            f"load: PARTIALLY SUPERSEDED ({live} of {total} still returned)",
+        )
+    return VERDICT_SUPERSEDED, "load: SUPERSEDED (an older run-option set)"
+
+
+def location_sample(db, schema_ids, limit: int = 4) -> dict:
+    """``{"total": N, "keys": [...], "sample": [{key: value}, ...]}`` for a
+    variant's schema locations.
+
+    Sampled rather than dumped: a loader with 450 locations would otherwise
+    bury the thing the reader came for. ``limit=None`` (or a limit past the
+    end) returns every one — what ``scidb variants --locations`` and the
+    panel's "show all" ask for.
+
+    Never raises: a label is not worth a failure, so a database that cannot
+    resolve a schema id reports the count alone.
+    """
+    schema_ids = list(schema_ids or ())
+    out = {"total": len(schema_ids), "keys": [], "sample": []}
+    if not schema_ids or db is None:
+        return out
+    take = schema_ids if limit is None else schema_ids[: max(int(limit), 0)]
+    try:
+        from ..state import _schema_id_to_combo
+
+        combos = [_schema_id_to_combo(db, sid) for sid in take]
+    except Exception:  # pragma: no cover - a label is never worth a failure
+        return out
+    combos = [
+        {k: v for k, v in (c or {}).items() if v is not None} for c in combos
+    ]
+    combos = [c for c in combos if c]
+    if not combos:
+        return out
+    out["keys"] = list(combos[0])
+    out["sample"] = combos
+    return out

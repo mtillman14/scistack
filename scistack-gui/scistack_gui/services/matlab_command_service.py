@@ -436,6 +436,17 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         )
         _targets = []
 
+    # D-2026-09-22-2, the MATLAB half. A terminal run is still a GUI-started
+    # run — the node id is in the request — so the association is recorded
+    # here, at dispatch, exactly as the Python route does. Only a run the GUI
+    # never saw (a script, or MATLAB started by hand) is left to inference.
+    if _node_id and _targets:
+        from scistack_gui.services.execution_service import record_dispatch_wirings
+
+        record_dispatch_wirings(
+            db, _node_id, function_name, _targets, params.get("run_id")
+        )
+
     # Resolve variants from DB history, scoped to the node that was clicked —
     # see scope_variants_to_node for why the name-only filter was wrong.
     all_variants = db.list_pipeline_variants()
@@ -795,6 +806,18 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                 )
                 continue
             unique_targets.append({**target, "input_types": flat_input_types})
+
+        # Same dispatch record as the single-node route: this step IS one
+        # node, and the script about to run will write history under the
+        # wiring its targets carry (D-2026-09-22-2).
+        if unique_targets:
+            from scistack_gui.services.execution_service import (
+                record_dispatch_wirings,
+            )
+
+            record_dispatch_wirings(
+                db, node_id, fn_label, unique_targets, params.get("run_id")
+            )
 
         # Path inputs for this function — same two-source resolution
         # (DB-variant input_types, then canvas edges as the live overlay) as

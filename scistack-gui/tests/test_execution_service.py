@@ -354,23 +354,32 @@ class TestGraduatedPathInputNodeIsRunnable:
         )
         return db
 
-    def _canvas_node_id(self, placement: str | None = None) -> str:
-        """The id the canvas gives this call site — hashed from the
-        PARTITIONED view, exactly as group_call_sites_by_wiring does."""
-        from scistack_gui.domain.graph_builder import wiring_id
-        from scistack_gui.ids import fn_node_id
+    #: The wiring the canvas computes for this call site — from the
+    #: PARTITIONED view, exactly as group_call_sites_by_wiring does. The whole
+    #: point of this class is that `derive_target_for_node` must agree with it.
+    CANVAS_WIRING_INPUTS = ({}, {"Out"}, {"filepath_or_buffer": "test_pi"})
 
-        node_id = fn_node_id(
-            "read_csv_like",
-            wiring_id(
-                "read_csv_like", {}, {"Out"}, {"filepath_or_buffer": "test_pi"}
-            ),
-        )
+    def _canvas_node_id(self, db, placement: str | None = None) -> str:
+        """The id the canvas gives this call site.
+
+        Allocated since 2026-09-22, so it is looked up — and allocated here if
+        no build has happened yet, which is what the canvas would have done
+        (``docs/claude/node-identity.md``).
+        """
+        from scistack_gui import node_wiring
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        node_wiring.ensure_tables(db)
+        wid = wiring_id("read_csv_like", *self.CANVAS_WIRING_INPUTS)
+        node_id = node_wiring.node_for_wiring(db, wid)
+        if node_id is None:
+            node_id = str(node_wiring.mint_node_id("read_csv_like"))
+            node_wiring.record(db, node_id, wid)
         return f"{node_id}::{placement}" if placement else node_id
 
     def test_graduated_node_resolves_to_its_history(self, populated_db, monkeypatch):
         db = self._db_with_history(populated_db, monkeypatch)
-        targets = derive_target_for_node(db, self._canvas_node_id())
+        targets = derive_target_for_node(db, self._canvas_node_id(db))
         assert len(targets) == 1, (
             "the graduated node's embedded wiring must match its own recorded "
             "history — an empty list is the 'connect it to an output variable "
@@ -384,7 +393,7 @@ class TestGraduatedPathInputNodeIsRunnable:
         """graduate_manual_node targets a placement-qualified id, which is
         what /api/run actually sends."""
         db = self._db_with_history(populated_db, monkeypatch)
-        targets = derive_target_for_node(db, self._canvas_node_id("main"))
+        targets = derive_target_for_node(db, self._canvas_node_id(db, "main"))
         assert len(targets) == 1
 
     def test_a_genuinely_different_wiring_still_matches_nothing(
@@ -392,16 +401,19 @@ class TestGraduatedPathInputNodeIsRunnable:
     ):
         """The fix must not make the comparison match everything — a node
         whose wiring really isn't in history still resolves to no targets."""
+        from scistack_gui import node_wiring
         from scistack_gui.domain.graph_builder import wiring_id
-        from scistack_gui.ids import fn_node_id
 
         db = self._db_with_history(populated_db, monkeypatch)
-        other = fn_node_id(
-            "read_csv_like",
-            wiring_id(
-                "read_csv_like", {}, {"Different"}, {"filepath_or_buffer": "test_pi"}
-            ),
+        # A node that really does have a different wiring: allocated, and
+        # associated with a wiring nothing in history holds.
+        other_wid = wiring_id(
+            "read_csv_like", {}, {"Different"}, {"filepath_or_buffer": "test_pi"}
         )
+        node_wiring.ensure_tables(db)
+        other = str(node_wiring.mint_node_id("read_csv_like"))
+        node_wiring.record(db, other, other_wid)
+
         assert derive_target_for_node(db, other) == []
 
 
