@@ -465,6 +465,20 @@ def _make_matlab_fn_sentinel(fn_name: str):
     return _sentinel
 
 
+def _parameter_names_from_matlab(names) -> "dict[str, str] | None":
+    """``+scidb/for_each.m``'s ``parameter_names`` (a py.dict of str, or
+    None) -> ``{input: declared Parameter name}``, merged by the one owner so
+    MATLAB and Python can never disagree on the rule."""
+    from scidb.log import Log
+    from scidb.parameter import declared_parameter_names
+
+    if not names:
+        return None
+    merged = declared_parameter_names({}, {str(k): str(v) for k, v in dict(names).items()})
+    Log.info(f"[bridge] parameter_names (input -> declared Parameter): {merged}")
+    return merged or None
+
+
 def for_each_prepare(
     fn_name: str,
     fn_hash: str,
@@ -482,6 +496,7 @@ def for_each_prepare(
     schema_filter=None,
     glue=None,
     locations=None,
+    parameter_names=None,
 ):
     """Bridge entry: run scidb.for_each's prepare phase in Python.
 
@@ -795,6 +810,10 @@ def for_each_prepare(
         # The save happens in a SECOND RPC, which reads this off the cached
         # state rather than being told again — one fact, one place.
         endpoint_kind=endpoint_kind or None,
+        # {input: declared Parameter}. MATLAB expands its Parameters before
+        # this call, so the names only arrive stated; the same owner as the
+        # Python path merges them (scidb.parameter.declared_parameter_names).
+        parameter_names=_parameter_names_from_matlab(parameter_names),
     )
 
     if state is None:
@@ -2567,6 +2586,7 @@ def pipeline_register_step(
     schema_keys=None,
     schema_filter=None,
     glue=None,
+    parameter_names=None,
 ) -> int:
     """Register one MATLAB for_each call as a deferred step; returns the
     step's index in the pipeline's own step list (MATLAB stores the fn
@@ -2605,6 +2625,7 @@ def pipeline_register_step(
             "schema_keys": schema_keys_arg,
             "schema_filter": schema_filter_arg,
             "glue": _reconstruct_glue_chains(glue) or None,
+            "parameter_names": _parameter_names_from_matlab(parameter_names),
             "__matlab__": True,
             "__matlab_fn_hash__": fn_hash,
         },

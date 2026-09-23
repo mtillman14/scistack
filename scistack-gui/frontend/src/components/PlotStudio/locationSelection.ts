@@ -308,20 +308,120 @@ export function without(
       }
     }
   }
+  // The last place is gone. An empty `include` would read as EVERYTHING, so
+  // the untick of the last box would re-tick them all.
+  if (next.length === 0) return nothingSelected(roots, selection)
   return { ...selection, include: normalize(roots, next) }
 }
 
-/** Add one location to the selection. */
+/**
+ * "Nothing selected", in the stored form: every top-level value omitted.
+ *
+ * `include` cannot say it — empty means everything — so it is said with the
+ * level rules, which every implementation already honours ("excluding every
+ * level of a key selects nothing", location-filter-semantics.md). Rules name
+ * the values that exist NOW: a top-level value saved later is not omitted.
+ * That reach only lasts while nothing is ticked; the next tick lifts the rule
+ * it overrides and stores places again (`withNodes`).
+ */
+function nothingSelected(
+  roots: LocationNode[],
+  selection: LocationSelection
+): LocationSelection {
+  let next: LocationSelection = { ...selection, include: [] }
+  for (const root of roots) next = withoutLevel(next, root.key, root.value)
+  return next
+}
+
+/** The node at exactly `path`, if this tree has one. */
+function nodeAt(roots: LocationNode[], path: Prefix): LocationNode | undefined {
+  let level = roots
+  let node: LocationNode | undefined
+  for (const step of path) {
+    node = level.find(n => same(n.path[n.path.length - 1], step))
+    if (!node) return undefined
+    level = node.children
+  }
+  return node
+}
+
+/**
+ * Turn these locations fully on — BOTH halves of the selection.
+ *
+ * The one owner of "tick", for both panes. A box can be unticked or
+ * indeterminate for either of two reasons: a place missing from `include`
+ * (a right-pane untick) or a level rule (a left-pane untick) — and the rule
+ * need not be on the clicked box's own key: omitting trial 1 leaves every
+ * subject indeterminate. A tick that repaired only one half was a click that
+ * visibly did nothing, which is how indeterminate boxes came to ignore clicks.
+ *
+ * A rule that reaches into the targets cannot stay a rule — the stored form
+ * cannot say "trial 1 is out, except under subject 1". So it is lifted, and
+ * what it still omitted OUTSIDE the targets is written down as places. That
+ * trades the rule's reach into data that does not exist yet for a click that
+ * does what it shows, and only for the rule the user just overrode.
+ */
+function withNodes(
+  roots: LocationNode[],
+  selection: LocationSelection,
+  targets: LocationNode[]
+): LocationSelection {
+  const inTargets = (path: Prefix) => targets.some(t => covers(t.path, path))
+
+  // Every rule step found on a target, its ancestors, or its descendants.
+  const lifted: PathStep[] = []
+  const collect = (node: LocationNode) => {
+    for (const step of node.path) {
+      const [key, value] = step
+      const ruled = (selection.exclude_levels[key] ?? []).some(level => sameValue(value, level))
+      if (ruled && !lifted.some(s => same(s, step))) lifted.push(step)
+    }
+    node.children.forEach(collect)
+  }
+  targets.forEach(collect)
+
+  if (lifted.length === 0) {
+    // Nothing stored means EVERYTHING is selected, so there is nothing to add.
+    // All targets go in before one normalize: adding them one at a time could
+    // collapse to the inert state midway and then narrow the whole figure to
+    // the single location it happened to add next.
+    if (selection.include.length === 0) return selection
+    const include = selection.include.filter(p => !targets.some(t => covers(t.path, p)))
+    for (const target of targets) include.push(target.path)
+    return { ...selection, include: normalize(roots, include) }
+  }
+
+  const exclude_levels: Record<string, string[]> = {}
+  for (const [key, values] of Object.entries(selection.exclude_levels)) {
+    const kept = values.filter(v => !lifted.some(s => same(s, [key, v])))
+    if (kept.length > 0) exclude_levels[key] = kept
+  }
+  // Rebuilt from the leaves it must end up covering, never by chaining
+  // `without`: removing a ruled ancestor can pass through an empty `include`,
+  // which means EVERYTHING, and the figure would silently widen to all of it.
+  // Targets always have leaves, so the rebuilt set is never empty.
+  const onPath = (path: Prefix) => lifted.some(s => path.some(step => same(s, step)))
+  const placed = (path: Prefix) =>
+    selection.include.length === 0 || selection.include.some(p => covers(p, path))
+  const keep: Prefix[] = []
+  const visit = (node: LocationNode) => {
+    if (node.children.length > 0) { node.children.forEach(visit); return }
+    if (inTargets(node.path) || (!onPath(node.path) && placed(node.path))) keep.push(node.path)
+  }
+  roots.forEach(visit)
+  return { include: normalize(roots, keep), exclude_levels }
+}
+
+/** Add one location to the selection — the right pane's tick. */
 export function withPath(
   roots: LocationNode[],
   selection: LocationSelection,
   path: Prefix
 ): LocationSelection {
-  // Nothing stored means EVERYTHING is selected, so adding a location is a
-  // no-op. Without this guard it is the opposite: the path becomes the only
-  // entry, and `withLevel` — which re-ticks a level's locations one at a time
-  // — could collapse to the inert state midway and then narrow the whole
-  // figure to the single location it happened to add next.
+  const node = nodeAt(roots, path)
+  if (node) return withNodes(roots, selection, [node])
+  // Not a place this tree has (e.g. a picked path from elsewhere): only the
+  // place half can apply.
   if (selection.include.length === 0) return selection
   const next = selection.include.filter(p => !covers(path, p))
   next.push(path)
@@ -418,11 +518,12 @@ export function withoutLevel(
 }
 
 /**
- * Put one level back — both halves of it.
+ * Put one level back — every location that has it, fully on.
  *
- * Clearing the rule is not enough: a ragged untick on the right pane may also
- * have removed some of this level's locations from `include`, and a left-pane
- * click that left them out would be a control that visibly does nothing.
+ * Clearing its own rule is not enough: a ragged untick on the right pane may
+ * have removed some of its locations from `include`, and a rule on ANOTHER key
+ * (trial 1 omitted) holes out every subject. Both are repaired by `withNodes`,
+ * the same tick the right pane uses.
  */
 export function withLevel(
   roots: LocationNode[],
@@ -430,20 +531,12 @@ export function withLevel(
   key: string,
   value: string
 ): LocationSelection {
+  // The level's own rule goes even if this tree has no node for it.
   const exclude_levels = { ...selection.exclude_levels }
   const kept = (exclude_levels[key] ?? []).filter(level => !sameValue(value, level))
   if (kept.length > 0) exclude_levels[key] = kept
   else delete exclude_levels[key]
-
-  let next: LocationSelection = { ...selection, exclude_levels }
-  // Nothing stored means everything is already selected; adding paths would
-  // turn the inert state into an enumerated one for no gain.
-  if (next.include.length > 0) {
-    for (const node of nodesAtLevel(roots, key, value)) {
-      next = withPath(roots, next, node.path)
-    }
-  }
-  return next
+  return withNodes(roots, { ...selection, exclude_levels }, nodesAtLevel(roots, key, value))
 }
 
 /**

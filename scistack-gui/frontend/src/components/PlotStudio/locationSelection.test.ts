@@ -218,8 +218,20 @@ test('unticking a whole subject leaves the other one', () => {
 })
 
 test('unticking the last selection leaves nothing selected', () => {
+  // Not `include: []` alone — that is EVERYTHING, and the last untick used to
+  // re-tick every box. Nothing is every top-level value omitted.
   const next = without(roots, sel([S01]), S01)
-  assert.deepEqual(next.include, [])
+  assert.deepEqual(next, sel([], { subject: ['S01', 'S02'] }))
+  for (const node of roots) assert.equal(coverageOf(node, next), 'none')
+})
+
+test('ticking out of the nothing state selects only what was ticked', () => {
+  const nothing = without(roots, sel([S01]), S01)
+  const next = withPath(roots, nothing, S01_T2)
+  assert.equal(coverageOf(roots[0].children[1], next), 'full')
+  for (const leafNode of [roots[0].children[0], roots[0].children[2], ...roots[1].children]) {
+    assert.equal(coverageOf(leafNode, next), 'none', JSON.stringify(leafNode.path))
+  }
 })
 
 test('re-ticking an exploded sibling set collapses it again', () => {
@@ -520,4 +532,110 @@ test('the shared file actually produced cases', () => {
   // green while testing exactly zero rules — the failure this file exists to
   // prevent, reproduced one level up.
   assert.ok(sharedCases.length >= 15, `only ${sharedCases.length} tree cases loaded`)
+})
+
+// --- every box responds -----------------------------------------------------
+//
+// Regression: an indeterminate box ignored clicks whenever the OTHER half of
+// the selection had caused the gap — a right-pane tick never lifted a level
+// rule, and a left-pane tick lifted only its own key's rule.
+
+const S01_T1: Prefix = [['subject', 'S01'], ['trial', 't1']]
+
+function allNodes(): LocationNode[] {
+  const out: LocationNode[] = []
+  const visit = (node: LocationNode) => { out.push(node); node.children.forEach(visit) }
+  roots.forEach(visit)
+  return out
+}
+const leaves = () => allNodes().filter(n => n.children.length === 0)
+
+test('untick a trial on the right, re-tick its subject on the left', () => {
+  const ragged = without(roots, sel([]), S01_T1)
+  assert.equal(levelCoverage(roots, ragged, 'subject', 'S01'), 'partial')
+  const next = toggleLevel(roots, ragged, 'subject', 'S01')
+  assert.deepEqual(next, sel([]), 'everything back is the inert selection')
+})
+
+test('a right-pane tick lifts a left-pane rule inside it', () => {
+  const ruled = toggleLevel(roots, sel([]), 'trial', 't2')
+  assert.equal(coverageOf(roots[0], ruled), 'partial')
+
+  const next = withPath(roots, ruled, S01)
+  assert.equal(coverageOf(roots[0], next), 'full')
+  // …and keeps omitting t2 where it was not overridden, now as a place.
+  assert.equal(coverageOf(roots[1].children[1], next), 'none')
+  assert.deepEqual(next.exclude_levels, {})
+})
+
+test('a right-pane tick undoes a left-pane untick of the same level', () => {
+  const ruled = toggleLevel(roots, sel([]), 'subject', 'S01')
+  assert.equal(coverageOf(roots[0], ruled), 'none')
+  assert.deepEqual(withPath(roots, ruled, S01), sel([]))
+})
+
+test('a right-pane tick BELOW a ruled ancestor keeps the ancestor’s other children out', () => {
+  const ruled = toggleLevel(roots, sel([]), 'subject', 'S01')
+  const next = withPath(roots, ruled, S01_T2)
+  assert.equal(coverageOf(roots[0].children[1], next), 'full')
+  assert.equal(coverageOf(roots[0].children[0], next), 'none')
+  assert.equal(coverageOf(roots[0].children[2], next), 'none')
+  assert.equal(coverageOf(roots[1], next), 'full')
+})
+
+test('a left-pane tick lifts a rule on ANOTHER key', () => {
+  // Omitting trial t1 leaves both subjects indeterminate on the left.
+  const ruled = toggleLevel(roots, sel([]), 'trial', 't1')
+  assert.equal(levelCoverage(roots, ruled, 'subject', 'S01'), 'partial')
+
+  const next = toggleLevel(roots, ruled, 'subject', 'S01')
+  assert.equal(levelCoverage(roots, next, 'subject', 'S01'), 'full')
+  assert.equal(coverageOf(roots[1].children[0], next), 'none', 'S02/t1 still omitted')
+  assert.equal(levelCoverage(roots, next, 'trial', 't1'), 'partial')
+})
+
+/** Every selection one or two clicks away from "everything", either pane. */
+function reachable(): LocationSelection[] {
+  const clicks = (s: LocationSelection): LocationSelection[] => [
+    ...allNodes().map(n =>
+      coverageOf(n, s) === 'full' ? without(roots, s, n.path) : withPath(roots, s, n.path)
+    ),
+    ...Object.entries(levelsByKey(roots)).flatMap(([key, values]) =>
+      values.map(value => toggleLevel(roots, s, key, value))
+    ),
+  ]
+  const once = clicks(sel([]))
+  return [sel([]), ...once, ...once.flatMap(clicks)]
+}
+
+test('every right-pane box flips on one click, and touches nothing outside it', () => {
+  for (const start of reachable()) {
+    for (const node of allNodes()) {
+      const before = coverageOf(node, start)
+      const next =
+        before === 'full' ? without(roots, start, node.path) : withPath(roots, start, node.path)
+      const label = `${JSON.stringify(node.path)} from ${JSON.stringify(start)}`
+      assert.equal(coverageOf(node, next), before === 'full' ? 'none' : 'full', label)
+      for (const other of leaves().filter(l => !covers(node.path, l.path))) {
+        assert.equal(coverageOf(other, next), coverageOf(other, start), `${label} moved ${JSON.stringify(other.path)}`)
+      }
+    }
+  }
+})
+
+test('every left-pane box flips on one click, and touches nothing outside it', () => {
+  for (const start of reachable()) {
+    for (const [key, values] of Object.entries(levelsByKey(roots))) {
+      for (const value of values) {
+        const before = levelCoverage(roots, start, key, value)
+        const next = toggleLevel(roots, start, key, value)
+        const label = `${key}=${value} from ${JSON.stringify(start)}`
+        assert.equal(levelCoverage(roots, next, key, value), before === 'full' ? 'none' : 'full', label)
+        const has = (l: LocationNode) => l.path.some(([k, v]) => k === key && v === value)
+        for (const other of leaves().filter(l => !has(l))) {
+          assert.equal(coverageOf(other, next), coverageOf(other, start), `${label} moved ${JSON.stringify(other.path)}`)
+        }
+      }
+    }
+  }
 })

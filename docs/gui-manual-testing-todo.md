@@ -36,6 +36,61 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0w. Schema location picker: every indeterminate box responds — added 2026-09-23
+
+**What changed:** a checkbox in either pane of the location picker ignored
+clicks when its gap was caused by the OTHER pane (e.g. untick `trial=1` on the
+left → every subject on the right is indeterminate and could not be re-ticked;
+or a subject on the left could not be re-ticked). One tick rule
+(`withNodes` in `locationSelection.ts`) now repairs both halves. Frontend only —
+both bundles rebuilt.
+
+**Frontend** (Plot Studio → location picker)
+- [ ] Right: untick `subject=1 / trial=1`. Left: `subject=1` goes indeterminate. Click it → every `subject=1` location on the right is ticked again.
+- [ ] Left: untick `trial=1`. Right: each subject goes indeterminate. Click `subject=1` on the right → its whole subtree ticks, including `trial=1`; other subjects' `trial=1` stays unticked, and left `trial=1` turns indeterminate.
+- [ ] Left: untick `subject=1`. Right: tick `subject=1` → it comes back fully; the footer shows no "−1 subject".
+- [ ] Known, NOT fixed: unticking the very last ticked location on the right re-selects everything.
+
+## 0v. One Parameter node after a run; no false "not reflected" chip — added 2026-09-23
+
+**What changed:** (B1) a Parameter whose declared name differs from the
+argument it feeds (`gaitrite_config` → `gaitRiteConfig`) got a second node
+after the function's first run, with only one of the two wired. Runs now
+record the declared Parameter name and the canvas builds one node.
+(B2) a node with "every column, one call each" selected showed "saved column
+selection not reflected by its last run" after running. Backend + MATLAB only —
+no frontend rebuild.
+
+**Backend**
+1. Pull, then **Restart** the GUI (the database gains a `declared_name`
+   column on first open; the log says `added declared_name column`).
+2. Keep `scidb.log` open.
+
+**Frontend**
+1. Unhide the two extra Parameter nodes you hid earlier today, if you want to
+   see them go: they are history from the runs before this fix and will stay
+   until those functions are re-run.
+2. Re-run `loadGaitRiteOneFile` (MATLAB) from its node's **Run** button.
+3. Create a new Parameter whose name differs from the argument it will feed,
+   wire it into a never-run function, and **Run** it (MATLAB and, if you have
+   one, a Python function).
+4. Look at `calculateSymmetryOneVector` (input `v` set to every column).
+
+**What you should see**
+- The generated MATLAB command ends its `scidb.for_each` call with
+  `'parameter_names', struct('gaitRiteConfig', 'gaitrite_config')`.
+- `scidb.log`: `[provenance] fn=…: N constant edge(s) named by declared
+  Parameter; argument->Parameter {'gaitRiteConfig': 'gaitrite_config'}`, then
+  on the rebuild `[graph_builder] 1 Parameter edge(s) feed an argument of
+  another name …`.
+- Steps 2–3: after the run there is ONE Parameter node, still wired to the
+  function. No new `param__gaitRiteConfig` node. If a history-only node does
+  appear, the log names it: `build_parameter_nodes: … come from run history
+  alone, not a declaration: […]`.
+- Step 4: no "saved column selection not reflected by its last run" chip.
+
+---
+
 ## 0u. Run a never-run MATLAB node from its own Run button — added 2026-09-23
 
 **What changed:** a MATLAB node that has never run but is wired on the canvas

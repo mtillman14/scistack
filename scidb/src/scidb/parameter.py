@@ -71,6 +71,15 @@ class Parameter(EachOf):
     def __init__(self, *values: Any, description: str = "") -> None:
         super().__init__(*values)
         self.description = description
+        # The DECLARED name -- the binding in the entities file or module that
+        # made this a Parameter. Set by whoever declares it (the entities
+        # loader, the discovery scanner), never by the caller of for_each:
+        # a Parameter's identity is its declaration, and the function
+        # argument it fills can be named differently. for_each records it on
+        # the constant's provenance edge so history can name the Parameter
+        # the canvas shows -- see declared_parameter_names below. Not part of
+        # any hash: identity is still the value alone.
+        self.name: "str | None" = None
         # Where it was declared, for the GUI sidebar. Best-effort: a caller
         # constructed from C or exec'd code has no frame to inspect.
         frame = inspect.currentframe()
@@ -127,7 +136,7 @@ class Parameter(EachOf):
         # Only reached when normal lookup fails, so real attributes
         # (alternatives, description, source_file, ...) take precedence.
         # Guard against recursion during __init__ before alternatives exists.
-        if name in ("alternatives", "description", "source_file", "source_line"):
+        if name in ("alternatives", "description", "source_file", "source_line", "name"):
             raise AttributeError(name)
         # MUST raise AttributeError, never TypeError, for a multi-valued
         # Parameter: hasattr() only swallows AttributeError, so anything
@@ -332,3 +341,50 @@ class Parameter(EachOf):
 
     def __reversed__(self):
         return reversed(self._single("reversed()"))
+
+
+# ---------------------------------------------------------------------------
+# Which declared Parameter fed which argument
+# ---------------------------------------------------------------------------
+def declared_parameter_names(
+    inputs: "dict[str, Any]", explicit: "dict[str, str] | None" = None
+) -> dict[str, str]:
+    """``{argument: declared Parameter name}`` for one ``for_each`` call.
+
+    THE owner of this mapping. History records a constant under the function
+    ARGUMENT it filled, but the canvas shows the Parameter under the name it
+    was DECLARED with, and the two differ whenever a Parameter declared
+    ``gaitrite_config`` feeds an argument ``gaitRiteConfig``. With no record
+    of the declared name, the history reader invented a second Parameter node
+    named after the argument on the first run (docs/claude/cleanup-audit.md
+    B1).
+
+    Two sources, merged here and nowhere else:
+
+    * *explicit* — the caller states it (the GUI from its wiring, a generated
+      MATLAB command via ``parameter_names=``). Wins, because a value already
+      recorded in history reaches ``for_each`` as a bare scalar, which carries
+      no name;
+    * a named :class:`Parameter` in *inputs* (``.name``, set by the entities
+      loader and the discovery scanner) — how a plain script run gets it.
+
+    An argument with neither is absent; readers fall back to the argument
+    name, which is exactly the pre-2026-09-23 behaviour.
+    """
+    names: dict[str, str] = {}
+    for arg, value in inputs.items():
+        declared = value.name if isinstance(value, Parameter) else None
+        if declared:
+            names[arg] = str(declared)
+    for arg, declared in (explicit or {}).items():
+        if declared:
+            names[str(arg)] = str(declared)
+    return names
+
+
+def parameter_node_name(argument: str, recorded: "dict[str, str] | None") -> str:
+    """The Parameter a recorded constant belongs to: the declared name its run
+    recorded (``_invocation_input.declared_name``), else the argument it
+    filled. Readers of history ask this, never spell the fallback themselves.
+    """
+    return (recorded or {}).get(argument) or argument

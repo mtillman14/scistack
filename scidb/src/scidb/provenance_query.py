@@ -2241,6 +2241,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     reconstructed ``CallSite``'s id — the same type the forward
     ``ForEachConfig.to_call_id`` fills, so they match by construction),
     ``input_types`` (param→type), ``constants`` (param→typed value),
+    ``parameter_names`` (param→declared Parameter name, recorded ones only),
     ``run_options`` (:func:`run_options_label`), ``output_num`` (int|None),
     ``record_count`` (distinct output records), ``function_hash``, and — added
     2026-09-22, see :func:`_annotate_variants` — ``first_saved``,
@@ -2272,14 +2273,22 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         # `{"columns": [...], "iterate": bool}`), so a target derived from
         # history re-runs with the columns it ran with — a Python
         # `Var["col"]` was invisible to the GUI's Run button until 2026-09-19.
-        selectors = {
-            param: json.loads(sel)
-            for param, sel in duck._fetchall(
-                "SELECT param_name, selector FROM _invocation_input "
-                "WHERE invocation_id = ? AND selector IS NOT NULL",
-                [inv_id],
-            )
-        }
+        #
+        # The same query reads `declared_name`: which declared Parameter fed
+        # a constant argument (cleanup-audit B1). One query, not two, on a
+        # loop that already runs several per invocation.
+        selectors: dict = {}
+        parameter_names: dict = {}
+        for param, sel, declared in duck._fetchall(
+            "SELECT param_name, selector, declared_name FROM _invocation_input "
+            "WHERE invocation_id = ? "
+            "AND (selector IS NOT NULL OR declared_name IS NOT NULL)",
+            [inv_id],
+        ):
+            if sel is not None:
+                selectors[param] = json.loads(sel)
+            if declared is not None and param in constants:
+                parameter_names[param] = declared
         # PathInput specs ride in input_types as their to_key() JSON string —
         # preserves the legacy contract (get_aggregated_variants parses them) and
         # call_id parity (forward to_call_id includes them in __inputs).
@@ -2376,6 +2385,11 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     # GUI target derived from history re-runs WITH its glue.
                     "glue_chains": glue_names,
                     "selectors": selectors,
+                    # {argument: declared Parameter name} for constants whose
+                    # run recorded one; absent = the argument name. Not in the
+                    # group key: the name is what the canvas calls a value,
+                    # never what makes two variants different.
+                    "parameter_names": parameter_names,
                     "output_num": output_num,
                     # The source that produced this variant. Reported so a
                     # reader can tell two variants apart when NOTHING else

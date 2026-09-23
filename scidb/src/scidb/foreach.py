@@ -40,6 +40,7 @@ from .bindings import (
 )
 from .exceptions import AmbiguousParamError
 from .input_spec import find_pathinput, is_loadable, spec_name, type_name, variable_type
+from .parameter import declared_parameter_names
 from .roles import endpoint_kind as _roles_endpoint_kind
 from .schema_values import canonical_numeric_value, schema_str
 from .variant import match_bare_name
@@ -221,6 +222,10 @@ class _ForEachState:
     # `to_version_keys` hashed, or it lands under a key nothing was stored
     # beneath. Never used for dispatch — the call already happened by then.
     fn: Any = None  # Callable | None
+    # {argument: declared Parameter name} (scidb.parameter.
+    # declared_parameter_names), carried to record_run so each constant edge
+    # names the Parameter the canvas shows. Descriptive, never identity.
+    parameter_names: Any = None  # dict[str, str] | None
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +252,7 @@ def for_each(
     share_limits: "dict[str, list[str]] | None" = None,
     finalized: bool = False,
     glue: "dict[str, Any] | None" = None,
+    parameter_names: "dict[str, str] | None" = None,
     pipeline: Any = _PIPELINE_UNSET,
     _inject_combo_metadata: bool = False,
     _pre_combo_hook: "Callable[[dict], bool] | None" = None,
@@ -337,6 +343,13 @@ def for_each(
                     saved. A glue node may change the column space but not the
                     row set; see ``scidb.glue`` and
                     ``docs/claude/free-code-glue-nodes.md``.
+        parameter_names: Optional ``{argument: declared Parameter name}``.
+                    Which declared Parameter fed each constant argument, when
+                    the caller knows it and the value does not carry it (a
+                    bare value, or a value recorded in history). Recorded on
+                    the constant's provenance edge, never part of identity.
+                    A named ``Parameter`` input supplies its own; see
+                    ``scidb.parameter.declared_parameter_names``.
         _inject_combo_metadata: If True, inject current-combo metadata keys
                     as extra kwargs to fn (used by scihist for generates_file).
         pipeline: Deferred-registration control. Omitted (default): if a
@@ -393,6 +406,7 @@ def for_each(
                 "share_limits": share_limits,
                 "finalized": finalized,
                 "glue": glue,
+                "parameter_names": parameter_names,
                 "_inject_combo_metadata": _inject_combo_metadata,
                 "_pre_combo_hook": _pre_combo_hook,
                 "_progress_fn": _progress_fn,
@@ -486,6 +500,13 @@ def for_each(
             f"expand_schema_keys: seeded metadata_iterables for {list(metadata_iterables.keys())}"
         )
 
+    # --- Declared Parameter names: resolved BEFORE EachOf expansion, which
+    #     replaces each Parameter with a bare alternative and so drops its
+    #     .name. The recursion below receives the resolved dict. ---
+    parameter_names = declared_parameter_names(inputs, parameter_names)
+    if parameter_names:
+        Log.debug(f"parameter_names (argument -> declared): {parameter_names}")
+
     # --- Step 1: EachOf expansion: must be first, before any other logic ---
     each_of_axes = []
     for param, val in inputs.items():
@@ -537,6 +558,8 @@ def for_each(
                 # success. Any glue on a function with a multi-valued
                 # Parameter or a multi-type input was affected.
                 glue=glue,
+                # Resolved above, while the Parameter objects still had names.
+                parameter_names=parameter_names,
                 # Same reasoning as glue above: every alternative runs over
                 # the same locations (a selection is about which data
                 # exists, not which variant produced it), and a kwarg
@@ -663,6 +686,7 @@ def for_each(
             # What kind of call this is — the save reads both off the state.
             generates_file=_is_generates_file,
             endpoint_kind=_endpoint_kind,
+            parameter_names=parameter_names,
         )
     if state is None:
         return None
@@ -1588,6 +1612,7 @@ def _for_each_prepare(
     locations: "Any" = None,
     generates_file: bool = False,
     endpoint_kind: "str | None" = None,
+    parameter_names: "dict[str, str] | None" = None,
 ) -> "_ForEachState | None":
     """Run scidb.for_each's pre-loop work (Steps 2-15).
 
@@ -3090,6 +3115,7 @@ def _for_each_prepare(
         per_combo_glue=per_combo_glue or None,
         glue_virtual=glue_fusion.virtual or None,
         bindings=run_bindings,
+        parameter_names=parameter_names or None,
     )
 
 
@@ -5541,6 +5567,7 @@ def _save_results(
                 user_id=get_user_id(),
                 glue_virtual=glue_virtual,
                 glue_chains=glue_chains,
+                parameter_names=state.parameter_names,
             )
             Log.info(
                 f"[provenance] recorded run_id={run_id} for {len(graph_records)} "

@@ -341,6 +341,9 @@ def _load_parameters(data: dict, result: EntitiesFile) -> None:
         param = Parameter(*values)
         param.source_file = str(result.path)
         param.source_line = line
+        # The declared name travels with the object so a run records which
+        # Parameter fed each argument (parameter.declared_parameter_names).
+        param.name = name
         result.parameters[name] = param
         result.lines[name] = line
         Log.debug("[entities] Declared parameter %s with %d value(s)", name, len(values))

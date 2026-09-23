@@ -31,6 +31,7 @@ from scidb.intent import (
     Statement,
     describe_columns,
     describe_plan,
+    is_every_column,
     normalize_columns,
     parse_selector,
     resolve,
@@ -134,6 +135,30 @@ def test_same_columns_folds_absent_and_empty():
     assert same_columns(None, {"columns": [], "iterate": False})
     assert same_columns(["a"], {"columns": ["a"]})
     assert not same_columns(["a"], {"columns": ["a"], "iterate": True})
+
+
+def test_every_column_is_symbolic_and_matches_its_resolved_run():
+    """Regression for cleanup-audit B2: a stated for_columns() is resolved at
+    run time, so the run records the column list it found. The canvas chip
+    compared the two literally and said "not reflected by its last run" on
+    every such node."""
+    stated = {"columns": [], "iterate": True}
+    recorded = {"columns": ["A_Idx_GR", "U_Idx_GR", "All_Idx_GR"], "iterate": True}
+    assert is_every_column(stated)
+    assert not is_every_column(recorded)
+    assert same_columns(stated, recorded)
+    assert same_columns(recorded, stated)
+
+
+def test_every_column_does_not_match_a_non_iterating_selection():
+    assert not same_columns({"columns": [], "iterate": True}, ["a", "b"])
+    assert not same_columns({"columns": [], "iterate": True}, None)
+
+
+def test_two_explicit_per_column_lists_still_compare_literally():
+    assert not same_columns(
+        {"columns": ["a"], "iterate": True}, {"columns": ["a", "b"], "iterate": True}
+    )
 
 
 def test_describe_columns_has_one_spelling():

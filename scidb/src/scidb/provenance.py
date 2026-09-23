@@ -523,12 +523,20 @@ def ensure_provenance_tables(duck) -> None:
     # qualifies wrappers that change which data is consumed without changing the
     # record (ColumnSelection: JSON like {"columns": [...]}); NULL otherwise.
     # It is folded into invocation_id so different selections don't collide.
+    #
+    # ``declared_name`` names the declared Parameter that filled a CONSTANT's
+    # slot when it differs from, or is merely unknown from, ``param_name``
+    # (a Parameter declared ``gaitrite_config`` feeding ``gaitRiteConfig``).
+    # Descriptive only, NOT part of invocation_id: the value is the identity,
+    # the name is what the canvas calls it. NULL = not recorded (older rows,
+    # a bare value in a script); readers fall back to ``param_name``.
     duck._execute("""
         CREATE TABLE IF NOT EXISTS _invocation_input (
             invocation_id   VARCHAR NOT NULL,
             param_name      VARCHAR NOT NULL,
             input_record_id VARCHAR NOT NULL,
             selector        VARCHAR,
+            declared_name   VARCHAR,
             PRIMARY KEY (invocation_id, param_name, input_record_id)
         )
     """)
@@ -579,6 +587,14 @@ def ensure_provenance_tables(duck) -> None:
             duck._execute("ALTER TABLE _invocation_input ADD COLUMN selector VARCHAR")
             logger.debug(
                 "ensure_provenance_tables: added selector column to _invocation_input"
+            )
+        if "declared_name" not in cols:
+            duck._execute(
+                "ALTER TABLE _invocation_input ADD COLUMN declared_name VARCHAR"
+            )
+            logger.info(
+                "ensure_provenance_tables: added declared_name column to "
+                "_invocation_input (older rows read as NULL = argument name)"
             )
     except Exception:
         logger.debug(

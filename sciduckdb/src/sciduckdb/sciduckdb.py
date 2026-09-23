@@ -989,6 +989,48 @@ class SciDuck:
             finally:
                 self.con.unregister("_bulk_insert_df")
 
+    def _bulk_update(self, table: str, key_cols, set_cols, rows) -> int:
+        """Update many rows with a single vectorized ``UPDATE ... FROM``.
+
+        The update counterpart of :meth:`_bulk_insert`, for the same reason
+        (per-row statements against a PK table are pathologically slow).
+        ``rows`` are value tuples in ``key_cols + set_cols`` order; a row
+        whose key matches nothing is ignored, and a matched row whose
+        ``set_cols`` already hold the given values is left untouched
+        (``IS DISTINCT FROM``), so re-running is a no-op. Returns the number
+        of rows handed in (DuckDB does not report the changed count here).
+        Safe inside an open transaction, like ``_bulk_insert``.
+        """
+        rows = list(rows)
+        if not rows:
+            return 0
+        key_cols, set_cols = list(key_cols), list(set_cols)
+        df = pd.DataFrame(rows, columns=key_cols + set_cols)
+        set_str = ", ".join(f'"{c}" = d."{c}"' for c in set_cols)
+        match = " AND ".join(f'"{table}"."{c}" = d."{c}"' for c in key_cols)
+        changed = " OR ".join(
+            f'"{table}"."{c}" IS DISTINCT FROM d."{c}"' for c in set_cols
+        )
+        sql = (
+            f'UPDATE "{table}" SET {set_str} FROM _bulk_update_df AS d '
+            f"WHERE {match} AND ({changed})"
+        )
+        with self._lock:
+            logger.debug(
+                "_bulk_update thread=%d table=%s rows=%d",
+                threading.get_ident(), table, len(rows),
+            )
+            self.con.register("_bulk_update_df", df)
+            try:
+                self.con.execute(sql)
+            except Exception:
+                logger.exception("_bulk_update FAILED table=%s", table)
+                self._recover_from_autocommit_failure()
+                raise
+            finally:
+                self.con.unregister("_bulk_update_df")
+        return len(rows)
+
     def _begin(self):
         thread = threading.get_ident()
         wait_start = time.monotonic()

@@ -415,10 +415,35 @@ def parse_selector(stored: Any) -> dict | None:
     return normalize_columns(stored)
 
 
+def is_every_column(sel: Any) -> bool:
+    """Is *sel* the SYMBOLIC "every data column, one call each"
+    (``MyVar.for_columns()``, stated as ``{"columns": [], "iterate": true}``)?
+
+    Symbolic because it is resolved at for_each time: the run records the
+    column list it found, so a statement and its own run's fact spell the
+    same selection two ways.
+    """
+    n = normalize_columns(sel)
+    return bool(n) and n["iterate"] and not n["columns"]
+
+
 def same_columns(a: Any, b: Any) -> bool:
     """Do two column selections mean the same thing? (``None`` == whole
-    variable, so absent and empty compare equal.)"""
-    return normalize_columns(a) == normalize_columns(b)
+    variable, so absent and empty compare equal.)
+
+    "Every column" (:func:`is_every_column`) matches ANY per-column selection:
+    a stated ``for_columns()`` and the resolved list its run recorded are the
+    same intent. Comparing them literally flagged every such node "not
+    reflected by its last run" (cleanup-audit B2). The columns a variable
+    HAS may have changed since that run; that is a data question, not an
+    intent one, and is not what this answers.
+    """
+    na, nb = normalize_columns(a), normalize_columns(b)
+    if na == nb:
+        return True
+    if na and nb and na["iterate"] and nb["iterate"]:
+        return is_every_column(na) or is_every_column(nb)
+    return False
 
 
 #: ``{aspect: normalizer}`` — a value entering resolution is normalized by

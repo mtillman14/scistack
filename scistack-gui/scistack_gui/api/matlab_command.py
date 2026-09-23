@@ -745,6 +745,7 @@ def generate_matlab_command(
     glue: dict[str, list[dict]] | None = None,
     run_options: dict | None = None,
     run_id: "str | None" = None,
+    parameter_names: "dict[str, str] | None" = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -927,6 +928,11 @@ def generate_matlab_command(
         template_opts_str = _format_run_option_pairs(run_options, function_name)
         if template_opts_str:
             template_tail += f", ...\n        {template_opts_str}"
+        # The FIRST run is the one that establishes history, so it is the one
+        # that must record which declared Parameter fed each argument.
+        template_names_str = _format_parameter_names_pair(parameter_names)
+        if template_names_str:
+            template_tail += f", ...\n        {template_names_str}"
         lines.append("try")
         lines.append("    % Run (fill in inputs/outputs)")
         lines.append(f"    scidb.for_each(@{function_name}, ...")
@@ -996,6 +1002,7 @@ def generate_matlab_command(
             variable_inputs=variable_inputs,
             glue=glue,
             run_options=run_options,
+            parameter_names=parameter_names,
         )
     )
 
@@ -1153,6 +1160,7 @@ def _for_each_call_lines(
     variable_inputs: "dict | None" = None,
     glue: dict[str, list[dict]] | None = None,
     run_options: dict | None = None,
+    parameter_names: "dict[str, str] | None" = None,
 ) -> list[str]:
     """One (indented) ``<matlab_fn>(@function_name, ...)`` block per grouped
     (inputs, constants) entry — the call body shared between a single
@@ -1225,6 +1233,11 @@ def _for_each_call_lines(
         # invocation_id), so a dropped pair silently produces a different run
         # than the one requested -- see docs/claude/gui-run-options-flow.md.
         opts_str = _format_run_option_pairs(run_options, function_name)
+        # Which declared Parameter fed each argument — recorded on the
+        # constant's provenance edge (cleanup-audit B1). Descriptive only.
+        names_str = _format_parameter_names_pair(parameter_names)
+        if names_str:
+            opts_str = f"{opts_str}, ...\n{indent}    {names_str}" if opts_str else names_str
 
         lines.append(f"{indent}% Run")
         lines.append(f"{indent}{matlab_fn}(@{function_name}, ...")
@@ -1239,6 +1252,23 @@ def _for_each_call_lines(
             lines.append(f"{indent}    {outputs_str}{tail});")
         lines.append("")
     return lines
+
+
+def _format_parameter_names_pair(parameter_names: "dict[str, str] | None") -> str:
+    """``'parameter_names', struct('arg', 'declared', ...)`` for
+    ``+scidb/for_each.m``, or ``""`` when there is nothing to say.
+
+    Every Parameter binding is emitted, same-named ones included: the name is
+    recorded, not inferred, so "same as the argument" is a fact worth
+    writing down too. Sorted, so the generated script is stable.
+    """
+    if not parameter_names:
+        return ""
+    fields = ", ".join(
+        f"{_format_matlab_value(arg)}, {_format_matlab_value(declared)}"
+        for arg, declared in sorted(parameter_names.items())
+    )
+    return f"'parameter_names', struct({fields})"
 
 
 def _format_glue_struct(glue: dict[str, list[dict]] | None) -> str:
@@ -1468,6 +1498,7 @@ def generate_matlab_pipeline_command(
                 sweeps=step.get("sweeps"),
                 variable_inputs=step.get("variable_inputs"),
                 run_options=step.get("run_options"),
+                parameter_names=step.get("parameter_names"),
             )
         )
     for comment in skip_comments:

@@ -475,6 +475,7 @@ def _run_in_thread(
                 from scistack_gui.services.execution_service import (
                     build_run_glue,
                     build_run_inputs,
+                    build_run_parameter_names,
                 )
 
                 inputs = build_run_inputs(v, function_name)
@@ -482,6 +483,7 @@ def _run_in_thread(
                 # right beside the inputs it reshapes — never a step, never a
                 # run of its own.
                 glue_arg = build_run_glue(v, function_name) or None
+                parameter_names_arg = build_run_parameter_names(v) or None
                 logger.debug(
                     "[run_thread] Built inputs for %d param(s): %s (run_id=%s)",
                     len(inputs),
@@ -615,6 +617,7 @@ def _run_in_thread(
                         where=where_arg,
                         skip_computed=False,
                         glue=glue_arg,
+                        parameter_names=parameter_names_arg,
                         _progress_fn=_progress_fn,
                         _cancel_check=_is_cancelled,
                         # The picker's pair, applied to the COMBO list by

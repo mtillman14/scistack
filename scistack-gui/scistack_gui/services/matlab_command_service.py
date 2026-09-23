@@ -191,6 +191,26 @@ def _collect_sweep_params(
     }
 
 
+def _collect_parameter_names(
+    function_name: str, manual_edges: list[dict], manual_nodes: dict
+) -> dict[str, str]:
+    """``{param_name: declared Parameter name}`` for every Parameter node wired
+    into *function_name* — the generated call's ``parameter_names=``, so the
+    run records the Parameter the canvas shows (cleanup-audit B1). Every
+    binding, valued or not: the name is a fact about the wiring, the values
+    are ``_collect_sweep_params``' business.
+    """
+    resolved = _resolve_matlab_wiring(function_name, manual_edges, manual_nodes)
+    names = dict(resolved.parameter_params)
+    if names:
+        logger.info(
+            "generate_matlab_command: %s: parameter_names %s",
+            function_name,
+            names,
+        )
+    return names
+
+
 def _collect_variable_inputs(
     function_name: str, manual_edges: list[dict], manual_nodes: dict
 ) -> dict[str, list[str]]:
@@ -644,6 +664,10 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         python_executable=sys.executable,
         path_inputs=path_input_params if path_input_params else None,
         sweeps=sweep_params if sweep_params else None,
+        parameter_names=_collect_parameter_names(
+            function_name, manual_edges, manual_nodes
+        )
+        or None,
         output_types=output_types if output_types else None,
         project_root=project_root,
         entities_script=_entities_script(),
@@ -892,6 +916,10 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                 "schema_level": params.get("schema_level"),
                 "path_inputs": path_input_params if path_input_params else None,
                 "sweeps": sweep_params if sweep_params else None,
+                "parameter_names": _collect_parameter_names(
+                    fn_label, manual_edges, manual_nodes
+                )
+                or None,
                 "variable_inputs": (
                     step_variable_inputs if step_variable_inputs else None
                 ),

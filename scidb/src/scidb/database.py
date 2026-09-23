@@ -35,6 +35,7 @@ from .exceptions import (
 )
 from .hashing import canonical_hash, generate_record_id
 from .log import Log
+from .parameter import parameter_node_name
 from .schema_values import (
     VALID_SCHEMA_KEY_TYPES,
     canonical_numeric_value,
@@ -4210,6 +4211,7 @@ class DatabaseManager:
                             "input_params": {param: var_type},
                             "outputs": [var_type1, var_type2],
                             "constants": {param: [val1, val2]},
+                            "parameter_names": {param: parameter node name},
                             "variant_count": int,
                             "variants": [
                                 {
@@ -4233,7 +4235,11 @@ class DatabaseManager:
                     }
 
             ``"constants"`` (dict)
-                Constants used across functions::
+                Constants used across functions, keyed by PARAMETER NODE name:
+                the declared Parameter the run recorded, else the argument.
+                Each function's ``"parameter_names"`` (``{argument: node}``)
+                says which argument each node filled — the handle an edge
+                from it lands on::
 
                     {
                         const_name: {
@@ -4272,6 +4278,7 @@ class DatabaseManager:
                 "input_params": {},
                 "outputs": [],
                 "constants": defaultdict(list),
+                "parameter_names": {},
                 "variant_count": 0,
                 "variants": [],
             }
@@ -4317,10 +4324,25 @@ class DatabaseManager:
             if out not in functions[fkey]["outputs"]:
                 functions[fkey]["outputs"].append(out)
 
-            # Track constants
+            # Track constants. A constant's NODE is the declared Parameter its
+            # run recorded, else the argument it filled (cleanup-audit B1):
+            # the value lives under the argument in `functions[...]` (that is
+            # what the function receives), and under the node everywhere a
+            # Parameter is named (`constants`, `parameter_names`).
+            recorded_names = v.get("parameter_names") or {}
             for k, val in constants.items():
-                const_counts[k][str(val)] += count
-                const_fns[k].add(fkey)
+                node = parameter_node_name(k, recorded_names)
+                seen = functions[fkey]["parameter_names"].get(k)
+                if seen is not None and seen != node:
+                    Log.warn(
+                        f"get_aggregated_variants: {fn} call {cid} argument "
+                        f"{k!r} was fed by Parameter {seen!r} in one run and "
+                        f"{node!r} in another; showing {seen!r}"
+                    )
+                    node = seen
+                functions[fkey]["parameter_names"][k] = node
+                const_counts[node][str(val)] += count
+                const_fns[node].add(fkey)
                 fn_constants_map[fkey].add(k)
                 if val not in functions[fkey]["constants"][k]:
                     functions[fkey]["constants"][k].append(val)
@@ -4343,6 +4365,7 @@ class DatabaseManager:
                 {
                     "input_types": inputs,
                     "constants": constants,
+                    "parameter_names": dict(recorded_names),
                     "output_type": out,
                     "output_num": v.get("output_num"),
                     "record_count": count,
@@ -4380,6 +4403,7 @@ class DatabaseManager:
                 "input_params": dict(data["input_params"]),
                 "outputs": data["outputs"],
                 "constants": {k: list(v) for k, v in data["constants"].items()},
+                "parameter_names": dict(data["parameter_names"]),
                 "variant_count": data["variant_count"],
                 "variants": data["variants"],
             }

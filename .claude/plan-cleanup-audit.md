@@ -5,7 +5,7 @@ Output: `docs/claude/cleanup-audit.md` — one ranked findings register.
 1. **Measurements** — DONE 2026-09-23 (size, churn×fix hotspots, function
    shape, import graph + private imports, lazy imports, MATLAB parity, silent
    excepts, N+1 signals, dead code, forwarding depth, markers).
-2. **Concept-ownership table** — concept → owner → consumers → rivals.
+2. **Concept-ownership table** — DONE 2026-09-23 (cleanup-audit §2). concept → owner → consumers → rivals.
    Seed from memory notes (rid spine, ids.py, entity_editability, variant space,
    project root, schema level default) + hotspots.
 3. **Critical-path flow diagrams** — save, load/load_all, for_each (Py + MATLAB),

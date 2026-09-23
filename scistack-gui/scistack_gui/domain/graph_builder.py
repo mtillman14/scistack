@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from scidb.provenance import compute_wiring_id as _compute_wiring_id
 from scidb.provenance import parse_path_input_spec as _parse_path_input_spec
 from scidb.provenance import strip_path_input_specs as _strip_path_input_specs
+from scidb.parameter import parameter_node_name
 
 from scistack_gui.ids import (
     FN_ID_PREFIX,
@@ -87,6 +88,29 @@ class AggregatedData:
     fn_variants_map: dict[FnKey, list] = field(
         default_factory=lambda: defaultdict(list)
     )
+    fn_parameter_names: dict[FnKey, dict[str, str]] = field(
+        default_factory=lambda: defaultdict(dict)
+    )
+    """``{fkey: {argument: Parameter node name}}`` — which Parameter node each
+    constant argument belongs to, as scidb resolved it
+    (``get_aggregated_variants`` / ``scidb.parameter.parameter_node_name``).
+    ``const_counts``/``const_fns`` are keyed by NODE; ``fn_constants`` and
+    variant rows by ARGUMENT (the handle). The two differ when a Parameter
+    declared ``gaitrite_config`` feeds ``gaitRiteConfig`` (cleanup-audit B1);
+    translate with :meth:`constant_node` / :meth:`constant_args`, never by
+    assuming they are equal."""
+
+    def constant_node(self, fkey: FnKey, argument: str) -> str:
+        """The Parameter node a call site's constant *argument* belongs to."""
+        return self.fn_parameter_names.get(fkey, {}).get(argument) or argument
+
+    def constant_args(self, fkey: FnKey, node: str) -> list[str]:
+        """The arguments of *fkey* that Parameter *node* fills (handles)."""
+        args = [
+            a for a in sorted(self.fn_constants.get(fkey, set()))
+            if self.constant_node(fkey, a) == node
+        ]
+        return args or [node]
 
 
 def edge_dedup_key(
@@ -331,6 +355,9 @@ def group_call_sites_by_wiring(
             grouped.fn_input_params[gkey].update(agg.fn_input_params[fkey])
             grouped.fn_outputs[gkey] |= set(agg.fn_outputs.get(fkey, set()))
             grouped.fn_constants[gkey] |= set(agg.fn_constants.get(fkey, set()))
+            grouped.fn_parameter_names[gkey].update(
+                agg.fn_parameter_names.get(fkey, {})
+            )
         else:
             # Still reserve the group, so a node whose every call site is
             # historical does not vanish from the canvas between the run that
@@ -371,14 +398,17 @@ def group_call_sites_by_wiring(
     # a SIBLING wiring sharing the same constant node hasn't caught up yet
     # (see pending_value_group_coverage / auto_clean_pending_constants).
     coverage = pending_value_group_coverage(pending_constants, agg)
+    # Pending values are keyed by the Parameter NODE (its UI writes them);
+    # the synthesized row is keyed by the ARGUMENT, like every real row.
     for gkey in list(grouped.fn_constants.keys()):
-        for const_name in sorted(grouped.fn_constants[gkey]):
+        for arg in sorted(grouped.fn_constants[gkey]):
+            const_name = grouped.constant_node(gkey, arg)
             for pval in sorted(pending_constants.get(const_name, set())):
                 if gkey in coverage.get((const_name, pval), set()):
                     continue
                 grouped.fn_variants_map[gkey].append(
                     {
-                        "constants": {const_name: pval},
+                        "constants": {arg: pval},
                         "state": "pending",
                         "staged": True,
                     }
@@ -790,9 +820,12 @@ def aggregate_variants(
         if fkey not in agg.fn_input_params:
             agg.fn_input_params[fkey] = {}
 
+        recorded = v.get("parameter_names") or {}
         for k, val in constants.items():
-            agg.const_counts[k][str(val)] += count
-            agg.const_fns[k].add(fkey)
+            node = parameter_node_name(k, recorded)
+            agg.fn_parameter_names[fkey].setdefault(k, node)
+            agg.const_counts[node][str(val)] += count
+            agg.const_fns[node].add(fkey)
             agg.fn_constants[fkey].add(k)
 
         # Per-call-site variant list (currently always one entry per FnKey
@@ -940,9 +973,13 @@ def _wiring_group_key(agg: "AggregatedData", fkey: FnKey) -> tuple[str, str]:
 def _fkey_has_constant_value(
     agg: "AggregatedData", fkey: FnKey, const_name: str, pval: str
 ) -> bool:
+    # const_name is the Parameter NODE; rows are keyed by the argument(s) it fills.
+    args = agg.constant_args(fkey, const_name)
     return any(
-        str(row.get("constants", {}).get(const_name)) == pval
+        str(row.get("constants", {}).get(arg)) == pval
         for row in agg.fn_variants_map.get(fkey, [])
+        for arg in args
+        if arg in row.get("constants", {})
     )
 
 
@@ -1221,6 +1258,19 @@ def build_parameter_nodes(
         "[graph_builder] build_parameter_nodes: building %d parameter node(s)",
         len(all_names),
     )
+    # A node that exists ONLY because history names it. Legitimate for a
+    # Parameter since removed from source, but it is also exactly what a run
+    # recorded under an argument name instead of the declared Parameter looks
+    # like (cleanup-audit B1) — so it is named, not left to be counted.
+    history_only = sorted(set(const_counts) - set(source_values))
+    if history_only and source_values:
+        logger.info(
+            "[graph_builder] build_parameter_nodes: %d node(s) come from run "
+            "history alone, not a declaration: %s (declared: %s)",
+            len(history_only),
+            history_only,
+            sorted(source_values),
+        )
     nodes = []
     for const_name in all_names:
         hidden_for_name = hidden_values.get(const_name, set())
@@ -1518,6 +1568,7 @@ def build_edges(
     hidden_ids: set[str],
     matlab_param_to_class: dict[str, dict[str, str]] | None = None,
     hidden_edge_ids: set[str] | None = None,
+    fn_parameter_names: "dict[FnKey, dict[str, str]] | None" = None,
 ) -> list[dict]:
     """Build React Flow edges (DB-derived + manual).
 
@@ -1528,7 +1579,12 @@ def build_edges(
     Args:
         fn_input_params: {(fn_name, call_id): {param: var_type}}.
         fn_outputs: {(fn_name, call_id): {output_types}}.
-        const_fns: {const_name: {(fn_name, call_id), ...}}.
+        const_fns: {Parameter node name: {(fn_name, call_id), ...}}.
+        fn_parameter_names: {fkey: {argument: Parameter node name}}
+            (``AggregatedData.fn_parameter_names``). An edge leaves the
+            NODE and lands on the ARGUMENT's handle; they differ when a
+            Parameter feeds an argument of another name (cleanup-audit B1).
+            Absent → the node name is the argument, the pre-2026-09-23 shape.
         path_inputs: {param_name: {"functions": set[FnKey], ...}}.
         manual_edges: List of manual edge dicts from pipeline_store.
         hidden_ids: Set of hidden node IDs.
@@ -1616,25 +1672,45 @@ def build_edges(
     # Constant → function edges (one per call site that uses the constant).
     logger.debug("[graph_builder] building constant → function edges")
     hidden_const_to_fn = 0
+    names_by_fkey = fn_parameter_names or {}
+    renamed_edges: list[str] = []
     for const_name, fkeys in const_fns.items():
         for fkey in fkeys:
             fn, cid = fkey
             target_id = fn_node_id(fn, cid)
-            key = (param_node_id(const_name), target_id)
-            if key not in seen_edges:
+            args = [
+                a for a, n in sorted(names_by_fkey.get(fkey, {}).items())
+                if n == const_name
+            ] or [const_name]
+            for arg in args:
+                key = (param_node_id(const_name), target_id, arg)
+                if key in seen_edges:
+                    continue
                 seen_edges.add(key)
-                edge_id = f"e__{const_name}__{fn}__{cid}"
+                # Keyed by the ARGUMENT (the handle it fills), which is what
+                # hidden_wirings and the disconnected report spell — and the
+                # same id as before whenever node and argument share a name.
+                edge_id = f"e__{arg}__{fn}__{cid}"
                 if edge_id in hidden_edge_ids:
                     hidden_const_to_fn += 1
                     continue
+                if arg != const_name:
+                    renamed_edges.append(f"{const_name}->{fn}.{arg}")
                 edges.append(
                     {
                         "id": edge_id,
                         "source": param_node_id(const_name),
                         "target": target_id,
-                        "targetHandle": param_handle(const_name),
+                        "targetHandle": param_handle(arg),
                     }
                 )
+    if renamed_edges:
+        logger.info(
+            "[graph_builder] %d Parameter edge(s) feed an argument of another "
+            "name (declared Parameter -> fn.argument): %s",
+            len(renamed_edges),
+            ", ".join(renamed_edges),
+        )
     const_to_fn_count = len(edges) - var_to_fn_count - fn_to_var_count
     logger.debug(
         "[graph_builder] built %d constant → function edge(s) (%d hidden)",

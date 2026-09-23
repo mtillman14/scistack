@@ -49,6 +49,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       runs in the language of the run, so a MATLAB pipeline
 %                       needs MATLAB glue. See
 %                       docs/claude/free-code-glue-nodes.md.
+%       parameter_names - struct: input name -> the DECLARED Parameter name
+%                       that fed it (e.g. struct('gaitRiteConfig',
+%                       'gaitrite_config')). Recorded on the constant's
+%                       provenance edge so the GUI shows ONE Parameter node
+%                       after a run; never part of identity. See
+%                       scidb.parameter.declared_parameter_names (Python).
 %       share_limits  - struct: input name -> string array of schema keys to
 %                       hold fixed; each group's [min max] is appended as a
 %                       trailing positional arg (declare `<input>_limits`
@@ -253,6 +259,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         end
     end
 
+    % --- parameter_names: struct (input -> declared Parameter) -> py.dict ---
+    py_parameter_names = parameter_names_to_python(opts.parameter_names);
+
     % --- Pipeline registration seam (deferred execution, stage 4) ---
     % Reuses the marshalled py objects above; registration must have zero
     % side effects, so this runs BEFORE prepare (no loads, no DB writes).
@@ -285,7 +294,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                        'skip_computed', logical(opts.skip_computed), ...
                        'schema_keys', py_schema_keys, ...
                        'schema_filter', py_schema_filter, ...
-                       'glue', py_glue)));
+                       'glue', py_glue, ...
+                       'parameter_names', py_parameter_names)));
             target_pipe.store_step(step_index, fn, inputs, outputs, opts);
             scidb.Log.info(['pipeline_step_registered (MATLAB): %s -> ' ...
                 'pipeline %s (deferred)'], fn_name, target_pipe.name);
@@ -314,7 +324,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'finalized', logical(opts.finalized), ...
                'schema_keys', py_schema_keys, ...
                'schema_filter', py_schema_filter, ...
-               'glue', py_glue));
+               'glue', py_glue, ...
+               'parameter_names', py_parameter_names));
     scidb.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
 
     % Dry-run: Python ran the scifor.for_each(dry_run=true) call itself
@@ -1766,6 +1777,8 @@ function [meta_args, opts] = split_options(varargin)
     % table in memory before fn sees it. Never saved. See
     % docs/claude/free-code-glue-nodes.md.
     opts.glue = struct();
+    % Input name -> declared Parameter name (see the parameter_names help).
+    opts.parameter_names = struct();
     opts.fn_name_override = '';
     opts.fn_hash_override = '';
     % Deferred pipeline registration: '' = ambient (register into the
@@ -1779,7 +1792,7 @@ function [meta_args, opts] = split_options(varargin)
     reserved_opts = ["dryrun", "save", "preload", "astable", "db", ...
                      "parallel", "distribute", "where", "introspect", ...
                      "skipcomputed", "finalized", "sharelimits", ...
-                     "schemakeys", "schemafilter", "glue", ...
+                     "schemakeys", "schemafilter", "glue", "parameternames", ...
                      "fnname", "fnhash", "pipeline"];
 
     meta_args = {};
@@ -1856,6 +1869,9 @@ function [meta_args, opts] = split_options(varargin)
                     % array of handles applied in order.
                     opts.glue = varargin{i+1};
                     i = i + 2; continue;
+                case "parameter_names"
+                    opts.parameter_names = varargin{i+1};
+                    i = i + 2; continue;
                 case "pipeline"
                     opts.pipeline = varargin{i+1};
                     i = i + 2; continue;
@@ -1888,6 +1904,31 @@ function [meta_args, opts] = split_options(varargin)
             end
         end
     end
+end
+
+
+function py_names = parameter_names_to_python(names)
+%PARAMETER_NAMES_TO_PYTHON  struct (input -> declared Parameter name) ->
+%   py.dict of str -> str, or py.None when empty. Values must be text: a
+%   declared name is an identifier, and anything else is a caller bug worth
+%   stopping on rather than recording a garbled name.
+    if isempty(names) || ~isstruct(names) || isempty(fieldnames(names))
+        py_names = py.None;
+        return;
+    end
+    py_names = py.dict();
+    fns = fieldnames(names);
+    for k = 1:numel(fns)
+        v = names.(fns{k});
+        if ~(ischar(v) || (isstring(v) && isscalar(v)))
+            error('scidb:for_each:parameterNames', ...
+                ['parameter_names.%s must be the declared Parameter name ' ...
+                 '(text), got a %s'], fns{k}, class(v));
+        end
+        py_names{fns{k}} = char(v);
+    end
+    scidb.Log.debug('parameter_names (input -> declared): %s', ...
+        char(py.str(py_names)));
 end
 
 

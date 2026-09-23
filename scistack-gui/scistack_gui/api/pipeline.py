@@ -335,13 +335,17 @@ def build_aggregate(db, scidb_agg: dict):
         fkey = (fn_name, call_id)
         agg.fn_input_params[fkey] = fn_data["input_params"]
         agg.fn_outputs[fkey] = set(fn_data["outputs"])
-        for const_name, values in fn_data["constants"].items():
-            agg.fn_constants[fkey].add(const_name)
+        # {argument: Parameter node} as scidb resolved it — never re-derived
+        # here (cleanup-audit B1: the canvas invented param__{argument}).
+        agg.fn_parameter_names[fkey] = dict(fn_data.get("parameter_names") or {})
+        for arg, values in fn_data["constants"].items():
+            agg.fn_constants[fkey].add(arg)
+            node = agg.constant_node(fkey, arg)
             for val in values:
                 # No per-value record counts in this projection; const_counts
                 # is display-only, so an approximation is honest here and the
                 # real counts land from scidb_agg["constants"] below.
-                agg.const_counts[const_name][str(val)] = 1
+                agg.const_counts[node][str(val)] = 1
         agg.fn_variants_map[fkey] = fn_data["variants"]
 
     for const_name, const_data in scidb_agg["constants"].items():
@@ -1115,6 +1119,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
         hidden_ids,
         matlab_param_to_class=matlab_param_to_class,
         hidden_edge_ids=hidden_edge_ids,
+        fn_parameter_names=agg.fn_parameter_names,
     )
     logger.info("[pipeline] built %d edges", len(edges))
 
@@ -1624,6 +1629,24 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
         ", ".join(f"{c} {t}" for t, c in sorted(node_types.items())),
         len(edges),
     )
+    # Which Parameter nodes, by id, and what each is wired into. A count
+    # alone could not tell a duplicate apart from a second real Parameter
+    # (cleanup-audit B1 had to be diagnosed from counts).
+    if logger.isEnabledFor(logging.DEBUG):
+        param_targets: dict[str, list[str]] = {}
+        for e in edges:
+            if str(e.get("source", "")).startswith(ids.PARAM_ID_PREFIX):
+                param_targets.setdefault(e["source"], []).append(
+                    f"{e.get('target')}.{e.get('targetHandle')}"
+                )
+        logger.debug(
+            "[pipeline] parameter nodes: %s",
+            {
+                n["id"]: param_targets.get(n["id"], [])
+                for n in nodes
+                if n["type"] == "parameterNode"
+            },
+        )
 
     result = {"nodes": nodes, "edges": edges, "pipeline_id": pipeline_id}
     if identity_warnings:

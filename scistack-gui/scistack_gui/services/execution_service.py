@@ -1745,6 +1745,22 @@ def default_schema_level(
 
     return schema_keys, "no history and no bound input to read a level from"
 
+def build_run_parameter_names(target: dict) -> dict[str, str]:
+    """The for_each ``parameter_names=`` dict for a derived target:
+    ``{argument: declared Parameter name}`` from its Parameter bindings.
+
+    A value already recorded in history reaches ``for_each`` as a bare
+    scalar (``build_run_inputs`` puts ``target["constants"]`` in first), so
+    the name the canvas shows has to be stated or the run records only the
+    argument — and the next graph build draws a second Parameter node named
+    after it (cleanup-audit B1). The wiring is the only source; scidb merges
+    it with any named Parameter (``scidb.parameter.declared_parameter_names``).
+    """
+    from scistack_gui.domain.edge_resolver import BINDING_PARAMETER, bindings_of_kind
+
+    return dict(bindings_of_kind(target.get("bindings") or {}, BINDING_PARAMETER))
+
+
 def build_run_glue(target: dict, function_name: str) -> dict:
     """The for_each ``glue=`` dict for a derived target, or ``{}``.
 
@@ -2098,6 +2114,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 db=db,
                 pipeline=pipe,
                 glue=build_run_glue(target, fn_label) or None,
+                parameter_names=build_run_parameter_names(target) or None,
                 distribute=step_options.distribute,
                 as_table=step_options.as_table,
                 **schema_iterables,

@@ -231,6 +231,11 @@ def discover_module(module: ModuleType) -> ModuleExports:
         # are all PathInputs, so a Parameter wrapping PathInputs would
         # otherwise be classified as a PathInput. ---
         if is_parameter(obj):
+            # The binding name IS the declared name; stamp it on the object
+            # so a script's for_each records it (declared_parameter_names).
+            # First binding wins: `B = A` re-exports A, it does not rename it.
+            if not getattr(obj, "name", None):
+                obj.name = name
             exports.parameters.append((name, obj))
             continue
 

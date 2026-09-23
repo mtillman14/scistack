@@ -435,6 +435,7 @@ def record_run(
     user_id: str | None,
     glue_virtual: dict | None = None,
     glue_chains: dict | None = None,
+    parameter_names: dict | None = None,
 ) -> str | None:
     """Write the bipartite graph for ``graph_records`` plus a fresh ``_run`` row.
 
@@ -449,9 +450,16 @@ def record_run(
     rewrote ``__record_id`` before Step 11), so the matching virtual ``_record``
     rows and their producing ``_invocation``s are written here. See
     :func:`_write_glue_nodes`.
+
+    ``parameter_names`` (``{argument: declared Parameter name}``, from
+    :func:`scidb.parameter.declared_parameter_names`) is stamped on each
+    CONSTANT edge's ``declared_name`` so history can name the Parameter the
+    canvas shows. Descriptive, not identity; the latest run's name wins on an
+    edge an earlier run already wrote.
     """
     if not graph_records:
         return None
+    parameter_names = dict(parameter_names or {})
 
     import time
 
@@ -475,6 +483,8 @@ def record_run(
     input_edges: dict[
         tuple[str, str, str], str | None
     ] = {}  # (inv,param,rid) -> selector
+    # (inv,param,rid) -> declared Parameter name, constant edges only
+    declared_edges: dict[tuple[str, str, str], str] = {}
     # ``output_edges`` is the WORKING slot map used for collision-free assignment
     # (seeded below with already-COMMITTED edges so a cross-run save appends fresh
     # slots instead of colliding). ``run_output_edges`` is the subset actually
@@ -599,6 +609,11 @@ def record_run(
             )
             for b in bindings:
                 input_edges[(inv_id, b.param, b.rid)] = b.selector
+            for param in const_b:
+                declared = parameter_names.get(param)
+                if declared:
+                    crid = next(b.rid for b in bindings if b.param == param)
+                    declared_edges[(inv_id, param, crid)] = declared
 
             # PathInput-spec edges: config-level (template+root_folder), recorded as
             # distinctly-typed input records so variant queries can surface them.
@@ -719,6 +734,16 @@ def record_run(
         pathinput_row_count,
         len(input_edges),
     )
+    # The argument -> Parameter naming this run recorded (cleanup-audit B1).
+    # INFO: it is the one line that says why the canvas does, or does not,
+    # draw a second Parameter node after a run.
+    if parameter_names:
+        renamed = {a: d for a, d in sorted(parameter_names.items()) if a != d}
+        Log.info(
+            f"[provenance] fn={function_name}: {len(declared_edges)} constant "
+            f"edge(s) named by declared Parameter; argument->Parameter "
+            f"{renamed or 'all same-named'}"
+        )
     _t_commit = time.perf_counter()
     _commit_graph(
         duck,
@@ -734,6 +759,7 @@ def record_run(
         run_output_edges,
         run_inv_ids,
         timings=timings,
+        declared_edges=declared_edges,
     )
     timings["3_commit"] = time.perf_counter() - _t_commit
     timings["total"] = time.perf_counter() - _t_start
@@ -862,6 +888,7 @@ def _commit_graph(
     run_output_edges,
     run_inv_ids,
     timings: dict | None = None,
+    declared_edges: dict | None = None,
 ) -> None:
     """Transactionally insert the assembled graph rows + the append-only run.
 
@@ -872,6 +899,7 @@ def _commit_graph(
     import time as _time
 
     timings = timings if timings is not None else {}
+    declared_edges = declared_edges or {}
 
     def _timed(label, fn):
         _t = _time.perf_counter()
@@ -930,14 +958,33 @@ def _commit_graph(
             "3d_invocation_input",
             lambda: duck._bulk_insert(
                 "_invocation_input",
-                ("invocation_id", "param_name", "input_record_id", "selector"),
+                (
+                    "invocation_id",
+                    "param_name",
+                    "input_record_id",
+                    "selector",
+                    "declared_name",
+                ),
                 [
-                    (inv, param, rid, sel)
+                    (inv, param, rid, sel, declared_edges.get((inv, param, rid)))
                     for (inv, param, rid), sel in input_edges.items()
                 ],
                 conflict_cols=["invocation_id", "param_name", "input_record_id"],
             ),
         )
+        # An edge an EARLIER run wrote keeps its row (DO NOTHING above), so
+        # its declared name is refreshed here: the latest run's naming is the
+        # one the canvas should show.
+        if declared_edges:
+            _timed(
+                "declared_names",
+                lambda: duck._bulk_update(
+                    "_invocation_input",
+                    ("invocation_id", "param_name", "input_record_id"),
+                    ("declared_name",),
+                    [(i, p, r, d) for (i, p, r), d in declared_edges.items()],
+                ),
+            )
         # Invariant check (Fix B): with cross-run slot seeding, a NEW output record
         # is always assigned a FREE output_num, so an incoming edge must never
         # collide with a committed slot pointing at a DIFFERENT record_id. The only
