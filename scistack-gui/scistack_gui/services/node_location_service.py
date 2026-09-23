@@ -182,10 +182,10 @@ def _unresolvable(db, node_id: str) -> dict:
     the note says that instead of implying something is broken.
     """
     from scistack_gui.services.execution_service import disconnected_reason
-    from scistack_gui.ids import parse_fn_node_id, strip_placement
+    from scistack_gui.ids import FN_ID_PREFIX, parse_fn_node_id, strip_placement
 
     parsed = parse_fn_node_id(node_id)
-    function_name = parsed[0] if parsed else strip_placement(node_id).removeprefix("fn__")
+    function_name = parsed[0] if parsed else strip_placement(node_id).removeprefix(FN_ID_PREFIX)
     reason = None
     try:
         reason = disconnected_reason(db, function_name, node_id)

@@ -23,7 +23,13 @@ from scidb.roles import endpoint_kind
 from scistack_gui import layout as layout_store
 from scistack_gui import registry
 from scistack_gui.api.handlers import Handler, install_routes
-from scistack_gui.ids import ROOT_SCOPE
+from scistack_gui.ids import (
+    FN_ID_PREFIX,
+    ROOT_SCOPE,
+    fn_node_id,
+    legacy_fn_node_id,
+    var_node_id,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -561,7 +567,7 @@ def _compute_run_states(
     fn_own_state: dict[tuple, str] = {}
     for fkey in fn_input_params:
         fn_name, cid = fkey
-        node_id = f"fn__{fn_name}__{cid or ''}"
+        node_id = fn_node_id(fn_name, cid or '')
         if node_id in state_results:
             fn_own_state[fkey] = state_results[node_id]["state"]
             counts = state_results[node_id].get("counts", {})
@@ -591,11 +597,11 @@ def _compute_run_states(
     elapsed_ms = (time.monotonic() - t0) * 1000
     counts = {"green": 0, "pending": 0, "red": 0}
     for nid, s in result.items():
-        if nid.startswith("fn__"):
+        if nid.startswith(FN_ID_PREFIX):
             counts[s] = counts.get(s, 0) + 1
     logger.debug(
         "run_states complete: %d call sites in %.1fms (%d green, %d pending, %d red)",
-        len([k for k in result if k.startswith("fn__")]),
+        len([k for k in result if k.startswith(FN_ID_PREFIX)]),
         elapsed_ms,
         counts["green"],
         counts["pending"],
@@ -696,7 +702,7 @@ def _matlab_param_to_class_from_db(
     return from_db
 
 
-def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
+def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
     """
     Build nodes and edges from list_pipeline_variants() and list_variables(),
     restricted to one pipeline SCOPE.
@@ -899,7 +905,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
         # composite `fn__{fn}__{call_id}` ID.  Look up the legacy form
         # first (matches the pre-call-id node), then any composite manual
         # node for this fn_name as a fallback.
-        cfg = node_configs.get(f"fn__{fn}") or manual_nodes.get(f"fn__{fn}", {}).get(
+        cfg = node_configs.get(legacy_fn_node_id(fn)) or manual_nodes.get(legacy_fn_node_id(fn), {}).get(
             "config"
         )
         if cfg is None:
@@ -932,7 +938,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = "main") -> dict:
     from scistack_gui.domain.edge_resolver import infer_manual_fn_param_to_class
     from scistack_gui.ids import fn_node_id
 
-    existing_node_labels_pre = {f"var__{t}": t for t in agg.all_var_types}
+    existing_node_labels_pre = {var_node_id(t): t for t in agg.all_var_types}
     for fn in matlab_functions:
         # Collect all DB-derived node IDs for this fn (one per call site)
         # plus any manual nodes that share the label.

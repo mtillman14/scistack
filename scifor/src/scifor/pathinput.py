@@ -86,11 +86,11 @@ def set_project_root(root: "str | Path | None") -> "Path | None":
     """Pin the directory a *rootless* PathInput resolves against.
 
     A ``PathInput`` with no ``root_folder`` resolves relative paths against
-    ``_find_project_root()``, which walks up from the **cwd**.  That is right
-    for a script run from inside the project and wrong for every embedded
+    :func:`project_root`, which is the **cwd** unless pinned.  That is right
+    for a script run from its project folder and wrong for every embedded
     interpreter: MATLAB's cwd is wherever the user's MATLAB happens to be
-    sitting (for a generated command, a temp script directory), so the walk
-    finds the wrong project or none at all.
+    sitting (for a generated command, a temp script directory), so the cwd
+    names the wrong folder.
 
     Callers that already know which project they are running — ``scidb.entities``
     over the MATLAB bridge, the GUI's generated command preamble — set it here
@@ -112,8 +112,8 @@ def set_project_root(root: "str | Path | None") -> "Path | None":
 
 
 def get_project_root() -> "Path | None":
-    """The pinned project root, or ``None`` when resolution falls back to
-    walking up from the cwd.  See :func:`set_project_root`."""
+    """The pinned project root, or ``None`` when :func:`project_root` falls
+    back to the cwd.  See :func:`set_project_root`."""
     return _project_root_override
 
 
@@ -123,26 +123,24 @@ def clear_project_root() -> None:
     set_project_root(None)
 
 
-def _find_project_root(start: Path | None = None) -> Path:
-    """Walk up from *start* (or cwd) to find the nearest project root.
+def project_root() -> Path:
+    """**The** project root: the pinned root, else the working directory.
 
-    The root is the first ancestor directory that contains ``pyproject.toml``
-    or ``scistack.toml``.  Falls back to *start* (or cwd) when neither file
-    is found anywhere in the hierarchy.
+    The one owner of "which directory is this project?" for every layer --
+    PathInput resolution here, config lookup in ``scidb.entities`` and
+    ``scidb.schema_order``, MATLAB stub placement. The GUI decides its root
+    (``scistack_gui.config.resolve_project_root``) and pins it here, so a GUI
+    run resolves exactly where the canvas matched.
 
-    With no explicit *start*, a project root pinned by
-    :func:`set_project_root` wins outright — the caller that pinned it knows
-    which project is running, and the cwd does not.
+    It deliberately does NOT walk up looking for ``pyproject.toml`` or
+    ``scistack.toml``. That walk made a stray config in a parent folder, or
+    an unrelated ``pyproject.toml`` beneath the project, silently decide
+    where every rootless PathInput resolved -- and each layer walked by a
+    different rule, so they could disagree.
     """
-    if start is None and _project_root_override is not None:
+    if _project_root_override is not None:
         return _project_root_override
-    current = (start or Path.cwd()).resolve()
-    for directory in [current, *current.parents]:
-        if (directory / "pyproject.toml").exists() or (
-            directory / "scistack.toml"
-        ).exists():
-            return directory
-    return current
+    return Path.cwd().resolve()
 
 
 class PathInput:
@@ -159,10 +157,8 @@ class PathInput:
                       "{subject}/trial_{trial}.mat"
         root_folder: Optional root directory.  If provided, paths are
                     resolved relative to it.  If None and the template is
-                    a relative path, the nearest ancestor directory
-                    containing ``pyproject.toml`` or ``scistack.toml`` is
-                    used; falls back to the current working directory when
-                    neither file is found.
+                    a relative path, :func:`project_root` is used (the
+                    pinned root, else the current working directory).
         aliases: Optional ``{key: {canonical: [spelling, ...]}}`` map so a
                 schema key can have multiple on-disk spellings that all mean
                 one canonical value, e.g.
@@ -443,7 +439,7 @@ class PathInput:
             dir_path = self.root_folder / dir_part if dir_part else self.root_folder
         else:
             dir_path = (
-                _find_project_root() / dir_part if dir_part else _find_project_root()
+                project_root() / dir_part if dir_part else project_root()
             )
         dir_path = dir_path.resolve()
 
@@ -472,7 +468,7 @@ class PathInput:
         if self.root_folder is not None:
             return (self.root_folder / resolved_path).resolve()
         if not resolved_path.is_absolute():
-            return (_find_project_root() / resolved_path).resolve()
+            return (project_root() / resolved_path).resolve()
         return resolved_path.resolve()
 
     def _padded_literal(
@@ -515,7 +511,7 @@ class PathInput:
             return Path(segments[0] + "/"), segments[1:]
         if self.root_folder is not None:
             return self.root_folder, segments
-        return _find_project_root(), segments
+        return project_root(), segments
 
     def _fallback_segment_regex(
         self,

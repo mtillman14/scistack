@@ -108,10 +108,10 @@ def _fn_node_ids(function_name: str, manual_edges: list[dict], manual_nodes: dic
     edge endpoint whose bare id is ``fn__{name}`` or ``fn__{name}__{suffix}``
     (a wiring id, a manual suffix, or either with a ``::{scope}`` placement).
     """
-    from scistack_gui.ids import strip_placement
+    from scistack_gui.ids import fn_nodes_prefix, legacy_fn_node_id, strip_placement
 
-    prefix = f"fn__{function_name}"
-    ids = {prefix}
+    legacy = legacy_fn_node_id(function_name)
+    ids = {legacy}
     for nid, meta in manual_nodes.items():
         if meta.get("type") == "functionNode" and meta.get("label") == function_name:
             ids.add(nid)
@@ -120,7 +120,7 @@ def _fn_node_ids(function_name: str, manual_edges: list[dict], manual_nodes: dic
             if not endpoint or endpoint in ids:
                 continue
             bare = strip_placement(endpoint)
-            if bare == prefix or bare.startswith(prefix + "__"):
+            if bare == legacy or bare.startswith(fn_nodes_prefix(function_name)):
                 ids.add(endpoint)
     return ids
 

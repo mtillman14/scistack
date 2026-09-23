@@ -123,8 +123,12 @@ above it; open the repo root instead. The resolved root is logged on every
 load and returned by `describe_managed_paths` (`project_root`,
 `config_path`), so the Paths popup can show which folder it settled on.
 
-`scifor.discovery.find_project_config` (the upward walk) still exists and is
-still used by `scidb.entities`, which walks from `cwd` — a correct anchor.
+**No layer walks upward any more (2026-09-23, D-2026-09-23-1).** The upward
+walk `scifor.discovery.find_project_config` is gone; scidb, scimatlab and
+PathInput resolution read `scifor.project_root()` (the pinned root, else the
+cwd) and look for the config AT it with `scifor.discovery.project_config_at`.
+The GUI decides its root here and `registry.load_from_config` pins it into
+scifor, so every layer in the GUI process sees the same folder.
 
 ### First write
 

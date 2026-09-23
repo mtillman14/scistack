@@ -34,22 +34,24 @@ router = APIRouter(tags=["project"])
 # Helpers
 # ---------------------------------------------------------------------------
 def _project_root() -> Path:
-    """Derive the project root from the open database path.
+    """The loaded project's root (``registry.get_project_root``, scifor's
+    pinned root), or -- before any project has loaded -- what
+    ``config.resolve_project_root`` would decide.
 
-    Standard layout places the .duckdb in the project root. If
-    ``pyproject.toml`` exists next to the database, that directory is the
-    root. Otherwise we walk upward.
+    It used to walk up from the DATABASE file to the nearest
+    ``pyproject.toml``: a fifth rule for "which folder is the project", and
+    the one ``resolve_project_root`` explicitly rejected (a database on
+    another drive never reaches its project).
     """
-    db_path = get_db_path()
-    candidate = db_path.parent
-    if (candidate / "pyproject.toml").exists():
-        return candidate
-    # Walk up (e.g. user put .duckdb in a subdir).
-    for parent in candidate.parents:
-        if (parent / "pyproject.toml").exists():
-            return parent
-    # Fallback to the db's parent directory even without pyproject.toml.
-    return candidate
+    from scistack_gui import registry
+    from scistack_gui.config import resolve_project_root
+
+    root = registry.get_project_root()
+    if root is not None:
+        return root
+    root = resolve_project_root(None, get_db_path())
+    logger.info("[project] No project loaded yet; using the resolved root %s", root)
+    return root
 
 
 def _serialise_module_exports(mod) -> dict:
@@ -450,7 +452,7 @@ def _build_registry_backed_result(root: Path):
 
     errors = [
         ModuleError(module_name=e["source"], traceback=e["error"])
-        for e in [*registry.get_load_errors(), *matlab_registry.get_load_errors()]
+        for e in registry.all_load_errors()
     ]
 
     modules = sorted(by_source.values(), key=lambda m: m.module_name)

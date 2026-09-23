@@ -1,20 +1,11 @@
-"""Deprecated shim — ``scihist.configure_database`` moved to scidb.
+"""``scihist.configure_database`` IS ``scidb.configure_database``.
 
-Prefer importing from ``scidb`` directly. This thin wrapper remains for
-backward-compatible imports. (It previously also registered the database as
-scilineage's cache backend; the rerun cache was removed, so it now simply
-delegates to ``scidb.configure_database``.)
+A re-export, not a wrapper. Until 2026-09-23 this was a ``db_path,
+schema_keys=None, **kwargs`` wrapper that called scidb with only the first
+two -- silently dropping ``schema_key_types`` and anything else passed -- a
+second, diverging owner of the one setup call.
 """
 
-from typing import Any
+from scidb import configure_database
 
-
-def configure_database(
-    db_path: str,
-    schema_keys: list[str] | None = None,
-    **kwargs,
-) -> Any:
-    """Deprecated alias for ``scidb.configure_database``."""
-    from scidb import configure_database as _scidb_configure
-
-    return _scidb_configure(db_path, schema_keys)
+__all__ = ["configure_database"]

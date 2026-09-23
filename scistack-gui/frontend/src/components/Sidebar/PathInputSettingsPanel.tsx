@@ -15,6 +15,11 @@
  * but only for edits made HERE. The hint below says so, because a user
  * hand-editing source instead gets no such protection.
  *
+ * A PathInput declared outside the entities file (e.g. in a MATLAB script)
+ * is read-only: every edit control is greyed out up front with a banner
+ * pointing at the declaration (useEntityEditability), rather than taking
+ * input the write would then refuse.
+ *
  * A refused write is SHOWN, never silently reverted: this panel used to
  * offer inputs wired to since-removed RPCs that no-opped on every save,
  * which read as the field reverting rather than the write being refused.
@@ -23,7 +28,9 @@
 import { useCallback, useState } from 'react'
 import { callBackend } from '../../api'
 import { useScope } from '../../context/ScopeContext'
-import { formatLocation, useSourceEdit } from './useSourceEdit'
+import ReadOnlyDeclarationBanner from './ReadOnlyDeclarationBanner'
+import { formatLocation, isLockedForEditing } from './sourceLocation'
+import { useEntityEditability, useSourceEdit } from './useSourceEdit'
 
 interface PathInputAlternate {
   template: string
@@ -51,6 +58,11 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
   const [rootDraft, setRootDraft] = useState(root_folder ?? '')
   const [altDraft, setAltDraft] = useState('')
   const { submit, error, readOnlyAt, saving, clearError } = useSourceEdit()
+  // Declared outside the entities file: every edit control is locked up
+  // front rather than taking input the write would refuse.
+  const editability = useEntityEditability('path_input', label)
+  const locked = isLockedForEditing(editability)
+  const inputsDisabled = saving || locked
 
   const write = (t: string, root: string, alts: PathInputAlternate[]) =>
     submit('update_path_input', {
@@ -90,12 +102,16 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
     <div style={styles.root}>
       <div style={styles.name}>{label}</div>
 
+      {locked && editability?.file && (
+        <ReadOnlyDeclarationBanner file={editability.file} line={editability.line} />
+      )}
+
       <section style={styles.section}>
         <div style={styles.sectionTitle}>Path Template</div>
         <input
-          style={styles.input}
+          style={locked ? styles.inputLocked : styles.input}
           value={templateDraft}
-          disabled={saving}
+          disabled={inputsDisabled}
           placeholder="{subject}/{trial}.csv"
           onChange={e => { setTemplateDraft(e.target.value); clearError() }}
           onBlur={saveTemplate}
@@ -104,20 +120,22 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
             if (e.key === 'Escape') { setTemplateDraft(template); clearError() }
           }}
         />
-        <div style={styles.hint}>
-          Shared by name — this rewrites the{' '}
-          <span style={styles.mono}>scidb.PathInput(...)</span> declaration in
-          source. Replacing the template re-points existing runs at the new
-          one; adding an alternate below never does.
-        </div>
+        {!locked && (
+          <div style={styles.hint}>
+            Shared by name — this rewrites the{' '}
+            <span style={styles.mono}>scidb.PathInput(...)</span> declaration in
+            source. Replacing the template re-points existing runs at the new
+            one; adding an alternate below never does.
+          </div>
+        )}
       </section>
 
       <section style={styles.section}>
         <div style={styles.sectionTitle}>Root Folder</div>
         <input
-          style={styles.input}
+          style={locked ? styles.inputLocked : styles.input}
           value={rootDraft}
-          disabled={saving}
+          disabled={inputsDisabled}
           placeholder="(not set)"
           onChange={e => { setRootDraft(e.target.value); clearError() }}
           onBlur={saveTemplate}
@@ -147,7 +165,7 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
               <button
                 style={styles.removeBtn}
                 onClick={() => removeAlternate(i)}
-                disabled={saving}
+                disabled={inputsDisabled}
                 title="Remove this alternate"
               >
                 ×
@@ -158,17 +176,21 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
 
         <div style={styles.addRow}>
           <input
-            style={styles.input}
+            style={locked ? styles.inputLocked : styles.input}
             placeholder="another template…"
             value={altDraft}
-            disabled={saving}
+            disabled={inputsDisabled}
             onChange={e => { setAltDraft(e.target.value); clearError() }}
             onKeyDown={e => {
               if (e.key === 'Enter') addAlternate()
               if (e.key === 'Escape') { setAltDraft(''); clearError() }
             }}
           />
-          <button style={styles.addBtn} onClick={addAlternate} disabled={saving}>
+          <button
+            style={locked ? styles.addBtnLocked : styles.addBtn}
+            onClick={addAlternate}
+            disabled={inputsDisabled}
+          >
             {saving ? '…' : 'Add'}
           </button>
         </div>
@@ -233,6 +255,30 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     padding: '3px 8px',
     cursor: 'pointer',
+    fontWeight: 600,
+  },
+  // Greyed, not hidden: the values stay readable, only writing is refused.
+  inputLocked: {
+    width: '100%',
+    background: '#15151f',
+    border: '1px solid #2a2a2a',
+    borderRadius: 3,
+    color: '#777',
+    fontFamily: 'monospace',
+    fontSize: 11,
+    padding: '3px 6px',
+    minWidth: 0,
+    boxSizing: 'border-box',
+    cursor: 'not-allowed',
+  },
+  addBtnLocked: {
+    background: '#3a3a3a',
+    border: 'none',
+    borderRadius: 3,
+    color: '#777',
+    fontSize: 11,
+    padding: '3px 8px',
+    cursor: 'not-allowed',
     fontWeight: 600,
   },
   removeBtn: {

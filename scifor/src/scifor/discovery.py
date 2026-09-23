@@ -201,29 +201,27 @@ def resolve_config_path(root: Path, raw: str) -> Path:
     return p if p.is_absolute() else root / p
 
 
-def find_project_config(start: Path) -> Path | None:
-    """Walk up from *start* for the nearest config file that actually
-    carries a scistack section, or ``None``.
+def project_config_at(root: Path) -> Path | None:
+    """The config file in *root* that carries a scistack section, or ``None``.
 
-    *start* may be a file or a directory. This is the upward-search half of
-    ``scistack_gui.config._locate_pyproject`` and the lookup behind
-    ``scidb.entities``' project resolution -- one implementation, so the
-    GUI and a plain script can never disagree about which project a path
-    belongs to (CLAUDE.md NOTE 3; ``feedback_avoid_scifor_scidb_duplication``).
+    **Looks in *root* and nowhere else.** The project root is decided once,
+    by ``scifor.pathinput.project_root`` (the pinned root, else the cwd), and
+    the project's config lives there by definition. This replaced an upward
+    walk (``find_project_config``) that let a config in a parent folder claim
+    every project beneath it, and that the GUI had already abandoned -- so
+    scidb and the GUI could read two different configs for one folder.
+
+    *root* may be a file (its folder is used) or a directory.
     """
-    start = Path(os.path.abspath(str(start)))
-    search_dir = start if start.is_dir() else start.parent
-    while True:
-        for name in CONFIG_FILENAMES:
-            candidate = search_dir / name
-            if candidate.exists() and read_scistack_section(candidate) is not None:
-                logger.debug("Found project config %s", candidate)
-                return candidate
-        parent = search_dir.parent
-        if parent == search_dir:
-            logger.debug("No project config found in any ancestor of %s", start)
-            return None
-        search_dir = parent
+    root = Path(os.path.abspath(str(root)))
+    search_dir = root if root.is_dir() else root.parent
+    for name in CONFIG_FILENAMES:
+        candidate = search_dir / name
+        if candidate.exists() and read_scistack_section(candidate) is not None:
+            logger.debug("Found project config %s", candidate)
+            return candidate
+    logger.debug("No project config with a scistack section in %s", search_dir)
+    return None
 
 
 @dataclass

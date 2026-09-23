@@ -244,6 +244,13 @@ def load_from_config(config: SciStackConfig) -> dict:
     logger.info("[registry] Loading from config at %s", config.project_root)
     global _config
     _config = config
+    # The GUI DECIDES the root (config.resolve_project_root); scifor HOLDS it
+    # for every layer. Pinning here is what makes an in-process run resolve
+    # a rootless PathInput -- and scidb read [schema_keys] -- at the same
+    # folder graph_builder matched against, instead of at the server's cwd.
+    from scifor.pathinput import set_project_root
+
+    set_project_root(config.project_root)
 
     old_fns = set(_functions.keys())
     old_vars = set(BaseVariable._all_subclasses.keys())
@@ -551,8 +558,30 @@ def _record_load_error(source: str, error: str) -> None:
 
 
 def get_load_errors() -> list[dict]:
-    """Return discovery failures from the most recent load/refresh."""
+    """Return PYTHON discovery failures from the most recent load/refresh.
+    For everything the user should see, use :func:`all_load_errors`."""
     return list(_load_errors)
+
+
+def all_load_errors() -> list[dict]:
+    """**Every** discovery failure -- Python's, then MATLAB's.
+
+    Each registry keeps its own list because each clears it on its own load
+    cycle; "what failed to load" is one answer, and four consumers used to
+    assemble it by concatenating the two by hand -- a fifth that forgot the
+    MATLAB half would silently hide every MATLAB parse error.
+    ``tests/test_load_errors_owner.py`` keeps this the only reader of
+    ``matlab_registry.get_load_errors``.
+    """
+    from scistack_gui import matlab_registry
+
+    errors = [*_load_errors, *matlab_registry.get_load_errors()]
+    logger.debug(
+        "[registry] all_load_errors: %d python, %d matlab",
+        len(_load_errors),
+        len(errors) - len(_load_errors),
+    )
+    return errors
 
 
 def resolve_module_source(module_name: str) -> str:
@@ -930,8 +959,14 @@ def get_project_root() -> "Path | None":
     """The loaded project's root directory, or ``None`` before any config is
     loaded. One accessor so callers that only need the root (the generated
     MATLAB command's resolution pin, ``graph_builder``'s project-rooted
-    PathInput matching) don't each reach into ``_config``."""
-    return getattr(_config, "project_root", None)
+    PathInput matching) don't each reach into ``_config``.
+
+    Reads scifor's pinned root, the one holder, which :func:`load_from_config`
+    set from ``config.project_root`` -- so it can never disagree with where
+    a run resolves."""
+    from scifor.pathinput import get_project_root as _pinned
+
+    return _pinned() if _config is not None else None
 
 
 def _source_tier(source: str, project_root: "Path | None") -> str:

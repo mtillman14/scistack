@@ -10,7 +10,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from scistack_gui.ids import PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX, strip_placement
+from scistack_gui.ids import (
+    IN_HANDLE_PREFIX,
+    OUT_HANDLE_PREFIX,
+    PARAM_ID_PREFIX,
+    PATH_INPUT_ID_PREFIX,
+    VAR_ID_PREFIX,
+    strip_placement,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +196,7 @@ def node_id_to_var_label(
     # placement-qualified as "var__TypeName::{pipeline_id}" — strip that
     # suffix before parsing so a placed node still resolves correctly.
     bare_id = strip_placement(node_id)
-    if bare_id.startswith("var__"):
+    if bare_id.startswith(VAR_ID_PREFIX):
         # Check existing DB nodes first.
         if node_id in existing_node_labels:
             return existing_node_labels[node_id]
@@ -329,7 +336,7 @@ def resolve_glue_chain(
         e
         for e in manual_edges
         if strip_placement(e.get("target", "")) == bare
-        and (e.get("targetHandle") or "").startswith("in__")
+        and (e.get("targetHandle") or "").startswith(IN_HANDLE_PREFIX)
     ]
     if not incoming:
         logger.debug(
@@ -457,10 +464,10 @@ def resolve_function_edges(
             # only new case a glue node adds to edge resolution — it reuses
             # the same in__/out__ handles a function node has.
             if is_glue_node(source, manual_nodes):
-                if not th.startswith("in__"):
+                if not th.startswith(IN_HANDLE_PREFIX):
                     _drop(edge, "glue edge carries no 'in__<param>' handle")
                     continue
-                param = th[len("in__") :]
+                param = th[len(IN_HANDLE_PREFIX) :]
                 chain, head = resolve_glue_chain(
                     source, manual_edges, manual_nodes, existing_node_labels
                 )
@@ -502,8 +509,8 @@ def resolve_function_edges(
             # is; build_edges encodes both names in the DB-derived edge id
             # for the same reason (see graph_builder.candidate_edge_id).
             if src_kind == BINDING_PATHINPUT:
-                if th.startswith("in__"):
-                    _bind(th[len("in__") :], src_binding, edge)
+                if th.startswith(IN_HANDLE_PREFIX):
+                    _bind(th[len(IN_HANDLE_PREFIX) :], src_binding, edge)
                 else:
                     _drop(edge, "PathInput edge carries no 'in__<param>' handle")
                 continue
@@ -515,16 +522,16 @@ def resolve_function_edges(
                     # handle, so here the parameter name and the declared
                     # name are the same string by construction.
                     _bind(th[len(PARAM_ID_PREFIX) :], src_binding, edge)
-                elif th.startswith("in__"):
-                    _bind(th[len("in__") :], src_binding, edge)
+                elif th.startswith(IN_HANDLE_PREFIX):
+                    _bind(th[len(IN_HANDLE_PREFIX) :], src_binding, edge)
                 else:
                     _drop(edge, "Parameter edge carries no parameter handle")
                 continue
 
             # Variable → fn.
             if src_kind == BINDING_VARIABLE:
-                if th.startswith("in__"):
-                    param = th[len("in__") :]
+                if th.startswith(IN_HANDLE_PREFIX):
+                    param = th[len(IN_HANDLE_PREFIX) :]
                     var_label = src_binding["ref"][0]
                     # Several variable edges onto one handle is EachOf, not a
                     # conflict — accumulate instead of going through _bind.
@@ -596,9 +603,9 @@ def infer_manual_fn_param_to_class(
         if strip_placement(edge.get("source", "")) not in fn_ids:
             continue
         sh = edge.get("sourceHandle") or ""
-        if not sh.startswith("out__"):
+        if not sh.startswith(OUT_HANDLE_PREFIX):
             continue
-        param = sh[len("out__") :]
+        param = sh[len(OUT_HANDLE_PREFIX) :]
         if not param or param in mapping:
             continue
         class_name = node_id_to_var_label(

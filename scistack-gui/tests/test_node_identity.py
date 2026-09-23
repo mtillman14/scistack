@@ -313,8 +313,14 @@ class TestIdentityPlanLookups:
         assert plan.token("f", "w1") == plan.token("f", "w2") == "abc"
         assert plan.wirings_of("f", "abc") == {"w1", "w2"}
 
-    def test_the_default_token_function_is_the_identity(self):
-        assert node_identity.identity_token("f", "w1") == "w1"
+    def test_identity_token_has_one_owner(self):
+        """graph_builder.identity_token is the one copy; node_identity used to
+        carry a second whose docstring claimed it was every token_for's
+        default -- the opposite of graph_builder's (token_for is REQUIRED)."""
+        from scistack_gui.domain import graph_builder
+
+        assert graph_builder.identity_token("f", "w1") == "w1"
+        assert not hasattr(node_identity, "identity_token")
 
 
 class TestTheGrSidesShapeEndToEnd:

@@ -377,6 +377,79 @@ class TestUpdateDeclaration:
         # ...and the file really was not touched.
         assert "scidb.Parameter(7" in other.read_text()
 
+    def _outside_project(self, tmp_path):
+        """A Parameter and a PathInput declared in a hand-written module that
+        is NOT the entities file -- the read-only case."""
+        from scistack_gui.db import get_db_path
+
+        other = tmp_path / "params.py"
+        other.write_text(
+            "import scidb\n\n"
+            "OUTSIDE = scidb.Parameter(7, description='')\n"
+            "RAW = scidb.PathInput('{subject}/a.csv')\n"
+        )
+        entities = tmp_path / "entities.toml"
+        entities.write_text("[parameters]\nINSIDE = 1\n")
+        config_mod.set_entities_file(get_db_path(), entities)
+        config_mod.add_path(get_db_path(), tmp_path)
+        _registry._module_path = None
+        _registry.load_from_config(config_mod.load_config(None, get_db_path()))
+        return other
+
+    def test_editability_reports_a_source_declaration_as_read_only(
+        self, populated_db, tmp_path
+    ):
+        """Panels grey their controls out from this answer BEFORE any edit
+        (seen 2026-09-23: a MATLAB-declared PathInput's root folder took
+        input and only refused it on blur)."""
+        from scistack_gui.services.target_file_service import entity_editability
+
+        other = self._outside_project(tmp_path)
+
+        for kind, name, line in (("parameter", "OUTSIDE", 3), ("path_input", "RAW", 4)):
+            result = entity_editability(kind, name)
+            assert result["editable"] is False, (kind, result)
+            assert result["reason"] == "read_only"
+            assert result["file"] == str(other)
+            assert result["line"] == line
+            assert "params.py" in result["message"]
+
+    def test_editability_and_the_write_refusal_agree(self, populated_db, tmp_path):
+        """One owner: the panel's up-front answer and the write path's
+        refusal must name the same file, line and message, or the banner and
+        the error would disagree."""
+        from scistack_gui.services.parameter_service import update_parameter
+        from scistack_gui.services.target_file_service import entity_editability
+
+        self._outside_project(tmp_path)
+
+        up_front = entity_editability("parameter", "OUTSIDE")
+        refused = update_parameter("OUTSIDE", [9])
+
+        assert not refused["ok"]
+        assert refused["reason"] == up_front["reason"] == "read_only"
+        assert refused["file"] == up_front["file"]
+        assert refused["line"] == up_front["line"]
+        assert refused["error"] == up_front["message"]
+
+    def test_editability_of_an_entities_file_declaration(self, populated_db, tmp_path):
+        from scistack_gui.services.target_file_service import entity_editability
+
+        self._outside_project(tmp_path)
+
+        result = entity_editability("parameter", "INSIDE")
+        assert result["editable"] is True
+        assert result["reason"] is None
+
+    def test_editability_of_an_unregistered_name(self, populated_db, tmp_path):
+        from scistack_gui.services.target_file_service import entity_editability
+
+        self._project(tmp_path, "[parameters]\n")
+        result = entity_editability("path_input", "NOPE")
+        assert result["editable"] is False
+        assert result["reason"] == "unknown"
+        assert "NOPE" in result["message"]
+
     def test_stale_file_is_refused_not_clobbered(self, populated_db, tmp_path):
         from scistack_gui.services.parameter_service import update_parameter
 

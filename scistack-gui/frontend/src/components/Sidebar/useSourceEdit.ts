@@ -18,8 +18,9 @@
  * prevent — see SweepSettingsPanel's old docstring.
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { callBackend } from '../../api'
+import type { EntityEditability } from './sourceLocation'
 
 export interface SourceEditResult {
   ok?: boolean
@@ -77,8 +78,37 @@ export function useSourceEdit(): SourceEditState {
   return { submit, error, readOnlyAt, saving, clearError }
 }
 
-/** `foo.py:42`, or just the path when the line is unknown. */
-export function formatLocation(at: { file: string; line: number | null }): string {
-  const name = at.file.split('/').pop() || at.file
-  return at.line ? `${name}:${at.line}` : name
+export type EditableEntityKind = 'parameter' | 'path_input'
+
+/**
+ * Ask the backend UP FRONT whether this entity's declaration is writable, so
+ * a panel can grey its controls out instead of accepting input that the
+ * write then refuses (a source-declared PathInput's root folder used to take
+ * typing and only say "declared in foo.m:32" after blur).
+ *
+ * The answer comes from `target_file_service.entity_editability` — the same
+ * function the write path refuses with — so the two can't disagree. `null`
+ * until it arrives; callers treat that as editable so a slow backend never
+ * locks an editable entity (see sourceLocation.isLockedForEditing). The
+ * write-time refusal still stands behind this as the backstop.
+ */
+export function useEntityEditability(
+  kind: EditableEntityKind,
+  name: string,
+): EntityEditability | null {
+  const [state, setState] = useState<EntityEditability | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setState(null)
+    callBackend('get_entity_editability', { kind, name })
+      .then(res => { if (!cancelled) setState(res as EntityEditability) })
+      .catch(err => {
+        // Fail open: the write path still refuses a read-only declaration.
+        console.warn(`[useEntityEditability] ${kind} '${name}':`, err)
+      })
+    return () => { cancelled = true }
+  }, [kind, name])
+
+  return state
 }

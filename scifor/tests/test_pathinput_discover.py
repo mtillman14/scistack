@@ -160,7 +160,7 @@ class TestDiscover:
         assert groups == {"alpha", "beta"}
 
     def test_no_root_folder_uses_cwd(self, tmp_path, monkeypatch):
-        """Fallback: when no pyproject.toml/scistack.toml ancestor exists, cwd is used."""
+        """With nothing pinned, the cwd IS the root."""
         (tmp_path / "file_A.txt").touch()
         (tmp_path / "file_B.txt").touch()
         monkeypatch.chdir(tmp_path)
@@ -171,36 +171,36 @@ class TestDiscover:
         xs = {c["x"] for c in combos}
         assert xs == {"A", "B"}
 
-    def test_no_root_folder_uses_pyproject_root_for_discover(
+    def test_no_root_folder_discovers_from_the_cwd_not_a_config_above_it(
         self, tmp_path, monkeypatch
     ):
-        """discover() with no root_folder roots at the pyproject.toml ancestor."""
+        """discover() with no root_folder roots at the cwd -- the project root
+        (scifor.project_root) -- even with a pyproject.toml further up. The
+        walk up to it is gone: it let an unrelated config decide the root."""
         (tmp_path / "pyproject.toml").touch()
         sub = tmp_path / "subdir"
         sub.mkdir()
         (tmp_path / "file_A.txt").touch()
-        (tmp_path / "file_B.txt").touch()
-        monkeypatch.chdir(sub)  # cwd is a subdirectory, not the project root
+        (sub / "file_B.txt").touch()
+        monkeypatch.chdir(sub)
 
-        pi = PathInput("file_{x}.txt")
-        combos = pi.discover()
-        assert len(combos) == 2
-        xs = {c["x"] for c in combos}
-        assert xs == {"A", "B"}
+        combos = PathInput("file_{x}.txt").discover()
+        assert {c["x"] for c in combos} == {"B"}
 
-    def test_no_root_folder_uses_scistack_toml_root_for_discover(
+    def test_no_root_folder_ignores_a_scistack_toml_above_the_cwd(
         self, tmp_path, monkeypatch
     ):
-        """discover() finds the root via scistack.toml when pyproject.toml is absent."""
+        """A scistack.toml in a parent folder does not make that folder the
+        root either (D-2026-09-23-1): the cwd is the root, so a file beside
+        the config is not discovered from a subfolder; one in the cwd is."""
         (tmp_path / "scistack.toml").touch()
         sub = tmp_path / "subdir"
         sub.mkdir()
         (tmp_path / "data_X.csv").touch()
+        (sub / "data_Y.csv").touch()
         monkeypatch.chdir(sub)
 
-        pi = PathInput("data_{x}.csv")
-        combos = pi.discover()
-        assert combos == [{"x": "X"}]
+        assert PathInput("data_{x}.csv").discover() == [{"x": "Y"}]
 
 
 class TestDiscoverFileVsDirectory:
@@ -401,19 +401,22 @@ class TestLoad:
         result = pi.load(subject="01")
         assert result == (tmp_path / "01" / "data.mat").resolve()
 
-    def test_load_no_root_folder_uses_project_root(self, tmp_path, monkeypatch):
-        """load() with no root_folder resolves relative to pyproject.toml ancestor."""
+    def test_load_no_root_folder_ignores_a_config_above_the_cwd(
+        self, tmp_path, monkeypatch
+    ):
+        """load() with no root_folder resolves against the cwd even when a
+        pyproject.toml or scistack.toml sits in a parent folder."""
         (tmp_path / "pyproject.toml").touch()
+        (tmp_path / "scistack.toml").touch()
         sub = tmp_path / "scripts"
         sub.mkdir()
         monkeypatch.chdir(sub)
 
-        pi = PathInput("{subject}/data.mat")
-        result = pi.load(subject="01")
-        assert result == (tmp_path / "01" / "data.mat").resolve()
+        result = PathInput("{subject}/data.mat").load(subject="01")
+        assert result == (sub / "01" / "data.mat").resolve()
 
     def test_load_no_root_folder_fallback_to_cwd(self, tmp_path, monkeypatch):
-        """load() falls back to cwd when no pyproject.toml ancestor exists."""
+        """load() with nothing pinned resolves against the cwd."""
         monkeypatch.chdir(tmp_path)
         pi = PathInput("{subject}/data.mat")
         result = pi.load(subject="01")

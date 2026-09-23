@@ -156,6 +156,21 @@ def color_groups(
     return groups
 
 
+def series_groups(
+    subset: pd.DataFrame, resolved: ResolvedPlot
+) -> list[tuple[Any, pd.DataFrame]]:
+    """``(series id, rows)`` per polyline / band, or one group for the lot.
+
+    Which rows form ONE line is a single decision for every renderer; it was
+    a byte-identical ``_series_groups`` in ``mpl`` and ``plotly_`` until
+    2026-09-23, free to drift so the two backends drew different lines.
+    """
+    series_column = resolved.encoding.series
+    if series_column and series_column in subset.columns:
+        return list(subset.groupby(series_column, sort=False))
+    return [(None, subset)]
+
+
 def legend_levels(resolved: ResolvedPlot) -> list[Any]:
     """
     The colour levels a legend would list, in drawn order.

@@ -1823,7 +1823,7 @@ class DatabaseManager:
         """
         from . import schema_order as _schema_order
 
-        order = _schema_order.project_level_order(self.dataset_db_path.parent)
+        order = _schema_order.project_level_order()
         if order is not self._validated_key_order:
             self._validated_key_order = order
             if order:

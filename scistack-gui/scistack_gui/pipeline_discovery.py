@@ -49,6 +49,8 @@ import uuid
 
 from scistack_gui.ids import PARAM_ID_PREFIX as _PARAM_PREFIX
 
+from scistack_gui.ids import in_handle, out_handle, path_input_node_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -286,7 +288,7 @@ def _seed_step(db, pipeline_id: str, spec, node_cache: dict[str, str]) -> None:
             and all(isinstance(a, PathInput) for a in value.alternatives)
         ):
             name = _registered_name(value, registry.get_path_inputs_registry()) or param
-            source_id = f"pathInput__{name}"
+            source_id = path_input_node_id(name)
         elif isinstance(value, EachOf):
             # Multi-type-variable branch, or some other EachOf shape --
             # only the variable-class case is common enough to wire here;
@@ -335,7 +337,7 @@ def _seed_step(db, pipeline_id: str, spec, node_cache: dict[str, str]) -> None:
                 "id": f"discovered_e_{uuid.uuid4().hex[:12]}",
                 "source": source_id,
                 "target": fn_node_id,
-                "targetHandle": f"in__{param}",
+                "targetHandle": in_handle(param),
             },
         )
 
@@ -349,6 +351,6 @@ def _seed_step(db, pipeline_id: str, spec, node_cache: dict[str, str]) -> None:
                 "id": f"discovered_e_{uuid.uuid4().hex[:12]}",
                 "source": fn_node_id,
                 "target": target_id,
-                "sourceHandle": f"out__{out_cls.__name__}",
+                "sourceHandle": out_handle(out_cls.__name__),
             },
         )

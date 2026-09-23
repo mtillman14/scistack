@@ -23,6 +23,10 @@ import logging
 from dataclasses import replace
 from typing import Any
 
+# The Parameter input-port handle prefix (``param__{argument}``): the same
+# constant graph_builder writes edges with, so the two cannot drift.
+from scistack_gui.ids import PARAM_HANDLE_PREFIX, ROOT_SCOPE, handle_name
+
 logger = logging.getLogger(__name__)
 
 #: Cached sources, keyed by ``("db", <database file path>)`` or
@@ -597,12 +601,8 @@ def _location_tree(db, variable, *, selection, problems_only, csv_path) -> dict:
     return payload
 
 
-#: Prefix ``graph_builder`` puts on a function's input-port handle. The suffix is
-#: the function's own ARGUMENT name.
-PARAM_HANDLE_PREFIX = "param__"
 
-
-def axis_node_bindings(db, axes: list[dict], pipeline_id: str = "main") -> dict:
+def axis_node_bindings(db, axes: list[dict], pipeline_id: str = ROOT_SCOPE) -> dict:
     """Which canvas node supplies each variant axis — ``{column: node_id}``.
 
     **Bound by PORT, never by name.** An edge into a function carries
@@ -643,10 +643,9 @@ def axis_node_bindings(db, axes: list[dict], pipeline_id: str = "main") -> dict:
         params = [a for a in axes if a.get("kind") == "param"]
         bindings: dict[str, str] = {}
         for edge in edges:
-            handle = edge.get("targetHandle") or ""
-            if not handle.startswith(PARAM_HANDLE_PREFIX):
+            argument = handle_name(edge.get("targetHandle"), PARAM_HANDLE_PREFIX)
+            if argument is None:
                 continue
-            argument = handle[len(PARAM_HANDLE_PREFIX) :]
             function = label_of.get(edge.get("target"), "")
             for axis in params:
                 if axis.get("function") == function and axis.get("param") == argument:

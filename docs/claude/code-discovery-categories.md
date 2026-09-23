@@ -20,6 +20,16 @@ one class, one registry, one canvas node type, one sidebar tab. See
 | **PathInputs** | Scan source files/packages | top-level `scidb.PathInput(...)` binding | top-level binding in the entities script (regex) |
 | **Submodules** | GUI composition (`pipelineNode`) OR source (`scidb.Pipeline`) | `scidb.Pipeline`/`.use()`/`.bind()`, bidirectional (import + export) | export only (flattened into the script) |
 
+**Discovered is not placed (2026-09-23).** A declared Parameter or PathInput
+is always BUILT as a graph node (so a sidebar drop can graduate onto it),
+but one with no run history and no GUI-added value carries
+`data["declared_only"]` (`scope_filter.DECLARED_ONLY`, set in
+`build_parameter_nodes` / `build_path_input_nodes`). `resolve_scope_view`
+denies such a node the "unplaced → root canvas" default: it appears only
+where it has a position, or when an edge already touches it. History-backed
+nodes keep the default. Before this, a brand-new database opened with every
+declared Parameter and PathInput strewn across the root canvas.
+
 ---
 
 ## 1. Functions — scanned from source

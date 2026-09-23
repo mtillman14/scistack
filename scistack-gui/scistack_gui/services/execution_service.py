@@ -28,6 +28,7 @@ from pathlib import Path
 from scidb.foreach_config import RunOptions
 
 from scistack_gui.ids import PARAM_ID_PREFIX as _PARAM_PREFIX
+from scistack_gui.ids import ROOT_SCOPE, fn_nodes_prefix, in_handle, legacy_fn_node_id
 
 logger = logging.getLogger(__name__)
 
@@ -355,7 +356,7 @@ def column_selections_for_nodes(
         # One trailing segment only: `fn__{fn}__{suffix}` with no further
         # `__`, so a function named `load` can never claim a config saved for
         # `load__raw`.
-        prefix = f"fn__{function_name}__"
+        prefix = fn_nodes_prefix(function_name)
         return bare.startswith(prefix) and "__" not in bare[len(prefix) :]
 
     merged: dict[str, dict] = {}
@@ -559,7 +560,7 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
     all_edges = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
 
-    fn_node_ids = {f"fn__{function_name}"}  # legacy/manual edges
+    fn_node_ids = {legacy_fn_node_id(function_name)}  # legacy/manual edges
     for v in fn_variants:
         cid = v.get("call_id")
         if cid:
@@ -1044,7 +1045,7 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
         key = node_token or token_for(function_name, wid)
         for pname, vtype in v["input_types"].items():
             candidate = f"e__{vtype}__{function_name}__{key}"
-            if candidate in hidden_edge_ids and (function_name, key, f"in__{pname}") not in manual_index:
+            if candidate in hidden_edge_ids and (function_name, key, in_handle(pname)) not in manual_index:
                 return f"input '{pname}' is disconnected — reconnect it before running"
         for cname in v.get("constants", {}).keys():
             candidate = f"e__{cname}__{function_name}__{key}"
@@ -1132,7 +1133,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
             for pname, vtype in params.items():
                 if (
                     f"e__{vtype}__{fn}__{wid}" in hidden_edge_ids
-                    and (fn, wid, f"in__{pname}") not in manual_index
+                    and (fn, wid, in_handle(pname)) not in manual_index
                 ):
                     reason = f"input '{pname}' disconnected"
                     break
@@ -1863,7 +1864,7 @@ def _scope_function_node_ids(db, pipeline_id: str, identity=None) -> list[tuple[
     for nid, meta in manual_nodes.items():
         if (
             meta.get("type") == "functionNode"
-            and (meta.get("pipeline_id") or "main") == pipeline_id
+            and (meta.get("pipeline_id") or ROOT_SCOPE) == pipeline_id
         ):
             _add(nid, meta["label"])
     placed_wirings: set[tuple[str, str]] = set()
@@ -1879,7 +1880,7 @@ def _scope_function_node_ids(db, pipeline_id: str, identity=None) -> list[tuple[
     # entry per distinct (fn_name, wiring_id) among the unplaced variants,
     # not one per fn_name (a name can have several unplaced wirings at
     # once, each needing its own step).
-    if pipeline_id == "main":
+    if pipeline_id == ROOT_SCOPE:
         from scistack_gui.api.pipeline import ensure_node_identities
 
         # The node id a wiring belongs to is LOOKED UP, never spelled. Two

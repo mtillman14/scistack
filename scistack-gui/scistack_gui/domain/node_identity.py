@@ -68,7 +68,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from scistack_gui.ids import ROOT_SCOPE, BareNodeId
+from scistack_gui.ids import ROOT_SCOPE, BareNodeId, fn_nodes_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -160,18 +160,8 @@ class IdentityPlan:
 
 def _suffix_of(node_id: str, fn_name: str) -> str:
     """``fn__bandpass__abc`` → ``abc``, for the node id of *fn_name*."""
-    prefix = f"fn__{fn_name}__"
+    prefix = fn_nodes_prefix(fn_name)
     return node_id[len(prefix) :] if node_id.startswith(prefix) else node_id
-
-
-def identity_token(fn_name: str, wiring: str) -> str:
-    """The no-database default: the node token IS the wiring.
-
-    Every ``token_for=`` parameter in ``graph_builder`` defaults to this, so a
-    caller (or a test) that knows nothing about node allocation behaves
-    exactly as the module did before allocation existed.
-    """
-    return wiring
 
 
 def resolve_identities(
@@ -239,7 +229,7 @@ def resolve_identities(
         # the list, there genuinely is no claimant for THIS function and the
         # next rule should get its turn.
         claimants = [
-            n for n in (by_wiring.get(wiring) or []) if n.startswith(f"fn__{fn_name}__")
+            n for n in (by_wiring.get(wiring) or []) if n.startswith(fn_nodes_prefix(fn_name))
         ]
         source = "recorded"
         if not claimants:

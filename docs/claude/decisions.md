@@ -8,6 +8,42 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-09-23-1 — The project root is the pinned root, else the working directory
+
+**Context.** Five places answered "which directory is this project?":
+- `scifor.pathinput._find_project_root` walked up from the cwd to ANY
+  `pyproject.toml`/`scistack.toml`.
+- `scifor.discovery.find_project_config` walked up to a config that carried
+  a scistack section. `scidb.entities.project_root` used it.
+- `scidb.schema_order.locate_config` checked the pinned root, then the cwd,
+  then the database's folder.
+- The GUI's `config.resolve_project_root` used the folder the user opened and
+  did no walk.
+- `api/project.py._project_root` walked up from the database file.
+
+The GUI never pinned scifor's root. So a GUI Python run resolved rootless
+PathInputs against the server's cwd, while the canvas matched them against the
+GUI's own root.
+
+**Decision.** There is one owner, `scifor.project_root()`. It returns the root
+pinned with `set_project_root`, else the cwd. **Nothing walks up to a config
+file.** A project's config is the one AT that root
+(`scifor.discovery.project_config_at`), so a config next to the database is no
+longer a fallback either.
+- **GUI:** it decides its root (`resolve_project_root`) and pins it in
+  `registry.load_from_config`. `registry.get_project_root()` reads the pin.
+- **MATLAB:** `load_entities(project_start)` pins the folder it is given,
+  whether or not that folder has a config.
+
+**Consequences.** A script run from a subfolder of its project gets that
+subfolder as its root. It resolves rootless PathInputs there and reads no
+`[schema_keys]` from above. Run from the project folder, or pin the root.
+Still open: the GUI's `locate_config_at` counts a `pyproject.toml` with no
+scistack section as the config, and scifor's does not. The GUI's "packaged
+project" rule depends on that.
+
+---
+
 ## D-2026-09-22-3 — A minted node id says only which function it runs
 
 **Context.** D-2026-09-22-1 says a function node's id is allocated, and its

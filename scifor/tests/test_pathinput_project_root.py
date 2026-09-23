@@ -1,10 +1,10 @@
 """The pinned project root for rootless PathInputs.
 
 A ``PathInput`` with no ``root_folder`` resolves relative templates against
-``_find_project_root()``, which walks up from the **cwd**. That is right for a
-script run inside the project and wrong for an embedded interpreter: MATLAB's
-cwd is wherever MATLAB is sitting (for a generated command, a temp script
-directory), so the walk finds the wrong project or none at all.
+``project_root()``, which is the **cwd** unless pinned. That is right for a
+script run from its project folder and wrong for an embedded interpreter:
+MATLAB's cwd is wherever MATLAB is sitting (for a generated command, a temp
+script directory), so the cwd names the wrong folder.
 
 ``set_project_root`` lets the caller that knows the project say so. The point
 of these tests is the invariant that makes it safe: it changes *resolution*
@@ -19,9 +19,9 @@ import os
 import pytest
 from scifor.pathinput import (
     PathInput,
-    _find_project_root,
     clear_project_root,
     get_project_root,
+    project_root,
     set_project_root,
 )
 
@@ -53,12 +53,12 @@ class TestOverride:
         set_project_root(project)
         assert get_project_root() == project.resolve()
 
-    def test_clear_restores_walk_up(self, project, monkeypatch):
+    def test_clear_restores_the_cwd(self, project, monkeypatch):
         set_project_root(project)
         clear_project_root()
         assert get_project_root() is None
         monkeypatch.chdir(project / "data")
-        assert _find_project_root() == project.resolve()
+        assert project_root() == (project / "data").resolve()
 
     def test_none_clears(self, project):
         set_project_root(project)
@@ -98,10 +98,12 @@ class TestResolution:
         pi = PathInput("data/{subject}.mat", root_folder=str(other))
         assert pi.load(subject="s01") == (other / "data" / "s01.mat").resolve()
 
-    def test_explicit_start_still_walks_up(self, project):
-        """``_find_project_root(start)`` answers about *start*, not the pin."""
-        set_project_root(project.parent)
-        assert _find_project_root(project / "data") == project.resolve()
+    def test_the_pin_wins_over_a_config_bearing_cwd(self, project, tmp_path, monkeypatch):
+        """A config in the cwd does not outrank the pin: nothing is inferred
+        from config files at all."""
+        monkeypatch.chdir(project)
+        set_project_root(tmp_path / "elsewhere")
+        assert project_root() == (tmp_path / "elsewhere").resolve()
 
     def test_discover_uses_the_override(self, project, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path / "elsewhere")
@@ -141,6 +143,32 @@ class TestEnvironmentIndependence:
     def test_override_survives_a_cwd_change(self, project, tmp_path, monkeypatch):
         set_project_root(project)
         monkeypatch.chdir(tmp_path / "elsewhere")
-        assert _find_project_root() == project.resolve()
+        assert project_root() == project.resolve()
         monkeypatch.chdir(os.fspath(tmp_path))
-        assert _find_project_root() == project.resolve()
+        assert project_root() == project.resolve()
+
+
+class TestNoWalkingUp:
+    """``project_root()`` is the pinned root, else the cwd -- never the folder
+    of a ``pyproject.toml``/``scistack.toml`` found by walking up. Each layer
+    used to walk by its own rule (any pyproject here, a scistack section in
+    scidb, none in the GUI), so one folder could have three roots."""
+
+    def test_unpinned_root_is_the_cwd_even_below_a_config(self, project, monkeypatch):
+        monkeypatch.chdir(project / "data")
+        assert project_root() == (project / "data").resolve()
+
+    def test_unpinned_root_is_the_cwd_with_no_config_anywhere(self, tmp_path, monkeypatch):
+        bare = tmp_path / "bare"
+        bare.mkdir()
+        monkeypatch.chdir(bare)
+        assert project_root() == bare.resolve()
+
+    def test_config_lookup_never_leaves_the_root(self, tmp_path):
+        from scifor.discovery import project_config_at
+
+        (tmp_path / "scistack.toml").write_text("modules = []\n")
+        child = tmp_path / "child"
+        child.mkdir()
+        assert project_config_at(tmp_path) == tmp_path / "scistack.toml"
+        assert project_config_at(child) is None

@@ -136,6 +136,9 @@ def clear_db_state():
     # same name (registry._register_variable's shadowing warning).
     _registry._variable_sources.clear()
     _registry._config = None
+    # load_from_config pins scifor's project root process-wide; a test that
+    # loaded a project must not leave the next one resolving inside it.
+    _scifor.clear_project_root()
     _registry._module_path = None
     _reset_matlab_registry()
     from scidb.pipeline import _reset_pipeline_state as _reset_pipelines
@@ -168,6 +171,9 @@ def clear_db_state():
     # same name (registry._register_variable's shadowing warning).
     _registry._variable_sources.clear()
     _registry._config = None
+    # load_from_config pins scifor's project root process-wide; a test that
+    # loaded a project must not leave the next one resolving inside it.
+    _scifor.clear_project_root()
     _registry._module_path = None
     _reset_matlab_registry()
     _reset_pipelines()

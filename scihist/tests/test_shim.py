@@ -2,9 +2,9 @@
 
 The implementation moved into scidb (which tracks lineage by default). scihist
 remains only for backward-compatible imports. Most symbols are identical objects
-re-exported from scidb; ``for_each`` and ``configure_database`` are thin wrappers
-that preserve scihist's historical defaults (``skip_computed=True`` and lineage
-cache-backend registration), so they are NOT identity-equal to scidb's.
+re-exported from scidb, ``configure_database`` included; ``for_each`` is a thin
+wrapper that preserves scihist's historical ``skip_computed=True`` default, so
+it is NOT identity-equal to scidb's.
 """
 
 import warnings
@@ -24,6 +24,9 @@ def test_reexports_are_scidb_objects():
     assert scihist.Merge is scidb.Merge
     assert scihist.ColumnSelection is scidb.ColumnSelection
     assert scihist.ForEachConfig is scidb.ForEachConfig
+    # One owner of database setup: the old wrapper silently dropped
+    # schema_key_types and every other keyword.
+    assert scihist.configure_database is scidb.configure_database
 
 
 def test_wrappers_present_but_not_identity():
@@ -31,7 +34,6 @@ def test_wrappers_present_but_not_identity():
 
     # Wrappers preserve scihist defaults, so they are distinct callables.
     assert callable(scihist.for_each)
-    assert callable(scihist.configure_database)
     assert scihist.for_each is not scidb.for_each
 
 

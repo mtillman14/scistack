@@ -19,6 +19,10 @@
  * only a name — and anything wired to an empty one fails loudly at run rather
  * than running with a value nobody chose.
  *
+ * A Parameter declared outside the entities file is read-only: every edit
+ * control is greyed out up front with a banner pointing at the declaration
+ * (useEntityEditability), rather than taking input the write would refuse.
+ *
  * A refused write is SHOWN, never silently reverted — see useSourceEdit for
  * why that matters.
  *
@@ -41,7 +45,9 @@
 
 import { useMemo, useState } from 'react'
 import type { ParameterValue } from '../DAG/ParameterNode'
-import { formatLocation, useSourceEdit } from './useSourceEdit'
+import ReadOnlyDeclarationBanner from './ReadOnlyDeclarationBanner'
+import { formatLocation, isLockedForEditing } from './sourceLocation'
+import { useEntityEditability, useSourceEdit } from './useSourceEdit'
 
 interface Props {
   id: string
@@ -110,6 +116,11 @@ function generateRange(start: number, end: number, third: number, kind: RangeKin
 export default function ParameterSettingsPanel({ label, values }: Props) {
   const [draft, setDraft] = useState('')
   const { submit, error, readOnlyAt, saving, clearError } = useSourceEdit()
+  // Declared outside the entities file: every edit control is locked up
+  // front rather than taking input the write would refuse.
+  const editability = useEntityEditability('parameter', label)
+  const locked = isLockedForEditing(editability)
+  const inputsDisabled = saving || locked
 
   const declared = declaredValues(values)
 
@@ -197,6 +208,10 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
     <div style={styles.root}>
       <div style={styles.constName}>{label}</div>
 
+      {locked && editability?.file && (
+        <ReadOnlyDeclarationBanner file={editability.file} line={editability.line} />
+      )}
+
       <section style={styles.section}>
         <div style={styles.sectionTitle}>
           Values{declared.length > 1 ? ` — runs ${declared.length}×` : ''}
@@ -216,11 +231,11 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
                 <span style={styles.recCount}>{v.record_count} rec</span>
               )}
               {!isDeclared && <span style={styles.historyTag}>history</span>}
-              {isDeclared && (
+              {isDeclared && !locked && (
                 <button
                   style={styles.removeBtn}
                   onClick={() => removeValue(v)}
-                  disabled={saving}
+                  disabled={inputsDisabled}
                   title={
                     isGroup
                       ? 'Remove the whole generated set from the declaration in source'
@@ -239,17 +254,21 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
         <div style={styles.sectionTitle}>Add value</div>
         <div style={styles.addRow}>
           <input
-            style={styles.input}
+            style={locked ? styles.inputLocked : styles.input}
             placeholder="value…"
             value={draft}
-            disabled={saving}
+            disabled={inputsDisabled}
             onChange={e => { setDraft(e.target.value); clearError() }}
             onKeyDown={e => {
               if (e.key === 'Enter') addValue()
               if (e.key === 'Escape') { setDraft(''); clearError() }
             }}
           />
-          <button style={styles.addBtn} onClick={addValue} disabled={saving}>
+          <button
+            style={locked ? styles.btnLocked : styles.addBtn}
+            onClick={addValue}
+            disabled={inputsDisabled}
+          >
             {saving ? '…' : 'Add'}
           </button>
         </div>
@@ -295,7 +314,7 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
                   style={styles.genInput}
                   placeholder="1, 2, 5, 10"
                   value={listDraft}
-                  disabled={saving}
+                  disabled={inputsDisabled}
                   onChange={e => { setListDraft(e.target.value); clearError() }}
                 />
                 <div style={styles.hint}>Comma- or space-separated numbers.</div>
@@ -309,7 +328,7 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
                       style={styles.genInput}
                       type="number"
                       value={start}
-                      disabled={saving}
+                      disabled={inputsDisabled}
                       onChange={e => { setStart(e.target.value); clearError() }}
                     />
                   </label>
@@ -319,7 +338,7 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
                       style={styles.genInput}
                       type="number"
                       value={end}
-                      disabled={saving}
+                      disabled={inputsDisabled}
                       onChange={e => { setEnd(e.target.value); clearError() }}
                     />
                   </label>
@@ -331,7 +350,7 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
                       style={styles.genInput}
                       type="number"
                       value={third}
-                      disabled={saving}
+                      disabled={inputsDisabled}
                       onChange={e => { setThird(e.target.value); clearError() }}
                     />
                   </label>
@@ -370,9 +389,9 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
             )}
 
             <button
-              style={preview.length === 0 ? styles.replaceBtnDisabled : styles.replaceBtn}
+              style={preview.length === 0 || locked ? styles.replaceBtnDisabled : styles.replaceBtn}
               onClick={applyGenerated}
-              disabled={saving || preview.length === 0}
+              disabled={inputsDisabled || preview.length === 0}
               type="button"
               title="Rewrite the declaration in source with exactly these values"
             >
@@ -498,6 +517,28 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     padding: '3px 8px',
     cursor: 'pointer',
+    fontWeight: 600,
+  },
+  // Greyed, not hidden: the values stay readable, only writing is refused.
+  inputLocked: {
+    flex: 1,
+    background: '#15151f',
+    border: '1px solid #2a2a2a',
+    borderRadius: 3,
+    color: '#777',
+    fontSize: 11,
+    padding: '3px 6px',
+    minWidth: 0,
+    cursor: 'not-allowed',
+  },
+  btnLocked: {
+    background: '#3a3a3a',
+    border: 'none',
+    borderRadius: 3,
+    color: '#777',
+    fontSize: 11,
+    padding: '3px 8px',
+    cursor: 'not-allowed',
     fontWeight: 600,
   },
   hint: {

@@ -1,10 +1,10 @@
 """Pinning scifor's PathInput resolution base from MATLAB.
 
 A ``PathInput`` declared with no ``root_folder`` resolves its relative
-template against scifor's project root, which is found by walking up from the
-**cwd**. Under MATLAB the cwd is wherever MATLAB is sitting — for a
-GUI-generated command, a temp script directory — so the walk finds the wrong
-project or none at all and every relative template misses.
+template against ``scifor.project_root()``, which is the **cwd** unless
+pinned. Under MATLAB the cwd is wherever MATLAB is sitting — for a
+GUI-generated command, a temp script directory — so it names the wrong folder
+and every relative template misses.
 
 ``+scidb/entities.m`` already receives the project root; these tests cover the
 Python half that turns it into scifor's resolution base, and the invariant
@@ -93,10 +93,17 @@ class TestLoadEntitiesPins:
             {"template": "data/{subject}.mat", "root_folder": None}
         ]
 
-    def test_no_project_leaves_the_override_alone(self, tmp_path):
-        """A start point outside any project must not pin anything — there is
-        no project to pin."""
-        empty = tmp_path / "no_project"
+    def test_a_named_folder_without_a_config_is_still_the_root(self, tmp_path):
+        """The folder MATLAB names IS the project root, config or not
+        (scifor.project_root never infers a root from config files)."""
+        empty = tmp_path / "no_config"
         empty.mkdir()
         load_entities(str(empty))
+        assert get_project_root() == empty.resolve()
+
+    def test_no_folder_named_pins_nothing(self, tmp_path, monkeypatch):
+        """With no folder named, the cwd is already what an unpinned root
+        means -- pinning it would freeze MATLAB's arbitrary cwd."""
+        monkeypatch.chdir(tmp_path)
+        load_entities(None)
         assert get_project_root() is None

@@ -87,6 +87,21 @@ A read-only entity shows its exact declaration site
 (`src/analysis/params.py:42`) rather than a generic "edit it in source"
 hint, with a click-to-open link under the VS Code extension.
 
+**Read-only is shown up front, not discovered on save (2026-09-23).** The
+rule has one owner, `target_file_service.entity_editability(kind, name)` →
+`{editable, reason: None|"read_only"|"unknown", file, line, message}`. Two
+consumers read it: `update_declaration` (refuses the write with exactly that
+file/line/message) and the sidebar panels, via the
+`get_entity_editability` RPC (`GET /api/entities/{kind}/{name}/editability`)
+and `useEntityEditability`. A `read_only` answer greys out every edit
+control in `PathInputSettingsPanel` / `ParameterSettingsPanel` and shows
+`ReadOnlyDeclarationBanner`. The lock decision itself is
+`sourceLocation.isLockedForEditing` (pure, unit-tested): only `read_only`
+locks; `null` (not answered yet / request failed) and `unknown` fail open,
+because the write-time refusal is still the backstop. Before this, a
+MATLAB-declared PathInput's Root Folder accepted typing and only refused it
+on blur.
+
 **There is deliberately no "Adopt into the entities file" action.** Moving a
 declaration means deleting it from the user's file (violates the
 confinement rule); copying it creates a duplicate name across two scanned

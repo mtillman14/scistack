@@ -24,6 +24,7 @@ from .base import (
     SAMPLE_EDGE_COLOR,
     SAMPLE_LINE_WIDTH,
     SAMPLE_MARKER_FRACTION,
+    series_groups,
     color_groups,
     dash_levels,
     dash_style,
@@ -240,14 +241,6 @@ def _draw_spaghetti(ax, frame, resolved) -> None:
             )
 
 
-def _series_groups(subset, resolved) -> list[tuple]:
-    """``(series id, rows)`` per polyline / band, or one group for the lot."""
-    series_column = resolved.encoding.series
-    if series_column and series_column in subset.columns:
-        return list(subset.groupby(series_column, sort=False))
-    return [(None, subset)]
-
-
 def _linestyle(resolved, rows):
     return MPL_DASHES[dash_style(resolved, rows)]
 
@@ -256,7 +249,7 @@ def _draw_lines(ax, frame, resolved) -> None:
     style = resolved.spec.style
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         color = palette_for(resolved, level, index)
-        for position, (_, line_rows) in enumerate(_series_groups(subset, resolved)):
+        for position, (_, line_rows) in enumerate(series_groups(subset, resolved)):
             positions, _ = x_positions(line_rows[resolved.encoding.x], resolved)
             ax.plot(
                 positions,
@@ -280,7 +273,7 @@ def _draw_band(ax, frame, resolved) -> None:
     encoding = resolved.encoding
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         color = palette_for(resolved, level, index)
-        for position, (_, rows) in enumerate(_series_groups(subset, resolved)):
+        for position, (_, rows) in enumerate(series_groups(subset, resolved)):
             positions, _ = x_positions(rows[encoding.x], resolved)
             centre = rows[encoding.y].to_numpy(dtype=float)
             ax.plot(

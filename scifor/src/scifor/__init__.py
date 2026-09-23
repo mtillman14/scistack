@@ -57,6 +57,7 @@ from .pathinput import (
     clear_listing_cache,
     clear_project_root,
     get_project_root,
+    project_root,
     set_project_root,
 )
 from .pathoutput import PathOutput
@@ -90,6 +91,7 @@ __all__ = [
     # Rootless-PathInput resolution base
     "set_project_root",
     "get_project_root",
+    "project_root",
     "clear_listing_cache",
     "clear_project_root",
     # Filters

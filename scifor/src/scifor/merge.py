@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from .column_selection import _display_name
+
 
 class Merge:
     """
@@ -147,14 +149,3 @@ class Merge:
                 parts.append(_display_name(spec))
         return f"Merge({', '.join(parts)})"
 
-
-def _display_name(obj: Any) -> str:
-    """Get a display name for an object."""
-    try:
-        import pandas as pd
-
-        if isinstance(obj, pd.DataFrame):
-            return f"DataFrame{list(obj.columns)}"
-    except ImportError:
-        pass
-    return getattr(obj, "__name__", type(obj).__name__)

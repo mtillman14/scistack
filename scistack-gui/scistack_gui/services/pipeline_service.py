@@ -12,10 +12,12 @@ import logging
 
 from scidb.roles import endpoint_kind
 
+from scistack_gui.ids import ROOT_SCOPE
+
 logger = logging.getLogger(__name__)
 
 
-def get_pipeline_graph(db, pipeline_id: str = "main") -> dict:
+def get_pipeline_graph(db, pipeline_id: str = ROOT_SCOPE) -> dict:
     """Build the pipeline graph (nodes + edges) for one SCOPE.
 
     Delegates to api/pipeline._build_graph which already orchestrates
@@ -206,7 +208,7 @@ def get_registry() -> dict:
     library_fns = _python_library_function_names()
     matlab_fns = matlab_registry.get_all_function_names()
     matlab_mismatched = matlab_registry.get_mismatched_function_names()
-    load_errors = [*registry.get_load_errors(), *matlab_registry.get_load_errors()]
+    load_errors = registry.all_load_errors()
     logger.info(
         "get_registry: %d python fns (+%d library refs), %d matlab fns, "
         "%d vars, %d load errors",

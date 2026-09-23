@@ -356,6 +356,68 @@ def _location_of(kind: str, name: str, source: str) -> dict:
     return payload
 
 
+def entity_editability(kind: str, name: str) -> dict:
+    """Whether the GUI may rewrite *name*'s declaration, and if not, why.
+
+    The ONE owner of the confinement rule (only the entities file is
+    writable, docs/claude/entity-editability-model.md). Two consumers read it
+    and must never diverge: :func:`update_declaration`, which refuses the
+    write, and the sidebar panels (via ``get_entity_editability``), which
+    grey their controls out before the user types anything. Before this the
+    rule was only checked at write time, so a source-declared PathInput's
+    root folder looked editable, took input, and then refused it.
+
+    Returns ``{editable, reason, file, line, message}`` where *reason* is
+    ``None`` (editable), ``"read_only"`` (declared outside the entities
+    file) or ``"unknown"`` (not registered). *file*/*line* locate the
+    declaration; *message* is the user-facing sentence for a refusal.
+    """
+    source = declaration_source(kind, name)
+    if source is None:
+        return {
+            "editable": False,
+            "reason": "unknown",
+            "file": None,
+            "line": None,
+            "message": f"No {kind} named '{name}' is registered.",
+        }
+
+    path = Path(source)
+    py_target, m_target = _editable_targets()
+    target = m_target if path.suffix == ".m" else py_target
+    if target is not None and Path(target) == path:
+        return {
+            "editable": True,
+            "reason": None,
+            "file": source,
+            "line": None,
+            "message": "",
+        }
+
+    location = _location_of(kind, name, source)
+    where = location["file"]
+    if location["line"] is not None:
+        where = f"{where}:{location['line']}"
+    logger.debug(
+        "[target_file_service] entity_editability: %s '%s' is read-only "
+        "(declared in %s, entities file is %s)",
+        kind,
+        name,
+        where,
+        target,
+    )
+    return {
+        "editable": False,
+        "reason": "read_only",
+        "file": location["file"],
+        "line": location["line"],
+        "message": (
+            f"'{name}' is declared in {where} — edit it there and hit "
+            f"Refresh Code. The GUI only writes to the entities file."
+        ),
+    }
+
+
 def update_declaration(
     kind: str, name: str, *, python_expr: str, matlab_expr: str, toml_expr: str
 ) -> dict:
@@ -377,38 +439,29 @@ def update_declaration(
     """
     from scidb.source_edit import find_binding_span, splice
 
-    source = declaration_source(kind, name)
-    if source is None:
+    editability = entity_editability(kind, name)
+    if editability["reason"] == "unknown":
         return {"ok": False, "error": f"No {kind} named '{name}' is registered."}
 
-    path = Path(source)
-    py_target, m_target = _editable_targets()
-    is_matlab = path.suffix == ".m"
-    is_toml = path.suffix == ".toml"
-    target = m_target if is_matlab else py_target
-
-    if target is None or Path(target) != path:
-        location = _location_of(kind, name, source)
-        where = location["file"]
-        if location["line"] is not None:
-            where = f"{where}:{location['line']}"
+    if not editability["editable"]:
         logger.info(
             "[target_file_service] Refusing to edit %s '%s': declared in %s, "
-            "outside the configured entities file (%s)",
+            "outside the configured entities file",
             kind,
             name,
-            source,
-            target,
+            editability["file"],
         )
         return {
             "ok": False,
-            "error": (
-                f"'{name}' is declared in {where} — edit it there and hit "
-                f"Refresh Code. The GUI only writes to the entities file."
-            ),
+            "error": editability["message"],
             "reason": "read_only",
-            **location,
+            "file": editability["file"],
+            "line": editability["line"],
         }
+
+    path = Path(editability["file"])
+    is_matlab = path.suffix == ".m"
+    is_toml = path.suffix == ".toml"
 
     try:
         original = path.read_text()
@@ -763,7 +816,7 @@ def _verify_failure_reason(name: str) -> str:
 
     reasons = [
         f"{err['source']}: {err['error']}"
-        for err in (*registry.get_load_errors(), *matlab_registry.get_load_errors())
+        for err in registry.all_load_errors()
         if name in err.get("error", "")
     ]
     detail = f" Reported: {'; '.join(reasons)}" if reasons else ""
@@ -773,7 +826,7 @@ def _verify_failure_reason(name: str) -> str:
         name,
         sorted(registry.get_path_inputs_registry()),
         sorted(registry.get_parameters_registry()),
-        [*registry.get_load_errors(), *matlab_registry.get_load_errors()],
+        registry.all_load_errors(),
     )
     return (
         f"'{name}' no longer resolves after the edit — the new value may be "

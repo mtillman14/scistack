@@ -10,15 +10,14 @@ import logging
 
 from scidb import BaseVariable
 
+from scistack_gui.ids import (
+    PATH_INPUT_ID_PREFIX,
+    ROOT_SCOPE,
+    param_node_id,
+    path_input_node_id,
+)
+
 logger = logging.getLogger(__name__)
-
-
-def _param_prefix() -> str:
-    """The Parameter node-id prefix. Imported lazily so this module keeps
-    its no-top-level-domain-imports shape."""
-    from scistack_gui.ids import PARAM_ID_PREFIX
-
-    return PARAM_ID_PREFIX
 
 
 def _notify_dag_updated() -> None:
@@ -33,7 +32,7 @@ def _notify_dag_updated() -> None:
     push_message({"type": "dag_updated"})
 
 
-def get_layout(pipeline_id: str = "main") -> dict:
+def get_layout(pipeline_id: str = ROOT_SCOPE) -> dict:
     from scistack_gui import layout as layout_store
 
     return layout_store.read_layout(pipeline_id)
@@ -45,7 +44,7 @@ def put_layout(
     y: float,
     node_type: str | None = None,
     label: str | None = None,
-    pipeline_id: str = "main",
+    pipeline_id: str = ROOT_SCOPE,
 ) -> dict:
     from scistack_gui import layout as layout_store
 
@@ -257,7 +256,7 @@ def delete_edge(
     return {"ok": True}
 
 
-def unhide_edge(db, edge_id: str, pipeline_id: str = "main") -> dict:
+def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> dict:
     from scistack_gui import pipeline_store
 
     logger.info(
@@ -356,14 +355,14 @@ def update_parameter(
     return result
 
 
-def delete_parameter(name: str, pipeline_id: str = "main") -> dict:
+def delete_parameter(name: str, pipeline_id: str = ROOT_SCOPE) -> dict:
     """"Delete" hides the node only — the source declaration is never
     touched (never delete, mark hidden). Reuses the same generic hide-node
     mechanism functions/variables/PathInputs already use."""
     from scistack_gui import pipeline_store as ps
     from scistack_gui.db import get_db
 
-    ps.hide_node(get_db(), f"{_param_prefix()}{name}", pipeline_id=pipeline_id)
+    ps.hide_node(get_db(), param_node_id(name), pipeline_id=pipeline_id)
     return {"ok": True}
 
 
@@ -410,14 +409,14 @@ def update_path_input(
     return result
 
 
-def delete_path_input(name: str, pipeline_id: str = "main") -> dict:
+def delete_path_input(name: str, pipeline_id: str = ROOT_SCOPE) -> dict:
     """"Delete" hides the node only — the source declaration is never
     touched (never delete, mark hidden). Reuses the same generic hide-node
     mechanism functions/variables already use."""
     from scistack_gui import pipeline_store as ps
     from scistack_gui.db import get_db
 
-    ps.hide_node(get_db(), f"pathInput__{name}", pipeline_id=pipeline_id)
+    ps.hide_node(get_db(), path_input_node_id(name), pipeline_id=pipeline_id)
     return {"ok": True}
 
 
@@ -451,7 +450,7 @@ def deep_copy_path_input(node_id: str) -> dict:
         if meta.get("type") != "pathInputNode":
             raise ValueError(f"'{node_id}' is not a PathInput node")
         old_name = meta["label"]
-    elif bare_id.startswith("pathInput__"):
+    elif bare_id.startswith(PATH_INPUT_ID_PREFIX):
         parts = bare_id.split("__")
         old_name = parts[1] if len(parts) >= 2 else None
     else:
@@ -568,7 +567,7 @@ def get_hidden_combos(db, function_name: str) -> dict:
 
 
 def hide_parameter_value(
-    db, const_name: str, value: str, pipeline_id: str = "main"
+    db, const_name: str, value: str, pipeline_id: str = ROOT_SCOPE
 ) -> dict:
     """Hide one constant value — excludes it (and, once execution_service
     consults this, every call site using it) from future runs without
@@ -615,7 +614,7 @@ def refresh_parameter_source(name: "str | None" = None) -> dict:
 
 
 def unhide_parameter_value(
-    db, const_name: str, value: str, pipeline_id: str = "main"
+    db, const_name: str, value: str, pipeline_id: str = ROOT_SCOPE
 ) -> dict:
     from scistack_gui import pipeline_store
 
@@ -632,7 +631,7 @@ def unhide_parameter_value(
 
 
 def set_parameter_group_checked(
-    db, const_name: str, values: list, checked: bool, pipeline_id: str = "main"
+    db, const_name: str, values: list, checked: bool, pipeline_id: str = ROOT_SCOPE
 ) -> dict:
     """Check or uncheck a whole generated value set at once.
 
@@ -660,7 +659,7 @@ def set_parameter_group_checked(
     return {"ok": True}
 
 
-def get_hidden_constant_values(db, pipeline_id: "str | None" = "main") -> dict:
+def get_hidden_constant_values(db, pipeline_id: "str | None" = ROOT_SCOPE) -> dict:
     from scistack_gui import pipeline_store
 
     return {

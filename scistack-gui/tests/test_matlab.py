@@ -3151,12 +3151,32 @@ class TestMaterializeVariableStubs:
         entities.write_text('variables = ["RawEMG"]\n', encoding="utf-8")
 
         created = materialize_variable_stubs(
-            ["RawEMG"], None, project_start=entities
+            ["RawEMG"], None, project_start=tmp_path
         )
 
         expected = tmp_path / "src" / DEFAULT_STUB_DIRNAME / "RawEMG.m"
         assert created == [expected]
         assert "classdef RawEMG < scidb.BaseVariable" in expected.read_text()
+
+    def test_the_registry_load_passes_the_project_root(self, tmp_path):
+        """The regression behind this test: load_from_config passed the
+        entities FILE (in src/) as project_start. With config read only AT
+        the root, that found no config and wrote no stubs, silently."""
+        from scimatlab.stubs import DEFAULT_STUB_DIRNAME
+        from scistack_gui import matlab_registry
+        from scistack_gui.config import load_config
+
+        (tmp_path / "scistack.toml").write_text(
+            'entities_file = "src/scistack_entities.toml"\n', encoding="utf-8"
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "scistack_entities.toml").write_text(
+            'variables = ["RawEMG"]\n', encoding="utf-8"
+        )
+
+        matlab_registry.load_from_config(load_config(tmp_path, tmp_path / "x.duckdb"))
+
+        assert (tmp_path / "src" / DEFAULT_STUB_DIRNAME / "RawEMG.m").exists()
 
 
 class TestMatlabFunctionPrecedence:
@@ -3180,9 +3200,16 @@ class TestMatlabFunctionPrecedence:
 
         from scistack_gui import matlab_registry
 
-        monkeypatch.setattr(
-            matlab_registry, "_config", types.SimpleNamespace(project_root=root)
-        )
+        from scifor import pathinput
+        from scistack_gui import registry
+
+        # What the load path does: both registries get the config, and
+        # registry.load_from_config pins scifor's root -- the one holder
+        # _matlab_project_root reads.
+        config = types.SimpleNamespace(project_root=root)
+        monkeypatch.setattr(matlab_registry, "_config", config)
+        monkeypatch.setattr(registry, "_config", config)
+        monkeypatch.setattr(pathinput, "_project_root_override", root.resolve())
 
     def test_project_wins_regardless_of_scan_order(self, monkeypatch, tmp_path):
         from scistack_gui import matlab_registry

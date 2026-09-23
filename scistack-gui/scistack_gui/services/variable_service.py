@@ -178,7 +178,9 @@ def _create_matlab_variable(name: str, docstring: str | None = None) -> dict:
     if target_dir is None:
         from scimatlab.stubs import variable_stub_dir
 
-        target_dir = variable_stub_dir(matlab_registry._config.project_root)
+        from scistack_gui import registry as _registry
+
+        target_dir = variable_stub_dir(_registry.get_project_root())
     if target_dir is None:
         return {
             "ok": False,

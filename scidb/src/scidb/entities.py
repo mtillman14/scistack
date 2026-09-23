@@ -71,7 +71,7 @@ from typing import Any
 
 from scifor import EachOf, PathInput
 from scifor.discovery import (
-    find_project_config,
+    project_config_at,
     read_scistack_section,
     resolve_config_path,
 )
@@ -442,25 +442,17 @@ def _name_error(name: str, result: EntitiesFile) -> "str | None":
 
 
 def _project_config(start: "Path | str | None") -> "Path | None":
-    """The ``scistack.toml``/``pyproject.toml`` governing *start* (default:
-    cwd), or ``None`` -- with the one debug log both callers below want."""
-    config = find_project_config(Path(start) if start is not None else Path.cwd())
+    """The ``scistack.toml``/``pyproject.toml`` of the project rooted at
+    *start* (default: ``scifor.project_root()``), or ``None`` -- with the one
+    debug log both callers below want. *start* IS the root: nothing walks up
+    from it (see ``scifor.discovery.project_config_at``)."""
+    from scifor.pathinput import project_root
+
+    root = Path(start) if start is not None else project_root()
+    config = project_config_at(root)
     if config is None:
-        Log.debug("[entities] No project config found from %s", start or Path.cwd())
+        Log.debug("[entities] No project config at project root %s", root)
     return config
-
-
-def project_root(start: "Path | str | None" = None) -> "Path | None":
-    """The root of the project containing *start* (default: cwd) -- the
-    directory holding its ``scistack.toml``/``pyproject.toml``, or ``None``
-    when *start* is not inside a project.
-
-    Shared so callers that need the root but not the entities file (the
-    MATLAB bridge pinning ``scifor``'s PathInput resolution base) don't
-    re-derive "the config file's parent" for themselves.
-    """
-    config = _project_config(start)
-    return config.parent if config is not None else None
 
 
 def resolve_entities_path(
@@ -557,7 +549,8 @@ def is_entities_opt_out(section: "dict | None") -> bool:
 
 
 def entities_path(start: "Path | str | None" = None) -> "Path | None":
-    """The entities file for the project containing *start* (default: cwd).
+    """The entities file for the project rooted at *start* (default:
+    ``scifor.project_root()``).
 
     Locates the project config, then applies :func:`resolve_entities_path`
     -- which is where the rule lives, and is documented.
@@ -572,7 +565,7 @@ _cache: "dict[str, tuple[float, EntitiesFile]]" = {}
 
 
 def load_for_project(start: "Path | str | None" = None) -> EntitiesFile:
-    """The loaded entities of the project containing *start*.
+    """The loaded entities of the project rooted at *start*.
 
     Cached on the file's mtime, so repeated attribute access costs one
     ``stat`` rather than a re-parse, while an edit (from the GUI or by

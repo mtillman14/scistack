@@ -8,7 +8,7 @@ from ``scidb`` directly; ``scihist`` will be removed in a future release.
 
 Behavioral nuances preserved by the shim:
 - ``scihist.for_each`` defaults ``skip_computed=True`` (scidb defaults False).
-- ``scihist.configure_database`` registers the DB as scilineage's cache backend.
+- ``scihist.configure_database`` is ``scidb.configure_database`` (a re-export).
 """
 
 import warnings as _warnings

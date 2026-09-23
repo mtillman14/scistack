@@ -257,8 +257,9 @@ class TestLiveReading:
 
 
 class TestLocatingTheProject:
-    """Which project's config applies: pinned root, then cwd, then the
-    database's own folder — and the answer is logged, including "none"."""
+    """Which project's config applies: the one AT scifor.project_root (the
+    pinned root, else the cwd) -- never above it, never next to the database
+    -- and the answer is logged, including "none"."""
 
     @pytest.fixture(autouse=True)
     def _unpin(self):
@@ -281,7 +282,17 @@ class TestLocatingTheProject:
         set_project_root(pinned)
         assert schema_order.project_level_order() == {"session": ["POST", "BL"]}
 
-    def test_the_database_folder_is_the_last_resort(self, tmp_path, monkeypatch):
+    def test_a_config_above_the_root_is_not_this_projects(self, tmp_path, monkeypatch):
+        """The upward walk is gone (one owner of the root: scifor.project_root)."""
+        write_config(tmp_path, 'session = ["POST", "BL"]\n')
+        below = tmp_path / "below"
+        below.mkdir()
+        monkeypatch.chdir(below)
+        assert schema_order.project_level_order() == {}
+
+    def test_the_database_folder_is_not_a_fallback(self, tmp_path, monkeypatch):
+        """A config next to the database belongs to the project only when that
+        folder IS the root; there is no second place to look."""
         project = tmp_path / "project"
         outside = tmp_path / "outside"
         project.mkdir()
@@ -289,9 +300,6 @@ class TestLocatingTheProject:
         write_config(project, 'session = ["POST", "BL"]\n')
         monkeypatch.chdir(outside)
         assert schema_order.project_level_order() == {}
-        assert schema_order.project_level_order(project) == {
-            "session": ["POST", "BL"]
-        }
 
     def test_no_config_found_is_logged_once(self, tmp_path, monkeypatch, caplog):
         import logging
@@ -394,7 +402,7 @@ class TestForEachOrder:
 
 class TestNewConfigMidSession:
     """A lookup that found NO config is trusted for ``LOCATE_TTL`` seconds —
-    the walk up the tree parses every candidate TOML, and a DatabaseManager
+    the lookup parses the candidate TOML, and a DatabaseManager
     asks on every sort. So a scistack.toml created after the database opened
     is found once that window passes, not on the very next call."""
 

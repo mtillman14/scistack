@@ -19,10 +19,9 @@ from scifor.discovery import (
     is_test_path,
     read_project_name,
 )
-# NOTE: scifor.discovery.find_project_config (the upward walk) is deliberately
-# NOT used here any more. Anchoring that walk at the database directory is what
-# let the reader and the writer disagree about the project root. It remains the
-# right tool for scidb.entities, which walks from cwd.
+# NOTE: nothing walks upward for a config any more, here or in scidb. The GUI
+# DECIDES the root (resolve_project_root); registry.load_from_config pins it
+# into scifor.project_root, the one holder every layer reads.
 
 if sys.version_info >= (3, 11):
     import tomllib

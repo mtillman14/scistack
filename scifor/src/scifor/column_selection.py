@@ -106,7 +106,7 @@ class ColumnSelection:
 
 
 def _display_name(obj: Any) -> str:
-    """Get a display name for an object."""
+    """Get a display name for an object -- the one copy; ``merge`` imports it."""
     try:
         import pandas as pd
 

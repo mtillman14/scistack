@@ -50,7 +50,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from scifor.discovery import find_project_config, read_scistack_section
+from scifor.discovery import project_config_at, read_scistack_section
 
 from .log import Log
 
@@ -92,12 +92,17 @@ def _read(config: Path) -> dict[str, list[str]]:
 
 
 def declared_level_order(start: "Path | str | None" = None) -> dict[str, list[str]]:
-    """``{schema key: [levels]}`` declared by the project containing *start*.
+    """``{schema key: [levels]}`` declared by the project rooted at *start*
+    (default: ``scifor.project_root()``).
 
     Empty when there is no project config, no ``[schema_keys]`` table, or
     nothing valid in it — in which case every caller keeps the ordering it had.
     """
-    config = find_project_config(Path(start) if start is not None else Path.cwd())
+    if start is None:
+        from scifor.pathinput import project_root
+
+        start = project_root()
+    config = project_config_at(Path(start))
     if config is None:
         return {}
     return _order_of(config)
@@ -135,7 +140,7 @@ def _order_of(config: Path) -> dict[str, list[str]]:
 
 
 #: How long a "which config belongs to this process" answer is trusted. The
-#: walk up the tree parses every candidate TOML, and a DatabaseManager asks on
+#: lookup parses the candidate TOML, and a DatabaseManager asks on
 #: every sort, so it is not repeated per call — but it IS repeated, so a
 #: scistack.toml created mid-session is found within this many seconds.
 LOCATE_TTL = 2.0
@@ -148,69 +153,54 @@ _locate_cache: dict[tuple[str, ...], tuple[float, "Path | None"]] = {}
 _located_logged: dict[tuple[str, ...], "str | None"] = {}
 
 
-def _starts(fallback: "Path | str | None") -> list[tuple[str, Path]]:
-    """Where to look for the project, most specific first.
+def _root() -> tuple[str, Path]:
+    """The project root this process runs in, with how it was decided (for
+    the log): ``scifor.project_root`` -- the root the MATLAB bridge, a
+    generated command or the GUI pinned, else the working directory. There
+    is no other place to look: a config above the root, or next to the
+    database file, is not this project's."""
+    from scifor.pathinput import get_project_root, project_root
 
-    * the project root pinned through ``scifor.set_project_root`` — what the
-      MATLAB bridge and generated commands set, because an embedded
-      interpreter's cwd says nothing about the project;
-    * the cwd — a script run from inside its project, and the GUI server
-      (the extension spawns it in the workspace folder);
-    * *fallback* — the database file's folder, for a database kept inside
-      the project it belongs to.
-    """
-    from scifor.pathinput import get_project_root
-
-    starts: list[tuple[str, Path]] = []
-    pinned = get_project_root()
-    if pinned is not None:
-        starts.append(("pinned project root", Path(pinned)))
-    starts.append(("working directory", Path.cwd()))
-    if fallback is not None:
-        starts.append(("database folder", Path(fallback)))
-    return starts
+    label = "pinned project root" if get_project_root() is not None else "working directory"
+    return label, project_root()
 
 
-def locate_config(fallback: "Path | str | None" = None) -> "Path | None":
-    """The project config whose ``[schema_keys]`` applies to this process.
+def locate_config() -> "Path | None":
+    """The project config whose ``[schema_keys]`` applies to this process:
+    the one AT :func:`_root`, never above it.
 
-    See :func:`_starts` for the search order. Cached for :data:`LOCATE_TTL`
-    seconds; the result is logged at INFO whenever it changes, including
-    "none found", which is otherwise indistinguishable from "no declaration".
+    Cached for :data:`LOCATE_TTL` seconds; the result is logged at INFO
+    whenever it changes, including "none found", which is otherwise
+    indistinguishable from "no declaration".
     """
     import time
 
-    starts = _starts(fallback)
-    cache_key = tuple(str(path) for _, path in starts)
+    label, root = _root()
+    cache_key = (str(root),)
     now = time.monotonic()
     cached = _locate_cache.get(cache_key)
     if cached is not None and now - cached[0] < LOCATE_TTL:
         return cached[1]
 
-    found: "Path | None" = None
-    found_from = ""
-    for label, start in starts:
-        found = find_project_config(start)
-        if found is not None:
-            found_from = f"{label} {start}"
-            break
+    found = project_config_at(root)
     _locate_cache[cache_key] = (now, found)
 
     answer = str(found) if found is not None else None
     if _located_logged.get(cache_key, "<unset>") != answer:
         _located_logged[cache_key] = answer
         if found is not None:
-            Log.info("[schema_order] using %s (found from the %s)", found, found_from)
+            Log.info("[schema_order] using %s (at the %s %s)", found, label, root)
         else:
             Log.info(
-                "[schema_order] no project config found from %s — schema "
+                "[schema_order] no project config found at the %s %s — schema "
                 "levels use the default order",
-                ", ".join(f"{label} {start}" for label, start in starts),
+                label,
+                root,
             )
     return found
 
 
-def project_level_order(fallback: "Path | str | None" = None) -> dict[str, list[str]]:
+def project_level_order() -> dict[str, list[str]]:
     """The declared level order for THIS process's project, read live.
 
     What a long-lived consumer (a ``DatabaseManager``, the GUI) asks on every
@@ -218,7 +208,7 @@ def project_level_order(fallback: "Path | str | None" = None) -> dict[str, list[
     the next table and the next figure without a restart. Cheap — the config
     location is cached for :data:`LOCATE_TTL` and the parse on the file's mtime.
     """
-    config = locate_config(fallback)
+    config = locate_config()
     if config is None:
         return {}
     return _order_of(config)

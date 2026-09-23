@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 
+from scistack_gui.ids import fn_node_id, var_node_id
+
 logger = logging.getLogger(__name__)
 
 _STATE_ORDER = {"red": 0, "pending": 1, "green": 2}
@@ -188,9 +190,9 @@ def propagate_run_states(
     result: dict[str, str] = {}
     for fkey, state in fn_effective_state.items():
         fn_name, call_id = fkey
-        result[f"fn__{fn_name}__{call_id}"] = state
+        result[fn_node_id(fn_name, call_id)] = state
     for vtype, state in var_state.items():
-        result[f"var__{vtype}"] = state
+        result[var_node_id(vtype)] = state
 
     state_counts = {"green": 0, "pending": 0, "red": 0}
     for s in result.values():

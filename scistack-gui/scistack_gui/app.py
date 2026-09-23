@@ -5,6 +5,7 @@ Mounts all API routers under /api and (in production) serves the pre-built
 React frontend as static files from scistack_gui/static/.
 """
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -27,6 +28,8 @@ from scistack_gui.api.schema import router as schema_router
 from scistack_gui.api.scopes import router as scopes_router
 from scistack_gui.api.variables import router as variables_router
 from scistack_gui.api.ws import router as ws_router
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -58,20 +61,39 @@ def create_app() -> FastAPI:
     app.include_router(provenance_router, prefix="/api")
     app.include_router(ws_router)
 
-    # Serve the pre-built React frontend if the static folder exists.
-    # During development the Vite dev server handles this instead.
-    static_dir = Path(__file__).parent / "static"
-    if static_dir.exists():
-        app.mount(
-            "/assets", StaticFiles(directory=static_dir / "assets"), name="assets"
-        )
-
-        @app.get("/{full_path:path}")
-        def serve_frontend(full_path: str):
-            """Catch-all: serve index.html for any non-API route (React handles routing)."""
-            return FileResponse(static_dir / "index.html")
-
+    _mount_frontend(app, Path(__file__).parent / "static")
     return app
+
+
+def _mount_frontend(app: FastAPI, static_dir: Path) -> None:
+    """Serve the pre-built React frontend, if a complete build is present.
+    During development the Vite dev server handles this instead.
+
+    Guards on the directories actually mounted, not just ``static/``: vite
+    empties its outDir before writing, so mid-build ``static/`` exists with
+    no ``assets/`` in it, and ``StaticFiles`` raises ``RuntimeError:
+    Directory '.../static/assets' does not exist`` from ``create_app`` —
+    which errored every test that built the app during a rebuild
+    (2026-09-23). A missing frontend must never take the API down with it.
+    """
+    assets_dir = static_dir / "assets"
+    index_html = static_dir / "index.html"
+    if not (assets_dir.is_dir() and index_html.is_file()):
+        logger.warning(
+            "create_app: frontend build incomplete or absent (assets=%s, "
+            "index.html=%s) — serving the API only. Rebuild with "
+            "`cd scistack-gui/frontend && npm run build`.",
+            assets_dir.is_dir(),
+            index_html.is_file(),
+        )
+        return
+
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str):
+        """Catch-all: serve index.html for any non-API route (React handles routing)."""
+        return FileResponse(index_html)
 
 
 app = create_app()

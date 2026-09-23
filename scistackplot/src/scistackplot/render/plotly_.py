@@ -30,6 +30,7 @@ from .base import (
     SAMPLE_EDGE_COLOR,
     SAMPLE_LINE_WIDTH,
     SAMPLE_MARKER_FRACTION,
+    series_groups,
     color_groups,
     dash_levels,
     dash_style,
@@ -617,21 +618,13 @@ def _spaghetti_traces(subset, resolved, base, color) -> list[dict]:
     return traces
 
 
-def _series_groups(subset, resolved) -> list[tuple]:
-    """``(series id, rows)`` per polyline / band, or one group for the lot."""
-    series_column = resolved.encoding.series
-    if series_column and series_column in subset.columns:
-        return list(subset.groupby(series_column, sort=False))
-    return [(None, subset)]
-
-
 def _line_traces(subset, resolved, base, color) -> list[dict]:
     """One trace per polyline; only the first carries the legend entry. An
     uncoloured grouping layer is told apart by dash style (``dash_style``),
     the same style in every panel and colour."""
     encoding = resolved.encoding
     traces = []
-    for position, (series_id, rows) in enumerate(_series_groups(subset, resolved)):
+    for position, (series_id, rows) in enumerate(series_groups(subset, resolved)):
         traces.append(
             {
                 **base,
@@ -654,7 +647,7 @@ def _band_traces(subset, resolved, base, color) -> list[dict]:
     legend entry."""
     encoding = resolved.encoding
     traces = []
-    for position, (series_id, rows) in enumerate(_series_groups(subset, resolved)):
+    for position, (series_id, rows) in enumerate(series_groups(subset, resolved)):
         x_values = _values(rows[encoding.x])
         if encoding.has_error:
             traces.append(

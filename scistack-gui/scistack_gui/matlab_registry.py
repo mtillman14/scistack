@@ -225,7 +225,11 @@ def load_from_config(config: SciStackConfig) -> dict:
         materialize_variable_stubs(
             list(_load_entities(config.entities_file).variables),
             config.matlab_variable_dir,
-            project_start=config.entities_file,
+            # The ROOT, not the entities file: stub placement reads the config
+            # AT the project root (scifor.project_root, D-2026-09-23-1). The
+            # entities file sits in src/, which holds no config -- passing it
+            # silently wrote no stubs at all once the upward walk was removed.
+            project_start=config.project_root,
         )
 
     logger.info(
@@ -575,13 +579,14 @@ def register_builtin_function(info: MatlabFunctionInfo) -> None:
 def _matlab_project_root() -> "Path | None":
     """The project root to judge definition precedence against.
 
-    Prefers this registry's own config so a MATLAB-only load still has a root,
-    and falls back to the Python registry's — the two are loaded from the same
-    ``SciStackConfig``, so they agree whenever both are set.
+    ``registry.get_project_root`` -- scifor's pinned root, the one holder.
+    It used to prefer this registry's own ``_config.project_root``, a second
+    copy of the same fact; every load path calls ``registry.load_from_config``
+    (which pins) before this registry's.
     """
     from scistack_gui import registry
 
-    return getattr(_config, "project_root", None) or registry.get_project_root()
+    return registry.get_project_root()
 
 
 def _register_matlab_function(info: MatlabFunctionInfo) -> None:

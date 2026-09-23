@@ -193,6 +193,7 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     update_path_input:      { path: (p) => `/api/path-inputs/${encodeURIComponent(p.name as string)}`, method: 'PUT', body: true },
     delete_path_input:      { path: (p) => `/api/path-inputs/${encodeURIComponent(p.name as string)}`, method: 'DELETE', body: true },
     deep_copy_path_input:   { path: (p) => `/api/path-inputs/${encodeURIComponent(p.node_id as string)}/deep-copy`, method: 'POST' },
+    get_entity_editability: { path: (p) => `/api/entities/${encodeURIComponent(p.kind as string)}/${encodeURIComponent(p.name as string)}/editability` },
     put_node_config:        { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/config`, method: 'PUT', body: true },
     start_run:              { path: '/api/run', method: 'POST', body: true },
     cancel_run:             { path: (p) => `/api/run/${encodeURIComponent(p.run_id as string)}/cancel`, method: 'POST' },

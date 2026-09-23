@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 
+from scistack_gui.ids import in_handle, out_handle
+
 logger = logging.getLogger(__name__)
 
 
@@ -244,12 +246,12 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
         if src_moved:
             new_edges.append({
                 "source": "__NEW_USE__", "target": tgt,
-                "sourceHandle": f"out__{var_label}", "targetHandle": e.get("targetHandle"),
+                "sourceHandle": out_handle(var_label), "targetHandle": e.get("targetHandle"),
             })
         else:
             new_edges.append({
                 "source": src, "target": "__NEW_USE__",
-                "sourceHandle": e.get("sourceHandle"), "targetHandle": f"in__{var_label}",
+                "sourceHandle": e.get("sourceHandle"), "targetHandle": in_handle(var_label),
             })
 
     # Centroid of the selection's CURRENT positions, for the placed node.

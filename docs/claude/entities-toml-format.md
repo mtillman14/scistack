@@ -130,9 +130,10 @@ the exact counterpart of `scidb.source_edit` for the Python form.
 Read half:
 - `load(path) -> EntitiesFile` — parse, validate, construct.
 - `entities_path()` / `load_for_project()` — resolve the file from the
-  project config (mtime-cached), via `scifor.discovery.find_project_config`,
-  which `scistack_gui.config` also uses, so the GUI and a plain script can
-  never disagree about which project a path belongs to.
+  project config (mtime-cached) found AT `scifor.project_root()` (the pinned
+  root, else the cwd) by `scifor.discovery.project_config_at` -- no upward
+  walk (D-2026-09-23-1). The GUI pins its root into scifor, so the GUI and a
+  plain script read the same config for the same folder.
 - `resolve_entities_path(root, section)` — the resolution **rule**, split
   out so a caller that already located the config and parsed its section
   (`scistack_gui.config.load_config`) asks scidb instead of reimplementing

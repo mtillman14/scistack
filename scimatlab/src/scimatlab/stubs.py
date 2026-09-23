@@ -74,11 +74,12 @@ def variable_stub_dir(project_start: "Path | str | None" = None) -> "Path | None
     Python-only project with an entities file load the MATLAB registry.
     """
     from scidb.entities import entities_path
-    from scifor.discovery import find_project_config, read_scistack_section
+    from scifor.discovery import project_config_at, read_scistack_section
+    from scifor.pathinput import project_root
 
-    start = Path(project_start) if project_start is not None else Path.cwd()
+    start = Path(project_start) if project_start is not None else project_root()
 
-    config = find_project_config(start)
+    config = project_config_at(start)
     if config is not None:
         section = read_scistack_section(config) or {}
         matlab_section = section.get("matlab")
@@ -205,9 +206,14 @@ def write_variable_classdefs(
         Path(target_dir) if target_dir is not None else variable_stub_dir(project_start)
     )
     if resolved is None:
+        from scifor.pathinput import project_root
+
+        looked_at = project_start if project_start is not None else project_root()
         message = (
-            "no entities file and no [matlab] variable_dir for this project, so "
-            f"there is nowhere to write classdefs for: {', '.join(sorted(wanted))}"
+            "no entities file and no [matlab] variable_dir for the project "
+            f"rooted at {looked_at} (the config is read AT the root, never "
+            "above it), so there is nowhere to write classdefs for: "
+            f"{', '.join(sorted(wanted))}"
         )
         Log.warn("[stubs] %s", message, layer="matlab")
         errors.append(message)

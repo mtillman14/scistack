@@ -27,7 +27,6 @@ from scistack_gui.ids import (
     ROOT_SCOPE,
     parse_placement_id,
     placement_id,
-    strip_placement,
 )
 
 logger = logging.getLogger(__name__)
@@ -192,14 +191,15 @@ def resolve_scope_view(
 
 
 def _var_label(node_id: str, manual_nodes: dict) -> str | None:
-    """Variable-type label for a node id, or None if not a variable node."""
-    meta = manual_nodes.get(node_id)
-    if meta is not None:
-        return meta["label"] if meta.get("type") == "variableNode" else None
-    bare = strip_placement(node_id)
-    if bare.startswith("var__"):
-        return bare[len("var__") :]
-    return None
+    """Variable-type label for a node id, or None if not a variable node.
+
+    ``edge_resolver.node_id_to_var_label`` owns the rule (it also handles a
+    manual variable id's random suffix, ``var__{label}__{rand}``, which a
+    plain prefix strip gets wrong).
+    """
+    from scistack_gui.domain.edge_resolver import node_id_to_var_label
+
+    return node_id_to_var_label(node_id, {}, manual_nodes)
 
 
 def document_interface(

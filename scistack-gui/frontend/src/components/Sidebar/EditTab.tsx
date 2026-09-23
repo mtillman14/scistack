@@ -27,7 +27,7 @@ import { useSidebarSelection } from '../../context/SidebarSelectionContext'
 import type { SidebarItemKind, SidebarSelectedItem } from '../../context/SidebarSelectionContext'
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
-import { formatLocation } from './useSourceEdit'
+import { formatLocation } from './sourceLocation'
 
 interface LoadError {
   source: string

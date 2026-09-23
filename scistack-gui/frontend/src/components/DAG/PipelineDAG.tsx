@@ -43,7 +43,7 @@ import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocatio
 import TopologiesPanel from '../Variants/TopologiesPanel'
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
-import { formatLocation } from '../Sidebar/useSourceEdit'
+import { formatLocation } from '../Sidebar/sourceLocation'
 import { applyDagreLayout } from '../../layout'
 import { callBackend, isVSCodeMode } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'

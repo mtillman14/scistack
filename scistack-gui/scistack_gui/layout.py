@@ -422,15 +422,13 @@ def write_manual_node(
         pipeline_id,
     )
     pipeline_store.unhide_node(db, node_id, pipeline_id)
-    from scistack_gui.ids import PARAM_ID_PREFIX
+    from scistack_gui.ids import (
+        NODE_TYPE_PREFIXES,
+        fn_nodes_prefix,
+        legacy_fn_node_id,
+    )
 
-    prefix_map = {
-        "variableNode": "var__",
-        "functionNode": "fn__",
-        "parameterNode": PARAM_ID_PREFIX,
-        "pathInputNode": "pathInput__",
-    }
-    prefix = prefix_map.get(node_type)
+    prefix = NODE_TYPE_PREFIXES.get(node_type)
     if prefix:
         logger.debug(
             "[layout] Unhiding canonical DB-derived nodes for type=%r, label=%r",
@@ -441,9 +439,9 @@ def write_manual_node(
             # DB-derived function nodes use composite ``fn__{label}__{call_id}``
             # IDs — there can be multiple canonical nodes per label.  Unhide
             # every call-site node sharing the label.
-            pipeline_store.unhide_nodes_by_prefix(db, f"fn__{label}__", pipeline_id)
+            pipeline_store.unhide_nodes_by_prefix(db, fn_nodes_prefix(label), pipeline_id)
             # Also unhide the legacy fn__{label} form for older layouts.
-            pipeline_store.unhide_node(db, f"fn__{label}", pipeline_id)
+            pipeline_store.unhide_node(db, legacy_fn_node_id(label), pipeline_id)
             logger.debug("[layout] Unhid all function nodes with label=%r", label)
         else:
             canonical_id = f"{prefix}{label}"

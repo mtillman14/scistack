@@ -18,6 +18,7 @@ table for both transports (``api/handlers.py``).
     PUT    /api/path-inputs/{name}              update_path_input
     DELETE /api/path-inputs/{name}              delete_path_input
     POST   /api/path-inputs/{node_id}/deep-copy deep_copy_path_input
+    GET    /api/entities/{kind}/{name}/editability get_entity_editability
     PUT    /api/edges/{edge_id}                 put_edge
     DELETE /api/edges/{edge_id}                 delete_edge
     POST   /api/edges/{edge_id}/unhide          unhide_edge
@@ -31,6 +32,8 @@ position-only write), so no row needs ``notify_dag_updated``.
 import logging
 
 from fastapi import APIRouter
+from typing import Literal
+
 from pydantic import BaseModel
 
 from scistack_gui.api.handlers import Handler, install_routes
@@ -116,6 +119,11 @@ class PathInputUpdate(BaseModel):
     template: str
     root_folder: str | None = None
     alternate_templates: list[dict] | None = None
+
+
+class EntityRef(BaseModel):
+    kind: Literal["parameter", "path_input"]
+    name: str
 
 
 class EdgeCreate(BaseModel):
@@ -254,6 +262,26 @@ def _deep_copy_path_input(req: NodeRef) -> dict:
     return layout_service.deep_copy_path_input(req.node_id)
 
 
+def _get_entity_editability(req: EntityRef) -> dict:
+    """Whether the GUI may edit this entity's declaration -- asked up front
+    so a panel can grey its controls out instead of accepting input the
+    write then refuses. Same answer the write path uses
+    (``target_file_service.entity_editability``, the one owner)."""
+    from scistack_gui.services.target_file_service import entity_editability
+
+    result = entity_editability(req.kind, req.name)
+    logger.info(
+        "get_entity_editability: %s '%s' -> editable=%s reason=%s file=%s line=%s",
+        req.kind,
+        req.name,
+        result["editable"],
+        result["reason"],
+        result["file"],
+        result["line"],
+    )
+    return result
+
+
 def _put_edge(db, req: EdgeCreate) -> dict:
     return layout_service.put_edge(
         db, req.edge_id, req.source, req.target, req.source_handle, req.target_handle
@@ -298,6 +326,7 @@ LAYOUT_HANDLERS: tuple[Handler, ...] = (
     Handler("update_path_input", "/path-inputs/{name}", PathInputUpdate, _update_path_input, needs_db=False, http_method="PUT"),
     Handler("delete_path_input", "/path-inputs/{name}", NamedInScope, _delete_path_input, needs_db=False, http_method="DELETE", body=True),
     Handler("deep_copy_path_input", "/path-inputs/{node_id}/deep-copy", NodeRef, _deep_copy_path_input, needs_db=False, http_errors=_BAD_REQUEST, body=False),
+    Handler("get_entity_editability", "/entities/{kind}/{name}/editability", EntityRef, _get_entity_editability, needs_db=False, http_method="GET"),
     Handler("put_edge", "/edges/{edge_id}", EdgeCreate, _put_edge, http_method="PUT", http_errors=_BAD_REQUEST),
     Handler("delete_edge", "/edges/{edge_id}", EdgeDelete, _delete_edge, http_method="DELETE", body=True),
     Handler("unhide_edge", "/edges/{edge_id}/unhide", EdgeInScope, _unhide_edge, body=True),

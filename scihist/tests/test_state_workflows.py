@@ -41,7 +41,11 @@ from scidb import for_each as scidb_for_each
 from scifor import PathInput
 from scihist import for_each
 
-DATA_DIR = Path(__file__).parent.parent.parent / "examples" / "aim2" / "data"
+# The tests' own fixture: sub{01..03}/trial{01..05}.csv (time, force_left,
+# force_right). It lived in examples/aim2/data until 1ab0ba51 reorganised the
+# example dataset and silently broke these suites -- test data is not example
+# data.
+DATA_DIR = Path(__file__).parent / "data" / "state_trials"
 
 
 # ---------------------------------------------------------------------------

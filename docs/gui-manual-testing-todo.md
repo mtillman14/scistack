@@ -36,6 +36,42 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0t. Source-declared entities are read-only in the sidebar — added 2026-09-23
+
+Backend (`target_file_service.entity_editability`, RPC `get_entity_editability`) + frontend (`PathInputSettingsPanel`, `ParameterSettingsPanel`, `ReadOnlyDeclarationBanner`). **Rebuild both bundles.**
+
+- [ ] Select a PathInput declared in a MATLAB script (e.g. `grPathTemplate`, `main_entrypoint_aim2.m`) → a grey "Read-only — declared in source" banner names `main_entrypoint_aim2.m:32` (file name only, not the full `Y:\…` path); Template, Root Folder, alternate input, Add and × are all greyed out and can't be typed into.
+- [ ] Same for a Parameter declared in a `.m`/`.py` outside the entities file → banner shown; Add value, ×, and the Generate inputs/Replace values button are all disabled.
+- [ ] Select a PathInput/Parameter declared in `scistack_entities.toml` → no banner, everything editable exactly as before.
+- [ ] Edit the declaration in the `.m` file, hit 🔄 Refresh Code, reselect the node → the new values show.
+- [ ] `scidb.log` shows `get_entity_editability: path_input '<name>' -> editable=False reason=read_only file=… line=…` on each selection.
+
+---
+
+## 0s. One project root; one load-errors list — added 2026-09-23
+
+Backend only (`scifor.project_root`, `registry.all_load_errors`); no frontend rebuild needed.
+
+- [ ] Open a project, then run a function fed by a PathInput with no `root_folder` → it resolves under the opened folder. `scidb.log` shows `[pathinput] project root override set to <that folder>` at load.
+- [ ] A project whose `scistack.toml` has `[schema_keys]` → tables and plots still follow the declared level order.
+- [ ] Break one Python entity and one MATLAB `.m` file → both errors still appear wherever load errors are shown (the registry panel and the project scan).
+- [ ] MATLAB terminal run via the generated command → rootless PathInputs still resolve under the project.
+
+---
+
+## 0r. A new database opens on a blank canvas — added 2026-09-23
+
+Backend only (`scope_filter.resolve_scope_view` + `declared_only` flag); no frontend rebuild needed.
+
+- [ ] Create a new database in a project whose source declares Parameters and PathInputs → the root canvas is EMPTY; they are all listed in the sidebar.
+- [ ] Drag a Parameter from the sidebar onto the canvas → it appears, showing its declared values; reload the window → it is still there.
+- [ ] Same for a PathInput.
+- [ ] Delete a placed, never-run Parameter/PathInput from the canvas → it leaves the canvas and does not come back on refresh (still in the sidebar).
+- [ ] Open an existing database that has runs → every node with history is still on the canvas as before.
+- [ ] An existing database where a never-run Parameter was wired to a function but never dragged → the Parameter and its edge are still shown.
+
+---
+
 ## 0q. Variants panel — "why does this variable have more variants than I expected?" — added 2026-09-22
 
 **What changed:** `Inspector.topologies` (already in the Python API and behind

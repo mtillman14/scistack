@@ -1111,8 +1111,15 @@ class TestRegisterFunctionPrecedence:
 
     @staticmethod
     def _root(monkeypatch, tmp_path):
+        # What load_from_config does: record the config AND pin scifor's root,
+        # which is what registry.get_project_root reads (one holder).
+        from scifor import pathinput
+
         monkeypatch.setattr(
             registry, "_config", types.SimpleNamespace(project_root=tmp_path / "proj")
+        )
+        monkeypatch.setattr(
+            pathinput, "_project_root_override", (tmp_path / "proj").resolve()
         )
 
     def test_project_wins_regardless_of_registration_order(

@@ -243,6 +243,36 @@ class TestTransportParity:
         assert METHODS["update_parameter"]({"name": "WINDOW", "values": [45]})["ok"]
         assert METHODS["update_path_input"]({"name": "RAW", "template": "b.csv"})["ok"]
 
+    def test_editability_is_served_identically_over_both_transports(
+        self, client, tmp_path, populated_db
+    ):
+        """The panels ask ``get_entity_editability`` before any edit; the
+        browser goes through REST (kind + name in the path), the VS Code
+        extension through JSON-RPC. Both must answer the same."""
+        from scistack_gui.db import get_db_path
+        from scistack_gui.server import METHODS
+
+        other = tmp_path / "params.py"
+        other.write_text("import scidb\n\nRAW = scidb.PathInput('{subject}/a.csv')\n")
+        entities = tmp_path / "entities.py"
+        entities.write_text("import scidb\n\nW = scidb.Parameter(1)\n")
+        config_mod.set_entities_file(get_db_path(), entities)
+        config_mod.add_path(get_db_path(), tmp_path)
+        _registry._module_path = None
+        _registry.load_from_config(config_mod.load_config(None, get_db_path()))
+
+        rest = client.get("/api/entities/path_input/RAW/editability").json()
+        rpc = METHODS["get_entity_editability"]({"kind": "path_input", "name": "RAW"})
+
+        assert rest == rpc
+        assert rest["editable"] is False
+        assert rest["reason"] == "read_only"
+        assert rest["file"] == str(other)
+        assert rest["line"] == 3
+
+        editable = client.get("/api/entities/parameter/W/editability").json()
+        assert editable["editable"] is True
+
     def test_service_signatures_match_between_layers(self):
         """layout_service is a thin pass-through; a drifted signature there
         silently drops an argument."""

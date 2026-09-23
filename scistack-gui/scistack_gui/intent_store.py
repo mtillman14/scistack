@@ -62,6 +62,8 @@ from scidb.intent import (
     normalize,
 )
 
+from scistack_gui.ids import PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX, VAR_ID_PREFIX
+
 logger = logging.getLogger(__name__)
 
 #: Aspects that have moved into this table, with the table each replaced.
@@ -483,9 +485,9 @@ def _rows(db, sql: str, params=None) -> list:
 def _subject_kind_for_node(node_id: str) -> str:
     """The subject kind a canvas node id names, by its prefix."""
     bare = node_id.split("::", 1)[0]
-    if bare.startswith("var__"):
+    if bare.startswith(VAR_ID_PREFIX):
         return SUBJECT_VARIABLE_TYPE
-    if bare.startswith("param__") or bare.startswith("pathInput__"):
+    if bare.startswith(PARAM_ID_PREFIX) or bare.startswith(PATH_INPUT_ID_PREFIX):
         return SUBJECT_PARAMETER
     return SUBJECT_CALL_SITE
 

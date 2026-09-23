@@ -1262,27 +1262,22 @@ def normalize_stat_result(
 
 
 def pathinput_project_root() -> str:
-    """Return scifor's ``_find_project_root()`` result as a string.
+    """Return ``scifor.project_root()`` (the pinned root, else the cwd) as a
+    string, so MATLAB reads the one owner of the project root rather than
+    deriving its own."""
+    from scifor.pathinput import project_root
 
-    Public-named wrapper around the underscore-prefixed helper so MATLAB
-    can resolve the path through the bridge — MATLAB's parser rejects
-    dot-access to identifiers that start with an underscore, so
-    ``py.scifor.pathinput._find_project_root()`` is not callable directly
-    from MATLAB code.
-    """
-    from scifor.pathinput import _find_project_root
-
-    return str(_find_project_root())
+    return str(project_root())
 
 
 def set_pathinput_project_root(root) -> str:
     """Bridge entry: pin the directory rootless PathInputs resolve against.
 
     A ``PathInput`` declared with no ``root_folder`` resolves relative paths
-    against scifor's project root, which is found by walking up from the
-    **cwd**. Under MATLAB the cwd is wherever the user's MATLAB is sitting --
-    for a GUI-generated command, a temp script directory -- so the walk finds
-    the wrong project or none at all, and every relative template misses.
+    against ``scifor.project_root()``, which is the **cwd** unless pinned.
+    Under MATLAB the cwd is wherever the user's MATLAB is sitting -- for a
+    GUI-generated command, a temp script directory -- so it names the wrong
+    folder, and every relative template misses.
 
     The caller knows the project; the cwd does not. ``+scidb/entities.m``
     calls this with the project root it was given, and the GUI's generated
@@ -1330,6 +1325,7 @@ def load_entities(project_start=None) -> dict:
 
     from scidb import entities
     from scidb.log import Log
+    from scifor.pathinput import project_root
 
     result = entities.load_for_project(project_start)
 
@@ -1338,9 +1334,12 @@ def load_entities(project_start=None) -> dict:
     # here. Any script that calls scidb.entities(PROJECT_ROOT) -- generated
     # or hand-written -- then resolves a rootless PathInput against that
     # project instead of MATLAB's cwd, with no second call to remember.
-    root = entities.project_root(project_start)
-    if root is not None:
-        set_pathinput_project_root(root)
+    # The folder MATLAB names IS the project root -- whether or not it holds a
+    # config (scifor.project_root: no walking up to a pyproject.toml). With no
+    # folder named there is nothing better than the cwd, which is what an
+    # unpinned root already means, so nothing is pinned.
+    if project_start is not None:
+        set_pathinput_project_root(Path(str(project_start)))
 
     def _arms(obj):
         alternatives = getattr(obj, "alternatives", None)
@@ -1377,10 +1376,10 @@ def load_entities(project_start=None) -> dict:
         # forgot to pass its project root produces.
         Log.warn(
             "[entities] MATLAB load found NO entities file: no project config "
-            "in any ancestor of %s (project_start=%r, cwd=%s). Declared "
+            "at the project root %s (project_start=%r, cwd=%s). Declared "
             "Parameters/PathInputs will not be in scope; pass the project "
             "root as scidb.entities(PROJECT_ROOT).",
-            Path(project_start) if project_start is not None else Path.cwd(),
+            Path(project_start) if project_start is not None else project_root(),
             project_start,
             Path.cwd(),
             layer="matlab",

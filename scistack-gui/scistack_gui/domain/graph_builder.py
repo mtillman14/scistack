@@ -18,14 +18,22 @@ from scidb.provenance import strip_path_input_specs as _strip_path_input_specs
 
 from scistack_gui.ids import (
     FN_ID_PREFIX,
+    IN_HANDLE_PREFIX,
     PARAM_ID_PREFIX,
     PATH_INPUT_ID_PREFIX,
     ROOT_SCOPE,
+    VAR_ID_PREFIX,
     fn_node_id,
+    in_handle,
+    out_handle,
+    param_handle,
+    param_node_id,
     parse_fn_node_id,
     parse_placement_id,
+    path_input_node_id,
     placement_id,
     strip_placement,
+    var_node_id,
 )
 from scistack_gui.domain.scope_filter import DECLARED_ONLY
 
@@ -105,8 +113,8 @@ def edge_dedup_key(
     src = strip_placement(source)
     tgt = strip_placement(target)
     handle = target_handle or ""
-    if src.startswith(PATH_INPUT_ID_PREFIX) and handle.startswith("in__"):
-        return (src, tgt, handle[len("in__") :])
+    if src.startswith(PATH_INPUT_ID_PREFIX) and handle.startswith(IN_HANDLE_PREFIX):
+        return (src, tgt, handle[len(IN_HANDLE_PREFIX) :])
     return (src, tgt)
 
 
@@ -852,7 +860,7 @@ def filter_hidden(
     )
 
     hidden_var_types = {
-        nid.replace("var__", "", 1) for nid in hidden_ids if nid.startswith("var__")
+        nid.replace(VAR_ID_PREFIX, "", 1) for nid in hidden_ids if nid.startswith(VAR_ID_PREFIX)
     }
     # fn IDs in hidden_ids are composite ``fn__{fn_name}__{call_id}``.
     # Parse into FnKeys; ignore IDs that don't match (legacy/manual).
@@ -867,9 +875,9 @@ def filter_hidden(
         if nid.startswith(PARAM_ID_PREFIX)
     }
     hidden_path_names = {
-        nid.replace("pathInput__", "", 1)
+        nid.replace(PATH_INPUT_ID_PREFIX, "", 1)
         for nid in hidden_ids
-        if nid.startswith("pathInput__")
+        if nid.startswith(PATH_INPUT_ID_PREFIX)
     }
 
     agg.all_var_types -= hidden_var_types
@@ -1023,11 +1031,11 @@ def build_variable_nodes(
             "label": vtype,
             "total_records": record_counts.get(vtype, 0),
         }
-        state = run_states.get(f"var__{vtype}", "green")
+        state = run_states.get(var_node_id(vtype), "green")
         data["run_state"] = state
         nodes.append(
             {
-                "id": f"var__{vtype}",
+                "id": var_node_id(vtype),
                 "type": "variableNode",
                 "position": {"x": 0, "y": 0},
                 "data": data,
@@ -1279,7 +1287,7 @@ def build_parameter_nodes(
 
         nodes.append(
             {
-                "id": f"{PARAM_ID_PREFIX}{const_name}",
+                "id": param_node_id(const_name),
                 "type": "parameterNode",
                 "position": {"x": 0, "y": 0},
                 "data": {
@@ -1320,7 +1328,7 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
         pi = path_inputs[pi_name]
         nodes.append(
             {
-                "id": f"pathInput__{pi_name}",
+                "id": path_input_node_id(pi_name),
                 "type": "pathInputNode",
                 "position": {"x": 0, "y": 0},
                 "data": {
@@ -1452,8 +1460,8 @@ def build_function_nodes(
                     cid,
                     sorted(orphan),
                     p2c,
-                    sorted(f"out__{o}" for o in orphan),
-                    sorted(f"out__{p}" for p in out_types),
+                    sorted(out_handle(o) for o in orphan),
+                    sorted(out_handle(p) for p in out_types),
                 )
             logger.debug(
                 "[graph_builder] matlab fn=%s call_id=%s handles=%s param→class=%s",
@@ -1549,7 +1557,7 @@ def build_edges(
         fn, cid = fkey
         target_id = fn_node_id(fn, cid)
         for param_name, in_type in params.items():
-            key = (f"var__{in_type}", target_id)
+            key = (var_node_id(in_type), target_id)
             if key not in seen_edges:
                 seen_edges.add(key)
                 edge_id = f"e__{in_type}__{fn}__{cid}"
@@ -1559,9 +1567,9 @@ def build_edges(
                 edges.append(
                     {
                         "id": edge_id,
-                        "source": f"var__{in_type}",
+                        "source": var_node_id(in_type),
                         "target": target_id,
-                        "targetHandle": f"in__{param_name}",
+                        "targetHandle": in_handle(param_name),
                     }
                 )
     var_to_fn_count = len(edges)
@@ -1580,7 +1588,7 @@ def build_edges(
         source_id = fn_node_id(fn, cid)
         class_to_param = {c: p for p, c in p2c_all.get(fn, {}).items()}
         for out_type in out_types:
-            key = (source_id, f"var__{out_type}")
+            key = (source_id, var_node_id(out_type))
             if key in seen_edges:
                 continue
             seen_edges.add(key)
@@ -1589,12 +1597,12 @@ def build_edges(
                 hidden_fn_to_var += 1
                 continue
             param = class_to_param.get(out_type)
-            source_handle = f"out__{param}" if param else f"out__{out_type}"
+            source_handle = out_handle(param) if param else out_handle(out_type)
             edges.append(
                 {
                     "id": edge_id,
                     "source": source_id,
-                    "target": f"var__{out_type}",
+                    "target": var_node_id(out_type),
                     "sourceHandle": source_handle,
                 }
             )
@@ -1612,7 +1620,7 @@ def build_edges(
         for fkey in fkeys:
             fn, cid = fkey
             target_id = fn_node_id(fn, cid)
-            key = (f"{PARAM_ID_PREFIX}{const_name}", target_id)
+            key = (param_node_id(const_name), target_id)
             if key not in seen_edges:
                 seen_edges.add(key)
                 edge_id = f"e__{const_name}__{fn}__{cid}"
@@ -1622,9 +1630,9 @@ def build_edges(
                 edges.append(
                     {
                         "id": edge_id,
-                        "source": f"{PARAM_ID_PREFIX}{const_name}",
+                        "source": param_node_id(const_name),
                         "target": target_id,
-                        "targetHandle": f"{PARAM_ID_PREFIX}{const_name}",
+                        "targetHandle": param_handle(const_name),
                     }
                 )
     const_to_fn_count = len(edges) - var_to_fn_count - fn_to_var_count
@@ -1644,7 +1652,7 @@ def build_edges(
         for fkey, param_name in pi["functions"]:
             fn, cid = fkey
             target_id = fn_node_id(fn, cid)
-            key = (f"pathInput__{pi_name}", target_id, param_name)
+            key = (path_input_node_id(pi_name), target_id, param_name)
             if key not in seen_edges:
                 seen_edges.add(key)
                 edge_id = f"e__{pi_name}__{param_name}__{fn}__{cid}"
@@ -1654,9 +1662,9 @@ def build_edges(
                 edges.append(
                     {
                         "id": edge_id,
-                        "source": f"pathInput__{pi_name}",
+                        "source": path_input_node_id(pi_name),
                         "target": target_id,
-                        "targetHandle": f"in__{param_name}",
+                        "targetHandle": in_handle(param_name),
                     }
                 )
     path_to_fn_count = (
@@ -1779,14 +1787,14 @@ def inbound_edge_candidates_by_handle(
     """
     result: dict[str, str] = {}
     for param_name, type_val in input_params.items():
-        handle = f"in__{param_name}"
+        handle = in_handle(param_name)
         types = type_val if isinstance(type_val, (list, set, tuple)) else [type_val]
         for vt in types:
             result[f"e__{vt}__{fn}__{wid}"] = handle
     for cname in const_names:
-        result[f"e__{cname}__{fn}__{wid}"] = f"{PARAM_ID_PREFIX}{cname}"
+        result[f"e__{cname}__{fn}__{wid}"] = param_handle(cname)
     for pname in path_names:
-        result[f"e__{pname}__{fn}__{wid}"] = f"in__{pname}"
+        result[f"e__{pname}__{fn}__{wid}"] = in_handle(pname)
     return result
 
 
@@ -1890,7 +1898,7 @@ def manual_input_overrides(
     # Visible history sources per handle, in recorded order.
     visible: dict[str, list[str]] = {}
     for param, type_val in input_params.items():
-        handle = f"in__{param}"
+        handle = in_handle(param)
         types = type_val if isinstance(type_val, (list, set, tuple)) else [type_val]
         visible[handle] = [
             vt
@@ -1901,7 +1909,7 @@ def manual_input_overrides(
 
     overrides: dict = {}
     for (ifn, iwid, handle), edges in manual_index.items():
-        if ifn != fn or iwid != wid or not handle.startswith("in__"):
+        if ifn != fn or iwid != wid or not handle.startswith(IN_HANDLE_PREFIX):
             continue
         sources = list(visible.get(handle, []))
         drawn = False
@@ -1925,7 +1933,7 @@ def manual_input_overrides(
             # EachOf, exactly as history-plus-manual already was. Before
             # 2026-09-22 the index kept only one of them and the second was
             # silently dropped.
-            overrides[handle[len("in__") :]] = (
+            overrides[handle[len(IN_HANDLE_PREFIX) :]] = (
                 sources[0] if len(sources) == 1 else sources
             )
 
@@ -2334,7 +2342,7 @@ def hidden_wirings(
                     pi_by_fkey.get(fkey, {}),
                 ),
             )
-            handle = f"in__{param_name}"
+            handle = in_handle(param_name)
             if f"e__{pi_name}__{param_name}__{fn}__{wid}" not in hidden_edge_ids:
                 continue
             if (fn, wid, handle) in manual_index:
@@ -2448,27 +2456,27 @@ def candidate_edge_id(
     """
     src = strip_placement(source_id)
     tgt = strip_placement(target_id)
-    if src.startswith("pathInput__"):
+    if src.startswith(PATH_INPUT_ID_PREFIX):
         parsed = parse_fn_node_id(tgt)
-        if parsed is None or not target_handle or not target_handle.startswith("in__"):
+        if parsed is None or not target_handle or not target_handle.startswith(IN_HANDLE_PREFIX):
             return None
         fn, wid = parsed
         pi_name = src.split("__", 1)[1]
-        param_name = target_handle[len("in__") :]
+        param_name = target_handle[len(IN_HANDLE_PREFIX) :]
         return f"e__{pi_name}__{param_name}__{fn}__{wid}"
-    if src.startswith(("var__", PARAM_ID_PREFIX)):
+    if src.startswith((VAR_ID_PREFIX, PARAM_ID_PREFIX)):
         parsed = parse_fn_node_id(tgt)
         if parsed is None:
             return None
         fn, wid = parsed
         x = src.split("__", 1)[1]
         return f"e__{x}__{fn}__{wid}"
-    if tgt.startswith("var__"):
+    if tgt.startswith(VAR_ID_PREFIX):
         parsed = parse_fn_node_id(src)
         if parsed is None:
             return None
         fn, wid = parsed
-        out_type = tgt[len("var__") :]
+        out_type = tgt[len(VAR_ID_PREFIX) :]
         return f"e__{fn}__{wid}__{out_type}"
     return None
 
@@ -2610,7 +2618,7 @@ def apply_placement_configs(
         stale_fresh = [
             nid
             for nid in orphans
-            if strip_placement(nid).startswith("fn__")
+            if strip_placement(nid).startswith(FN_ID_PREFIX)
             and parse_fn_node_id(nid) is None
             and strip_placement(nid).count("__") >= 2
         ]

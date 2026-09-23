@@ -73,6 +73,51 @@ that recognition should not be a bare string literal repeated across layers.
 #: distinguish "this id names real DB data" from a manual/opaque id.
 DB_DERIVED_PREFIXES = (VAR_ID_PREFIX, FN_ID_PREFIX, PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX)
 
+#: React Flow node type -> the canonical id prefix of that kind of node.
+#: The frontend's drop handler mirrors this (it mints manual ids before the
+#: backend sees them); ``tests/test_id_spelling.py`` pins the two together.
+NODE_TYPE_PREFIXES = {
+    "variableNode": VAR_ID_PREFIX,
+    "functionNode": FN_ID_PREFIX,
+    "parameterNode": PARAM_ID_PREFIX,
+    "pathInputNode": PATH_INPUT_ID_PREFIX,
+}
+
+# ---------------------------------------------------------------------------
+# Handles — the port an edge attaches to
+# ---------------------------------------------------------------------------
+#
+# A function's input port is ``in__{argument}``, its output port
+# ``out__{output name}``. An edge from a PARAMETER targets
+# ``param__{argument}`` instead -- the Parameter's own id prefix, so
+# ``graph_builder`` and ``plot_service`` (which binds a variant axis to the
+# node feeding a port) spell it identically. All three were string literals
+# at ~30 sites until 2026-09-23.
+
+IN_HANDLE_PREFIX = "in__"
+OUT_HANDLE_PREFIX = "out__"
+PARAM_HANDLE_PREFIX = PARAM_ID_PREFIX
+
+
+def in_handle(argument: str) -> str:
+    return f"{IN_HANDLE_PREFIX}{argument}"
+
+
+def out_handle(name: str) -> str:
+    return f"{OUT_HANDLE_PREFIX}{name}"
+
+
+def param_handle(argument: str) -> str:
+    return f"{PARAM_HANDLE_PREFIX}{argument}"
+
+
+def handle_name(handle: "str | None", prefix: str = IN_HANDLE_PREFIX) -> str | None:
+    """The argument/output name in *handle*, or ``None`` if *handle* is not
+    a *prefix* handle (or is empty)."""
+    if not handle or not handle.startswith(prefix):
+        return None
+    return handle[len(prefix) :]
+
 
 class BareNodeId(str):
     """A canonical node id with no placement suffix."""
@@ -195,3 +240,33 @@ def parse_fn_node_id(node_id: str) -> tuple[str, str] | None:
     if len(suffix) != 16 or not all(c in "0123456789abcdef" for c in suffix):
         return None
     return fn_name, suffix
+
+
+# ---------------------------------------------------------------------------
+# Variable / Parameter / PathInput node ids
+# ---------------------------------------------------------------------------
+
+
+def var_node_id(var_type: str) -> BareNodeId:
+    return BareNodeId(f"{VAR_ID_PREFIX}{var_type}")
+
+
+def param_node_id(name: str) -> BareNodeId:
+    return BareNodeId(f"{PARAM_ID_PREFIX}{name}")
+
+
+def path_input_node_id(name: str) -> BareNodeId:
+    return BareNodeId(f"{PATH_INPUT_ID_PREFIX}{name}")
+
+
+def fn_nodes_prefix(fn_name: str) -> str:
+    """The prefix every composite node id of *fn_name* starts with
+    (``fn__{fn}__``) -- for "all of this function's nodes" scans."""
+    return f"{FN_ID_PREFIX}{fn_name}__"
+
+
+def legacy_fn_node_id(fn_name: str) -> BareNodeId:
+    """``fn__{fn}`` with no token: pre-call-site documents and a few manual
+    edge lookups still name a function node this way."""
+    return BareNodeId(f"{FN_ID_PREFIX}{fn_name}")
+
