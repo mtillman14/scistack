@@ -774,11 +774,6 @@ def get_all_variable_names() -> list[str]:
     return sorted(_matlab_variables.keys())
 
 
-def get_all_path_input_names() -> list[str]:
-    """Return sorted list of all registered MATLAB PathInput names."""
-    return sorted(_matlab_path_inputs.keys())
-
-
 def get_all_parameter_names() -> list[str]:
     """Return sorted list of all registered MATLAB Parameter names."""
     return sorted(_matlab_parameters.keys())

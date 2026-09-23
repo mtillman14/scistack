@@ -51,6 +51,28 @@ both bundles rebuilt.
 - [ ] Left: untick `subject=1`. Right: tick `subject=1` → it comes back fully; the footer shows no "−1 subject".
 - [ ] Right: untick every location one by one. The LAST untick leaves every box unticked (it used to re-tick them all); the footer reads "All locations (−N subject)". Then tick one trial → only that trial is ticked.
 
+## 0y. Schema Selection honoured by MATLAB runs and pipeline runs — added 2026-09-23
+
+**What changed:** a node's Schema Selection (the location picker) now applies
+exactly on MATLAB runs (it used to be squashed into per-key lists and could run
+more than selected) and on pipeline runs, Python and MATLAB (they ignored it).
+Backend + MATLAB only.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. On a MATLAB node, pick a RAGGED selection (all of one subject, plus one
+   session of another) and click **Run**.
+2. Run the whole pipeline containing that node (Python or MATLAB).
+
+**What you should see**
+- The generated command has a `'locations', '{"exclude_levels": …, "include": …}'`
+  line, and MATLAB's `… N iterations` line counts only the selected locations.
+- The pipeline run iterates the same locations as the node's own Run.
+
+---
+
 ## 0x. MATLAB addpath breakdown in scidb.log — added 2026-09-23
 
 **What changed:** the generated MATLAB script now times each `addpath`

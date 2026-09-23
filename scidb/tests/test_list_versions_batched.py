@@ -35,7 +35,9 @@ def test_versions_are_listed_with_their_save_kwargs(db):
     _seed(db)
     versions = db.list_versions(Versioned, subject="1")
     assert len(versions) == 2
-    assert {v["schema"]["subject"] for v in versions} == {"1"}
+    # restore_schema_value gives the key's typed value back ("1" -> 1); this
+    # test is about the batched branch params, not that conversion.
+    assert {str(v["schema"]["subject"]) for v in versions} == {"1"}
     notes = {v["branch_params"].get("__save__.note") for v in versions}
     assert notes == {"first", "second"}
 

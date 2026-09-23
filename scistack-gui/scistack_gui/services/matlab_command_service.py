@@ -649,12 +649,10 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         db_path=db_path,
         schema_keys=list(db.dataset_schema_keys),
         variants=fn_variants if fn_variants else params.get("variants"),
-        # A MATLAB command can only spell one value list per schema key, so a
-        # ragged selection is projected onto that shape here — and the
-        # projection runs MORE than was selected. `report` logs exactly what
-        # was lost rather than letting the generated script quietly disagree
-        # with the picker. Closing it means teaching +scifor/for_each.m the
-        # same `locations=` argument the Python side has.
+        # One value list per schema key: the per-key projection of a ragged
+        # selection, which bounds what MATLAB resolves. The EXACT selection
+        # travels beside it as `locations` (below), which the bridge applies
+        # to the combos it hands MATLAB (cleanup-audit F6).
         schema_filter=_schema_selection.report(
             params.get("schema_selection"),
             db,
@@ -679,6 +677,8 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
             function_name, manual_edges, manual_nodes
         )
         or None,
+        # The exact selection, beside the schema_filter projection above.
+        locations=params.get("schema_selection") or None,
         output_types=output_types if output_types else None,
         project_root=project_root,
         entities_script=_entities_script(),
@@ -943,6 +943,13 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                 # single-node command; the pipeline script used to drop it,
                 # so a glued step ran on unreshaped input (cleanup-audit F17).
                 "glue": _collect_glue_chains(fn_label, manual_edges, manual_nodes)
+                or None,
+                # This node's own location selection (cleanup-audit F36): the
+                # pipeline script used one request-wide schema_filter for
+                # every step and ignored each node's selection.
+                "locations": pipeline_store.get_node_config(db, node_id).get(
+                    "schemaSelection"
+                )
                 or None,
                 "parameter_names": _collect_parameter_names(
                     fn_label, manual_edges, manual_nodes

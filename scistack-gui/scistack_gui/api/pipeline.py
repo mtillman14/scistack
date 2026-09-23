@@ -71,39 +71,6 @@ def _fn_params_from_registry(fn_name: str) -> list[str]:
     return []
 
 
-def _node_id_to_var_label(
-    node_id: str,
-    existing_ids: set[str],
-    nodes: list[dict],
-    manual_nodes: dict[str, dict],
-) -> str | None:
-    """Resolve a node ID to its variable label, or None if not a variable node.
-
-    Thin wrapper around domain.edge_resolver.node_id_to_var_label that
-    builds the existing_node_labels dict from the nodes list.
-    """
-    from scistack_gui.domain.edge_resolver import node_id_to_var_label
-
-    existing_node_labels = {n["id"]: n["data"]["label"] for n in nodes}
-    return node_id_to_var_label(node_id, existing_node_labels, manual_nodes)
-
-
-def _get_record_counts(db: DatabaseManager, var_types: set[str]) -> dict[str, int]:
-    """
-    Query the row count of each variable type's table directly.
-    Used for nodes that have data but no for_each variants (e.g. raw .save() calls).
-    Returns 0 for types whose table doesn't exist yet.
-    """
-    counts: dict[str, int] = {}
-    for vtype in var_types:
-        try:
-            row = db._duck._fetchall(f'SELECT COUNT(*) FROM "{vtype}"')
-            counts[vtype] = int(row[0][0]) if row else 0
-        except Exception:
-            counts[vtype] = 0
-    return counts
-
-
 def _build_matlab_fn_proxy(fn_name: str):
     """Build a MatlabLineageFcn proxy for use in check_node_state.
 

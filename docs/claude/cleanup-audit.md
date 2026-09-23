@@ -588,16 +588,16 @@ scidb owner rather than add a MATLAB-side rule.
 | F2 | high | coupling | MATLAB for_each built from 7 private scidb.foreach steps | §1.4 |
 | F3 | med | perf (N+1) — **fixed 2026-09-23: one `branch_params_batch` pass; its silent `except: return []` now warns; tests unrun** | `list_versions` does 2 graph walks per row | §1.7 |
 | F4 | med | structure | `_for_each_prepare` 1,522 lines; scifor `for_each` 1,039 lines / 29 params | §1.3 |
-| F5 | med | silent failure | ambient `get_database()`/schema lookups swallowed in foreach | §1.4, §1.6 |
-| F6 | med | parity | `locations`/`track_lineage` missing from MATLAB for_each | §1.5 |
+| F5 | med | silent failure — **fixed 2026-09-23: `database.database_or_none` (only DatabaseNotConfiguredError reads as None) replaces 13 swallowing lookups in foreach; tests unrun** | ambient `get_database()`/schema lookups swallowed in foreach | §1.4, §1.6 |
+| F6 | med | parity — **locations fixed 2026-09-23: `+scidb/for_each.m` 'locations' (JSON) -> bridge filters combos; generator emits the exact selection. `track_lineage` remains Python-only; tests unrun** | `locations`/`track_lineage` missing from MATLAB for_each | §1.5 |
 | F7 | med | coupling | scidb depends on 8 private sciduckdb converters | §1.4 |
 | F8 | low | test placement | scihist: 114 src lines, 7,920 test lines | §1.1 |
-| F9 | low | dead code — **partial 2026-09-23: `database._load_by_record_row` (118 lines) deleted; bridge candidates remain** | ~680 unreferenced lines, top 5 listed | §1.8 |
+| F9 | low | dead code — **done 2026-09-23 for private/internal functions: `_load_by_record_row`, 6 bridge functions, scifor `_describe_result`, `_is_tabular_dict`, 2 api/pipeline helpers, `get_all_path_input_names` (~480 lines). Kept: public methods / scistackplot API / decorator routes** | ~680 unreferenced lines, top 5 listed | §1.8 |
 | F10 | low | readability | GUI forwarding chains (3 hops to intent_store) | §1.9 |
 | F11 | high | owner gap (B1) — **fixed, tests unrun** | Parameter declared↔argument name not recorded; run duplicates the Parameter node | §2.1, §3 |
 | F12 | med | owner split (B2) — **fixed, tests unrun** | symbolic vs resolved "all columns" gives a false unused-intent chip | §2.3, §3 |
 | F13 | med | rival recipes — **root cause 2026-09-23: NOT a recipe drift. The MATLAB bridge passes a Python sentinel as `fn`; the save path hashed the sentinel's own body. Fixed: the sentinel carries the MATLAB digest as `source_hash`, and `function_sources_for` treats digest-only as nothing to capture; tests unrun** | MATLAB vs Python function hash drift blocks source capture | §2.1 |
-| F14 | med | dual holder | dataset schema keys mirrored into the scifor global in 3 places | §2.2 |
+| F14 | med | dual holder — **fixed 2026-09-23: scidb reads `database.dataset_schema_keys_of`, never scifor's copy back; the copy is still written for scifor; tests unrun** | dataset schema keys mirrored into the scifor global in 3 places | §2.2 |
 | F15 | med | perf — **instrumented 2026-09-23, awaiting a measured run** | `get_pipeline` 10 s after a run (real data) | §3 |
 | F16 | med | perf (N+1) — **instrumented 2026-09-23 (`[timing] pipeline_variants` by query kind), awaiting a measured run** | `provenance_query.pipeline_variants` runs ~4 queries per invocation — likely F15 | found fixing B1 |
 | F17 | med | dropped kwarg — **fixed 2026-09-23: glue forwarded by Pipeline.m replay and per step in the MATLAB pipeline script; tests unrun** | MATLAB `Pipeline.m` replay forwards no `glue`; the MATLAB pipeline-script generator passes no `glue` to `_for_each_call_lines` | found fixing B1 |
@@ -619,6 +619,7 @@ scidb owner rather than add a MATLAB-side rule.
 | F33 | med | silent no-op | the panel omitted null location keys, so `split_node_config` never cleared a stated level (fixed: all three keys always sent) | found fixing F23 |
 | F34 | high | silent data loss | `intent_store._import_once` marked the one-time legacy import DONE on any error, so a lock during it dropped legacy hides/pending values/edges permanently (fixed with F1: only a missing source table counts as nothing to copy; other errors retry next open) | found fixing F1 |
 | F35 | med | feature gap | MATLAB function source is never captured (`_function_source` rows exist only for Python): nothing sends the `.m` text. Needed for any code-version view of MATLAB functions (variant-selection). Bridge-side: send `source_text` with the digest, verify the digest matches before storing | found fixing F13 |
+| F36 | high | ignored setting | a node's Schema Selection applied only to its own Run button: the Python pipeline passed no `locations`, the MATLAB pipeline one request-wide `schema_filter` for every step (fixed 2026-09-23: both read each node's stored `schemaSelection`; tests unrun) | found fixing F6 |
 
 ## 6. Reproducing
 

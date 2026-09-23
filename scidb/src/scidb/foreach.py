@@ -38,7 +38,8 @@ from .bindings import (
     signature_conflicts_with,
     variant_signature,
 )
-from .exceptions import AmbiguousParamError
+from .exceptions import AmbiguousParamError, DatabaseNotConfiguredError
+from .database import database_or_none, dataset_schema_keys_of
 from .input_spec import find_pathinput, is_loadable, spec_name, type_name, variable_type
 from .parameter import declared_parameter_names
 from .roles import endpoint_kind as _roles_endpoint_kind
@@ -441,12 +442,7 @@ def for_each(
     if active_db is None and (
         skip_computed or schema_filter is not None or schema_keys is not None
     ):
-        try:
-            from .database import get_database
-
-            active_db = get_database()
-        except Exception:
-            active_db = None
+        active_db = database_or_none()
 
     if schema_filter is not None or schema_keys is not None:
         if active_db is None:
@@ -785,12 +781,7 @@ def _for_each_execute(
     # when nothing else triggers that wrapping.
     _kt_db = db
     if _kt_db is None:
-        try:
-            from scidb.database import get_database
-
-            _kt_db = get_database()
-        except Exception:
-            _kt_db = None
+        _kt_db = database_or_none()
     _schema_key_types = getattr(_kt_db, "dataset_schema_key_types", {}) or {}
     _schema_keys_for_types = list(getattr(_kt_db, "dataset_schema_keys", []) or [])
 
@@ -1712,10 +1703,10 @@ def _for_each_prepare(
         resolved_db = db
         if resolved_db is None:
             try:
-                from scidb.database import get_database
+                from .database import get_database
 
                 resolved_db = get_database()
-            except Exception:
+            except DatabaseNotConfiguredError:
                 raise ValueError(
                     f"Empty list [] was passed for {needs_resolve}, which means "
                     f"'use all levels', but no database is available. Either pass "
@@ -1886,12 +1877,7 @@ def _for_each_prepare(
     Log.debug("stringifying metadata iterable values for schema keys")
     _resolved_db_for_str = db
     if _resolved_db_for_str is None:
-        try:
-            from scidb.database import get_database
-
-            _resolved_db_for_str = get_database()
-        except Exception:
-            _resolved_db_for_str = None
+        _resolved_db_for_str = database_or_none()
     if _resolved_db_for_str is not None and hasattr(
         _resolved_db_for_str, "dataset_schema_keys"
     ):
@@ -2079,12 +2065,7 @@ def _for_each_prepare(
     # recompute; unaffected outputs correctly skip.)
     _exclusion_db = db or resolved_db
     if _exclusion_db is None:
-        try:
-            from scidb.database import get_database
-
-            _exclusion_db = get_database()
-        except Exception:
-            _exclusion_db = None
+        _exclusion_db = database_or_none()
 
     if _exclusion_db is not None:
         from .exclusions import filter_excluded_combos
@@ -2145,7 +2126,7 @@ def _for_each_prepare(
             glue_fusion = _glue.fuse_glue(
                 loaded_inputs,
                 deferred_glue_chains,
-                schema_keys=list(_scifor.get_schema() or []),
+                schema_keys=dataset_schema_keys_of(db),
                 apply_bulk=(glue_language == "python"),
             )
     per_combo_glue = glue_fusion.per_combo
@@ -2285,7 +2266,9 @@ def _for_each_prepare(
 
     # --- Step 12: Build full combos: base_combos × valid rid-combos per schema location ---
     Log.debug("expanding combos with record-ID variants")
-    current_schema_keys = list(_scifor.get_schema() or [])
+    # The database is the one holder of the dataset's schema keys; scifor's
+    # set_schema copy is for scifor, never read back here (cleanup-audit F14).
+    current_schema_keys = dataset_schema_keys_of(db)
 
     base_combos = all_combos
     Log.debug(
@@ -3430,11 +3413,8 @@ def _resolve_mapping_inputs(
 
     resolved_db = db
     if resolved_db is None:
-        try:
-            from scidb.database import get_database
-
-            resolved_db = get_database()
-        except Exception:
+        resolved_db = database_or_none()
+        if resolved_db is None:
             return {}
     if resolved_db is None or not hasattr(resolved_db, "mapping_data_columns"):
         return {}
@@ -3550,10 +3530,10 @@ def _resolve_colname_from_db(colname: "ColName", db: Any | None) -> str:
     resolved_db = db
     if resolved_db is None:
         try:
-            from scidb.database import get_database
+            from .database import get_database
 
             resolved_db = get_database()
-        except Exception:
+        except DatabaseNotConfiguredError:
             raise ValueError(
                 "ColName requires a database to resolve column names. "
                 "Either pass db= to for_each or call configure_database() first."
@@ -3779,12 +3759,7 @@ def _load_input(
     if isinstance(var_spec, Merge):
         _merge_db = db
         if _merge_db is None:
-            try:
-                from scidb.database import get_database
-
-                _merge_db = get_database()
-            except Exception:
-                pass
+            _merge_db = database_or_none()
         if _merge_needs_per_combo(var_spec) or _merge_db is None:
             # Use per-combo when a constituent lacks bulk-load support, or when
             # there is genuinely no database — without one, the bulk loader
@@ -3950,12 +3925,7 @@ def _load_input(
         if hasattr(var_spec, "load"):
             _check_db = db
             if _check_db is None:
-                try:
-                    from scidb.database import get_database
-
-                    _check_db = get_database()
-                except Exception:
-                    pass
+                _check_db = database_or_none()
             if _check_db is not None and hasattr(_check_db, "load_all_as_df"):
                 loaded_df = _load_var_type_as_spread(
                     var_spec,
@@ -4444,11 +4414,8 @@ def _endpoint_artifact_path(
 def _stamp_db_name(db: Any) -> "str | None":
     """Basename of the active database file for the stamp blob."""
     if db is None:
-        try:
-            from .database import get_database
-
-            db = get_database()
-        except Exception:
+        db = database_or_none()
+        if db is None:
             return None
     p = getattr(db, "dataset_db_path", None)
     return _Path(p).name if p is not None else None
@@ -4622,12 +4589,7 @@ def _resolve_for_columns(inputs: dict, db: Any | None) -> dict:
 
     resolved_db = db
     if resolved_db is None:
-        try:
-            from scidb.database import get_database
-
-            resolved_db = get_database()
-        except Exception:
-            resolved_db = None
+        resolved_db = database_or_none()
 
     resolved_cols: dict[str, list[str]] = {}
     for name, cs in iterate_params.items():
@@ -4686,12 +4648,7 @@ def _load_var_type_as_spread(
     # Resolve the database instance.
     resolved_db = db
     if resolved_db is None:
-        try:
-            from scidb.database import get_database
-
-            resolved_db = get_database()
-        except Exception:
-            pass
+        resolved_db = database_or_none()
 
     if resolved_db is not None and hasattr(resolved_db, "load_all_as_df"):
         # Fast path: bulk engine with spread layout.
@@ -5091,10 +5048,7 @@ def _save_results(
     if db is not None and hasattr(db, "dataset_schema_keys"):
         schema_keys_set = set(db.dataset_schema_keys)
     else:
-        try:
-            schema_keys_set = set(_scifor.get_schema() or [])
-        except Exception:
-            pass
+        schema_keys_set = set(dataset_schema_keys_of(None))
 
     # Determine which columns are metadata (not output names)
     meta_cols = [c for c in result_tbl.columns if c not in output_names]
@@ -5663,17 +5617,7 @@ def _save_results(
 
 def _get_schema_keys(db: Any | None) -> set:
     """Return the set of dataset_schema_keys from db or the global database."""
-    if db is not None and hasattr(db, "dataset_schema_keys"):
-        return set(db.dataset_schema_keys)
-    try:
-        from .database import get_database
-
-        _db = get_database()
-        if hasattr(_db, "dataset_schema_keys"):
-            return set(_db.dataset_schema_keys)
-    except Exception:
-        pass
-    return set()
+    return set(dataset_schema_keys_of(db))
 
 
 def _has_pathinput(inputs: dict) -> bool:
@@ -5718,14 +5662,8 @@ def _propagate_schema(db, distribute: bool) -> None:
         _scifor.set_schema(list(db.dataset_schema_keys))
         return
 
-    # No explicit db: try the global database.
-    _global_db = None
-    try:
-        from scidb.database import get_database
-
-        _global_db = get_database()
-    except Exception:
-        pass
+    # No explicit db: the global one, or None only when none is configured.
+    _global_db = database_or_none()
 
     if _global_db is not None and hasattr(_global_db, "dataset_schema_keys"):
         _scifor.set_schema(list(_global_db.dataset_schema_keys))
@@ -5740,12 +5678,7 @@ def _propagate_schema(db, distribute: bool) -> None:
 def _active_database():
     """The configured database, or ``None`` — for callers holding ``db=None``
     that still need a lookup (the Fixed-rid fallback at save)."""
-    try:
-        from .database import get_database
-
-        return get_database()
-    except Exception:
-        return None
+    return database_or_none()
 
 
 def _build_run_bindings(

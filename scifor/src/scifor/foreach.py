@@ -1328,29 +1328,6 @@ def _expand_column_result(col: str, res: Any) -> "list[tuple[str, Any]]":
     return [(col, res)]
 
 
-def _describe_result(val) -> str:
-    """Compact description of a function result value."""
-    try:
-        import pandas as pd
-
-        if isinstance(val, pd.DataFrame):
-            return f"DataFrame {val.shape[0]}x{val.shape[1]}"
-    except ImportError:
-        pass
-    try:
-        import numpy as np
-
-        if isinstance(val, np.ndarray):
-            return f"ndarray shape={val.shape}"
-    except ImportError:
-        pass
-    if isinstance(val, dict):
-        return f"dict ({len(val)} keys)"
-    if isinstance(val, (list, tuple)):
-        return f"{type(val).__name__} len={len(val)}"
-    return type(val).__name__
-
-
 # ---------------------------------------------------------------------------
 # Input classification
 # ---------------------------------------------------------------------------

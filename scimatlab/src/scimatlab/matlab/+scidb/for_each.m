@@ -55,6 +55,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       provenance edge so the GUI shows ONE Parameter node
 %                       after a run; never part of identity. See
 %                       scidb.parameter.declared_parameter_names (Python).
+%       locations     - JSON text: the schema location selection
+%                       {"include": [[[key, value], ...], ...],
+%                        "exclude_levels": {key: [values]}} — ragged prefixes
+%                       a per-key value list cannot say. Applied by the bridge
+%                       to the combos it hands this loop (same filter as
+%                       Python's for_each(locations=)).
 %       share_limits  - struct: input name -> string array of schema keys to
 %                       hold fixed; each group's [min max] is appended as a
 %                       trailing positional arg (declare `<input>_limits`
@@ -262,6 +268,13 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % --- parameter_names: struct (input -> declared Parameter) -> py.dict ---
     py_parameter_names = parameter_names_to_python(opts.parameter_names);
 
+    % --- locations: JSON text, parsed by the bridge (or py.None) ---
+    if isempty(opts.locations) || strlength(string(opts.locations)) == 0
+        py_locations = py.None;
+    else
+        py_locations = char(opts.locations);
+    end
+
     % --- Pipeline registration seam (deferred execution, stage 4) ---
     % Reuses the marshalled py objects above; registration must have zero
     % side effects, so this runs BEFORE prepare (no loads, no DB writes).
@@ -295,7 +308,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                        'schema_keys', py_schema_keys, ...
                        'schema_filter', py_schema_filter, ...
                        'glue', py_glue, ...
-                       'parameter_names', py_parameter_names)));
+                       'parameter_names', py_parameter_names, ...
+                       'locations', py_locations)));
             target_pipe.store_step(step_index, fn, inputs, outputs, opts);
             scidb.Log.info(['pipeline_step_registered (MATLAB): %s -> ' ...
                 'pipeline %s (deferred)'], fn_name, target_pipe.name);
@@ -325,7 +339,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'schema_keys', py_schema_keys, ...
                'schema_filter', py_schema_filter, ...
                'glue', py_glue, ...
-               'parameter_names', py_parameter_names));
+               'parameter_names', py_parameter_names, ...
+               'locations', py_locations));
     scidb.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
 
     % Dry-run: Python ran the scifor.for_each(dry_run=true) call itself
@@ -1779,6 +1794,8 @@ function [meta_args, opts] = split_options(varargin)
     opts.glue = struct();
     % Input name -> declared Parameter name (see the parameter_names help).
     opts.parameter_names = struct();
+    % Schema location selection as JSON text ('' = none). See the help.
+    opts.locations = '';
     opts.fn_name_override = '';
     opts.fn_hash_override = '';
     % Deferred pipeline registration: '' = ambient (register into the
@@ -1792,7 +1809,7 @@ function [meta_args, opts] = split_options(varargin)
     reserved_opts = ["dryrun", "save", "preload", "astable", "db", ...
                      "parallel", "distribute", "where", "introspect", ...
                      "skipcomputed", "finalized", "sharelimits", ...
-                     "schemakeys", "schemafilter", "glue", "parameternames", ...
+                     "schemakeys", "schemafilter", "glue", "parameternames", "locations", ...
                      "fnname", "fnhash", "pipeline"];
 
     meta_args = {};
@@ -1871,6 +1888,9 @@ function [meta_args, opts] = split_options(varargin)
                     i = i + 2; continue;
                 case "parameter_names"
                     opts.parameter_names = varargin{i+1};
+                    i = i + 2; continue;
+                case "locations"
+                    opts.locations = varargin{i+1};
                     i = i + 2; continue;
                 case "pipeline"
                     opts.pipeline = varargin{i+1};

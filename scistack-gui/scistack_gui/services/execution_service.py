@@ -2145,6 +2145,12 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 pipeline=pipe,
                 glue=build_run_glue(target, fn_label) or None,
                 parameter_names=build_run_parameter_names(target) or None,
+                # This node's own location selection, as its Run button uses
+                # (cleanup-audit F36: pipeline runs ignored it).
+                locations=(pipeline_store.get_node_config(db, node_id) or {}).get(
+                    "schemaSelection"
+                )
+                or None,
                 distribute=step_options.distribute,
                 as_table=step_options.as_table,
                 **schema_iterables,

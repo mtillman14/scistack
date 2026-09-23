@@ -816,6 +816,7 @@ def generate_matlab_command(
     run_options: dict | None = None,
     run_id: "str | None" = None,
     parameter_names: "dict[str, str] | None" = None,
+    locations: "dict | None" = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -1000,6 +1001,9 @@ def generate_matlab_command(
         template_names_str = _format_parameter_names_pair(parameter_names)
         if template_names_str:
             template_tail += f", ...\n        {template_names_str}"
+        template_locations_str = _format_locations_pair(locations)
+        if template_locations_str:
+            template_tail += f", ...\n        {template_locations_str}"
         lines.append("try")
         lines.append("    % Run (fill in inputs/outputs)")
         lines.append(f"    scidb.for_each(@{function_name}, ...")
@@ -1070,6 +1074,7 @@ def generate_matlab_command(
             glue=glue,
             run_options=run_options,
             parameter_names=parameter_names,
+            locations=locations,
         )
     )
 
@@ -1228,6 +1233,7 @@ def _for_each_call_lines(
     glue: dict[str, list[dict]] | None = None,
     run_options: dict | None = None,
     parameter_names: "dict[str, str] | None" = None,
+    locations: "dict | None" = None,
 ) -> list[str]:
     """One (indented) ``<matlab_fn>(@function_name, ...)`` block per grouped
     (inputs, constants) entry — the call body shared between a single
@@ -1305,6 +1311,14 @@ def _for_each_call_lines(
         names_str = _format_parameter_names_pair(parameter_names)
         if names_str:
             opts_str = f"{opts_str}, ...\n{indent}    {names_str}" if opts_str else names_str
+        # The EXACT location selection, applied by the bridge to the combos it
+        # hands MATLAB (cleanup-audit F6). schema_filter above is only its
+        # per-key projection, which can run more than was selected.
+        locations_str = _format_locations_pair(locations)
+        if locations_str:
+            opts_str = (
+                f"{opts_str}, ...\n{indent}    {locations_str}" if opts_str else locations_str
+            )
 
         lines.append(f"{indent}% Run")
         lines.append(f"{indent}{matlab_fn}(@{function_name}, ...")
@@ -1319,6 +1333,22 @@ def _for_each_call_lines(
             lines.append(f"{indent}    {outputs_str}{tail});")
         lines.append("")
     return lines
+
+
+def _format_locations_pair(locations: "dict | None") -> str:
+    """``'locations', '<json>'`` for ``+scidb/for_each.m``, or ``""`` for no
+    selection. JSON rather than a MATLAB struct: the selection is nested
+    lists (ragged include prefixes), which MATLAB->Python conversion does not
+    round-trip; the bridge parses it (``bridge._locations_from_matlab``)."""
+    import json
+
+    from scifor.locations import LocationFilter
+
+    selection = LocationFilter.of(locations) if locations else None
+    if selection is None or selection.is_empty():
+        return ""
+    text = json.dumps(selection.to_dict(), sort_keys=True)
+    return f"'locations', {_format_matlab_value(text)}"
 
 
 def _format_parameter_names_pair(parameter_names: "dict[str, str] | None") -> str:
@@ -1565,6 +1595,7 @@ def generate_matlab_pipeline_command(
                 glue=step.get("glue"),
                 run_options=step.get("run_options"),
                 parameter_names=step.get("parameter_names"),
+                locations=step.get("locations"),
             )
         )
     for comment in skip_comments:

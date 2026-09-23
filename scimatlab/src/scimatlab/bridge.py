@@ -16,23 +16,6 @@ from hashlib import sha256
 STRING_REPR_DELIMITER = "-"
 
 
-def _describe_value(val):
-    """Return a short type/shape string for logging."""
-    import numpy as np
-    import pandas as pd
-
-    t = type(val).__name__
-    if isinstance(val, pd.DataFrame):
-        return f"DataFrame {val.shape[0]}x{val.shape[1]} cols={list(val.columns)}"
-    if isinstance(val, np.ndarray):
-        return f"ndarray shape={val.shape} dtype={val.dtype}"
-    if isinstance(val, (list, tuple)):
-        return f"{t} len={len(val)}"
-    if isinstance(val, (int, float, str, bool)):
-        return f"{t}"
-    return f"{t}"
-
-
 # ---------------------------------------------------------------------------
 # Proxy classes
 # ---------------------------------------------------------------------------
@@ -222,87 +205,6 @@ def _reconstruct_input_for_keys(spec):
     return spec
 
 
-def build_for_each_config_keys(
-    fn_name: str,
-    fn_hash: str,
-    inputs_spec: dict,
-    where_key=None,
-    distribute: bool = False,
-    as_table=None,
-) -> dict:
-    """Return the canonical ``ForEachConfig.to_version_keys()`` dict.
-
-    MATLAB ships a JSON-friendly description of inputs (see
-    ``_reconstruct_input_for_keys`` for the spec format) plus the
-    pre-computed function name and source hash. We reconstruct the
-    Python-side wrappers, run them through ``ForEachConfig`` so the
-    serialization logic stays in one place, then replace the sentinel-
-    function hash with the MATLAB-provided one.
-
-    The function name uses ``__name__`` so ForEachConfig's ``__fn`` matches
-    the MATLAB-visible function name. The MATLAB caller is responsible for
-    passing the same name MATLAB's ``functions(fcn).function`` returns.
-
-    Parameters
-    ----------
-    fn_name : str
-        Function name (e.g. "bandpass").
-    fn_hash : str
-        16- or 64-char hex string from ``compute_matlab_function_hash``.
-        Stored in the returned dict's ``__fn_hash`` field unchanged.
-    inputs_spec : dict
-        ``{param_name: kind-tagged-spec}``. See
-        ``_reconstruct_input_for_keys`` for the spec format.
-    where_key : str or None
-        Already-stringified where-filter key (MATLAB calls
-        ``filter.py_filter.to_key()`` before passing).
-    distribute : bool
-        Per the scidb.for_each ``distribute=`` flag.
-    as_table : bool, list, or None
-        Per the scidb.for_each ``as_table=`` flag.
-
-    Returns
-    -------
-    dict
-        Canonical version_keys dict (same structure as
-        ``ForEachConfig.to_version_keys()``).
-    """
-    from scidb.foreach_config import ForEachConfig
-
-    inputs = {
-        name: _reconstruct_input_for_keys(spec)
-        for name, spec in dict(inputs_spec).items()
-    }
-
-    # ForEachConfig requires a callable; use a local sentinel so the rest of
-    # to_version_keys runs unchanged, then overwrite __fn_hash. The sentinel
-    # is not stored anywhere — its hash is discarded.
-    def _sentinel():
-        pass
-
-    _sentinel.__name__ = fn_name
-
-    # Convert as_table from a py.list/tuple to a Python list for ForEachConfig.
-    if as_table is not None and not isinstance(as_table, bool):
-        try:
-            as_table = list(as_table)
-        except TypeError:
-            pass
-
-    cfg = ForEachConfig(
-        _sentinel,
-        inputs,
-        where=where_key,
-        distribute=bool(distribute),
-        as_table=as_table,
-    )
-    keys = cfg.to_version_keys()
-    # Replace the sentinel's auto-computed hash with the MATLAB-provided one.
-    keys["__fn"] = fn_name
-    keys["__fn_hash"] = fn_hash
-    return keys
-
-
 # ---------------------------------------------------------------------------
 # Two-pass for_each bridge: prepare → MATLAB scifor loop → save
 #
@@ -345,12 +247,6 @@ def _sanitize_rid_key(key: str) -> str:
     """
     if key.startswith("__"):
         return "x" + key
-    return key
-
-
-def _unsanitize_rid_key(key: str) -> str:
-    if key.startswith("x__"):
-        return key[1:]
     return key
 
 
@@ -473,6 +369,20 @@ def _make_matlab_fn_sentinel(fn_name: str, fn_hash: "str | None" = None):
     if fn_hash:
         _sentinel.source_hash = str(fn_hash)
     return _sentinel
+
+
+def _locations_from_matlab(locations):
+    """``+scidb/for_each.m``'s ``locations`` (JSON text, a mapping, or None)
+    -> the mapping ``scifor.locations`` reads, or None. JSON because a ragged
+    include list does not survive MATLAB->Python struct conversion."""
+    import json
+
+    if locations is None:
+        return None
+    if isinstance(locations, (str, bytes)):
+        text = locations.decode() if isinstance(locations, bytes) else locations
+        return json.loads(text) if text.strip() else None
+    return dict(locations)
 
 
 def _parameter_names_from_matlab(names) -> "dict[str, str] | None":
@@ -607,6 +517,8 @@ def for_each_prepare(
         If any input resolves to a ``PerComboLoader`` (per-combo loading
         is not yet supported on the MATLAB path).
     """
+    # JSON text from +scidb/for_each.m -> mapping (cleanup-audit F6).
+    locations = _locations_from_matlab(locations)
     from scidb.bindings import COMBO_KEY, RECORD_ID_COLUMN
     from scidb.foreach import (
         _build_skip_hook,
@@ -1458,92 +1370,6 @@ def ensure_variable_classdefs(names, project_start=None) -> dict:
     return write_variable_classdefs(wanted, project_start=project_start)
 
 
-def discover_pathinput_combos(pi, user_metadata=None):
-    """Discover filesystem combos for a PathInput and filter by user values.
-
-    Replaces the MATLAB-side PathInput discovery+filter block in
-    ``+scidb/for_each.m``. Returns a dict with both the (filtered) combos
-    and the per-key value lists actually present in the filtered result,
-    so MATLAB can update its ``meta_values`` to reflect what's on disk
-    (dropping invented combos and filling in keys the user passed as []).
-
-    The user-value filter algorithm mirrors what MATLAB used to do:
-        - keys not present in combo dicts are ignored
-        - empty user-value lists are treated as "no constraint"
-        - non-empty user-value lists keep only combos whose value (stringified)
-          is in the user-provided set
-
-    Parameters
-    ----------
-    pi : scifor.pathinput.PathInput
-        The Python PathInput instance to discover from. MATLAB's
-        ``scifor.PathInput`` exposes its underlying Python instance via
-        ``pi.py_obj`` so the same configuration (template, root_folder,
-        regex flag) is used for discovery and per-combo load.
-    user_metadata : dict[str, list] or None
-        ``{key: [user_values...]}``. Empty list means "no constraint".
-        Keys absent from combos are ignored.
-
-    Returns
-    -------
-    dict with keys:
-        combos          : list of dicts (filtered)
-        original_count  : int (combos before user-value filtering)
-        present_keys    : list of str (placeholder keys appearing in combos)
-        values_by_key   : dict[str, list[str]] — distinct stringified values
-                          per placeholder key in the filtered combos
-                          (preserves insertion order, deduplicated)
-    """
-    combos = pi.discover()
-    original_count = len(combos)
-
-    if not combos:
-        return {
-            "combos": [],
-            "original_count": 0,
-            "present_keys": [],
-            "values_by_key": {},
-        }
-
-    present_keys = list(combos[0].keys())
-
-    # Filter by user-supplied metadata values
-    user = dict(user_metadata or {})
-    if user:
-        kept = []
-        for combo in combos:
-            keep = True
-            for key, user_vals in user.items():
-                if key not in combo:
-                    continue
-                uv = list(user_vals or [])
-                if not uv:
-                    continue  # empty means no constraint
-                if str(combo[key]) not in {str(v) for v in uv}:
-                    keep = False
-                    break
-            if keep:
-                kept.append(combo)
-        combos = kept
-
-    # Compute distinct stringified values per key (insertion-ordered)
-    values_by_key: dict = {}
-    for key in present_keys:
-        seen = {}
-        for c in combos:
-            v = str(c[key])
-            if v not in seen:
-                seen[v] = None
-        values_by_key[key] = list(seen.keys())
-
-    return {
-        "combos": combos,
-        "original_count": original_count,
-        "present_keys": present_keys,
-        "values_by_key": values_by_key,
-    }
-
-
 def compute_matlab_function_hash(
     source_text: str, name: str = "", unpack_output: bool = False
 ) -> str:
@@ -2365,39 +2191,6 @@ def load_and_extract(py_class, metadata_dict, version_id="latest", db=None, wher
     return wrap_batch_bridge(py_vars)
 
 
-def load_var_type_all_as_df(py_class, where=None, db=None):
-    """Return the assembled DataFrame produced by ``_load_var_type_all``.
-
-    Calls scidb's ``_load_var_type_all`` and surfaces the resulting
-    DataFrame (with ``__record_id``, ``__branch_params``, schema columns,
-    and data columns) as a single object that crosses the MATLAB↔Python
-    bridge in one call. This replaces the MATLAB-side
-    ``lineage_results_to_table`` reassembly path and preserves the
-    ``__record_id`` / ``__branch_params`` columns needed for variant
-    tracking.
-
-    Parameters
-    ----------
-    py_class : type
-        BaseVariable subclass (Python surrogate registered for the MATLAB
-        type).
-    where : Filter or None
-        Optional ``where=`` filter.
-    db : DatabaseManager or None
-        Optional database; uses global default when None.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Assembled DataFrame. Empty DataFrame when no rows match.
-    """
-    from scidb.database import get_database
-    from scidb.foreach import _load_var_type_all
-
-    _db = db if db is not None and not isinstance(db, type(None)) else get_database()
-    return _load_var_type_all(py_class, _db, where)
-
-
 def get_surrogate_class(type_name: str):
     """Retrieve the Python surrogate class for a MATLAB variable type.
 
@@ -2434,93 +2227,6 @@ def to_csv_bridge(type_name, filename, **kwargs):
     """
     cls = get_surrogate_class(type_name)
     cls.to_csv(str(filename), **kwargs)
-
-
-def get_data_column_name(py_class, db=None):
-    """Resolve the single data column name for a variable type.
-
-    Used by MATLAB's scidb.ColName to resolve column names via the
-    Python bridge.
-
-    Parameters
-    ----------
-    py_class : type
-        BaseVariable subclass to query.
-    db : DatabaseManager or None
-        Optional database; uses global default when None.
-
-    Returns
-    -------
-    str
-        The single data column name.
-
-    Raises
-    ------
-    ValueError
-        If the variable has 0 or 2+ data columns.
-    """
-    import json
-
-    from scidb.database import get_database
-
-    _db = db if db is not None and not isinstance(db, type(None)) else get_database()
-    var_name = py_class.__name__
-    schema_keys = list(_db.dataset_schema_keys)
-
-    # Via SciDuck._fetchone so execute+fetch stay under one lock. `_db` is a
-    # DatabaseManager (the dataset_schema_keys read above already requires
-    # one); the SciDuck it wraps is ._duck. `_db._execute` was an
-    # AttributeError — DatabaseManager has no _execute.
-    row = _db._duck._fetchone(
-        "SELECT dtype FROM _variables WHERE variable_name = ?",
-        [var_name],
-    )
-
-    if row is None:
-        # Variable not yet saved — fall back to view_name
-        if hasattr(py_class, "view_name"):
-            return py_class.view_name()
-        return var_name
-
-    dtype_meta = json.loads(row[0])
-    mode = dtype_meta.get("mode", "single_column")
-
-    if mode == "single_column":
-        col_names = list(dtype_meta.get("columns", {}).keys())
-        if col_names:
-            return col_names[0]
-        if hasattr(py_class, "view_name"):
-            return py_class.view_name()
-        return var_name
-
-    if mode == "dataframe":
-        df_columns = dtype_meta.get(
-            "df_columns", list(dtype_meta.get("columns", {}).keys())
-        )
-        data_cols = [c for c in df_columns if c not in schema_keys]
-        if len(data_cols) == 1:
-            return data_cols[0]
-        elif len(data_cols) == 0:
-            raise ValueError(
-                f"ColName({var_name}): variable has no data columns "
-                f"(all columns are schema keys). "
-                f"Columns: {df_columns}, schema keys: {schema_keys}"
-            )
-        else:
-            raise ValueError(
-                f"ColName({var_name}): variable has {len(data_cols)} "
-                f"data columns ({data_cols}), expected exactly 1. "
-                f"Schema keys: {schema_keys}"
-            )
-
-    if mode == "multi_column":
-        raise ValueError(
-            f"ColName({var_name}): not supported for dict-type (multi_column) variables."
-        )
-
-    if hasattr(py_class, "view_name"):
-        return py_class.view_name()
-    return var_name
 
 
 # ---------------------------------------------------------------------------
@@ -2597,6 +2303,7 @@ def pipeline_register_step(
     schema_filter=None,
     glue=None,
     parameter_names=None,
+    locations=None,
 ) -> int:
     """Register one MATLAB for_each call as a deferred step; returns the
     step's index in the pipeline's own step list (MATLAB stores the fn
@@ -2636,6 +2343,7 @@ def pipeline_register_step(
             "schema_filter": schema_filter_arg,
             "glue": _reconstruct_glue_chains(glue) or None,
             "parameter_names": _parameter_names_from_matlab(parameter_names),
+            "locations": _locations_from_matlab(locations),
             "__matlab__": True,
             "__matlab_fn_hash__": fn_hash,
         },

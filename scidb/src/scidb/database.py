@@ -390,26 +390,6 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
 _local = threading.local()
 
 
-def _is_tabular_dict(data):
-    """Return True if data is a dict where ALL values are 1D (or Nx1 column-vector) numpy arrays of equal length."""
-    if not isinstance(data, dict) or len(data) == 0:
-        return False
-    lengths = set()
-    for _k, v in data.items():
-        if not isinstance(v, np.ndarray):
-            return False
-        # Accept 1D arrays, Nx1 column vectors, and 1xN row vectors (from MATLAB)
-        if v.ndim == 1:
-            lengths.add(v.shape[0])
-        elif v.ndim == 2 and v.shape[0] == 1:
-            lengths.add(v.shape[1])
-        elif v.ndim == 2 and v.shape[1] == 1:
-            lengths.add(v.shape[0])
-        else:
-            return False
-    return len(lengths) == 1
-
-
 def _get_leaf_paths(d, prefix=()):
     """Recursively get all leaf paths in a nested dict.
 
@@ -792,6 +772,37 @@ def get_database() -> "DatabaseManager":
     if getattr(db, "_closed", False):
         db.reopen()
     return db
+
+
+def database_or_none(db: "DatabaseManager | None" = None) -> "DatabaseManager | None":
+    """*db* if given, else the configured database, else ``None`` — for a
+    caller that can proceed without one.
+
+    THE one spelling of "which database does this call use". Only "nothing
+    configured" (:class:`DatabaseNotConfiguredError`) reads as ``None``; any
+    other failure — a reopen that cannot get the file lock, above all —
+    propagates. ``foreach`` used to spell this as ``try: get_database()
+    except Exception: pass`` in a dozen places, so a locked database looked
+    exactly like no database and a run silently carried on with different
+    schema keys (cleanup-audit F5).
+    """
+    if db is not None:
+        return db
+    try:
+        return get_database()
+    except DatabaseNotConfiguredError:
+        return None
+
+
+def dataset_schema_keys_of(db: "DatabaseManager | None" = None) -> list[str]:
+    """The dataset's schema keys, from the database (the one holder).
+
+    ``scifor.set_schema`` keeps a COPY for scifor's standalone mode; scidb
+    reads the database, never that copy back (cleanup-audit F14). ``[]``
+    when no database is configured.
+    """
+    active = database_or_none(db)
+    return list(getattr(active, "dataset_schema_keys", None) or [])
 
 
 def _declared_rank_column(col, declared: list[str]) -> list[int]:
