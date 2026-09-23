@@ -2111,7 +2111,9 @@ def latest_runs(duck, fn_names) -> dict:
     return out
 
 
-def recorded_schema_keys(duck, fn_name: str, schema_keys) -> list[str] | None:
+def recorded_schema_keys(
+    duck, fn_name: str, schema_keys, call_ids=None
+) -> list[str] | None:
     """The schema keys *fn_name* ITERATED on its most recent run, in dataset
     order — or ``None`` when it has never run.
 
@@ -2129,24 +2131,60 @@ def recorded_schema_keys(duck, fn_name: str, schema_keys) -> list[str] | None:
     function ran, not at every key the dataset has. Defaulting to every key
     is how a trial-level step re-run from the GUI fanned out to cycle level
     and wrote ten records per trial (test_dag_runs, 2026-09-19).
+
+    ``call_ids`` scopes the answer to those call sites — one canvas node's
+    CURRENT wiring (``scidb.schema_level``, 2026-09-23). Without it the answer
+    is the function NAME's latest run, which another node of the same
+    function can have produced (cleanup-audit F24); only callers with no node
+    (the CLI) should omit it.
     """
     keys = list(schema_keys or [])
     if not keys:
         return None
-    last = latest_runs(duck, [fn_name]).get(fn_name)
-    if last is None:
-        return None
     cols = ", ".join(f's."{k}"' for k in keys)
-    rows = duck._fetchall(
+    base = (
         f"SELECT DISTINCT inv.distribute, {cols} "  # noqa: S608 - keys are the dataset's own
         "FROM _run_invocation ri "
         "JOIN _invocation inv ON inv.invocation_id = ri.invocation_id "
         "JOIN _invocation_output io ON io.invocation_id = ri.invocation_id "
         "JOIN _record r ON r.record_id = io.output_record_id "
         "LEFT JOIN _schema s ON s.schema_id = r.schema_id "
-        "WHERE ri.run_id = ?",
-        [last["run_id"]],
+        "WHERE ri.run_id = ?"
     )
+    if call_ids is not None:
+        # Scoped to ONE node's call sites (cleanup-audit F24): the latest run
+        # among the invocations those call sites own, and only their records.
+        # A call site set with no invocations (a new or rewired node) has no
+        # history — None, so the caller falls through to the inputs rule.
+        wanted = {c for c in call_ids if c}
+        inv_ids = sorted(
+            {
+                inv
+                for cfg in function_variant_configs(duck, fn_name)
+                if config_call_id(fn_name, cfg) in wanted
+                for inv in cfg.get("invocation_ids") or ()
+            }
+        )
+        if not inv_ids:
+            return None
+        ph = ", ".join("?" for _ in inv_ids)
+        latest = duck._fetchall(
+            "SELECT ri.run_id FROM _run_invocation ri "  # noqa: S608 - placeholders only
+            "JOIN _run r ON r.run_id = ri.run_id "
+            f"WHERE ri.invocation_id IN ({ph}) "
+            "ORDER BY r.timestamp DESC, ri.run_id DESC LIMIT 1",
+            inv_ids,
+        )
+        if not latest:
+            return None
+        rows = duck._fetchall(
+            base + f" AND ri.invocation_id IN ({ph})", [latest[0][0], *inv_ids]
+        )
+    else:
+        last = latest_runs(duck, [fn_name]).get(fn_name)
+        if last is None:
+            return None
+        rows = duck._fetchall(base, [last["run_id"]])
     if not rows:
         return None
     populated: set[str] = set()
@@ -2251,8 +2289,20 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     the signature slot only sometimes; see ``get_aggregated_variants`` for the
     two cases where it is not.
     """
-    from .foreach_config import CallSite, RunOptions
+    import time as _time
 
+    from .foreach_config import CallSite, RunOptions
+    from .log import Log
+
+    # Per-query-kind totals: this loop issues several queries PER INVOCATION
+    # and was ~2.8 s of a 10 s canvas build (cleanup-audit §4.1, F16). The
+    # [timing] line says which query kind to batch first.
+    timings: dict[str, float] = {}
+
+    def _add(phase: str, t0: float) -> None:
+        timings[phase] = timings.get(phase, 0.0) + (_time.perf_counter() - t0)
+
+    _t_all = _time.perf_counter()
     inv_rows = duck._fetchall(
         "SELECT invocation_id, function_name, as_table, distribute, across_variants, "
         "function_hash FROM _invocation WHERE function_name != ?",
@@ -2266,7 +2316,9 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     for inv_id, fn_name, as_table, distribute, across_variants, fn_hash in inv_rows:
         if inv_id in glue_invs:
             continue  # a glue hop is not a pipeline step (D5)
+        _t = _time.perf_counter()
         var_inputs, constants = invocation_inputs(duck, inv_id)
+        _add("invocation_inputs", _t)
         input_types = {i["param_name"]: i["variable_type"] for i in var_inputs}
         pooled = sorted(across_variants or [])
         # The column selections the call used (`_invocation_input.selector`,
@@ -2279,6 +2331,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         # loop that already runs several per invocation.
         selectors: dict = {}
         parameter_names: dict = {}
+        _t = _time.perf_counter()
         for param, sel, declared in duck._fetchall(
             "SELECT param_name, selector, declared_name FROM _invocation_input "
             "WHERE invocation_id = ? "
@@ -2289,10 +2342,13 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                 selectors[param] = json.loads(sel)
             if declared is not None and param in constants:
                 parameter_names[param] = declared
+        _add("selectors", _t)
         # PathInput specs ride in input_types as their to_key() JSON string —
         # preserves the legacy contract (get_aggregated_variants parses them) and
         # call_id parity (forward to_call_id includes them in __inputs).
+        _t = _time.perf_counter()
         input_types.update(invocation_path_inputs(duck, inv_id))
+        _add("path_inputs", _t)
         glue_names = {
             i["param_name"]: list(i["glue_chain"])
             for i in var_inputs
@@ -2306,12 +2362,14 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         # redesign). So two for_each calls differing only by where= are the same
         # config variant here.
 
+        _t = _time.perf_counter()
         out_rows = duck._fetchall(
             "SELECT io.output_num, io.output_record_id, rec.type "
             "FROM _invocation_output io JOIN _record rec ON rec.record_id = io.output_record_id "
             "WHERE io.invocation_id = ?",
             [inv_id],
         )
+        _add("outputs", _t)
         for output_num, out_rid, out_type in out_rows:
             if output_type is not None and out_type != output_type:
                 continue
@@ -2408,7 +2466,16 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     groups[gkey]["output_num"] = output_num
             group_records[gkey].add(out_rid)
 
-    return _annotate_variants(duck, groups, group_records)
+    _t = _time.perf_counter()
+    annotated = _annotate_variants(duck, groups, group_records)
+    _add("annotate", _t)
+    timings["total"] = _time.perf_counter() - _t_all
+    Log.timings(
+        "pipeline_variants",
+        timings,
+        extra=f"{len(inv_rows)} invocation(s) -> {len(annotated)} variant(s)",
+    )
+    return annotated
 
 
 def _annotate_variants(duck, groups: dict, group_records: dict) -> list[dict]:

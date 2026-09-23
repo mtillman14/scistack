@@ -72,6 +72,73 @@ class _PreambleTiming:
 
     def __init__(self) -> None:
         self._emitted: list[tuple[str, str]] = []  # (variable, label)
+        # Extra temporaries and scidb.Log lines a section contributes beyond
+        # its one duration (the addpath breakdown, cleanup-audit F29).
+        self._extra_temps: list[str] = []
+        self._extra_summary: list[str] = []
+
+    def addpath_section(self, dirs: "list[str] | None") -> list[str]:
+        """The addpath block, timed PER DIRECTORY (cleanup-audit F29).
+
+        addpath was ~4.4 s of a ~4.7 s preamble on every run against a
+        network share, and one total could not say why. This records, per
+        directory, its time and whether it was already on the path, plus the
+        path's length before and after; :meth:`summary_lines` reports them
+        through scidb.Log as ``[timing] matlab_addpath`` naming the slowest
+        directory, and each directory at DEBUG.
+
+        One literal ``addpath('<dir>');`` statement per directory, in the
+        original order, so path precedence is unchanged and the script still
+        reads as the plain addpath list it always was.
+        """
+        dirs = list(dirs or [])
+        if not dirs:
+            return []
+        quoted = [f"'{_escape_matlab_string(d)}'" for d in dirs]
+        body = [
+            f"scistack_addpath_dirs__ = {{{', '.join(quoted)}}};",
+            f"scistack_addpath_each__ = zeros(1, {len(dirs)});",
+            f"scistack_addpath_known__ = false(1, {len(dirs)});",
+            "scistack_addpath_before__ = numel(strsplit(path, pathsep));",
+        ]
+        for i, q in enumerate(quoted, start=1):
+            body.append(
+                f"scistack_addpath_known__({i}) = ismember({q}, strsplit(path, pathsep)); "
+                f"scistack_t__ = tic; addpath({q}); "
+                f"scistack_addpath_each__({i}) = toc(scistack_t__);"
+            )
+        body.append("scistack_addpath_after__ = numel(strsplit(path, pathsep));")
+        self._extra_temps.extend(
+            [
+                "scistack_addpath_dirs__",
+                "scistack_addpath_each__",
+                "scistack_addpath_known__",
+                "scistack_addpath_before__",
+                "scistack_addpath_after__",
+                "scistack_addpath_max__",
+                "scistack_addpath_imax__",
+                "scistack_addpath_k__",
+                "scistack_t__",
+            ]
+        )
+        self._extra_summary = [
+            "% addpath breakdown: which directory costs what (cleanup-audit F29).",
+            "[scistack_addpath_max__, scistack_addpath_imax__] = max(scistack_addpath_each__);",
+            "scidb.Log.info(['[timing] matlab_addpath: TOTAL=%.3fs (dirs=%d, "
+            "already_on_path=%d, path_entries=%d->%d, slowest=%.3fs %s)'], ...",
+            "    sum(scistack_addpath_each__), numel(scistack_addpath_dirs__), ...",
+            "    sum(scistack_addpath_known__), scistack_addpath_before__, ...",
+            "    scistack_addpath_after__, scistack_addpath_max__, ...",
+            "    scistack_addpath_dirs__{scistack_addpath_imax__});",
+            "for scistack_addpath_k__ = 1:numel(scistack_addpath_dirs__)",
+            "    scidb.Log.debug('[timing]   addpath %.3fs already_on_path=%d %s', ...",
+            "        scistack_addpath_each__(scistack_addpath_k__), ...",
+            "        scistack_addpath_known__(scistack_addpath_k__), ...",
+            "        scistack_addpath_dirs__{scistack_addpath_k__});",
+            "end",
+            "",
+        ]
+        return self.section(body, "scistack_t_addpath__", "addpath")
 
     def section(self, body: list[str], var: str, label: str) -> list[str]:
         """``body`` wrapped in tic/toc, recording its duration into ``var``.
@@ -104,6 +171,7 @@ class _PreambleTiming:
                 "scidb.Log.info('[timing] matlab_preamble: TOTAL=%.3fs', ...",
                 "    toc(scistack_script_t0__));",
                 "",
+                *self._extra_summary,
             ]
         phases = ", ".join(f"{label}=%.3fs" for _, label in self._emitted)
         args = ", ".join(var for var, _ in self._emitted)
@@ -112,6 +180,7 @@ class _PreambleTiming:
             f"scidb.Log.info('[timing] matlab_preamble: TOTAL=%.3fs ({phases})', ...",
             f"    toc(scistack_script_t0__), {args});",
             "",
+            *self._extra_summary,
         ]
 
     def total_lines(self) -> list[str]:
@@ -127,6 +196,7 @@ class _PreambleTiming:
         if self._emitted:
             temps.append("scistack_section_t0__")
             temps.extend(var for var, _ in self._emitted)
+        temps.extend(self._extra_temps)
         return [
             "fprintf('[SciStack][timing] script_total %.3fs\\n', "
             "toc(scistack_script_t0__));",
@@ -826,11 +896,8 @@ def generate_matlab_command(
     )
     lines.extend(timing.section(pyenv_lines, "scistack_t_pyenv__", "pyenv_preamble"))
 
-    # addpath entries
-    addpath_lines = [
-        f"addpath('{_escape_matlab_string(d)}');" for d in (addpath_dirs or [])
-    ]
-    lines.extend(timing.section(addpath_lines, "scistack_t_addpath__", "addpath"))
+    # addpath entries, timed per directory (cleanup-audit F29)
+    lines.extend(timing.addpath_section(addpath_dirs))
     lines.extend(
         timing.section(_run_origin_lines(), "scistack_t_origin__", "run_origin")
     )
@@ -1347,9 +1414,10 @@ def generate_matlab_pipeline_command(
         compilation, see ``execution_service.derive_target_for_node`` /
         ``build_backend_pipeline``). Each entry:
         ``{"function_name": str, "variants": list[dict] | None,
-        "schema_filter": dict | None, "schema_level": list[str] | None,
+        "schema_filter": dict | None, "schema_level": SchemaLevel,
         "path_inputs": dict | None, "sweeps": dict | None,
-        "variable_inputs": dict | None, "run_options": dict | None}``.
+        "variable_inputs": dict | None, "glue": dict | None,
+        "parameter_names": dict | None, "run_options": dict | None}``.
         ``run_options`` comes from that node's SAVED config, not from canvas
         node data -- a pipeline run touches nodes the user never selected, so
         there is no live React state to read (see
@@ -1402,11 +1470,8 @@ def generate_matlab_pipeline_command(
     )
     lines.extend(timing.section(pyenv_lines, "scistack_t_pyenv__", "pyenv_preamble"))
 
-    # addpath entries
-    addpath_lines = [
-        f"addpath('{_escape_matlab_string(d)}');" for d in (addpath_dirs or [])
-    ]
-    lines.extend(timing.section(addpath_lines, "scistack_t_addpath__", "addpath"))
+    # addpath entries, timed per directory (cleanup-audit F29)
+    lines.extend(timing.addpath_section(addpath_dirs))
     lines.extend(
         timing.section(_run_origin_lines(), "scistack_t_origin__", "run_origin")
     )
@@ -1497,6 +1562,7 @@ def generate_matlab_pipeline_command(
                 matlab_fn="scidb.for_each",
                 sweeps=step.get("sweeps"),
                 variable_inputs=step.get("variable_inputs"),
+                glue=step.get("glue"),
                 run_options=step.get("run_options"),
                 parameter_names=step.get("parameter_names"),
             )
@@ -1954,50 +2020,49 @@ def _format_run_option_pairs(
 
 
 def _resolve_iterate_keys(
-    schema_level: list[str] | None,
+    schema_level,
     schema_keys: list[str],
     function_name: str,
 ) -> list[str]:
-    """Which schema keys this run iterates — the tri-state of ``schema_level``.
+    """The keys the generated ``for_each`` iterates, ``[]`` for one
+    dataset-level call (no schema kwargs emitted).
 
-    ``schema_level`` is **three**-valued, and the third value is the one that
-    used to be lost:
+    *schema_level* should be a RESOLVED ``scidb.schema_level.SchemaLevel``:
+    both service routes resolve it with the one owner
+    (``execution_service.default_schema_level``), the same decision a Python
+    Run makes (cleanup-audit F22). This generator used to read a null level as
+    "every key", so a placeholder-less PathInput loader ran once per populated
+    key combination on the same file (``loadDemographics`` ×714).
 
-    - ``None``  -> not specified; iterate ALL of ``schema_keys``.
-    - ``[k...]`` -> iterate exactly those keys.
-    - ``[]``     -> the user deselected EVERY level; iterate nothing, i.e. one
-      dataset-level call.
-
-    The old test was ``schema_level if schema_level else schema_keys``, which
-    is a truthiness test, so the empty list folded back into "all keys" and a
-    deselect-everything node ran the full schema grid anyway. With
-    ``distribute=true`` that is not merely extra work — it changes the
-    distribute target (scifor resolves it from the DEEPEST ITERATED key), so
-    the run also saved at the wrong level. See
-    ``.claude/plan-schema-level-empty-distribute.md`` and
-    ``docs/claude/gui-run-options-flow.md``.
-
-    ``domain/variant_resolver.resolve_variants`` and ``api/run.py``'s Python
-    path already distinguish the three; this is the same contract, spelled the
-    same way.
+    A raw stored value (``None`` / ``[]`` / ``[keys]``) is still accepted for
+    direct callers with no database (previews, tests): ``[]`` is one call and
+    ``[keys]`` those keys, as everywhere; an UNSET level cannot be resolved
+    here, so it falls back to every key with a WARNING naming the caller bug.
     """
-    if schema_level is None:
-        return list(schema_keys)
-    if not schema_level:
-        # INFO, not DEBUG: "no schema kwargs in the generated script" is
-        # otherwise indistinguishable from a generator that dropped them
-        # (which is exactly the bug this replaced), and it is the only
-        # observable difference between a dataset-level run and a full-grid
-        # run before MATLAB starts printing combos.
-        logger.info(
-            "generate_matlab_command: %s: schema_level=[] — every schema level "
-            "deselected, emitting NO schema kwargs (one dataset-level call; "
-            "distribute, if set, targets the top of the schema %s)",
+    from scidb.schema_level import SchemaLevel
+
+    level = SchemaLevel.from_stated(schema_level, schema_keys)
+    if level.is_unset:
+        logger.warning(
+            "generate_matlab_command: %s: schema level reached the generator "
+            "UNRESOLVED — iterating every key %s. A service route must resolve "
+            "it with execution_service.default_schema_level first.",
             function_name or "<fn>",
             list(schema_keys),
         )
-        return []
-    return list(schema_level)
+        return list(schema_keys)
+    if level.is_one_call:
+        # INFO: "no schema kwargs in the generated script" is otherwise
+        # indistinguishable from a generator that dropped them, and it is the
+        # only observable difference between a dataset-level run and a
+        # full-grid run before MATLAB starts printing combos.
+        logger.info(
+            "generate_matlab_command: %s: one dataset-level call — emitting NO "
+            "schema kwargs (distribute, if set, targets the top of the schema %s)",
+            function_name or "<fn>",
+            list(schema_keys),
+        )
+    return level.iterate_keys()
 
 
 def _format_schema_kwargs(

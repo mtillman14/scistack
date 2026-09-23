@@ -235,69 +235,6 @@ def merge_pending_constants(
     return fn_variants
 
 
-def build_schema_kwargs(
-    schema_level: list[str] | None,
-    all_schema_keys: list[str],
-    schema_filter: dict[str, list] | None,
-    distinct_values: dict[str, list],
-) -> dict[str, list]:
-    """Build the schema kwargs dict for for_each.
-
-    Args:
-        schema_level: Which schema keys to iterate; None = all.
-        all_schema_keys: All schema keys from the DB.
-        schema_filter: {key: [selected values]}; None = all.
-        distinct_values: {key: [all_values]} from db.distinct_schema_values.
-
-    Returns:
-        {schema_key: [values_to_iterate]}.
-    """
-    logger.info(
-        "[variant_resolver] build_schema_kwargs: building schema kwargs for iteration"
-    )
-    iterate_keys = schema_level if schema_level is not None else list(all_schema_keys)
-    logger.debug(
-        "[variant_resolver] iterating over %d schema key(s): %s",
-        len(iterate_keys),
-        iterate_keys,
-    )
-
-    if schema_filter:
-        logger.debug(
-            "[variant_resolver] applying schema filter with %d key(s)",
-            len(schema_filter),
-        )
-        schema_kwargs = {}
-        for key in iterate_keys:
-            if key in schema_filter and schema_filter[key]:
-                schema_kwargs[key] = schema_filter[key]
-                logger.debug(
-                    "[variant_resolver] schema key '%s': using %d filtered value(s)",
-                    key,
-                    len(schema_filter[key]),
-                )
-            else:
-                schema_kwargs[key] = distinct_values.get(key, [])
-                logger.debug(
-                    "[variant_resolver] schema key '%s': using %d distinct value(s)",
-                    key,
-                    len(distinct_values.get(key, [])),
-                )
-        logger.info(
-            "[variant_resolver] build_schema_kwargs complete: %d schema key(s) configured",
-            len(schema_kwargs),
-        )
-        return schema_kwargs
-    else:
-        logger.debug("[variant_resolver] no schema filter, using all distinct values")
-        schema_kwargs = {key: distinct_values.get(key, []) for key in iterate_keys}
-        logger.info(
-            "[variant_resolver] build_schema_kwargs complete: %d schema key(s) configured",
-            len(schema_kwargs),
-        )
-        return schema_kwargs
-
-
 def constants_match(db_constants: dict, selected: dict) -> bool:
     """True if selected is a subset of db_constants (value equality as strings)."""
     return all(str(db_constants.get(k)) == str(v) for k, v in selected.items())

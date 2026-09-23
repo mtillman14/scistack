@@ -2310,7 +2310,9 @@ class DatabaseManager:
         )
         return result
 
-    def _reconstruct_metadata_from_row(self, row: pd.Series) -> tuple[dict, dict]:
+    def _reconstruct_metadata_from_row(
+        self, row: pd.Series, branch_params: "dict | None" = None
+    ) -> tuple[dict, dict]:
         """
         Reconstruct flat and nested metadata for a record.
 
@@ -2319,6 +2321,11 @@ class DatabaseManager:
         bipartite graph (the synthetic ``__save__`` invocation's constants —
         see :func:`provenance_query.derived_branch_params`). Internal pipeline
         markers (``__fn`` etc.) are not user metadata and are not exposed.
+
+        *branch_params* is the record's already-derived branch params, for a
+        caller that batched them (``provenance_query.branch_params_batch``);
+        without it this walks the record's ancestry itself, one record at a
+        time — the N+1 a loop over rows must not pay (cleanup-audit F3).
 
         Returns (flat_metadata, nested_metadata).
         """
@@ -2332,11 +2339,11 @@ class DatabaseManager:
         # Direct-save kwargs: __save__.<kwarg> entries in derived branch params.
         version = {}
         rid = row.get("record_id")
-        if rid is not None:
-
-            for k, v in provenance_query.derived_branch_params(self._duck, rid).items():
-                if k.startswith("__save__."):
-                    version[k[len("__save__.") :]] = v
+        if branch_params is None and rid is not None:
+            branch_params = provenance_query.derived_branch_params(self._duck, rid)
+        for k, v in (branch_params or {}).items():
+            if k.startswith("__save__."):
+                version[k[len("__save__.") :]] = v
 
         nested_metadata = {"schema": schema, "version": version}
         flat_metadata = {}
@@ -2388,125 +2395,6 @@ class DatabaseManager:
             return _unflatten_struct_columns(sub_df, dtype_meta["struct_columns"])
         else:
             return sub_df
-
-    def _load_by_record_row(
-        self,
-        variable_class: type[BaseVariable],
-        row: pd.Series,
-        loc: Any = None,
-        iloc: Any = None,
-    ) -> BaseVariable:
-        """
-        Load a variable instance given a _find_record row (save log joined to _record).
-
-        Determines native vs custom deserialization from _variables.dtype,
-        loads data from the data table by record_id, and constructs the
-        BaseVariable instance.
-        """
-        type_name = row["variable_name"]
-        table_name = type_name + "_data"
-        record_id = row["record_id"]
-        content_hash = row["content_hash"]
-        flat_metadata, nested_metadata = self._reconstruct_metadata_from_row(row)
-
-        # Get dtype from _variables to determine deserialization path
-        dtype_rows = self._duck._fetchall(
-            "SELECT dtype FROM _variables WHERE variable_name = ?",
-            [type_name],
-        )
-
-        if not dtype_rows:
-            raise NotFoundError(f"No dtype found for {type_name} in _variables")
-
-        dtype_meta = json.loads(dtype_rows[0][0])
-        is_custom = dtype_meta.get("custom", False)
-
-        if is_custom:
-            # Custom path: query by record_id
-            df = self._duck._fetchdf(
-                f'SELECT * FROM "{table_name}" WHERE record_id = ?',
-                [record_id],
-            )
-            # Drop record_id column (internal identifier)
-            df = df.drop(columns=["record_id"], errors="ignore")
-
-            if loc is not None:
-                if not isinstance(loc, (list, range, slice)):
-                    loc = [loc]
-                df = df.loc[loc]
-            elif iloc is not None:
-                if not isinstance(iloc, (list, range, slice)):
-                    iloc = [iloc]
-                df = df.iloc[iloc]
-
-            data = self._deserialize_custom_subdf(variable_class, df, dtype_meta)
-        else:
-            # Native path: query by record_id, restore type
-            row_df = self._duck._fetchdf(
-                f'SELECT * FROM "{table_name}" WHERE record_id = ?',
-                [record_id],
-            )
-            row_df = row_df.drop(columns=["record_id"], errors="ignore")
-
-            mode = dtype_meta.get("mode", "single_column")
-            columns_meta = dtype_meta.get("columns", {})
-
-            if mode == "dataframe":
-                # One DuckDB row per DataFrame row: apply _storage_to_python per cell.
-                result = {}
-                null_counts: dict = {}
-                for c, meta in columns_meta.items():
-                    if c in row_df.columns:
-                        n_null = count_null_list_elements(row_df[c])
-                        if n_null:
-                            null_counts[c] = n_null
-                        result[c] = [
-                            _storage_to_python(row_df[c].iloc[i], meta)
-                            for i in range(len(row_df))
-                        ]
-                if null_counts:
-                    # DEBUG here: load() is per record, and a bulk MATLAB load
-                    # of GAITRiteLoaded would otherwise emit 420 lines.
-                    Log.debug(
-                        f"load({type_name}, {record_id}): restored NULL list "
-                        f"element(s) as NaN: {null_counts}"
-                    )
-                df_columns = dtype_meta.get("df_columns", list(columns_meta.keys()))
-                data = pd.DataFrame(result, columns=df_columns)
-            else:
-                row_df = self._duck._restore_types(row_df, dtype_meta)
-                if len(row_df) == 1:
-                    if mode == "single_column":
-                        col_name = next(iter(columns_meta))
-                        data = row_df[col_name].iloc[0]
-                    elif mode == "multi_column":
-                        result = {}
-                        for c, meta in columns_meta.items():
-                            result[c] = _storage_to_python(row_df[c].iloc[0], meta)
-                        if dtype_meta.get("nested"):
-                            data = _unflatten_dict(result, dtype_meta["path_map"])
-                        else:
-                            data = result
-                    else:
-                        data = row_df
-                else:
-                    data = row_df
-
-        instance = variable_class(data)
-        instance.record_id = record_id
-        instance.metadata = flat_metadata
-        instance.content_hash = content_hash
-        # branch_params is the accumulated upstream constants (§6), derived from
-        # the bipartite graph rather than read from a stored column.
-        try:
-
-            instance.branch_params = provenance_query.derived_branch_params(
-                self._duck, record_id
-            )
-        except Exception:
-            instance.branch_params = {}
-
-        return instance
 
     def register(self, variable_class: type[BaseVariable]) -> None:
         """
@@ -3323,6 +3211,52 @@ class DatabaseManager:
             return None
         return list(dtype_meta.get("columns", {}).keys()) or None
 
+    def data_column_names(self, variable_class: type[BaseVariable]) -> "list[str] | None":
+        """The data columns a ``layout="spread"`` load of *variable_class*
+        returns, read from storage metadata (``_variables.dtype``) — no data
+        is loaded. ``None`` when metadata cannot answer and only a load can.
+
+        THE owner of that answer, mirroring :meth:`load_all_as_df`'s fast path
+        and :meth:`_assemble_df_from_records_and_data`: a ``dataframe`` or
+        ``multi_column`` type spreads its stored columns in stored order; a
+        ``single_column`` type spreads one column named after the variable
+        (``view_name``). Whatever routes the load to the iterator fallback
+        (custom or nested storage, an overridden ``__init__``, custom
+        serialization) answers ``None`` here too, so a caller never gets a
+        column list the real load would not produce.
+
+        Unlike reading ``loaded.columns``, this never includes a record's
+        direct-save kwarg columns (``version="v1"`` spreads as a ``version``
+        column): they are metadata, not data (cleanup-audit F28).
+        """
+        type_name = variable_class.__name__
+        rows = self._duck._fetchall(
+            "SELECT dtype FROM _variables WHERE variable_name = ?", [type_name]
+        )
+        if not rows:
+            return None
+        dtype_meta = json.loads(rows[0][0])
+        if (
+            variable_class.__init__ is not BaseVariable.__init__
+            or self._has_custom_serialization(variable_class)
+            or dtype_meta.get("custom")
+            or dtype_meta.get("nested")
+        ):
+            return None
+        data_cols = list(dtype_meta.get("columns", {}).keys())
+        mode = dtype_meta.get("mode", "single_column")
+        if mode == "single_column":
+            if not data_cols:
+                return None
+            return [
+                variable_class.view_name()
+                if hasattr(variable_class, "view_name")
+                else type_name
+            ]
+        if mode in ("dataframe", "multi_column"):
+            return data_cols or None
+        return None
+
     def load_all_as_df(
         self,
         variable_class: type[BaseVariable],
@@ -3861,15 +3795,28 @@ class DatabaseManager:
                 branch_params_filter=branch_params_filter,
                 include_excluded=include_excluded,
             )
-        except Exception:
+        except Exception as exc:
+            # Still answered as "no versions" (callers and MATLAB rely on a
+            # list), but no longer silently: an error here is not the same as
+            # a location with nothing saved.
+            Log.warn(
+                f"list_versions({variable_class.__name__}): record lookup failed "
+                f"({type(exc).__name__}: {exc}); reporting no versions"
+            )
             return []
 
-
+        # Every row's branch params from ONE upstream closure. This loop used
+        # to walk each record's ancestry twice (once for its save kwargs, once
+        # for branch_params) — the N+1 the batched helpers exist to avoid
+        # (cleanup-audit F3).
+        bp_map = provenance_query.branch_params_batch(
+            self._duck, list(records["record_id"]) if len(records) else []
+        )
         results = []
         for _, row in records.iterrows():
-            _, nested = self._reconstruct_metadata_from_row(row)
             # branch_params derived from the bipartite graph (§6), not a column.
-            bp = provenance_query.derived_branch_params(self._duck, row["record_id"])
+            bp = bp_map.get(row["record_id"], {})
+            _, nested = self._reconstruct_metadata_from_row(row, branch_params=bp)
             entry = {
                 "record_id": row["record_id"],
                 "schema": nested.get("schema", {}),

@@ -51,6 +51,69 @@ both bundles rebuilt.
 - [ ] Left: untick `subject=1`. Right: tick `subject=1` → it comes back fully; the footer shows no "−1 subject".
 - [ ] Right: untick every location one by one. The LAST untick leaves every box unticked (it used to re-tick them all); the footer reads "All locations (−N subject)". Then tick one trial → only that trial is ticked.
 
+## 0x. MATLAB addpath breakdown in scidb.log — added 2026-09-23
+
+**What changed:** the generated MATLAB script now times each `addpath`
+directory (addpath was ~4.4 s of every run's ~4.7 s preamble). Backend only.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Run any MATLAB function node.
+
+**What you should see**
+- In `scidb.log`, right after `[timing] matlab_preamble …`: one line
+  `[timing] matlab_addpath: TOTAL=…s (dirs=N, already_on_path=K,
+  path_entries=A->B, slowest=…s <dir>)`. Send it to Claude: it decides whether
+  the fix is fewer folders, skipping folders already on the path, or one slow
+  network folder.
+- Set the log level to DEBUG to see one `addpath … already_on_path=… <dir>`
+  line per folder.
+
+---
+
+## 0w. Schema Level: automatic by default, same on every route — added 2026-09-23
+
+**What changed:** an unset Schema Level is now "automatic" everywhere. Every
+route (Python Run, Python pipeline, MATLAB Run, MATLAB pipeline script) and the
+settings panel ask one owner: stated on the node, else where THIS node last
+ran under its current wiring, else its inputs' level, else every key. MATLAB
+used to run every populated key (`loadDemographics` ran 714 times on one file).
+Unticking every box (`[]`) now means one call on every route (a Python Run used
+to iterate EVERY key). Frontend rebuilt (both targets).
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+2. Keep `scidb.log` open; every run logs one `[schema-level] … -> iterating …
+   (<rule>) via <route>` line.
+
+**Frontend**
+1. Select `loadDemographics`. If you set its level by hand earlier, click
+   **Use automatic**.
+2. Select a node that has never run, wired to a trial-level variable and a
+   subject-level one.
+3. On any node, untick one box, then click **Use automatic**.
+4. Run `loadDemographics` (MATLAB).
+
+**What you should see**
+- Step 1: the Schema Level boxes are faded, the hint reads "Automatic — the
+  finest level its inputs carry · one call over the whole dataset", no box ticked.
+- Step 2: boxes subject…trial ticked (faded), hint "Automatic — the finest level
+  its inputs carry".
+- Step 3: after the untick the hint reads "Set on this node" and the rest of the
+  boxes stay ticked (they start from the automatic level, not from "all").
+  **Use automatic** returns to the faded state, and it survives a canvas refresh.
+- `as_table` no longer implies one call (F32, 2026-09-23): a never-run Python
+  node with `as_table` on and no level set now runs at its automatic level,
+  one table per location. To aggregate, untick the keys to pool over (untick
+  all for one call). Nodes that already ran as one call keep doing so.
+- Step 4: the MATLAB log shows `1 iteration: no metadata`, and `scidb.log`
+  shows `[schema-level] loadDemographics … -> iterating nothing: one call over
+  the whole dataset (the finest level its inputs carry) via matlab run`.
+
+---
+
 ## 0v. One Parameter node after a run; no false "not reflected" chip — added 2026-09-23
 
 **What changed:** (B1) a Parameter whose declared name differs from the

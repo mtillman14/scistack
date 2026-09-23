@@ -1652,98 +1652,129 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
 
 
 def default_schema_level(
-    db, function_name: str, targets: list[dict], *, stated=None
-) -> tuple["list[str] | None", str]:
-    """Which schema keys a run of *function_name* iterates when the caller
-    passes none — ``(keys, reason)``, ``reason`` naming the rule that
-    answered so the log can say so. ``keys`` is spelled the way
-    ``for_each(schema_keys=...)`` reads it: a list of keys, or ``None`` for
-    a once-per-dataset call (iterate nothing, pool every row).
+    db,
+    function_name: str,
+    targets: list[dict],
+    *,
+    stated=None,
+    node_id: "str | None" = None,
+    route: str = "",
+):
+    """``(SchemaLevel, rule)`` — which schema keys a run of *function_name*
+    iterates. Every run route calls this, and so does the settings panel
+    (``get_schema_level``), so what the panel shows is what a Run does.
 
-    The ONE owner of this default, for the run thread and the compiled
-    pipeline alike. Precedence, per ``docs/claude/intent-and-fact.md``:
+    The decision is scidb's (``scidb.schema_level.resolve_schema_level``:
+    stated > where this node last ran > its inputs > every key). This
+    function only gathers the GUI-side facts it needs:
 
-    1. **stated** — the Schema Level on the node (intent) wins outright;
-    2. **recorded** — the keys the function ITERATED on its last run, read
-       off the records it produced (``provenance_query.recorded_schema_keys``:
-       history as the floor);
-    3. **inputs** — for a node that has never run, the level its inputs
-       imply: every key any bound Variable's records populate or any bound
-       PathInput's template names, in dataset order
-       (``provenance_query.finest_schema_keys``). Two inputs at different
-       levels iterate the finer union; the coarser one broadcasts;
-    4. **all keys** — only when there is no history and no bound input to
-       read a level from, i.e. nothing to go on.
+    * *stated* — the node's stored ``schemaLevel`` (``null`` / ``[]`` /
+      ``[keys]``), read by ``SchemaLevel.from_stated``: ``[]`` is ONE CALL on
+      every route (cleanup-audit F26);
+    * the node's call sites — ``call_id`` of each HISTORY target. A target the
+      user rewired carries none (``variant_resolver`` drops it), so a rewired
+      or new node has no recorded level and falls to its inputs (user
+      decision 2026-09-23: history counts only under the current wiring);
+    * the bound inputs — variable types and PathInput objects (alternate
+      templates included) from the targets' bindings.
 
-    Defaulting straight to (4) is how a trial-level step re-run from the
-    canvas fanned out to cycle level (2026-09-19), and how a never-run
-    subject-level function would have run once per cycle with its input
-    broadcast 60 times.
+    ``as_table`` plays NO part: it is the format inputs arrive in (tables
+    keeping their schema-key columns), never how many calls there are. The
+    Python Run used to read "as_table, no level" as one call over the whole
+    dataset — a rule no other route had (cleanup-audit F32, dropped
+    2026-09-23 by user decision). To aggregate, state the level on the node.
+
+    Logs ONE ``[schema-level]`` line naming the route and the rule, so a run
+    that iterates the wrong keys says why.
     """
     from scidb import provenance_query as _pq
+    from scidb.schema_level import input_levels, resolve_schema_level
     from scistack_gui import registry
     from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, BINDING_VARIABLE
 
     schema_keys = list(db.dataset_schema_keys)
-    if stated:
-        return [k for k in schema_keys if k in set(stated)], "stated on the node"
 
-    try:
-        recorded = _pq.recorded_schema_keys(db._duck, function_name, schema_keys)
-    except Exception:
-        logger.warning(
-            "[execution] '%s': recorded schema level lookup failed",
-            function_name,
-            exc_info=True,
-        )
-        recorded = None
-    if recorded is not None:
-        # An empty recorded level is a real answer: the last run was one call
-        # over the whole dataset (records with no schema key). Spelled as
-        # for_each spells it — `None` iterates nothing, `[]` would mean every
-        # key. Only a missing history (`recorded is None`) falls through.
-        if recorded:
-            return recorded, "the level it last ran at"
-        return None, "the level it last ran at — none: one call over the whole dataset"
+    call_ids = {t.get("call_id") for t in targets or [] if t.get("call_id")}
+    recorded = None
+    if call_ids:
+        try:
+            recorded = _pq.recorded_schema_keys(
+                db._duck, function_name, schema_keys, call_ids=call_ids
+            )
+        except Exception:
+            logger.warning(
+                "[schema-level] '%s': recorded level lookup failed; using inputs",
+                function_name,
+                exc_info=True,
+            )
 
     type_names: set[str] = set()
-    templates: list[list[str]] = []
-    path_inputs = registry.get_path_inputs_registry()
+    path_inputs: list = []
+    registry_pis = registry.get_path_inputs_registry()
     for t in targets or []:
         for binding in (t.get("bindings") or {}).values():
             kind = binding.get("kind")
             ref = binding.get("ref")
             if kind == BINDING_VARIABLE:
                 type_names.update(ref if isinstance(ref, (list, tuple)) else [ref])
-            elif kind == BINDING_PATHINPUT:
-                pi = path_inputs.get(ref)
-                if pi is not None and hasattr(pi, "placeholder_keys"):
-                    templates.append(
-                        [k for k in pi.placeholder_keys() if k in schema_keys]
-                    )
-    levels: list[list[str]] = list(templates)
-    if type_names:
-        try:
-            levels.extend(
-                _pq.variable_schema_keys(db._duck, type_names, schema_keys).values()
-            )
-        except Exception:
-            logger.warning(
-                "[execution] '%s': input schema level lookup failed",
-                function_name,
-                exc_info=True,
-            )
-    if levels:
-        # At least one bound input has a known level. Their union may be EMPTY
-        # — a PathInput with no placeholder, a variable saved with no key —
-        # and that is a real level, not an absence: once over the whole
-        # dataset — `for_each(schema_keys=None)`, iterate nothing.
-        inferred = _pq.finest_schema_keys(levels, schema_keys)
-        if inferred:
-            return inferred, "the finest level its inputs carry"
-        return None, "the level its inputs carry — none: one call over the whole dataset"
+            elif kind == BINDING_PATHINPUT and ref in registry_pis:
+                path_inputs.append(registry_pis[ref])
+    try:
+        levels = input_levels(db._duck, type_names, path_inputs, schema_keys)
+    except Exception:
+        logger.warning(
+            "[schema-level] '%s': input level lookup failed",
+            function_name,
+            exc_info=True,
+        )
+        levels = []
 
-    return schema_keys, "no history and no bound input to read a level from"
+    level, rule = resolve_schema_level(schema_keys, stated, recorded, levels)
+    logger.info(
+        "[schema-level] %s node=%s stated=%s -> iterating %s (%s) via %s "
+        "[call sites %d, recorded %s, input levels %s]",
+        function_name,
+        node_id or "-",
+        "unset" if stated is None else stated,
+        level.describe(),
+        rule,
+        route or "?",
+        len(call_ids),
+        recorded,
+        levels,
+    )
+    return level, rule
+
+
+def node_schema_level(
+    db, node_id: "str | None", function_name: str, stated=None
+) -> dict:
+    """The level a Run of this node would iterate, for the settings panel:
+    ``{"state", "keys", "rule", "schema_keys"}``.
+
+    Built from EXACTLY what a Run passes (``derive_target_for_node`` + staged
+    pending overrides) through the same resolver, so the panel cannot show a level the run then ignores
+    (cleanup-audit F23). *stated* is the panel's current, possibly unsaved,
+    value.
+    """
+    from scistack_gui import pipeline_store
+
+    targets = (
+        derive_target_for_node(db, node_id)
+        if node_id
+        else derive_fn_targets(db, function_name)
+    )
+    targets = apply_pending_overrides(targets, pipeline_store.get_pending_constants(db))
+    level, rule = default_schema_level(
+        db,
+        function_name,
+        targets,
+        stated=stated,
+        node_id=node_id,
+        route="settings panel",
+    )
+    return {**level.to_json(rule), "schema_keys": list(db.dataset_schema_keys)}
+
 
 def build_run_parameter_names(target: dict) -> dict[str, str]:
     """The for_each ``parameter_names=`` dict for a derived target:
@@ -2067,6 +2098,22 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         # a pipeline run is still a GUI-started run and still holds the node
         # id, so nothing about it needs inferring afterwards.
         record_dispatch_wirings(db, node_id, fn_label, targets, None)
+        # Which keys THIS node iterates, resolved ONCE from all its targets —
+        # the same inputs the single-node Run passes, so a node runs at the
+        # same level from its own Run button and from a pipeline run.
+        level, why = default_schema_level(
+            db,
+            fn_label,
+            targets,
+            stated=(pipeline_store.get_node_config(db, node_id) or {}).get(
+                "schemaLevel"
+            ),
+            node_id=node_id,
+            route=f"python pipeline {pipeline_id}",
+        )
+        schema_iterables = {
+            k: all_iterables[k] for k in level.iterate_keys() if k in all_iterables
+        }
         seen_target_keys: set = set()
         for target in targets:
             target_key = (
@@ -2076,23 +2123,6 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
             if target_key in seen_target_keys:
                 continue
             seen_target_keys.add(target_key)
-            # Which keys THIS step iterates: the node's own level, else where
-            # it last ran, else what its inputs imply, else every key — the
-            # same owner as the run thread (default_schema_level). A step
-            # that iterated every key regardless ran trial-level functions
-            # once per cycle with their inputs broadcast.
-            stated = (pipeline_store.get_node_config(db, node_id) or {}).get(
-                "schemaLevel"
-            )
-            level, why = default_schema_level(db, fn_label, [target], stated=stated)
-            schema_iterables = {k: all_iterables[k] for k in (level or []) if k in all_iterables}
-            logger.info(
-                "[execution] scope %s: '%s' iterates %s (%s)",
-                pipeline_id,
-                fn_label,
-                level if level is not None else "nothing: one call",
-                why,
-            )
             try:
                 inputs = build_run_inputs(target, fn_label, db)
                 output_cls = registry.get_variable_class(target["output_type"])

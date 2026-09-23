@@ -244,3 +244,28 @@ class TestCaptureDuringForEach:
         assert len(captured) == 2
         assert any("1000.0" in body for body in captured)
         assert any("1000.0" not in body for body in captured)
+
+
+# ---------------------------------------------------------------------------
+# A digest with no text is "nothing to capture" (cleanup-audit F13)
+# ---------------------------------------------------------------------------
+
+
+def test_a_digest_only_stand_in_captures_nothing_and_reports_its_digest():
+    """The MATLAB bridge hands for_each a Python sentinel carrying the .m
+    file's digest as ``source_hash``. Hashing the sentinel's OWN body gave a
+    hash that never matched the stored one ("the two recipes have drifted" on
+    every MATLAB run) — and a match would have stored the sentinel as the
+    user's code."""
+    from scidb.foreach_config import function_sources_for
+
+    def stand_in():
+        raise RuntimeError("never called")
+
+    stand_in.__name__ = "loadGaitRiteOneFile"
+    stand_in.source_hash = "221afae652af0000"
+
+    fn_hash, entry, units = function_sources_for(stand_in)
+    assert fn_hash == "221afae652af0000"
+    assert entry == "loadGaitRiteOneFile"
+    assert units == {}

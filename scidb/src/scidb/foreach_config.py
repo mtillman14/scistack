@@ -79,15 +79,25 @@ def function_sources_for(fn) -> tuple[str, str | None, dict]:
 
     MATLAB is handled by duck-typing a ``source_text`` attribute, matching how
     ``function_hash_for`` duck-types ``source_hash`` (scidb does not import
-    scimatlab). **Nothing supplies it yet** — ``MatlabLineageFcn`` carries only
-    the digest — so MATLAB functions currently capture no source. The hook is
-    here so closing that is a bridge-side change rather than a scidb one.
+    scimatlab). **Nothing supplies it yet** — ``MatlabLineageFcn`` and the
+    bridge's sentinel carry only the digest — so MATLAB functions currently
+    capture no source. The hook is here so closing that is a bridge-side change
+    rather than a scidb one.
+
+    A ``source_hash`` with NO text means exactly that: nothing to capture,
+    returned as no units. The object in hand is then only a stand-in for the
+    real (MATLAB) function, and hashing ITS Python body produced a hash that
+    never matched the stored one — a false "recipes have drifted" warning on
+    every MATLAB run (cleanup-audit F13).
     """
     explicit_text = getattr(fn, "source_text", None)
+    inner = getattr(fn, "fcn", fn)
+    name = getattr(inner, "__name__", None) or getattr(fn, "__name__", "?")
     if explicit_text:
-        inner = getattr(fn, "fcn", fn)
-        name = getattr(inner, "__name__", None) or getattr(fn, "__name__", "?")
         return str(getattr(fn, "source_hash", "") or ""), name, {name: explicit_text}
+    digest = getattr(fn, "source_hash", None)
+    if digest:
+        return str(digest), name, {}
 
     fn_hash, units = compute_function_hash_with_sources(fn, truncate=16)
     # `_hash_source` records the entry point before recursing into callees, and

@@ -26,6 +26,14 @@ import {
   isInert,
 } from '../PlotStudio/locationSelection'
 
+/** `get_schema_level`: the level a Run of this node would iterate, and why. */
+interface ResolvedSchemaLevel {
+  state: 'unset' | 'one_call' | 'keys'
+  keys: string[]
+  rule: string
+  schema_keys: string[]
+}
+
 interface VariantRow {
   [constantName: string]: string
 }
@@ -394,6 +402,21 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
   const [showHidden, setShowHidden] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [columnsByType, setColumnsByType] = useState<Record<string, VariableColumns>>({})
+  // The level a Run of this node would iterate — asked of the backend, which
+  // resolves it with the SAME code a Run uses (execution_service.
+  // default_schema_level), so this panel cannot show a level the run then
+  // ignores. null until loaded.
+  const [resolvedLevel, setResolvedLevel] = useState<ResolvedSchemaLevel | null>(null)
+  const schemaLevelKey = schemaLevel === null ? 'unset' : JSON.stringify(schemaLevel)
+  useEffect(() => {
+    let cancelled = false
+    callBackend('get_schema_level', { function_name: label, node_id: id, stated: schemaLevel })
+      .then(d => { if (!cancelled) setResolvedLevel(d as ResolvedSchemaLevel) })
+      .catch(err => console.error('[FunctionSettings] get_schema_level:', err))
+    return () => { cancelled = true }
+    // schemaLevelKey stands in for schemaLevel (a fresh array each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, label, schemaLevelKey])
 
   useEffect(() => {
     callBackend('get_schema')
@@ -487,9 +510,12 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       if (node) {
         const config: Record<string, unknown> = {}
         const d = node.data as Record<string, unknown>
-        if (d.schemaSelection) config.schemaSelection = d.schemaSelection
-        if (d.schemaLevel) config.schemaLevel = d.schemaLevel
-        if (d.whereFilters) config.whereFilters = d.whereFilters
+        // The three location keys are ONE statement, always written together
+        // (intent_store.set_schema_location). Omitting a null one used to make
+        // "Use automatic" a no-op: the old stated level survived the save.
+        config.schemaSelection = d.schemaSelection ?? null
+        config.schemaLevel = d.schemaLevel ?? null
+        config.whereFilters = d.whereFilters ?? []
         if (d.runOptions) config.runOptions = d.runOptions
         if (d.columnSelections) config.columnSelections = d.columnSelections
         callBackend('put_node_config', { node_id: id, config })
@@ -522,7 +548,9 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
   const toggleSchemaLevel = useCallback((key: string) => {
     if (!schema) return
     const allKeys = schema.keys
-    const current = schemaLevel ?? allKeys
+    // Starting from what a Run would do NOW, so the first click edits the
+    // automatic level rather than an "every key" nobody chose.
+    const current = schemaLevel ?? resolvedLevel?.keys ?? allKeys
     const isSelected = current.includes(key)
 
     let updated: string[]
@@ -533,10 +561,14 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       updated = allKeys.filter(k => current.includes(k) || k === key)
     }
 
-    // If all keys selected, store null (means "all").
-    const isAll = updated.length === allKeys.length
-    updateNodeData({ schemaLevel: isAll ? null : updated })
-  }, [schema, schemaLevel, updateNodeData])
+    // Stored as stated, even when it equals every key: null now means
+    // "automatic", not "all" (plan-schema-level-default Stage 5).
+    updateNodeData({ schemaLevel: updated })
+  }, [schema, schemaLevel, resolvedLevel, updateNodeData])
+
+  const clearStatedLevel = useCallback(() => {
+    updateNodeData({ schemaLevel: null })
+  }, [updateNodeData])
 
   // Set (or clear) one parameter's column selection. Saved exactly like
   // runOptions — updateNodeData + put_node_config. Unlike run options there
@@ -768,13 +800,22 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
         {schema && schema.keys.length > 0 && (
           <>
             <div style={styles.schemaLevelHint}>
-              Which schema keys to iterate over
+              {schemaLevel === null
+                ? `Automatic — ${resolvedLevel?.rule ?? 'resolving…'}`
+                : 'Set on this node'}
+              {resolvedLevel?.state === 'one_call' && ' · one call over the whole dataset'}
             </div>
             <div style={styles.checkboxGrid}>
               {schema.keys.map(key => {
-                const checked = schemaLevel === null || schemaLevel.includes(key)
+                const automatic = schemaLevel === null
+                const checked = automatic
+                  ? (resolvedLevel?.keys ?? []).includes(key)
+                  : schemaLevel.includes(key)
                 return (
-                  <label key={key} style={styles.checkboxLabel}>
+                  <label
+                    key={key}
+                    style={{ ...styles.checkboxLabel, ...(automatic ? styles.automaticLevel : {}) }}
+                  >
                     <input
                       type="checkbox"
                       checked={checked}
@@ -786,6 +827,11 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
                 )
               })}
             </div>
+            {schemaLevel !== null && (
+              <button type="button" style={styles.addFilterBtn} onClick={clearStatedLevel}>
+                Use automatic
+              </button>
+            )}
           </>
         )}
       </section>
@@ -1069,6 +1115,10 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#555',
     fontStyle: 'italic',
     marginBottom: 4,
+  },
+  // Automatic level: shown, clickable, but visibly not a choice anyone made.
+  automaticLevel: {
+    opacity: 0.6,
   },
   // Run options styles
   optionLabel: {

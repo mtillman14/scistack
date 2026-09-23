@@ -785,17 +785,49 @@ def statements_from_rows(rows: Iterable[tuple]) -> list[Statement]:
     return out
 
 
+def fetch_intent_rows(duck, sql: str, params=None) -> list:
+    """Run a read against the intent store — THE one place that decides what
+    a failed read means (cleanup-audit F1).
+
+    A table that does not exist yet (a database no GUI has opened) is a real
+    answer: nothing has been stated, ``[]``. ANY other failure — a lock held
+    by another process, a closed connection, a bad query — raises. It used to
+    return ``[]`` too, and "the store could not be read" then looked exactly
+    like "the user stated nothing": wiring, hides and pending values vanished
+    from the canvas for as long as the lock lasted, with no message.
+    """
+    try:
+        return duck._fetchall(sql, list(params or []))
+    except Exception as exc:
+        if is_missing_table(exc):
+            logger.debug("[intent] store not created yet: %s", exc)
+            return []
+        logger.error(
+            "[intent] could not read the intent store (%s: %s) — refusing to "
+            "treat that as 'nothing stated'",
+            type(exc).__name__,
+            exc,
+        )
+        raise
+
+
+def is_missing_table(exc: Exception) -> bool:
+    """DuckDB's "Table with name X does not exist" (a CatalogException)."""
+    try:
+        import duckdb
+    except ImportError:  # pragma: no cover - duckdb is a hard dependency
+        return False
+    return isinstance(exc, duckdb.CatalogException) and "does not exist" in str(exc)
+
+
 def load_statements_sql(duck, *, aspect: str | None = None) -> list[Statement]:
     """Read the store through any object with ``_fetchall(sql, params)`` —
-    ``[]`` when the table does not exist (a database no GUI has opened)."""
+    ``[]`` when the table does not exist (a database no GUI has opened);
+    any other failure raises (:func:`fetch_intent_rows`)."""
     cols = ", ".join(INTENT_COLUMNS)
     sql = f"SELECT {cols} FROM {INTENT_TABLE}"
     params: list = []
     if aspect:
         sql += " WHERE aspect = ?"
         params.append(aspect)
-    try:
-        rows = duck._fetchall(sql, params)
-    except Exception:
-        return []
-    return statements_from_rows(rows)
+    return statements_from_rows(fetch_intent_rows(duck, sql, params))

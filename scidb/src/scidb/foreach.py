@@ -404,6 +404,10 @@ def for_each(
                 "schema_filter": schema_filter,
                 "schema_keys": schema_keys,
                 "share_limits": share_limits,
+                # Dropped from this list until 2026-09-23 (cleanup-audit F18):
+                # a step registered with a location selection replayed over
+                # every location.
+                "locations": locations,
                 "finalized": finalized,
                 "glue": glue,
                 "parameter_names": parameter_names,
@@ -4548,25 +4552,48 @@ def _iterate_column_selection(spec: Any) -> "ColumnSelection | None":
 def _resolve_all_columns(var_type: Any, db: Any | None) -> list[str]:
     """Resolve ``for_columns()`` (all columns) to the variable's data column names.
 
-    Loads the variable's stored table and returns its columns minus schema keys
-    and internal ``__*`` columns. Used so that an empty ``columns`` becomes a
-    concrete list before version keys are computed.
+    Reads them from storage metadata (``DatabaseManager.data_column_names``)
+    and returns them minus schema keys and internal ``__*`` columns. Used so
+    that an empty ``columns`` becomes a concrete list before version keys are
+    computed.
+
+    It used to load the WHOLE variable to read its column names, and prepare
+    then loaded it again for the call (cleanup-audit F28: 1.1 s twice for a
+    420-row table). A load is now only the fallback for a type whose metadata
+    cannot answer (custom/nested storage, overridden construction).
     """
     import pandas as pd
 
-    loaded = _load_var_type_as_spread(var_type, db, None)
     var_name = getattr(var_type, "__name__", repr(var_type))
-    if not isinstance(loaded, pd.DataFrame):
-        raise ValueError(
-            f"for_columns(): could not load '{var_name}' to resolve its columns "
-            f"(no DataFrame returned). Pass an explicit column list instead."
-        )
+    active_db = db
+    if active_db is None:
+        from .database import get_database
+
+        active_db = get_database()
+    names = None
+    if isinstance(var_type, type) and hasattr(active_db, "data_column_names"):
+        names = active_db.data_column_names(var_type)
+    if names is not None:
+        source = "storage metadata"
+    else:
+        loaded = _load_var_type_as_spread(var_type, db, None)
+        if not isinstance(loaded, pd.DataFrame):
+            raise ValueError(
+                f"for_columns(): could not load '{var_name}' to resolve its columns "
+                f"(no DataFrame returned). Pass an explicit column list instead."
+            )
+        names = list(loaded.columns)
+        source = "a full load (metadata could not answer)"
     schema_keys = _get_schema_keys(db)
     cols = [
         c
-        for c in loaded.columns
+        for c in names
         if c not in schema_keys and not str(c).startswith("__")
     ]
+    Log.info(
+        f"[for_columns] {var_name}: every column = {len(cols)} column(s), "
+        f"read from {source}"
+    )
     if not cols:
         raise ValueError(
             f"for_columns(): no data columns found for '{var_name}' "

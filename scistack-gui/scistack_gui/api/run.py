@@ -372,34 +372,26 @@ def _run_in_thread(
             run_id,
         )
 
-    # Schema iteration is handled by for_each via schema_level — but for_each
-    # ONLY auto-iterates when it is set. Left None it pools every schema row
-    # into a single call, which is never what a canvas Run means for per-combo
-    # functions (the seed scripts pass explicit iterables). Default to
-    # iterating ALL schema keys — EXCEPT when the user explicitly chose
-    # as_table, which means "pool the rows".
+    # Which schema keys this run iterates. ONE owner decides, for every route
+    # (execution_service.default_schema_level -> scidb.schema_level): the
+    # node's stated level (`[]` = one call), else where THIS node last ran
+    # under its current wiring, else its inputs' level, else every key.
     #
-    # `schema_selection` does NOT suppress this, and the old `schema_filter`
-    # did: a filtered run then established no iteration at all and silently
-    # pooled. A location selection says WHICH combos to run, never whether to
-    # iterate, so the two are now independent.
-    if schema_level is None and not opt_as_table:
-        # One owner for the default (execution_service.default_schema_level):
-        # the node's own level, else where the function last ran, else the
-        # level its inputs imply, else every key. See
-        # docs/claude/intent-and-fact.md rule 4.
-        from scistack_gui.services.execution_service import default_schema_level
+    # `schema_selection` does NOT change this: a location selection says WHICH
+    # combos to run, never whether to iterate.
+    from scistack_gui.services.execution_service import default_schema_level
 
-        schema_level, why = default_schema_level(db, function_name, unique_targets)
-        logger.info(
-            "[run_thread] No schema iteration requested — iterating %s (%s) "
-            "(run_id=%s)",
-            schema_level if schema_level is not None else "nothing: one call",
-            why,
-            run_id,
-        )
-    if schema_level:
-        logger.debug("[run_thread] Schema level: %s (run_id=%s)", schema_level, run_id)
+    level, _why = default_schema_level(
+        db,
+        function_name,
+        unique_targets,
+        stated=schema_level,
+        node_id=node_id,
+        route=f"python run {run_id}",
+    )
+    # for_each's own spelling: None = one call, [keys] = iterate them. Never
+    # the node's raw list — `schema_keys=[]` would iterate EVERY key (F26).
+    for_each_schema_keys = level.for_each_schema_keys()
     if not is_empty(schema_selection):
         # INFO, not DEBUG: this changes which combos run, and a run that does
         # less than expected is read as a broken pipeline unless the log says
@@ -428,14 +420,14 @@ def _run_in_thread(
 
     logger.info(
         "[run_thread] Starting execution of %d target(s) for '%s' "
-        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, schema_level=%s, schema_selection=%s) (run_id=%s)",
+        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, iterating=%s, schema_selection=%s) (run_id=%s)",
         len(unique_targets),
         function_name,
         opt_dry_run,
         opt_save,
         opt_distribute,
         opt_as_table,
-        schema_level,
+        level.describe(),
         _summarize_selection(schema_selection),
         run_id,
     )
@@ -641,7 +633,7 @@ def _run_in_thread(
                         # execution_service.build_backend_pipeline's
                         # schema_iterables comment for the same failure
                         # mode, found earlier via a different call path.
-                        schema_keys=schema_level,
+                        schema_keys=for_each_schema_keys,
                     )
                 output = buf.getvalue()
                 if output:
@@ -1855,6 +1847,15 @@ class RunRef(BaseModel):
     run_id: str
 
 
+class SchemaLevelRequest(BaseModel):
+    """What the settings panel asks: the level a Run of this node would use,
+    given its current (possibly unsaved) stated value."""
+
+    function_name: str
+    node_id: str | None = None
+    stated: list[str] | None = None
+
+
 class MatlabCommandRequest(BaseModel):
     """The command generators read the raw request dict (``params``) as the
     single-run/pipeline-run requests do — every field the picker sends is
@@ -1943,6 +1944,12 @@ def _restart_matlab_engine() -> dict:
     return restart_matlab_engine()
 
 
+def _get_schema_level(db, req: SchemaLevelRequest) -> dict:
+    from scistack_gui.services.execution_service import node_schema_level
+
+    return node_schema_level(db, req.node_id, req.function_name, req.stated)
+
+
 def _generate_matlab_command(db, req: MatlabCommandRequest) -> dict:
     from scistack_gui.services.matlab_command_service import generate_matlab_command
 
@@ -1973,6 +1980,7 @@ RUN_HANDLERS: tuple[Handler, ...] = (
     Handler("force_cancel_run", "/run/{run_id}/force-cancel", RunRef, _force_cancel_run, body=False, **_NO_DB),
     Handler("get_matlab_engine_status", "/matlab-engine", None, _get_matlab_engine_status, http_method="GET", **_NO_DB),
     Handler("restart_matlab_engine", "/matlab-engine/restart", None, _restart_matlab_engine, **_NO_DB),
+    Handler("get_schema_level", "/schema-level", SchemaLevelRequest, _get_schema_level),
     Handler("generate_matlab_command", None, MatlabCommandRequest, _generate_matlab_command),
     Handler("generate_matlab_pipeline_command", None, MatlabCommandRequest, _generate_matlab_pipeline_command),
     Handler("start_matlab_sidecar_run", None, SidecarRunRequest, _start_matlab_sidecar_run, **_NO_DB),

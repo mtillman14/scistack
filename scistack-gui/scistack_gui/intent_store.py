@@ -465,21 +465,37 @@ def _import_once(db, name: str, aspect: str, importer) -> None:
     """Run *importer(db) -> int* once, ever, under *name*."""
     if _imported(db, name):
         return
+    from scidb.intent import is_missing_table
+
     try:
         count = importer(db)
-    except Exception:
+    except Exception as exc:
+        if not is_missing_table(exc):
+            # NOT marked imported: a lock or any other transient failure must
+            # be retried on the next open. Marking it done here (as this used
+            # to, for every error) dropped the legacy rows for good
+            # (cleanup-audit F1).
+            logger.error(
+                "[intent_store] import %s FAILED (%s: %s) — will retry on the "
+                "next open; legacy rows not yet carried over",
+                name,
+                type(exc).__name__,
+                exc,
+            )
+            return
         # A source table this database never had (fresh DB): nothing to copy.
-        logger.debug("[intent_store] import %s skipped", name, exc_info=True)
+        logger.debug("[intent_store] import %s: no source table", name)
         count = 0
     _mark_imported(db, name, aspect, {"imported": count})
     logger.info("[intent_store] import %s: %d row(s) carried over", name, count)
 
 
 def _rows(db, sql: str, params=None) -> list:
-    try:
-        return _duck(db)._fetchall(sql, params or [])
-    except Exception:
-        return []
+    # scidb owns what a failed intent read means: a missing table is "nothing
+    # stated", anything else (a lock, above all) raises (cleanup-audit F1).
+    from scidb.intent import fetch_intent_rows
+
+    return fetch_intent_rows(_duck(db), sql, params)
 
 
 def _subject_kind_for_node(node_id: str) -> str:

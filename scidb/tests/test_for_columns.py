@@ -672,3 +672,44 @@ class TestForColumnsMultiOutput:
 
         versions = DeltaGait.list_versions(db=db, subject="1", session="A")
         assert len(versions) == 1
+
+
+# ---------------------------------------------------------------------------
+# "Every column" is read from storage metadata, not a load (cleanup-audit F28)
+# ---------------------------------------------------------------------------
+
+
+class TestEveryColumnFromMetadata:
+    def test_metadata_names_the_same_columns_a_load_would(self, db):
+        """Same set AND order: the resolved list becomes the selector, which
+        is folded into invocation_id, so an order change would re-identify
+        every existing all-columns call site."""
+        from scidb.foreach import _load_var_type_as_spread, _resolve_all_columns
+
+        _seed_wide(db)
+        loaded = _load_var_type_as_spread(GaitData, db, None)
+        from_load = [
+            c for c in loaded.columns if c not in SCHEMA and not str(c).startswith("__")
+        ]
+        assert db.data_column_names(GaitData) == ["StepLength", "Cadence"]
+        assert _resolve_all_columns(GaitData, db) == from_load == ["StepLength", "Cadence"]
+
+    def test_resolving_every_column_loads_nothing(self, db, monkeypatch):
+        """It used to load the whole variable just to read its column names,
+        and prepare then loaded it again."""
+        import scidb.foreach as fe
+
+        _seed_wide(db)
+        loads = []
+        real = fe._load_var_type_as_spread
+
+        def counting(var_type, *a, **k):
+            loads.append(getattr(var_type, "__name__", var_type))
+            return real(var_type, *a, **k)
+
+        monkeypatch.setattr(fe, "_load_var_type_as_spread", counting)
+        assert fe._resolve_all_columns(GaitData, db) == ["StepLength", "Cadence"]
+        assert loads == []
+
+    def test_an_unregistered_type_has_no_metadata_answer(self, db):
+        assert db.data_column_names(OtherData) is None

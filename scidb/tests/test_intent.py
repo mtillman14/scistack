@@ -338,3 +338,45 @@ def test_describe_plan_names_every_input():
     line = describe_plan(plan)
     assert "cycles: CycleSymmetry (whole variable)" in line
     assert "value: TrialMeanSymmetry (2 columns)" in line
+
+
+# ---------------------------------------------------------------------------
+# A failed read is not "nothing stated" (cleanup-audit F1)
+# ---------------------------------------------------------------------------
+
+
+class _Duck:
+    def __init__(self, exc=None, rows=()):
+        self.exc, self.rows = exc, list(rows)
+
+    def _fetchall(self, sql, params):
+        if self.exc is not None:
+            raise self.exc
+        return self.rows
+
+
+def test_a_missing_intent_table_reads_as_nothing_stated():
+    import duckdb
+
+    from scidb.intent import fetch_intent_rows, load_statements_sql
+
+    missing = duckdb.CatalogException("Catalog Error: Table with name _intent does not exist!")
+    assert fetch_intent_rows(_Duck(missing), "SELECT 1") == []
+    assert load_statements_sql(_Duck(missing)) == []
+
+
+def test_a_locked_or_broken_store_raises_instead_of_reading_empty():
+    """A lock made wiring, hides and pending values vanish from the canvas
+    while it lasted, because every error read as an empty store."""
+    import duckdb
+
+    from scidb.intent import fetch_intent_rows, load_statements_sql
+
+    locked = duckdb.IOException("IO Error: Could not set lock on file")
+    with pytest.raises(duckdb.IOException):
+        fetch_intent_rows(_Duck(locked), "SELECT 1")
+    with pytest.raises(duckdb.IOException):
+        load_statements_sql(_Duck(locked))
+    other_catalog = duckdb.CatalogException("Catalog Error: Scalar Function foo not found")
+    with pytest.raises(duckdb.CatalogException):
+        fetch_intent_rows(_Duck(other_catalog), "SELECT foo()")

@@ -47,6 +47,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from scifor.locations import LocationFilter
+
 from .log import Log
 from .roles import endpoint_kind
 
@@ -488,6 +490,10 @@ class PipelineBinding:
                     inp: [km.get(k, k) for k in keys]
                     for inp, keys in new_options["share_limits"].items()
                 }
+            if new_options.get("locations") is not None:
+                new_options["locations"] = LocationFilter.of(
+                    new_options["locations"]
+                ).renamed(km)
 
         new_spec = StepSpec(
             fn=spec.fn,

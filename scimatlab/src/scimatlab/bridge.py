@@ -440,7 +440,7 @@ def _rename_rid_columns_in_value(val, rename_map):
     return val
 
 
-def _make_matlab_fn_sentinel(fn_name: str):
+def _make_matlab_fn_sentinel(fn_name: str, fn_hash: "str | None" = None):
     """Build a Python callable that records its name but errors if invoked.
 
     The MATLAB-driven path runs the user function inside MATLAB's
@@ -449,6 +449,14 @@ def _make_matlab_fn_sentinel(fn_name: str):
     ``ForEachConfig``; the function itself is never called from Python.
     If it ever IS called, that signals a programming error (likely the
     bridge state was reused after ``for_each_save`` freed it).
+
+    It carries the MATLAB digest as ``source_hash`` — the duck-typed marker
+    scidb reads for "a MATLAB function" (``function_hash_for``,
+    ``function_sources_for``). Without it the save path hashed THIS Python
+    body as if it were the user's function, found it never matched the stored
+    MATLAB hash, and warned "the two recipes have drifted" on every MATLAB run
+    (cleanup-audit F13) — and a match would have filed this sentinel's code
+    as the user's source.
     """
 
     def _sentinel(**kwargs):
@@ -462,6 +470,8 @@ def _make_matlab_fn_sentinel(fn_name: str):
     _sentinel.__lineage_wrapper__ = (
         True  # Skip Python's tuple-unpacking wrapper in scidb.for_each
     )
+    if fn_hash:
+        _sentinel.source_hash = str(fn_hash)
     return _sentinel
 
 
@@ -625,7 +635,7 @@ def for_each_prepare(
     outputs = [get_surrogate_class(str(n)) for n in list(output_class_names)]
 
     # Build the no-op Python sentinel for ForEachConfig
-    fn = _make_matlab_fn_sentinel(fn_name)
+    fn = _make_matlab_fn_sentinel(fn_name, fn_hash)
 
     # Normalize metadata_iterables: each value must be a Python list of
     # values to iterate over.  MATLAB sends scalars (subject=1 →
@@ -2602,7 +2612,7 @@ def pipeline_register_step(
         for name, spec in dict(inputs_spec).items()
     }
     outputs = [get_surrogate_class(n) for n in list(output_class_names)]
-    sentinel = _make_matlab_fn_sentinel(fn_name)
+    sentinel = _make_matlab_fn_sentinel(fn_name, fn_hash)
     meta = {k: list(v) for k, v in dict(metadata_iterables).items()}
     schema_keys_arg = list(schema_keys) if schema_keys is not None else None
     schema_filter_arg = (

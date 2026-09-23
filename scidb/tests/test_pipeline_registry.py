@@ -1301,3 +1301,48 @@ class TestEndpointVerbs:
 
         parent.run_endpoints(include_used=True, finalized=True)
         assert (plots / "1_1.png").exists()
+
+
+class TestLocationsSurviveDeferral:
+    """cleanup-audit F18: ``locations`` was the one for_each option missing
+    from the registered spec, so a deferred step replayed over EVERY
+    location."""
+
+    def test_a_registered_step_keeps_its_location_selection(self, db):
+        foreign = Pipeline("foreign_locations")
+        selection = {"include": [[["session", "1"]]], "exclude_levels": {}}
+        for_each(
+            mean_of,
+            {"filtered": Filtered},
+            [Speed],
+            session=SUBJECTS,
+            locations=selection,
+            pipeline=foreign,
+        )
+        (spec,) = foreign.steps
+        assert spec.options["locations"] == selection
+
+    def test_a_key_map_binding_renames_the_location_keys(self, db):
+        from scifor.locations import LocationFilter
+
+        foreign = Pipeline("foreign_locations_km")
+        for_each(
+            mean_of,
+            {"filtered": Filtered},
+            [Speed],
+            session=SUBJECTS,
+            locations={"include": [[["session", "1"]]], "exclude_levels": {"session": ["2"]}},
+            pipeline=foreign,
+        )
+        analysis = Pipeline(
+            "analysis_locations",
+            db=db,
+            uses=[foreign.bind(key_map={"session": "subject"})],
+        )
+        (spec,) = [s for (o, s) in analysis._composed_steps() if o is foreign]
+        renamed = spec.options["locations"]
+        assert isinstance(renamed, LocationFilter)
+        assert renamed.to_dict() == {
+            "include": [[["subject", "1"]]],
+            "exclude_levels": {"subject": ["2"]},
+        }

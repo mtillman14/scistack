@@ -479,6 +479,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     # Node-scoped when the request names a node, name-scoped otherwise —
     # the same distinction the Python run draws.
     from scistack_gui.services.execution_service import (
+        default_schema_level,
         derive_fn_targets,
         derive_target_for_node,
         variable_inputs_view,
@@ -659,7 +660,17 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
             db,
             context=f"matlab command for {function_name}",
         ),
-        schema_level=params.get("schema_level"),
+        # Resolved by the one owner, exactly as a Python Run of this node
+        # would (cleanup-audit F22): never a raw null the generator used to
+        # read as "every key".
+        schema_level=default_schema_level(
+            db,
+            function_name,
+            fn_variants,
+            stated=params.get("schema_level"),
+            node_id=_node_id,
+            route="matlab run",
+        )[0],
         addpath_dirs=addpath_dirs if addpath_dirs else None,
         python_executable=sys.executable,
         path_inputs=path_input_params if path_input_params else None,
@@ -789,6 +800,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     from scistack_gui.services.execution_service import (
         _scope_function_node_ids,
         apply_pending_overrides,
+        default_schema_level,
         derive_target_for_node,
         variable_inputs_view,
     )
@@ -913,9 +925,25 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                 "function_name": fn_label,
                 "variants": unique_targets,
                 "schema_filter": params.get("schema_filter"),
-                "schema_level": params.get("schema_level"),
+                # Per NODE from its stored level, like the Python pipeline
+                # route — not the pipeline request's one value for every step.
+                "schema_level": default_schema_level(
+                    db,
+                    fn_label,
+                    unique_targets,
+                    stated=pipeline_store.get_node_config(db, node_id).get(
+                        "schemaLevel"
+                    ),
+                    node_id=node_id,
+                    route=f"matlab pipeline {pipeline_id}",
+                )[0],
                 "path_inputs": path_input_params if path_input_params else None,
                 "sweeps": sweep_params if sweep_params else None,
+                # Glue rides on the step's input bindings exactly as on a
+                # single-node command; the pipeline script used to drop it,
+                # so a glued step ran on unreshaped input (cleanup-audit F17).
+                "glue": _collect_glue_chains(fn_label, manual_edges, manual_nodes)
+                or None,
                 "parameter_names": _collect_parameter_names(
                     fn_label, manual_edges, manual_nodes
                 )

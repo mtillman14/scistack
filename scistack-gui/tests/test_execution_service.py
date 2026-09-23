@@ -432,15 +432,42 @@ class TestDefaultSchemaLevel:
         level, why = default_schema_level(
             populated_db, "bandpass_filter", [], stated=["session", "subject"]
         )
-        assert level == ["subject", "session"]  # dataset order, not stated order
+        assert level.for_each_schema_keys() == ["subject", "session"]  # dataset order
+        assert why == "stated on the node"
+
+    def test_a_stated_empty_level_is_one_call_not_every_key(self, populated_db):
+        """`[]` ("every box unticked") is ONE call on every route — never
+        for_each's `schema_keys=[]`, which means every key (cleanup-audit F26)."""
+        from scistack_gui.services.execution_service import default_schema_level
+
+        level, why = default_schema_level(populated_db, "bandpass_filter", [], stated=[])
+        assert level.is_one_call
+        assert level.for_each_schema_keys() is None
         assert why == "stated on the node"
 
     def test_a_function_with_history_iterates_where_it_last_ran(self, populated_db):
+        """History counts through the node's own call sites: its history
+        targets carry `call_id` (cleanup-audit F24)."""
+        from scistack_gui.services.execution_service import (
+            default_schema_level,
+            derive_fn_targets,
+        )
+
+        targets = derive_fn_targets(populated_db, "bandpass_filter")
+        assert any(t.get("call_id") for t in targets)
+        level, why = default_schema_level(populated_db, "bandpass_filter", targets)
+        assert level.for_each_schema_keys() == ["subject", "session"]
+        assert "last ran" in why
+
+    def test_history_of_another_call_site_does_not_count(self, populated_db):
+        """A new or rewired node has no call_id; the function NAME having
+        run elsewhere must not decide its level."""
         from scistack_gui.services.execution_service import default_schema_level
 
-        level, why = default_schema_level(populated_db, "bandpass_filter", [])
-        assert level == ["subject", "session"]
-        assert "last ran" in why
+        level, why = default_schema_level(
+            populated_db, "bandpass_filter", [self._target()]
+        )
+        assert "last ran" not in why
 
     def test_a_never_run_function_takes_its_inputs_level(self, populated_db):
         """A subject-level input implies a subject-level run — not one call
@@ -457,7 +484,7 @@ class TestDefaultSchemaLevel:
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(x=variable_binding(["SubjectOnly"]))]
         )
-        assert level == ["subject"]
+        assert level.for_each_schema_keys() == ["subject"]
         assert "inputs" in why
 
     def test_inputs_at_different_levels_iterate_the_finer_union(self, populated_db):
@@ -482,29 +509,55 @@ class TestDefaultSchemaLevel:
                 )
             ],
         )
-        assert level == ["subject", "session"]
+        assert level.for_each_schema_keys() == ["subject", "session"]
 
     def test_a_path_input_template_names_its_level(self, populated_db, monkeypatch):
+        from scifor import PathInput
+
         from scistack_gui import registry
         from scistack_gui.domain.edge_resolver import pathinput_binding
         from scistack_gui.services.execution_service import default_schema_level
 
-        class FakePathInput:
-            def placeholder_keys(self):
-                return ["subject", "not_a_key"]
-
-        monkeypatch.setattr(registry, "get_path_inputs_registry", lambda: {"files": FakePathInput()})
+        monkeypatch.setattr(
+            registry,
+            "get_path_inputs_registry",
+            lambda: {"files": PathInput("{subject}/{not_a_key}.csv")},
+        )
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(f=pathinput_binding("files"))]
         )
-        assert level == ["subject"]
+        assert level.for_each_schema_keys() == ["subject"]
+        assert "inputs" in why
+
+    def test_alternate_templates_contribute_their_union(self, populated_db, monkeypatch):
+        """An EachOf of PathInputs used to be skipped by a hasattr guard, so a
+        loader fed only by one ran at every key (cleanup-audit F25)."""
+        from scifor import EachOf, PathInput
+
+        from scistack_gui import registry
+        from scistack_gui.domain.edge_resolver import pathinput_binding
+        from scistack_gui.services.execution_service import default_schema_level
+
+        monkeypatch.setattr(
+            registry,
+            "get_path_inputs_registry",
+            lambda: {
+                "files": EachOf(
+                    PathInput("{subject}/a.csv"), PathInput("{subject}/b.csv")
+                )
+            },
+        )
+        level, why = default_schema_level(
+            populated_db, "never_ran", [self._target(f=pathinput_binding("files"))]
+        )
+        assert level.for_each_schema_keys() == ["subject"]
         assert "inputs" in why
 
     def test_nothing_to_go_on_means_every_key(self, populated_db):
         from scistack_gui.services.execution_service import default_schema_level
 
         level, why = default_schema_level(populated_db, "never_ran", [])
-        assert level == ["subject", "session"]
+        assert level.for_each_schema_keys() == ["subject", "session"]
         assert "no history" in why
 
 
@@ -522,22 +575,23 @@ class TestDatasetLevelDefault:
     def test_a_path_input_with_no_schema_placeholder_means_one_call(
         self, populated_db, monkeypatch
     ):
+        from scifor import PathInput
+
         from scistack_gui import registry
         from scistack_gui.domain.edge_resolver import pathinput_binding
         from scistack_gui.services.execution_service import default_schema_level
 
-        class DatasetFile:
-            def placeholder_keys(self):
-                return []
-
         monkeypatch.setattr(
-            registry, "get_path_inputs_registry", lambda: {"config": DatasetFile()}
+            registry,
+            "get_path_inputs_registry",
+            lambda: {"config": PathInput("demographics.xlsx")},
         )
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(f=pathinput_binding("config"))]
         )
-        assert level is None
-        assert "one call over the whole dataset" in why
+        assert level.for_each_schema_keys() is None
+        assert level.is_one_call
+        assert "inputs" in why
 
     def test_a_dataset_level_variable_means_one_call(self, populated_db):
         from scidb import BaseVariable
@@ -552,8 +606,8 @@ class TestDatasetLevelDefault:
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(x=variable_binding(["WholeDataset"]))]
         )
-        assert level is None
-        assert "one call" in why
+        assert level.for_each_schema_keys() is None
+        assert "inputs" in why
 
     def test_a_dataset_level_input_beside_a_finer_one_iterates_the_finer(
         self, populated_db
@@ -577,7 +631,7 @@ class TestDatasetLevelDefault:
                 )
             ],
         )
-        assert level == ["subject", "session"]
+        assert level.for_each_schema_keys() == ["subject", "session"]
 
     def test_an_unbound_or_recordless_input_is_not_a_level(self, populated_db):
         """A variable with no records says nothing about level, so with no
@@ -588,7 +642,7 @@ class TestDatasetLevelDefault:
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(x=variable_binding(["NoRecordsYet"]))]
         )
-        assert level == ["subject", "session"]
+        assert level.for_each_schema_keys() == ["subject", "session"]
         assert "no history" in why
 
 

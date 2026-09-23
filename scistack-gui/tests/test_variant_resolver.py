@@ -9,7 +9,6 @@ from scidb.foreach_config import RunOptions
 from scistack_gui.domain.graph_builder import identity_token
 from scistack_gui.domain.variant_resolver import (
     build_inferred_variants,
-    build_schema_kwargs,
     compute_call_id,
     deduplicate_variants,
     reconcile_manual_inputs,
@@ -832,61 +831,3 @@ class TestReconcileManualInputsUnboundParams:
         other_wid = wiring_id("fn", {"signal": "Other"}, {"Out"}, {})
         edges = [self._edge(other_wid, "in__side", "var__Demographics")]
         assert reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token) == [target]
-
-
-class TestBuildSchemaKwargs:
-    def test_no_filter_no_level_returns_all(self):
-        result = build_schema_kwargs(
-            schema_level=None,
-            all_schema_keys=["subject", "session"],
-            schema_filter=None,
-            distinct_values={"subject": [1, 2], "session": ["pre", "post"]},
-        )
-        assert result == {"subject": [1, 2], "session": ["pre", "post"]}
-
-    def test_schema_level_limits_keys(self):
-        result = build_schema_kwargs(
-            schema_level=["subject"],
-            all_schema_keys=["subject", "session"],
-            schema_filter=None,
-            distinct_values={"subject": [1, 2], "session": ["pre", "post"]},
-        )
-        assert result == {"subject": [1, 2]}
-        assert "session" not in result
-
-    def test_schema_filter_narrows_values(self):
-        result = build_schema_kwargs(
-            schema_level=None,
-            all_schema_keys=["subject", "session"],
-            schema_filter={"subject": [1]},
-            distinct_values={"subject": [1, 2], "session": ["pre", "post"]},
-        )
-        assert result["subject"] == [1]
-        assert result["session"] == ["pre", "post"]
-
-    def test_schema_filter_empty_list_falls_back_to_distinct(self):
-        result = build_schema_kwargs(
-            schema_level=None,
-            all_schema_keys=["subject"],
-            schema_filter={"subject": []},
-            distinct_values={"subject": [1, 2, 3]},
-        )
-        assert result["subject"] == [1, 2, 3]
-
-    def test_schema_level_and_filter_combined(self):
-        result = build_schema_kwargs(
-            schema_level=["subject"],
-            all_schema_keys=["subject", "session"],
-            schema_filter={"subject": [2]},
-            distinct_values={"subject": [1, 2], "session": ["pre"]},
-        )
-        assert result == {"subject": [2]}
-
-    def test_key_missing_from_distinct_returns_empty_list(self):
-        result = build_schema_kwargs(
-            schema_level=None,
-            all_schema_keys=["subject"],
-            schema_filter=None,
-            distinct_values={},
-        )
-        assert result == {"subject": []}

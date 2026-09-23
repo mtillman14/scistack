@@ -498,3 +498,35 @@ class TestScopeAware:
         assert _hidden_constant_values(populated_db, "pipe_b") == {"HZ": {"10"}}
         assert _hidden_constant_values(populated_db, ROOT_SCOPE) == {}
         assert _hidden_constant_values(populated_db, None) == {"HZ": {"10"}}
+
+
+class TestImportOnceNeverDropsRowsOnAFailure:
+    """cleanup-audit F1: the one-time legacy import marked itself done on ANY
+    error, so a lock during it dropped the legacy rows for good."""
+
+    def test_a_transient_failure_is_retried_not_marked_done(self, populated_db):
+        import duckdb
+
+        intent_store.ensure_tables(populated_db)
+
+        def locked(_db):
+            raise duckdb.IOException("IO Error: Could not set lock on file")
+
+        intent_store._import_once(populated_db, "test_f1_locked", "hidden", locked)
+        assert not intent_store._imported(populated_db, "test_f1_locked")
+
+        intent_store._import_once(populated_db, "test_f1_locked", "hidden", lambda _db: 3)
+        assert intent_store._imported(populated_db, "test_f1_locked")
+
+    def test_a_missing_source_table_is_nothing_to_copy(self, populated_db):
+        import duckdb
+
+        intent_store.ensure_tables(populated_db)
+
+        def missing(_db):
+            raise duckdb.CatalogException(
+                "Catalog Error: Table with name _pipeline_x does not exist!"
+            )
+
+        intent_store._import_once(populated_db, "test_f1_missing", "hidden", missing)
+        assert intent_store._imported(populated_db, "test_f1_missing")

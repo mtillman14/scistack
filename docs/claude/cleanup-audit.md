@@ -9,9 +9,9 @@ Four passes, each feeding one ranked findings register (§5):
 1. **Measurements** (§1, done) — objective scans; they pick where to look.
 2. **Concept-ownership table** (§2, done) — concept → owner → consumers → rivals (NOTE 4).
    Bugs it surfaced are in §3.
-3. **Critical-path flow diagrams** (§4, next) — function-level, annotated with
+3. **Critical-path flow diagrams** (§4: 4.1 graph build, 4.2 schema level, 4.3 MATLAB run done; Python for_each + plot load need a measured run) — function-level, annotated with
    queries, locks, caches, and cross-layer reconstructions. Only for paths §1 flags.
-4. **Re-check the 2026-09-20 review** — what is closed, what is still open.
+4. **Re-check the 2026-09-20 review** (§4½, done) — what is closed, what is still open.
 
 ---
 
@@ -338,30 +338,287 @@ Only diagnostic callers (the chip, `[selector-changed]`). Tests in
 
 ---
 
+## 4. Critical-path flow diagrams
+
+Function-level traces of the paths §1 flagged. Each is annotated with where
+the time goes (**measured** from `scidb.log` timestamps, or *unmeasured*), the
+queries it issues, and where one layer reconstructs something another already
+knows.
+
+### 4.1 `get_pipeline` — the canvas graph build (F15, F16)
+
+Measured on the real Stroke-R01-Aim2 database, 2026-09-23 14:45:50→56, right
+after a MATLAB run: **10.1 s** total (`RPC << get_pipeline … (10078.0ms)`).
+Gaps are the time between consecutive log lines, charged to the step that ends
+them.
+
+```
+get_pipeline (api/pipeline._build_graph, 951 lines)            10.1 s
+│
+├─ list_hypotheses / get_hidden_pipelines                         ~0.1 s
+├─ db.get_aggregated_variants()                                   2.8 s  MEASURED
+│    └─ provenance_query.pipeline_variants
+│         for each _invocation (non-save):                        N+1 ×4
+│           invocation_inputs(inv)           ── 1+ query
+│           selectors/declared_name          ── 1 query
+│           invocation_path_inputs(inv)      ── 1 query
+│           outputs JOIN _record             ── 1 query
+│         _annotate_variants                  (batched ✓)
+│    └─ per variable type: COUNT(*) _record    ── 1 query each (small N)
+├─ build_aggregate → filter_hidden → run-state pass 1
+│    └─ _compute_run_states
+│         └─ scidb.state.check_multiple_nodes_state
+│              for each fn call site:
+│                check_node_state
+│                  expected_invocations_for_function          unmeasured
+│                    function_variant_configs(fn)  ── per-invocation reads?
+│                  present_invocation_schema_pairs  (batched ✓)
+│                  for each expected combo:                     N+1 ×1
+│                    _schema_id_to_combo  ── SELECT … WHERE schema_id=?
+│                    (result used only for per-combo detail; the canvas
+│                     reads counts + state only)
+│                  _discovery_gate → PathInput.discover()
+│                    network walk, cached 190 dirs              ~1.4 s MEASURED
+│              (everything after the last walk, no log lines)    4.4 s MEASURED
+├─ group_call_sites_by_wiring → run-state pass 2 (propagate)       <0.01 s
+├─ build_*_nodes / build_edges / merge_manual_nodes              <0.1 s
+└─ scope filter, unused-intent marks, assemble                    <0.05 s
+```
+
+**Reading it.** About 7 of the 10 s is scidb answering two questions per
+canvas refresh: "what has run" (`pipeline_variants`) and "what should have run"
+(`check_node_state`). Both walk the provenance graph one invocation or one combo
+at a time. The GUI steps are negligible. The same walk runs again on EVERY
+`dag_updated` (each run, each edit), and a session log shows ~60
+`get_pipeline` calls.
+
+**Known N+1s on this path**
+- `pipeline_variants`: ~4 queries per invocation (F16).
+- `check_node_state`: 1 query per expected combo in `_schema_id_to_combo`, for
+  data the canvas discards (new, **F21**).
+
+**Instrumentation to add before fixing** (NOTE 2): `Log.timings` phases in
+`get_aggregated_variants` (variants / var counts), `check_node_state`
+(expected / present / combos / discovery) and a per-call-site line in
+`check_multiple_nodes_state` with its combo count. That turns the 4.4 s gap
+into named numbers and says whether `expected_invocations_for_function` or the
+combo loop dominates.
+
+### 4.2 Schema-level default — which keys a run iterates
+
+The user asked (2026-09-23) whether the node's level is set from its inputs,
+across mixed levels and for PathInput-only functions.
+
+```
+Python "Run" (api/run._run_in_thread) ─┐
+Python pipeline (build_backend_pipeline)┼─► execution_service.default_schema_level
+                                        │     1 stated on node (schemaLevel)
+                                        │     2 recorded: provenance_query.recorded_schema_keys
+                                        │         (latest run of the FUNCTION NAME)
+                                        │     3 inputs: variable_schema_keys ∪ PathInput
+                                        │         placeholder_keys → finest_schema_keys (union)
+                                        │     4 all dataset keys
+MATLAB "Run" (generate_matlab_command) ─┐
+MATLAB pipeline script                  ┼─► params["schema_level"] (node's stated value or null)
+                                        │     _resolve_iterate_keys: null → ALL keys
+                                        │     emits 'key', [] for every key → scidb iterates
+                                        │     every key that has values in the DB
+Canvas (FunctionSettingsPanel)          ─► null shown as EVERY box ticked
+```
+
+**Status 2026-09-23:** F22–F27 fixed by `.claude/plan-schema-level-default.md`: one owner `scidb.schema_level`, all routes via `execution_service.default_schema_level`, panel via the `get_schema_level` RPC.
+
+**Findings**
+- **F22 (high): MATLAB runs never use the default.** Evidence: `loadDemographics`
+  (one PathInput, no placeholders, i.e. the inputs rule says "one call") ran
+  **714 iterations** of the same file at 11:57:55 (subject×session×speed×trial,
+  whatever keys had values). It dropped to 1 only after the user deselected
+  every level by hand (11:58:24). `calculateSymmetryOneVector` and `grSides`
+  iterated 450 combos the same way. Two owners for one concept: the Python
+  route asks `default_schema_level`, the MATLAB route asks nothing.
+- **F23 (med): the canvas shows "all keys" for an unstated level**, while a
+  Python run would iterate the inferred level and a MATLAB run every
+  populated key. The node never shows what will actually happen.
+- **F24 (med): `recorded_schema_keys` is function-name scoped**, not node or
+  call-site scoped. Two canvas nodes of one function take the level of
+  whichever ran last. It also outranks the inputs, so rewiring a node to a finer
+  input keeps the old level until the user sets one.
+- **F25 (low): alternate-template PathInputs are skipped.** The registry holds
+  them as `EachOf(PathInput, …)`, which has no `placeholder_keys`; the
+  `hasattr` guard drops them silently. As a function's only input, that
+  falls through to "all keys".
+- **F26 (high): `[]` means three things.** "Every level unticked" is stored as
+  `schemaLevel: []`. `_resolve_iterate_keys` (MATLAB) reads it as one
+  dataset-level call; `api/run.py` skips the default (`is None` test) and
+  passes `schema_keys=[]` to `for_each`, which means EVERY key; the pipeline
+  route calls `default_schema_level(stated=[])`, whose `if stated:` treats it
+  as unset.
+- **Nothing seeds a level on a new node** (verified: the panel writes
+  `schemaLevel` only on a checkbox click; no backend writer). The precedence
+  still misbehaves on a first run via F23 (the display invites a click that
+  becomes a permanent stated level) and F24 (a new node of an already-run
+  function takes the other node's level instead of its inputs').
+- Correct as designed (tests exist, `scistack-gui/tests/test_execution_service.py`
+  ~l.429–600): mixed levels iterate the union, and the coarser input broadcasts;
+  a PathInput with no placeholder means one call; a dataset-level variable
+  means one call; a recordless input is not a level.
+
+### 4.3 A MATLAB run, end to end (load + save included)
+
+Measured from `scidb.log` [timing] lines, 2026-09-23. Two runs:
+**A** `loadGaitRiteOneFile` (PathInput loader, 150 combos, 450 records saved,
+70.5 s script total) and **B** `calculateSymmetryOneVector` (one trial-level
+`for_columns()` input, 450 combos, 420 records).
+
+```
+generated script (api/matlab_command) → MATLAB terminal
+│
+├─ matlab_preamble                                   A 4.72 s   B 4.63 s
+│    addpath                                         A 4.50 s   B 4.38 s  ◄ 95%
+│    entities / configure_database / register        ~0.2 s
+│
+├─ +scidb/for_each.m → bridge.for_each_prepare (Python)
+│    A: PathInput discovery walk (network)           1.60 s
+│    B: _resolve_all_columns(GAITRiteLoaded_UA)      1.10 s  ◄ FULL load, for column NAMES
+│         _find_record 0.11 s (collapse 0.10 s) + load_all_as_df 1.09 s
+│       combo pruning ("filtered 348 of 798")
+│       _load_input(GAITRiteLoaded_UA)               1.03 s  ◄ SAME load again
+│    prepare total                                    B 2.37 s
+│
+├─ MATLAB: convert inputs (py → MATLAB)              A 0.13 s   B 1.33 s (6.1 MB table)
+├─ MATLAB: scifor.for_each loop (user code)          A 56.9 s   B 2.5 s
+│    (A is xlsread over the network, not scistack)
+├─ MATLAB → Python result transfer                   A ~4.3 s   B ~0.7 s  UNLOGGED gap
+│    (between "done in" and the bridge's for_each_save line)
+│
+├─ bridge.for_each_save → scidb._save_results
+│    save_batch                                      A 1.93 s   B 1.50 s
+│      per_row_hashing (canonical_hash)              A 1.70 s   B 1.32 s  ◄ ~3 ms/row
+│      inserts                                       ~0.2 s
+│    record_run                                      A 0.08 s   B 0.33 s
+│      (B: 420 invocations, assemble loop 0.25 s)
+│    source capture: REFUSED for B (fn-hash recipes drifted, F13)
+│
+└─ db.close, marker, then GUI get_pipeline           10.1 s (§4.1)
+```
+
+**Reading it.** For a fast user function (B), scistack's own overhead is
+about 4.6 s of preamble, 2.4 s of prepare, 1.3 s of conversion, 0.7 s of transfer
+and 1.5 s of save, all around a 2.5 s computation. Then the canvas refresh costs
+another 10 s. Largest items:
+- **addpath ~4.4 s every run (F29).** 95% of the preamble, identical every
+  time. This is the "~4-5 s unattributed" from the preamble-timing memory, now
+  attributed. Next question: is it `genpath` over the UNC share, or the sheer
+  number of folders?
+- **Double full load for `for_columns()` (F28).** Resolving "every column"
+  loads the whole variable to read its column names, then prepare loads it
+  again. The names are available without loading any data (the storage
+  table's columns); cost today ≈ one extra full load per all-columns input.
+- **Per-row canonical hashing in `save_batch` (F30)** dominates the save,
+  ~3 ms per record. Unmeasured whether it is the value hash or the metadata
+  hash.
+- **Result transfer is unlogged (F31)**: 4.3 s for A's 450×59 table.
+
+**Instrumentation to add** (NOTE 2): a `[timing] addpath` breakdown (count of
+folders, genpath vs explicit); a `for_each_result_transfer` phase in
+`+scidb/for_each.m` before the save RPC; `save_batch` hashing split into
+value vs metadata.
+
+---
+
+## 4½. Re-check of the 2026-09-20 architecture review
+
+Status against the code on 2026-09-23 (numbers re-measured, not copied).
+
+| # | review item | status | evidence now |
+|---|---|---|---|
+| 1 | Identity is two systems (move `wiring_id` into scidb + parity tests) | **closed** | `scidb.provenance.compute_wiring_id`; `scidb/tests/test_identity_parity.py`. The same *class* recurred for Parameters (B1, fixed) and schema levels (F22–F26, open) |
+| 2 | `for_each` assembles provenance two ways; extract phases | **partial** | phases exist (`_for_each_prepare` / `_execute` / `_save_results`, typed `_ForEachState`, `RunBindings.for_combo` one edge function; `_save_results` 17 → 4 params), but `_for_each_prepare` is now a **1,522-line** body, larger than the 975-line `for_each` the review measured |
+| 3 | Two hand-mirrored GUI transports | **closed** | `api/tables.ALL_HANDLERS`; 4 FastAPI routes remain |
+| 4 | Lazy imports from cycles | **partial** | scidb 352 → 159, GUI 850 → 758; `scidb/tests/test_imports.py` guards scidb only; the GUI has no guard |
+| 5 | Rules in comments, not types | **partial** | `BareNodeId`/`PlacedNodeId` exist; `[]` vs `None` for schema levels is still a paragraph, and it bit again (F26). `docs/claude` grew 27k → 28.9k lines; `.claude/` plans 127 → 267; no pruning happened |
+| 6 | Scope-awareness half done | **closed** (per the 2026-09-21 commit; `_intent` writes carry `scope`, `copy_scope`, `scope_of_node` used by runs) | not re-verified end to end |
+| 7 | MATLAB is a second implementation | **open**, and the biggest source of today's findings | F2, F6, F17, F18, F22 are all MATLAB-mirror drift |
+| 8 | `DatabaseManager` god object | **open** | 73 → 71 methods |
+| 9 | Frontend (PlotStudio size, untyped node data, two builds) | **open** | `PlotStudio.tsx` 3,916 → 3,986 lines; both vite targets still separate commands |
+| 10 | Bespoke migrations | **open, growing** | 8 `ALTER TABLE` sites (B1 added one: `_invocation_input.declared_name`) |
+
+**Pattern across §2–§4:** the review's item 7 (MATLAB as a hand-mirrored
+second implementation) is now the dominant source of new bugs. Items 1–3 fixed
+their instances, but the same "two owners" shape keeps reappearing wherever a
+MATLAB route re-derives what a Python route asks scidb for.
+
+---
+
 ## 5. Findings register (running)
+
+### Ranked next actions (2026-09-23)
+
+Ordered by *wrong results* first, then *silent data loss*, then *time spent
+per canvas refresh or run*, then maintainability.
+
+1. **Schema level (F22, F26, then F23–F25, F27)**: runs iterate the wrong keys
+   (loadDemographics ×714; `[]` = every key on Python). Plan written:
+   `.claude/plan-schema-level-default.md`.
+2. **Intent reads swallow errors (F1)**: a lock makes wiring and hides read as
+   absent. Small: raise or log with the lock holder, and never return `[]` for
+   an error.
+3. **Canvas refresh 10 s (F15, F16, F21)**: add the §4.1 timers, then batch
+   `pipeline_variants` and `_schema_id_to_combo`. Runs about 60× a session.
+4. **Double load for `for_columns()` (F28)**: read column names from storage
+   metadata instead of loading the data.
+5. **MATLAB preamble addpath 4.4 s (F29)**: measure folder count and genpath
+   first.
+6. **Function-hash drift MATLAB↔Python (F13)**: source is not being captured
+   for MATLAB functions whose recipes disagree.
+7. **Dropped kwargs on mirrored routes (F17, F18)**: glue in the MATLAB pipeline
+   script and replay; `locations` on bridge real runs.
+8. Maintainability: private cross-package imports (F2, F7), test-only rival
+   copies (F19, F27), dead code (F9), scihist test placement (F8), forwarding
+   depth (F10), the 1,522-line `_for_each_prepare` (F4), migrations (review #10).
+
+Theme behind 1, 6 and 7: the MATLAB route re-derives what the Python route
+asks scidb for (review item 7). Each fix above should route MATLAB through the
+scidb owner rather than add a MATLAB-side rule.
+
 
 | # | severity | kind | finding | evidence |
 |---|---|---|---|---|
-| F1 | high | silent failure | Intent reads return `[]` on any SQL error, so wiring/hides vanish under a lock | §1.6 |
+| F1 | high | silent failure — **fixed 2026-09-23, tests unrun** | Intent reads return `[]` on any SQL error, so wiring/hides vanish under a lock | §1.6 |
 | F2 | high | coupling | MATLAB for_each built from 7 private scidb.foreach steps | §1.4 |
-| F3 | med | perf (N+1) | `list_versions` does 2 graph walks per row | §1.7 |
+| F3 | med | perf (N+1) — **fixed 2026-09-23: one `branch_params_batch` pass; its silent `except: return []` now warns; tests unrun** | `list_versions` does 2 graph walks per row | §1.7 |
 | F4 | med | structure | `_for_each_prepare` 1,522 lines; scifor `for_each` 1,039 lines / 29 params | §1.3 |
 | F5 | med | silent failure | ambient `get_database()`/schema lookups swallowed in foreach | §1.4, §1.6 |
 | F6 | med | parity | `locations`/`track_lineage` missing from MATLAB for_each | §1.5 |
 | F7 | med | coupling | scidb depends on 8 private sciduckdb converters | §1.4 |
 | F8 | low | test placement | scihist: 114 src lines, 7,920 test lines | §1.1 |
-| F9 | low | dead code | ~680 unreferenced lines, top 5 listed | §1.8 |
+| F9 | low | dead code — **partial 2026-09-23: `database._load_by_record_row` (118 lines) deleted; bridge candidates remain** | ~680 unreferenced lines, top 5 listed | §1.8 |
 | F10 | low | readability | GUI forwarding chains (3 hops to intent_store) | §1.9 |
 | F11 | high | owner gap (B1) — **fixed, tests unrun** | Parameter declared↔argument name not recorded; run duplicates the Parameter node | §2.1, §3 |
 | F12 | med | owner split (B2) — **fixed, tests unrun** | symbolic vs resolved "all columns" gives a false unused-intent chip | §2.3, §3 |
-| F13 | med | rival recipes | MATLAB vs Python function hash drift blocks source capture | §2.1 |
+| F13 | med | rival recipes — **root cause 2026-09-23: NOT a recipe drift. The MATLAB bridge passes a Python sentinel as `fn`; the save path hashed the sentinel's own body. Fixed: the sentinel carries the MATLAB digest as `source_hash`, and `function_sources_for` treats digest-only as nothing to capture; tests unrun** | MATLAB vs Python function hash drift blocks source capture | §2.1 |
 | F14 | med | dual holder | dataset schema keys mirrored into the scifor global in 3 places | §2.2 |
-| F15 | med | perf | `get_pipeline` 10 s after a run (real data) | §3 |
-| F16 | med | perf (N+1) | `provenance_query.pipeline_variants` runs ~4 queries per invocation — likely F15 | found fixing B1 |
-| F17 | med | dropped kwarg | MATLAB `Pipeline.m` replay forwards no `glue`; the MATLAB pipeline-script generator passes no `glue` to `_for_each_call_lines` | found fixing B1 |
-| F18 | med | dropped kwarg | bridge real-run `_for_each_prepare` gets no `locations` (dry run does); Python `register_call` options omit `locations` | found fixing B1 |
+| F15 | med | perf — **instrumented 2026-09-23, awaiting a measured run** | `get_pipeline` 10 s after a run (real data) | §3 |
+| F16 | med | perf (N+1) — **instrumented 2026-09-23 (`[timing] pipeline_variants` by query kind), awaiting a measured run** | `provenance_query.pipeline_variants` runs ~4 queries per invocation — likely F15 | found fixing B1 |
+| F17 | med | dropped kwarg — **fixed 2026-09-23: glue forwarded by Pipeline.m replay and per step in the MATLAB pipeline script; tests unrun** | MATLAB `Pipeline.m` replay forwards no `glue`; the MATLAB pipeline-script generator passes no `glue` to `_for_each_call_lines` | found fixing B1 |
+| F18 | med | dropped kwarg — **2026-09-23: bridge half was a false alarm (bridge filters combos itself); Python register_call now keeps `locations` and key_map bindings rename them (`LocationFilter.renamed`); tests unrun** | bridge real-run `_for_each_prepare` gets no `locations` (dry run does); Python `register_call` options omit `locations` | found fixing B1 |
 | F19 | low | rival converter | `graph_builder.aggregate_variants` is test-only; production uses `api/pipeline.build_aggregate` | found fixing B1 |
 | F20 | med | owner gap | pending constants were looked up by argument name in the pending-row synthesis (fixed with B1); audit other name-keyed GUI state for the same split | found fixing B1 |
+| F21 | med | perf (N+1) — **fixed 2026-09-23 (one batched `_schema_ids_to_combos`), tests unrun** | `state._schema_id_to_combo`: one query per expected combo, result unused by the canvas | §4.1 |
+| F22 | high | two owners — **fixed 2026-09-23, tests unrun** | MATLAB runs ignore `default_schema_level`: null level means every populated key (loadDemographics ×714) | §4.2 |
+| F23 | med | display ≠ behaviour — **fixed 2026-09-23, tests unrun** | unstated level shows all keys ticked; neither run route does that | §4.2 |
+| F24 | med | scope — **fixed 2026-09-23, tests unrun** | recorded level is function-name scoped and outranks rewired inputs | §4.2 |
+| F25 | low | silent skip — **fixed 2026-09-23, tests unrun** | alternate-template PathInputs (EachOf) contribute no level | §4.2 |
+| F26 | high | three meanings — **fixed 2026-09-23, tests unrun** | a node level of `[]` ("no levels ticked"): MATLAB generator = one dataset call; Python Run passes `for_each(schema_keys=[])` = EVERY key; pipeline `default_schema_level` `if stated:` = unset | §4.2 |
+| F27 | low | rival copy — **fixed 2026-09-23, tests unrun** | `variant_resolver.build_schema_kwargs` (None → all keys) is test-only | §4.2 |
+| F28 | med | perf (duplicate) — **fixed 2026-09-23: `DatabaseManager.data_column_names` reads `_variables.dtype`; a load only as fallback. Note: direct-save kwarg columns are no longer counted as data columns; tests unrun** | `for_columns()` all-columns resolution loads the whole variable for its column names; prepare then loads it again (1.1 s ×2) | §4.3 |
+| F29 | med | perf — **instrumented 2026-09-23: `[timing] matlab_addpath` (per-dir times, already_on_path, path size, slowest dir); awaiting a MATLAB run** | MATLAB preamble `addpath` ~4.4 s of 4.7 s, every run | §4.3 |
+| F30 | low | perf | `save_batch` per-row canonical hashing ~3 ms/record | §4.3 |
+| F31 | low | observability | MATLAB→Python result transfer unlogged (4.3 s for 450×59) | §4.3 |
+| F32 | low | route-only rule — **decided 2026-09-23 (option A): rule dropped on every route; as_table is format only, aggregate by stating the level; tests unrun** | an unstated level on an `as_table` run pools into one call on the Python Run only; pipeline and MATLAB routes do not. Now one flag in `default_schema_level`, still undecided whether every route should apply it | found fixing F22 |
+| F33 | med | silent no-op | the panel omitted null location keys, so `split_node_config` never cleared a stated level (fixed: all three keys always sent) | found fixing F23 |
+| F34 | high | silent data loss | `intent_store._import_once` marked the one-time legacy import DONE on any error, so a lock during it dropped legacy hides/pending values/edges permanently (fixed with F1: only a missing source table counts as nothing to copy; other errors retry next open) | found fixing F1 |
+| F35 | med | feature gap | MATLAB function source is never captured (`_function_source` rows exist only for Python): nothing sends the `.m` text. Needed for any code-version view of MATLAB functions (variant-selection). Bridge-side: send `source_text` with the digest, verify the digest matches before storing | found fixing F13 |
 
 ## 6. Reproducing
 

@@ -32,6 +32,7 @@ import logging
 from typing import Literal
 
 from .input_spec import find_pathinput
+from .log import Log
 from .schema_values import schema_str
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,11 @@ def check_multiple_nodes_state(
         db = get_database()
 
     result: dict[str, dict] = {}
+    # Phase totals across every call site, plus the slowest one — the canvas
+    # build spent ~4.4 s here unlogged (cleanup-audit §4.1, F15/F21).
+    timings: dict[str, float] = {}
+    per_site: list[tuple[float, str, int]] = []
+    _t_all = time.perf_counter()
 
     for node in nodes:
         # Get function object
@@ -320,7 +326,17 @@ def check_multiple_nodes_state(
 
         # Call check_node_state for this node
         try:
-            state_result = check_node_state(fn, outputs, db=db, call_id=call_id)
+            _t_site = time.perf_counter()
+            state_result = check_node_state(
+                fn, outputs, db=db, call_id=call_id, _timings=timings
+            )
+            per_site.append(
+                (
+                    time.perf_counter() - _t_site,
+                    f"{fn_name}/{(call_id or '')[:8]}",
+                    len(state_result.get("combos") or []),
+                )
+            )
             node_id = f"fn__{fn_name}__{call_id or ''}"
             result[node_id] = {
                 "state": state_result["state"],
@@ -345,6 +361,17 @@ def check_multiple_nodes_state(
         len(nodes),
         len(result),
     )
+    if per_site:
+        slowest = max(per_site)
+        Log.timings(
+            "check_multiple_nodes_state",
+            {**timings, "total": time.perf_counter() - _t_all},
+            extra=(
+                f"{len(per_site)} call site(s), "
+                f"{sum(n for _t, _s, n in per_site)} combo(s); slowest "
+                f"{slowest[1]} {slowest[0]:.3f}s ({slowest[2]} combo(s))"
+            ),
+        )
 
     return result
 
@@ -356,6 +383,7 @@ def check_node_state(
     db=None,
     call_id: str | None = None,
     glue: dict | None = None,
+    _timings: "dict[str, float] | None" = None,
 ) -> dict:
     """Aggregate run state across all known combos for a pipeline function.
 
@@ -438,7 +466,15 @@ def check_node_state(
     # This used to AST-hash `fn.fcn` unconditionally, which for a MATLAB
     # function is a bare name-holder: the resulting hash matched nothing ever
     # written, so every MATLAB node with variable inputs was permanently red.
+    timings = _timings if _timings is not None else {}
+
+    def _add(phase: str, t0: float) -> None:
+        timings[phase] = timings.get(phase, 0.0) + (time.perf_counter() - t0)
+
+    _t = time.perf_counter()
     fn_hash = function_hash_for(fn)
+    _add("function_hash", _t)
+    _t = time.perf_counter()
     expected = provenance_query.expected_invocations_for_function(
         db,
         fn_name,
@@ -447,13 +483,19 @@ def check_node_state(
         call_id=call_id,
         glue_fallback=glue,
     )
+    _add("expected_invocations", _t)
+    _t = time.perf_counter()
     present = provenance_query.present_invocation_schema_pairs(
         db._duck,
         {inv_id for inv_id, _sid in expected},
     )
+    _add("present_pairs", _t)
+    _t = time.perf_counter()
 
     counts: dict[str, int] = {"up_to_date": 0, "stale": 0, "missing": 0}
     combo_results: list[dict] = []
+    # One query for every location, not one per combo (cleanup-audit F21).
+    combos_by_sid = _schema_ids_to_combos(db, [sid for _inv, sid in expected])
     for inv_id, schema_id in expected:
         state: ComboState = (
             "up_to_date" if (inv_id, schema_id) in present else "missing"
@@ -461,11 +503,13 @@ def check_node_state(
         counts[state] += 1
         combo_results.append(
             {
-                "schema_combo": _schema_id_to_combo(db, schema_id),
+                "schema_combo": combos_by_sid.get(schema_id, {}),
                 "branch_params": {},
                 "state": state,
             }
         )
+
+    _add("combo_lookup", _t)
 
     # --- The PathInput-only loader gate ---
     # For a function with no database inputs the expected set above is derived
@@ -473,11 +517,13 @@ def check_node_state(
     # a partially-run loader reads green. Discovery is the one live source for
     # what should exist; `_discovery_gate` consults it, guards against a walk
     # that cannot resolve, and only ever adds. See its docstring.
+    _t = time.perf_counter()
     for combo in _discovery_gate(fn_name, db, realized_count=len(combo_results)):
         counts["missing"] += 1
         combo_results.append(
             {"schema_combo": combo, "branch_params": {}, "state": "missing"}
         )
+    _add("discovery_gate", _t)
 
     # --- Aggregate to node state (binary: green | red) ---
     # green iff the node has expected work AND all of it is present; red otherwise
@@ -807,7 +853,8 @@ def check_pathinput_node_state(
         fn_name,
         const_rids,
     )
-    realized = [_norm(_schema_id_to_combo(db, sid)) for sid in realized_sids]
+    realized_by_sid = _schema_ids_to_combos(db, realized_sids)
+    realized = [_norm(realized_by_sid.get(sid, {})) for sid in realized_sids]
 
     def _is_realized(c: dict) -> bool:
         # a should-combo is covered if some realized location agrees on all its keys
@@ -859,6 +906,42 @@ def _combo_str(schema_combo: dict, branch_params: dict | None = None) -> str:
     return ", ".join(parts)
 
 
+def _schema_ids_to_combos(db, schema_ids) -> dict:
+    """``{schema_id: {key: value}}`` for many locations in ONE batched read.
+
+    The batched form of :func:`_schema_id_to_combo` and the one place the
+    lookup is spelled: ``check_node_state`` used to issue one query per
+    expected combo on every canvas refresh (cleanup-audit F21). A predicted
+    location with no ``_schema`` row yet arrives as a ``((key, value), ...)``
+    tuple and is read as-is; an unknown id maps to ``{}``.
+    """
+    from .provenance_query import _chunked_in
+
+    out: dict = {}
+    ids: set[int] = set()
+    for sid in schema_ids:
+        if isinstance(sid, tuple):
+            out[sid] = {k: v for k, v in sid if v is not None}
+        elif sid is not None:
+            ids.add(int(sid))
+    schema_keys = list(db.dataset_schema_keys or [])
+    if ids and schema_keys:
+        cols = ", ".join(f'"{k}"' for k in schema_keys)
+        rows = _chunked_in(
+            db._duck,
+            f"SELECT schema_id, {cols} FROM _schema WHERE schema_id IN ({{ph}})",  # noqa: S608
+            sorted(ids),
+        )
+        for sid, *values in rows:
+            out[sid] = {
+                k: v for k, v in zip(schema_keys, values, strict=False) if v is not None
+            }
+    for sid in schema_ids:
+        if sid is not None and not isinstance(sid, tuple):
+            out.setdefault(sid, out.get(int(sid), {}))
+    return out
+
+
 def _schema_id_to_combo(db, schema_id) -> dict:
     """Convert a schema_id to a dict of schema key → value.
 
@@ -866,21 +949,7 @@ def _schema_id_to_combo(db, schema_id) -> dict:
     aggregating call that has never produced anything there) arrives as a
     ``((key, value), ...)`` tuple instead of an id — read as-is.
     """
-    if isinstance(schema_id, tuple):
-        return {k: v for k, v in schema_id if v is not None}
-    schema_keys = db.dataset_schema_keys
-    if not schema_keys:
-        return {}
-
-    col_select = ", ".join(f'"{k}"' for k in schema_keys)
-    rows = db._duck._fetchall(
-        f"SELECT {col_select} FROM _schema WHERE schema_id = ?",
-        [int(schema_id)],
-    )
-    if not rows:
-        return {}
-
-    return {k: v for k, v in zip(schema_keys, rows[0], strict=False) if v is not None}
+    return _schema_ids_to_combos(db, [schema_id]).get(schema_id, {})
 
 
 def _get_latest_record_at_location(db, record_id: str) -> str | None:

@@ -204,6 +204,22 @@ class LocationFilter:
             },
         }
 
+    def renamed(self, key_map: Mapping[str, str] | None) -> "LocationFilter":
+        """The same selection with schema keys renamed through *key_map*
+        (old -> new; keys not in it unchanged) — what a pipeline ``key_map``
+        binding applies to every schema-keyed option of a step it reuses."""
+        if not key_map:
+            return self
+        return LocationFilter(
+            include=tuple(
+                tuple((key_map.get(k, k), v) for k, v in prefix)
+                for prefix in self.include
+            ),
+            exclude_levels=tuple(
+                (key_map.get(k, k), values) for k, values in self.exclude_levels
+            ),
+        )
+
     # ---- the rule --------------------------------------------------------
 
     def is_empty(self) -> bool:
