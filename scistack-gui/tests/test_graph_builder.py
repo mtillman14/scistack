@@ -3684,3 +3684,81 @@ class TestStatedWiringClaims:
         )
 
         assert sorted(claims[(self.FN, new_wid)]) == sorted([first, second])
+
+
+# ---------------------------------------------------------------------------
+# Declared-only Parameters/PathInputs are off the canvas until placed
+# ---------------------------------------------------------------------------
+
+
+class TestDeclaredOnlyNodesStartOffCanvas:
+    """A new database opened with every source-declared Parameter and
+    PathInput already on the root canvas: they had no position, and an
+    unplaced node defaults to root. History earns that default; a bare
+    declaration lives in the sidebar until dragged onto a canvas or wired."""
+
+    PI_ENTRY = {"template": "{s}/f.csv", "root_folder": None, "alternate_templates": []}
+
+    def _declared_graph(self):
+        nodes = build_parameter_nodes(
+            {}, pending_constants={}, source_parameters={"hz": Parameter(20)}
+        )
+        nodes += build_path_input_nodes({"raw": {**self.PI_ENTRY, "functions": set()}})
+        return nodes
+
+    def _root_view(self, nodes, edges=(), positions_by_scope=None):
+        from scistack_gui.domain.scope_filter import resolve_scope_view
+        from scistack_gui.ids import ROOT_SCOPE
+
+        return resolve_scope_view(
+            nodes,
+            list(edges),
+            ROOT_SCOPE,
+            manual_nodes={},
+            positions_by_scope=positions_by_scope or {},
+        )
+
+    def test_source_only_nodes_are_flagged(self):
+        from scistack_gui.domain.scope_filter import DECLARED_ONLY
+
+        assert all(n["data"][DECLARED_ONLY] for n in self._declared_graph())
+
+    def test_history_backed_nodes_are_not_flagged(self):
+        from scistack_gui.domain.scope_filter import DECLARED_ONLY
+
+        param = build_parameter_nodes(
+            {"hz": {"20": 3}}, pending_constants={}, source_parameters={"hz": Parameter(20)}
+        )
+        # A pending value never makes a node on its own (nodes come from
+        # history or source) — it un-flags a DECLARED Parameter.
+        pending = build_parameter_nodes(
+            {}, pending_constants={"hz": {"5"}}, source_parameters={"hz": Parameter(20)}
+        )
+        pi = build_path_input_nodes(
+            {"raw": {**self.PI_ENTRY, "functions": {(("load", "c1"), "path")}}}
+        )
+        assert not param[0]["data"][DECLARED_ONLY]
+        assert not pending[0]["data"][DECLARED_ONLY]
+        assert not pi[0]["data"][DECLARED_ONLY]
+
+    def test_new_database_root_canvas_is_blank(self):
+        nodes, edges = self._root_view(self._declared_graph())
+        assert nodes == [] and edges == []
+
+    def test_placed_declared_node_is_shown(self):
+        from scistack_gui.ids import ROOT_SCOPE, placement_id
+
+        placed = placement_id("param__hz", ROOT_SCOPE)
+        nodes, _ = self._root_view(
+            self._declared_graph(),
+            positions_by_scope={ROOT_SCOPE: {placed: {"x": 0, "y": 0}}},
+        )
+        assert [n["id"] for n in nodes] == [placed]
+
+    def test_wired_declared_node_is_shown_with_its_edge(self):
+        """An unmoved node the user already wired must not strand the edge."""
+        fn = {"id": "fn__f__abc", "type": "functionNode", "data": {"label": "f"}}
+        edge = {"id": "manual__1", "source": "pathInput__raw", "target": fn["id"]}
+        nodes, edges = self._root_view(self._declared_graph() + [fn], [edge])
+        assert sorted(n["id"] for n in nodes) == ["fn__f__abc", "pathInput__raw"]
+        assert edges == [edge]

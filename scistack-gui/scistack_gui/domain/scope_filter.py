@@ -8,7 +8,9 @@ Three concerns, all side-effect-free:
   pathInput__ built from history) belong to the scope their POSITION is
   saved in — dragging a node onto a sub-pipeline's canvas writes its
   position into that scope, which IS the membership record. A node with no
-  saved position anywhere defaults to the root scope.
+  saved position anywhere defaults to the root scope — EXCEPT a
+  declared-only node (see :data:`DECLARED_ONLY`), which is on no canvas
+  until it is placed or wired.
 - **Filtering**: restrict a fully-built graph to one scope (nodes by
   membership, edges by both-endpoints-kept).
 - **Document interface**: a pipeline scope's ports — variable types consumed
@@ -30,6 +32,14 @@ from scistack_gui.ids import (
 
 logger = logging.getLogger(__name__)
 
+#: Node-data flag, set by ``graph_builder`` on a Parameter/PathInput node
+#: that exists only because source declares it (no run history, no
+#: GUI-added value). History is what earns an unplaced node the root-canvas
+#: default; a bare declaration lives in the sidebar, and joins a canvas only
+#: once dragged there (a position) or wired (a manual edge). Without this a
+#: brand-new database opened with every declared Parameter and PathInput
+#: already strewn across the root canvas.
+DECLARED_ONLY = "declared_only"
 
 
 def node_scope(node_id: str, manual_nodes: dict, positions_by_scope: dict) -> str:
@@ -58,6 +68,7 @@ def _resolve_in_scope(
     scope_id: str,
     manual_nodes: dict,
     positions_by_scope: dict,
+    default_to_root: bool = True,
 ) -> str | None:
     """Resolve ``node_id`` (manual, bare canonical, or already placement-
     qualified) to its id WITHIN ``scope_id``, or None if not visible there.
@@ -101,7 +112,7 @@ def _resolve_in_scope(
             parsed_pid = parse_placement_id(pid)
             if parsed_pid is not None and parsed_pid[0] == node_id:
                 return None  # qualified placement, but in a DIFFERENT scope
-    return node_id if scope_id == ROOT_SCOPE else None
+    return node_id if scope_id == ROOT_SCOPE and default_to_root else None
 
 
 def resolve_scope_view(
@@ -122,22 +133,37 @@ def resolve_scope_view(
     endpoint that matches no built node) still defaults to root and stays
     on the root canvas exactly as it did pre-scoping.
     """
+    # A declared-only node an edge already touches is in use (the edge can
+    # only be one the user drew), so it keeps the root default — hiding it
+    # would strand that edge.
+    wired = {e["source"] for e in edges} | {e["target"] for e in edges}
+    unplaced_declared = {
+        n["id"]
+        for n in nodes
+        if n.get("data", {}).get(DECLARED_ONLY) and n["id"] not in wired
+    }
+
+    def _resolve(node_id: str) -> str | None:
+        return _resolve_in_scope(
+            node_id,
+            scope_id,
+            manual_nodes,
+            positions_by_scope,
+            default_to_root=node_id not in unplaced_declared,
+        )
+
     id_map: dict[str, str] = {}
     kept_nodes = []
     for n in nodes:
-        resolved = _resolve_in_scope(n["id"], scope_id, manual_nodes, positions_by_scope)
+        resolved = _resolve(n["id"])
         if resolved is not None:
             id_map[n["id"]] = resolved
             kept_nodes.append({**n, "id": resolved} if resolved != n["id"] else n)
 
     kept_edges = []
     for e in edges:
-        src = id_map.get(e["source"]) or _resolve_in_scope(
-            e["source"], scope_id, manual_nodes, positions_by_scope
-        )
-        tgt = id_map.get(e["target"]) or _resolve_in_scope(
-            e["target"], scope_id, manual_nodes, positions_by_scope
-        )
+        src = id_map.get(e["source"]) or _resolve(e["source"])
+        tgt = id_map.get(e["target"]) or _resolve(e["target"])
         if src is not None and tgt is not None:
             kept_edges.append(
                 {**e, "source": src, "target": tgt}
@@ -153,6 +179,15 @@ def resolve_scope_view(
         len(kept_edges),
         len(edges),
     )
+    off_canvas = sorted(nid for nid in unplaced_declared if nid not in id_map)
+    if off_canvas:
+        logger.debug(
+            "[scope_filter] scope %s: %d declared-only node(s) never placed "
+            "or wired, left off the canvas: %s",
+            scope_id,
+            len(off_canvas),
+            off_canvas,
+        )
     return kept_nodes, kept_edges
 
 

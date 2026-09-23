@@ -27,6 +27,7 @@ from scistack_gui.ids import (
     placement_id,
     strip_placement,
 )
+from scistack_gui.domain.scope_filter import DECLARED_ONLY
 
 logger = logging.getLogger(__name__)
 
@@ -1289,6 +1290,11 @@ def build_parameter_nodes(
                     "declared_in_entities_file": is_declared_in_entities_file(
                         source_file, entities_file
                     ),
+                    # No DB history and no GUI-added value: it exists only
+                    # because source declares it. Such a node is on a canvas
+                    # only where it has been placed (scope_filter).
+                    DECLARED_ONLY: const_name not in const_counts
+                    and not pending_constants.get(const_name),
                 },
             }
         )
@@ -1322,6 +1328,9 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
                     "template": pi["template"],
                     "root_folder": pi.get("root_folder"),
                     "alternate_templates": pi.get("alternate_templates", []),
+                    # Seeded from the registry with no run history
+                    # (seed_undiscovered_path_inputs) — see DECLARED_ONLY.
+                    DECLARED_ONLY: not pi.get("functions"),
                 },
             }
         )
