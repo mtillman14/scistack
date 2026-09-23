@@ -49,7 +49,7 @@ both bundles rebuilt.
 - [ ] Right: untick `subject=1 / trial=1`. Left: `subject=1` goes indeterminate. Click it → every `subject=1` location on the right is ticked again.
 - [ ] Left: untick `trial=1`. Right: each subject goes indeterminate. Click `subject=1` on the right → its whole subtree ticks, including `trial=1`; other subjects' `trial=1` stays unticked, and left `trial=1` turns indeterminate.
 - [ ] Left: untick `subject=1`. Right: tick `subject=1` → it comes back fully; the footer shows no "−1 subject".
-- [ ] Known, NOT fixed: unticking the very last ticked location on the right re-selects everything.
+- [ ] Right: untick every location one by one. The LAST untick leaves every box unticked (it used to re-tick them all); the footer reads "All locations (−N subject)". Then tick one trial → only that trial is ticked.
 
 ## 0v. One Parameter node after a run; no false "not reflected" chip — added 2026-09-23
 
