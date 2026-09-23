@@ -526,9 +526,13 @@ def test_save_figure_writes_one_file_per_iterated_figure(populated_db, tmp_path)
     result = plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
 
     assert len(result["files"]) == 2
-    assert {p.name for p in tmp_path.glob("emg_*.png")} == {
-        "emg_subject_1.png",
-        "emg_subject_2.png",
+    # Numbered, not named for the figure (2026-09-22). A figure label carries
+    # the constants that define the variant, so slugging it put a whole config
+    # dict in the filename — 630 characters against Windows' 260. The sidecar
+    # manifest is what says which is which.
+    assert {p.name for p in tmp_path.glob("emg_v*.png")} == {
+        "emg_v1.png",
+        "emg_v2.png",
     }
 
 
@@ -546,10 +550,120 @@ def test_save_figure_saves_only_the_requested_figure(populated_db, tmp_path):
     )
 
     assert result["ok"] is True
-    # Named for the figure it holds, not "emg.png" — a fan-out saved one frame
-    # at a time must not produce files that cannot be told apart.
-    assert [p.name for p in tmp_path.glob("*.png")] == ["emg_subject_2.png"]
-    assert result["files"] == [str(tmp_path / "emg_subject_2.png")]
+    # Numbered rather than "emg.png" — a fan-out saved one frame at a time
+    # must not produce files that cannot be told apart.
+    assert [p.name for p in tmp_path.glob("*.png")] == ["emg_v1.png"]
+    assert result["files"] == [str(tmp_path / "emg_v1.png")]
+
+
+# --- short names, stable numbers, and a manifest that explains them --------
+#
+# 2026-09-22: three saves failed with FileNotFoundError on a 630-character
+# path. The name was built by slugging the figure label, and a Variant label
+# spells out the constants that define it — the whole `gaitRiteConfig` dict.
+# FileNotFoundError reads as "the folder is missing", so the real cause took a
+# traceback to find. Filenames are numbered now; the meaning of each number
+# lives in a sidecar keyed by (settings, variant).
+
+
+def _manifest(tmp_path, stem="emg"):
+    import json
+
+    return json.loads((tmp_path / f"{stem}.figures.json").read_text())
+
+
+def test_the_manifest_says_what_each_number_holds(populated_db, tmp_path):
+    spec = _pooled_spec(populated_db)
+    spec = _with_roles(spec, subject="iterate")
+
+    plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
+
+    entries = _manifest(tmp_path)["entries"]
+    assert [e["n"] for e in entries] == [1, 2]
+    assert [e["file"] for e in entries] == ["emg_v1.png", "emg_v2.png"]
+    # The label the filename no longer carries has to be somewhere.
+    assert all(e["figure"] for e in entries), entries
+    assert len({e["figure"] for e in entries}) == 2
+    assert all(e["settings"]["kind"] == "band" for e in entries)
+
+
+def test_re_saving_the_same_figure_reuses_its_number(populated_db, tmp_path):
+    """Same variant, same settings — the file already referenced in a talk
+    must update in place, not multiply."""
+    spec = _pooled_spec(populated_db)
+    spec = _with_roles(spec, subject="iterate")
+
+    first = plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
+    second = plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
+
+    assert first["files"] == second["files"]
+    assert len(list(tmp_path.glob("emg_v*.png"))) == 2
+    assert len(_manifest(tmp_path)["entries"]) == 2
+
+
+def test_changed_settings_take_a_new_number(populated_db, tmp_path):
+    """Different settings are a different figure and must not overwrite."""
+    spec = _pooled_spec(populated_db)
+    spec = _with_roles(spec, subject="iterate")
+    plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
+
+    restyled = {**spec, "kind": "line"}
+    plot_service.save_figure(populated_db, restyled, str(tmp_path / "emg.png"))
+
+    assert {p.name for p in tmp_path.glob("emg_v*.png")} == {
+        "emg_v1.png",
+        "emg_v2.png",
+        "emg_v3.png",
+        "emg_v4.png",
+    }
+    kinds = {e["settings"]["kind"] for e in _manifest(tmp_path)["entries"]}
+    assert kinds == {"band", "line"}
+
+
+def test_a_lost_manifest_never_overwrites_the_files_beside_it(
+    populated_db, tmp_path
+):
+    """Numbering floors on what is on disk, not only on what the manifest
+    remembers — a deleted manifest costs the descriptions, not the figures."""
+    spec = _pooled_spec(populated_db)
+    spec = _with_roles(spec, subject="iterate")
+    plot_service.save_figure(populated_db, spec, str(tmp_path / "emg.png"))
+    (tmp_path / "emg.figures.json").unlink()
+
+    restyled = {**spec, "kind": "line"}
+    plot_service.save_figure(populated_db, restyled, str(tmp_path / "emg.png"))
+
+    names = {p.name for p in tmp_path.glob("emg_v*.png")}
+    assert names == {"emg_v1.png", "emg_v2.png", "emg_v3.png", "emg_v4.png"}
+
+
+def test_a_single_named_save_keeps_the_name_it_was_given(populated_db, tmp_path):
+    """No fan-out, no number: the user asked for this file."""
+    spec = _pooled_spec(populated_db)
+    result = plot_service.save_figure(populated_db, spec, str(tmp_path / "figure.png"))
+    assert result["files"] == [str(tmp_path / "figure.png")]
+    assert not list(tmp_path.glob("*.figures.json"))
+
+
+# --- the guards ------------------------------------------------------------
+
+
+def test_slug_is_capped_and_stays_distinct():
+    long_a = "Variant_" + "gaitRiteConfig_FOLDER_NAME_Gaitrite_" * 20 + "_SSV"
+    long_b = "Variant_" + "gaitRiteConfig_FOLDER_NAME_Gaitrite_" * 20 + "_FV"
+
+    a, b = plot_service._slug(long_a), plot_service._slug(long_b)
+    assert len(a) <= plot_service.MAX_SLUG
+    assert a != b, "two long labels sharing a prefix collapsed onto one name"
+
+
+def test_a_path_too_long_is_refused_with_a_message_that_names_the_cause(tmp_path):
+    ok = plot_service._path_too_long(tmp_path / "fine.png")
+    assert ok is None
+
+    huge = plot_service._path_too_long(tmp_path / ("x" * 300 + ".png"))
+    assert huge and "characters" in huge
+    assert "not found" not in huge.lower()
 
 
 def test_saving_one_figure_builds_only_that_figure(populated_db, tmp_path, monkeypatch):
@@ -699,8 +813,8 @@ def test_saving_into_a_folder_names_the_files_after_the_figures(
     assert result["ok"] is True
     assert result["directory"] == str(folder)
     assert {p.name for p in folder.glob("*.png")} == {
-        "RawSignal_subject_1.png",
-        "RawSignal_subject_2.png",
+        "RawSignal_v1.png",
+        "RawSignal_v2.png",
     }
 
 
@@ -954,8 +1068,8 @@ def test_a_save_job_writes_every_figure_and_reports_each(
     assert {m["job_id"] for m in messages} == {started["job_id"]}
     assert len(done["files"]) == 2
     assert {p.name for p in tmp_path.glob("*.png")} == {
-        "emg_subject_1.png",
-        "emg_subject_2.png",
+        "emg_v1.png",
+        "emg_v2.png",
     }
 
 
@@ -1124,7 +1238,10 @@ def test_saving_one_figure_is_a_job_too(
     messages = _drain(captured_pushes, "plot_save_complete")
     done = next(m for m in messages if m["type"] == "plot_save_complete")
 
-    assert [Path(f).name for f in done["files"]] == ["emg_subject_2.png"]
+    # `_v1` because it is the first figure saved into this folder — the
+    # number is allocation order per (folder, stem), not the figure index.
+    # Which figure it holds is in emg.figures.json.
+    assert [Path(f).name for f in done["files"]] == ["emg_v1.png"]
     # One figure resolved, not the fan-out: the whole point of the index.
     assert [
         (m["stage"], m["done"], m["total"])
@@ -1225,10 +1342,20 @@ def test_figure_index_reaches_the_service_over_both_transports(
         if m["type"] == "plot_save_complete"
     )
 
-    # One figure each, and the SAME figure — so the same label lands in both
-    # names and neither transport quietly saved the fan-out.
-    assert [Path(f).name for f in over_http["files"]] == ["http_subject_1.png"]
-    assert [Path(f).name for f in over_rpc["files"]] == ["rpc_subject_1.png"]
+    # One figure each, and the SAME figure — neither transport quietly saved
+    # the fan-out. Filenames are numbered per (folder, stem) now, so both are
+    # `_v1` whichever figure they hold; the manifests are what say they agree.
+    import json
+
+    assert [Path(f).name for f in over_http["files"]] == ["http_v1.png"]
+    assert [Path(f).name for f in over_rpc["files"]] == ["rpc_v1.png"]
+    labels = {
+        json.loads((tmp_path / f"{stem}.figures.json").read_text())["entries"][0][
+            "figure"
+        ]
+        for stem in ("http", "rpc")
+    }
+    assert len(labels) == 1, f"the transports saved different figures: {labels}"
 
 
 # --- cache invalidation after a run ----------------------------------------

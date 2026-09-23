@@ -1734,8 +1734,16 @@ def manual_edge_handle_index(
     to function nodes (parse_fn_node_id, which strips any placement
     suffix first) — so a bare, wiring-grouped, or scope-placed target id
     all resolve to the same (fn_name, wiring_id) key.
+
+    **Every** edge on a handle, not the last one scanned (2026-09-22). The
+    index used to hold one edge per key, which silently lost the others: two
+    manual edges on one handle showed only one source (the "Known limitations"
+    entry in the doc above), and the supersession rewrite could only move one
+    of them per build — so a node with two edges per handle needed two builds
+    to migrate, doing half the work each time and logging it twice. Values are
+    lists in scan order; every caller that only asks ``in`` is unaffected.
     """
-    index: dict[tuple[str, str, str], dict] = {}
+    index: dict[tuple[str, str, str], list[dict]] = {}
     for edge in manual_edges:
         handle = edge.get("targetHandle")
         target = edge.get("target")
@@ -1744,8 +1752,12 @@ def manual_edge_handle_index(
         parsed = parse_fn_node_id(target)
         if parsed is None:
             continue
-        index[(parsed[0], parsed[1], handle)] = edge
-    logger.debug("[graph_builder] manual_edge_handle_index: indexed %d edge(s)", len(index))
+        index.setdefault((parsed[0], parsed[1], handle), []).append(edge)
+    logger.debug(
+        "[graph_builder] manual_edge_handle_index: %d edge(s) on %d handle(s)",
+        sum(len(v) for v in index.values()),
+        len(index),
+    )
     return index
 
 
@@ -1806,21 +1818,34 @@ def manual_input_overrides(
     hidden_handles = {h for eid, h in handle_map.items() if eid in hidden_edge_ids}
 
     overrides: dict = {}
-    for (ifn, iwid, handle), edge in manual_index.items():
+    for (ifn, iwid, handle), edges in manual_index.items():
         if ifn != fn or iwid != wid or not handle.startswith("in__"):
             continue
-        var_label = node_id_to_var_label(edge.get("source", ""), {}, manual_nodes or {})
-        if not var_label:
-            # PathInput / Parameter / glue sources have their own binding
-            # rules (edge_resolver); this rule is about variables only.
-            continue
         sources = list(visible.get(handle, []))
-        if var_label in sources:
-            # Re-drawing an edge history already shows: nothing to override
-            # (layout_service.put_edge auto-unhides that case anyway).
-            continue
-        sources.append(var_label)
-        overrides[handle[len("in__") :]] = sources[0] if len(sources) == 1 else sources
+        drawn = False
+        for edge in edges:
+            var_label = node_id_to_var_label(
+                edge.get("source", ""), {}, manual_nodes or {}
+            )
+            if not var_label:
+                # PathInput / Parameter / glue sources have their own binding
+                # rules (edge_resolver); this rule is about variables only.
+                continue
+            if var_label in sources:
+                # Re-drawing an edge history already shows, or the same
+                # variable wired twice: nothing new to override
+                # (layout_service.put_edge auto-unhides the first case).
+                continue
+            sources.append(var_label)
+            drawn = True
+        if drawn:
+            # Two manual edges naming two variables on one handle is an
+            # EachOf, exactly as history-plus-manual already was. Before
+            # 2026-09-22 the index kept only one of them and the second was
+            # silently dropped.
+            overrides[handle[len("in__") :]] = (
+                sources[0] if len(sources) == 1 else sources
+            )
 
     if overrides:
         logger.debug(
@@ -1995,15 +2020,22 @@ def superseded_manual_input_overrides(
         from scistack_gui.domain.edge_resolver import node_id_to_var_label
 
         manual_vars: dict[str, str] = {}
-        edges_by_param: dict[str, dict] = {}
+        edges_by_param: dict[str, list] = {}
         for param in overrides:
-            edge = manual_index.get((fn, wid, f"in__{param}"))
-            if edge is None:
-                continue
-            label = node_id_to_var_label(edge.get("source", ""), {}, manual_nodes or {})
-            if label:
-                manual_vars[param] = label
-                edges_by_param[param] = edge
+            for edge in manual_index.get((fn, wid, f"in__{param}"), []):
+                label = node_id_to_var_label(
+                    edge.get("source", ""), {}, manual_nodes or {}
+                )
+                if not label:
+                    continue
+                # The FIRST variable decides the effective wiring (provenance
+                # stores one type per input; an EachOf run splits into one
+                # wiring per source). But EVERY edge on the handle has to be
+                # moved — the index kept only one before 2026-09-22, so a
+                # handle with two edges took two builds to migrate and did
+                # half the work, and logged it, each time.
+                manual_vars.setdefault(param, label)
+                edges_by_param.setdefault(param, []).append(edge)
         if not manual_vars:
             continue
         effective = {**fn_input_params.get(fkey, {}), **manual_vars}
@@ -2014,11 +2046,19 @@ def superseded_manual_input_overrides(
             continue
         new_id = fn_node_id(fn, new_wid)
         superseded[node_id] = new_id
+        # Every edge on every overridden handle, in one pass. Idempotence does
+        # not need a guard here: these edges were found under the OLD wiring's
+        # key, so none of them can already name the new node. Once they have
+        # moved, `manual_input_overrides` finds nothing on the old wiring, the
+        # node is not in `overrides_by_node` at all, and this loop never runs
+        # for it again. (A `target == moved` skip was written here first and
+        # was dead code — a test asserting the rebuild case proved it.)
         node_rewrites: list[dict] = []
-        for edge in edges_by_param.values():
-            target = edge.get("target", "")
-            suffix = target[len(strip_placement(target)) :]
-            node_rewrites.append({**edge, "target": new_id + suffix})
+        for param_edges in edges_by_param.values():
+            for edge in param_edges:
+                target = edge.get("target", "")
+                suffix = target[len(strip_placement(target)) :]
+                node_rewrites.append({**edge, "target": new_id + suffix})
         rewrites.extend(node_rewrites)
         logger.info(
             "[graph_builder] manual input overlay on %s (%s) is superseded by "

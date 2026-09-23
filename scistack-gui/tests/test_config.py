@@ -1853,3 +1853,106 @@ def test_a_preserved_schema_keys_table_is_rendered_last(tmp_path):
     data = _read_raw_section(toml_file)
     assert data["packages"] == ["foo"]
     assert set(data["schema_keys"]) == {"session"}
+
+
+# ---------------------------------------------------------------------------
+# One file, two spellings of its DRIVE LETTER
+# ---------------------------------------------------------------------------
+# The mapped-drive case above is one family; case is the other. A 2026-09-22
+# session registered 20 project MATLAB functions twice and logged a
+# "shadows previous definition" WARN for each, telling the user their own
+# code was shadowing itself:
+#
+#   WARN MATLAB function 'grSides' from Y:\...\src\grSides.m shadows previous
+#        definition from y:\...\src\grSides.m
+#
+# `_identity_key` cannot be relied on to catch it: the paths are on a mapped
+# SMB share, and a network filesystem frequently reports st_ino == 0, which
+# makes that test return None. os.path.normcase is the platform's own answer —
+# lowercases on Windows, identity on POSIX — so the two spellings compare
+# equal exactly where the OS says they are one file.
+# ---------------------------------------------------------------------------
+
+
+def test_same_path_agrees_with_the_filesystem_about_case(tmp_path):
+    """Ask the filesystem, not ``os.path.normcase``.
+
+    They are different questions and macOS is the proof: ``normcase`` is the
+    identity on POSIX (a *platform convention*), while APFS actually folds
+    case. So on a Mac the two spellings name one file and ``normcase`` says
+    they do not. ``_same_path`` has to match the filesystem, which it does via
+    ``_identity_key``; this test would have asserted the opposite if it had
+    trusted ``normcase`` to predict it.
+    """
+    from scistack_gui.config import _same_path
+
+    f = tmp_path / "grSides.m"
+    f.write_text("function grSides()\n")
+    swapped = str(f).replace("grSides.m", "GRSIDES.M")
+    filesystem_folds_case = (tmp_path / "GRSIDES.M").exists()
+
+    assert _same_path(str(f), swapped) == filesystem_folds_case
+
+
+def test_same_path_folds_case_when_file_identity_is_unavailable(tmp_path, monkeypatch):
+    """The Windows-SMB shape, which is where this actually bit.
+
+    ``_identity_key`` compares ``(st_dev, st_ino)`` and returns ``None`` when
+    a filesystem reports ``st_ino == 0`` — which mapped network shares
+    frequently do. Windows then has no file-identity answer at all, and
+    without the ``normcase`` comparison ``y:\\...\\grSides.m`` and
+    ``Y:\\...\\grSides.m`` fall through as two different files: 20 project
+    functions registered twice, each warning the user their own code shadowed
+    itself (2026-09-22).
+
+    Both halves are simulated, because neither is reproducible here: identity
+    unavailable, and a platform whose ``normcase`` folds case.
+    """
+    import os
+
+    from scistack_gui import config as config_mod
+
+    f = tmp_path / "grSides.m"
+    f.write_text("function grSides()\n")
+    swapped = str(f).replace("grSides.m", "GRSIDES.M")
+
+    monkeypatch.setattr(config_mod, "_identity_key", lambda _p: None)
+    monkeypatch.setattr(config_mod.os.path, "normcase", lambda s: s.lower())
+
+    assert config_mod._same_path(str(f), swapped), (
+        "with no file identity available, case folding is the only thing left "
+        "that can recognise one file under two spellings"
+    )
+    assert not config_mod._same_path(str(f), str(tmp_path / "other.m")), (
+        "case folding must not make two genuinely different files equal"
+    )
+    assert os.sep  # keep the import meaningful on every platform
+
+
+def test_a_function_does_not_shadow_itself_under_two_spellings(tmp_path, caplog):
+    """The user-visible consequence: no warning, and no second registration."""
+    import logging
+    import os
+
+    from scistack_gui.registry import resolve_definition_shadowing
+
+    f = tmp_path / "grSides.m"
+    f.write_text("function grSides()\n")
+    other_case = str(f).replace("grSides.m", "GRSIDES.M")
+    # The FILESYSTEM decides, not os.path.normcase — see
+    # test_same_path_agrees_with_the_filesystem_about_case.
+    if not (tmp_path / "GRSIDES.M").exists():
+        pytest.skip("case-sensitive filesystem: these really are two files")
+    assert os.sep
+
+    with caplog.at_level(logging.WARNING):
+        replaced = resolve_definition_shadowing(
+            "grSides",
+            incoming=other_case,
+            existing=str(f),
+            project_root=tmp_path,
+            kind="MATLAB function",
+        )
+
+    assert replaced is True, "the same file must re-register without complaint"
+    assert "shadows previous definition" not in caplog.text

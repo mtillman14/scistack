@@ -456,45 +456,88 @@ def _matlab_param_to_class_from_db(
 ) -> dict[str, dict[str, str]]:
     """``{fn_name: {output_param_name: class_name}}`` derived from DB variants.
 
-    Maps each variant's ``output_num`` (its slot in the fn signature) onto the
-    fn's declared output name. This is the DB-derived half of
-    ``matlab_param_to_class``; ``infer_manual_fn_param_to_class`` supplies the
-    manual-edge half. When BOTH come up empty the fn node renders handle
-    ``out__{param}`` while build_edges points its edge at ``out__{Class}``, and
-    React Flow silently drops an edge whose sourceHandle does not exist — the
-    fn appears disconnected from an output variable that run_state marks green.
+    The DB-derived half of ``matlab_param_to_class``;
+    ``infer_manual_fn_param_to_class`` supplies the manual-edge half. When BOTH
+    come up empty the fn node renders handle ``out__{param}`` while build_edges
+    points its edge at ``out__{Class}``, and React Flow silently drops an edge
+    whose sourceHandle does not exist — the fn appears disconnected from an
+    output variable that run_state marks green.
+
+    **``output_num`` is only a signature slot sometimes** (2026-09-22). It is
+    the PK half of ``_invocation_output`` and names *which output of this
+    invocation* a record is, which coincides with the signature slot only for
+    an ordinary multi-output call. Two cases where it does not:
+
+    * a ``distribute`` run emits one record per slice, so ``output_num`` is the
+      slice index (``database.py``'s latest-collapse says so in as many words);
+    * a batch loader shares one invocation across runs and a re-run's record
+      takes the next free slot, so one file's record was output #34 on the
+      first run and #60 on the second (``provenance_save``, Fix B).
+
+    So for a function declaring exactly ONE output, ``output_num`` cannot
+    disambiguate anything and must not be consulted: the single declared name
+    maps to the variant's ``output_type``, whatever the number says. Until
+    this was noticed every such function fell down the out-of-range branch,
+    contributed nothing, and logged a line PER DB RECORD — 100,758 of the
+    120,351 lines in the 2026-09-22 log, and `from_db` empty for all seven
+    MATLAB functions in that project.
+
+    Only a genuinely multi-output function consults the number, and an
+    out-of-range one there is summarised once per function rather than per
+    record.
     """
     from_db: dict[str, dict[str, str]] = {}
     for (fn_name, _call_id), fn_data in aggregated_functions.items():
         if fn_name not in matlab_functions:
             continue
-        for variant in fn_data.get("variants", []):
+        names = matlab_output_order.get(fn_name) or []
+        variants = fn_data.get("variants", [])
+        if len(names) == 1:
+            # One declared output: the number is noise here.
+            seen = {
+                v.get("output_type") for v in variants if v.get("output_type")
+            }
+            if not seen:
+                continue
+            if len(seen) > 1:
+                # One param cannot name two classes, so the map can only hold
+                # one. Say which and why rather than picking silently.
+                logger.warning(
+                    "[pipeline] matlab_param_to_class: fn=%s declares one output "
+                    "%r but its records carry %d different types %s — using %r; "
+                    "the others' edges will fall back to the manual-edge source",
+                    fn_name,
+                    names[0],
+                    len(seen),
+                    sorted(seen),
+                    sorted(seen)[0],
+                )
+            from_db.setdefault(fn_name, {})[names[0]] = sorted(seen)[0]
+            continue
+
+        unresolved: set = set()
+        for variant in variants:
             onum = variant.get("output_num")
             out_type = variant.get("output_type")
-            if onum is None or out_type is None:
-                # A variant with no output_num contributes nothing here, so the
-                # manual-edge fallback becomes load-bearing. Say so — this is
-                # what surfaced get_aggregated_variants() dropping output_num.
-                logger.info(
-                    "[pipeline] matlab_param_to_class: fn=%s output_type=%r has "
-                    "output_num=%r — DB source contributes nothing for this variant",
-                    fn_name,
-                    out_type,
-                    onum,
-                )
+            if out_type is None:
                 continue
-            names = matlab_output_order.get(fn_name) or []
-            if 0 <= int(onum) < len(names):
+            if onum is not None and 0 <= int(onum) < len(names):
                 from_db.setdefault(fn_name, {})[names[int(onum)]] = out_type
             else:
-                logger.info(
-                    "[pipeline] matlab_param_to_class: fn=%s output_num=%s is out of "
-                    "range for its %d declared output name(s) %s — DB source skipped",
-                    fn_name,
-                    onum,
-                    len(names),
-                    names,
-                )
+                unresolved.add(onum)
+        if unresolved:
+            # DEBUG and aggregated: this runs per DB record on every canvas
+            # refresh, and one line each is what made scidb.log 24 MB.
+            logger.debug(
+                "[pipeline] matlab_param_to_class: fn=%s left %d variant(s) "
+                "unmapped — output_num %s names no slot in its %d declared "
+                "output(s) %s; those edges fall back to the manual-edge source",
+                fn_name,
+                len(unresolved),
+                sorted(n for n in unresolved if n is not None) or "(absent)",
+                len(names),
+                names,
+            )
     return from_db
 
 

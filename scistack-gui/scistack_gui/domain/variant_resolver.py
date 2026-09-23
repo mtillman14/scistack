@@ -600,6 +600,14 @@ def reconcile_manual_inputs(
     manual_index = manual_edge_handle_index(manual_edges)
     manual_nodes = manual_nodes or {}
     kept = []
+    # One line per WIRING, not per target. Every target of a wiring gets the
+    # same overrides and the same substituted bindings, so logging inside the
+    # loop wrote the identical sentence once per DB record — 390 of them for a
+    # single grSides run on 2026-09-22. The line stays at INFO because its
+    # ABSENCE is the documented diagnostic for "the run ignored the edge I
+    # drew" (docs/claude/manual-edges-on-history-nodes.md §Reading scidb.log);
+    # a count is strictly more informative than a repetition.
+    substituted: dict[str, tuple] = {}
     for t in targets:
         bindings = t.get("bindings") or {}
         # Bare-string-when-single: wiring_id hashes the value as written, and
@@ -653,15 +661,20 @@ def reconcile_manual_inputs(
             # first place.
             new_target["input_types"] = variable_types_view(new_bindings)
         new_target.pop("call_id", None)
+        prev = substituted.get(wid)
+        substituted[wid] = (overrides, new_bindings, (prev[2] if prev else 0) + 1)
+        kept.append(new_target)
+
+    for wid, (overrides, new_bindings, n) in substituted.items():
         logger.info(
-            "[variant_resolver] target for '%s' (wiring %s): manual edge(s) "
-            "override %s — substituting bindings=%s (call_id recomputed)",
+            "[variant_resolver] '%s' (wiring %s): manual edge(s) override %s — "
+            "substituting bindings=%s on %d target(s) (call_id recomputed)",
             function_name,
             wid,
             overrides,
             new_bindings,
+            n,
         )
-        kept.append(new_target)
     return kept
 
 

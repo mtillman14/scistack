@@ -26,6 +26,17 @@ from scifor import PathInput
 TEMPLATE = "{subject}/{session}/data.txt"
 
 
+@pytest.fixture(autouse=True)
+def _clear_listing_cache():
+    """The listing cache is process-wide since 2026-09-22; tests must not
+    inherit one another's."""
+    from scifor import clear_listing_cache
+
+    clear_listing_cache()
+    yield
+    clear_listing_cache()
+
+
 @pytest.fixture
 def tree(tmp_path):
     for subject in ("s1", "s2"):
@@ -78,12 +89,41 @@ class TestWalkUsesTheListingCache:
         found = {(c["subject"], c["session"]) for c in pi.discover()}
         assert ("s3", "A") in found
 
-    def test_fresh_instance_walks_again(self, tree, monkeypatch):
-        """The cache is per instance — a new PathInput knows nothing."""
-        PathInput(TEMPLATE, root_folder=str(tree)).discover()
+    def test_a_fresh_instance_reuses_the_cache(self, tree, monkeypatch):
+        """The cache is per PROCESS, not per instance (2026-09-22).
+
+        It used to live on the object, and the canvas rebuilds PathInput
+        objects from their stored specs on every refresh — so it was born
+        empty every time and never once served a listing: ``0 served from the
+        listing cache`` on all 79 walks of one session, ~344 network directory
+        reads per refresh, ~3 s of a 5.7-21 s ``get_pipeline``. The reuse is
+        between objects, so the cache has to be too.
+        """
+        first = PathInput(TEMPLATE, root_folder=str(tree)).discover()
         calls = _listdir_calls(monkeypatch)
-        PathInput(TEMPLATE, root_folder=str(tree)).discover()
-        assert len(calls) > 0
+
+        second = PathInput(TEMPLATE, root_folder=str(tree)).discover()
+
+        assert second == first
+        assert calls == [], (
+            f"a second PathInput over an unchanged tree re-read {len(calls)} "
+            f"director(ies)"
+        )
+
+    def test_a_changed_directory_is_re_read_across_instances(self, tree):
+        """Sharing is only safe because every entry is mtime-validated."""
+        assert len(PathInput(TEMPLATE, root_folder=str(tree)).discover()) == 4
+
+        d = tree / "s3" / "A"
+        d.mkdir(parents=True)
+        (d / "data.txt").write_text("x")
+        os.utime(tree, None)
+
+        found = {
+            (c["subject"], c["session"])
+            for c in PathInput(TEMPLATE, root_folder=str(tree)).discover()
+        }
+        assert ("s3", "A") in found, "a shared cache served a stale listing"
 
 
 class TestDiscoverReportsItself:

@@ -2400,33 +2400,100 @@ class TestMatlabParamToClassFromDb:
             "loadDelsysEMGOneFile": {"loaded_data": "RawEMG", "cycles": "Cycles"}
         }
 
-    def test_missing_output_num_contributes_nothing(self, caplog):
-        """The pre-fix behaviour, kept deliberately: fall through to the
-        manual-edge source rather than guessing a slot."""
+    # --- one declared output: the number is noise (2026-09-22) -------------
+    #
+    # "Fall through to the manual-edge source rather than guessing a slot" is
+    # right for a multi-output function and vacuous for a single-output one:
+    # there is one slot and the variant's own output_type is the only
+    # candidate, so nothing is being guessed. `output_num` is the PK half of
+    # `_invocation_output` and names which output OF THE INVOCATION a record
+    # is — a `distribute` run numbers its slices, and a batch loader sharing
+    # an invocation gives a re-run's record the next free slot. Neither is a
+    # signature position. Consulting it here made every single-output MATLAB
+    # function contribute nothing AND log once per DB record: 100,758 of the
+    # 120,351 lines in the 2026-09-22 log.
+
+    def test_one_declared_output_does_not_consult_the_number(self):
         from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
 
+        for onum in (None, 0, 7, 450):
+            result = _matlab_param_to_class_from_db(
+                self._agg({"output_type": "RawEMG", "output_num": onum}),
+                {"loadDelsysEMGOneFile"},
+                {"loadDelsysEMGOneFile": ("loaded_data",)},
+            )
+            assert result == {"loadDelsysEMGOneFile": {"loaded_data": "RawEMG"}}, (
+                f"output_num={onum!r} changed the answer for a one-output fn"
+            )
+
+    def test_a_distributed_run_maps_every_slice_to_the_one_output(self, caplog):
+        """The real shape: 450 records of one variable, output_num 0..449."""
+        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+
+        variants = [
+            {"output_type": "GAITRiteLoaded", "output_num": i} for i in range(450)
+        ]
         with caplog.at_level(logging.INFO):
             result = _matlab_param_to_class_from_db(
-                self._agg({"output_type": "RawEMG", "output_num": None}),
+                self._agg(*variants, fn="loadGaitRiteOneFile"),
+                {"loadGaitRiteOneFile"},
+                {"loadGaitRiteOneFile": ("grTable",)},
+            )
+
+        assert result == {"loadGaitRiteOneFile": {"grTable": "GAITRiteLoaded"}}
+        assert caplog.text == "", (
+            "450 records produced log output — this ran once per DB record on "
+            "every canvas refresh and is what made scidb.log 24 MB"
+        )
+
+    def test_one_output_with_conflicting_types_warns_and_is_deterministic(
+        self, caplog
+    ):
+        """One param cannot name two classes. Say which and why."""
+        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+
+        with caplog.at_level(logging.WARNING):
+            result = _matlab_param_to_class_from_db(
+                self._agg(
+                    {"output_type": "RawEMG", "output_num": 0},
+                    {"output_type": "Cycles", "output_num": 1},
+                ),
                 {"loadDelsysEMGOneFile"},
                 {"loadDelsysEMGOneFile": ("loaded_data",)},
             )
 
-        assert result == {}
-        assert "DB source contributes nothing" in caplog.text
+        assert result == {"loadDelsysEMGOneFile": {"loaded_data": "Cycles"}}
+        assert "different types" in caplog.text
+        assert "RawEMG" in caplog.text and "Cycles" in caplog.text
 
-    def test_out_of_range_output_num_is_skipped(self, caplog):
+    def test_a_multi_output_fn_still_refuses_to_guess(self, caplog):
+        """The original rule, kept where it means something: two declared
+        outputs and a number naming neither is genuinely ambiguous."""
         from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
 
         with caplog.at_level(logging.INFO):
             result = _matlab_param_to_class_from_db(
                 self._agg({"output_type": "RawEMG", "output_num": 7}),
                 {"loadDelsysEMGOneFile"},
-                {"loadDelsysEMGOneFile": ("loaded_data",)},
+                {"loadDelsysEMGOneFile": ("loaded_data", "cycles")},
             )
 
         assert result == {}
-        assert "out of range" in caplog.text
+        assert caplog.text == "", "the unmapped summary belongs at DEBUG"
+
+    def test_the_multi_output_summary_is_one_line_per_function(self, caplog):
+        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+
+        variants = [{"output_type": "RawEMG", "output_num": i} for i in range(5, 40)]
+        with caplog.at_level(logging.DEBUG):
+            _matlab_param_to_class_from_db(
+                self._agg(*variants),
+                {"loadDelsysEMGOneFile"},
+                {"loadDelsysEMGOneFile": ("loaded_data", "cycles")},
+            )
+
+        lines = [r for r in caplog.records if "unmapped" in r.getMessage()]
+        assert len(lines) == 1, f"{len(lines)} lines for one function"
 
     def test_non_matlab_functions_are_ignored(self):
         from scistack_gui.api.pipeline import _matlab_param_to_class_from_db

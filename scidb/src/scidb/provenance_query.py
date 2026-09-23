@@ -2229,22 +2229,32 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
 
     Graph-native replacement for the old ``version_keys``-grouped
     ``list_pipeline_variants``. A variant is one ``(output_type, function_name,
-    input_types, constants, output_num)`` combination — config-level
+    input_types, constants, glue, run options)`` combination — config-level
     (fn-hash- and instance-independent). Synthetic ``__save__`` invocations are
     excluded (they are not pipeline steps).
+
+    ``output_num`` is **reported but not part of that identity** — see the
+    comment at the group key for why it only ever split things that are not
+    different variants.
 
     Each dict: ``function_name``, ``output_type``, ``call_id`` (the
     reconstructed ``CallSite``'s id — the same type the forward
     ``ForEachConfig.to_call_id`` fills, so they match by construction),
     ``input_types`` (param→type), ``constants`` (param→typed value),
     ``run_options`` (:func:`run_options_label`), ``output_num`` (int|None),
-    ``record_count`` (distinct output records).
+    ``record_count`` (distinct output records), ``function_hash``, and — added
+    2026-09-22, see :func:`_annotate_variants` — ``first_saved``,
+    ``last_saved``, ``schema_ids``, ``current`` and ``current_record_count``.
+
+    ``output_num`` names which output OF THE INVOCATION a record is, which is
+    the signature slot only sometimes; see ``get_aggregated_variants`` for the
+    two cases where it is not.
     """
     from .foreach_config import CallSite, RunOptions
 
     inv_rows = duck._fetchall(
-        "SELECT invocation_id, function_name, as_table, distribute, across_variants "
-        "FROM _invocation WHERE function_name != ?",
+        "SELECT invocation_id, function_name, as_table, distribute, across_variants, "
+        "function_hash FROM _invocation WHERE function_name != ?",
         [SAVE_FUNCTION_NAME],
     )
 
@@ -2252,7 +2262,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     group_records: dict = {}  # group_key -> set(output_record_id)
     glue_invs = glue_invocation_ids(duck)
 
-    for inv_id, fn_name, as_table, distribute, across_variants in inv_rows:
+    for inv_id, fn_name, as_table, distribute, across_variants, fn_hash in inv_rows:
         if inv_id in glue_invs:
             continue  # a glue hop is not a pipeline step (D5)
         var_inputs, constants = invocation_inputs(duck, inv_id)
@@ -2296,13 +2306,27 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         for output_num, out_rid, out_type in out_rows:
             if output_type is not None and out_type != output_type:
                 continue
+            # `output_num` is NOT part of the key (2026-09-22). It names which
+            # output OF THE INVOCATION a record is, and that only ever splits
+            # things which are not different variants:
+            #
+            # * an ordinary multi-output call already differs by `out_type`,
+            #   which IS in the key, so the number adds nothing;
+            # * a `distribute` run numbers its SLICES, so one call became N
+            #   variants — ~21,000 of them for one real loader, which is the
+            #   literal answer a user got to "why does this variable have more
+            #   variants than I expected";
+            # * a batch loader sharing an invocation takes the next free slot
+            #   on each re-run, so re-runs split too.
+            #
+            # One variant now holds its N records at N locations, which is
+            # what `record_count` and `schema_ids` already say.
             gkey = (
                 out_type,
                 fn_name,
                 tuple(sorted(input_types.items())),
                 constants_identity_key(constants),
                 tuple(sorted((k, tuple(v)) for k, v in glue_names.items())),
-                output_num,
                 tuple(at),
                 bool(distribute),
                 tuple(pooled),
@@ -2353,13 +2377,89 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     "glue_chains": glue_names,
                     "selectors": selectors,
                     "output_num": output_num,
+                    # The source that produced this variant. Reported so a
+                    # reader can tell two variants apart when NOTHING else
+                    # distinguishes them — a body edit re-run at the same
+                    # constants under the same options.
+                    "function_hash": fn_hash,
                 }
                 group_records[gkey] = set()
+            else:
+                # The LOWEST slot, so the reported number is deterministic
+                # rather than row-order dependent. For the only case where it
+                # still means something — a multi-output call, where each
+                # `out_type` is its own group — that is the type's own slot.
+                prev = groups[gkey].get("output_num")
+                if output_num is not None and (prev is None or output_num < prev):
+                    groups[gkey]["output_num"] = output_num
             group_records[gkey].add(out_rid)
 
-    return [
-        {**groups[gkey], "record_count": len(group_records[gkey])} for gkey in groups
-    ]
+    return _annotate_variants(duck, groups, group_records)
+
+
+def _annotate_variants(duck, groups: dict, group_records: dict) -> list[dict]:
+    """Add chronology, locations and the load-path verdict to each variant.
+
+    Three things `scidb variants` could not say before 2026-09-22, and each is
+    a question a user actually asks of a database that has grown more variants
+    than they expected:
+
+    * ``first_saved`` / ``last_saved`` — *when*, so the list can be read in
+      the order things happened rather than in hash order;
+    * ``schema_ids`` — *where*, so "450 records" becomes "450 locations over
+      subject x session x speed x trial";
+    * ``current`` — **whether a load would use these records at all.** This is
+      the one that makes the view a diagnostic rather than a description. Two
+      variants that look equally alive are the shape of the 2026-09-22 bug,
+      where node state counted records the load path had already dropped.
+
+    Batched deliberately: one query for the save log, one for the schema ids,
+    one supersession pass over every record at once. The per-record shape of
+    this is an N+1 on a canvas path (``project_batched_provenance_hot_paths``).
+    """
+    all_rids = sorted({rid for rids in group_records.values() for rid in rids})
+    stamps: dict = {}
+    schema_of: dict = {}
+    if all_rids:
+        for rid, ts in _chunked_in(
+            duck,
+            "SELECT record_id, MAX(timestamp) FROM _record_save "
+            "WHERE record_id IN ({ph}) GROUP BY record_id",
+            all_rids,
+        ):
+            stamps[rid] = ts
+        for rid, sid in _chunked_in(
+            duck,
+            "SELECT record_id, schema_id FROM _record WHERE record_id IN ({ph})",
+            all_rids,
+        ):
+            schema_of[rid] = sid
+    superseded = run_option_superseded_records(duck, all_rids) if all_rids else set()
+
+    out = []
+    for gkey, info in groups.items():
+        rids = group_records[gkey]
+        times = sorted(t for t in (stamps.get(r) for r in rids) if t is not None)
+        live = rids - superseded
+        out.append(
+            {
+                **info,
+                "record_count": len(rids),
+                "first_saved": times[0] if times else None,
+                "last_saved": times[-1] if times else None,
+                "schema_ids": sorted(
+                    {s for s in (schema_of.get(r) for r in rids) if s is not None}
+                ),
+                # A variant is current when a `latest` load would still return
+                # its records. Partial is possible and is worth seeing rather
+                # than rounding away: a run-option flip supersedes per
+                # function, globally, so a variant can lose some locations and
+                # keep others.
+                "current": len(live) == len(rids),
+                "current_record_count": len(live),
+            }
+        )
+    return out
 
 
 def _producing_variant_key(duck, record_id: str):

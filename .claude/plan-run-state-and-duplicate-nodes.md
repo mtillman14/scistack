@@ -470,12 +470,44 @@ That is a colour symptom too.
 Read `output_num` as an output slot only where it *is* one. And log a summary
 per function per build, not a line per record.
 
-### The fix
+### The fix — DONE 2026-09-22
 
-Carry the run's `distribute` flag onto the variant record (it already carries
-`output_num` for this purpose) and skip the slot lookup when it's set. Drop the
-leftover message to DEBUG and aggregate it. Do the same for the 390 identical
-`variant_resolver` lines per run.
+Simpler than the plan assumed, and the log said why: **every one of the
+100,758 flood lines is for a function declaring exactly ONE output.** With one
+declared output there is no slot to guess — the single name maps to the
+variant's `output_type` and `output_num` must not be consulted at all. That
+one condition removes 100% of the flood and populates `from_db` for all seven
+MATLAB functions in the affected project.
+
+No `distribute` flag is needed. `distribute` is not the only case where
+`output_num` is not a slot — a batch loader sharing one invocation across runs
+gives a re-run's record the next free slot too (`provenance_save`, Fix B) — so
+keying on it would have fixed one cause and left the other.
+
+The original rule ("fall through rather than guess a slot") is kept where it
+means something: a genuinely multi-output function with an out-of-range number
+still contributes nothing, and now says so **once per function at DEBUG**
+instead of once per record at INFO. Conflicting types under one declared
+output warn and resolve deterministically.
+
+`variant_resolver`'s 390 identical lines per run are now one line per wiring
+with a target count. It stays at INFO deliberately — its *absence* is the
+documented diagnostic for "the run ignored the edge I drew"
+(`manual-edges-on-history-nodes.md` §Reading scidb.log).
+
+Root cause of the original mistake, fixed in the same pass: the
+`list_pipeline_variants` docstring called `output_num` *"0-based position in
+the fn signature"*. It now says what it actually is, and names the two cases
+where it is not a signature position.
+
+### Tests
+
+`test_matlab.py::TestMatlabParamToClassFromDb` — two tests that encoded the
+old single-output behaviour were rewritten (with the reasoning for the
+reversal); five added: the number is ignored for one declared output whatever
+it says, a 450-slice distributed run maps cleanly and logs **nothing**,
+conflicting types warn, a multi-output fn still refuses to guess, and the
+unmapped summary is one line per function.
 
 ---
 
@@ -515,11 +547,32 @@ resolved fine.
 The safety check should distinguish "the search returned nothing" from "the
 search returned a location with no keys".
 
-### The fix
+### The fix — DONE 2026-09-22
 
-Count the keyless match, and base the safety check on how many matches the
-search returned rather than on how many survived counting. Fix the warning text
-to name the right cause.
+Two changes in `scidb/state.py`:
+
+1. `check_pathinput_node_state._add` admits the keyless combo. The dedup key
+   `()` is already unique, so only the `if c` falsiness test had to go. The
+   downstream semantics were already right and needed no change:
+   `_is_realized({})` is `any(...)` over an empty key set — true iff the
+   function has realized ANY location, which is exactly the question for a
+   single fixed file. So the node reads red before its first run and green
+   after, with no special case.
+2. The result now carries `discovered` — the RAW number of matches the walk
+   returned, before the grid intersection and before exclusions — and
+   `_discovery_gate` bases its credibility check on that instead of on how
+   many survived. "The walk found nothing" (unreachable root, Windows path on
+   POSIX) and "everything found was excluded" are different situations, and
+   only the first should disable discovery.
+
+Warning reworded to "matched nothing on disk", which is what it now means.
+
+### Tests
+
+`test_locations.py::TestKeylessPathInput` — a template naming one fixed file:
+the match counts, never-run is red, after the run it is green, the credibility
+guard does not fire, and (the case the guard exists for) an unreachable root
+still trips it.
 
 ---
 
@@ -542,34 +595,98 @@ variant. Single-figure saves earlier the same day all worked.
 ### What it should do
 
 A save either writes a usable file or fails with a message that names the real
-cause. A filename built from a variant should be short.
+cause. Filenames stay **short**, nothing is silently overwritten, and what each
+file holds is recorded somewhere durable (user, 2026-09-22).
 
-### The fix
+### The fix — DONE 2026-09-22
 
-Cap the generated name at ~48 characters with a short hash appended so two
-figures don't collide, and check the path length before writing so the error
-says "path too long", not "file not found".
+**Numbered, not slugged.** A fanned-out save writes `<stem>_v1`, `<stem>_v2`, …
+The number is keyed on **(plot settings, variant)** — the user's own framing:
+a figure is the same figure only if both match. `PlotSpec.to_dict()` is the
+normalised settings form and `scicanonicalhash.canonical_hash` is the project's
+one hasher, so the key needed nothing new.
 
-(Longer term the label itself shouldn't spell out a whole config dict, but the
-cap is the safe fix and lands first.)
+Consequences of that key, both wanted:
+- re-saving the same figure after a re-render **reuses its number**, so the
+  file already referenced in a talk updates in place instead of multiplying;
+- changing any setting **takes a new number**, so a tweak never silently
+  overwrites the figure someone already has.
+
+**A sidecar manifest, not a database row.** `<stem>.figures.json` beside the
+images records `{n, file, key, figure label, kind, full settings, saved_at}`
+per figure. Deliberately not the database: these files go into a talk or a
+paper directory and get copied around, and *"what is v2?"* has to be
+answerable months later without the right database open. One manifest per
+(directory, stem), so the same database saving to two folders keeps two
+independent numberings.
+
+**A lost manifest cannot cause an overwrite.** Numbering floors on the `_v{n}`
+files actually present in the directory as well as on what the manifest
+remembers, so deleting or corrupting it costs the descriptions, never the
+figures.
+
+**Two guards behind that.** `_slug` is capped at 48 characters with a
+6-hex digest appended when truncated, so two long labels sharing a prefix
+cannot collapse onto one name; and `_path_too_long` refuses an over-long path
+*before* rendering, with a message naming the real cause. `savefig`'s own
+`FileNotFoundError` reads as "the folder is missing", which is why the real
+cause took a traceback to find.
+
+**Trade-off accepted:** `emg_v1.png` is less self-describing than
+`emg_subject_1.png` was. Short won because the label is unbounded and the
+manifest is a better answer than a filename ever was — it carries the full
+settings, not just a label.
+
+### Tests
+
+`test_plot_service.py` — two tests asserting the old slugged names were
+rewritten; seven added: the manifest names each file, re-saving reuses the
+number, changed settings take a new one, a deleted manifest does not
+overwrite, a single named save keeps its name and writes no manifest, the slug
+cap keeps long labels distinct, and an over-long path is refused with a
+message that does not say "not found".
 
 ---
 
 ## Problem 8: small things
 
-**Every project MATLAB function is registered twice.** The shadow check
-compares file paths with `==`, so `y:\…\grSides.m` and `Y:\…\grSides.m` look
-like two different files. 20 functions affected, one warning each. Fix:
-normalise and case-fold the path in that one helper before comparing.
+**Every project MATLAB function is registered twice. DONE 2026-09-22.**
+The shadow check compared file paths with `==`, so `y:\…\grSides.m` and
+`Y:\…\grSides.m` looked like two files: 20 functions registered twice, each
+with a WARN telling the user their own code shadowed itself.
 
-**The directory-listing cache never hits** — `0 served from the listing cache`
-on all 79 searches. The cache lives on the PathInput object, and the canvas
-builds fresh PathInput objects every refresh, so it starts empty every time.
-That's ~344 network directory reads per refresh. Fix: move the cache to module
-level (it's already validated by modification time, so sharing is safe).
+Fixed at the existing owner rather than in the registry. `config._same_path`
+was already the comparison for this family — it was written for the
+mapped-drive-vs-UNC form — so the registry now calls it. But `_same_path`
+alone was not enough: its `_identity_key` test returns `None` when a
+filesystem reports `st_ino == 0`, which a mapped SMB share frequently does,
+and that is exactly the setup where this bit. `_same_path` gained an
+`os.path.normcase` comparison — lowercases on Windows, identity on POSIX — so
+two spellings compare equal precisely where the OS says they are one file.
+
+Tests in `test_config.py` assert the *platform's* rule rather than one
+platform's answer, so they mean the same thing on macOS and on Windows.
+
+**The directory-listing cache never hits. DONE 2026-09-22.**
+`0 served from the listing cache` on all 79 searches. `_dir_cache` lived on
+the PathInput object and the canvas rebuilds those every refresh, so it was
+born empty every time — ~344 network directory reads per refresh.
+
+Moved to module level (`pathinput._DIR_CACHE`), with `clear_listing_cache()`
+exported. Safe to share because every entry is mtime-validated on read: a
+stale listing can never be served, only re-read. That is also why no
+invalidation hook is needed after a run — directory mtime changes when entries
+appear or vanish, which is all discovery looks at.
+
+`test_pathinput_discover_cache.py` had a test asserting the old behaviour
+verbatim ("The cache is per instance — a new PathInput knows nothing"); it now
+asserts the opposite, with a sibling proving a changed directory is still
+re-read across instances. An autouse fixture clears the cache between tests
+now that it outlives them.
 
 **A canvas refresh takes 5.7–21 seconds** (median 9.8). Mostly the two items
-above plus Problem 2's work. Re-measure after fixing those rather than guessing.
+above plus Problem 2's work. **Still to re-measure** — the next `scidb.log`
+from a real session is the measurement; do not optimise further on guesses.
 
 **Not a bug — leave it alone.** Colours are computed twice per refresh (9 call
 sites, then 8 after grouping). That's deliberate: the second pass exists so a
@@ -693,31 +810,58 @@ own.
 first few, with a count. A full listing goes behind `--locations` (and `--json`
 always carries everything).
 
-### The fix
+### The fix — Python + CLI DONE 2026-09-22; GUI panel outstanding
 
-1. **Extend the query.** `provenance_query.pipeline_variants` currently returns
-   no timestamps, no locations and no function hash. Add `first_saved`,
-   `last_saved`, `fn_hash`, `fn_version`, and the schema ids — one query, not
-   one per variant (`project_batched_provenance_hot_paths`).
-2. **Extend `VariantSummary`** with those fields plus the two verdicts.
-3. **Group in `Inspector.variants`** by topology and sort chronologically.
-4. **Render** the two-level view in `render.py`. `render_variants_table` stays
-   for the flat case; this is a second renderer.
-5. **Surface it in all three places**, same rule as `Inspector.provenance`: one
-   implementation, CLI command written first, GUI panel a thin shell over the
-   same method (`services/provenance_service.py` is the pattern to copy — it is
-   explicit that nothing there computes anything).
+1. **`provenance_query.pipeline_variants`** now carries `first_saved`,
+   `last_saved`, `schema_ids`, `function_hash`, `current` and
+   `current_record_count`. Added in one batched pass
+   (`_annotate_variants`): one query for the save log, one for the schema
+   ids, one supersession sweep over every record at once — the per-record
+   shape would be an N+1 on a canvas path.
+2. **`VariantSummary`** gained the same fields, each documented with the
+   question it answers.
+3. **`Inspector.variants`** now sorts **chronologically** (was output/fn/slot
+   — stable but answering no question). New **`Inspector.topologies`** groups
+   by `(function_name, input_types, output_type)`, oldest first.
+4. **`render.render_topologies`** is the two-level view;
+   `render_variants_table` stays for `--flat`.
+5. **`scidb variants <name>`** is two-level by default, with `--flat` and
+   `--locations`.
 
-While in `pipeline_variants`: its docstring says `output_num` is the *"0-based
-position in the fn signature"*. For a distributed run that is false — it's the
-slice index (Problem 5). Fix the docstring in the same pass; the wrong
-docstring is how Problem 5 got written.
+**The verdict column is the point.** `load: CURRENT` /
+`PARTIALLY SUPERSEDED (n of m still returned)` / `SUPERSEDED` reads straight
+off `run_option_superseded_records` — the one owner Problem 2 created. A
+variant node state counts and a load drops is invisible in every other view,
+and is exactly the 2026-09-22 bug. Partial supersession is kept rather than
+rounded to a boolean because run options are judged per function *globally*,
+so a variant can lose some locations and keep others — which is the trial-4
+orphan that started all this.
 
-### Test
+**No wiring id was invented.** The GUI has one and scidb's nearest equivalent
+(`call_id`) is a different thing — it folds in constants and run options. The
+grouping uses fields already present, so this adds no third answer to "which
+node is this" (`node-identity.md`).
 
-`scidb/tests/test_inspect_api.py` — a variable produced by one topology under
-two run-option sets comes back as one topology with two variants, in
-chronological order, with the older marked superseded for load.
+The `output_num` docstring was corrected under Problem 5.
+
+**Outstanding:** the GUI panel. `Inspector.topologies` is the one
+implementation and the CLI was built first, so the panel is a thin shell over
+the same method — `services/provenance_service.py` is the pattern. Planned
+separately as **`.claude/plan-topologies-panel.md`** (4 stages: service+RPC,
+panel, canvas context-menu entry, docs), because it needs a frontend component
+that has to be looked at rather than only tested.
+
+### Tests
+
+- `test_inspect_pipeline.py::TestTopologies` — two constant variants are ONE
+  topology, every variant appears exactly once, chronological order, locations
+  present, unsuperseded reads current, the renderer names the shape and the
+  verdict.
+- `test_run_option_variants.py::TestTheVariantsViewShowsTheSupersession` — on
+  the database that motivated it: the older run-option set is marked
+  not-current, both runs are still one topology (the *shape* never changed),
+  the rendered view distinguishes them, and the orphaned-trial case reports
+  partial supersession.
 
 ---
 
@@ -856,3 +1000,65 @@ Tests, one package at a time:
 cd /workspace/scidb && python -m pytest tests/ -x -q
 cd /workspace/scistack-gui && python -m pytest tests/ -x -q
 ```
+
+---
+
+## Problem 11: a distributed run is reported as one variant per slice
+
+Found 2026-09-22 while building Problem 9's view — which is the point of that
+view, but it is not fixed.
+
+### What it is
+
+`provenance_query.pipeline_variants` includes **`output_num` in its group
+key**. `output_num` names which output of the invocation a record is, so:
+
+- an ordinary multi-output call (`outputs=[A, B]`) splits into two groups —
+  but those already differ by `output_type`, which is in the key too, so
+  `output_num` contributes nothing there;
+- a **distributed** run emits one record per slice, each with its own
+  `output_num`, so one call becomes N variants;
+- a batch loader that shares an invocation across runs takes the next free
+  slot each time, so re-runs also split.
+
+`output_num` therefore only ever splits things that are not different
+variants. On the 2026-09-22 database `loadGaitRiteOneFile` has ~21,000 variant
+rows for what a user would call two — that is the same count that produced
+Problem 5's 100,758-line log flood, and it is the literal answer to "why does
+this variable have more variants than I expected".
+
+### What it should do
+
+One variant per genuine variant: `(output_type, function, inputs, constants,
+glue, run options)`. A distributed run is ONE variant holding N records at N
+locations — which is exactly what `schema_ids` and `record_count` already say.
+
+### The fix — DONE 2026-09-22
+
+`output_num` dropped from the group key in `pipeline_variants`. Still
+**reported**, as the LOWEST slot in the group rather than the first seen, so
+the number is deterministic instead of row-order dependent — and for the only
+case where it still means anything (a multi-output call, where each
+`output_type` is its own group) that is the type's own slot.
+
+Nothing else moved. `call_id` is computed from `CallSite(fn_name, inputs,
+constants, options, glue)` and never included `output_num`, so call-site
+identity is untouched and `test_identity_parity.py` was never at risk. What
+changes is how many groups share one call_id: N, now 1.
+
+The two consumers checked first both hold:
+- `inspect/graph.py` builds `outputs: {output_type: set(output_num)}` — a
+  set of one per type now, which is what it wanted;
+- `database.py`'s aggregation sums `record_count` across variants, so N
+  one-record groups and one N-record group give the same total. Its comment
+  claiming `output_num` is "the only thing that tells the GUI which slot
+  produced this output" is now qualified: true for multi-output, and Problem 5
+  already made single-output functions ignore it.
+
+### Tests
+
+`test_run_option_variants.py` — the pinned 6 became 2, with a sibling
+asserting the distributed variant still holds all its slices (grouped, not
+dropped), and a new multi-output case proving the slot still distinguishes two
+declared outputs. `test_variant_queries.py`'s two `output_num` contract tests
+are multi-output and unaffected by construction.

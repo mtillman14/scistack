@@ -36,6 +36,44 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0o. Saved figures are numbered, with a manifest — added 2026-09-22
+
+**What changed:** saving a fanned-out plot used to name each file after its
+figure label. A Variant label spells out the constants that define it, so one
+`gaitRiteConfig` dict produced a 630-character path — over Windows' 260 — and
+three saves failed with `FileNotFoundError`, which reads like a missing
+folder. Files are now `<name>_v1.svg`, `<name>_v2.svg`, … and a sidecar
+`<name>.figures.json` records what each number holds. Plan: Problem 7 in
+`.claude/plan-run-state-and-duplicate-nodes.md`.
+
+**Backend:** `scistack_gui/services/plot_service.py`. **No frontend change.**
+
+**Steps:**
+
+1. Open a plot that fans out over more than one figure (a Variant or an
+   ITERATE role). **Save all figures** into a folder. You should get
+   `<name>_v1`, `<name>_v2`, … — short names — plus `<name>.figures.json`.
+2. Open that JSON. Each entry should name its file, the figure it holds, and
+   the full plot settings. *This is the thing that has to make sense to you in
+   six months — tell me if it does not.*
+3. **Save again without changing anything.** The same files should be
+   overwritten; no `_v3` should appear.
+4. **Change a setting** (y-limits, grouping, kind) and save again. This time
+   new numbers *should* appear, and the old files must be untouched.
+5. Save a **single** figure to an explicit filename. It should keep exactly
+   the name you gave it, with no number and no manifest.
+6. Try saving into a deeply nested folder with a long path. You should get a
+   clear "path is N characters, over Windows' 260-character limit" message
+   rather than a file-not-found error.
+
+**Judgement call to confirm:** `emg_v1.png` is less self-describing than the
+old `emg_subject_1.png`. Short was chosen because the label is unbounded, and
+the manifest carries more than a filename could. If the numbering feels worse
+in practice for short labels, say so — a hybrid is possible but makes the
+numbers unstable, which is why I did not do it.
+
+---
+
 ## 0n. Node colours: correct, cascading, and refreshed — added 2026-09-22
 
 **What changed:** three separate defects that together made the canvas

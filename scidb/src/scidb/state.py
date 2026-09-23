@@ -594,13 +594,13 @@ def _discovered_combos(fn_name: str, db) -> tuple[int, list[dict]] | None:
         # the docstring of `_discovery_gate` for why exclusions are the escape
         # hatch rather than a remembered grid.
         result = check_pathinput_node_state(_stub, [], inputs, db=db)
-        on_disk += len(result["combos"])
+        on_disk += result.get("discovered", len(result["combos"]))
         missing.extend(c["schema_combo"] for c in result["combos"] if c["state"] == "missing")
     elapsed = time.perf_counter() - started
 
     _discovery_cache[key] = (now + DISCOVERY_CACHE_SECONDS, (on_disk, missing))
     logger.debug(
-        "discovery for %s: %d location(s) on disk, %d never run, in %.3fs "
+        "discovery for %s: %d match(es) on disk, %d never run, in %.3fs "
         "(cached %.0fs)",
         fn_name,
         on_disk,
@@ -654,9 +654,13 @@ def _discovery_gate(fn_name: str, db, realized_count: int) -> list[dict]:
         return []
     on_disk, shortfall = found
 
+    # `on_disk` is the RAW number of matches the walk returned, not the number
+    # that survived the grid and the exclusions (2026-09-22). The guard is
+    # about whether the WALK worked; "everything found was excluded" is a
+    # different, legitimate state and must not read as a broken path.
     if on_disk == 0 and realized_count:
         logger.warning(
-            "node %s: PathInput discovery found no files at all, but the "
+            "node %s: PathInput discovery matched nothing on disk, but the "
             "function has %d realized location(s) — treating discovery as "
             "unavailable rather than reporting everything missing. Check the "
             "data root is reachable and that scistack.toml's paths resolve on "
@@ -755,9 +759,23 @@ def check_pathinput_node_state(
     seen: set = set()
 
     def _add(combo: dict) -> None:
+        # A KEYLESS combo is legitimate and must be kept (2026-09-22). A
+        # PathInput whose template has no `{placeholders}` — one fixed
+        # spreadsheet, typically distributed to many subjects afterwards —
+        # discovers exactly one match, and that match carries no schema keys.
+        # `if c` dropped it as falsy, `should` came back empty, and the
+        # credibility guard in `_discovery_gate` then read a successful walk
+        # as a broken one: `loadDemographics` and `loadFunctionalOutcomes`
+        # reported "PathInput discovery found no files at all" 44 times in
+        # one session, advising the user to check a data root that had
+        # resolved perfectly.
+        #
+        # `_is_realized({})` is `any(...)` over an empty key set, i.e. true
+        # iff the function has realized ANY location — which is exactly the
+        # right question for a single fixed file: loaded, or not.
         c = _norm(combo)
         key = tuple(sorted(c.items()))
-        if c and key not in seen:
+        if key not in seen:
             seen.add(key)
             should.append(c)
 
@@ -765,9 +783,11 @@ def check_pathinput_node_state(
     grid_sets = {k: {schema_str(x) for x in iteration[k]} for k in grid_keys}
 
     pi = find_pathinput(inputs)
+    discovered = 0
     if pi is not None:
         # Discovered combos that satisfy the grid (the intersection).
         for combo in pi.discover():
+            discovered += 1
             c = _norm(combo)
             if all(c.get(k) in grid_sets[k] for k in grid_keys):
                 _add(c)
@@ -804,14 +824,27 @@ def check_pathinput_node_state(
         "green" if (combo_results and counts["missing"] == 0) else "red"
     )
     logger.debug(
-        "pathinput node %s: %s (should=%d, up_to_date=%d, missing=%d)",
+        "pathinput node %s: %s (discovered=%d, should=%d, up_to_date=%d, missing=%d)",
         fn_name,
         overall,
+        discovered,
         len(should),
         counts["up_to_date"],
         counts["missing"],
     )
-    return {"state": overall, "combos": combo_results, "counts": counts}
+    # ``discovered`` is the RAW count the walk returned, before the grid
+    # intersection and before exclusions. `_discovery_gate`'s credibility
+    # check needs that number rather than ``len(combos)``: "the walk found
+    # nothing" (an unreachable root, a Windows path read on POSIX) and
+    # "everything the walk found was excluded or outside the grid" are
+    # different situations and only the first is a reason to stop trusting
+    # discovery.
+    return {
+        "state": overall,
+        "combos": combo_results,
+        "counts": counts,
+        "discovered": discovered,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -953,3 +953,110 @@ class TestIntersectedLocations:
         text = "\n".join(r.getMessage() for r in caplog.records)
         assert "intersect_location_states(LocRaw ∩ LocFilt)" in text
         assert "LocRaw=" in text and "LocFilt=" in text
+
+
+# ---------------------------------------------------------------------------
+# A PathInput with no placeholders
+# ---------------------------------------------------------------------------
+
+
+class LocFixed(BaseVariable):
+    """What a single-spreadsheet loader writes."""
+
+
+def loc_import_fixed(filepath):
+    with open(filepath) as fh:
+        return float(fh.read().strip())
+
+
+class TestKeylessPathInput:
+    """A template with no ``{placeholders}`` names exactly ONE location.
+
+    The real shape (2026-09-22): ``loadDemographics`` and
+    ``loadFunctionalOutcomes`` point at a single fixed spreadsheet and
+    distribute it across subjects afterwards. ``discover()`` matched the file
+    and returned one combo carrying no schema keys — which
+    ``check_pathinput_node_state`` then dropped as falsy, leaving the
+    should-run set empty. ``_discovery_gate`` read that as a walk that found
+    nothing and disabled itself, so both nodes reported
+
+        PathInput discovery found no files at all, but the function has 16
+        realized location(s) — treating discovery as unavailable …
+
+    44 times in one session, advising the user to check a data root that had
+    resolved perfectly. Their state was permanently "cannot tell".
+    """
+
+    @pytest.fixture
+    def fixed_file(self, tmp_path):
+        from scifor import PathInput
+
+        root = tmp_path / "data"
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "demographics.txt").write_text("42.0")
+        return PathInput("demographics.txt", root_folder=str(root))
+
+    @pytest.fixture
+    def fixed_db(self, tmp_path, fixed_file):
+        db = configure_database(tmp_path / "loc_fixed.duckdb", SCHEMA_KEYS)
+        yield db, fixed_file
+        db.close()
+
+    def test_the_single_match_counts(self, fixed_db):
+        """One keyless combo is a should-run set of one, not of zero."""
+        db, path_input = fixed_db
+        res = check_pathinput_node_state(
+            loc_import_fixed, [LocFixed], {"filepath": path_input}, db=db
+        )
+        assert res["discovered"] == 1
+        assert len(res["combos"]) == 1, (
+            "the keyless combo was dropped — should-run is empty and the node "
+            "can never be evaluated"
+        )
+
+    def test_never_run_is_red(self, fixed_db):
+        db, path_input = fixed_db
+        res = check_pathinput_node_state(
+            loc_import_fixed, [LocFixed], {"filepath": path_input}, db=db
+        )
+        assert res["state"] == "red"
+        assert res["counts"]["missing"] == 1
+
+    def test_after_the_run_it_is_green(self, fixed_db):
+        db, path_input = fixed_db
+        for_each(loc_import_fixed, {"filepath": path_input}, [LocFixed])
+        res = check_pathinput_node_state(
+            loc_import_fixed, [LocFixed], {"filepath": path_input}, db=db
+        )
+        assert res["state"] == "green", res
+        assert res["counts"]["missing"] == 0
+
+    def test_the_credibility_guard_does_not_fire(self, fixed_db, caplog):
+        """The guard exists for an unreachable root, not for a template that
+        happens to name one file."""
+        import logging
+
+        db, path_input = fixed_db
+        for_each(loc_import_fixed, {"filepath": path_input}, [LocFixed])
+        with caplog.at_level(logging.WARNING):
+            check_node_state(loc_import_fixed, [LocFixed], db=db)
+        assert "matched nothing on disk" not in caplog.text
+        assert "found no files at all" not in caplog.text
+
+    def test_an_unreachable_root_still_trips_the_guard(self, fixed_db, tmp_path, caplog):
+        """The case the guard is for must keep working: the loader has run,
+        and then the data root goes away."""
+        import logging
+
+        from scifor import PathInput
+
+        db, path_input = fixed_db
+        for_each(loc_import_fixed, {"filepath": path_input}, [LocFixed])
+
+        gone = PathInput("demographics.txt", root_folder=str(tmp_path / "nowhere"))
+        with caplog.at_level(logging.WARNING):
+            res = check_pathinput_node_state(
+                loc_import_fixed, [LocFixed], {"filepath": gone}, db=db
+            )
+        assert res["discovered"] == 0
+        assert res["combos"] == []

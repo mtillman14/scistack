@@ -4166,7 +4166,18 @@ class DatabaseManager:
                 constants     (dict: param_name → value),
                 run_options   (str: the distribute/as_table set this variant
                                ran under — provenance_query.run_options_label),
-                output_num    (int | None: 0-based position in the fn signature),
+                output_num    (int | None: which output of the PRODUCING
+                               INVOCATION this record is — the PK half of
+                               _invocation_output. That coincides with the
+                               0-based signature slot only for an ordinary
+                               multi-output call: a `distribute` run numbers
+                               its SLICES, and a batch loader sharing one
+                               invocation across runs gives a re-run's record
+                               the next free slot. Do not index a signature
+                               with it without checking the range, and never
+                               for a single-output function — see
+                               scistack_gui.api.pipeline.
+                               _matlab_param_to_class_from_db),
                 record_count  (int: distinct records for this variant)
         """
 
@@ -4314,12 +4325,20 @@ class DatabaseManager:
                 if val not in functions[fkey]["constants"][k]:
                     functions[fkey]["constants"][k].append(val)
 
-            # Track variant. output_num must be carried through: it is the only
-            # thing that tells the GUI which slot of the fn signature produced
-            # this output, and for MATLAB fns it is the sole DB-derived source
-            # for the fn->output edge (see api/pipeline.py matlab_param_to_class).
-            # Dropping it here silently forced that edge to depend on a
-            # hand-drawn manual edge instead.
+            # Track variant. output_num is carried through because for a
+            # MULTI-OUTPUT fn it tells the GUI which slot of the signature
+            # produced this output, and for MATLAB fns that is the sole
+            # DB-derived source for the fn->output edge (see api/pipeline.py
+            # matlab_param_to_class). Dropping it silently forced that edge to
+            # depend on a hand-drawn manual edge instead.
+            #
+            # It is NOT variant identity (2026-09-22): a distributed run
+            # numbers its slices, so keying on it made one call N variants.
+            # Each output_type is now its own group and this is that type's
+            # own (lowest) slot — which is what the GUI wanted all along.
+            # A single-output fn must ignore it entirely; see
+            # _matlab_param_to_class_from_db for the two cases where the
+            # number is not a signature position at all.
             functions[fkey]["variants"].append(
                 {
                     "input_types": inputs,

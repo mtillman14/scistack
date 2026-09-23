@@ -575,3 +575,107 @@ class TestRunOptionsValue:
         named = CallSite("fn", {"df": "Wide"}, options=RunOptions(as_table=["df"]))
         assert base.call_id != pooled.call_id
         assert pooled.call_id == named.call_id, "True means every loadable input"
+
+
+class TestTheVariantsViewShowsTheSupersession:
+    """The differential column, on the database that motivated it.
+
+    `scidb variants` described what exists and could not say which of it a
+    load would return — so two variants, one live and one dead, read
+    identically. That is exactly the state in which node state counted
+    records the load path had already dropped and a finished step stayed red
+    forever (TestNodeStateAgreesWithTheLoadPath above). The view now says so.
+    """
+
+    def test_the_superseded_run_is_marked(self, both_runs):
+        summaries = both_runs.inspect.variants("Loaded")
+        by_label = {v.run_options: v for v in summaries}
+        assert set(by_label) == {"distribute=false", "distribute=true"}
+        assert by_label["distribute=true"].current is True
+        assert by_label["distribute=false"].current is False, (
+            "the older run-option set is not returned by a load and must not "
+            "read as live"
+        )
+
+    def test_both_runs_are_one_topology_with_two_variants(self, both_runs):
+        """Same function, same (absent) inputs, same output: one node, run two
+        ways. Nothing about the SHAPE changed, and there are exactly two runs.
+
+        This read 6 until 2026-09-22, because ``output_num`` was in the variant
+        group key and a `distribute` run numbers its SLICES — so one call
+        became one variant per record (~21,000 for a real loader). That is
+        Problem 11, and it was found by this view, which exists to answer "why
+        does this variable have more variants than I expected".
+        """
+        groups = both_runs.inspect.topologies("Loaded")
+        assert len(groups) == 1, "the shape never changed, so there is one topology"
+        _key, variants = groups[0]
+        assert len(variants) == 2, (
+            "a distributed run is ONE variant holding its slices, not one "
+            "variant per slice"
+        )
+        assert {v.run_options for v in variants} == {
+            "distribute=false",
+            "distribute=true",
+        }
+
+    def test_the_distributed_variant_holds_all_of_its_slices(self, both_runs):
+        """The records did not go anywhere — they are grouped, not dropped."""
+        variants = both_runs.inspect.variants("Loaded")
+        distributed = next(v for v in variants if v.run_options == "distribute=true")
+        assert distributed.record_count == len(TRIALS)
+        assert len(distributed.schema_ids) == len(TRIALS), (
+            "one variant, one record per trial, one location each"
+        )
+
+    def test_a_multi_output_call_still_splits_by_output_type(self, db):
+        """The case `output_num` was thought to be protecting: two outputs of
+        one call. They already differ by output_type, which IS in the key, so
+        dropping the number changes nothing here."""
+
+        class LeftSide(BaseVariable):
+            pass
+
+        class RightSide(BaseVariable):
+            pass
+
+        def split_sides():
+            return pd.DataFrame({"v": [1.0]}), pd.DataFrame({"v": [2.0]})
+
+        for_each(split_sides, {}, [LeftSide, RightSide], subject=["SS01"])
+
+        left = db.inspect.variants("LeftSide")
+        right = db.inspect.variants("RightSide")
+        assert len(left) == 1 and len(right) == 1
+        assert left[0].output_num != right[0].output_num, (
+            "the slot still distinguishes the two declared outputs"
+        )
+
+    def test_the_rendered_view_distinguishes_them(self, both_runs):
+        from scidb.inspect import render
+
+        text = render.render_topologies(
+            "Loaded", both_runs.inspect.topologies("Loaded"), db=both_runs
+        )
+        assert "load: CURRENT" in text
+        assert "SUPERSEDED" in text
+
+    def test_a_partially_superseded_variant_says_how_much(self, stale_trial):
+        """Run options are judged per function, globally, so a variant can
+        lose some locations and keep others. Rounding that to a boolean would
+        hide the trial-4 orphan that started all this."""
+        summaries = stale_trial.inspect.variants("Loaded")
+        old = [v for v in summaries if v.run_options == "distribute=false"]
+        new = [v for v in summaries if v.run_options == "distribute=true"]
+        assert old and new
+        assert all(v.current is False for v in old), (
+            "the superseded option set must not read as live anywhere"
+        )
+        assert all(v.current_record_count == 0 for v in old)
+        assert all(v.current is True for v in new)
+
+    @pytest.fixture
+    def stale_trial(self, db):
+        for_each(make_rows, {}, [Loaded], subject=["SS01"], trial=[1, 2, 3, 4])
+        for_each(make_rows, {}, [Loaded], distribute=True, subject=["SS01"])
+        return db

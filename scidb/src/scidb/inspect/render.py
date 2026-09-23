@@ -404,6 +404,91 @@ def _descendants(node) -> int:
     return len(node.children) + sum(_descendants(c) for c in node.children)
 
 
+def render_topologies(name: str, topologies: list, db=None, max_locations: int = 4) -> str:
+    """The two-level view: DAG shape, then the variants within it.
+
+    Written 2026-09-22 for "why does this variable have more variants than I
+    expected". The flat table cannot answer it — it shows variants and a
+    second TOPOLOGY looks exactly like a second variant, so a node the user
+    did not know existed reads as a run they forgot about.
+
+    ``load:`` is the column that matters. A variant node state counts and the
+    load path drops is invisible in every other view and is the shape of the
+    bug this came from; here two otherwise-identical rows differ visibly.
+    """
+    if not topologies:
+        return f"{name}: no pipeline variants"
+
+    n_variants = sum(len(group) for _k, group in topologies)
+    lines = [
+        f"{name} — {len(topologies)} topology/ies, {n_variants} variant(s)",
+    ]
+    for (fn_name, input_types, output_type), group in topologies:
+        inputs = ", ".join(f"{p}: {t}" for p, t in input_types) or "(no inputs)"
+        lines.append("")
+        lines.append(f"  topology  {fn_name}({inputs}) -> {output_type}")
+        for i, v in enumerate(group, start=1):
+            consts = (
+                ", ".join(f"{k}={val}" for k, val in sorted(v.constants.items()))
+                or "no constants"
+            )
+            head = f"    [{i}] {consts}"
+            if v.run_options:
+                head += f"   run={v.run_options}"
+            if v.function_hash:
+                head += f"   code={v.function_hash[:8]}"
+            lines.append(head)
+            lines.append(
+                f"        {v.record_count} record(s)"
+                + (
+                    f"   first {v.first_saved}   last {v.last_saved}"
+                    if v.first_saved
+                    else ""
+                )
+            )
+            if v.current:
+                verdict = "load: CURRENT"
+            elif v.current_record_count:
+                verdict = (
+                    f"load: PARTIALLY SUPERSEDED "
+                    f"({v.current_record_count} of {v.record_count} still returned)"
+                )
+            else:
+                verdict = "load: SUPERSEDED (an older run-option set)"
+            lines.append(f"        {verdict}")
+            if v.schema_ids:
+                lines.append(
+                    f"        {len(v.schema_ids)} location(s)"
+                    + _location_sample(v.schema_ids, db, max_locations)
+                )
+    return "\n".join(lines)
+
+
+def _location_sample(schema_ids, db, limit: int) -> str:
+    """``   subject/session — S01/BL, S01/MID24, … (+18)``, or just a count.
+
+    Sampled rather than dumped: a loader with 450 locations would otherwise
+    bury the thing the reader came for. ``--locations`` and ``--json`` carry
+    the full set.
+    """
+    if db is None:
+        return ""
+    try:
+        from scidb.state import _schema_id_to_combo
+
+        combos = [_schema_id_to_combo(db, sid) for sid in schema_ids[:limit]]
+    except Exception:  # pragma: no cover - a label is never worth a failure
+        return ""
+    combos = [{k: v for k, v in (c or {}).items() if v is not None} for c in combos]
+    combos = [c for c in combos if c]
+    if not combos:
+        return ""
+    keys = "/".join(combos[0])
+    shown = ", ".join("/".join(str(v) for v in c.values()) for c in combos)
+    more = len(schema_ids) - len(combos)
+    return f"   {keys} — {shown}" + (f", … (+{more})" if more > 0 else "")
+
+
 def render_variants_table(variants: list[VariantSummary]) -> str:
     if not variants:
         return "(no pipeline variants)"

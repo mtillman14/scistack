@@ -244,8 +244,20 @@ def _cmd_variants(insp: Inspector, args) -> None:
     variants = insp.variants(args.name)
     if args.json:
         _emit_json(variants)
-    else:
+    elif getattr(args, "flat", False):
         print(render.render_variants_table(variants))
+    else:
+        # Two-level by default (2026-09-22): a second TOPOLOGY and a second
+        # VARIANT are different news, and the flat table cannot tell them
+        # apart. `--flat` keeps the old one row per variant.
+        print(
+            render.render_topologies(
+                args.name,
+                insp.topologies(args.name),
+                db=insp._db,
+                max_locations=99999 if getattr(args, "locations", False) else 4,
+            )
+        )
 
 
 def _stderr_chooser(title: str, labels) -> int:
@@ -659,9 +671,19 @@ def _add_commands(
     p = sub.add_parser(
         "variants",
         parents=[parent],
-        help="Coexisting variants of a variable type or function.",
+        help="Coexisting variants of a variable type or function, by topology.",
     )
     p.add_argument("name", help="Variable type or function name.")
+    p.add_argument(
+        "--flat",
+        action="store_true",
+        help="One row per variant instead of grouping by DAG topology.",
+    )
+    p.add_argument(
+        "--locations",
+        action="store_true",
+        help="List every schema location rather than a sample.",
+    )
     p.set_defaults(_handler=_cmd_variants)
 
     p = sub.add_parser(

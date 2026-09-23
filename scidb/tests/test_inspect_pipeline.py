@@ -324,3 +324,66 @@ class TestCli:
         assert main(["--db", str(green_db), "variants", "PipeFilt"]) == 0
         out = capsys.readouterr().out
         assert "low_hz=20" in out and "low_hz=30" in out
+
+
+class TestTopologies:
+    """Two levels, because they are two questions.
+
+    `variants()` alone cannot answer "why does this variable have more
+    variants than I expected": a second TOPOLOGY — a node the user did not
+    know existed — reads exactly like a second variant of the node they did.
+    Grouping by DAG shape separates the two, and ordering by when things were
+    saved lets the list be read in the order they happened.
+
+    Added 2026-09-22 with the load-path verdict, which is what makes the view
+    a diagnostic: a variant node state counts and a load drops is invisible
+    everywhere else, and is the shape of the bug this came from
+    (docs/claude/run-option-variants.md §"The third consumer").
+    """
+
+    def test_two_constant_variants_are_one_topology(self, insp):
+        """Same function, same inputs, same output — different constants.
+        One node on the canvas, two runs of it."""
+        groups = insp.topologies("PipeFilt")
+        assert len(groups) == 1
+        (fn_name, inputs, output_type), variants = groups[0]
+        assert fn_name == "bandpass2"
+        assert output_type == "PipeFilt"
+        assert dict(inputs) == {"signal": "PipeRaw"}
+        assert {v.constants["low_hz"] for v in variants} == {"20", "30"}
+
+    def test_every_variant_appears_exactly_once(self, insp):
+        flat = insp.variants("PipeFilt")
+        grouped = [v for _k, group in insp.topologies("PipeFilt") for v in group]
+        assert sorted(v.call_id for v in grouped) == sorted(v.call_id for v in flat)
+
+    def test_variants_are_ordered_by_when_they_were_saved(self, insp):
+        stamps = [v.first_saved for v in insp.variants("PipeFilt")]
+        assert all(s is not None for s in stamps), "no chronology to sort by"
+        assert stamps == sorted(stamps)
+
+    def test_a_variant_knows_where_its_records_are(self, insp):
+        for v in insp.variants("PipeFilt"):
+            assert v.schema_ids, "a count of records is not a count of places"
+            assert len(v.schema_ids) <= v.record_count
+
+    def test_an_unsuperseded_variant_reads_as_current(self, insp):
+        """Nothing here has been re-run another way, so everything is live."""
+        for v in insp.variants("PipeFilt"):
+            assert v.current is True
+            assert v.current_record_count == v.record_count
+
+    def test_the_renderer_names_the_shape_and_the_verdict(self, insp):
+        from scidb.inspect import render
+
+        text = render.render_topologies(
+            "PipeFilt", insp.topologies("PipeFilt"), db=insp._db
+        )
+        assert "topology" in text
+        assert "bandpass2(signal: PipeRaw) -> PipeFilt" in text
+        assert "load: CURRENT" in text
+        assert "location(s)" in text
+
+    def test_an_unknown_name_still_raises(self, insp):
+        with pytest.raises(NotFoundError):
+            insp.topologies("NoSuchThing")

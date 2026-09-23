@@ -991,8 +991,18 @@ def resolve_definition_shadowing(
     last-one-wins behaviour, because there the choice really is arbitrary --
     that is the case worth a warning. Shared by the Python and MATLAB
     registries so the rule cannot drift between them.
+
+    "Same source" is ``config._same_path``, not string equality (2026-09-22).
+    One file reached here under two spellings -- ``y:\\...\\grSides.m`` and
+    ``Y:\\...\\grSides.m`` -- and a bare ``==`` called them two definitions,
+    so 20 project functions were registered twice and each logged a WARN
+    telling the user their code was shadowing itself. ``_same_path`` is the
+    owner of that comparison and already existed for the mapped-drive-vs-UNC
+    form of the same bug.
     """
-    if existing is None or existing == incoming:
+    from scistack_gui.config import _same_path
+
+    if existing is None or existing == incoming or _same_path(existing, incoming):
         return True
 
     incoming_tier = _source_tier(incoming, project_root)

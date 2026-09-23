@@ -54,6 +54,27 @@ class VariantSummary:
     input_types: dict[str, str]  # param → type name (PathInput params → spec string)
     constants: dict[str, str]  # param → display string of the value
     record_count: int
+    #: When this variant's records were written — the chronology `scidb
+    #: variants` is sorted by, and the first thing a reader wants when a
+    #: database has grown more variants than expected (2026-09-22).
+    first_saved: str | None = None
+    last_saved: str | None = None
+    #: Distinct schema locations these records sit at. A count of records is
+    #: not a count of places; "450 records" and "450 locations over
+    #: subject x session x speed x trial" answer different questions.
+    schema_ids: tuple = ()
+    #: The producing source. The only thing that tells two variants apart when
+    #: constants, inputs and run options are all identical — a body edit.
+    function_hash: str | None = None
+    #: **Whether a ``latest`` load would still return these records.**
+    #: The column that makes this view a diagnostic rather than a description:
+    #: a variant that node state counts and the load path drops is the shape
+    #: of the 2026-09-22 bug, and here the two read differently side by side.
+    #: Partial supersession is real (run options are judged per function,
+    #: globally, so a variant can lose some locations and keep others), which
+    #: is why the count is carried as well as the flag.
+    current: bool = True
+    current_record_count: int = 0
     #: ``distribute=…[, as_table=[…]]`` — the third variant axis after
     #: constants and code. Two rows identical everywhere else and different
     #: here are two genuinely different variants (the flags are folded into

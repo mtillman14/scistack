@@ -766,7 +766,12 @@ class TestCli:
     def test_variants_human_render_adds_the_column_when_it_distinguishes(
         self, run_options_path, capsys
     ):
-        assert cli_main(["--db", str(run_options_path), "variants", "VpLoaded"]) == 0
+        """``--flat`` is the one-row-per-variant table. The default view is
+        grouped by topology since 2026-09-22 and spells the options inline."""
+        assert (
+            cli_main(["--db", str(run_options_path), "variants", "VpLoaded", "--flat"])
+            == 0
+        )
 
         assert "run options" in capsys.readouterr().out
 
@@ -774,9 +779,22 @@ class TestCli:
         self, code_versions_path, capsys
     ):
         """One option set everywhere is a column of noise, not information."""
-        assert cli_main(["--db", str(code_versions_path), "variants", "VpScaled"]) == 0
+        assert (
+            cli_main(["--db", str(code_versions_path), "variants", "VpScaled", "--flat"])
+            == 0
+        )
 
         assert "run options" not in capsys.readouterr().out
+
+    def test_the_default_view_groups_by_topology_and_gives_a_verdict(
+        self, run_options_path, capsys
+    ):
+        assert cli_main(["--db", str(run_options_path), "variants", "VpLoaded"]) == 0
+
+        out = capsys.readouterr().out
+        assert "topology" in out
+        assert "run=" in out, "the options still have to be visible"
+        assert "load:" in out, "the verdict is the reason this view exists"
 
 
 class TestSharedApi:

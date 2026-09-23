@@ -54,6 +54,7 @@ from .locations import LocationFilter, filter_combos
 from .merge import Merge
 from .pathinput import (
     PathInput,
+    clear_listing_cache,
     clear_project_root,
     get_project_root,
     set_project_root,
@@ -89,6 +90,7 @@ __all__ = [
     # Rootless-PathInput resolution base
     "set_project_root",
     "get_project_root",
+    "clear_listing_cache",
     "clear_project_root",
     # Filters
     "Col",

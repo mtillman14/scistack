@@ -124,8 +124,20 @@ def _same_path(a, b) -> bool:
 
     Falls back to normalized equality when file identity is unavailable, so
     a path that doesn't exist yet behaves exactly as it did before.
+
+    **Case is compared the way the platform compares it** (2026-09-22).
+    ``os.path.normcase`` lowercases on Windows and is the identity on POSIX,
+    which is exactly the rule wanted: ``y:\\proj\\grSides.m`` and
+    ``Y:\\proj\\grSides.m`` are one file on Windows and two on Linux. The
+    ``_identity_key`` test above cannot be relied on to catch it, because a
+    network share frequently reports ``st_ino == 0`` and that test then
+    returns ``None`` — which is precisely the setup where this bit: a mapped
+    SMB drive, where 20 project functions were each registered twice under
+    the two spellings and every one logged a "shadows previous definition"
+    warning.
     """
-    if _normalize(a) == _normalize(b):
+    na, nb = _normalize(a), _normalize(b)
+    if na == nb or os.path.normcase(str(na)) == os.path.normcase(str(nb)):
         return True
     key_a = _identity_key(a)
     return key_a is not None and key_a == _identity_key(b)

@@ -3450,3 +3450,192 @@ class TestRunStatePropagationFollowsManualEdges:
             {producer_a: {"A"}, producer_b: {"B"}, consumer: {"C"}},
         )
         assert states["fn__consume__call_c"] == "red"
+
+
+class TestManualEdgeHandleIndexKeepsEveryEdge:
+    """One handle can carry more than one manual edge, and the index has to
+    hold them all.
+
+    It kept the LAST one scanned, which cost two things. The documented one:
+    two manual edges naming two variables on one handle showed only one
+    source. The one found on 2026-09-22: the supersession rewrite could move
+    only one edge per handle per build, so a node with two edges per handle
+    needed two builds to migrate, did half the work each time, and logged
+    "rewriting 2 manual edge(s)" twice — which read as the migration failing
+    and retrying.
+    """
+
+    FN = "grSides"
+
+    def _wid(self, inputs, outputs=("GRTable",)):
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        return wiring_id(self.FN, inputs, set(outputs), {})
+
+    def _edges(self, wid, *specs):
+        from scistack_gui.ids import fn_node_id
+
+        return [
+            {
+                "id": f"manual__{i}",
+                "source": src,
+                "target": fn_node_id(self.FN, wid) + suffix,
+                "targetHandle": handle,
+            }
+            for i, (src, handle, suffix) in enumerate(specs)
+        ]
+
+    def test_two_edges_on_one_handle_are_both_indexed(self):
+        from scistack_gui.domain.graph_builder import manual_edge_handle_index
+
+        wid = self._wid({"gr": "GAITRiteLoaded"})
+        index = manual_edge_handle_index(
+            self._edges(
+                wid,
+                ("var__Demographics", "in__side", ""),
+                ("var__Demographics", "in__side", "::main"),
+            )
+        )
+        assert len(index[(self.FN, wid, "in__side")]) == 2
+
+    def test_two_variables_on_one_handle_are_an_each_of(self):
+        """The documented Known limitation, closed."""
+        from scistack_gui.domain.graph_builder import (
+            manual_edge_handle_index,
+            manual_input_overrides,
+        )
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = manual_edge_handle_index(
+            self._edges(
+                wid,
+                ("var__Demographics", "in__side", ""),
+                ("var__SideTable", "in__side", ""),
+            )
+        )
+        assert manual_input_overrides(self.FN, wid, history, set(), index) == {
+            "side": ["Demographics", "SideTable"]
+        }
+
+    def test_the_same_variable_twice_is_not_an_each_of(self):
+        """Two rows describing one wire are one source, not two."""
+        from scistack_gui.domain.graph_builder import (
+            manual_edge_handle_index,
+            manual_input_overrides,
+        )
+
+        history = {"gr": "GAITRiteLoaded"}
+        wid = self._wid(history)
+        index = manual_edge_handle_index(
+            self._edges(
+                wid,
+                ("var__Demographics", "in__side", ""),
+                ("var__Demographics", "in__side", "::main"),
+            )
+        )
+        assert manual_input_overrides(self.FN, wid, history, set(), index) == {
+            "side": "Demographics"
+        }
+
+
+class TestSupersessionMigratesInOnePass:
+    """Every edge on the handle moves at once, and a rebuild moves nothing.
+
+    Observed 2026-09-22: the migration wrote two edges at 13:51:40 and two
+    more at 13:51:54, fourteen seconds apart, because the index only surfaced
+    one edge per handle at a time.
+    """
+
+    FN = "grSides"
+
+    def _setup(self, n_edges_per_handle: int):
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.ids import fn_node_id
+
+        history = {"grTableIn": "GAITRiteLoaded"}
+        effective = {"grTableIn": "GAITRiteLoaded", "side": "Demographics"}
+        outs = {"GAITRiteLoaded_UA"}
+        old_wid = wiring_id(self.FN, history, outs, {})
+        new_wid = wiring_id(self.FN, effective, outs, {})
+        fn_input_params = {
+            (self.FN, old_wid): history,
+            (self.FN, new_wid): effective,
+        }
+        fn_outputs = {(self.FN, old_wid): outs, (self.FN, new_wid): outs}
+        edges = [
+            {
+                "id": f"manual__{i}",
+                "source": "var__Demographics::main",
+                "target": fn_node_id(self.FN, old_wid) + "::main",
+                "targetHandle": "in__side",
+            }
+            for i in range(n_edges_per_handle)
+        ]
+        overrides = {fn_node_id(self.FN, old_wid): {"side": "Demographics"}}
+        return (
+            overrides,
+            fn_input_params,
+            fn_outputs,
+            edges,
+            fn_node_id(self.FN, new_wid),
+        )
+
+    def test_both_edges_move_in_the_same_build(self):
+        from scistack_gui.domain.graph_builder import (
+            superseded_manual_input_overrides,
+        )
+
+        overrides, params, outputs, edges, new_id = self._setup(2)
+        rewrites, superseded = superseded_manual_input_overrides(
+            overrides, params, outputs, {}, edges
+        )
+        assert len(rewrites) == 2, (
+            "one build moved only some of the edges — the rest need another "
+            "build, which is what made this look like a retry loop"
+        )
+        assert all(r["target"] == new_id + "::main" for r in rewrites)
+        assert superseded
+
+    def test_a_rebuild_finds_nothing_left_to_migrate(self):
+        """Idempotence, through the path a real build takes.
+
+        The migrated edges name the NEW node, so the old wiring has no manual
+        edge on any handle — `manual_input_overrides` returns nothing, the old
+        node never enters `overrides_by_node`, and the migration cannot run a
+        second time. Asserting that via the real derivation rather than by
+        re-passing a stale overrides dict is the difference between testing
+        the behaviour and testing a hand-made input: the first version of this
+        test did the latter, and its failure is what exposed a dead guard in
+        the code.
+        """
+        from scistack_gui.domain.graph_builder import (
+            manual_edge_handle_index,
+            manual_input_overrides,
+            superseded_manual_input_overrides,
+            wiring_id,
+        )
+
+        overrides, params, outputs, edges, new_id = self._setup(2)
+        rewrites, _ = superseded_manual_input_overrides(
+            overrides, params, outputs, {}, edges
+        )
+        migrated = [{**e, "target": r["target"]} for e, r in zip(edges, rewrites)]
+
+        history = {"grTableIn": "GAITRiteLoaded"}
+        old_wid = wiring_id(self.FN, history, {"GAITRiteLoaded_UA"}, {})
+        assert (
+            manual_input_overrides(
+                self.FN,
+                old_wid,
+                history,
+                set(),
+                manual_edge_handle_index(migrated),
+            )
+            == {}
+        ), "the old wiring still appears to carry a drawn edge"
+
+        again, _ = superseded_manual_input_overrides(
+            {}, params, outputs, {}, migrated
+        )
+        assert again == [], "a rebuild re-wrote edges that had already moved"

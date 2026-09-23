@@ -592,6 +592,14 @@ class Inspector:
                 constants={k: _value_str(val) for k, val in v["constants"].items()},
                 record_count=int(v["record_count"]),
                 run_options=v.get("run_options"),
+                first_saved=v.get("first_saved"),
+                last_saved=v.get("last_saved"),
+                schema_ids=tuple(v.get("schema_ids") or ()),
+                function_hash=v.get("function_hash"),
+                current=bool(v.get("current", True)),
+                current_record_count=int(
+                    v.get("current_record_count", v.get("record_count", 0))
+                ),
             )
 
         matches = [v for v in raw if v["output_type"] == name]
@@ -610,8 +618,14 @@ class Inspector:
                 )
             return []  # real variable, just no producing pipeline steps (raw saves)
         out = [to_summary(v) for v in matches]
+        # CHRONOLOGICAL (2026-09-22). The old order was output/fn/slot/
+        # constants, which is stable but answers no question: someone opening
+        # this because a variable grew more variants than they expected wants
+        # to read down the list in the order things happened. Unsaved variants
+        # sort last; ties fall back to the old key so the order stays total.
         out.sort(
             key=lambda s: (
+                s.first_saved or "9999",
                 s.output_type,
                 s.function_name,
                 s.output_num if s.output_num is not None else -1,
@@ -627,6 +641,57 @@ class Inspector:
                 f"column are distinct variants, not duplicates"
             )
         return out
+
+    def topologies(self, name):
+        """The same variants, grouped by the DAG shape that produced them.
+
+        ``[(topology, [VariantSummary, ...]), ...]``, oldest topology first.
+        A **topology** is ``(function_name, input_types, output_type)`` — which
+        function, fed by what, producing what — independent of the constants,
+        the run options and the code version, and independent of schema
+        location. It is the level a user reasons about when they look at the
+        canvas: one node.
+
+        Two levels rather than one flat list because those are the two
+        questions, asked in order: *how many distinct shapes have produced
+        this variable?* and then, within a shape, *which runs of it are
+        there?* ``variants()`` answers the second alone and cannot answer the
+        first — reading it, a user cannot tell a second topology (a node they
+        did not know existed) from a second variant of the one they did.
+
+        **No wiring id is computed here.** The GUI has one
+        (``graph_builder.wiring_id``) and scidb's nearest equivalent
+        (``call_id``) is a different thing — it folds in constants and run
+        options, so two runs of one shape have two call ids. Grouping on the
+        fields already present avoids inventing a third answer to "which node
+        is this", which is the failure mode this whole area keeps hitting
+        (``docs/claude/node-identity.md``).
+        """
+        by_topology: dict = {}
+        for summary in self.variants(name):
+            key = (
+                summary.function_name,
+                tuple(sorted(summary.input_types.items())),
+                summary.output_type,
+            )
+            by_topology.setdefault(key, []).append(summary)
+        ordered = sorted(
+            by_topology.items(),
+            key=lambda kv: (
+                min((s.first_saved or "9999") for s in kv[1]),
+                kv[0],
+            ),
+        )
+        superseded = [
+            k for k, group in ordered if not any(s.current for s in group)
+        ]
+        if superseded:
+            Log.info(
+                f"topologies({name}): {len(superseded)} of {len(ordered)} "
+                f"topology/ies hold no records a load would return — "
+                f"{[k[0] for k in superseded]}"
+            )
+        return ordered
 
     def _resolve_pin(
         self, variable, record_id, metadata, selection=None

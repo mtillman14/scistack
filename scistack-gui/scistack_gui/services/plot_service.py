@@ -985,10 +985,37 @@ def save_figure(
                 # figure it holds — `figure_1.png` for a fan-out the user is
                 # saving one frame of at a time would be a lie.
                 if len(resolved) > 1 or figure_index is not None:
-                    slug = _slug(item.figure_label) or f"{len(written) + 1}"
-                    out = directory / f"{stem}_{slug}{suffix}"
+                    # NUMBERED, not slugged. A figure label carries the
+                    # constants that define the variant, so slugging it put a
+                    # whole `gaitRiteConfig` dict in the filename — 630
+                    # characters against Windows' 260, and three saves died
+                    # with FileNotFoundError (2026-09-22). The number is stable
+                    # per (settings, variant) and the sidecar manifest says
+                    # what each one means.
+                    key = _figure_key(spec, item.figure_label)
+                    n = _figure_number(
+                        directory,
+                        stem,
+                        suffix,
+                        key,
+                        {
+                            "variable": spec.y_measure,
+                            "kind": str(spec.kind),
+                            "figure": item.figure_label or "",
+                            "settings": spec.to_dict(),
+                        },
+                    )
+                    out = directory / f"{stem}_v{n}{suffix}"
                 else:
                     out = directory / f"{stem}{suffix}"
+
+                # Checked here rather than left to `savefig`, which raises
+                # FileNotFoundError for a path too long and sends the reader
+                # looking for a missing folder.
+                too_long = _path_too_long(out)
+                if too_long:
+                    logger.info("[plot] save refused a path: %s", too_long)
+                    return {"ok": False, "error": too_long, "files": written}
 
                 # Announced BEFORE the work, not only after: rendering a
                 # full-resolution panel grid is seconds to minutes, and a log
@@ -1139,10 +1166,180 @@ def save_plot_data(
     }
 
 
-def _slug(text: str) -> str:
+#: Longest a generated name fragment may be. Windows caps a whole path at 260
+#: characters, and a slug built from a figure label blew straight through it —
+#: a variant label carries the constants that define it, so one
+#: ``gaitRiteConfig`` dict produced a 630-character path and three saves died
+#: with ``FileNotFoundError``, which reads like a missing folder (2026-09-22).
+#: Figure files are numbered rather than slugged now (see
+#: :func:`_figure_number`); this cap is the belt to that pair of braces, and
+#: applies to every remaining generated fragment.
+MAX_SLUG = 48
+
+
+def _slug(text: str, limit: int = MAX_SLUG) -> str:
+    """A filename-safe fragment, never longer than *limit*.
+
+    A truncated slug keeps a short digest of the full text so two long names
+    that share a prefix cannot collapse onto one filename.
+    """
     import re
 
-    return re.sub(r"[^0-9A-Za-z]+", "_", text).strip("_")
+    cleaned = re.sub(r"[^0-9A-Za-z]+", "_", text).strip("_")
+    if len(cleaned) <= limit:
+        return cleaned
+    from hashlib import sha256
+
+    digest = sha256(text.encode("utf-8")).hexdigest()[:6]
+    return f"{cleaned[: limit - 7].rstrip('_')}_{digest}"
+
+
+#: Windows refuses a path over 260 characters unless long-path support is
+#: switched on, and refuses a single name component over 255 everywhere.
+#: POSIX has no total-path cap worth enforcing but caps a component at 255 too.
+MAX_PATH_WINDOWS = 260
+MAX_NAME_COMPONENT = 255
+
+
+def _path_too_long(out) -> "str | None":
+    """A message if *out* cannot be written on this platform, else ``None``.
+
+    ``savefig`` raises ``FileNotFoundError`` for an over-long path, which reads
+    as "the folder is missing" and sends the reader to check a directory that
+    is fine. Three saves died that way on 2026-09-22 before anyone read the
+    traceback far enough to see a 630-character filename.
+    """
+    import os
+
+    if len(out.name) > MAX_NAME_COMPONENT:
+        return (
+            f"the file name is {len(out.name)} characters, over this "
+            f"platform's {MAX_NAME_COMPONENT}-character limit for one name"
+        )
+    if os.name == "nt" and len(str(out)) > MAX_PATH_WINDOWS:
+        return (
+            f"the full path is {len(str(out))} characters, over Windows' "
+            f"{MAX_PATH_WINDOWS}-character limit — save into a folder with a "
+            f"shorter path, or enable long-path support"
+        )
+    return None
+
+
+#: Sidecar recording what each ``_v{n}`` file in a directory actually holds.
+#: A JSON file beside the images rather than a row in the database,
+#: deliberately: these figures go into a talk or a paper directory and get
+#: copied around, and "what is v2?" has to be answerable six months later
+#: without the right database open. One manifest per (directory, stem).
+FIGURE_MANIFEST_SUFFIX = ".figures.json"
+
+
+def _manifest_path(directory, stem: str):
+    return directory / f"{stem}{FIGURE_MANIFEST_SUFFIX}"
+
+
+def _read_manifest(directory, stem: str) -> dict:
+    import json
+
+    path = _manifest_path(directory, stem)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"version": 1, "entries": []}
+    except (ValueError, OSError) as exc:
+        # Never start renumbering from 1 on an unreadable manifest: that would
+        # overwrite figures already in someone's talk. `_figure_number` also
+        # floors on the files actually present, so a lost manifest costs the
+        # LABELS, not the numbering.
+        logger.warning(
+            "[plot] could not read %s (%s) — numbering will continue past the "
+            "files already in that folder, but their descriptions are lost",
+            path,
+            exc,
+        )
+        return {"version": 1, "entries": []}
+    if not isinstance(raw, dict) or not isinstance(raw.get("entries"), list):
+        logger.warning("[plot] %s is not a figure manifest — ignoring it", path)
+        return {"version": 1, "entries": []}
+    return raw
+
+
+def _figure_key(spec, figure_label: str) -> str:
+    """What makes two saved figures *the same figure*.
+
+    The variable's variant AND the settings that drew it — a figure is only
+    the same one if both match, so changing a y-limit or a grouping produces a
+    new number rather than silently replacing the figure already in a talk.
+    ``PlotSpec.to_dict`` is the normalised settings form, and
+    ``scicanonicalhash`` is the project's one hasher.
+    """
+    from scicanonicalhash import canonical_hash
+
+    return canonical_hash(
+        {"settings": spec.to_dict(), "figure": figure_label or ""}
+    )[:16]
+
+
+def _existing_numbers(directory, stem: str, suffix: str) -> set:
+    """``_v{n}`` numbers already on disk for this stem, manifest or not."""
+    import re
+
+    pattern = re.compile(rf"^{re.escape(stem)}_v(\d+){re.escape(suffix)}$")
+    found = set()
+    try:
+        for child in directory.iterdir():
+            m = pattern.match(child.name)
+            if m:
+                found.add(int(m.group(1)))
+    except OSError:
+        pass
+    return found
+
+
+def _figure_number(directory, stem: str, suffix: str, key: str, entry: dict) -> int:
+    """The ``v{n}`` this figure gets, stable across saves.
+
+    Same key — same variant, same settings — returns the same number, so
+    re-rendering after a tweak updates the file already referenced elsewhere
+    instead of littering the folder. A key not seen before takes the next
+    number above everything the manifest knows AND everything already on disk,
+    so a deleted or unreadable manifest can never cause an overwrite.
+
+    Writes the manifest back as a side effect; a figure that then fails to
+    render leaves a claimed number, which is the harmless direction.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    manifest = _read_manifest(directory, stem)
+    entries = manifest["entries"]
+    by_key = {e.get("key"): e for e in entries if isinstance(e, dict)}
+
+    known = {e["n"] for e in entries if isinstance(e, dict) and isinstance(e.get("n"), int)}
+    existing = by_key.get(key)
+    if existing is not None and isinstance(existing.get("n"), int):
+        n = existing["n"]
+        entries.remove(existing)
+    else:
+        n = max(known | _existing_numbers(directory, stem, suffix) | {0}) + 1
+
+    entries.append(
+        {
+            "n": n,
+            "file": f"{stem}_v{n}{suffix}",
+            "key": key,
+            "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            **entry,
+        }
+    )
+    entries.sort(key=lambda e: e.get("n", 0))
+    try:
+        _manifest_path(directory, stem).write_text(
+            json.dumps(manifest, indent=2, default=str) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        # A figure written without its description beats no figure at all.
+        logger.warning("[plot] could not write the figure manifest: %s", exc)
+    return n
 
 
 def supported_formats() -> list[str]:

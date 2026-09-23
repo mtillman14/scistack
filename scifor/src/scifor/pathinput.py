@@ -9,6 +9,33 @@ from typing import Any
 
 from scistacklog import Log
 
+#: ``{directory: (mtime_ns, sorted entries)}`` — directory listings shared by
+#: every PathInput in the process.
+#:
+#: MODULE-LEVEL on purpose (2026-09-22). It lived on the instance, and the
+#: canvas rebuilds PathInput objects from their stored specs on every refresh,
+#: so the cache was born empty every single time: ``0 served from the listing
+#: cache`` on all 79 walks of one session, ~344 network directory reads per
+#: refresh and ~3 s of a 5.7–21 s ``get_pipeline``. The instance docstring
+#: already said the memo belonged above the walk; this is above the *object*,
+#: which is where the reuse actually is.
+#:
+#: Safe to share because every entry is validated against the directory's
+#: mtime on read — a stale listing cannot be served, only re-read. The cost of
+#: sharing is one ``stat`` per directory per walk, which is what the instance
+#: cache paid too.
+#:
+#: Unbounded by design: it holds one small list per directory a template has
+#: ever walked, and a process that walks enough directories for that to matter
+#: has a much larger problem. ``clear_listing_cache()`` exists for tests and
+#: for the "I just changed the filesystem" case.
+_DIR_CACHE: dict[str, tuple[int, list[str]]] = {}
+
+
+def clear_listing_cache() -> None:
+    """Forget every cached directory listing."""
+    _DIR_CACHE.clear()
+
 
 def _expects_file(segment: str) -> bool:
     """Heuristic: does this LAST path segment's template text look like a
@@ -184,9 +211,9 @@ class PathInput:
         # Numeric-fallback caches (see load()): learned zero-pad width per
         # placeholder key, and per-directory listings validated by mtime.
         self._pad_width: dict[str, int] = {}
-        self._dir_cache: dict[str, tuple[int, list[str]]] = {}
         # Listing-cache counters, reported by discover(): how many directories
         # a walk actually read from disk vs. served from a still-valid listing.
+        # The cache ITSELF is module-level (`_DIR_CACHE`) — see there.
         self._dir_cache_reads = 0
         self._dir_cache_hits = 0
         self.aliases = aliases or {}
@@ -556,7 +583,7 @@ class PathInput:
             mtime = directory.stat().st_mtime_ns
         except OSError:
             return []
-        cached = self._dir_cache.get(key)
+        cached = _DIR_CACHE.get(key)
         if cached is not None and cached[0] == mtime:
             self._dir_cache_hits += 1
             return cached[1]
@@ -564,7 +591,7 @@ class PathInput:
             entries = sorted(os.listdir(directory))
         except OSError:
             return []
-        self._dir_cache[key] = (mtime, entries)
+        _DIR_CACHE[key] = (mtime, entries)
         self._dir_cache_reads += 1
         return entries
 
