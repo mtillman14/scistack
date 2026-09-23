@@ -724,6 +724,18 @@ def strip_path_input_specs(input_types: dict) -> dict:
     }
 
 
+def _wiring_input_term(value):
+    """One input's term in the wiring payload: a one-item collection
+    collapses to its item (so ``["X"]`` hashes as ``"X"``), a multi-type
+    (EachOf) input is sorted (so edge order doesn't matter), anything else is
+    used as-is. The bare form is the one every recorded id was computed from,
+    so collapsing toward it changes no existing id."""
+    if isinstance(value, (list, set, tuple)):
+        items = sorted(value)
+        return items[0] if len(items) == 1 else items
+    return value
+
+
 def compute_wiring_id(
     fn_name: str, input_types: dict, out_types, path_inputs: "dict | None"
 ) -> str:
@@ -745,16 +757,18 @@ def compute_wiring_id(
     alike. That disagreement is what once made a graduated PathInput-fed
     node unrunnable ("No pipeline history or output connections found" for
     a green, fully wired node).
+
+    A single-type input hashes the same whether it is spelled ``"X"`` or
+    ``["X"]`` (:func:`_wiring_input_term`). History always spells it bare,
+    while an edge-derived candidate list spells it as a one-item list; the
+    equivalence lives here so no caller has to remember to flatten first.
     """
     import json as _json
 
     input_types = strip_path_input_specs(input_types)
     payload_obj: dict = {
         "fn": fn_name,
-        "inputs": {
-            k: (sorted(v) if isinstance(v, (list, set, tuple)) else v)
-            for k, v in sorted(input_types.items())
-        },
+        "inputs": {k: _wiring_input_term(v) for k, v in sorted(input_types.items())},
         "outputs": sorted(out_types),
     }
     if path_inputs:

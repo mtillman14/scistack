@@ -165,9 +165,30 @@ class ResolvedEdges:
     glue_chains: dict[str, list[str]] = field(default_factory=dict)
 
     @property
-    def input_types(self) -> dict[str, list[str]]:
-        """View: ``{param: [variable type names]}`` (display / wire format)."""
-        return bindings_of_kind(self.bindings, BINDING_VARIABLE)
+    def input_types(self) -> dict:
+        """View: ``{param: type}`` in the ONE shape every target and wiring
+        id uses — :func:`variable_types_view`: bare for one type, a list only
+        for a genuine multi-type (EachOf) input.
+
+        This used to return the always-list candidate view, so a never-run
+        target (``execution_service._inferred_targets``) carried
+        ``["GAITRiteLoaded"]`` where every history target carried
+        ``"GAITRiteLoaded"``, and each consumer flattened it (or didn't) on
+        its own. The single-node MATLAB route didn't, and crashed with
+        ``unhashable type: 'list'`` (grSides, 2026-09-23).
+        """
+        return variable_types_view(self.bindings)
+
+    @property
+    def input_type_candidates(self) -> dict[str, list[str]]:
+        """View: ``{param: [variable type names]}``, always a list — for
+        consumers that render every candidate (the MATLAB generator's
+        ``variable_inputs``). NOT an identity shape: never hash it or put it
+        in a target's ``input_types``; use :attr:`input_types`."""
+        return {
+            p: (list(ref) if isinstance(ref, (list, tuple)) else [ref])
+            for p, ref in bindings_of_kind(self.bindings, BINDING_VARIABLE).items()
+        }
 
     @property
     def path_input_params(self) -> dict[str, str]:

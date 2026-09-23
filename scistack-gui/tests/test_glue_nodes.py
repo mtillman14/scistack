@@ -84,7 +84,7 @@ class TestEdgeResolution:
         # The binding is the VARIABLE; the glue rides alongside. Glue
         # interposes on a binding — it is never a binding of its own,
         # because it has no saved output for anything to bind to.
-        assert resolved.input_types == {"emg": ["RawEMG"]}
+        assert resolved.input_types == {"emg": "RawEMG"}
         assert resolved.glue_chains == {"emg": ["glue_drop_baseline"]}
 
     def test_glue_feeding_glue_is_one_chain_in_application_order(self):
@@ -97,7 +97,7 @@ class TestEdgeResolution:
         resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
 
         assert resolved.glue_chains == {"emg": ["glue_a", "glue_b"]}
-        assert resolved.input_types == {"emg": ["RawEMG"]}
+        assert resolved.input_types == {"emg": "RawEMG"}
 
     def test_an_unwired_glue_node_binds_nothing(self):
         manual_nodes = {"g1": _glue_node("glue_x")}

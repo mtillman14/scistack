@@ -207,7 +207,10 @@ class TestResolveFunctionEdgesInputs:
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
         )
-        assert result.input_types == {"signal": ["RawEMG"]}
+        # One view, the history shape: bare for a single type. The always-list
+        # rendering is input_type_candidates, never an identity input.
+        assert result.input_types == {"signal": "RawEMG"}
+        assert result.input_type_candidates == {"signal": ["RawEMG"]}
 
     def test_multiple_inputs_same_param(self):
         edges = [
@@ -253,7 +256,7 @@ class TestResolveFunctionEdgesInputs:
             manual_nodes={},
             existing_node_labels={},
         )
-        assert result.input_types["signal"] == ["A"]
+        assert result.input_types["signal"] == "A"
 
     def test_handleless_input_edge_is_dropped_not_positionally_assigned(self):
         # Used to be matched to the first unresolved signature param BY
@@ -299,7 +302,7 @@ class TestResolveFunctionEdgesInputs:
             manual_nodes={},
             existing_node_labels={},
         )
-        assert result.input_types == {"low_hz": ["Hz"]}
+        assert result.input_types == {"low_hz": "Hz"}
 
     def test_fn_node_ids_set_matches_variant_ids(self):
         # Both "fn__fn" and a UUID variant ID should be recognised.
@@ -323,7 +326,7 @@ class TestResolveFunctionEdgesInputs:
             manual_nodes={},
             existing_node_labels={},
         )
-        assert result.input_types == {"x": ["A"]}
+        assert result.input_types == {"x": "A"}
         assert result.output_types == ["B"]
 
 

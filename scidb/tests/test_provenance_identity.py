@@ -322,3 +322,41 @@ def test_variable_input_params_empty_when_no_inputs():
 
     assert variable_input_params({}) == []
     assert variable_input_params({"__inputs": {}, "__constants": {"hz": 30}}) == []
+
+
+# ---------------------------------------------------------------------------
+# Wiring ids: "X" and ["X"] are one input shape
+# ---------------------------------------------------------------------------
+def test_wiring_id_single_item_list_hashes_as_bare_type():
+    """History spells a single-type input bare; an edge-derived candidate
+    list spells it ``["X"]``. The recipe treats them as one shape, so no
+    caller has to flatten before hashing (grSides, 2026-09-23)."""
+    bare = prov.compute_wiring_id("f", {"x": "A"}, {"Out"}, {})
+    for spelled in (["A"], ("A",), {"A"}):
+        assert prov.compute_wiring_id("f", {"x": spelled}, {"Out"}, {}) == bare
+
+
+def test_wiring_id_bytes_pinned_for_single_type_input():
+    """The collapse moves toward the bare form every recorded id was computed
+    from — pinned so any byte change to the recipe is caught. Node ids key
+    saved layout positions and scope membership."""
+    expected = "9ec83455542ee324"
+    assert (
+        prov.compute_wiring_id(
+            "grSides", {"grTableIn": "GAITRiteLoaded"}, {"grTable"}, {}
+        )
+        == expected
+    )
+    assert (
+        prov.compute_wiring_id(
+            "grSides", {"grTableIn": ["GAITRiteLoaded"]}, ["grTable"], None
+        )
+        == expected
+    )
+
+
+def test_wiring_id_multi_type_is_order_insensitive_and_distinct():
+    ab = prov.compute_wiring_id("f", {"x": ["A", "B"]}, {"Out"}, {})
+    assert prov.compute_wiring_id("f", {"x": ["B", "A"]}, {"Out"}, {}) == ab
+    assert prov.compute_wiring_id("f", {"x": "A"}, {"Out"}, {}) != ab
+    assert prov.compute_wiring_id("f", {"x": "B"}, {"Out"}, {}) != ab

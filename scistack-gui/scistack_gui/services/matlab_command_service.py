@@ -40,31 +40,52 @@ def _entities_file() -> "str | None":
     return str(entities) if entities else None
 
 
-def _normalize_input_types(input_types: dict) -> "tuple[dict, list[str]]":
-    """Collapse a target's ``input_types`` to the flat ``{param: type_name}``
-    shape ``api.matlab_command``'s generator expects.
+def _multi_type_params(target: dict) -> list[str]:
+    """Params of *target* bound to more than one variable type (EachOf).
 
-    ``derive_target_for_node``'s never-run fallback (``resolve_function_
-    edges``) returns each param as a LIST of candidate producer types —
-    even a single candidate is ``["RawSignal"]``, not ``"RawSignal"`` —
-    unlike real DB-history variants, which are already flat. A one-item
-    list collapses to its item; a param with 0 or >1 candidates has no
-    single MATLAB-safe value (the generator has no ``EachOf(...)``
-    support), so it's reported back as unresolved instead of guessing.
-
-    Returns ``(flat_input_types, unresolved_param_names)``.
+    A target's ``input_types`` is already in
+    ``edge_resolver.variable_types_view``'s shape — bare for one type, a
+    list only for a genuine multi-type input — for history AND never-run
+    targets alike. So a list here always means "several candidates", never
+    "one candidate spelled as a list"; there is nothing to flatten.
     """
-    flat: dict = {}
-    unresolved: list[str] = []
-    for param, type_val in input_types.items():
-        if isinstance(type_val, list):
-            if len(type_val) == 1:
-                flat[param] = type_val[0]
-            else:
-                unresolved.append(param)
-        else:
-            flat[param] = type_val
-    return flat, unresolved
+    return sorted(
+        param
+        for param, type_val in (target.get("input_types") or {}).items()
+        if isinstance(type_val, (list, tuple))
+    )
+
+
+def _matlab_runnable_targets(
+    targets: list[dict], fn_label: str
+) -> "tuple[list[dict], list[str]]":
+    """The targets a MATLAB script can express, and a warning per skipped one.
+
+    The generator has no ``EachOf(...)`` support, so a multi-type input has
+    no single MATLAB-safe value; that target is skipped instead of guessing a
+    type. The ONE rule for both MATLAB routes — the single-node Run
+    (``scope_variants_to_node``) and the pipeline Run
+    (``generate_matlab_pipeline_command``). Until 2026-09-23 only the
+    pipeline route applied it (as ``_normalize_input_types``, which also
+    flattened one-item lists the producer should never have made), so a
+    never-run node Run from its own button crashed with
+    ``unhashable type: 'list'`` (grSides).
+
+    Returns ``(runnable_targets, warnings)``.
+    """
+    runnable: list[dict] = []
+    warnings: list[str] = []
+    for target in targets:
+        multi = _multi_type_params(target)
+        if multi:
+            warnings.append(
+                f"'{fn_label}': param(s) {multi} have more than one candidate "
+                "producer type — target skipped (MATLAB generation doesn't "
+                "support EachOf-style multi-type inputs)"
+            )
+            continue
+        runnable.append(target)
+    return runnable, warnings
 
 
 def _sort_inferred_by_params_order(
@@ -191,7 +212,7 @@ def _collect_variable_inputs(
     consumed all three from that dict.
     """
     resolved = _resolve_matlab_wiring(function_name, manual_edges, manual_nodes)
-    return dict(resolved.input_types)
+    return dict(resolved.input_type_candidates)
 
 
 def _collect_glue_chains(
@@ -349,19 +370,42 @@ def scope_variants_to_node(
     "run this function" request with no canvas behind it) or when the node
     derives nothing at all (never run, no edges) — there, history is still
     the best guess and refusing to run would be a regression.
+
+    A node whose targets are ALL multi-type (see :func:`_matlab_runnable_targets`)
+    raises instead of falling back: history would be another wiring's, which
+    is exactly the wrong-node run this function exists to prevent.
     """
     if not node_id or not targets:
+        if node_id:
+            logger.info(
+                "generate_matlab_command: fn=%s node %s derives no target — "
+                "using %d name-scoped history row(s)",
+                function_name,
+                node_id,
+                len(fn_variants),
+            )
         return fn_variants
-    if len(targets) != len(fn_variants):
-        logger.info(
-            "generate_matlab_command: fn=%s scoped to node %s — %d of %d "
-            "variant row(s) belong to this node's wiring",
-            function_name,
-            node_id,
-            len(targets),
-            len(fn_variants),
+    runnable, warnings = _matlab_runnable_targets(targets, function_name)
+    for warning in warnings:
+        logger.warning("generate_matlab_command: %s", warning)
+    if not runnable:
+        raise ValueError(
+            f"Cannot generate a MATLAB command for node {node_id}: "
+            + "; ".join(warnings)
+            + ". Wire exactly one variable type into each input."
         )
-    return targets
+    # Where the rows came from matters when reading a failure: history rows
+    # and edge-inferred rows (never run) reach the generator by one path.
+    logger.info(
+        "generate_matlab_command: fn=%s scoped to node %s — %d target(s) "
+        "(%s), %d name-scoped history row(s)",
+        function_name,
+        node_id,
+        len(runnable),
+        "from history" if fn_variants else "inferred from edges, never run",
+        len(fn_variants),
+    )
+    return runnable
 
 
 def generate_matlab_command(function_name: str, db, params: dict) -> dict:
@@ -436,17 +480,6 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         )
         _targets = []
 
-    # D-2026-09-22-2, the MATLAB half. A terminal run is still a GUI-started
-    # run — the node id is in the request — so the association is recorded
-    # here, at dispatch, exactly as the Python route does. Only a run the GUI
-    # never saw (a script, or MATLAB started by hand) is left to inference.
-    if _node_id and _targets:
-        from scistack_gui.services.execution_service import record_dispatch_wirings
-
-        record_dispatch_wirings(
-            db, _node_id, function_name, _targets, params.get("run_id")
-        )
-
     # Resolve variants from DB history, scoped to the node that was clicked —
     # see scope_variants_to_node for why the name-only filter was wrong.
     all_variants = db.list_pipeline_variants()
@@ -456,6 +489,21 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         _node_id,
         function_name,
     )
+
+    # D-2026-09-22-2, the MATLAB half. A terminal run is still a GUI-started
+    # run — the node id is in the request — so the association is recorded
+    # here, at dispatch, exactly as the Python route does. Only a run the GUI
+    # never saw (a script, or MATLAB started by hand) is left to inference.
+    #
+    # Recorded AFTER scoping, and only for the targets that will actually run:
+    # scope_variants_to_node refuses a node whose inputs are all multi-type,
+    # and a refused run must not claim a wiring it never ran as.
+    if _node_id and _targets:
+        from scistack_gui.services.execution_service import record_dispatch_wirings
+
+        record_dispatch_wirings(
+            db, _node_id, function_name, fn_variants, params.get("run_id")
+        )
 
     # Collect PathInput param mappings.
     path_input_params: dict[str, dict] = {}
@@ -794,18 +842,9 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
             if key in seen_target_keys:
                 continue
             seen_target_keys.add(key)
-            flat_input_types, unresolved = _normalize_input_types(
-                target.get("input_types") or {}
-            )
-            if unresolved:
-                warnings.append(
-                    f"'{fn_label}': param(s) {sorted(unresolved)} have more "
-                    "than one candidate producer type — target skipped "
-                    "(MATLAB generation doesn't support EachOf-style "
-                    "multi-type inputs)"
-                )
-                continue
-            unique_targets.append({**target, "input_types": flat_input_types})
+            unique_targets.append(target)
+        unique_targets, skipped = _matlab_runnable_targets(unique_targets, fn_label)
+        warnings.extend(skipped)
 
         # Same dispatch record as the single-node route: this step IS one
         # node, and the script about to run will write history under the

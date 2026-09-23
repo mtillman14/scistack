@@ -1171,7 +1171,9 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
             manual_nodes=manual_nodes,
             existing_node_labels=existing_node_labels,
         )
-        inferred_inputs = {p: ts[0] for p, ts in resolved.input_types.items() if ts}
+        # Identity comparison against a DB candidate: the variable_types_view
+        # shape (bare for one type), the same one history records.
+        inferred_inputs = {p: t for p, t in resolved.input_types.items() if t}
         return resolved, inferred_inputs
 
     validated_graduations = []
@@ -1376,7 +1378,9 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
                 manual_nodes=manual_nodes,
                 existing_node_labels=existing_node_labels,
             )
-            for p, ts in glue_resolved.input_types.items():
+            # Display only: handle labels are strings, so a multi-type input
+            # shows its first candidate. Never an identity input.
+            for p, ts in glue_resolved.input_type_candidates.items():
                 if ts:
                     resolved_input_params[p] = ts[0]
         elif meta["type"] == "functionNode":
@@ -1388,7 +1392,11 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
                 manual_nodes=manual_nodes,
                 existing_node_labels=existing_node_labels,
             )
-            inferred_inputs = {p: ts[0] for p, ts in resolved.input_types.items() if ts}
+            # Display only (see the glue branch above): first candidate per
+            # handle. Never an identity input.
+            inferred_inputs = {
+                p: ts[0] for p, ts in resolved.input_type_candidates.items() if ts
+            }
             resolved_input_params = {p: inferred_inputs.get(p, "") for p in sig_params}
             for p, t in inferred_inputs.items():
                 if p not in resolved_input_params:

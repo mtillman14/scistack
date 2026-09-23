@@ -93,7 +93,7 @@ class TestResolveIntoOneDict:
             existing_node_labels={},
         )
         assert resolved.path_input_params == {"path": "pi"}
-        assert resolved.input_types == {"v": ["V"]}
+        assert resolved.input_types == {"v": "V"}
         assert resolved.parameter_params == {}
 
     def test_multiple_variables_on_one_handle_accumulate(self):

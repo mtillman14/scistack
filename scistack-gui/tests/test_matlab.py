@@ -2129,56 +2129,83 @@ class TestGroupVariantsNonScalarConstants:
         assert grouped[0]["constants"] == {"bands": [20, 450]}
 
 
-class TestNormalizeInputTypes:
-    """derive_target_for_node's never-run fallback (resolve_function_edges)
-    returns each input param as a LIST of candidate types — even a single
-    candidate is ["RawSignal"], not "RawSignal" — unlike real DB-history
-    variants, which are already flat. generate_matlab_pipeline_command
-    must flatten this before handing targets to api.matlab_command's
-    generator, or a single-candidate list ends up nested inside a dict
-    key's tuple and raises `TypeError: unhashable type: 'list'` in
-    _group_variants (regression: found via a never-run MATLAB node in
-    test_matlab_pipeline_execution.py)."""
+class TestMatlabRunnableTargets:
+    """One rule for both MATLAB routes: a target with a multi-type (EachOf)
+    input is skipped with a warning; everything else passes through
+    untouched. Targets arrive in ``edge_resolver.variable_types_view``'s
+    shape (bare for one type) from history AND never-run derivation, so a
+    list here always means several candidates.
 
-    def test_flat_values_pass_through(self):
+    Replaces TestNormalizeInputTypes: that helper flattened one-item lists the
+    never-run producer used to make, and only the pipeline route called it —
+    the single-node route crashed with "unhashable type: 'list'" (grSides,
+    2026-09-23)."""
+
+    @staticmethod
+    def _t(input_types):
+        return {"input_types": input_types, "constants": {}, "output_type": "Out"}
+
+    def test_flat_targets_pass_through_unchanged(self):
         from scistack_gui.services.matlab_command_service import (
-            _normalize_input_types,
+            _matlab_runnable_targets,
         )
 
-        flat, unresolved = _normalize_input_types({"signal": "RawSignal"})
-        assert flat == {"signal": "RawSignal"}
-        assert unresolved == []
+        target = self._t({"signal": "RawSignal", "side": "Demographics"})
+        runnable, warnings = _matlab_runnable_targets([target], "f")
+        assert runnable == [target]
+        assert warnings == []
 
-    def test_single_item_list_collapses_to_scalar(self):
+    def test_multi_type_target_skipped_with_warning(self):
         from scistack_gui.services.matlab_command_service import (
-            _normalize_input_types,
+            _matlab_runnable_targets,
         )
 
-        flat, unresolved = _normalize_input_types({"signal": ["RawSignal"]})
-        assert flat == {"signal": "RawSignal"}
-        assert unresolved == []
+        runnable, warnings = _matlab_runnable_targets(
+            [self._t({"signal": ["RawSignal", "OtherSignal"]})], "f"
+        )
+        assert runnable == []
+        assert len(warnings) == 1
+        assert "['signal']" in warnings[0]
 
-    def test_multi_item_list_reported_unresolved(self):
+    def test_mixed_targets_keep_only_the_runnable_ones(self):
         from scistack_gui.services.matlab_command_service import (
-            _normalize_input_types,
+            _matlab_runnable_targets,
         )
 
-        flat, unresolved = _normalize_input_types(
-            {"signal": ["RawSignal", "OtherSignal"]}
-        )
-        assert "signal" not in flat
-        assert unresolved == ["signal"]
+        good = self._t({"a": "Flat"})
+        bad = self._t({"a": "Flat", "c": ["X", "Y"]})
+        runnable, warnings = _matlab_runnable_targets([good, bad], "f")
+        assert runnable == [good]
+        assert len(warnings) == 1 and "['c']" in warnings[0]
 
-    def test_mixed_params(self):
+    def test_scoping_a_node_with_only_multi_type_targets_raises(self):
+        """Falling back to name-scoped history here would run another
+        node's wiring — the bug scope_variants_to_node exists to prevent."""
         from scistack_gui.services.matlab_command_service import (
-            _normalize_input_types,
+            scope_variants_to_node,
         )
 
-        flat, unresolved = _normalize_input_types(
-            {"a": "Flat", "b": ["OneCandidate"], "c": ["X", "Y"]}
-        )
-        assert flat == {"a": "Flat", "b": "OneCandidate"}
-        assert unresolved == ["c"]
+        history = [self._t({"signal": "RawSignal"})]
+        with pytest.raises(ValueError, match="Wire exactly one variable type"):
+            scope_variants_to_node(
+                history, [self._t({"signal": ["A", "B"]})], "fn__f__abc", "f"
+            )
+
+    def test_collect_var_types_names_a_leftover_list(self):
+        """The generator's own guard: a route that bypasses the filter fails
+        naming the function and param, not with a bare unhashable-type."""
+        from scistack_gui.api.matlab_command import _collect_var_types
+
+        with pytest.raises(TypeError, match="'grSides' param 'grTableIn'"):
+            _collect_var_types(
+                [
+                    {
+                        "function_name": "grSides",
+                        "input_types": {"grTableIn": ["GAITRiteLoaded"]},
+                        "output_type": "grTable",
+                    }
+                ]
+            )
 
 
 class TestCollectSweepParams:

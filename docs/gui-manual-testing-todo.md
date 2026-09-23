@@ -36,6 +36,32 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0u. Run a never-run MATLAB node from its own Run button — added 2026-09-23
+
+**What changed:** a MATLAB node that has never run but is wired on the canvas
+(grSides: `GAITRiteLoaded` → `grTableIn`, `Demographics["PareticSide"]` →
+`side`) failed on Run with `unhashable type: 'list'`. Never-run targets now
+use the same input-type shape as history. Backend only — no frontend rebuild.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+2. Keep `scidb.log` open.
+
+**Frontend**
+1. On a function node that has never run (grSides, or a fresh node wired to
+   one input and one output), click **Run**.
+2. Optional: wire TWO variable nodes into the SAME input of a never-run MATLAB
+   node, click **Run**.
+
+**What you should see**
+- Step 1: the MATLAB command is generated and runs; no `unhashable type`
+  error. The log shows `scoped to node fn__grSides__… — 1 target(s)
+  (inferred from edges, never run), 0 name-scoped history row(s)` (the old
+  misleading `1 of 0 variant row(s)` line is gone).
+- Step 2: the run is refused with `… have more than one candidate producer
+  type … Wire exactly one variable type into each input.` — it must NOT run
+  some other node's history.
+
 ## 0t. Source-declared entities are read-only in the sidebar — added 2026-09-23
 
 Backend (`target_file_service.entity_editability`, RPC `get_entity_editability`) + frontend (`PathInputSettingsPanel`, `ParameterSettingsPanel`, `ReadOnlyDeclarationBanner`). **Rebuild both bundles.**

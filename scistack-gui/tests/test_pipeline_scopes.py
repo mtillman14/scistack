@@ -2256,13 +2256,12 @@ class TestDeriveTargetForNode:
         targets = derive_target_for_node(get_db(), "mf_bp_other")
 
         assert len(targets) == 1
-        # A never-run target's input_types values are lists (matching
-        # derive_fn_targets' own never-run fallback shape — see
-        # edge_resolver.ResolvedEdges.input_types, which supports multi-type/
-        # EachOf wiring); only DB-history-derived targets (list_pipeline_
-        # variants' rows) use bare strings. run.py already handles both
-        # ("type_names may be a list (new) or a string (from DB history)").
-        assert targets[0]["input_types"].get("signal") == ["OtherSignal2"]
+        # A never-run target's input_types use the SAME shape as a history
+        # target (edge_resolver.variable_types_view): bare for one type, a
+        # list only for a genuine multi-type input. It used to be
+        # ["OtherSignal2"] here, and the single-node MATLAB route crashed on
+        # it with "unhashable type: 'list'" (grSides, 2026-09-23).
+        assert targets[0]["input_types"].get("signal") == "OtherSignal2"
         assert targets[0]["output_type"] == "OtherFiltered2"
         assert targets[0]["constants"].get("low_hz") == 99, (
             "must use the staged pending value (99), not the real "
@@ -2317,7 +2316,7 @@ class TestDeriveTargetForNode:
         targets = derive_target_for_node(get_db(), "mf_bp_other3")
 
         assert len(targets) == 1
-        assert targets[0]["input_types"].get("signal") == ["OtherSignal3"]
+        assert targets[0]["input_types"].get("signal") == "OtherSignal3"
         assert targets[0]["output_type"] == "OtherFiltered3"
         assert targets[0]["constants"].get("low_hz") == 20, (
             "must reuse the real, already-known low_hz=20 value from the "
@@ -2988,3 +2987,135 @@ class TestPathInputExecutionResolution:
 
         assert isinstance(inputs["filepath"], PathInput)
         assert not isinstance(inputs["filepath"], EachOf)
+
+
+class TestNeverRunNodeMatlabCommand:
+    """Regression (grSides, 2026-09-23): Run on a never-run, wired MATLAB node
+    crashed in ``generate_matlab_command`` with ``unhashable type: 'list'``.
+
+    The node derived one target from its edges, so the generator skipped its
+    first-run template branch and read that target as history — but a
+    never-run target spelled each input as a candidate LIST (``["X"]``)
+    where history spells it bare (``"X"``). The fix gives every target the
+    one ``edge_resolver.variable_types_view`` shape at the producer, so these
+    exercise the whole single-node route: canvas → derivation → scoping →
+    generator. The function doesn't need to be MATLAB — the service only
+    renders text.
+    """
+
+    def _wire(self, client, fn_node, in_nodes, out_node):
+        import numpy as np
+        from scidb import BaseVariable
+
+        for i, (node_id, label) in enumerate(in_nodes):
+            cls = type(label, (BaseVariable,), {})
+            cls.save(np.zeros(5), subject=1, session="pre")
+            client.put(f"/api/layout/{node_id}", json={
+                "x": 0, "y": i * 10, "node_type": "variableNode", "label": label,
+            })
+            client.put(f"/api/edges/e_{node_id}", json={
+                "source": node_id, "target": fn_node, "target_handle": "in__signal",
+            })
+        out_id, out_label = out_node
+        type(out_label, (BaseVariable,), {})
+        client.put(f"/api/layout/{fn_node}", json={
+            "x": 10, "y": 0, "node_type": "functionNode", "label": "bandpass_filter",
+        })
+        client.put(f"/api/layout/{out_id}", json={
+            "x": 20, "y": 0, "node_type": "variableNode", "label": out_label,
+        })
+        client.put(f"/api/edges/e_{out_id}", json={"source": fn_node, "target": out_id})
+        client.put("/api/parameters/low_hz/pending/42")
+        client.put(f"/api/edges/e_{fn_node}_const", json={
+            "source": "param__low_hz", "target": fn_node, "target_handle": "in__low_hz",
+        })
+
+    def test_never_run_target_is_history_shaped(self, client):
+        from scistack_gui.db import get_db
+        from scistack_gui.services.execution_service import derive_target_for_node
+
+        self._wire(client, "mf_nr1", [("mv_nr1_in", "NeverRunIn1")], ("mv_nr1_out", "NeverRunOut1"))
+
+        targets = derive_target_for_node(get_db(), "mf_nr1")
+
+        assert len(targets) == 1
+        assert targets[0]["input_types"] == {"signal": "NeverRunIn1"}
+
+    def test_single_node_command_for_never_run_node_does_not_crash(self, client):
+        from scistack_gui.db import get_db
+        from scistack_gui.services.matlab_command_service import generate_matlab_command
+
+        self._wire(client, "mf_nr2", [("mv_nr2_in", "NeverRunIn2")], ("mv_nr2_out", "NeverRunOut2"))
+
+        result = generate_matlab_command(
+            "bandpass_filter", get_db(), {"node_id": "mf_nr2", "run_id": "r-nr2"}
+        )
+
+        cmd = result["command"]
+        assert "scidb.register_variable(NeverRunIn2());" in cmd
+        assert "scidb.register_variable(NeverRunOut2());" in cmd
+
+    def test_multi_type_input_is_refused_legibly_not_run_as_history(self, client):
+        """Two variable types into one input: MATLAB can't express EachOf.
+        The node must NOT fall back to name-scoped history (that is another
+        node's wiring — the real bandpass_filter(RawSignal) call site)."""
+        import pytest
+
+        from scistack_gui.db import get_db
+        from scistack_gui.services.matlab_command_service import generate_matlab_command
+
+        self._wire(
+            client,
+            "mf_nr3",
+            [("mv_nr3_a", "NeverRunIn3A"), ("mv_nr3_b", "NeverRunIn3B")],
+            ("mv_nr3_out", "NeverRunOut3"),
+        )
+
+        with pytest.raises(ValueError, match="Wire exactly one variable type"):
+            generate_matlab_command(
+                "bandpass_filter", get_db(), {"node_id": "mf_nr3", "run_id": "r-nr3"}
+            )
+
+    def test_multi_type_derivation_wiring_matches_dispatch_record(self, client):
+        """The latent twin of the crash: derivation hashed a manual node's
+        wiring with the FIRST candidate only (``ts[0]``) while
+        ``record_dispatch_wirings`` hashed the full list, so for a multi-type
+        input the two never matched. Both now read one view."""
+        from scistack_gui import pipeline_store
+        from scistack_gui.db import get_db
+        from scistack_gui.domain.edge_resolver import (
+            BINDING_PATHINPUT,
+            bindings_of_kind,
+            resolve_function_edges,
+            variable_types_view,
+        )
+        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui.services.execution_service import derive_target_for_node
+
+        self._wire(
+            client,
+            "mf_nr4",
+            [("mv_nr4_a", "NeverRunIn4A"), ("mv_nr4_b", "NeverRunIn4B")],
+            ("mv_nr4_out", "NeverRunOut4"),
+        )
+        db = get_db()
+        resolved = resolve_function_edges(
+            fn_node_ids={"mf_nr4"},
+            manual_edges=pipeline_store.get_manual_edges(db),
+            manual_nodes=pipeline_store.get_manual_nodes(db),
+            existing_node_labels={},
+        )
+        assert sorted(resolved.input_types["signal"]) == ["NeverRunIn4A", "NeverRunIn4B"]
+
+        (target,) = derive_target_for_node(db, "mf_nr4")
+        derived = wiring_id(
+            "bandpass_filter", resolved.input_types, set(resolved.output_types),
+            resolved.path_input_params,
+        )
+        dispatched = wiring_id(
+            "bandpass_filter",
+            variable_types_view(target["bindings"]),
+            {target["output_type"]},
+            bindings_of_kind(target["bindings"], BINDING_PATHINPUT),
+        )
+        assert derived == dispatched

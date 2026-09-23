@@ -788,7 +788,10 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         )
         if not resolved.output_types:
             return []
-        inferred_inputs = {p: ts[0] for p, ts in resolved.input_types.items() if ts}
+        # The variable_types_view shape — the same one record_dispatch_wirings
+        # hashes. This was `ts[0]` (first candidate only), which for a
+        # multi-type input computed a wiring the dispatch record never matched.
+        inferred_inputs = {p: t for p, t in resolved.input_types.items() if t}
         node_wiring = wiring_id(
             function_name,
             inferred_inputs,

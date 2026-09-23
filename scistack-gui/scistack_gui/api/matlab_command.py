@@ -1052,10 +1052,22 @@ def _collect_var_types(variants: list[dict]) -> set[str]:
     for v in variants:
         input_types = v.get("input_types", {})
         if isinstance(input_types, dict):
-            for type_val in input_types.values():
+            for param, type_val in input_types.items():
                 if _parse_path_input(str(type_val)) is not None:
                     excluded_path_inputs += 1
                     continue
+                if not isinstance(type_val, str):
+                    # Unreachable when callers pass targets through
+                    # matlab_command_service._matlab_runnable_targets; named
+                    # here so a new route that forgets fails legibly rather
+                    # than with a bare "unhashable type: 'list'" (grSides,
+                    # 2026-09-23).
+                    raise TypeError(
+                        f"_collect_var_types: {v.get('function_name', '?')!r} "
+                        f"param {param!r} has input type {type_val!r} "
+                        f"({type(type_val).__name__}); the MATLAB generator "
+                        "needs exactly one variable type name per input"
+                    )
                 all_var_types.add(type_val)
         output_type = v.get("output_type", "")
         if output_type:
