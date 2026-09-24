@@ -288,8 +288,14 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
                 "yanchor": "top",
             }
         )
+        if not group.label:
+            # A bracket with no label draws no rule: a bare line names nothing.
+            continue
         layout.setdefault("shapes", []).append(
             {
+                # Same tag as its label, so `_apply_decisions` can drop the
+                # rule when the export blanks that label (hide_legend_ticks).
+                "name": f"{X_GROUP_TAG}:{group.depth}:{group.start}",
                 "type": "line",
                 "xref": "paper",
                 "yref": "paper",
@@ -1048,6 +1054,17 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
             if name in fitted:
                 note["text"] = _html(fitted[name])
                 note["font"] = {**note.get("font", {}), "size": brackets.font_pt}
+        # A bracket whose label the export blanked loses its rule too, as it
+        # does in the export (mpl._draw_x_groups).
+        blank = {name for name, text in fitted.items() if not text}
+        if blank and layout.get("shapes"):
+            kept = [s for s in layout["shapes"] if s.get("name") not in blank]
+            Log.debug(
+                "preview: %d bracket rule(s) dropped with their blank labels",
+                len(layout["shapes"]) - len(kept),
+                layer=LAYER,
+            )
+            layout["shapes"] = kept
 
     legend = decisions.get("legend")
     if legend is not None and layout.get("showlegend"):

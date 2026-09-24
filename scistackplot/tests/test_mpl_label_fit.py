@@ -123,6 +123,16 @@ def _bracket_labels(ax):
     return [t for t in ax.texts if t.get_visible() and t.get_text()]
 
 
+def _bracket_rules(ax):
+    """The rules ``_draw_x_groups`` adds: unclipped grey lines. add_artist
+    files a Line2D under ``ax.lines``, not ``ax.artists``."""
+    return [
+        line
+        for line in ax.lines
+        if not line.get_clip_on() and line.get_color() == "#888888"
+    ]
+
+
 def _assert_ticks_do_not_overlap(figure, ax):
     renderer = figure.canvas.get_renderer()
     labels = sorted(_tick_labels(ax), key=lambda t: t.get_position()[0])
@@ -367,8 +377,19 @@ def test_hiding_legend_ticks_blanks_a_colour_layer_bracket_row(gait_table):
         for ax in axes:
             assert {t.get_text() for t in _tick_labels(ax)} == set(SESSIONS)
             assert not _bracket_labels(ax)
-            # The bracket rules stay: they still show which bars belong together.
-            assert ax.artists or ax.lines
+            # No label shown, so no rule: a bare line under the ticks names nothing.
+            assert not _bracket_rules(ax)
+    finally:
+        plt.close(figure)
+
+
+def test_labelled_brackets_keep_their_rules(gait_table):
+    _, figure = _draw(_graph2(), gait_table)
+    try:
+        axes = _labelled_axes(figure)
+        assert axes
+        for ax in axes:
+            assert len(_bracket_rules(ax)) == len(_bracket_labels(ax)) == len(GROUPS)
     finally:
         plt.close(figure)
 

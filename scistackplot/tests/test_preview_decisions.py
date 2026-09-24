@@ -101,6 +101,27 @@ def test_bracket_labels_take_the_bracket_decision(gait_table):
     assert {a["font"]["size"] for a in tagged} == {brackets.font_pt}
 
 
+def _bracket_rules(payload):
+    return [
+        s for s in payload["layout"].get("shapes", [])
+        if str(s.get("name", "")).startswith(X_GROUP_TAG)
+    ]
+
+
+def test_labelled_brackets_keep_their_rules_in_the_preview(gait_table):
+    resolved = _one(_graph2(), gait_table)
+    payload = render_plotly(resolved, decisions=layout_decisions(resolved))
+    assert _bracket_rules(payload)
+
+
+def test_a_blanked_bracket_row_draws_no_rules_in_the_preview(gait_table):
+    """graph2 + hide_legend_ticks: InterventionGroup is the brackets AND the
+    colour, so the export blanks those labels — and a bare rule names nothing."""
+    resolved = _one(_graph2(hide_legend_ticks=True), gait_table)
+    payload = render_plotly(resolved, decisions=layout_decisions(resolved))
+    assert not _bracket_rules(payload)
+
+
 def test_export_size_is_drawn_at_its_size(gait_table):
     resolved = _one(_graph1(), gait_table)
     payload = render_plotly(resolved, fixed_size_px=(432, 324))

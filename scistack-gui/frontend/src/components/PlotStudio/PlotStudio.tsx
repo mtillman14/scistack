@@ -2867,7 +2867,7 @@ export default function PlotStudio({
             </label>
             <label
               style={styles.factorRow}
-              title="Blank the labels of a layer that is also the colour, while the legend lists the same levels in the same colours. The ticks and brackets stay."
+              title="Blank the labels of a layer that is also the colour, while the legend lists the same levels in the same colours. The ticks stay; a bracket row whose labels are hidden loses its lines too."
             >
               <span style={styles.factorName}>Hide labels the legend repeats</span>
               <input

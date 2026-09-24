@@ -11,6 +11,26 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zp. No bracket lines when the bracket labels are hidden — added 2026-09-24
+
+**What changed:** when **Hide labels the legend repeats** blanks a bracket
+row's labels (that layer is also the colour), the horizontal lines under the
+tick labels are no longer drawn either. Brackets that still show their labels
+keep their lines. Applies to the preview and the saved figure.
+
+**Backend:** `scidb.log` has `x bracket row 'InterventionGroup': no label
+shown, rules omitted` for the export, and `preview: N bracket rule(s) dropped
+with their blank labels` for the preview.
+
+**Frontend:**
+1. Open a bar plot with x grouped by `session` then `InterventionGroup`, and
+   colour set to `InterventionGroup`. Bracket labels and lines appear under
+   the session ticks.
+2. Tick **Hide labels the legend repeats**. The group labels and the lines
+   under them should both disappear, in the preview and in a saved figure.
+3. Set the colour to `session` instead. The ticks are hidden, but the
+   `InterventionGroup` brackets keep their labels **and** their lines.
+
 ## 0zo. Exported plot code has the preview's y range — added 2026-09-24
 
 **What changed:** the exported `plot_` code used to work out its fixed y range

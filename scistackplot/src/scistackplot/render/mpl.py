@@ -897,7 +897,17 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
             under = offset_copy(
                 blended, fig=fig, y=-(top + X_GROUP_RULE_GAP_PT), units="points"
             )
+            if not any(texts):
+                # A row with no label shown (hide_legend_ticks: the legend
+                # names it) draws no rules either: a bare line names nothing.
+                Log.debug(
+                    "x bracket row %r: no label shown, rules omitted",
+                    resolved.x_layers[depth] if depth < len(resolved.x_layers) else depth,
+                    layer=LAYER,
+                )
             for group, text in zip(by_depth[depth], texts):
+                if not text:
+                    continue
                 # add_artist, not plot(): a plotted line would join the data
                 # limits and could move the ticks the labels were fitted to.
                 ax.add_artist(
@@ -910,18 +920,17 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
                         clip_on=False,
                     )
                 )
-                if text:
-                    ax.text(
-                        group.centre,
-                        0.0,
-                        text,
-                        transform=under,
-                        ha="center",
-                        va="top",
-                        multialignment="center",
-                        fontsize=fit.font_pt,
-                        clip_on=False,
-                    )
+                ax.text(
+                    group.centre,
+                    0.0,
+                    text,
+                    transform=under,
+                    ha="center",
+                    va="top",
+                    multialignment="center",
+                    fontsize=fit.font_pt,
+                    clip_on=False,
+                )
         ax.xaxis.labelpad = X_GROUP_GAP_PT + plan.depth * step
     return fit
 
