@@ -75,7 +75,8 @@ class ExtentMode:
     band inside a line plot's limits.
     """
 
-    #: BAND/BAR with an error band: the drawn extent is ``centre ± spread``.
+    #: BAND/BAR: the drawn extent is ``centre ± spread`` (just the centre with
+    #: no error band) — never the sample rows themselves.
     summary: bool
     #: Any COLLAPSE role: the collapse chain runs before anything is drawn,
     #: so the drawn values are means, not the observations. Raw extents would
@@ -99,8 +100,13 @@ class ExtentMode:
 
         sample = has_sample(roles)
         return cls(
-            summary=spec.kind in (PlotKind.BAND, PlotKind.BAR)
-            and spec.aggregate.error is not ErrorBand.NONE,
+            # With or without a band: a bar/band draws the sample's CENTRE,
+            # never the sample rows. Gating this on `error is not NONE` (until
+            # 2026-09-24) sent a band-less bar down the raw path — its limits
+            # spanned the per-sample means, looser than the bars at both ends,
+            # and the exported figure (fitted to the bars) disagreed.
+            # `spread_bounds` / `position_stats` return centre..centre for NONE.
+            summary=spec.kind in (PlotKind.BAND, PlotKind.BAR),
             collapse=sample,
             from_zero=spec.kind is PlotKind.BAR and not spec.style.log_y,
             log=bool(spec.style.log_y),
@@ -664,6 +670,8 @@ def _summary_bounds(values: pd.Series, spec: PlotSpec):
         values.median() if spec.aggregate.statistic is Statistic.MEDIAN else values.mean()
     )
     error = spec.aggregate.error
+    if error is ErrorBand.NONE:
+        return centre, centre, centre
     if error is ErrorBand.IQR:
         return centre, values.quantile(0.25), values.quantile(0.75)
     sd = values.std(ddof=1)

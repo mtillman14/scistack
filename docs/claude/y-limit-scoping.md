@@ -167,8 +167,24 @@ way to see the others. That decides what `codegen._y_limit_plan` can emit:
 |---|---|
 | scope names every ITERATE factor | nothing — the figure's own data defines it, which is what seaborn already does |
 | …and FACET factors too | `facet_kws={"sharey": False}` (seaborn shares y by **default**, so this must be said or the export differs) |
+| scope is FACET factors only, and does not name every ITERATE factor | a per-panel literal table `_ylims = {(facet values as str): (lo, hi)}`, set on each axis via `g.axes_dict`, with the whole-dataset range as fallback (added 2026-09-24; before, one global literal flattened small-valued facets) |
 | scope does **not** name every ITERATE factor | a literal `g.set(ylim=(lo, hi))`, computed at generation time |
+| scope names SOME ITERATE factors but not all | the widest range, a docstring NOTE and a WARN in `scidb.log` — the only case where the export cannot match, because which group a figure belongs to is an iteration key, not a column |
 | `minimum` and `maximum` both set | that literal |
+
+**The literal is the preview's number, never a recomputation.** It is read
+from `reduce.planned_y_limits(spec, base_table)`, which returns the plan's own
+`(y_scope, y_limits)`. Until 2026-09-24 codegen ran `limits_by_scope` itself over
+a table that had never been through `apply_filters`, so a filtered-out subject
+still set the export's floor. Pass the **base** table (before variant sets and
+level groups), the same one `resolve` takes.
+
+**Autoscaled bars.** matplotlib pins an autoscaled bar axis to exactly 0 (a
+sticky edge), while the preview pads 5 % below zero. On the autoscale row
+above, a linear BAR export also emits `use_sticky_edges = False` plus
+`autoscale_view()` (`codegen._bar_autoscale_lines`). No `relim()`, because it
+skips Collections (the sample overlay). Parity tests:
+`scistackplot/tests/test_codegen_ylimits.py`.
 
 ### Why a literal and not `share_limits`
 
@@ -237,3 +253,11 @@ reproducible one.
   defaulted, so a panel factor with no checkbox was one the user could never
   scale apart. `ResolvedPlot.panel_factors` (also in plotly's `layout.meta`)
   is the list, as resolved.
+- **A band-less bar is still a summary.** `ExtentMode.summary` is true for
+  BAR/BAND whatever the error band. It used to require an error band, which
+  sent a `NONE` bar down the raw path: its limits spanned the per-sample means,
+  looser than the bars (2026-09-24). `spread_bounds` and `_summary_bounds`
+  return the centre for `NONE`.
+- **`sharey` spelling in exports.** `sns.catplot(sharey=False)`, but
+  `sns.relplot(facet_kws={"sharey": False})`. catplot forwards its own
+  `sharey` to FacetGrid, so `facet_kws` there raises "multiple values".

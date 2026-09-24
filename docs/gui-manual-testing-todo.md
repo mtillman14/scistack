@@ -11,6 +11,34 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zo. Exported plot code has the preview's y range — added 2026-09-24
+
+**What changed:** the exported `plot_` code used to work out its fixed y range
+from the data *before* filters, so a filtered-out subject could move the
+bottom of the axis. It now uses the same numbers the preview uses. An exported
+bar chart that autoscales now also leaves the same small gap below zero as the
+preview, instead of starting at exactly 0.
+
+**Backend:** after exporting, `scidb.log` has one `export y limits: …` line
+saying whether the range was baked in (and its numbers) or autoscaled.
+
+**Frontend:**
+1. Open a bar plot of GAITRiteSymmetry with `speed` iterating and a location
+   filter that removes some subjects. Note the y-axis min and max in the
+   preview.
+2. Export the plot code and run it for the same figure. The saved figure's
+   y-axis min and max should match the preview's.
+3. Tick every iterate factor in the y-limit scope so that each figure scales
+   to its own data, then export again. The exported bar axis should start a
+   little below 0, as the preview does, not at exactly 0.
+4. Now tick only `ColName` (the facet) in the y-limit scope, with `speed`
+   still iterating. In the preview each GAITRite field has its own range,
+   and that range is the same across speeds. Export and run it for both
+   speeds: each field's panel should have the same y min/max as the preview.
+   Small fields should no longer be flattened onto one axis shared with the
+   large ones. The log line should say `export y limits: per panel over
+   ['ColName']`.
+
 ## 0zn. Weight of the "Show sample" points and of spaghetti lines — added 2026-09-24
 
 **What changed:** two new boxes scale point size and line thickness

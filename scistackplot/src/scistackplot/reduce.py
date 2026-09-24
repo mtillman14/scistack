@@ -475,6 +475,27 @@ def _plan(spec: PlotSpec, table: LongTable) -> _Plan:
     return _with_y_limits(_with_presentation(plan, spec), spec)
 
 
+def planned_y_limits(
+    spec: PlotSpec, table: LongTable
+) -> tuple[list[str], dict[tuple, tuple[float, float]]]:
+    """``(scope, {scope values: (low, high)})`` — the limits the preview draws.
+
+    The one owner of "what y range does this spec get". ``codegen`` bakes these
+    numbers into an exported figure, and it used to recompute them itself from
+    the table it was handed — which had never been through ``apply_filters``,
+    so a location filter that dropped the lowest subject left the export's floor
+    at that subject's value while the preview's floor had moved up (2026-09-24).
+    Reading the plan instead means the export cannot see different rows, a
+    different collapse, or a different scope from the preview.
+
+    ``table`` is the BASE table (before variant sets and level groups), exactly
+    as :func:`resolve` takes it. With manual limits the dict is empty — the
+    data is never consulted — and callers read ``spec.y_axis`` instead.
+    """
+    plan = _plan(spec, table)
+    return list(plan.y_scope), dict(plan.y_limits)
+
+
 def _with_presentation(plan: "_Plan", spec: PlotSpec) -> "_Plan":
     """Put the look-only fields back onto a plan's spec.
 
