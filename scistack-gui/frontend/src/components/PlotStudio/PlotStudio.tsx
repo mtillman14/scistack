@@ -82,6 +82,8 @@ import {
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
 import { type Labelable, type SpecAliases } from './aliasEdit'
 import { type MarkWeightsMeta, type WeightKey, weightTitle, withWeight } from './markWeights'
+import { otherPlotTheme, plotThemeVars, screenFigure } from './plotTheme'
+import { setPlotTheme, usePlotTheme } from './usePlotTheme'
 
 /** The dpi `plot_save` renders a raster at when the request names none
  *  (`api/plot.py` SaveRequest). Only the readout uses it; the save itself
@@ -744,6 +746,10 @@ export default function PlotStudio({
   // at all for this measure's shape, why not when it cannot, and what role a
   // grouping ticked right now would take.
   const grouping = capabilities?.grouping
+
+  // Light or dark. The shell paints the chrome from it; the figure only needs
+  // its text colour, which plotly must be handed as a value.
+  const theme = usePlotTheme()
 
   const [figures, setFigures] = useState<FigurePayload[]>([])
   // Which figure of the ITERATE fan-out is on screen. The fan-out runs in
@@ -3216,18 +3222,18 @@ export default function PlotStudio({
               const fixed = (figure.figure.layout?.meta as { fixed_size?: [number, number] } | undefined)
                 ?.fixed_size
               if (!fixed) return null
+              // Light: the renderer's figure untouched, which is the saved
+              // file. Dark: recoloured for the screen (plotTheme.screenFigure).
+              const shown = screenFigure(figure.figure, theme)
               return (
                 <div style={{ overflow: 'auto', maxWidth: '100%' }}>
                   <Plot
-                    data={figure.figure.data}
+                    data={shown.data}
                     layout={{
-                      ...figure.figure.layout,
+                      ...shown.layout,
                       autosize: false,
                       width: fixed[0],
                       height: fixed[1],
-                      paper_bgcolor: 'transparent',
-                      plot_bgcolor: 'transparent',
-                      font: { ...(figure.figure.layout.font as object), color: '#ccc' },
                     }}
                     config={{
                       displaylogo: false,
@@ -3241,16 +3247,14 @@ export default function PlotStudio({
             })()}
             {!(figure.figure.layout?.meta as { fixed_size?: unknown } | undefined)?.fixed_size && (
             <Plot
-              data={figure.figure.data}
+              data={screenFigure(figure.figure, theme).data}
               layout={{
-                ...figure.figure.layout,
+                // As above: untouched in light mode, screen colours in dark.
+                // Sizes are always the renderer's (`layout.font.size` =
+                // `TextSizes.base`), so a text setting shows before a save.
+                ...screenFigure(figure.figure, theme).layout,
                 autosize: true,
                 height: figureHeight,
-                paper_bgcolor: 'transparent',
-                plot_bgcolor: 'transparent',
-                // Colour only. The size is the renderer's (`layout.font.size` =
-                // `TextSizes.base`), so the setting shows before a save.
-                font: { ...(figure.figure.layout.font as object), color: '#ccc' },
               }}
               config={{
                 displaylogo: false,
@@ -3380,10 +3384,18 @@ function Shell({
   onToggleControls,
   rightRail,
 }: ShellProps) {
+  const theme = usePlotTheme()
   return (
     // No overlay click-to-close: a stray click on the backdrop while dragging a
     // plotly selection would throw the panel away mid-exploration.
-    <div style={embedded ? styles.embeddedRoot : styles.overlay}>
+    <div
+      style={{
+        ...(embedded ? styles.embeddedRoot : styles.overlay),
+        // The theme's owner: every `var(--ps-…)` below resolves here.
+        ...plotThemeVars(theme),
+        colorScheme: theme,
+      }}
+    >
       {/* A row, not a column: the title bar caps the controls rail rather than
           spanning the panel, so the figure keeps the tab's full height. */}
       <div ref={panelRef} style={embedded ? styles.embeddedPanel : styles.panel}>
@@ -3420,6 +3432,18 @@ function Shell({
               )}
             </div>
             <div style={styles.headerActions}>
+              <button
+                type="button"
+                style={styles.headerButton}
+                onClick={() => setPlotTheme(otherPlotTheme(theme))}
+                title={
+                  theme === 'dark'
+                    ? 'Light mode: preview the figure exactly as it will be saved (every plot tab)'
+                    : 'Dark mode: figure recoloured for the screen, not as saved (every plot tab)'
+                }
+              >
+                {theme === 'dark' ? '☀' : '☾'}
+              </button>
               {!embedded && (
                 <button type="button" style={styles.close} onClick={onClose}>✕</button>
               )}
@@ -4313,39 +4337,39 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+    position: 'fixed', inset: 0, background: 'var(--ps-scrim)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
   },
   // Own-tab mode: fill the webview exactly, no card, no backdrop.
-  embeddedRoot: { position: 'absolute', inset: 0, background: '#16162a' },
+  embeddedRoot: { position: 'absolute', inset: 0, background: 'var(--ps-bg)' },
   embeddedPanel: {
-    width: '100%', height: '100%', background: '#16162a',
+    width: '100%', height: '100%', background: 'var(--ps-bg)',
     display: 'flex', flexDirection: 'row', overflow: 'hidden',
   },
   panel: {
-    width: '96vw', height: '94vh', background: '#16162a',
-    border: '1px solid #3a3a5a', borderRadius: 8,
+    width: '96vw', height: '94vh', background: 'var(--ps-bg)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 8,
     display: 'flex', flexDirection: 'row', overflow: 'hidden',
   },
   // The title bar and the controls share one column, so the figure column
   // starts at the very top of the panel.
   rail: {
     width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column',
-    minHeight: 0, borderRight: '1px solid #2a2a4a',
+    minHeight: 0, borderRight: '1px solid var(--ps-border)',
   },
   // Collapsed: only as wide as the toggle that brings it back.
   railCollapsed: { width: 'auto' },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 6, padding: '8px 12px', borderBottom: '1px solid #2a2a4a',
-    background: '#1a1a2e', flexShrink: 0,
+    gap: 6, padding: '8px 12px', borderBottom: '1px solid var(--ps-border)',
+    background: 'var(--ps-surface)', flexShrink: 0,
   },
   title: {
-    color: '#eee', fontSize: 13, fontWeight: 600,
+    color: 'var(--ps-text)', fontSize: 13, fontWeight: 600,
     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
   },
   close: {
-    background: 'transparent', border: 'none', color: '#888',
+    background: 'transparent', border: 'none', color: 'var(--ps-text-muted-neutral)',
     cursor: 'pointer', fontSize: 14,
   },
   // LONGHANDS only, and the same keys in both states — see controlsHidden.
@@ -4366,14 +4390,14 @@ const styles: Record<string, React.CSSProperties> = {
   headerActions: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 },
   headerLeft: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
   ruleList: { marginTop: 6 },
-  ruleTitle: { fontSize: 10, color: '#999', marginBottom: 3 },
+  ruleTitle: { fontSize: 10, color: 'var(--ps-text-muted)', marginBottom: 3 },
   ruleRow: { display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 },
-  slotIndex: { fontSize: 10, color: '#888', flex: '0 0 52px' },
+  slotIndex: { fontSize: 10, color: 'var(--ps-text-muted-neutral)', flex: '0 0 52px' },
   gridSizeRow: { display: 'flex', gap: 8, marginBottom: 4 },
   gridSizeField: { display: 'flex', alignItems: 'center', gap: 4 },
-  gridSizeLabel: { fontSize: 11, color: '#bbb' },
+  gridSizeLabel: { fontSize: 11, color: 'var(--ps-text-secondary)' },
   // An unpinned dimension reads as derived, not as something the user typed.
-  gridSizeAuto: { color: '#8a8aa8', fontStyle: 'italic' },
+  gridSizeAuto: { color: 'var(--ps-text-muted-purple)', fontStyle: 'italic' },
   // Text sizes: two columns of label + box, labels right-aligned so the boxes
   // line up.
   textSizesHeader: {
@@ -4384,17 +4408,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px', marginBottom: 6,
   },
   textSizeLabel: {
-    fontSize: 11, color: '#bbb', flex: 1, textAlign: 'right' as const, whiteSpace: 'nowrap' as const,
+    fontSize: 11, color: 'var(--ps-text-secondary)', flex: 1, textAlign: 'right' as const, whiteSpace: 'nowrap' as const,
   },
   inlineButton: {
-    padding: '1px 8px', background: '#22223a', color: '#ccc',
-    border: '1px solid #3a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 10,
+    padding: '1px 8px', background: 'var(--ps-control)', color: 'var(--ps-text-control)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 4, cursor: 'pointer', fontSize: 10,
   },
   layoutNote: {
-    fontSize: 10, color: '#e0b050', marginTop: 6, lineHeight: 1.4,
+    fontSize: 10, color: 'var(--ps-caution)', marginTop: 6, lineHeight: 1.4,
   },
   headerButton: {
-    background: '#22223a', color: '#ccc', border: '1px solid #3a3a5a',
+    background: 'var(--ps-control)', color: 'var(--ps-text-control)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 4, cursor: 'pointer', fontSize: 11, padding: '2px 8px',
   },
   // minWidth 0: a flex item defaults to its content's width, and a wide plotly
@@ -4403,56 +4427,56 @@ const styles: Record<string, React.CSSProperties> = {
   section: { marginBottom: 16 },
   sectionTitle: {
     fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.6,
-    color: '#7b68ee', marginBottom: 6, fontWeight: 700,
+    color: 'var(--ps-accent)', marginBottom: 6, fontWeight: 700,
   },
-  hint: { fontSize: 10, color: '#777', marginBottom: 6, fontStyle: 'italic' },
+  hint: { fontSize: 10, color: 'var(--ps-text-faint)', marginBottom: 6, fontStyle: 'italic' },
   refusedRow: {
-    fontSize: 10, color: '#6b6b7a', marginBottom: 4, paddingLeft: 18,
+    fontSize: 10, color: 'var(--ps-text-faint-slate)', marginBottom: 4, paddingLeft: 18,
     fontFamily: 'monospace',
   },
   locationButton: {
     width: '100%',
     textAlign: 'left',
-    background: '#12121f',
-    border: '1px solid #2a2a4a',
-    color: '#ddd',
+    background: 'var(--ps-field)',
+    border: '1px solid var(--ps-border)',
+    color: 'var(--ps-text-body)',
     borderRadius: 4,
     padding: '5px 8px',
     fontSize: 12,
     cursor: 'pointer',
   },
   pinNote: {
-    fontSize: 10, lineHeight: 1.45, color: '#d9c48f', marginBottom: 6,
-    padding: '5px 7px', background: '#221c0c', borderLeft: '2px solid #d9b45f',
+    fontSize: 10, lineHeight: 1.45, color: 'var(--ps-note-text)', marginBottom: 6,
+    padding: '5px 7px', background: 'var(--ps-note-bg)', borderLeft: '2px solid var(--ps-note-border)',
   },
   factorRow: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     gap: 6, marginBottom: 5,
   },
   factorName: {
-    fontSize: 11, fontFamily: 'monospace', color: '#ccc',
+    fontSize: 11, fontFamily: 'monospace', color: 'var(--ps-text-control)',
     display: 'flex', alignItems: 'center', gap: 4, minWidth: 0,
   },
   levelCount: {
-    fontSize: 9, color: '#666', background: '#22223a',
+    fontSize: 9, color: 'var(--ps-text-faint-grey)', background: 'var(--ps-control)',
     borderRadius: 8, padding: '0 5px',
   },
   // Where a ticked grouping ended up. Muted: it is a confirmation, not a
   // warning — the one reading that IS a warning ("pooled") says so in words.
-  groupRole: { fontSize: 9, color: '#7c7ca0', marginLeft: 6 },
-  colorTag: { fontSize: 10, color: '#7c7ca0', marginLeft: 6, marginRight: 4, whiteSpace: 'nowrap' as const },
+  groupRole: { fontSize: 9, color: 'var(--ps-text-faint-indigo)', marginLeft: 6 },
+  colorTag: { fontSize: 10, color: 'var(--ps-text-faint-indigo)', marginLeft: 6, marginRight: 4, whiteSpace: 'nowrap' as const },
   // A wide variable, collapsed. Reads as a row rather than a button so the
   // section still scans as one list of groupings.
   variantTag: {
-    fontSize: 8, color: '#fbbf24', border: '1px solid #6b5a1a',
+    fontSize: 8, color: 'var(--ps-warn)', border: '1px solid var(--ps-warn-border)',
     borderRadius: 3, padding: '0 3px', textTransform: 'uppercase',
   },
   fieldTag: {
-    fontSize: 8, color: '#67e8f9', border: '1px solid #1a5a6b',
+    fontSize: 8, color: 'var(--ps-cyan)', border: '1px solid var(--ps-cyan-border)',
     borderRadius: 3, padding: '0 3px', textTransform: 'uppercase',
   },
   codeTag: {
-    fontSize: 8, color: '#c4b5fd', border: '1px solid #4c3a8a',
+    fontSize: 8, color: 'var(--ps-accent-text-light)', border: '1px solid var(--ps-accent-border)',
     borderRadius: 3, padding: '0 3px', textTransform: 'uppercase',
     marginLeft: 6,
   },
@@ -4464,74 +4488,74 @@ const styles: Record<string, React.CSSProperties> = {
   },
   variantNameInput: {
     flex: 1, minWidth: 0,
-    background: '#22223a', color: '#ddd', border: '1px solid #3a3a5a',
+    background: 'var(--ps-control)', color: 'var(--ps-text-body)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 4, fontSize: 11, padding: '3px 5px',
   },
   variantSelectButton: {
-    flex: '0 0 auto', padding: '3px 8px', background: '#22223a', color: '#c4b5fd',
-    border: '1px solid #4c3a8a', borderRadius: 4, cursor: 'pointer', fontSize: 11,
+    flex: '0 0 auto', padding: '3px 8px', background: 'var(--ps-control)', color: 'var(--ps-accent-text-light)',
+    border: '1px solid var(--ps-accent-border)', borderRadius: 4, cursor: 'pointer', fontSize: 11,
   },
   variantRemove: {
-    flex: '0 0 auto', padding: '2px 5px', background: 'transparent', color: '#888',
+    flex: '0 0 auto', padding: '2px 5px', background: 'transparent', color: 'var(--ps-text-muted-neutral)',
     border: 'none', cursor: 'pointer', fontSize: 11,
   },
   variantEmptyTag: {
-    fontSize: 9, color: '#fbbf24', border: '1px solid #6b5a1a',
+    fontSize: 9, color: 'var(--ps-warn)', border: '1px solid var(--ps-warn-border)',
     borderRadius: 3, padding: '0 3px', textTransform: 'uppercase',
   },
   // Grey, not amber: "not yet said" is a state, not a problem.
   variantUnsetTag: {
-    fontSize: 9, color: '#8a8aa8', border: '1px solid #3a3a5a',
+    fontSize: 9, color: 'var(--ps-text-muted-purple)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 3, padding: '0 3px', textTransform: 'uppercase',
   },
   variantAdd: {
     alignSelf: 'flex-start', padding: '3px 10px', background: 'transparent',
-    color: '#9d92f5', border: '1px dashed #4c3a8a', borderRadius: 4,
+    color: 'var(--ps-accent-text)', border: '1px dashed var(--ps-accent-border)', borderRadius: 4,
     cursor: 'pointer', fontSize: 11,
   },
   variantRow: { display: 'flex', flexDirection: 'column', gap: 2 },
   variantName: {
-    fontSize: 10, color: '#9ca3af', fontFamily: 'monospace',
+    fontSize: 10, color: 'var(--ps-text-muted-grey)', fontFamily: 'monospace',
     display: 'flex', alignItems: 'center',
   },
   variantLevels: { display: 'flex', flexWrap: 'wrap', gap: 8 },
   variantLevel: {
     display: 'flex', alignItems: 'center', gap: 3,
-    fontSize: 11, color: '#ddd', cursor: 'pointer',
+    fontSize: 11, color: 'var(--ps-text-body)', cursor: 'pointer',
   },
   variantCount: {
-    fontSize: 10, color: '#9ca3af', marginTop: 4,
-    borderTop: '1px solid #333', paddingTop: 4,
+    fontSize: 10, color: 'var(--ps-text-muted-grey)', marginTop: 4,
+    borderTop: '1px solid var(--ps-border-neutral)', paddingTop: 4,
   },
   variantCountEmpty: {
-    fontSize: 10, color: '#fbbf24', marginTop: 4,
-    borderTop: '1px solid #333', paddingTop: 4,
+    fontSize: 10, color: 'var(--ps-warn)', marginTop: 4,
+    borderTop: '1px solid var(--ps-border-neutral)', paddingTop: 4,
   },
-  shapeTag: { fontSize: 9, color: '#67e8f9', marginLeft: 6 },
-  sourceTag: { fontSize: 9, color: '#8b8ba7', marginLeft: 6 },
-  readonlyValue: { fontSize: 12, fontFamily: 'monospace', color: '#eee' },
+  shapeTag: { fontSize: 9, color: 'var(--ps-cyan)', marginLeft: 6 },
+  sourceTag: { fontSize: 9, color: 'var(--ps-text-muted-violet)', marginLeft: 6 },
+  readonlyValue: { fontSize: 12, fontFamily: 'monospace', color: 'var(--ps-text)' },
   select: {
-    background: '#22223a', color: '#ddd', border: '1px solid #3a3a5a',
+    background: 'var(--ps-control)', color: 'var(--ps-text-body)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 4, fontSize: 11, padding: '2px 4px', maxWidth: 130,
   },
   kindRow: {
     display: 'flex', alignItems: 'center', fontSize: 11,
-    color: '#ccc', marginBottom: 3, cursor: 'pointer',
+    color: 'var(--ps-text-control)', marginBottom: 3, cursor: 'pointer',
   },
   actions: { display: 'flex', gap: 6, marginTop: 8 },
   button: {
-    flex: 1, padding: '5px 8px', background: '#22223a', color: '#ccc',
-    border: '1px solid #3a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 11,
+    flex: 1, padding: '5px 8px', background: 'var(--ps-control)', color: 'var(--ps-text-control)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 4, cursor: 'pointer', fontSize: 11,
   },
   primaryButton: {
-    flex: 1, padding: '5px 8px', background: '#7b68ee', color: '#fff',
+    flex: 1, padding: '5px 8px', background: 'var(--ps-accent)', color: 'var(--ps-accent-fg)',
     border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600,
   },
-  notice: { fontSize: 10, color: '#67e8f9', marginTop: 6 },
+  notice: { fontSize: 10, color: 'var(--ps-cyan)', marginTop: 6 },
   dataChooser: {
     marginTop: 8,
     padding: 8,
-    border: '1px solid #3a3a3a',
+    border: '1px solid var(--ps-border-neutral-strong)',
     borderRadius: 4,
   },
   dataDepthOption: {
@@ -4542,87 +4566,87 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 6,
     cursor: 'pointer',
   },
-  dataColumns: { display: 'block', fontSize: 10, color: '#888', fontFamily: 'monospace' },
-  note: { fontSize: 12, color: '#777', fontStyle: 'italic', padding: 8 },
-  error: { fontSize: 12, color: '#f87171', padding: 12 },
+  dataColumns: { display: 'block', fontSize: 10, color: 'var(--ps-text-muted-neutral)', fontFamily: 'monospace' },
+  note: { fontSize: 12, color: 'var(--ps-text-faint)', fontStyle: 'italic', padding: 8 },
+  error: { fontSize: 12, color: 'var(--ps-error)', padding: 12 },
   specError: {
-    fontSize: 11, color: '#fbbf24', background: '#2a2416',
-    border: '1px solid #6b5a1a', borderRadius: 4, padding: 8, marginBottom: 8,
+    fontSize: 11, color: 'var(--ps-warn)', background: 'var(--ps-warn-bg)',
+    border: '1px solid var(--ps-warn-border)', borderRadius: 4, padding: 8, marginBottom: 8,
   },
   figureBlock: { marginBottom: 14 },
   figureLabel: {
-    fontSize: 11, fontFamily: 'monospace', color: '#aaa', marginBottom: 2,
+    fontSize: 11, fontFamily: 'monospace', color: 'var(--ps-text-secondary-alt)', marginBottom: 2,
   },
   navigator: {
     display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6,
-    padding: '3px 6px', background: '#16162a', border: '1px solid #2c2c4a',
+    padding: '3px 6px', background: 'var(--ps-bg)', border: '1px solid var(--ps-border-soft)',
     borderRadius: 4,
   },
   navButton: {
-    background: '#22223c', color: '#ddd', border: '1px solid #3a3a5a',
+    background: 'var(--ps-control-alt)', color: 'var(--ps-text-body)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 3, cursor: 'pointer', fontSize: 12, lineHeight: 1,
     padding: '3px 8px',
   },
   navButtonOff: { opacity: 0.35, cursor: 'default' },
   navLabel: {
-    flex: 1, fontSize: 11, fontFamily: 'monospace', color: '#ccc',
+    flex: 1, fontSize: 11, fontFamily: 'monospace', color: 'var(--ps-text-control)',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  navCount: { fontSize: 11, color: '#888', whiteSpace: 'nowrap' },
+  navCount: { fontSize: 11, color: 'var(--ps-text-muted-neutral)', whiteSpace: 'nowrap' },
   levelPicker: { marginBottom: 4 },
   levelPickerHead: {
     display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-    background: 'transparent', border: 'none', color: '#ddd', cursor: 'pointer',
+    background: 'transparent', border: 'none', color: 'var(--ps-text-body)', cursor: 'pointer',
     fontSize: 11, padding: '3px 0', textAlign: 'left',
   },
   levelCountFiltered: {
-    fontSize: 10, color: '#fbbf24', background: '#2a2416',
-    border: '1px solid #6b5a1a', borderRadius: 8, padding: '0 6px',
+    fontSize: 10, color: 'var(--ps-warn)', background: 'var(--ps-warn-bg)',
+    border: '1px solid var(--ps-warn-border)', borderRadius: 8, padding: '0 6px',
   },
-  levelChevron: { fontSize: 9, color: '#777' },
+  levelChevron: { fontSize: 9, color: 'var(--ps-text-faint)' },
   levelList: {
     maxHeight: 160, overflowY: 'auto', padding: '2px 0 4px 10px',
-    borderLeft: '1px solid #2c2c4a', marginLeft: 2,
+    borderLeft: '1px solid var(--ps-border-soft)', marginLeft: 2,
   },
   levelRow: {
-    display: 'flex', alignItems: 'center', fontSize: 11, color: '#bbb',
+    display: 'flex', alignItems: 'center', fontSize: 11, color: 'var(--ps-text-secondary)',
     padding: '1px 0', cursor: 'pointer',
   },
   levelReset: {
-    background: 'transparent', border: 'none', color: '#7aa2f7',
+    background: 'transparent', border: 'none', color: 'var(--ps-link)',
     cursor: 'pointer', fontSize: 10, padding: '2px 0',
   },
   levelBulkRow: { display: 'flex', gap: 10 },
-  levelEmpty: { fontSize: 10, color: '#fbbf24', paddingTop: 2 },
+  levelEmpty: { fontSize: 10, color: 'var(--ps-warn)', paddingTop: 2 },
   xLayerRow: { display: 'flex', alignItems: 'center', gap: 4, padding: '2px 0' },
   xLayerDepth: {
-    fontSize: 9, color: '#888', background: '#22223c', borderRadius: 8,
+    fontSize: 9, color: 'var(--ps-text-muted-neutral)', background: 'var(--ps-control-alt)', borderRadius: 8,
     padding: '0 5px', minWidth: 14, textAlign: 'center',
   },
   bucketRow: { display: 'flex', alignItems: 'center', gap: 4, padding: '1px 0' },
   bucketLevel: {
-    fontSize: 10, color: '#bbb', fontFamily: 'monospace',
+    fontSize: 10, color: 'var(--ps-text-secondary)', fontFamily: 'monospace',
     minWidth: 54, overflow: 'hidden', textOverflow: 'ellipsis',
   },
-  bucketArrow: { fontSize: 9, color: '#666' },
+  bucketArrow: { fontSize: 9, color: 'var(--ps-text-faint-grey)' },
   bucketInput: {
-    flex: 1, minWidth: 40, background: '#1a1a2e', color: '#ddd',
-    border: '1px solid #3a3a5a', borderRadius: 3, fontSize: 10, padding: '1px 4px',
+    flex: 1, minWidth: 40, background: 'var(--ps-surface)', color: 'var(--ps-text-body)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 3, fontSize: 10, padding: '1px 4px',
   },
   rangeRow: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 },
   rangeInput: {
-    width: 62, background: '#1a1a2e', color: '#ddd',
-    border: '1px solid #3a3a5a', borderRadius: 3, fontSize: 10, padding: '2px 4px',
+    width: 62, background: 'var(--ps-surface)', color: 'var(--ps-text-body)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 3, fontSize: 10, padding: '2px 4px',
   },
   variantVariableSelect: {
-    background: '#1a1a2e', color: '#ddd', border: '1px solid #3a3a5a',
+    background: 'var(--ps-surface)', color: 'var(--ps-text-body)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 3, fontSize: 10, padding: '2px 4px', maxWidth: 110,
   },
   // The same information as the dropdown, when there is nothing to switch to.
   // Styled as text rather than as a disabled control: a greyed-out select
   // invites clicking and then refuses, which is worse than a plain label.
   variantVariableLabel: {
-    fontSize: 10, color: '#9a9ab8', fontFamily: 'monospace',
+    fontSize: 10, color: 'var(--ps-text-muted-indigo)', fontFamily: 'monospace',
     maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
@@ -4632,38 +4656,38 @@ const styles: Record<string, React.CSSProperties> = {
   // like an error would train the user to dismiss the one message that says
   // their subjects were computed by different code.
   spanBanner: {
-    fontSize: 11, color: '#a9c7ff', background: '#161a2e',
-    border: '1px solid #2f4172', borderRadius: 4, padding: 8, marginBottom: 8,
+    fontSize: 11, color: 'var(--ps-info-text)', background: 'var(--ps-info-bg)',
+    border: '1px solid var(--ps-info-border)', borderRadius: 4, padding: 8, marginBottom: 8,
     lineHeight: 1.5,
   },
   emptyPin: {
-    fontSize: 11, color: '#ddd', background: '#16162a',
-    border: '1px solid #3a3a5a', borderRadius: 6, padding: 14, marginBottom: 8,
+    fontSize: 11, color: 'var(--ps-text-body)', background: 'var(--ps-bg)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 6, padding: 14, marginBottom: 8,
     lineHeight: 1.6,
   },
-  emptyPinTitle: { fontSize: 12, color: '#fff', marginBottom: 8 },
+  emptyPinTitle: { fontSize: 12, color: 'var(--ps-text-strong)', marginBottom: 8 },
   emptyPinBlock: { marginTop: 10 },
-  emptyPinAttempt: { color: '#bbb' },
+  emptyPinAttempt: { color: 'var(--ps-text-secondary)' },
   emptyPinCode: {
-    fontFamily: 'monospace', fontSize: 10, color: '#fbbf24',
-    background: '#0e0e1a', borderRadius: 3, padding: '1px 4px',
+    fontFamily: 'monospace', fontSize: 10, color: 'var(--ps-warn)',
+    background: 'var(--ps-code-bg)', borderRadius: 3, padding: '1px 4px',
   },
-  emptyPinHint: { color: '#8a8aa8', fontSize: 10, marginTop: 6 },
+  emptyPinHint: { color: 'var(--ps-text-muted-purple)', fontSize: 10, marginTop: 6 },
   emptyPinOptions: {
     display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6,
   },
   emptyPinOption: {
-    background: '#1a1a2e', color: '#9d92f5', border: '1px solid #4c3a8a',
+    background: 'var(--ps-surface)', color: 'var(--ps-accent-text)', border: '1px solid var(--ps-accent-border)',
     borderRadius: 4, cursor: 'pointer', fontSize: 10, padding: '3px 8px',
     fontFamily: 'monospace',
   },
-  downsampleNote: { fontSize: 10, color: '#fbbf24', marginBottom: 4 },
+  downsampleNote: { fontSize: 10, color: 'var(--ps-warn)', marginBottom: 4 },
   codeOverlay: {
-    position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)',
+    position: 'absolute', inset: 0, background: 'var(--ps-scrim-code)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40,
   },
   code: {
-    background: '#0e0e1a', color: '#ddd', border: '1px solid #3a3a5a',
+    background: 'var(--ps-code-bg)', color: 'var(--ps-text-body)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 6, padding: 16, fontSize: 11, fontFamily: 'monospace',
     maxHeight: '80%', maxWidth: '80%', overflow: 'auto', whiteSpace: 'pre',
   },

@@ -42,9 +42,9 @@ interface Props {
 }
 
 const COLOR: Record<Coverage, string> = {
-  full: '#d7dae3',
-  partial: '#eab308',
-  none: '#6b7280',
+  full: 'var(--ps-status-full)',
+  partial: 'var(--ps-amber)',
+  none: 'var(--ps-text-faint-cool)',
 }
 
 export default function SchemaKeyLevels({
@@ -140,13 +140,13 @@ export default function SchemaKeyLevels({
 
 const styles: Record<string, React.CSSProperties> = {
   list: { fontSize: 12 },
-  muted: { fontSize: 11, color: '#9aa0b4', padding: '4px 6px' },
+  muted: { fontSize: 11, color: 'var(--ps-text-muted-slate)', padding: '4px 6px' },
   keyRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
     padding: '3px 6px',
-    borderTop: '1px solid #20203a',
+    borderTop: '1px solid var(--ps-border-faint)',
   },
   levelRow: {
     display: 'flex',
@@ -154,9 +154,9 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
     padding: '2px 6px 2px 26px',
   },
-  twisty: { cursor: 'pointer', width: 12, color: '#9aa0b4', userSelect: 'none' },
+  twisty: { cursor: 'pointer', width: 12, color: 'var(--ps-text-muted-slate)', userSelect: 'none' },
   checkbox: { margin: 0 },
   keyName: { cursor: 'pointer', fontWeight: 600, flex: 1 },
   levelName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  count: { fontSize: 10, color: '#6b7280', fontVariantNumeric: 'tabular-nums' },
+  count: { fontSize: 10, color: 'var(--ps-text-faint-cool)', fontVariantNumeric: 'tabular-nums' },
 }

@@ -11,6 +11,57 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zq. Plot Studio light mode = the saved figure, exactly — added 2026-09-24
+
+**What changed:** there is now a ☀ / ☾ button at the top right of the Plot
+Studio's controls header. It switches the studio (controls, popups, saved-plots
+rail) between dark and light. The choice is remembered and shared by every plot
+tab. Studio colours come from a single palette,
+`frontend/src/components/PlotStudio/plotTheme.ts`.
+
+The figure itself now draws the export's "paper" (`scistackplot/paper.py`):
+a white background, black text, a black frame round every panel, outward
+ticks, no grid, no zero line, and black error bars with caps. **Light mode
+shows the figure untouched, so it should be the saved PNG exactly.** Dark
+mode recolours the text, frame, ticks and error bars to light grey on a
+transparent background, for the screen only. Doc:
+`docs/claude/preview-paper-parity.md`.
+
+**Extension:** the "SciStack" output channel logs `plot theme: light (stored;
+N other webview(s) told)` on each toggle.
+
+**Backend:** `scidb.log`'s `figure size … in (…)` line (written on save) now
+ends with `paper #ffffff bg, #000000 frame 0.8pt, ticks out 3.5pt, grid off`.
+
+**Frontend:**
+1. Open a plot tab (dark). The figure should now have a light-grey frame
+   and ticks, and no grid lines.
+2. Click **☀**. The whole studio turns light: the rail, inputs, dropdowns,
+   checkboxes, scrollbars and the Saved plots rail. Look for any dark patch
+   or any text you can't read (for example the amber notes, the yellow "no
+   records" warning, or the cyan/violet tags).
+2a. **The parity check.** In light mode, with the preview at the export size
+   (not "Fit pane"), open a bar plot with error bars, faceted by one
+   factor. Save it as PNG and open the file beside the tab. Background,
+   frame, ticks, the absence of a grid, text colour and error-bar caps
+   should match. Note any difference you see (legend, bracket lines,
+   spacing) rather than fixing it here.
+2b. Repeat 2a with a box plot, a line/band plot and a log-y axis. On the
+   log axis, matplotlib's extra minor ticks are a known difference.
+3. Open the variant, grouping and location popups. Their frames and
+   sidebars should be light too. (The pipeline nodes drawn inside the
+   variant/grouping canvas keep the canvas's own dark style, as expected.)
+4. With a second plot tab already open, toggle in the first. The second
+   should switch as well.
+5. Close every plot tab and open a new one. It should open in light mode.
+   Reload the window and check it again.
+6. On the pipeline canvas, the 🗂 location picker and the Provenance panel's
+   variant popup should still look as they did before (dark).
+7. Browser build (`scistack-gui` CLI): the toggle works and survives a page
+   reload.
+
+---
+
 ## 0zp. No bracket lines when the bracket labels are hidden — added 2026-09-24
 
 **What changed:** when **Hide labels the legend repeats** blanks a bracket

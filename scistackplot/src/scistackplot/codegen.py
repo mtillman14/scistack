@@ -49,7 +49,8 @@ from .spec import (
     value_spellings,
 )
 from .table import MISSING_LEVEL, LongTable
-from .textsize import rc_params, resolve_sizes
+from .paper import figure_rc_params, paper_axes_code, seaborn_err_kws
+from .textsize import resolve_sizes
 from .weights import sample_weight, spaghetti_weight
 from .ylimits import GLOBAL_KEY
 from .variants import (
@@ -167,9 +168,9 @@ def generate_plot_function(
         "",
         # The body runs under rc_context rather than setting plt.rcParams: this
         # function runs inside a pipeline, and a global font.size would leak
-        # into every figure drawn after it. The dict is textsize.rc_params, the
-        # one render_matplotlib opens, so every text size matches.
-        f"    with plt.rc_context({rc_params(resolve_sizes(spec.style))!r}):",
+        # into every figure drawn after it. The dict is paper.figure_rc_params,
+        # the one render_matplotlib opens, so every text size and the paper match.
+        f"    with plt.rc_context({figure_rc_params(resolve_sizes(spec.style))!r}):",
     ]
     # A body line that carries its own newline continues at the body indent,
     # so the extra level has to be applied to the continuation too.
@@ -1409,6 +1410,9 @@ def _plot_call(spec, table, roles, shape, y_plan: _YLimitPlan) -> list[str]:
         if kind is PlotKind.BAR:
             args.append(f"estimator={estimator}")
             args.append(f"errorbar={errorbar}")
+            # The export's error-bar ink and caps (paper.seaborn_err_kws);
+            # seaborn's own are grey, thicker and capless.
+            args.append(f"err_kws={seaborn_err_kws()!r}")
         call = "sns.catplot"
     elif kind is PlotKind.SPAGHETTI:
         # Markers and lines in one call: one polyline per series, no estimator,
@@ -1566,6 +1570,10 @@ def _plot_call(spec, table, roles, shape, y_plan: _YLimitPlan) -> list[str]:
     if style.title:
         lines.append(f"g.figure.suptitle({style.title!r})")
     lines.extend(_alias_relabel_lines(aliases, _x_is_categorical(spec, table, roles, shape)))
+    # The frame, ticks and background the preview and render_matplotlib draw
+    # (paper.py). Also undoes seaborn's default despine, which would export
+    # an open frame beside a boxed preview.
+    lines.extend(paper_axes_code("g.axes.flat"))
     lines.append(f"g.figure.set_size_inches({style.width}, {style.height})")
     lines.extend(_fitted_tick_lines(spec, table, roles, shape))
     lines.extend(_exact_size_layout_lines(style))
@@ -1767,6 +1775,7 @@ def _heatmap_call(spec, table: LongTable) -> list[str]:
         'image = ax.imshow(matrix, aspect="auto", origin="lower")',
         "fig.colorbar(image, ax=ax)",
         f"ax.set_title({title!r})",
+        *paper_axes_code("[ax]"),
         "return fig",
     ]
 

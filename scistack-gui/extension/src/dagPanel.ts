@@ -11,6 +11,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Session } from './session';
+import { answerSetPlotTheme, plotThemeHost } from './plotTheme';
 import { LogSink, sessionSlug } from './sessionCore';
 import { runInMatlabTerminal, isMatlabExtensionAvailable, isMatlabTerminalOpen } from './matlabTerminal';
 import { MatlabRunTracker } from './matlabRunTracker';
@@ -73,6 +74,8 @@ export class DagPanel {
     );
 
     this.panel.webview.html = this.getHtml();
+    // Its fallback modal is a Plot Studio too, so it follows the toggle.
+    this.disposeCallbacks.push(plotThemeHost(context.globalState).add(this));
 
     // Which canvas the user is looking at decides which database a command
     // from the Command Palette or the status bar means.
@@ -99,6 +102,13 @@ export class DagPanel {
               error: { message: String(err) },
             });
           }
+          return;
+        }
+        if (method === 'set_plot_theme') {
+          // Host-side: the preference outlives this webview (see plotTheme.ts).
+          await answerSetPlotTheme(
+            plotThemeHost(this.context.globalState), msg, this, this.outputChannel,
+          );
           return;
         }
         if (method === 'open_plot_panel') {
@@ -901,6 +911,7 @@ export class DagPanel {
 <body>
   <div id="root"></div>
   <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
+  <script nonce="${nonce}">${plotThemeHost(this.context.globalState).initScript()}</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

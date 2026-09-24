@@ -31,6 +31,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { Session } from './session';
+import { answerSetPlotTheme, plotThemeHost } from './plotTheme';
 
 export interface PlotTarget {
   variable?: string;
@@ -56,6 +57,7 @@ export class PlotPanel {
   private panel: vscode.WebviewPanel;
   private disposables: vscode.Disposable[] = [];
   private unregister: () => void = () => {};
+  private unregisterTheme: () => void = () => {};
 
   static show(
     context: vscode.ExtensionContext,
@@ -105,6 +107,8 @@ export class PlotPanel {
 
     this.panel.webview.html = this.getHtml();
     this.unregister = this.session.plots.add(this);
+    // Every plot tab, whatever its database, follows the light/dark toggle.
+    this.unregisterTheme = plotThemeHost(context.globalState).add(this);
 
     // Focusing a plot tab says which database later Palette commands mean.
     this.panel.onDidChangeViewState(
@@ -118,6 +122,14 @@ export class PlotPanel {
     this.panel.webview.onDidReceiveMessage(
       async (msg: Record<string, unknown>) => {
         const method = msg.method as string;
+
+        if (method === 'set_plot_theme') {
+          // Host-side: the preference outlives this tab (see plotTheme.ts).
+          await answerSetPlotTheme(
+            plotThemeHost(this.context.globalState), msg, this, this.session.log,
+          );
+          return;
+        }
 
         if (method === 'pick_save_path') {
           // Only the host can show a file dialog; a webview cannot save a file
@@ -224,6 +236,7 @@ export class PlotPanel {
 
   private dispose(): void {
     this.unregister();
+    this.unregisterTheme();
     while (this.disposables.length) this.disposables.pop()?.dispose();
   }
 
@@ -280,6 +293,7 @@ export class PlotPanel {
   <div id="root"></div>
   <script nonce="${nonce}">window.__SCISTACK_VIEW__ = ${target};</script>
   <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
+  <script nonce="${nonce}">${plotThemeHost(this.context.globalState).initScript()}</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

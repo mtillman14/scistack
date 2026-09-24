@@ -549,18 +549,18 @@ export default function VariantDagPopup({
 /** Only what the shared shell does not provide (`DagPicker.pickerStyles`). */
 const localStyles: Record<string, React.CSSProperties> = {
   nameInput: {
-    background: '#22223a', color: '#ddd', border: '1px solid #3a3a5a',
+    background: 'var(--ps-control)', color: 'var(--ps-text-body)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 4, fontSize: 12, padding: '3px 6px', minWidth: 200,
   },
   unmapped: {
-    borderTop: '1px solid #2a2a4a', padding: '8px 14px', maxHeight: 120,
+    borderTop: '1px solid var(--ps-border)', padding: '8px 14px', maxHeight: 120,
     overflowY: 'auto', flexShrink: 0,
   },
-  unmappedTitle: { fontSize: 10, color: '#e0b050', marginBottom: 4 },
+  unmappedTitle: { fontSize: 10, color: 'var(--ps-caution)', marginBottom: 4 },
   unmappedRow: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 3 },
-  unmappedName: { fontSize: 11, fontFamily: 'monospace', color: '#bbb' },
+  unmappedName: { fontSize: 11, fontFamily: 'monospace', color: 'var(--ps-text-secondary)' },
   unmappedLevels: { display: 'flex', gap: 8, flexWrap: 'wrap' },
   unmappedLevel: {
-    display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: '#ddd',
+    display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--ps-text-body)',
   },
 }

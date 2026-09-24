@@ -45,7 +45,7 @@ dependencies = [
 [project.optional-dependencies]
 mpl = [
     "matplotlib>=3.6",
-    "seaborn>=0.12",
+    "seaborn>=0.13",
 ]
 interactive = [
     "plotly>=5.0",
@@ -54,7 +54,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "matplotlib>=3.6",
-    "seaborn>=0.12",
+    "seaborn>=0.13",
     "plotly>=5.0",
     "tomli-w>=1.0",
 ]

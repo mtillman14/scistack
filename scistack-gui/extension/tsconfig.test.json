@@ -15,6 +15,7 @@
     "src/panelRegistry.ts",
     "src/sessionCore.ts",
     "src/rpcPending.ts",
+    "src/plotTheme.ts",
     "src/*.test.ts"
   ]
 }

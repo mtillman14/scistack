@@ -20,7 +20,8 @@ from ..figsize import aspect_name
 from ..resolved import MPL_DASHES, ResolvedPlot
 from ..spec import PlotKind
 from ..table import natural_sort_key
-from ..textsize import ResolvedSizes, rc_params, resolve_sizes
+from ..paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
+from ..textsize import ResolvedSizes, resolve_sizes
 from ..weights import describe_weights, sample_weight, spaghetti_weight
 from ..ticklabels import (
     BRACKET_POLICY,
@@ -84,14 +85,16 @@ def render(resolved: ResolvedPlot):
         # inside for_each, where a leaked rcParam would resize someone else's
         # figure. Every size is stated in points by the one owner
         # (textsize.rc_params), so nothing here depends on a relative name.
+        # The paper (background, frame, ticks, grid) is stated alongside them
+        # by its own owner, paper.figure_rc_params, instead of inherited.
         sizes = resolve_sizes(style)
-        with plt.rc_context(rc_params(sizes)):
+        with plt.rc_context(figure_rc_params(sizes)):
             n_rows, n_cols = grid_shape(resolved)
             # The size the file will have, exactly (figure_file.write_figure
             # never trims). Stated in the log because the preview never shows it: a
             # figure that "came out squashed" is diagnosed here, not in the GUI.
             Log.info(
-                "figure size %.2f x %.2f in (%s), %d x %d panel grid, text %s%s",
+                "figure size %.2f x %.2f in (%s), %d x %d panel grid, text %s%s, %s",
                 style.width,
                 style.height,
                 aspect_name(style.width, style.height),
@@ -99,6 +102,7 @@ def render(resolved: ResolvedPlot):
                 n_cols,
                 sizes.describe(),
                 (f", marks {w}" if (w := describe_weights(resolved)) else ""),
+                describe_paper(),
                 layer=LAYER,
             )
             fig, axes = plt.subplots(
@@ -376,7 +380,9 @@ def _draw_bars(ax, frame, resolved) -> None:
             centre,
             width=width,
             yerr=error,
-            capsize=3,
+            capsize=PAPER.error_cap,
+            ecolor=PAPER.error_bar_color,
+            error_kw={"elinewidth": PAPER.error_bar_width, "capthick": PAPER.error_cap_width},
             color=palette_for(resolved, level, index),
             alpha=resolved.spec.style.alpha,
             label=resolved.text.color_level(level) if level is not None else None,
@@ -536,6 +542,10 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
             ax = axes[row][col]
             if not ax.get_visible():
                 continue
+            # Explicitly, not only through the rc: ticks are made lazily, and a
+            # save outside the rc_context would build them from whatever rc is
+            # in force then (paper.apply_paper_axes).
+            apply_paper_axes(ax)
             # ONE rule decides both the axis title and the tick labels (see
             # base.shows_x_labels). They used to drift: the title followed
             # "nothing below" while the categorical block further down

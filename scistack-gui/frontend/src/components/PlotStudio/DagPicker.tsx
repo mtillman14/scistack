@@ -204,77 +204,77 @@ export function PickerDialog({
 
 export const pickerStyles: Record<string, React.CSSProperties> = {
   backdrop: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)',
+    position: 'fixed', inset: 0, background: 'var(--ps-scrim-strong)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100,
   },
   dialog: {
-    width: '82vw', height: '80vh', background: '#16162a',
-    border: '1px solid #7b68ee', borderRadius: 8,
+    width: '82vw', height: '80vh', background: 'var(--ps-bg)',
+    border: '1px solid var(--ps-accent)', borderRadius: 8,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
-    boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+    boxShadow: '0 12px 40px var(--ps-shadow)',
   },
   header: {
-    padding: '10px 14px', borderBottom: '1px solid #2a2a4a', background: '#1a1a2e',
+    padding: '10px 14px', borderBottom: '1px solid var(--ps-border)', background: 'var(--ps-surface)',
     display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0,
   },
   headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
-  title: { color: '#eee', fontSize: 14, fontWeight: 600 },
-  subtitle: { color: '#8a8aa8', fontSize: 11, fontStyle: 'italic' },
+  title: { color: 'var(--ps-text)', fontSize: 14, fontWeight: 600 },
+  subtitle: { color: 'var(--ps-text-muted-purple)', fontSize: 11, fontStyle: 'italic' },
   // Canvas and sidebar side by side; the canvas takes whatever is left.
   body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'row' },
   canvas: { flex: 1, minWidth: 0, position: 'relative' },
   sidebar: {
-    width: 280, flexShrink: 0, borderLeft: '1px solid #2a2a4a',
-    background: '#1a1a2e', overflowY: 'auto', padding: '10px 12px',
+    width: 280, flexShrink: 0, borderLeft: '1px solid var(--ps-border)',
+    background: 'var(--ps-surface)', overflowY: 'auto', padding: '10px 12px',
   },
   footer: {
     display: 'flex', justifyContent: 'flex-end', gap: 8,
-    padding: '10px 14px', borderTop: '1px solid #2a2a4a', flexShrink: 0,
+    padding: '10px 14px', borderTop: '1px solid var(--ps-border)', flexShrink: 0,
   },
   button: {
-    padding: '5px 14px', background: '#22223a', color: '#ccc',
-    border: '1px solid #3a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 12,
+    padding: '5px 14px', background: 'var(--ps-control)', color: 'var(--ps-text-control)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 4, cursor: 'pointer', fontSize: 12,
   },
   primaryButton: {
-    padding: '5px 14px', background: '#7b68ee', color: '#fff',
+    padding: '5px 14px', background: 'var(--ps-accent)', color: 'var(--ps-accent-fg)',
     border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600,
   },
-  note: { fontSize: 12, color: '#777', fontStyle: 'italic', padding: 12 },
-  error: { fontSize: 12, color: '#f87171', padding: 12 },
+  note: { fontSize: 12, color: 'var(--ps-text-faint)', fontStyle: 'italic', padding: 12 },
+  error: { fontSize: 12, color: 'var(--ps-error)', padding: 12 },
   // The chosen variable, beside the title in step two.
   chosenVariable: {
-    fontFamily: 'monospace', fontSize: 12, color: '#9d92f5',
-    background: '#22223a', border: '1px solid #4c3a8a', borderRadius: 4,
+    fontFamily: 'monospace', fontSize: 12, color: 'var(--ps-accent-text)',
+    background: 'var(--ps-control)', border: '1px solid var(--ps-accent-border)', borderRadius: 4,
     padding: '2px 8px',
   },
   inertNode: {
-    background: '#2a2438', border: '2px dashed #6b5a9a', borderRadius: 6,
+    background: 'var(--ps-drop-bg)', border: '2px dashed var(--ps-drop-border)', borderRadius: 6,
     padding: '8px 12px', minWidth: 150, opacity: 0.55,
   },
   inertNodeLabel: {
-    fontWeight: 600, color: '#c4b5fd', fontFamily: 'monospace',
+    fontWeight: 600, color: 'var(--ps-accent-text-light)', fontFamily: 'monospace',
     textAlign: 'center', fontSize: 13,
   },
   inertNodeHint: {
-    fontSize: 10, color: '#8a8aa8', fontStyle: 'italic', textAlign: 'center',
+    fontSize: 10, color: 'var(--ps-text-muted-purple)', fontStyle: 'italic', textAlign: 'center',
   },
   pickNode: {
     borderRadius: 6, padding: '8px 12px', minWidth: 150, textAlign: 'center',
   },
   pickNodeReady: {
-    background: '#1e2a44', border: '2px solid #4f7fd0', cursor: 'pointer',
+    background: 'var(--ps-target-bg)', border: '2px solid var(--ps-target-border)', cursor: 'pointer',
   },
   // Drawn, not hidden, and not merely dim: the reason is the content. A node
   // the user expected to click has to say why it cannot be, in place.
   pickNodeRefused: {
-    background: '#22223a', border: '2px dashed #3a3a5a', opacity: 0.6,
+    background: 'var(--ps-control)', border: '2px dashed var(--ps-border-strong)', opacity: 0.6,
     cursor: 'not-allowed',
   },
   pickNodeLabel: {
-    fontWeight: 600, color: '#ddd', fontFamily: 'monospace', fontSize: 13,
+    fontWeight: 600, color: 'var(--ps-text-body)', fontFamily: 'monospace', fontSize: 13,
   },
   pickNodeHint: {
-    fontSize: 9, color: '#8a8aa8', fontStyle: 'italic', marginTop: 2,
+    fontSize: 9, color: 'var(--ps-text-muted-purple)', fontStyle: 'italic', marginTop: 2,
     maxWidth: 200, whiteSpace: 'normal', lineHeight: 1.3,
   },
 }

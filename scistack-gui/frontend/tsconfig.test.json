@@ -43,6 +43,8 @@
     "src/components/PlotStudio/markWeights.ts",
     "src/components/PlotStudio/markWeights.test.ts",
     "src/components/PlotStudio/pickerCanvas.test.ts",
+    "src/components/PlotStudio/plotTheme.ts",
+    "src/components/PlotStudio/plotTheme.test.ts",
     "src/components/Variants/topologies.ts",
     "src/components/Variants/topologies.test.ts",
     "src/components/Sidebar/sourceLocation.ts",

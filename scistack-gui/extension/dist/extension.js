@@ -40,6 +40,125 @@ var vscode6 = __toESM(require("vscode"));
 // src/plotPanel.ts
 var path = __toESM(require("path"));
 var vscode = __toESM(require("vscode"));
+
+// src/panelRegistry.ts
+var PanelRegistry = class {
+  constructor() {
+    this.panels = /* @__PURE__ */ new Set();
+  }
+  /** Number of panels currently registered. */
+  get size() {
+    return this.panels.size;
+  }
+  /**
+   * The registered panels, for a caller that must act on each one (closing
+   * a session's plot tabs). A snapshot, because disposing a panel
+   * unregisters it and would otherwise mutate the set mid-iteration.
+   */
+  sinks() {
+    return [...this.panels];
+  }
+  /**
+   * Register a panel. Returns the function that removes it again — call it
+   * from the panel's dispose, or a closed tab keeps receiving messages.
+   */
+  add(sink) {
+    this.panels.add(sink);
+    return () => {
+      this.panels.delete(sink);
+    };
+  }
+  /**
+   * Post to every registered panel. Returns how many received it, which is
+   * what the caller logs — "emitted, 0 panels" is the signature of this bug
+   * and is otherwise indistinguishable from a message that was never sent.
+   *
+   * One panel that throws (a webview disposed between the notification and
+   * this loop) must not swallow delivery to the rest, so failures are counted
+   * out rather than propagated.
+   */
+  send(msg) {
+    let delivered = 0;
+    for (const sink of this.panels) {
+      try {
+        sink.postMessage(msg);
+        delivered += 1;
+      } catch {
+      }
+    }
+    return delivered;
+  }
+};
+
+// src/plotTheme.ts
+var PLOT_THEME_STATE_KEY = "scistack.plotTheme";
+var DEFAULT_PLOT_THEME = "dark";
+function parsePlotThemeMode(value) {
+  return value === "dark" || value === "light" ? value : null;
+}
+var PlotThemeHost = class {
+  constructor(memento) {
+    this.memento = memento;
+    this.sinks = new PanelRegistry();
+  }
+  /** The stored mode; anything unreadable is the default, not an error. */
+  get mode() {
+    return parsePlotThemeMode(this.memento.get(PLOT_THEME_STATE_KEY)) ?? DEFAULT_PLOT_THEME;
+  }
+  /** Register a webview for changes. Call the returned function on dispose. */
+  add(sink) {
+    return this.sinks.add(sink);
+  }
+  /**
+   * Store `value` and tell every open webview but `origin` (which switched
+   * itself already). Returns how many were told, for the caller's log line.
+   * Throws on anything that is not a mode, so a malformed request is answered
+   * with an error instead of storing garbage.
+   */
+  async set(value, origin) {
+    const mode = parsePlotThemeMode(value);
+    if (!mode)
+      throw new Error(`not a plot theme: ${JSON.stringify(value)}`);
+    await this.memento.update(PLOT_THEME_STATE_KEY, mode);
+    const msg = { method: "plot_theme_changed", params: { mode } };
+    let notified = 0;
+    for (const sink of this.sinks.sinks()) {
+      if (sink === origin)
+        continue;
+      try {
+        sink.postMessage(msg);
+        notified += 1;
+      } catch {
+      }
+    }
+    return { mode, notified };
+  }
+  /**
+   * The `<script>` body that hands a new webview the current mode. JSON, so
+   * the value cannot break out of the tag whatever the store holds.
+   */
+  initScript() {
+    return `window.__SCISTACK_PLOT_THEME__ = ${JSON.stringify(this.mode)};`;
+  }
+};
+var shared;
+function plotThemeHost(memento) {
+  shared ??= new PlotThemeHost(memento);
+  return shared;
+}
+async function answerSetPlotTheme(host, msg, panel, log) {
+  try {
+    const params = msg.params ?? {};
+    const { mode, notified } = await host.set(params.mode, panel);
+    log.appendLine(`plot theme: ${mode} (stored; ${notified} other webview(s) told)`);
+    panel.postMessage({ id: msg.id, result: { mode } });
+  } catch (err) {
+    log.appendLine(`plot theme: set failed \u2014 ${err}`);
+    panel.postMessage({ id: msg.id, error: { message: String(err) } });
+  }
+}
+
+// src/plotPanel.ts
 var PlotPanel = class _PlotPanel {
   constructor(context, session, target, column) {
     this.context = context;
@@ -47,6 +166,8 @@ var PlotPanel = class _PlotPanel {
     this.target = target;
     this.disposables = [];
     this.unregister = () => {
+    };
+    this.unregisterTheme = () => {
     };
     this.panel = vscode.window.createWebviewPanel(
       "scistack.plot",
@@ -66,6 +187,7 @@ var PlotPanel = class _PlotPanel {
     );
     this.panel.webview.html = this.getHtml();
     this.unregister = this.session.plots.add(this);
+    this.unregisterTheme = plotThemeHost(context.globalState).add(this);
     this.panel.onDidChangeViewState(
       (e) => {
         if (e.webviewPanel.active)
@@ -77,6 +199,15 @@ var PlotPanel = class _PlotPanel {
     this.panel.webview.onDidReceiveMessage(
       async (msg) => {
         const method = msg.method;
+        if (method === "set_plot_theme") {
+          await answerSetPlotTheme(
+            plotThemeHost(this.context.globalState),
+            msg,
+            this,
+            this.session.log
+          );
+          return;
+        }
         if (method === "pick_save_path") {
           try {
             const params = msg.params ?? {};
@@ -174,6 +305,7 @@ var PlotPanel = class _PlotPanel {
   }
   dispose() {
     this.unregister();
+    this.unregisterTheme();
     while (this.disposables.length)
       this.disposables.pop()?.dispose();
   }
@@ -225,6 +357,7 @@ var PlotPanel = class _PlotPanel {
   <div id="root"></div>
   <script nonce="${nonce}">window.__SCISTACK_VIEW__ = ${target};</script>
   <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
+  <script nonce="${nonce}">${plotThemeHost(this.context.globalState).initScript()}</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
@@ -565,6 +698,7 @@ var DagPanel = class {
       }
     );
     this.panel.webview.html = this.getHtml();
+    this.disposeCallbacks.push(plotThemeHost(context.globalState).add(this));
     this.panel.onDidChangeViewState(
       (e) => {
         for (const cb of this.activeCallbacks)
@@ -586,6 +720,15 @@ var DagPanel = class {
               error: { message: String(err) }
             });
           }
+          return;
+        }
+        if (method === "set_plot_theme") {
+          await answerSetPlotTheme(
+            plotThemeHost(this.context.globalState),
+            msg,
+            this,
+            this.outputChannel
+          );
           return;
         }
         if (method === "open_plot_panel") {
@@ -1277,6 +1420,7 @@ var DagPanel = class {
 <body>
   <div id="root"></div>
   <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
+  <script nonce="${nonce}">${plotThemeHost(this.context.globalState).initScript()}</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
@@ -1290,55 +1434,6 @@ function getNonce2() {
   }
   return text;
 }
-
-// src/panelRegistry.ts
-var PanelRegistry = class {
-  constructor() {
-    this.panels = /* @__PURE__ */ new Set();
-  }
-  /** Number of panels currently registered. */
-  get size() {
-    return this.panels.size;
-  }
-  /**
-   * The registered panels, for a caller that must act on each one (closing
-   * a session's plot tabs). A snapshot, because disposing a panel
-   * unregisters it and would otherwise mutate the set mid-iteration.
-   */
-  sinks() {
-    return [...this.panels];
-  }
-  /**
-   * Register a panel. Returns the function that removes it again — call it
-   * from the panel's dispose, or a closed tab keeps receiving messages.
-   */
-  add(sink) {
-    this.panels.add(sink);
-    return () => {
-      this.panels.delete(sink);
-    };
-  }
-  /**
-   * Post to every registered panel. Returns how many received it, which is
-   * what the caller logs — "emitted, 0 panels" is the signature of this bug
-   * and is otherwise indistinguishable from a message that was never sent.
-   *
-   * One panel that throws (a webview disposed between the notification and
-   * this loop) must not swallow delivery to the rest, so failures are counted
-   * out rather than propagated.
-   */
-  send(msg) {
-    let delivered = 0;
-    for (const sink of this.panels) {
-      try {
-        sink.postMessage(msg);
-        delivered += 1;
-      } catch {
-      }
-    }
-    return delivered;
-  }
-};
 
 // src/pythonProcess.ts
 var import_child_process = require("child_process");

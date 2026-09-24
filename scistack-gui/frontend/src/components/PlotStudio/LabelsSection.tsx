@@ -263,26 +263,26 @@ function TextRow({
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  hint: { fontSize: 10, color: '#777', marginBottom: 6, fontStyle: 'italic' },
-  error: { fontSize: 10, color: '#e0b050', marginTop: 6, lineHeight: 1.4 },
-  factor: { borderTop: '1px solid #2a2a4a', paddingTop: 6, marginTop: 6 },
+  hint: { fontSize: 10, color: 'var(--ps-text-faint)', marginBottom: 6, fontStyle: 'italic' },
+  error: { fontSize: 10, color: 'var(--ps-caution)', marginTop: 6, lineHeight: 1.4 },
+  factor: { borderTop: '1px solid var(--ps-border)', paddingTop: 6, marginTop: 6 },
   factorHeader: { display: 'flex', flexDirection: 'column', gap: 2 },
-  role: { fontSize: 9, color: '#7c7ca0', textTransform: 'uppercase', letterSpacing: 0.6 },
+  role: { fontSize: 9, color: 'var(--ps-text-faint-indigo)', textTransform: 'uppercase', letterSpacing: 0.6 },
   row: { display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 },
   raw: {
-    fontSize: 11, color: '#bbb', flex: '0 0 72px', overflow: 'hidden',
+    fontSize: 11, color: 'var(--ps-text-secondary)', flex: '0 0 72px', overflow: 'hidden',
     textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   input: {
-    flex: 1, minWidth: 0, background: '#22223a', color: '#ddd',
-    border: '1px solid #3a3a5a', borderRadius: 4, fontSize: 11, padding: '3px 5px',
+    flex: 1, minWidth: 0, background: 'var(--ps-control)', color: 'var(--ps-text-body)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 4, fontSize: 11, padding: '3px 5px',
   },
   projectButton: {
-    flex: '0 0 auto', padding: '1px 5px', background: '#22223a', color: '#aaa',
-    border: '1px solid #3a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 9,
+    flex: '0 0 auto', padding: '1px 5px', background: 'var(--ps-control)', color: 'var(--ps-text-secondary-alt)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 4, cursor: 'pointer', fontSize: 9,
   },
   disclosure: {
-    background: 'none', border: 'none', color: '#8a8aa8', cursor: 'pointer',
+    background: 'none', border: 'none', color: 'var(--ps-text-muted-purple)', cursor: 'pointer',
     fontSize: 10, padding: '2px 0', textAlign: 'left',
   },
 }

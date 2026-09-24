@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import PlotRoot, { type PlotViewConfig } from './PlotRoot'
 import ClientErrorBoundary from './components/ClientErrorBoundary'
+import { DEFAULT_PLOT_THEME, plotThemeVars } from './components/PlotStudio/plotTheme'
 
 /**
  * One bundle, two roots. The extension opens the Plot Studio in its own editor
@@ -17,6 +18,15 @@ declare global {
 }
 
 const view = window.__SCISTACK_VIEW__
+
+// The Plot Studio's colour tokens, on the page root in the default (dark)
+// palette. The studio overrides them on its own root with the chosen mode; this
+// is for the pieces reused OUTSIDE it — the canvas's SchemaLocationPicker, the
+// provenance panel's VariantDagPopup — which would otherwise resolve every
+// `var(--ps-…)` to nothing. See components/PlotStudio/plotTheme.ts.
+for (const [name, value] of Object.entries(plotThemeVars(DEFAULT_PLOT_THEME))) {
+  document.documentElement.style.setProperty(name, value)
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

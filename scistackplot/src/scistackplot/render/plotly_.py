@@ -21,6 +21,13 @@ import pandas as pd
 from scistacklog import Log
 
 from ..figsize import describe_size
+from ..paper import (
+    PAPER,
+    describe_paper,
+    plotly_axis_style,
+    plotly_error_style,
+    plotly_layout_style,
+)
 from ..resolved import ResolvedPlot
 from ..roles import overlay_in_legend
 from ..spec import PlotKind
@@ -82,6 +89,8 @@ def render(
         sizes = resolve_sizes(style)
         traces: list[dict] = []
         legend_on = shows_legend(resolved)
+        # The same phrase render_matplotlib logs, so preview and export compare.
+        Log.debug("preview %s", describe_paper(), layer=LAYER)
         if not legend_on and resolved.encoding.color:
             Log.debug(
                 "legend omitted: %d colour level(s) drawn for %r",
@@ -120,7 +129,12 @@ def render(
             # The same number as the export's font.size, read as px here. The
             # GUI adds the colour; it must not add a size, or the setting would
             # only be visible after a save.
-            "font": {"size": sizes.base},
+            "font": {"size": sizes.base, "color": PAPER.text},
+            # The export's paper (paper.py): white, a black frame with outward
+            # ticks, no grid. Left to plotly.js's defaults the preview drew a
+            # grey grid and a zero line and no frame, so it was never the
+            # figure a save produces.
+            **plotly_layout_style(),
             # The grid shape travels with the figure so the panel can size it:
             # 4 rows of subplots need more height than 1, and only the renderer
             # knows how the panels were laid out. The GUI also reads `rows`/
@@ -408,6 +422,8 @@ def _panel_traces(
                     "arrayminus": (
                         centre - np.asarray(_values(subset[encoding.y_low]), dtype=float)
                     ).tolist(),
+                    # The export's error-bar ink and caps (paper.py).
+                    **plotly_error_style(),
                 }
             traces.append(
                 {
@@ -789,6 +805,7 @@ def _add_axes(
     sizes = resolve_sizes(resolved.spec.style)
 
     layout[x_key] = {
+        **plotly_axis_style(),
         "domain": [x0, x0 + cell_width],
         "anchor": x_anchor,
         # Tick labels and the axis title share ONE rule (base.shows_x_labels).
@@ -856,6 +873,7 @@ def _add_axes(
         "automargin": True,
     }
     layout[y_key] = {
+        **plotly_axis_style(),
         "domain": [y0, y0 + cell_height],
         "anchor": y_anchor,
         "showticklabels": leftmost,

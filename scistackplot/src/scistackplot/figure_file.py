@@ -23,6 +23,7 @@ from typing import IO, Any
 
 from scistacklog import Log
 
+from .paper import PAPER
 from .resolved import ResolvedPlot
 
 LAYER = "scistackplot"
@@ -97,6 +98,9 @@ def write_figure(
                 *fig.get_size_inches(),
                 layer=LAYER,
             )
+        # The paper's background, stated: savefig reads its facecolor from the
+        # rc in force NOW, outside render's rc_context (paper.py).
+        savefig_kwargs.setdefault("facecolor", PAPER.background)
         fig.savefig(target, dpi=dpi, **savefig_kwargs)
         finished = time.perf_counter()
         width, height = (float(v) for v in fig.get_size_inches())

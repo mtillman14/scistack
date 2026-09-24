@@ -266,6 +266,15 @@ one owner (`resolve_sizes`, `rc_params`). The export, the generated code and
 the plotly preview (as px) all read it, under `rc_context` so nothing leaks
 into the next figure. See `docs/claude/plot-text-and-labels.md`.
 
+The figure's **paper** (white background, black text, a black frame round every
+panel, outward ticks, no grid, and the error-bar ink) has one owner,
+`scistackplot.paper.PAPER`. Its values are matplotlib's defaults, written
+out. The export, the generated code and the plotly preview all draw it, so
+the preview shows the saved figure's page rather than plotly's grid. A
+personal `matplotlibrc` cannot change an export. The Plot Studio shows the
+figure untouched in light mode; dark mode recolours the ink for the screen.
+See `docs/claude/preview-paper-parity.md`.
+
 `StyleOptions.sample_weight` and `StyleOptions.line_weight` are multipliers
 (default 1) on the point size AND line thickness together: the first for the
 "Show sample" overlay's points and joining lines, the second for a
