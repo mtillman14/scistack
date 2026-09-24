@@ -1,9 +1,17 @@
-function py_obj = to_python(data)
+function [py_obj, col_stats] = to_python(data)
 %TO_PYTHON  Convert MATLAB data to a Python object for database storage.
 %
 %   Handles: double/single/integer arrays, scalars, strings, logicals.
 %   Arrays are converted to C-contiguous numpy ndarrays so that
 %   canonical_hash produces consistent results.
+%
+%   [py_obj, col_stats] = to_python(tbl) also returns, for a TABLE, one
+%   entry per column: name, strategy ('plain', 'table_concat', 'flat' or
+%   'element_by_element'), n (elements) and seconds. for_each.m logs the
+%   slowest ones, so a slow MATLAB->Python result transfer names the column
+%   and the strategy that cost it (cleanup-audit F31). Empty for non-tables.
+
+    col_stats = struct('name', {}, 'strategy', {}, 'n', {}, 'seconds', {});
 
     % Pass through Python objects that arrived in a MATLAB cell. The
     % MATLAB→Python bridge can route them straight back without conversion
@@ -88,6 +96,8 @@ function py_obj = to_python(data)
         col_names = data.Properties.VariableNames;
         py_dict = py.dict();
         for i = 1:numel(col_names)
+            t_col = tic;
+            strategy = 'plain';
             col = data.(col_names{i});
             orig_class = class(col);
             orig_size = size(col);
@@ -139,6 +149,7 @@ function py_obj = to_python(data)
                                 py_concat_df, py_row_counts);
 
                             concat_ok = true;
+                            strategy = 'table_concat';
                             scidb.Log.debug('to_python: table concat succeeded for column "%s"', col_names{i});
                         catch concat_err
                             scidb.Log.debug('to_python: table concat failed for column "%s", falling back: %s', ...
@@ -161,6 +172,7 @@ function py_obj = to_python(data)
                                 py_lengths = py.numpy.array(lengths, pyargs('dtype', 'int64'));
                                 py_val = py.scimatlab.bridge.split_flat_to_lists(py_flat, py_lengths);
                                 fast_path_ok = true;
+                                strategy = 'flat';
                                 scidb.Log.debug('to_python: fast path succeeded for column "%s"', col_names{i});
                             catch fast_err
                                 % Fast path failed (e.g., numpy bridge error) — fall back
@@ -178,6 +190,7 @@ function py_obj = to_python(data)
                     % Strategy 3: Element-by-element fallback
                     % (most compatible but slowest)
                     if ~concat_ok && ~fast_path_ok
+                        strategy = 'element_by_element';
                         % Fallback: convert element-by-element.
                         % Inner numpy arrays must become Python lists so that
                         % pandas creates an object column instead of trying to
@@ -242,6 +255,8 @@ function py_obj = to_python(data)
                     i, numel(col_names), col_names{i}, detail, ME.message);
             end
             py_dict{col_names{i}} = py_val;
+            col_stats(end + 1) = struct('name', col_names{i}, ...
+                'strategy', strategy, 'n', numel(col), 'seconds', toc(t_col)); %#ok<AGROW>
         end
         py_obj = py.pandas.DataFrame(py_dict);
 

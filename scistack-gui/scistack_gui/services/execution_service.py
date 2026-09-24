@@ -210,13 +210,22 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
     that discrepancy is exactly what once made a graduated PathInput-fed node
     unrunnable.
 
-    No Parameter bindings: a history target's ``constants`` already hold
-    concrete recorded values, so nothing needs looking up in the Parameter
-    registry.
+    Parameter bindings name the DECLARED Parameter each constant's run
+    recorded (``scidb.parameter.parameter_node_name``), so a history target
+    translates between declared name and argument exactly as an edge-derived
+    one does (``edge_resolver.declared_by_argument``, cleanup-audit F20).
+    They never look anything up: ``build_run_inputs`` skips a Parameter
+    binding whose argument already holds a recorded value.
     """
     if not targets:
         return targets
-    from scistack_gui.domain.edge_resolver import pathinput_binding, variable_binding
+    from scidb.parameter import parameter_node_name
+
+    from scistack_gui.domain.edge_resolver import (
+        parameter_binding,
+        pathinput_binding,
+        variable_binding,
+    )
 
     by_call = _db_path_input_params(db, function_name)
     for t in targets:
@@ -251,6 +260,9 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
                 )
         for param, decl_name in by_call.get(t.get("call_id"), {}).items():
             bindings[param] = pathinput_binding(decl_name)
+        recorded = t.get("parameter_names") or {}
+        for arg in t.get("constants") or {}:
+            bindings[arg] = parameter_binding(parameter_node_name(arg, recorded))
         t.setdefault("bindings", bindings)
     return targets
 
@@ -1166,12 +1178,16 @@ def apply_pending_overrides(targets: list[dict], pending_constants: dict) -> lis
     """
     if not pending_constants:
         return targets
+    from scistack_gui.domain.edge_resolver import by_argument
+
     out = []
     for target in targets:
         constants = dict(target["constants"])
         overridden = []
-        for const_name, values in pending_constants.items():
-            if const_name in constants and values:
+        # Pending values are keyed by the DECLARED Parameter; constants by
+        # the argument (cleanup-audit F20) — translated, never compared.
+        for const_name, values in by_argument(pending_constants, target).items():
+            if values:
                 raw = next(iter(values))
                 try:
                     typed = ast.literal_eval(raw)
@@ -1726,20 +1742,32 @@ def node_schema_level(
     return {**level.to_json(rule), "schema_keys": list(db.dataset_schema_keys)}
 
 
-def build_run_parameter_names(target: dict) -> dict[str, str]:
+def build_run_declared_names(target: dict) -> dict[str, str]:
     """The for_each ``parameter_names=`` dict for a derived target:
-    ``{argument: declared Parameter name}`` from its Parameter bindings.
+    ``{argument: declared name}`` from its Parameter AND PathInput bindings.
+
+    A PathInput's declared name is what groups PathInput-fed steps on the
+    canvas and in ``scidb graph`` alike, so the run records it too
+    (cleanup-audit F38).
 
     A value already recorded in history reaches ``for_each`` as a bare
     scalar (``build_run_inputs`` puts ``target["constants"]`` in first), so
     the name the canvas shows has to be stated or the run records only the
     argument — and the next graph build draws a second Parameter node named
     after it (cleanup-audit B1). The wiring is the only source; scidb merges
-    it with any named Parameter (``scidb.parameter.declared_parameter_names``).
+    it with any named Parameter (``scidb.parameter.declared_input_names``).
     """
-    from scistack_gui.domain.edge_resolver import BINDING_PARAMETER, bindings_of_kind
+    from scistack_gui.domain.edge_resolver import (
+        BINDING_PARAMETER,
+        BINDING_PATHINPUT,
+        bindings_of_kind,
+    )
 
-    return dict(bindings_of_kind(target.get("bindings") or {}, BINDING_PARAMETER))
+    bindings = target.get("bindings") or {}
+    return {
+        **bindings_of_kind(bindings, BINDING_PATHINPUT),
+        **bindings_of_kind(bindings, BINDING_PARAMETER),
+    }
 
 
 def build_run_glue(target: dict, function_name: str) -> dict:
@@ -2094,7 +2122,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 db=db,
                 pipeline=pipe,
                 glue=build_run_glue(target, fn_label) or None,
-                parameter_names=build_run_parameter_names(target) or None,
+                parameter_names=build_run_declared_names(target) or None,
                 # This node's own location selection, as its Run button uses
                 # (cleanup-audit F36: pipeline runs ignored it).
                 locations=(pipeline_store.get_node_config(db, node_id) or {}).get(

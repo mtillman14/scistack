@@ -90,6 +90,38 @@ def bindings_of_kind(bindings: dict[str, dict], kind: str) -> dict:
     return {p: b["ref"] for p, b in (bindings or {}).items() if b["kind"] == kind}
 
 
+def declared_by_argument(target: dict) -> dict[str, str]:
+    """``{argument: declared Parameter name}`` for every constant a target
+    carries — its Parameter binding's ref, else the argument itself.
+
+    THE translation between the two names a Parameter has (cleanup-audit
+    B1/F20). GUI state about a Parameter — pending values, hidden values — is
+    keyed by the DECLARED name (the node the user clicks); a target's
+    ``constants`` are keyed by the ARGUMENT. Comparing them directly matches
+    nothing whenever a Parameter declared ``gaitrite_config`` feeds
+    ``gaitRiteConfig``. Edge-derived targets carry Parameter bindings from
+    the wiring; history targets from the name their run recorded
+    (``execution_service._attach_db_path_inputs``).
+    """
+    declared = bindings_of_kind(target.get("bindings") or {}, BINDING_PARAMETER)
+    return {arg: declared.get(arg, arg) for arg in (target.get("constants") or {})}
+
+
+def by_argument(named: dict, target: dict) -> dict:
+    """*named* (keyed by declared Parameter name) re-keyed to *target*'s
+    arguments — only the entries this target has a constant for. See
+    :func:`declared_by_argument`."""
+    out = {}
+    for arg, declared in declared_by_argument(target).items():
+        if declared in named:
+            out[arg] = named[declared]
+            if declared != arg:
+                logger.debug(
+                    "[edge_resolver] Parameter %r feeds argument %r", declared, arg
+                )
+    return out
+
+
 def variable_types_view(bindings: dict[str, dict]) -> dict:
     """``{param_name: type}`` for variable bindings, in the shape the REST of
     the system uses: a bare string when one type is bound, a list only for a

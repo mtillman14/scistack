@@ -54,7 +54,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       'gaitrite_config')). Recorded on the constant's
 %                       provenance edge so the GUI shows ONE Parameter node
 %                       after a run; never part of identity. See
-%                       scidb.parameter.declared_parameter_names (Python).
+%                       scidb.parameter.declared_input_names (Python),
+%                       which also names PathInputs (cleanup-audit F38).
 %       locations     - JSON text: the schema location selection
 %                       {"include": [[[key, value], ...], ...],
 %                        "exclude_levels": {key: [values]}} — ragged prefixes
@@ -697,7 +698,14 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
     % --- Convert each result table to a Python DataFrame for the save call.
     %     Outputs are plain values; the bipartite provenance graph is
-    %     recorded by the bridge save path from each output's save metadata. ---
+    %     recorded by the bridge save path from each output's save metadata.
+    %
+    %     Timed as for_each_result_transfer: this used to be an unlogged gap
+    %     between scifor's "done in" and "for_each_save returned" (~4.3 s for
+    %     a 450x59 table, cleanup-audit F31). Per output: shape, bytes,
+    %     seconds and the slowest columns with the strategy to_python used. ---
+    transfer_t0 = tic;
+    transfer_parts = {};
     py_result_dfs = py.list();
     for o = 1:n_out
         if n_outputs == 0
@@ -714,8 +722,16 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         scidb.Log.debug('scifor output %d (%s): table %dx%d cols=%s', ...
             o, output_names{o}, height(tbl), width(tbl), ...
             strjoin(string(tbl.Properties.VariableNames), ', '));
-        py_result_dfs.append(scidb.internal.to_python(tbl));
+        t_out = tic;
+        [py_df, col_stats] = scidb.internal.to_python(tbl);
+        py_result_dfs.append(py_df);
+        w = whos('tbl');
+        transfer_parts{end + 1} = sprintf('%s %dx%d %d bytes %.3fs%s', ...
+            output_names{o}, height(tbl), width(tbl), w.bytes, toc(t_out), ...
+            describe_slowest_columns(col_stats, 3)); %#ok<AGROW>
     end
+    scidb.Log.info('[timing] for_each_result_transfer: %d output(s), TOTAL=%.3fs (%s)', ...
+        numel(transfer_parts), toc(transfer_t0), strjoin(transfer_parts, '; '));
 
     % --- Call #2: Python save ---
     save_t0 = tic;
@@ -884,12 +900,33 @@ end
 
 % =========================================================================
 % Helpers (kept):
+%   - describe_slowest_columns: the for_each_result_transfer timing detail
 %   - find_pathinput: used by the bridge spec builder and the
 %     _resolve_pathinput option
 %   - is_loadable / is_metadata_compatible: classification for spec building
 %   - describe_input_for_python: kind-tagged spec serializer for Python
 %   - split_options: name-value vs option splitter
 % =========================================================================
+
+function txt = describe_slowest_columns(col_stats, k)
+%DESCRIBE_SLOWEST_COLUMNS  ", slowest: col=1.20s (element_by_element, 450)"
+%   for the K slowest columns of a to_python conversion; '' when there are
+%   none. Names the column AND the strategy, since the fix differs: an
+%   element_by_element column wants a flattenable type, a table_concat one
+%   is already the fast path.
+    txt = '';
+    if isempty(col_stats)
+        return;
+    end
+    [~, order] = sort([col_stats.seconds], 'descend');
+    parts = {};
+    for j = order(1:min(k, numel(order)))
+        c = col_stats(j);
+        parts{end + 1} = sprintf('%s=%.3fs (%s, %d)', c.name, c.seconds, c.strategy, c.n); %#ok<AGROW>
+    end
+    txt = [', slowest: ' strjoin(parts, ', ')];
+end
+
 
 function out = flatten_nested_table_outputs(result_tbl, output_names)
 %FLATTEN_NESTED_TABLE_OUTPUTS  Expand nested-table output columns to flat rows.

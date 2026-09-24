@@ -542,10 +542,10 @@ def resolve_path_input_name(
     project_root=None,
 ) -> tuple[str, dict]:
     """Match a DB-history-observed ``{"template", "root_folder"}`` against
-    the source-scanned PathInput registry by CONTENT (there's no name in
-    DB history — ``PathInput.to_key()`` only serializes template/
-    root_folder, never the module-level name it's bound to). Returns
-    ``(registry_name, display_dict)``.
+    the source-scanned PathInput registry by CONTENT. Used only for runs
+    recorded WITHOUT a declared name (``_invocation_input.declared_name`` on
+    the PathInput edge, recorded since 2026-09-24 — cleanup-audit F38; see
+    ``convert_scidb_path_inputs``). Returns ``(registry_name, display_dict)``.
 
     Four strategies, in order:
 
@@ -647,20 +647,63 @@ def convert_scidb_path_inputs(
     """
     result: dict[str, dict] = {}
     for pi_data in scidb_path_inputs.values():
-        pi_name, display = resolve_path_input_name(
-            {"template": pi_data["template"], "root_folder": pi_data["root_folder"]},
-            path_input_registry,
-            path_input_history,
-            project_root,
-        )
-        entry_functions = {
-            (tuple(fkey), param_name) for fkey, param_name in pi_data["functions"]
+        matched: list = []  # [(name, display)] once computed
+
+        def _match(pi_data=pi_data, matched=matched):
+            """The registry content match — only when something needs it, so
+            a recorded name never triggers its 'no matching declaration'
+            warning for a template edited since."""
+            if not matched:
+                matched.append(
+                    resolve_path_input_name(
+                        {
+                            "template": pi_data["template"],
+                            "root_folder": pi_data["root_folder"],
+                        },
+                        path_input_registry,
+                        path_input_history,
+                        project_root,
+                    )
+                )
+            return matched[0]
+
+        # The name a run RECORDED wins over the content match (cleanup-audit
+        # F38): it is the fact `scidb graph` groups by too, and it survives a
+        # template edit or two declarations sharing one template, where
+        # matching by content cannot tell. The match is the fallback for runs
+        # recorded without a name.
+        recorded = {
+            (tuple(fkey), param): name
+            for (fkey, param), name in (pi_data.get("declared_names") or {}).items()
         }
-        existing = result.get(pi_name)
-        if existing is None:
-            result[pi_name] = {**display, "functions": entry_functions}
-        else:
-            existing["functions"] |= entry_functions
+        for fkey, param_name in pi_data["functions"]:
+            membership = (tuple(fkey), param_name)
+            pi_name = recorded.get(membership)
+            if pi_name is None:
+                pi_name = _match()[0]
+            elif pi_name not in path_input_registry:
+                logger.info(
+                    "[graph_builder] PathInput %s.%s: recorded declared name %r "
+                    "is not declared now (removed or renamed) — drawn from its "
+                    "recorded template",
+                    fkey[0],
+                    param_name,
+                    pi_name,
+                )
+            existing = result.get(pi_name)
+            if existing is None:
+                display = (
+                    path_input_display(path_input_registry[pi_name])
+                    if pi_name in path_input_registry
+                    else {
+                        "template": pi_data["template"],
+                        "root_folder": pi_data["root_folder"],
+                        "alternate_templates": [],
+                    }
+                )
+                result[pi_name] = {**display, "functions": {membership}}
+            else:
+                existing["functions"].add(membership)
     return result
 
 

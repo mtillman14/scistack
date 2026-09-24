@@ -245,5 +245,51 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
             testCase.verifyNotEmpty(skipped, ...
                 'expected the nargout=0 skip to be logged');
         end
+
+        function test_result_transfer_timing_line_is_emitted(testCase)
+            %TEST_RESULT_TRANSFER_TIMING_LINE_IS_EMITTED
+            %   The MATLAB->Python result conversion between scifor's loop
+            %   and for_each_save was an unlogged gap (~4.3 s for a 450x59
+            %   table, cleanup-audit F31). Pins the named line: the output,
+            %   its shape and size, and the slowest columns WITH the
+            %   to_python strategy that converted them.
+            DummyMixed().save(table(1, 'VariableNames', {'v'}), ...
+                'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
+
+            scidb.for_each(@dummy_return_one, ...
+                struct('x', DummyMixed()), ...
+                {DummyOut()}, ...
+                'as_table', true, ...
+                'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
+
+            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scidb.log')), newline);
+            hits = lines(contains(lines, '[timing] for_each_result_transfer:'));
+            testCase.verifyNotEmpty(hits, ...
+                'no [timing] for_each_result_transfer line found in scidb.log');
+            summary = hits{end};
+            testCase.verifyTrue(contains(summary, '1 output(s), TOTAL='), summary);
+            testCase.verifyTrue(contains(summary, 'DummyOut '), summary);
+            testCase.verifyTrue(contains(summary, ' bytes '), summary);
+            testCase.verifyNotEmpty(regexp(summary, ...
+                'slowest: \w+=[\d.]+s \((plain|table_concat|flat|element_by_element), \d+\)', ...
+                'once'), summary);
+        end
+
+        function test_to_python_reports_the_strategy_per_column(testCase)
+            %TEST_TO_PYTHON_REPORTS_THE_STRATEGY_PER_COLUMN
+            %   The per-column stats behind the transfer line.
+            tbl = table([1; 2], {[1 2 3]; [4 5]}, {'a'; struct('k', 1)}, ...
+                'VariableNames', {'num', 'vecs', 'mixed'});
+            [py_df, stats] = scidb.internal.to_python(tbl);
+            testCase.verifyEqual(double(py.len(py_df)), 2);
+            testCase.verifyEqual({stats.name}, {'num', 'vecs', 'mixed'});
+            testCase.verifyEqual({stats.strategy}, ...
+                {'plain', 'flat', 'element_by_element'});
+            testCase.verifyEqual([stats.n], [2 2 2]);
+            testCase.verifyTrue(all([stats.seconds] >= 0));
+
+            [~, none] = scidb.internal.to_python(5);
+            testCase.verifyEmpty(none);
+        end
     end
 end

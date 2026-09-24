@@ -829,7 +829,9 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
 
     ``variables`` carries ``record_count: None``; the method fills the real
     counts. ``path_inputs`` is keyed by the PathInput SPEC (its JSON), each
-    entry ``{"template", "root_folder", "functions": [(fkey, param_name), ...]}``.
+    entry ``{"template", "root_folder", "functions": [(fkey, param_name), ...],
+    "declared_names": {(fkey, param_name): declared PathInput name}}`` — the
+    latter only where the run recorded one (cleanup-audit F38).
     """
     from collections import defaultdict
 
@@ -842,6 +844,10 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
             "outputs": [],
             "constants": defaultdict(list),
             "parameter_names": {},
+            # {argument: declared PathInput name} where the run recorded it
+            # (cleanup-audit F38) — what `provenance.call_site_wiring_ids`
+            # groups steps by.
+            "path_input_names": {},
             "variant_count": 0,
             "variants": [],
         }
@@ -879,9 +885,13 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
                 # the FIRST one's template (cleanup-audit F37).
                 spec_key = json.dumps(pi, sort_keys=True, default=str)
                 entry = path_inputs.setdefault(
-                    spec_key, {**pi, "functions": set()}
+                    spec_key, {**pi, "functions": set(), "declared_names": {}}
                 )
                 entry["functions"].add((fkey, param_name))
+                recorded = (v.get("path_input_names") or {}).get(param_name)
+                if recorded:
+                    entry["declared_names"][(fkey, param_name)] = recorded
+                    functions[fkey]["path_input_names"][param_name] = recorded
             else:
                 all_var_types.add(type_val)
                 functions[fkey]["input_params"][param_name] = type_val
@@ -962,6 +972,7 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
             "outputs": data["outputs"],
             "constants": {k: list(v) for k, v in data["constants"].items()},
             "parameter_names": dict(data["parameter_names"]),
+            "path_input_names": dict(data["path_input_names"]),
             "variant_count": data["variant_count"],
             "variants": data["variants"],
         }
@@ -975,6 +986,66 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
         "variables": variables,
         "constants": constants_result,
         "path_inputs": path_inputs,
+    }
+
+
+def call_site_path_input_names(path_inputs: dict, fallback=None) -> dict:
+    """``{fkey: {param: PathInput name}}`` for the ``path_inputs`` of
+    :func:`aggregate_pipeline_variants` — the PathInput term of a step's wiring.
+
+    The name a run RECORDED (``declared_names``) always wins: it is the fact.
+    Only a run recorded without one — before 2026-09-24, or a hand-written
+    script whose PathInput was never declared — takes ``fallback(entry)``,
+    the caller's best guess (the GUI matches its registry; the CLI has none and
+    uses the spec, the default here). The spec is template AND root folder —
+    the key the GUI's registry match uses too: one template under two roots
+    names two different sets of files.
+    """
+    fallback = fallback or (
+        lambda entry: "spec:"
+        + json.dumps(
+            {"template": entry.get("template"), "root_folder": entry.get("root_folder")},
+            sort_keys=True,
+            default=str,
+        )
+    )
+    out: dict = {}
+    for entry in path_inputs.values():
+        recorded = entry.get("declared_names") or {}
+        guess = None
+        for fkey, param in entry.get("functions") or ():
+            fkey = tuple(fkey)
+            name = recorded.get((fkey, param))
+            if name is None:
+                if guess is None:
+                    guess = fallback(entry)
+                name = guess
+            out.setdefault(fkey, {})[param] = name
+    return out
+
+
+def call_site_wiring_ids(aggregate: dict, fallback=None) -> dict:
+    """``{fkey: wiring_id}`` — which recorded call sites form ONE pipeline
+    step, for the output of :func:`aggregate_pipeline_variants`.
+
+    THE step grouping (cleanup-audit F38). ``scidb graph`` groups through
+    this function; the GUI groups by the same recipe
+    (``provenance.compute_wiring_id``) over the same facts, its PathInput
+    names coming from :func:`call_site_path_input_names`' rule (recorded
+    first). Constants are not in the key: a sweep is one step with several
+    variants.
+    """
+    from .provenance import compute_wiring_id
+
+    names = call_site_path_input_names(aggregate.get("path_inputs") or {}, fallback)
+    return {
+        tuple(fkey): compute_wiring_id(
+            fkey[0],
+            data.get("input_params") or {},
+            data.get("outputs") or [],
+            names.get(tuple(fkey), {}),
+        )
+        for fkey, data in (aggregate.get("functions") or {}).items()
     }
 
 

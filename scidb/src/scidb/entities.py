@@ -77,7 +77,7 @@ from scifor.discovery import (
 )
 from scistacklog import Log
 
-from .parameter import Parameter
+from .parameter import Parameter, stamp_path_input_name
 from .source_edit import Span, line_number, splice
 from .variable import BaseVariable
 
@@ -342,7 +342,7 @@ def _load_parameters(data: dict, result: EntitiesFile) -> None:
         param.source_file = str(result.path)
         param.source_line = line
         # The declared name travels with the object so a run records which
-        # Parameter fed each argument (parameter.declared_parameter_names).
+        # Parameter fed each argument (parameter.declared_input_names).
         param.name = name
         result.parameters[name] = param
         result.lines[name] = line
@@ -386,6 +386,9 @@ def _load_path_inputs(data: dict, result: EntitiesFile) -> None:
             continue
 
         obj = arms[0] if len(arms) == 1 else EachOf(*arms)
+        # The declared name travels on the object, so a run records WHICH
+        # PathInput fed it (parameter.declared_input_names, cleanup-audit F38).
+        stamp_path_input_name(obj, name)
         result.path_inputs[name] = obj
         result.lines[name] = line
         Log.debug(

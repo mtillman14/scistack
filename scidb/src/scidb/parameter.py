@@ -77,7 +77,7 @@ class Parameter(EachOf):
         # a Parameter's identity is its declaration, and the function
         # argument it fills can be named differently. for_each records it on
         # the constant's provenance edge so history can name the Parameter
-        # the canvas shows -- see declared_parameter_names below. Not part of
+        # the canvas shows -- see declared_input_names below. Not part of
         # any hash: identity is still the value alone.
         self.name: "str | None" = None
         # Where it was declared, for the GUI sidebar. Best-effort: a caller
@@ -344,36 +344,82 @@ class Parameter(EachOf):
 
 
 # ---------------------------------------------------------------------------
-# Which declared Parameter fed which argument
+# Which declared entity (Parameter or PathInput) fed which argument
 # ---------------------------------------------------------------------------
-def declared_parameter_names(
+def stamp_path_input_name(obj: Any, name: str) -> None:
+    """Record *name* as the declared name of a PathInput declaration.
+
+    *obj* is what the declaration binds: a ``PathInput``, or an ``EachOf`` of
+    them (alternate templates), in which case every alternative is named —
+    ``for_each`` runs each alternative as its own call, so the name has to
+    travel with the alternative. First binding wins (``B = A`` re-exports A,
+    it does not rename it), exactly as for a Parameter. The entities loader
+    and the discovery scanner both call this; neither spells the rule.
+    """
+    from scifor.pathinput import PathInput
+
+    arms = obj.alternatives if isinstance(obj, EachOf) else [obj]
+    for arm in arms:
+        if isinstance(arm, PathInput) and not getattr(arm, "name", None):
+            arm.name = name
+
+
+def _declared_name_of(value: Any) -> "str | None":
+    """The declared name a for_each input carries, if any: a named Parameter,
+    a named PathInput, or an EachOf whose alternatives are one named
+    PathInput declaration (all arms carry the same name)."""
+    from scifor.pathinput import PathInput
+
+    if isinstance(value, Parameter):
+        return value.name
+    if isinstance(value, PathInput):
+        return getattr(value, "name", None)
+    if isinstance(value, EachOf) and value.alternatives and all(
+        isinstance(a, PathInput) for a in value.alternatives
+    ):
+        names = {getattr(a, "name", None) for a in value.alternatives}
+        return names.pop() if len(names) == 1 else None
+    return None
+
+
+def declared_input_names(
     inputs: "dict[str, Any]", explicit: "dict[str, str] | None" = None
 ) -> dict[str, str]:
-    """``{argument: declared Parameter name}`` for one ``for_each`` call.
+    """``{argument: declared entity name}`` for one ``for_each`` call.
 
-    THE owner of this mapping. History records a constant under the function
-    ARGUMENT it filled, but the canvas shows the Parameter under the name it
-    was DECLARED with, and the two differ whenever a Parameter declared
-    ``gaitrite_config`` feeds an argument ``gaitRiteConfig``. With no record
-    of the declared name, the history reader invented a second Parameter node
-    named after the argument on the first run (docs/claude/cleanup-audit.md
-    B1).
+    THE owner of this mapping, for both kinds of named input:
+
+    * a **Parameter** — history records a constant under the function
+      ARGUMENT it filled, but the canvas shows the Parameter under the name it
+      was DECLARED with, and the two differ whenever a Parameter declared
+      ``gaitrite_config`` feeds an argument ``gaitRiteConfig``. With no
+      record of the declared name, the history reader invented a second
+      Parameter node named after the argument on the first run
+      (docs/claude/cleanup-audit.md B1);
+    * a **PathInput** — the canvas groups PathInput-fed steps by WHICH
+      declared PathInput feeds them. Unrecorded, only the GUI (from its
+      registry) could say, so ``scidb graph`` grouped steps differently from
+      the canvas (cleanup-audit F38).
+
+    The name is stamped on the argument's provenance edge (the constant edge
+    or the PathInput edge) as ``_invocation_input.declared_name``.
 
     Two sources, merged here and nowhere else:
 
     * *explicit* — the caller states it (the GUI from its wiring, a generated
       MATLAB command via ``parameter_names=``). Wins, because a value already
-      recorded in history reaches ``for_each`` as a bare scalar, which carries
-      no name;
-    * a named :class:`Parameter` in *inputs* (``.name``, set by the entities
-      loader and the discovery scanner) — how a plain script run gets it.
+      recorded in history reaches ``for_each`` as a bare scalar, which
+      carries no name;
+    * a named input in *inputs* (``.name``, set by the entities loader and
+      the discovery scanner — :func:`stamp_path_input_name` for PathInputs)
+      — how a plain script run gets it.
 
     An argument with neither is absent; readers fall back to the argument
-    name, which is exactly the pre-2026-09-23 behaviour.
+    name (Parameters) or the template (PathInputs).
     """
     names: dict[str, str] = {}
     for arg, value in inputs.items():
-        declared = value.name if isinstance(value, Parameter) else None
+        declared = _declared_name_of(value)
         if declared:
             names[arg] = str(declared)
     for arg, declared in (explicit or {}).items():

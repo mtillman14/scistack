@@ -204,6 +204,13 @@ class PathInput:
         self.root_folder = Path(root_folder) if root_folder is not None else None
         self.regex = bool(regex)
         self.__name__ = f"PathInput({path_template!r})"
+        # The DECLARED name — the binding in the entities file or module that
+        # made this a PathInput. Set by whoever declares it (scidb's entities
+        # loader, the discovery scanner), never by a for_each caller. scidb
+        # records it on the PathInput's provenance edge so history can say
+        # WHICH declared PathInput fed a step (cleanup-audit F38). Not part of
+        # to_key(): identity is still the template.
+        self.name: "str | None" = None
         # Numeric-fallback caches (see load()): learned zero-pad width per
         # placeholder key, and per-directory listings validated by mtime.
         self._pad_width: dict[str, int] = {}

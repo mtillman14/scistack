@@ -54,7 +54,7 @@ else:  # pragma: no cover
 from scifor import EachOf, PathInput
 from scifor.discovery import PathInsert, purge_module, read_project_name, walk_package
 
-from .parameter import Parameter
+from .parameter import Parameter, stamp_path_input_name
 from .pipeline import is_scistack_function
 from .roles import FunctionRole, function_role
 from .variable import BaseVariable
@@ -232,7 +232,7 @@ def discover_module(module: ModuleType) -> ModuleExports:
         # otherwise be classified as a PathInput. ---
         if is_parameter(obj):
             # The binding name IS the declared name; stamp it on the object
-            # so a script's for_each records it (declared_parameter_names).
+            # so a script's for_each records it (declared_input_names).
             # First binding wins: `B = A` re-exports A, it does not rename it.
             if not getattr(obj, "name", None):
                 obj.name = name
@@ -242,6 +242,9 @@ def discover_module(module: ModuleType) -> ModuleExports:
         # --- PathInput instances, or an EachOf of PathInputs (alternate
         # templates) ---
         if is_path_input(obj):
+            # Same as a Parameter: the binding name IS the declared name,
+            # stamped so a script's for_each records it (cleanup-audit F38).
+            stamp_path_input_name(obj, name)
             exports.path_inputs.append((name, obj))
             continue
 

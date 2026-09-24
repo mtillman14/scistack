@@ -451,9 +451,9 @@ def record_run(
     rows and their producing ``_invocation``s are written here. See
     :func:`_write_glue_nodes`.
 
-    ``parameter_names`` (``{argument: declared Parameter name}``, from
-    :func:`scidb.parameter.declared_parameter_names`) is stamped on each
-    CONSTANT edge's ``declared_name`` so history can name the Parameter the
+    ``parameter_names`` (``{argument: declared Parameter or PathInput name}``,
+    from :func:`scidb.parameter.declared_input_names`) is stamped on each
+    CONSTANT or PathInput edge's ``declared_name`` so history can name the Parameter the
     canvas shows. Descriptive, not identity; the latest run's name wins on an
     edge an earlier run already wrote.
     """
@@ -626,6 +626,12 @@ def record_run(
                     prid, (prid, created_at, PATHINPUT_TYPE, None, ch, None, False)
                 )
                 input_edges[(inv_id, param, prid)] = None
+                # Which DECLARED PathInput fed this argument — what groups
+                # PathInput-fed steps, on the canvas and in `scidb graph`
+                # alike (cleanup-audit F38). Same column as a Parameter's.
+                declared = parameter_names.get(param)
+                if declared:
+                    declared_edges[(inv_id, param, prid)] = declared
 
             inv_cache[cache_key] = inv_id
 
@@ -739,9 +745,12 @@ def record_run(
     # draw a second Parameter node after a run.
     if parameter_names:
         renamed = {a: d for a, d in sorted(parameter_names.items()) if a != d}
+        n_pathinput = sum(1 for (_i, _p, rid) in declared_edges if rid in constant_rows
+                          and constant_rows[rid][2] == PATHINPUT_VALUE_TYPE)
         Log.info(
-            f"[provenance] fn={function_name}: {len(declared_edges)} constant "
-            f"edge(s) named by declared Parameter; argument->Parameter "
+            f"[provenance] fn={function_name}: {len(declared_edges) - n_pathinput} "
+            f"constant edge(s) named by declared Parameter, {n_pathinput} "
+            f"PathInput edge(s) named by declared PathInput; argument->declared "
             f"{renamed or 'all same-named'}"
         )
     _t_commit = time.perf_counter()

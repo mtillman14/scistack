@@ -11,6 +11,51 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zm. A Parameter named differently from its argument: staged and unchecked values work — added 2026-09-24
+
+**What changed:** staged (pending) and unchecked values on a Parameter now
+reach the function argument it feeds even when the names differ — e.g. the
+`gaitrite_config` Parameter wired into `loadGaitRiteOneFile.gaitRiteConfig`
+(cleanup-audit F20). Before, a staged value never ran and an unchecked value
+ran anyway, for such a Parameter only. Backend only.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. On `gaitrite_config`, stage a new value and click **Run** on
+   `loadGaitRiteOneFile`.
+2. Untick one of `gaitrite_config`'s values and run again.
+
+**What you should see**
+- Step 1 runs the staged value: `scidb.log` shows `[execution] pending
+  override on … target: {'gaitRiteConfig': …}`.
+- Step 2 runs without the unticked value's combination.
+
+---
+
+## 0zl. PathInput nodes follow the recorded name — added 2026-09-24
+
+**What changed:** a run now records WHICH declared PathInput fed it, and the
+canvas uses that name before matching templates (cleanup-audit F38). Normally
+nothing looks different. It matters when two PathInputs share a template, or
+after a template edit. Backend only.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Run a PathInput-fed function from the canvas (Python or MATLAB).
+2. Edit that PathInput's template in the sidebar and refresh.
+
+**What you should see**
+- The function node and its PathInput edge stay where they were; no second
+  function node appears.
+- `scidb.log`: `[provenance] fn=…: … PathInput edge(s) named by declared PathInput`.
+- `scidb graph` in a terminal shows the same number of steps as the canvas.
+
+---
+
 ## 0zk. Labels: titles and display aliases, for one plot or the whole project — added 2026-09-24
 
 **What changed:** Plot Studio has a **Labels** section below Figure size:

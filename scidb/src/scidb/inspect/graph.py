@@ -1,14 +1,16 @@
 """PipelineGraph — the type-level pipeline DAG for observability.
 
 Shapes ``provenance_query.pipeline_variants`` into display-ready nodes and
-edges. Grouping: one FunctionNode per **pipeline step** = (function_name,
-variable-input wiring). Constants are aggregated across the step's variants
-— note this is deliberately coarser than ``call_id`` (which folds constants
-in), so a two-value sweep renders as one step with two variants, matching
-the GUI's mental model of "the bandpass step". Each variant keeps its own
-``call_id``. PathInput specs are displayed but excluded from the grouping
-key (a template change does not fork a variant — decided WON'T-DO
-2026-06-21).
+edges. Grouping: one FunctionNode per **pipeline step**, decided by
+``database.call_site_wiring_ids`` — the SAME rule the canvas uses
+(function, variable inputs, outputs, and which DECLARED PathInput feeds each
+PathInput argument; cleanup-audit F38). Constants are aggregated across the
+step's variants — deliberately coarser than ``call_id`` (which folds
+constants in), so a two-value sweep renders as one step with two variants,
+matching the GUI's "the bandpass step". Each variant keeps its own
+``call_id``. A template edit does not fork a step when the run recorded
+the PathInput's declared name; a run recorded without one is grouped by its
+spec, template and root folder (the CLI has no registry to match it against).
 
 Node state (green/red) reuses ``state.py`` §9c semantics
 (``expected_invocations_for_function`` vs ``present_invocation_schema_pairs``):
@@ -21,14 +23,13 @@ Node state (green/red) reuses ``state.py`` §9c semantics
 - ``state_basis="none"``      — no stored hash at all; state="unknown".
 
 Variant rows -> per-call-site aggregate is ``database.aggregate_pipeline_variants``
-(the GUI converts that with ``graph_builder.aggregate_from_scidb``). The STEP
-grouping here (function + variable wiring) still has a GUI twin,
-``graph_builder.group_call_sites_by_wiring`` (cleanup-audit F38).
+(the GUI converts that with ``graph_builder.aggregate_from_scidb``). The GUI's
+``group_call_sites_by_wiring`` adds only placement on top (several wirings
+may be one canvas node by the user's allocation); step identity is shared.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -147,11 +148,8 @@ def _value_str(value) -> str:
         return str(value)
 
 
-def _step_id(fn_name: str, wiring_key) -> str:
-    digest = hashlib.sha256(
-        json.dumps(wiring_key, sort_keys=True, default=str).encode()
-    ).hexdigest()[:8]
-    return f"fn__{fn_name}__{digest}"
+def _step_id(fn_name: str, wiring_id: str) -> str:
+    return f"fn__{fn_name}__{wiring_id}"
 
 
 def _stored_function_hashes(duck) -> dict[str, str]:
@@ -259,10 +257,14 @@ def build_pipeline_graph(
 ) -> PipelineGraph:
     from .. import provenance_query
 
+    from ..database import aggregate_pipeline_variants, call_site_wiring_ids
+
     duck = db._duck
     raw_variants = provenance_query.pipeline_variants(duck)
+    # Which call sites form one step: the shared rule (cleanup-audit F38).
+    wiring_of = call_site_wiring_ids(aggregate_pipeline_variants(raw_variants))
 
-    # --- group variants into steps: (fn_name, variable-input wiring) ---
+    # --- group variants into steps: (fn_name, wiring_id) ---
     steps: dict[tuple, dict] = {}
     for v in raw_variants:
         var_inputs: dict[str, str] = {}
@@ -274,12 +276,9 @@ def build_pipeline_graph(
             else:
                 var_inputs[param] = type_val
 
-        # PathInput params contribute their *name* only — the spec is display
-        # data, not step identity (template change ≠ new variant).
         wiring_key = (
             v["function_name"],
-            tuple(sorted(var_inputs.items())),
-            tuple(sorted(path_inputs)),
+            wiring_of[(v["function_name"], v["call_id"])],
         )
         step = steps.get(wiring_key)
         if step is None:
@@ -336,9 +335,14 @@ def build_pipeline_graph(
         return var_nodes[name]
 
     for wiring_key, step in sorted(
-        steps.items(), key=lambda kv: (kv[1]["fn_name"], kv[0][1], kv[0][2])
+        steps.items(),
+        key=lambda kv: (
+            kv[1]["fn_name"],
+            sorted(kv[1]["input_params"].items()),
+            kv[0][1],
+        ),
     ):
-        fid = _step_id(step["fn_name"], wiring_key)
+        fid = _step_id(step["fn_name"], wiring_key[1])
         st = states[step["fn_name"]]
         state, state_counts, basis = st["state"], st["counts"], st["basis"]
         step["variants"].sort(

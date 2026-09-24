@@ -41,7 +41,7 @@ from .bindings import (
 from .exceptions import AmbiguousParamError, DatabaseNotConfiguredError
 from .database import database_or_none, dataset_schema_keys_of
 from .input_spec import find_pathinput, is_loadable, spec_name, type_name, variable_type
-from .parameter import declared_parameter_names
+from .parameter import declared_input_names
 from .roles import endpoint_kind as _roles_endpoint_kind
 from .schema_values import canonical_numeric_value, schema_str
 from .variant import match_bare_name
@@ -224,7 +224,7 @@ class _ForEachState:
     # beneath. Never used for dispatch — the call already happened by then.
     fn: Any = None  # Callable | None
     # {argument: declared Parameter name} (scidb.parameter.
-    # declared_parameter_names), carried to record_run so each constant edge
+    # declared_input_names), carried to record_run so each constant edge
     # names the Parameter the canvas shows. Descriptive, never identity.
     parameter_names: Any = None  # dict[str, str] | None
 
@@ -350,7 +350,7 @@ def for_each(
                     bare value, or a value recorded in history). Recorded on
                     the constant's provenance edge, never part of identity.
                     A named ``Parameter`` input supplies its own; see
-                    ``scidb.parameter.declared_parameter_names``.
+                    ``scidb.parameter.declared_input_names``.
         _inject_combo_metadata: If True, inject current-combo metadata keys
                     as extra kwargs to fn (used by scihist for generates_file).
         pipeline: Deferred-registration control. Omitted (default): if a
@@ -503,7 +503,7 @@ def for_each(
     # --- Declared Parameter names: resolved BEFORE EachOf expansion, which
     #     replaces each Parameter with a bare alternative and so drops its
     #     .name. The recursion below receives the resolved dict. ---
-    parameter_names = declared_parameter_names(inputs, parameter_names)
+    parameter_names = declared_input_names(inputs, parameter_names)
     if parameter_names:
         Log.debug(f"parameter_names (argument -> declared): {parameter_names}")
 

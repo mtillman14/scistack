@@ -191,17 +191,18 @@ def _collect_sweep_params(
     }
 
 
-def _collect_parameter_names(
+def _collect_declared_names(
     function_name: str, manual_edges: list[dict], manual_nodes: dict
 ) -> dict[str, str]:
-    """``{param_name: declared Parameter name}`` for every Parameter node wired
-    into *function_name* — the generated call's ``parameter_names=``, so the
-    run records the Parameter the canvas shows (cleanup-audit B1). Every
-    binding, valued or not: the name is a fact about the wiring, the values
-    are ``_collect_sweep_params``' business.
+    """``{param_name: declared name}`` for every Parameter AND PathInput node
+    wired into *function_name* — the generated call's ``parameter_names=``,
+    so the run records the Parameter the canvas shows (cleanup-audit B1) and
+    the PathInput that groups the step (F38). Every binding, valued or not:
+    the name is a fact about the wiring, the values are
+    ``_collect_sweep_params``' business.
     """
     resolved = _resolve_matlab_wiring(function_name, manual_edges, manual_nodes)
-    names = dict(resolved.parameter_params)
+    names = {**resolved.path_input_params, **resolved.parameter_params}
     if names:
         logger.info(
             "generate_matlab_command: %s: parameter_names %s",
@@ -673,7 +674,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         python_executable=sys.executable,
         path_inputs=path_input_params if path_input_params else None,
         sweeps=sweep_params if sweep_params else None,
-        parameter_names=_collect_parameter_names(
+        parameter_names=_collect_declared_names(
             function_name, manual_edges, manual_nodes
         )
         or None,
@@ -950,7 +951,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
                     "schemaSelection"
                 )
                 or None,
-                "parameter_names": _collect_parameter_names(
+                "parameter_names": _collect_declared_names(
                     fn_label, manual_edges, manual_nodes
                 )
                 or None,

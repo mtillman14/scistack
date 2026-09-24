@@ -409,11 +409,11 @@ def _parameter_names_from_matlab(names) -> "dict[str, str] | None":
     None) -> ``{input: declared Parameter name}``, merged by the one owner so
     MATLAB and Python can never disagree on the rule."""
     from scidb.log import Log
-    from scidb.parameter import declared_parameter_names
+    from scidb.parameter import declared_input_names
 
     if not names:
         return None
-    merged = declared_parameter_names({}, {str(k): str(v) for k, v in dict(names).items()})
+    merged = declared_input_names({}, {str(k): str(v) for k, v in dict(names).items()})
     Log.info(f"[bridge] parameter_names (input -> declared Parameter): {merged}")
     return merged or None
 
@@ -748,7 +748,7 @@ def for_each_prepare(
         endpoint_kind=endpoint_kind or None,
         # {input: declared Parameter}. MATLAB expands its Parameters before
         # this call, so the names only arrive stated; the same owner as the
-        # Python path merges them (scidb.parameter.declared_parameter_names).
+        # Python path merges them (scidb.parameter.declared_input_names).
         parameter_names=_parameter_names_from_matlab(parameter_names),
     )
 

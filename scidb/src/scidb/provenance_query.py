@@ -2415,6 +2415,13 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
             for p, declared in edges["declared_names"].items()
             if p in constants
         }
+        # Which DECLARED PathInput fed each PathInput argument, where the run
+        # recorded it — what groups PathInput-fed steps (cleanup-audit F38).
+        path_input_names = {
+            p: declared
+            for p, declared in edges["declared_names"].items()
+            if p in edges["path_inputs"]
+        }
         # PathInput specs ride in input_types as their to_key() JSON string —
         # preserves the legacy contract (get_aggregated_variants parses them) and
         # call_id parity (forward to_call_id includes them in __inputs).
@@ -2510,6 +2517,9 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                     # group key: the name is what the canvas calls a value,
                     # never what makes two variants different.
                     "parameter_names": parameter_names,
+                    # {argument: declared PathInput name} where recorded.
+                    # Like parameter_names, not in the group key.
+                    "path_input_names": path_input_names,
                     "output_num": output_num,
                     # The source that produced this variant. Reported so a
                     # reader can tell two variants apart when NOTHING else

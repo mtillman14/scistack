@@ -165,10 +165,15 @@ def merge_pending_constants(
         )
         return fn_variants
 
-    fn_const_names = {k for v in fn_variants for k in v["constants"]}
-    pending_for_fn = {
-        k: vals for k, vals in pending_constants.items() if k in fn_const_names
-    }
+    # Pending values are keyed by the DECLARED Parameter; a variant's
+    # constants by the argument (cleanup-audit F20). Re-keyed per variant by
+    # the one translation, then merged: {argument: pending values}.
+    from scistack_gui.domain.edge_resolver import by_argument
+
+    pending_for_fn: dict[str, set[str]] = {}
+    for v in fn_variants:
+        for arg, vals in by_argument(pending_constants, v).items():
+            pending_for_fn.setdefault(arg, set()).update(vals)
 
     if not pending_for_fn:
         logger.debug(
@@ -360,7 +365,12 @@ def resolve_target_call_id(
     value), in which case it's never safe to trust a possibly-stale
     ``call_id`` field and it's recomputed fresh via ``compute_call_id``.
     """
-    touched = bool(pending_constant_names & set(target.get("constants", {})))
+    from scistack_gui.domain.edge_resolver import declared_by_argument
+
+    # Pending names are DECLARED Parameter names (cleanup-audit F20).
+    touched = bool(
+        pending_constant_names & set(declared_by_argument(target).values())
+    )
     cid = target.get("call_id") if (not touched and target.get("call_id")) else None
     if cid is None:
         cid = compute_call_id(function_name, target, options)
@@ -448,8 +458,8 @@ def filter_hidden_constant_value_targets(
     differ, comparing them directly silently matches nothing and every
     unchecked value runs anyway. The target's Parameter bindings
     (``{param_name: declared_name}``, put on the target by the wiring) are
-    the translation, defaulting to the param name for DB-history targets
-    where the two are the same string by construction.
+    the translation (``edge_resolver.by_argument``); history targets carry
+    them too, from the name their run recorded (cleanup-audit F20).
 
     Value matching is ``is_hidden_value``'s, shared with
     ``execution_service._apply_hidden_values`` — a naive ``str()`` compare
@@ -458,14 +468,14 @@ def filter_hidden_constant_value_targets(
     """
     if not hidden_values:
         return targets
-    from scistack_gui.domain.edge_resolver import BINDING_PARAMETER, bindings_of_kind
+    from scistack_gui.domain.edge_resolver import by_argument
 
     kept = []
     for t in targets:
         constants = t.get("constants", {})
-        declared_of = bindings_of_kind(t.get("bindings") or {}, BINDING_PARAMETER)
+        hidden_here = by_argument(hidden_values, t)
         if any(
-            is_hidden_value(value, hidden_values.get(declared_of.get(param, param), ()))
+            is_hidden_value(value, hidden_here.get(param, ()))
             for param, value in constants.items()
         ):
             continue

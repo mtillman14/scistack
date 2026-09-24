@@ -15,7 +15,7 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, Parameter, configure_database, entities, for_each
-from scidb.parameter import declared_parameter_names, parameter_node_name
+from scidb.parameter import declared_input_names, parameter_node_name
 
 SCHEMA = ["subject", "session"]
 
@@ -73,19 +73,19 @@ class TestDeclaredParameterNames:
     def test_a_named_parameter_supplies_its_own_name(self):
         p = Parameter(20)
         p.name = "cutoff"
-        assert declared_parameter_names({"low_hz": p, "high_hz": 500}) == {
+        assert declared_input_names({"low_hz": p, "high_hz": 500}) == {
             "low_hz": "cutoff"
         }
 
     def test_an_unnamed_parameter_or_bare_value_says_nothing(self):
-        assert declared_parameter_names({"low_hz": Parameter(20), "x": 3}) == {}
+        assert declared_input_names({"low_hz": Parameter(20), "x": 3}) == {}
 
     def test_explicit_wins_over_the_objects_own_name(self):
         """A value recorded in history reaches for_each bare; the caller's
         wiring is the authority when both exist."""
         p = Parameter(20)
         p.name = "old_name"
-        assert declared_parameter_names(
+        assert declared_input_names(
             {"low_hz": p}, {"low_hz": "cutoff"}
         ) == {"low_hz": "cutoff"}
 

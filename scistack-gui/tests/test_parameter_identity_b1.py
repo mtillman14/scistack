@@ -164,7 +164,9 @@ def test_pending_values_keyed_by_the_node_see_rows_keyed_by_the_argument():
 
 
 def test_a_gui_run_states_the_names_from_its_wiring():
-    from scistack_gui.services.execution_service import build_run_parameter_names
+    """Parameter AND PathInput bindings: the PathInput name groups the step
+    (cleanup-audit F38)."""
+    from scistack_gui.services.execution_service import build_run_declared_names
 
     target = {
         "bindings": {
@@ -172,7 +174,10 @@ def test_a_gui_run_states_the_names_from_its_wiring():
             "gaitRitePath": {"kind": "pathinput", "ref": "GaitRite"},
         }
     }
-    assert build_run_parameter_names(target) == {ARG: DECLARED}
+    assert build_run_declared_names(target) == {
+        ARG: DECLARED,
+        "gaitRitePath": "GaitRite",
+    }
 
 
 class TestGeneratedMatlab:
