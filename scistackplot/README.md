@@ -120,6 +120,29 @@ field by default; pass `fields_as_columns=False` for one row per field.
 Scalar plots only; a raw 1-D or 2-D plot is refused with the reason.
 See `docs/claude/plot-data-export.md`.
 
+## Reopen a spec an older version wrote
+
+A spec saved last month may name settings this version has renamed or
+removed. `PlotSpec.from_dict` is strict and refuses it. `restore_spec`
+keeps everything that still reads and tells you what did not:
+
+```python
+from scistackplot import reconcile, restore_spec
+
+restored = restore_spec(stored_dict, fallback_measure="StepLength")
+for note in restored.notes:           # e.g. "style.widht: 'widht' is no longer a setting; ignored"
+    print(note.path, note.kind, note.message)
+
+checked = reconcile(restored.spec, table)   # names today's data no longer has
+```
+
+It never migrates. A renamed setting takes its default and gets a note. It
+never raises, except when there is no usable measure and no
+`fallback_measure`. `reconcile` removes `show_sample` keys and a
+`sample_color` that are no longer factors, because the figure would refuse
+them. It reports stale roles and leaves them in place, because resolve drops
+them itself. See `docs/claude/saved-plots.md`.
+
 ## Arranging the subplots
 
 Faceted panels flow in order by default, wrapping at `FacetOptions.wrap`. When

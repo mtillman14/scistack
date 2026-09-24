@@ -51,6 +51,19 @@ from .load import (
     sample_value,
     schema_keys,
 )
+from .saved import (
+    SavedPlot,
+    SavedPlotError,
+    SavedPlotExists,
+    SavedPlotInfo,
+    check_name,
+    hide_saved_plot,
+    list_saved_plots,
+    load_saved_plot,
+    rename_saved_plot,
+    save_plot,
+    saved_plot_history,
+)
 from .source import ScidbSource
 from .variants import (
     branch_params_for,
@@ -61,6 +74,18 @@ from .variants import (
 
 __all__ = [
     "ScidbSource",
+    # saved plots
+    "save_plot",
+    "list_saved_plots",
+    "load_saved_plot",
+    "rename_saved_plot",
+    "hide_saved_plot",
+    "saved_plot_history",
+    "check_name",
+    "SavedPlot",
+    "SavedPlotInfo",
+    "SavedPlotError",
+    "SavedPlotExists",
     "variant_set",
     "variant_graph",
     "selection_for",

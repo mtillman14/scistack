@@ -11,6 +11,83 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zi. Saved plots: name a plot, reopen it exactly as it was — added 2026-09-24
+
+**What changed:** Plot Studio has a **Saved plots** rail on the right. Save
+the current plot under a name, and reopen it later from the list with every
+setting restored: spec, preview mode, figure-size dropdown, and which figure
+of a Separate-figures set was showing. Saving an existing name adds a new
+version and keeps the old ones. Remove hides a plot and never deletes it.
+A plot saved by an older build still opens; settings that no longer exist
+are listed in a yellow note instead of failing. Not available when plotting
+a CSV. Plan: `.claude/plan-saved-plots.md`.
+
+**Backend**
+1. Pull, **reload the VS Code window** (webview bundle changed), then
+   **Restart** the GUI.
+
+**Frontend**
+1. Right-click a variable → Plot. The rail on the right says "Unsaved plot"
+   and "No saved plots for this variable yet".
+2. Change a few settings (kind, a role, the figure-size dropdown, Preview
+   mode "Fit pane"). Click **Save plot…**, type `Fig A`, press Enter.
+3. Change something. The name gets a yellow ● and "· modified".
+4. Click **Save…**. The box is prefilled with `Fig A`; press Enter. The
+   ● goes away and the row reads `v2`.
+5. Save another plot as `Fig B`. Then click **Save…** while `Fig B` is open,
+   type `Fig A`, press Enter. It asks: *"Fig A" is another saved plot. Save
+   this as its next version?* Try Cancel (back to the name box), then accept.
+6. Close the tab. Right-click the same variable → Plot again. Click `Fig A`
+   in the list.
+7. With unsaved changes, click another plot. It asks before discarding them.
+8. ✎ renames a plot. Renaming onto another plot's name shows the reason in
+   red. ✕ asks, then removes it from the list.
+9. Collapse the rail with ❯. It shrinks to a vertical "Saved plots (N)" strip,
+   still showing ● when there are unsaved changes.
+10. A Separate-figures plot: step to figure 3, save, change figures, reopen.
+    It returns on figure 3.
+
+**What you should see**
+- Reopening gives the same figure you saved: kind, roles, colours, size,
+  preview mode, figure number.
+- **Please check:** opening a fresh plot or a saved plot and touching
+  nothing must NOT show ● modified. If it does, some setting is being
+  adjusted automatically after opening. Send the `scidb.log` lines below and
+  describe what you changed.
+- `scidb.log`: `[saved_plot] saved <Var> / 'Fig A' as version N (… bytes,
+  envelope format 1)`, `[saved_plot] opened <Var> / 'Fig A' version N …: 0
+  note(s)`, `[restore] <Var>: K stored setting(s), 0 note(s)`.
+- A CSV plot has no Saved plots rail.
+
+---
+
+## 0zh. Canvas and Plot Studio pickers load faster — added 2026-09-24
+
+**What changed:** the graph build reads every function call's inputs and
+outputs in two batched queries, not four queries per call (about 5 s of an
+11 s build on your AIM 2 database). The Variant and Grouping pickers now load
+their canvas WITHOUT run states, skipping the ~6 s state check. Their
+variable nodes therefore have no green/red border any more. That is
+intended: the picker is about selection, not freshness.
+
+**Backend**
+1. Pull, **reload the VS Code window** (webview bundle changed), then
+   **Restart** the GUI.
+
+**Frontend**
+1. Open the main canvas. Note how long it takes to appear.
+2. In Plot Studio, open the Variant selection popup, then the Grouping popup.
+
+**What you should see**
+- The canvas colours are unchanged, and it appears noticeably faster.
+- Both popups open in about 1-2 s, and their nodes have no green/red border.
+- In `scidb.log`: `[timing] pipeline_variants: … (invocation_edges=…, outputs=…, group=…, annotate=…)`,
+  and `[timing] check_multiple_nodes_state` with `expected.variant_configs`,
+  `expected.realized_inputless` and `expected.predict` — please send those lines.
+- For each popup: `[pipeline] run states not requested — skipping the state check`.
+
+---
+
 ## 0zg. Fix the tick settings yourself; exported code matches — added 2026-09-23
 
 **What changed:** the Figure size section has new controls:

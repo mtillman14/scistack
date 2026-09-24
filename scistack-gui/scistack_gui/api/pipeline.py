@@ -643,7 +643,9 @@ def _matlab_param_to_class_from_db(
     return from_db
 
 
-def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
+def _build_graph(
+    db: DatabaseManager, pipeline_id: str = ROOT_SCOPE, *, run_states: bool = True
+) -> dict:
     """
     Build nodes and edges from list_pipeline_variants() and list_variables(),
     restricted to one pipeline SCOPE.
@@ -790,15 +792,25 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
         manual_nodes=manual_nodes,
         hidden_edge_ids=hidden_edge_ids,
     )
-    logger.info("[pipeline] Computing run states (delegating to run_state)")
-    run_states = _compute_run_states(
-        db,
-        agg.fn_input_params,
-        agg.fn_outputs,
-        disconnected_fkeys,
-        propagation_input_params=state_input_params,
-    )
-    logger.info("[pipeline] computed run states for %d nodes", len(run_states))
+    # Run states are the most expensive part of a build (~6 s of 11 s on a
+    # real 843-invocation database, cleanup-audit F15): every call site's
+    # expected invocations are predicted from current data. A caller that
+    # draws no state — the Plot Studio pickers — asks for the graph without
+    # them, and gets nodes with NO run_state rather than a guessed one.
+    with_run_states = run_states
+    if with_run_states:
+        logger.info("[pipeline] Computing run states (delegating to run_state)")
+        run_states = _compute_run_states(
+            db,
+            agg.fn_input_params,
+            agg.fn_outputs,
+            disconnected_fkeys,
+            propagation_input_params=state_input_params,
+        )
+        logger.info("[pipeline] computed run states for %d nodes", len(run_states))
+    else:
+        logger.info("[pipeline] run states not requested — skipping the state check")
+        run_states = {}
 
     # --- Group call sites by wiring (one canvas node per fn + IO shape) ---
     # Constant-value call sites become variant rows (with their own state
@@ -1519,6 +1531,12 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
         logger.info("[pipeline] tagged %d endpoint node(s)", endpoint_count)
 
     logger.info("[pipeline] Graph build complete - assembling final result")
+    if not with_run_states:
+        # Nothing was checked, so nothing is reported: variable nodes default
+        # to "green" and the grouped cascade may still derive states from
+        # staged values — neither is an answer to "is this node up to date".
+        for n in nodes:
+            n["data"].pop("run_state", None)
     node_types = {}
     for n in nodes:
         t = n["type"]
@@ -1583,6 +1601,12 @@ class ScopeQuery(BaseModel):
     pipeline_id: str | None = ROOT_SCOPE
 
 
+class PipelineQuery(ScopeQuery):
+    #: False = the graph without per-node run states (the Plot Studio
+    #: pickers draw none; the state check is most of a build's cost).
+    run_states: bool = True
+
+
 class FunctionName(BaseModel):
     name: str
 
@@ -1619,10 +1643,12 @@ class ParameterGroupChecked(BaseModel):
     pipeline_id: str | None = ROOT_SCOPE
 
 
-def _get_pipeline(db, req: ScopeQuery) -> dict:
+def _get_pipeline(db, req: PipelineQuery) -> dict:
     from scistack_gui.services.pipeline_service import get_pipeline_graph
 
-    return get_pipeline_graph(db, req.pipeline_id or ROOT_SCOPE)
+    return get_pipeline_graph(
+        db, req.pipeline_id or ROOT_SCOPE, run_states=req.run_states
+    )
 
 
 def _get_function_params(req: FunctionName) -> dict:
@@ -1704,7 +1730,7 @@ def _list_hidden_parameter_values(db, req: ScopeQuery) -> dict:
 
 
 PIPELINE_HANDLERS: tuple[Handler, ...] = (
-    Handler("get_pipeline", "/pipeline", ScopeQuery, _get_pipeline, http_method="GET"),
+    Handler("get_pipeline", "/pipeline", PipelineQuery, _get_pipeline, http_method="GET"),
     Handler("get_function_params", "/function/{name}/params", FunctionName, _get_function_params, needs_db=False, http_method="GET"),
     Handler("get_function_source", "/function/{name}/source", FunctionName, _get_function_source, needs_db=False, http_method="GET"),
     Handler("get_function_doc", "/function/{name}/doc", FunctionName, _get_function_doc, needs_db=False, http_method="GET"),

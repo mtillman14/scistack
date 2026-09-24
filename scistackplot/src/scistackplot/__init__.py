@@ -94,6 +94,7 @@ from .roles import (
     validate,
     with_requirements_for,
 )
+from .restore import NoteKind, RestoreError, RestoreNote, Restored, reconcile, restore_spec
 from .shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
 from .spec import (
@@ -177,6 +178,13 @@ __all__ = [
     "ErrorBand",
     "Aggregation",
     "LegacySpecError",
+    # restoring a stored spec whose shape may have drifted
+    "restore_spec",
+    "reconcile",
+    "Restored",
+    "RestoreNote",
+    "RestoreError",
+    "NoteKind",
     "FacetOptions",
     "YAxis",
     "eligible_scope",

@@ -31,6 +31,16 @@ import {
   rolesAfterPick,
 } from './locationSelection'
 import { orderGroups, placeGroupLayer } from './groups'
+import SavedPlotsRail, { type SaveResult } from './SavedPlotsRail'
+import {
+  isModified,
+  iterateSignature as iterateSignatureOf,
+  modifiedKey,
+  readView,
+  viewState,
+  type RestoreNote,
+  type SavedPlotInfo,
+} from './savedPlots'
 import {
   isLocked,
   isTicked,
@@ -758,6 +768,23 @@ export default function PlotStudio({
   const [previewMode, setPreviewMode] = useState<PreviewMode>('export')
   const observerRef = useRef<ResizeObserver | null>(null)
 
+  // Saved plots (.claude/plan-saved-plots.md). The backend owns storage,
+  // names and restoring; `savedPlots.ts` owns the view settings and the
+  // "modified" comparison. A CSV has no database, so none of this applies.
+  const [savedPlots, setSavedPlots] = useState<SavedPlotInfo[]>([])
+  const [savedRailCollapsed, setSavedRailCollapsed] = useState(false)
+  const [loadedPlot, setLoadedPlot] = useState<SavedPlotInfo | null>(null)
+  const [restoreNotes, setRestoreNotes] = useState<RestoreNote[]>([])
+  const [savedBusy, setSavedBusy] = useState(false)
+  const [savedError, setSavedError] = useState('')
+  // `modifiedKey` of the settings as last opened or saved. Null = always
+  // modified (a plot restored with notes is not in the current format yet).
+  const [baseline, setBaseline] = useState<string | null>(null)
+  // Set when new settings are applied wholesale (the panel opening, a saved
+  // plot loading, a save). The next render's key becomes the baseline, so
+  // the comparison sees the state React actually applied.
+  const captureBaseline = useRef(false)
+
   // A CSV has no variable type; name the file instead.
   const title = describe?.variable ?? variable ?? (csvPath ? csvPath.split('/').pop() ?? 'CSV' : '')
 
@@ -796,6 +823,9 @@ export default function PlotStudio({
     setFigures([])
     setAspectChoice(null)
     setLoadError('')
+    setLoadedPlot(null)
+    setRestoreNotes([])
+    setSavedError('')
     callBackend('plot_describe', { variable: variable || undefined, ...sourceParams })
       .then(raw => {
         if (cancelled) return
@@ -815,6 +845,7 @@ export default function PlotStudio({
               ? applyPickedLocation(response.spec, initialLocation, keys)
               : response.spec
           )
+          captureBaseline.current = true
         }
         if (response.capabilities) setCapabilities(response.capabilities)
       })
@@ -858,16 +889,20 @@ export default function PlotStudio({
   // resetting to figure 1 on every spec edit would make the panel unusable
   // while browsing. A fan-out that merely got shorter is handled by the
   // backend's clamp instead.
-  const iterateSignature = useMemo(
-    () =>
-      Object.entries(spec?.roles ?? {})
-        .filter(([, role]) => role === 'iterate')
-        .map(([name]) => name)
-        .sort()
-        .join('|'),
-    [spec?.roles]
-  )
-  useEffect(() => { setFigureIndex(0) }, [iterateSignature])
+  const iterateSignature = useMemo(() => iterateSignatureOf(spec?.roles), [spec?.roles])
+  // A saved plot restores its own figure index along with its roles. The
+  // signature it arrives with is recorded here, and the ONE reset that
+  // signature causes is skipped, so the restored index survives. Any later
+  // change of the fan-out resets as usual.
+  const restoredSignature = useRef<string | null>(null)
+  useEffect(() => {
+    if (restoredSignature.current === iterateSignature) {
+      restoredSignature.current = null
+      return
+    }
+    restoredSignature.current = null
+    setFigureIndex(0)
+  }, [iterateSignature])
 
   // --- resolve on every spec change (debounced) ---------------------------
   const timer = useRef<number | null>(null)
@@ -1888,6 +1923,162 @@ export default function PlotStudio({
       .catch(err => setNotice(`Could not add: ${(err as Error).message}`))
   }, [spec])
 
+  // --- saved plots ----------------------------------------------------------
+  // Keyed by the variable `describe` resolved (the prop may be empty, meaning
+  // "the first plottable measure"). Plots are saved against that variable.
+  const savedVariable = csvPath ? null : describe?.variable ?? null
+
+  useEffect(() => {
+    setSavedPlots([])
+    if (!savedVariable) return
+    let cancelled = false
+    callBackend('plot_saved_list', { variable: savedVariable })
+      .then(raw => {
+        if (!cancelled) setSavedPlots((raw as { plots: SavedPlotInfo[] }).plots ?? [])
+      })
+      .catch(err => !cancelled && setSavedError(`Could not list saved plots: ${(err as Error).message}`))
+    return () => { cancelled = true }
+  }, [savedVariable])
+
+  const currentKey = useMemo(
+    () => modifiedKey(spec, viewState(previewMode, aspectChoice, figureIndex)),
+    [spec, previewMode, aspectChoice, figureIndex]
+  )
+  // `baseline` is a dependency so that a save of UNCHANGED settings (the
+  // key does not move) still captures: the save resets it to null, and that
+  // change alone re-runs this.
+  useEffect(() => {
+    if (!captureBaseline.current || !spec) return
+    captureBaseline.current = false
+    setBaseline(currentKey)
+  }, [currentKey, spec, baseline])
+  const modified = isModified(baseline, currentKey)
+
+  const saveCurrent = useCallback(
+    async (name: string, overwrite: boolean): Promise<SaveResult> => {
+      if (!spec || !savedVariable) return { ok: false }
+      setSavedBusy(true)
+      setSavedError('')
+      try {
+        const result = (await callBackend('plot_saved_save', {
+          variable: savedVariable,
+          name,
+          spec,
+          view: viewState(previewMode, aspectChoice, figureIndex),
+          overwrite,
+          current_plot_id: loadedPlot?.plot_id ?? null,
+        })) as { ok: boolean; plot?: SavedPlotInfo; plots?: SavedPlotInfo[]; exists?: SavedPlotInfo }
+        if (!result.ok) return { ok: false, exists: result.exists }
+        setSavedPlots(result.plots ?? [])
+        setLoadedPlot(result.plot ?? null)
+        setRestoreNotes([])
+        captureBaseline.current = true
+        setBaseline(null)
+        return { ok: true }
+      } catch (err) {
+        setSavedError(`Could not save: ${(err as Error).message}`)
+        return { ok: false }
+      } finally {
+        setSavedBusy(false)
+      }
+    },
+    [spec, savedVariable, previewMode, aspectChoice, figureIndex, loadedPlot]
+  )
+
+  const openSaved = useCallback((plotId: string) => {
+    setSavedBusy(true)
+    setSavedError('')
+    callBackend('plot_saved_open', { plot_id: plotId })
+      .then(raw => {
+        const result = raw as {
+          plot: SavedPlotInfo & { spec: Spec; view: unknown; notes: RestoreNote[] }
+          capabilities: Capabilities | null
+        }
+        const { spec: restored, view, notes, ...info } = result.plot
+        const shown = readView(view)
+        console.info(
+          `[PlotStudio] opened saved plot "${info.name}" v${info.version}: ` +
+            `${notes.length} note(s)`, notes
+        )
+        // Keep the restored figure index through the fan-out reset its roles
+        // would otherwise trigger (see `restoredSignature`).
+        restoredSignature.current = iterateSignatureOf(restored.roles)
+        setSpec(restored)
+        setPreviewMode(shown.previewMode)
+        setAspectChoice(shown.aspectChoice)
+        setFigureIndex(shown.figureIndex)
+        if (result.capabilities) {
+          setCapabilities(result.capabilities)
+          capsSpecRef.current = JSON.stringify(restored)
+        }
+        setLoadedPlot(info as SavedPlotInfo)
+        setRestoreNotes(notes)
+        if (notes.length) {
+          // Not in the current format until saved again: never clean.
+          captureBaseline.current = false
+          setBaseline(null)
+          setSavedRailCollapsed(false)
+        } else {
+          captureBaseline.current = true
+          setBaseline(null)
+        }
+      })
+      .catch(err => setSavedError(`Could not open: ${(err as Error).message}`))
+      .finally(() => setSavedBusy(false))
+  }, [])
+
+  const renameSaved = useCallback(async (plotId: string, name: string): Promise<boolean> => {
+    setSavedError('')
+    try {
+      const result = (await callBackend('plot_saved_rename', { plot_id: plotId, name })) as {
+        plot: SavedPlotInfo
+        plots: SavedPlotInfo[]
+      }
+      setSavedPlots(result.plots ?? [])
+      setLoadedPlot(current => (current?.plot_id === plotId ? result.plot : current))
+      return true
+    } catch (err) {
+      setSavedError(`Could not rename: ${(err as Error).message}`)
+      return false
+    }
+  }, [])
+
+  const removeSaved = useCallback(async (plotId: string) => {
+    setSavedError('')
+    try {
+      const result = (await callBackend('plot_saved_hide', { plot_id: plotId })) as {
+        plots: SavedPlotInfo[]
+      }
+      setSavedPlots(result.plots ?? [])
+      if (loadedPlot?.plot_id === plotId) {
+        // The settings on screen are no longer saved anywhere visible.
+        captureBaseline.current = false
+        setLoadedPlot(null)
+        setBaseline(null)
+      }
+    } catch (err) {
+      setSavedError(`Could not remove: ${(err as Error).message}`)
+    }
+  }, [loadedPlot])
+
+  const savedRail = savedVariable ? (
+    <SavedPlotsRail
+      collapsed={savedRailCollapsed}
+      onToggle={() => setSavedRailCollapsed(v => !v)}
+      plots={savedPlots}
+      loaded={loadedPlot}
+      modified={modified}
+      notes={restoreNotes}
+      busy={savedBusy}
+      error={savedError}
+      onSave={saveCurrent}
+      onOpen={openSaved}
+      onRename={renameSaved}
+      onRemove={removeSaved}
+      onDismissNotes={() => setRestoreNotes([])}
+    />
+  ) : null
+
   // --- render -------------------------------------------------------------
   if (loadError) {
     return (
@@ -1935,6 +2126,7 @@ export default function PlotStudio({
       panelRef={panelRef}
       controlsHidden={controlsHidden}
       onToggleControls={() => setControlsHidden(v => !v)}
+      rightRail={savedRail}
       sidebar={
         <div
           style={{
@@ -3023,6 +3215,8 @@ interface ShellProps {
   panelRef?: React.RefObject<HTMLDivElement>
   controlsHidden?: boolean
   onToggleControls?: () => void
+  /** The "Saved plots" rail, right of the figure; collapses itself. */
+  rightRail?: React.ReactNode
 }
 
 function Shell({
@@ -3036,6 +3230,7 @@ function Shell({
   panelRef,
   controlsHidden,
   onToggleControls,
+  rightRail,
 }: ShellProps) {
   return (
     // No overlay click-to-close: a stray click on the backdrop while dragging a
@@ -3085,6 +3280,7 @@ function Shell({
           {sidebar}
         </div>
         {children}
+        {rightRail}
       </div>
     </div>
   )

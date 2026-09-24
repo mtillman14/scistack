@@ -482,6 +482,7 @@ def check_node_state(
         inputs_fallback=inputs,
         call_id=call_id,
         glue_fallback=glue,
+        _timings=timings,
     )
     _add("expected_invocations", _t)
     _t = time.perf_counter()

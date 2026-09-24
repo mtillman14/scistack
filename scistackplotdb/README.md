@@ -106,6 +106,34 @@ Everything about *recording* the figure — `finalized`, artifact stamping,
 `skip_computed`, `scidb report` — is SciDB's existing endpoint machinery and is
 untouched.
 
+## Saved plots
+
+Plot Studio's **Saved plots** are stored in the project database, so a
+script can reopen them too:
+
+```python
+from scistackplotdb import list_saved_plots, load_saved_plot, save_plot
+
+info = save_plot(db, "StepLength", "Figure 3", spec)       # version 1
+save_plot(db, "StepLength", "Figure 3", edited_spec)       # version 2; v1 kept
+for plot in list_saved_plots(db, "StepLength"):
+    print(plot.name, plot.version, plot.saved_at)
+
+saved = load_saved_plot(db, info.plot_id)                  # newest version
+old = load_saved_plot(db, info.plot_id, version=1)
+figure = render(ScidbSource(db).get_table(saved.spec.variant_variables()), saved.spec)
+```
+
+- **Append-only.** Re-saving a name adds a version.
+  `hide_saved_plot` removes a plot from the list and deletes nothing.
+- **Always written in the current format, read leniently.** A plot saved by
+  an older `scistackplot` still opens; `saved.notes` lists any setting that
+  no longer applies (`scistackplot.restore_spec`).
+- Pass `table=` or `table_for=` to also check the spec against today's data.
+
+The table, the drift policy and why this is not in the GUI's intent store:
+`docs/claude/saved-plots.md`.
+
 ## Ordering
 
 Factor levels are ordered by SciDB's declared `schema_key_types`, not by

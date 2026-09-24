@@ -117,7 +117,7 @@ function callVSCode(method: string, params: Record<string, unknown>): Promise<un
  */
 async function callFetch(method: string, params: Record<string, unknown>): Promise<unknown> {
   const routes: Record<string, { path: string | ((p: Record<string, unknown>) => string); method?: string; body?: boolean }> = {
-    get_pipeline:           { path: (p) => `/api/pipeline?pipeline_id=${encodeURIComponent((p.pipeline_id as string) ?? 'main')}` },
+    get_pipeline:           { path: (p) => `/api/pipeline?pipeline_id=${encodeURIComponent((p.pipeline_id as string) ?? 'main')}${p.run_states === false ? '&run_states=false' : ''}` },
     get_layout:             { path: (p) => `/api/layout?pipeline_id=${encodeURIComponent((p.pipeline_id as string) ?? 'main')}` },
     get_schema:             { path: '/api/schema' },
     get_info:               { path: '/api/info' },
@@ -243,6 +243,14 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     // minutes of work, against the 30 s timeout below.
     plot_save_start:        { path: '/api/plot/save', method: 'POST', body: true },
     plot_invalidate:        { path: '/api/plot/invalidate', method: 'POST' },
+    // Saved plots: named, per-variable, kept in the project database
+    // (.claude/plan-saved-plots.md). "hide" is Remove — nothing is deleted.
+    plot_saved_list:        { path: '/api/plot/saved/list', method: 'POST', body: true },
+    plot_saved_save:        { path: '/api/plot/saved/save', method: 'POST', body: true },
+    plot_saved_open:        { path: '/api/plot/saved/open', method: 'POST', body: true },
+    plot_saved_rename:      { path: '/api/plot/saved/rename', method: 'POST', body: true },
+    plot_saved_hide:        { path: '/api/plot/saved/hide', method: 'POST', body: true },
+    plot_saved_history:     { path: '/api/plot/saved/history', method: 'POST', body: true },
     // An error boundary's report — see components/ClientErrorBoundary.tsx.
     report_client_error:    { path: '/api/client-error', method: 'POST', body: true },
   };

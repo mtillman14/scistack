@@ -8,6 +8,34 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-09-24-1 — Saved plots are salvaged on open, never migrated
+
+**Context.** Plot Studio saves named plots per variable (a `PlotSpec` plus
+view settings). The spec keeps changing shape, and the strict
+`PlotSpec.from_dict` refuses any renamed key. The beta rule forbids
+migration code.
+
+**Decision.** Writes are strict and reads are lenient.
+- `save_plot` stores only the current format.
+- `scistackplot.restore_spec` reads any stored spec field by field, driven
+  by the dataclasses' type hints. Whatever no longer parses reverts to its
+  default with a `RestoreNote`.
+- Opening never rewrites the stored copy.
+- A plot restored with notes opens as modified until it is re-saved.
+- Storage is append-only (`plot_id` + `version`). "Remove" hides; nothing is
+  deleted.
+- Saved plots live in `scistackplotdb.saved`, not the intent store: they are
+  display intent.
+
+**Consequences.** A renamed setting comes back at its default, with a note
+naming the old key; the user accepted this over writing upgraders. Adding a
+`PlotSpec` field needs no restore code, but the round-trip test's
+`full_spec()` fixture must set it.
+
+**Full argument:** `docs/claude/saved-plots.md`.
+
+---
+
 ## D-2026-09-23-1 — The project root is the pinned root, else the working directory
 
 **Context.** Five places answered "which directory is this project?":

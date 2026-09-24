@@ -51,6 +51,8 @@ _SCANNED_PACKAGES = (
     "scimatlab",
     "scistack-gui",
     "scistacklog",
+    "scistackplot",
+    "scistackplotdb",
 )
 
 _SKIP_DIR_PARTS = {".venv", "node_modules", "__pycache__", ".git", "build", "dist"}

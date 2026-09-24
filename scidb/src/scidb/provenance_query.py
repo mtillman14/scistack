@@ -1407,43 +1407,10 @@ def invocation_inputs(duck, invocation_id: str):
     feeds this param?" therefore keep working unchanged, and callers that care
     about the glue can see it.
     """
-    rows = duck._fetchall(
-        "SELECT ii.param_name, ii.input_record_id, r.type, c.value_repr "
-        "FROM _invocation_input ii "
-        "LEFT JOIN _record r ON r.record_id = ii.input_record_id "
-        "LEFT JOIN _constant c ON c.record_id = ii.input_record_id "
-        "WHERE ii.invocation_id = ?",
-        [invocation_id],
-    )
-    var_inputs = []
-    constants = {}
-    for param_name, in_rid, rtype, value_repr in rows:
-        if rtype == PATHINPUT_TYPE:
-            continue  # PathInput spec — not a variable nor a sweep constant
-        if rtype == CONSTANT_TYPE:
-            constants[param_name] = _safe_literal(value_repr)
-        elif rtype == GLUE_TYPE:
-            src = glue_source(duck, in_rid)
-            var_inputs.append(
-                {
-                    "record_id": in_rid,
-                    "param_name": param_name,
-                    "variable_type": (src or {}).get("variable_type") or GLUE_TYPE,
-                    "glue_chain": (src or {}).get("chain_names") or [],
-                    "glue_chain_hash": (src or {}).get("chain_hash") or "",
-                    "glue_source_record_id": (src or {}).get("record_id"),
-                }
-            )
-        else:
-            var_inputs.append(
-                {
-                    "record_id": in_rid,
-                    "param_name": param_name,
-                    "variable_type": rtype,
-                }
-            )
-    var_inputs.sort(key=lambda d: (d["param_name"], d["record_id"]))
-    return var_inputs, constants
+    edges = invocation_edges_batch(duck, [invocation_id]).get(invocation_id)
+    if edges is None:
+        return [], {}
+    return edges["var_inputs"], edges["constants"]
 
 
 def invocation_path_inputs(duck, invocation_id: str) -> dict[str, str]:
@@ -1452,15 +1419,115 @@ def invocation_path_inputs(duck, invocation_id: str) -> dict[str, str]:
     The spec string is ``PathInput.to_key()`` (JSON: template, root_folder, …),
     stored as a distinctly-typed (:data:`PATHINPUT_TYPE`) input record.
     """
-    rows = duck._fetchall(
-        "SELECT ii.param_name, c.value_repr "
+    edges = invocation_edges_batch(duck, [invocation_id]).get(invocation_id)
+    return dict(edges["path_inputs"]) if edges else {}
+
+
+def invocation_edges_batch(duck, invocation_ids) -> dict:
+    """Every input edge of many invocations, read in one pass.
+
+    THE one reader of ``_invocation_input`` rows as a call's wiring;
+    :func:`invocation_inputs` and :func:`invocation_path_inputs` are this
+    function for one id. Returns ``{invocation_id: {...}}`` with:
+
+    * ``var_inputs`` — ``[{record_id, param_name, variable_type}]`` sorted by
+      ``(param, record_id)``; a glued param reports its SOURCE type plus
+      ``glue_chain`` / ``glue_chain_hash`` / ``glue_source_record_id``;
+    * ``constants`` — ``{param: typed value}``;
+    * ``path_inputs`` — ``{param: PathInput.to_key() JSON}``;
+    * ``selectors`` — ``{param: raw selector JSON}`` (edges that carry one);
+    * ``declared_names`` — ``{param: declared Parameter name}`` (recorded ones).
+
+    An invocation with no input edges is absent from the result.
+
+    Batched because the canvas asks this of EVERY invocation twice per build
+    (``pipeline_variants`` and each call site's ``function_variant_configs``):
+    per invocation it was 3-4 queries, ~3,400 round trips and ~4 s of an 11 s
+    ``get_pipeline`` on 843 invocations (cleanup-audit F15/F16). Glue sources
+    are resolved in one :func:`glue_source_batch` call, not one query each.
+    """
+    ids = [i for i in dict.fromkeys(invocation_ids) if i]
+    if not ids:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT ii.invocation_id, ii.param_name, ii.input_record_id, r.type, "
+        "c.value_repr, ii.selector, ii.declared_name "
         "FROM _invocation_input ii "
-        "JOIN _record r ON r.record_id = ii.input_record_id "
-        "JOIN _constant c ON c.record_id = ii.input_record_id "
-        "WHERE ii.invocation_id = ? AND r.type = ?",
-        [invocation_id, PATHINPUT_TYPE],
+        "LEFT JOIN _record r ON r.record_id = ii.input_record_id "
+        "LEFT JOIN _constant c ON c.record_id = ii.input_record_id "
+        "WHERE ii.invocation_id IN ({ph})",
+        ids,
     )
-    return dict(rows)
+    glue_src = glue_source_batch(
+        duck, [in_rid for _i, _p, in_rid, rtype, *_ in rows if rtype == GLUE_TYPE]
+    )
+    out: dict = {}
+    for inv_id, param_name, in_rid, rtype, value_repr, selector, declared in rows:
+        edges = out.get(inv_id)
+        if edges is None:
+            edges = out[inv_id] = {
+                "var_inputs": [],
+                "constants": {},
+                "path_inputs": {},
+                "selectors": {},
+                "declared_names": {},
+            }
+        if selector is not None:
+            edges["selectors"][param_name] = selector
+        if declared is not None:
+            edges["declared_names"][param_name] = declared
+        if rtype == PATHINPUT_TYPE:
+            # A spec, not a variable nor a sweep constant. A spec record
+            # without its _constant row carries no template, so it is skipped
+            # (the per-invocation reader inner-joined _constant).
+            if value_repr is not None:
+                edges["path_inputs"][param_name] = value_repr
+        elif rtype == CONSTANT_TYPE:
+            edges["constants"][param_name] = _safe_literal(value_repr)
+        elif rtype == GLUE_TYPE:
+            src = glue_src.get(in_rid) or {}
+            edges["var_inputs"].append(
+                {
+                    "record_id": in_rid,
+                    "param_name": param_name,
+                    "variable_type": src.get("variable_type") or GLUE_TYPE,
+                    "glue_chain": src.get("chain_names") or [],
+                    "glue_chain_hash": src.get("chain_hash") or "",
+                    "glue_source_record_id": src.get("record_id"),
+                }
+            )
+        else:
+            edges["var_inputs"].append(
+                {
+                    "record_id": in_rid,
+                    "param_name": param_name,
+                    "variable_type": rtype,
+                }
+            )
+    for edges in out.values():
+        edges["var_inputs"].sort(key=lambda d: (d["param_name"], d["record_id"]))
+    return out
+
+
+def invocation_outputs_batch(duck, invocation_ids) -> dict:
+    """``{invocation_id: [(output_num, output_record_id, output_type), ...]}``
+    for many invocations in one pass (the per-invocation query was ~1 s of
+    ``pipeline_variants`` on 843 invocations)."""
+    ids = [i for i in dict.fromkeys(invocation_ids) if i]
+    if not ids:
+        return {}
+    out: dict = {}
+    for inv_id, output_num, out_rid, out_type in _chunked_in(
+        duck,
+        "SELECT io.invocation_id, io.output_num, io.output_record_id, rec.type "
+        "FROM _invocation_output io "
+        "JOIN _record rec ON rec.record_id = io.output_record_id "
+        "WHERE io.invocation_id IN ({ph})",
+        ids,
+    ):
+        out.setdefault(inv_id, []).append((output_num, out_rid, out_type))
+    return out
 
 
 def stored_invocation_signature(duck, record_id: str):
@@ -1914,18 +1981,18 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     )
     configs: dict = {}
     glue_invs = glue_invocation_ids(duck)
+    # A glue hop is not a pipeline step (D5).
+    inv_rows = [row for row in inv_rows if row[0] not in glue_invs]
+    # Every edge of every invocation in one read — this ran three queries per
+    # invocation, once per call site on every canvas build (cleanup-audit F15).
+    edges_by_inv = invocation_edges_batch(duck, [row[0] for row in inv_rows])
     for inv_id, as_table, distribute, across_variants in inv_rows:
-        if inv_id in glue_invs:
-            continue  # a glue hop is not a pipeline step (D5)
-        var_inputs, constants = invocation_inputs(duck, inv_id)
+        edges = edges_by_inv.get(inv_id) or {}
+        var_inputs = edges.get("var_inputs", [])
+        constants = edges.get("constants", {})
         pooled = sorted(across_variants or [])
-        # selectors per param from the edges
-        sel_rows = duck._fetchall(
-            "SELECT param_name, selector FROM _invocation_input "
-            "WHERE invocation_id = ? AND selector IS NOT NULL",
-            [inv_id],
-        )
-        selectors = dict(sel_rows)
+        # selectors per param from the edges (raw JSON strings)
+        selectors = dict(edges.get("selectors", {}))
         input_types = {i["param_name"]: i["variable_type"] for i in var_inputs}
         # Glue chains fed into this param, recovered from the virtual record's
         # producing invocation. Part of the config key: two call sites differing
@@ -1935,7 +2002,7 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
             for i in var_inputs
             if i.get("glue_chain")
         }
-        path_inputs = invocation_path_inputs(duck, inv_id)
+        path_inputs = dict(edges.get("path_inputs", {}))
         at = sorted(as_table) if as_table else []
         key = (
             tuple(sorted(input_types.items())),
@@ -2294,9 +2361,9 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     from .foreach_config import CallSite, RunOptions
     from .log import Log
 
-    # Per-query-kind totals: this loop issues several queries PER INVOCATION
-    # and was ~2.8 s of a 10 s canvas build (cleanup-audit §4.1, F16). The
-    # [timing] line says which query kind to batch first.
+    # Per-phase totals. Until 2026-09-24 this loop issued four queries PER
+    # INVOCATION (~4.8 s on 843 invocations, cleanup-audit F15/F16); every
+    # phase is now one batched read.
     timings: dict[str, float] = {}
 
     def _add(phase: str, t0: float) -> None:
@@ -2312,13 +2379,27 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     groups: dict = {}  # group_key -> info dict
     group_records: dict = {}  # group_key -> set(output_record_id)
     glue_invs = glue_invocation_ids(duck)
+    # A glue hop is not a pipeline step (D5).
+    inv_rows = [row for row in inv_rows if row[0] not in glue_invs]
+    step_ids = [row[0] for row in inv_rows]
+    _t = _time.perf_counter()
+    edges_by_inv = invocation_edges_batch(duck, step_ids)
+    _add("invocation_edges", _t)
+    _t = _time.perf_counter()
+    outputs_by_inv = invocation_outputs_batch(duck, step_ids)
+    _add("outputs", _t)
+    _no_edges = {
+        "var_inputs": [],
+        "constants": {},
+        "path_inputs": {},
+        "selectors": {},
+        "declared_names": {},
+    }
 
+    _t_group = _time.perf_counter()
     for inv_id, fn_name, as_table, distribute, across_variants, fn_hash in inv_rows:
-        if inv_id in glue_invs:
-            continue  # a glue hop is not a pipeline step (D5)
-        _t = _time.perf_counter()
-        var_inputs, constants = invocation_inputs(duck, inv_id)
-        _add("invocation_inputs", _t)
+        edges = edges_by_inv.get(inv_id, _no_edges)
+        var_inputs, constants = edges["var_inputs"], edges["constants"]
         input_types = {i["param_name"]: i["variable_type"] for i in var_inputs}
         pooled = sorted(across_variants or [])
         # The column selections the call used (`_invocation_input.selector`,
@@ -2326,29 +2407,18 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         # history re-runs with the columns it ran with — a Python
         # `Var["col"]` was invisible to the GUI's Run button until 2026-09-19.
         #
-        # The same query reads `declared_name`: which declared Parameter fed
-        # a constant argument (cleanup-audit B1). One query, not two, on a
-        # loop that already runs several per invocation.
-        selectors: dict = {}
-        parameter_names: dict = {}
-        _t = _time.perf_counter()
-        for param, sel, declared in duck._fetchall(
-            "SELECT param_name, selector, declared_name FROM _invocation_input "
-            "WHERE invocation_id = ? "
-            "AND (selector IS NOT NULL OR declared_name IS NOT NULL)",
-            [inv_id],
-        ):
-            if sel is not None:
-                selectors[param] = json.loads(sel)
-            if declared is not None and param in constants:
-                parameter_names[param] = declared
-        _add("selectors", _t)
+        # The same edges carry `declared_name`: which declared Parameter fed
+        # a constant argument (cleanup-audit B1).
+        selectors = {p: json.loads(sel) for p, sel in edges["selectors"].items()}
+        parameter_names = {
+            p: declared
+            for p, declared in edges["declared_names"].items()
+            if p in constants
+        }
         # PathInput specs ride in input_types as their to_key() JSON string —
         # preserves the legacy contract (get_aggregated_variants parses them) and
         # call_id parity (forward to_call_id includes them in __inputs).
-        _t = _time.perf_counter()
-        input_types.update(invocation_path_inputs(duck, inv_id))
-        _add("path_inputs", _t)
+        input_types.update(edges["path_inputs"])
         glue_names = {
             i["param_name"]: list(i["glue_chain"])
             for i in var_inputs
@@ -2362,15 +2432,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         # redesign). So two for_each calls differing only by where= are the same
         # config variant here.
 
-        _t = _time.perf_counter()
-        out_rows = duck._fetchall(
-            "SELECT io.output_num, io.output_record_id, rec.type "
-            "FROM _invocation_output io JOIN _record rec ON rec.record_id = io.output_record_id "
-            "WHERE io.invocation_id = ?",
-            [inv_id],
-        )
-        _add("outputs", _t)
-        for output_num, out_rid, out_type in out_rows:
+        for output_num, out_rid, out_type in outputs_by_inv.get(inv_id, ()):
             if output_type is not None and out_type != output_type:
                 continue
             # `output_num` is NOT part of the key (2026-09-22). It names which
@@ -2465,6 +2527,8 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                 if output_num is not None and (prev is None or output_num < prev):
                     groups[gkey]["output_num"] = output_num
             group_records[gkey].add(out_rid)
+
+    _add("group", _t_group)
 
     _t = _time.perf_counter()
     annotated = _annotate_variants(duck, groups, group_records)
@@ -3393,6 +3457,7 @@ def expected_invocations_for_function(
     inputs_fallback: dict | None = None,
     call_id: str | None = None,
     glue_fallback: dict | None = None,
+    _timings: dict | None = None,
 ) -> set:
     """Expected ``{(invocation_id, schema_id)}`` pairs for ``fn_name`` (§9c).
 
@@ -3428,10 +3493,20 @@ def expected_invocations_for_function(
     Callers reading this function directly get the graph's answer and should
     not present it as node state.
     """
+    import time as _time
+
     duck = db._duck
     expected: set = set()
+    # Sub-phases for the caller's [timing] line (`state.check_node_state`):
+    # this function was 5 s of a 6 s node-state pass (cleanup-audit F15).
+    timings = _timings if _timings is not None else {}
 
+    def _add(phase: str, t0: float) -> None:
+        timings[phase] = timings.get(phase, 0.0) + (_time.perf_counter() - t0)
+
+    _t = _time.perf_counter()
     configs = function_variant_configs(duck, fn_name)
+    _add("expected.variant_configs", _t)
     if call_id is not None:
         matched = [c for c in configs if config_call_id(fn_name, c) == call_id]
         logger.debug(
@@ -3452,14 +3527,18 @@ def expected_invocations_for_function(
     # `expected`, the node reports needs-run, and re-running refills it under
     # the new hash. Without the restriction a PathInput-only loader could never
     # go red however much its code changed.
+    _t = _time.perf_counter()
     realized = realized_inputless_invocations(duck, fn_name, fn_hash)
     if call_id is not None:
         realized = {(i, s) for i, s in realized if i in scoped_inv_ids}
     expected |= realized
+    _add("expected.realized_inputless", _t)
 
     # (b) live prediction per known variant config × current input data
+    _t = _time.perf_counter()
     for cfg in configs:
         _predict_config_invocations(duck, fn_hash, cfg, expected)
+    _add("expected.predict", _t)
 
     # (c) live prediction from the declared inputs — the NEVER-RUN fallback,
     # and only that. A declaration says which types feed which parameters; it
@@ -3481,7 +3560,9 @@ def expected_invocations_for_function(
         fallback_cid = config_call_id(fn_name, fallback_cfg)
         already_run = any(config_call_id(fn_name, c) == fallback_cid for c in configs)
         if (call_id is None or fallback_cid == call_id) and not already_run:
+            _t = _time.perf_counter()
             _predict_config_invocations(duck, fn_hash, fallback_cfg, expected)
+            _add("expected.predict", _t)
         elif already_run:
             logger.debug(
                 "expected_invocations(%s): declared inputs match a recorded "

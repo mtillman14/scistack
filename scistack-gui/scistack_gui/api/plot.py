@@ -21,6 +21,12 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/plot/variant-sets             plot_variant_sets_save
     POST /api/plot/save                     plot_save_start
     POST /api/plot/invalidate               plot_invalidate
+    POST /api/plot/saved/list               plot_saved_list
+    POST /api/plot/saved/save               plot_saved_save
+    POST /api/plot/saved/open               plot_saved_open
+    POST /api/plot/saved/rename             plot_saved_rename
+    POST /api/plot/saved/hide               plot_saved_hide
+    POST /api/plot/saved/history            plot_saved_history
     POST /api/client-error                  report_client_error
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
@@ -43,7 +49,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from scistack_gui.api.handlers import Handler, install_routes
-from scistack_gui.services import plot_service
+from scistack_gui.services import plot_service, saved_plot_service
 from scistack_gui.services.client_errors import report_client_error
 
 logger = logging.getLogger(__name__)
@@ -146,6 +152,45 @@ class SaveRequest(BaseModel):
 class VariantSetsRequest(BaseModel):
     variable: str
     variant_sets: list[dict] | None = None
+
+
+class SavedListRequest(BaseModel):
+    variable: str
+
+
+class SavedSaveRequest(BaseModel):
+    variable: str
+    name: str
+    spec: dict
+    #: The panel's own view settings (preview mode, aspect choice, figure
+    #: index), stored verbatim; the frontend owns their meaning.
+    view: dict | None = None
+    #: False: saving onto a DIFFERENT plot's name comes back as a question
+    #: (`{"ok": False, "exists": ...}`) instead of adding a version to it.
+    overwrite: bool | None = True
+    #: The plot the panel has open. Saving under its own name is never a question.
+    current_plot_id: str | None = None
+
+
+class SavedOpenRequest(BaseModel):
+    plot_id: str
+    #: None opens the newest version.
+    version: int | None = None
+
+
+class SavedRenameRequest(BaseModel):
+    plot_id: str
+    name: str
+
+
+class SavedHideRequest(BaseModel):
+    plot_id: str
+    #: False un-hides. "Remove" never deletes (feedback_never_delete_mark_hidden).
+    hidden: bool | None = True
+
+
+class SavedHistoryRequest(BaseModel):
+    plot_id: str
 
 
 class ClientErrorRequest(BaseModel):
@@ -278,6 +323,38 @@ def _invalidate(db) -> dict:
     return plot_service.invalidate(db)
 
 
+def _saved_list(db, req: SavedListRequest) -> dict:
+    return saved_plot_service.list_plots(db, req.variable)
+
+
+def _saved_save(db, req: SavedSaveRequest) -> dict:
+    return saved_plot_service.save(
+        db,
+        req.variable,
+        req.name,
+        req.spec,
+        req.view,
+        overwrite=req.overwrite is not False,
+        current_plot_id=req.current_plot_id,
+    )
+
+
+def _saved_open(db, req: SavedOpenRequest) -> dict:
+    return saved_plot_service.open_plot(db, req.plot_id, req.version)
+
+
+def _saved_rename(db, req: SavedRenameRequest) -> dict:
+    return saved_plot_service.rename(db, req.plot_id, req.name)
+
+
+def _saved_hide(db, req: SavedHideRequest) -> dict:
+    return saved_plot_service.hide(db, req.plot_id, req.hidden is not False)
+
+
+def _saved_history(db, req: SavedHistoryRequest) -> dict:
+    return saved_plot_service.history(db, req.plot_id)
+
+
 def _client_error(req: ClientErrorRequest) -> dict:
     """The webview caught a render error; write it into the shared log."""
     return report_client_error(req.model_dump())
@@ -357,6 +434,35 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
         db_optional=True,
     ),
     Handler("plot_invalidate", "/plot/invalidate", None, _invalidate),
+    # Saved plots (.claude/plan-saved-plots.md). Not db_optional: a CSV has
+    # nowhere to keep them. The quick reads/writes keep the blanket hold;
+    # `plot_saved_open` loads the plot's data frames too, so it takes the
+    # connection itself for just that window (the 2026-09-11 rule above).
+    # `SavedPlotError` is a ValueError, so a refused name is a 400.
+    Handler(
+        "plot_saved_list", "/plot/saved/list", SavedListRequest, _saved_list,
+        http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_saved_save", "/plot/saved/save", SavedSaveRequest, _saved_save,
+        http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_saved_open", "/plot/saved/open", SavedOpenRequest, _saved_open,
+        holds_db_lock=False, http_errors={**_BAD_REQUEST, **_NOT_INSTALLED},
+    ),
+    Handler(
+        "plot_saved_rename", "/plot/saved/rename", SavedRenameRequest,
+        _saved_rename, http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_saved_hide", "/plot/saved/hide", SavedHideRequest, _saved_hide,
+        http_errors=_BAD_REQUEST,
+    ),
+    Handler(
+        "plot_saved_history", "/plot/saved/history", SavedHistoryRequest,
+        _saved_history, http_errors=_BAD_REQUEST,
+    ),
     # Touches no database at all — it only writes a log line, and must still
     # work while MATLAB holds the file (that is exactly when a webview crash
     # is worth hearing about).

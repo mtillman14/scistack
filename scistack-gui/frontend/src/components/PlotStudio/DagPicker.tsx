@@ -55,8 +55,12 @@ export function usePipelineCanvas() {
     let cancelled = false
     ;(async () => {
       try {
+        // Without run states: a picker draws none, and the state check is
+        // most of what a graph build costs (~6 s of 11 s on a real database,
+        // cleanup-audit F15) — the popup would wait for colours it never shows.
         const pipeline = (await callBackend('get_pipeline', {
           pipeline_id: 'main',
+          run_states: false,
         })) as { nodes: Node[]; edges: Edge[] }
         const layout = (await callBackend('get_layout', {
           pipeline_id: 'main',

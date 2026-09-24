@@ -649,6 +649,43 @@ def describe_span(span: dict) -> str:
     return f"{span['function']}: {'; '.join(parts)}"
 
 
+def stale_role_names(
+    spec: PlotSpec, table: LongTable, derived: LongTable
+) -> tuple[list[str], list[str]]:
+    """The spec's role names that no longer name a factor, as
+    ``(answered, missing)``.
+
+    *answered*: a factor of the raw table that a variant claimed, so it is gone
+    from ``derived``. *missing*: a factor of NEITHER table.
+
+    This is the one statement of the rule. :func:`strip_answered_roles` acts on
+    it at every resolve, and ``restore.reconcile`` reports it when a saved plot
+    is reopened. Two copies of the predicate would disagree about what "stale"
+    means.
+    """
+    answered = [
+        name
+        for name in spec.roles
+        if table.has_factor(name) and not derived.has_factor(name)
+    ]
+    # A role for a factor NEITHER table has. Until 2026-09-19 this was left
+    # for `validate` to refuse as a typo. In the panel that refusal cannot be
+    # fixed: the factor is not listed, so its role cannot be removed -- the
+    # case being a spec saved against a deeper variable, reopened after the
+    # variable moved to a coarser level (the integration suite, plan B9).
+    # Dropped with a WARN instead, so the figure draws and the log says what
+    # was ignored. `validate` still refuses it for a direct library caller.
+    # In NEITHER table: a derived factor (a level group's `Phase`, the
+    # `Variant` axis) exists only in `derived`, and must not be mistaken for
+    # a missing one.
+    missing = [
+        name
+        for name in spec.roles
+        if not table.has_factor(name) and not derived.has_factor(name)
+    ]
+    return answered, missing
+
+
 def strip_answered_roles(
     spec: PlotSpec, table: LongTable, derived: LongTable
 ) -> PlotSpec:
@@ -672,26 +709,7 @@ def strip_answered_roles(
     ``color`` would fail ``validate``'s "colour names a grouping layer" rule
     for a factor the user never un-coloured.
     """
-    stale = [
-        name
-        for name in spec.roles
-        if table.has_factor(name) and not derived.has_factor(name)
-    ]
-    # A role for a factor NEITHER table has. Until 2026-09-19 this was left
-    # for `validate` to refuse as a typo. In the panel that refusal cannot be
-    # fixed: the factor is not listed, so its role cannot be removed -- the
-    # case being a spec saved against a deeper variable, reopened after the
-    # variable moved to a coarser level (the integration suite, plan B9).
-    # Dropped with a WARN instead, so the figure draws and the log says what
-    # was ignored. `validate` still refuses it for a direct library caller.
-    # In NEITHER table: a derived factor (a level group's `Phase`, the
-    # `Variant` axis) exists only in `derived`, and must not be mistaken for
-    # a missing one.
-    missing = [
-        name
-        for name in spec.roles
-        if not table.has_factor(name) and not derived.has_factor(name)
-    ]
+    stale, missing = stale_role_names(spec, table, derived)
     if missing:
         Log.warn(
             "role(s) for %s ignored -- not factors of this table (%s)",

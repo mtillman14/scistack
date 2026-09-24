@@ -115,11 +115,14 @@ def test_scalar_variable_resolves_to_a_box_plot(seeded):
     assert resolved.row_count == 12
     # Colour is paint (2026-09-21): the coloured subject layer keeps its tick
     # layer, so the x axis is session x subject, sessions outermost.
-    from scistackplot.xaxis import LEAF_SEPARATOR
+    from scistackplot.xaxis import LEAF_SEPARATOR, is_spacer
 
-    outer = [x.split(LEAF_SEPARATOR)[0] for x in resolved.x_order]
+    # A nested axis puts spacer slots between blocks (xaxis.SPACER_PREFIX);
+    # they are positions, not ticks.
+    ticks = [x for x in resolved.x_order if not is_spacer(x)]
+    outer = [x.split(LEAF_SEPARATOR)[0] for x in ticks]
     assert set(outer) == {"pre", "post"}
-    assert len(resolved.x_order) == 2 * len(SUBJECTS)
+    assert len(ticks) == 2 * len(SUBJECTS)
 
 
 def test_1d_variable_explodes_into_samples(seeded):

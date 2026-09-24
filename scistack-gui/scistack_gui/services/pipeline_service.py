@@ -17,7 +17,9 @@ from scistack_gui.ids import ROOT_SCOPE
 logger = logging.getLogger(__name__)
 
 
-def get_pipeline_graph(db, pipeline_id: str = ROOT_SCOPE) -> dict:
+def get_pipeline_graph(
+    db, pipeline_id: str = ROOT_SCOPE, *, run_states: bool = True
+) -> dict:
     """Build the pipeline graph (nodes + edges) for one SCOPE.
 
     Delegates to api/pipeline._build_graph which already orchestrates
@@ -33,7 +35,7 @@ def get_pipeline_graph(db, pipeline_id: str = ROOT_SCOPE) -> dict:
     from scistack_gui.api.pipeline import _build_graph
 
     try:
-        return _build_graph(db, pipeline_id)
+        return _build_graph(db, pipeline_id, run_states=run_states)
     except Exception:
         logger.exception(
             "[pipeline] graph build FAILED (scope=%s) — see traceback", pipeline_id
