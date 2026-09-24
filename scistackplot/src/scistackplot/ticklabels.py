@@ -120,7 +120,7 @@ class LabelPolicy:
     #: Clear space required between neighbouring labels.
     pad_pt: float = 2.0
     #: Settings the user fixed (``StyleOptions.tick_rotation`` /
-    #: ``tick_font_size`` / ``tick_every``). A pinned value is used as given
+    #: ``text.x_ticks`` or ``text.groups`` / ``tick_every``). A pinned value is used as given
     #: and never searched; the rest of the ladder still runs around it.
     #: A pinned ``every`` thins even names: the user asked for it.
     pin_rotation: int | None = None

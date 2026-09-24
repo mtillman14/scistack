@@ -1104,6 +1104,7 @@ def _render_scistack_toml(
     matlab_variable_dir,
     matlab_entities_file=None,
     schema_keys: dict | None = None,
+    aliases: dict | None = None,
 ) -> str:
     """Render a complete scistack.toml from known [tool.scistack] fields.
 
@@ -1161,6 +1162,16 @@ def _render_scistack_toml(
         for key, levels in schema_keys.items():
             if isinstance(levels, (list, tuple)):
                 lines.append(f"{key} = {_toml_array(list(levels))}")
+    # `[aliases]` likewise: display names every plot reads (scidb.aliases).
+    # Tables only, so it is safe here, after [schema_keys]; scidb owns the
+    # grammar, so the text comes from its renderer, never from this module.
+    if aliases:
+        from scidb.aliases import render_aliases_table
+
+        rendered = render_aliases_table(aliases)
+        if rendered:
+            lines.append("")
+            lines.append(rendered.rstrip("\n"))
     lines.append("")
     return "\n".join(lines)
 
@@ -1322,6 +1333,7 @@ def add_path(db_path: Path, new_path: Path) -> Path:
         # would otherwise be DELETED by the Paths popup, which rewrites the
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
+        aliases=section.get("aliases"),
     )
     target_path.write_text(content)
     logger.info("[config] add_path: wrote %s (added %s)", target_path, new_str)
@@ -1383,6 +1395,7 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
         # would otherwise be DELETED by the Paths popup, which rewrites the
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
+        aliases=section.get("aliases"),
     )
     toml_path.write_text(content)
     logger.info("[config] remove_path: wrote %s (removed %s)", toml_path, target)
@@ -1542,6 +1555,7 @@ def set_entities_file(
         # would otherwise be DELETED by the Paths popup, which rewrites the
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
+        aliases=section.get("aliases"),
     )
     target_path.write_text(content)
     logger.info(
@@ -1631,6 +1645,7 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
         # would otherwise be DELETED by the Paths popup, which rewrites the
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
+        aliases=section.get("aliases"),
     )
     target_path.write_text(content)
     logger.info(
@@ -1685,6 +1700,7 @@ def clear_entities_file(db_path: Path) -> Path:
         # would otherwise be DELETED by the Paths popup, which rewrites the
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
+        aliases=section.get("aliases"),
     )
     toml_path.write_text(content)
     logger.info(
@@ -1693,3 +1709,83 @@ def clear_entities_file(db_path: Path) -> Path:
         toml_path,
     )
     return toml_path
+
+
+#: Sentinel for "leave the name alone" in :func:`set_project_alias` — None
+#: means "clear it".
+_UNCHANGED = object()
+
+
+def set_project_alias(
+    db_path: Path,
+    thing: str,
+    *,
+    name: "str | None | object" = _UNCHANGED,
+    level: "str | None" = None,
+    alias: "str | None" = None,
+) -> dict:
+    """Set or clear one PROJECT display alias in scistack.toml's ``[aliases]``
+    and return the table as written.
+
+    ``name=`` sets (text) or clears (None/"") the thing's own name;
+    ``level=`` + ``alias=`` sets or clears one level's alias. The edit itself
+    is ``scidb.aliases.with_alias`` and the TOML text is
+    ``scidb.aliases.render_aliases_table``, through this module's whole-file
+    writer (``_render_scistack_toml``), so everything else in the file comes
+    back as it was. Loose-script projects only: a pyproject.toml is edited by
+    hand, and a project with no config file is refused rather than given
+    one (creating the first file switches discovery modes — ``add_path``'s
+    job, not an alias's).
+    """
+    from scidb import aliases as _aliases
+
+    logger.info(
+        "[config] set_project_alias: thing=%r name=%s level=%r alias=%r",
+        thing,
+        "(unchanged)" if name is _UNCHANGED else repr(name),
+        level,
+        alias,
+    )
+    project_root = resolve_project_root(None, db_path)
+    toml_path = locate_config_at(project_root)
+    if toml_path is None:
+        raise FileNotFoundError(
+            f"No scistack.toml at {project_root}. Aliases can only be saved to "
+            "a project config; set this one for the plot instead."
+        )
+    if toml_path.name == "pyproject.toml":
+        raise ValueError(
+            f"Packaged project ({toml_path}): the GUI does not edit "
+            f"pyproject.toml. Add it by hand under [tool.scistack.aliases."
+            f"{thing}], or set it for this plot instead."
+        )
+
+    section = _load_raw_scistack_section(toml_path)
+    edit = {} if name is _UNCHANGED else {"name": name or None}
+    table = _aliases.with_alias(section.get("aliases"), thing, level=level, alias=alias, **edit)
+    matlab_section = dict(section.get("matlab", {}))
+    content = _render_scistack_toml(
+        modules=list(section.get("modules", [])),
+        entities_file=section.get("entities_file"),
+        glue_dir=section.get("glue_dir"),
+        variable_file=section.get("variable_file"),
+        packages=list(section.get("packages", [])),
+        auto_discover=section.get("auto_discover", True),
+        matlab_functions=list(matlab_section.get("functions", [])),
+        matlab_variables=list(matlab_section.get("variables", [])),
+        matlab_sources=list(matlab_section.get("sources", [])),
+        matlab_variable_dir=matlab_section.get("variable_dir"),
+        matlab_entities_file=matlab_section.get("entities_file"),
+        schema_keys=section.get("schema_keys"),
+        aliases=table,
+    )
+    toml_path.write_text(content)
+    # The reader caches on mtime; two writes inside one filesystem tick would
+    # read as one version. Forget the parse so the next figure sees this one.
+    _aliases.clear_cache()
+    logger.info(
+        "[config] set_project_alias: wrote %s ([aliases] now %s)",
+        toml_path,
+        _aliases.describe(table) or "empty",
+    )
+    return table

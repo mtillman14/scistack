@@ -21,6 +21,7 @@ from typing import Any
 
 import pandas as pd
 
+from .aliases import DisplayText
 from .spec import PlotKind, PlotSpec
 
 #: Canonical column names inside a panel frame. Renderers address these, never
@@ -262,6 +263,16 @@ class ResolvedPlot:
     #: enumeration).
     sample_color: str | None = None
     sample_color_order: list[Any] = field(default_factory=list)
+    #: How every level and name READS in this figure (``aliases.DisplayText``:
+    #: the plot's aliases over the project's). Renderers draw text through
+    #: this and never stringify a level themselves; every identity above
+    #: (keys, orders, offsets) stays raw. Empty reads everything raw.
+    text: DisplayText = field(default_factory=DisplayText)
+    #: What the GUI's Labels section offers for this figure (``aliases.labelable``):
+    #: the measure and every factor drawn as text, each with its alias key,
+    #: name and levels as ``{raw, text, origin}``. Shipped as
+    #: ``layout.meta.labelable``; the panel never derives the list.
+    labelable: list[dict] = field(default_factory=list)
 
     @property
     def figure_label(self) -> str:
@@ -335,6 +346,9 @@ class ResolvedPlot:
                 {
                     "key": {k: _jsonable(v) for k, v in panel.key.items()},
                     "title": panel.title,
+                    # The TEXT the renderers draw; `title` above is the identity
+                    # (facet layout rules and logs match it raw).
+                    "display_title": self.text.panel_title(panel.key),
                     "grid_row": panel.grid_row,
                     "grid_col": panel.grid_col,
                     # Per panel, because the figure-level value is absent

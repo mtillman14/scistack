@@ -118,39 +118,41 @@ dpi control is added, the readout must read from it.
   ("Figure size" section, `InchInput`, `setStyle`)
 - Plan: `.claude/figure-size-setting.md`
 
-## Font size (added the same day)
+## Font size (added the same day; per element since 2026-09-24)
 
-`StyleOptions.font_size` (points, default **14** — matplotlib's 10 was
-"far too small" at 8 x 6 in) is matplotlib's `font.size`. That one key is
-enough because every other text size in matplotlib (`axes.labelsize`,
-`xtick.labelsize`, `legend.fontsize`, `figure.titlesize`) defaults to a
-*relative* name — `medium`, `large` — that resolves against `font.size`.
+*Superseded in detail by `plot-text-and-labels.md`, which covers the
+per-element sizes (`StyleOptions.text`). The notes below are what still holds.*
 
-Three things about how it is applied:
+`TextSizes.base` (points, default **14**; matplotlib's 10 was "far too small"
+at 8 x 6 in) is matplotlib's `font.size`. Every other element is either fixed
+or derived from it with matplotlib's own ratios, by the one owner
+`scistackplot.textsize`. The single `font_size` / `tick_font_size` fields were
+replaced as a clean break.
+
+How it is applied:
 
 - **`rc_context`, never `rcParams`.** `render_matplotlib` runs inside the GUI
-  server and inside `for_each`; a global `font.size` would resize the next
-  figure anyone draws. The generated function is wrapped the same way —
-  `with plt.rc_context({"font.size": N}):` — which is why the body of a
+  server and inside `for_each`; a global rc would resize the next figure
+  anyone draws. The generated function is wrapped the same way, with
+  `with plt.rc_context({...textsize.rc_params...}):`. That is why the body of a
   generated `plot_` function is indented one level deeper than the imports.
-- **Text reads the size at creation.** `FontProperties` resolves `"medium"`
-  to points when the artist is made, so the context must be open while every
+- **Text reads the size at creation.** The context must be open while every
   label, tick and legend entry is created, and it is: the whole timer body is
   under it. Ticks that matplotlib creates *later* (at `savefig`, outside the
   context) copy their properties from tick 0, which `tight_layout` forced into
   existence inside the context. `test_fontsize.py` saves to a `BytesIO` first
   and then inspects the sizes, precisely to cover that path.
-- **Explicit sizes are relative.** The nested-x group labels were
-  `fontsize=9`; they are `fontsize="small"` now. A fixed point size anywhere
-  in the renderer is a label that ignores the setting.
+- **No renderer derives its own size.** Every size comes from
+  `resolve_sizes`. The plotly bracket labels were `0.8 x` while matplotlib's
+  were `small` (0.833 x): two owners of one number, now one.
 
-The plotly preview gets `layout.font.size = font_size` from the renderer and
-the GUI adds only the colour (`{...layout.font, color: '#ccc'}`). Points and
-px are not the same unit, but one number in both places means the text box
-does something visible before a save. The sidebar thumbnail
-(`VariablePlot.tsx`) keeps its own fixed 10 px — it is not a preview of the
-export.
+The plotly preview gets `layout.font.size = text.base` and the per-element
+fonts from the renderer; the GUI adds only the colour
+(`{...layout.font, color: '#ccc'}`). Points and px are not the same unit, but
+one number in both places means the text box does something visible before a
+save. The sidebar thumbnail (`VariablePlot.tsx`) keeps its own fixed 10 px,
+because it is not a preview of the export.
 
-The GUI box is "Font (pt)" in the Figure size section, a
+The GUI box is "Font (pt)" in the Figure size section (writes `text.base`), a
 `PositiveNumberInput` like width and height (0 pt is a matplotlib error, not
 a size).

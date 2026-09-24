@@ -21,6 +21,7 @@ import pytest
 
 from scistackplot import (
     Aggregation,
+    Alias,
     ErrorBand,
     FacetOptions,
     FactorVariable,
@@ -37,6 +38,7 @@ from scistackplot import (
     Role,
     Statistic,
     StyleOptions,
+    TextSizes,
     VariantSet,
     YAxis,
     reconcile,
@@ -80,7 +82,17 @@ def full_spec() -> PlotSpec:
             palette="viridis",
             width=7.2,
             height=4.5,
-            font_size=10.0,
+            text=TextSizes(
+                base=10.0,
+                title=16.0,
+                x_label=11.0,
+                y_label=12.0,
+                x_ticks=9.0,
+                y_ticks=8.5,
+                groups=7.5,
+                legend=9.5,
+                legend_title=10.5,
+            ),
             log_x=True,
             log_y=True,
             title="Step length",
@@ -90,9 +102,9 @@ def full_spec() -> PlotSpec:
             alpha=0.5,
             hide_legend_ticks=True,
             tick_rotation=45,
-            tick_font_size=9.0,
             tick_every=2,
         ),
+        aliases={"session": Alias(name="Visit", levels={"01": "One"})},
         filters=[
             Filter(
                 column="subject",
@@ -194,6 +206,32 @@ def test_unknown_style_key_keeps_the_rest_of_style():
     restored = restore_spec(raw)
     assert _paths(restored.notes) == ["style.widht"]
     assert restored.spec.style == full_spec().style
+
+
+def test_pre_text_sizes_font_keys_revert_with_a_note_each():
+    """`font_size` / `tick_font_size` became `style.text` (2026-09-24), a clean
+    break: a plot saved before then opens with default sizes, is told which
+    keys were dropped, and keeps every other style setting."""
+    raw = _through_json(full_spec())
+    del raw["style"]["text"]
+    raw["style"]["font_size"] = 18.0
+    raw["style"]["tick_font_size"] = 9.0
+    restored = restore_spec(raw)
+    assert sorted(_paths(restored.notes, NoteKind.UNKNOWN_SETTING)) == [
+        "style.font_size",
+        "style.tick_font_size",
+    ]
+    assert restored.spec.style.text == TextSizes()
+    assert restored.spec.style.width == full_spec().style.width
+
+
+def test_a_bad_text_size_defaults_only_that_size():
+    raw = _through_json(full_spec())
+    raw["style"]["text"]["legend"] = "huge"
+    restored = restore_spec(raw)
+    assert _paths(restored.notes) == ["style.text.legend"]
+    assert restored.spec.style.text.legend is None
+    assert restored.spec.style.text.title == full_spec().style.text.title
 
 
 def test_a_setting_moved_out_of_a_block_is_reported_by_its_old_path():

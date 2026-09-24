@@ -103,6 +103,7 @@ from .variant import Variant, branch_param
 from . import entities  # noqa: E402
 from . import intent  # noqa: E402
 from . import schema_order  # noqa: E402
+from . import aliases  # noqa: E402
 
 __version__ = "0.1.0"
 
@@ -115,6 +116,7 @@ __all__ = [
     # Intent vs fact: statements about runs, resolved against provenance
     "intent",
     "schema_order",
+    "aliases",
     # Discovery
     "scan_project",
     "scan_package",

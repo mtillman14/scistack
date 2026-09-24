@@ -213,6 +213,18 @@ class ScidbSource(BaseSource):
         values = [str(row[0]) for row in rows]
         return self._ordered(key, values)
 
+    def _aliases_source(self):
+        """Reads the project's ``[aliases]`` through the DatabaseManager on
+        every call (``dataset_aliases``: live, cached on the file's mtime,
+        validated when it changes). scidb owns the grammar; this only hands
+        the parsed table to scistackplot, which cannot import scidb."""
+        db = self._db
+
+        def read() -> dict:
+            return getattr(db, "dataset_aliases", None) or {}
+
+        return read
+
     def _cache_generation(self):
         """The declared ``[schema_keys]`` level order, as a hashable value.
 

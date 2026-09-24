@@ -207,6 +207,43 @@ friends rewrite the whole file from the fields they know, so the table is
 carried across verbatim and emitted last (a TOML table swallows every key after
 it). Tests pin both halves.
 
+## `[aliases]`: display names for figures
+
+Added 2026-09-24. The concept is in `plot-text-and-labels.md`.
+
+```toml
+# scistack.toml
+[aliases.session]                 # one entry per thing: a schema key, a
+name = "Session"                  # variable, "Var.Column", ColName, Variant
+
+[aliases.session.levels]          # its values, keyed by level TEXT (quoted)
+"BL" = "Baseline"
+"01" = "Visit 1"
+
+[aliases."Demographics.Sex"]
+name = "Sex"
+levels = { "F" = "Female", "M" = "Male" }
+
+# pyproject.toml: the same under [tool.scistack.aliases.…]
+```
+
+- **Display only.** Nothing in scidb reads it to decide anything.
+  Plotting shows the aliases, and each plot may override them
+  (`PlotSpec.aliases`).
+- **Owner:** `scidb.aliases` owns the grammar. It is read live, through
+  `DatabaseManager.dataset_aliases`, from the same config `[schema_keys]`
+  comes from (`schema_order.locate_config`). The parse is cached on mtime.
+  WARNs cover unknown names, a schema key and a variable that share a name,
+  and two levels with the same alias. A malformed entry is dropped with a
+  WARN; it never fails the read.
+- **Unlike `[schema_keys]`, it is NOT part of `ScidbSource._cache_generation`.**
+  An edit rebuilds no table. Each table carries a live reader instead.
+- **The GUI round-trips it** through `_render_scistack_toml(aliases=)`, whose
+  `[aliases]` text comes from `scidb.aliases.render_aliases_table`. Inline
+  `levels = {…}` comes back as a `[….levels]` sub-table.
+- **Diagnosing:** `grep "\[aliases\]" scidb.log` shows what was read
+  (`session (name, 2 level(s))`) and any warnings.
+
 ## All fields are optional
 
 Every config field has a sensible default. An empty `scistack.toml` (or a `pyproject.toml` with an empty `[tool.scistack]` section, or even a `pyproject.toml` with no `[tool.scistack]` at all) produces a valid config:

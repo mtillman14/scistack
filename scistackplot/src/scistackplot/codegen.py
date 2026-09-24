@@ -17,10 +17,12 @@ from __future__ import annotations
 import json
 import keyword
 import re
+from dataclasses import dataclass
 from typing import NamedTuple
 
 from scistacklog import Log
 
+from .aliases import DisplayText, check_distinct, display_text
 from .cell import apply_cell_collapse, cell_collapses, effective_shape
 from .groups import apply_level_groups
 from .reduce import plan_layout, x_axis_title
@@ -47,6 +49,7 @@ from .spec import (
     value_spellings,
 )
 from .table import MISSING_LEVEL, LongTable
+from .textsize import rc_params, resolve_sizes
 from .ylimits import eligible_scope, limits_by_scope
 from .variants import (
     LATEST,
@@ -161,9 +164,9 @@ def generate_plot_function(
         "",
         # The body runs under rc_context rather than setting plt.rcParams: this
         # function runs inside a pipeline, and a global font.size would leak
-        # into every figure drawn after it. One key scales every text size
-        # (ticks, labels, legend, title), matching render_matplotlib.
-        f'    with plt.rc_context({{"font.size": {spec.style.font_size}}}):',
+        # into every figure drawn after it. The dict is textsize.rc_params, the
+        # one render_matplotlib opens, so every text size matches.
+        f"    with plt.rc_context({rc_params(resolve_sizes(spec.style))!r}):",
     ]
     # A body line that carries its own newline continues at the body indent,
     # so the extra level has to be applied to the continuation too.
@@ -849,7 +852,9 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
     return lines
 
 
-def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
+def _sample_draw_lines(
+    spec, table: LongTable, roles, shape, text: "DisplayText | None" = None
+) -> list[str]:
     """Draw ``_sample`` on the seaborn grid: each point at its mark's position
     plus its identity's offset — the arithmetic of
     ``render.base.sample_positions`` restated in plain pandas — joined into a
@@ -1012,18 +1017,24 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
         ]
     )
     if overlay_in_legend(spec, sample_color):
-        lines.extend(_sample_legend_lines(spec, sample_color, hue, linestyle))
+        lines.extend(_sample_legend_lines(spec, sample_color, hue, linestyle, text))
     return lines
 
 
-def _sample_legend_lines(spec, sample_color: str, hue: str | None, linestyle: str) -> list[str]:
+def _sample_legend_lines(
+    spec, sample_color: str, hue: str | None, linestyle: str, text: "DisplayText | None" = None
+) -> list[str]:
     """Append the overlay's colour levels to the grid's legend, after the
     hue entries — what ``mpl._sample_legend_handles`` draws. seaborn's own
     legend is rebuilt with the entries merged rather than a second legend
     added beside it, and the title names both keys (``a / b``)."""
     from .render.base import SAMPLE_EDGE_COLOR
 
-    title = f"{hue} / {sample_color}" if hue else sample_color
+    # The keys' display names (name aliases), as the preview's legend title.
+    text = text or DisplayText()
+    hue_name = text.name(hue, hue) if hue else None
+    sample_name = text.name(sample_color, sample_color)
+    title = f"{hue_name} / {sample_name}" if hue else sample_name
     return [
         "# overlay legend: the marks' hue entries, then one per "
         f"{sample_color} (render.base.shows_legend: only past one level)",
@@ -1180,9 +1191,168 @@ def _seaborn_can_express_layout(spec, table: LongTable, roles) -> bool:
     return bool(levels) and plan_layout(levels, spec.facet).fills_row_major
 
 
+@dataclass(frozen=True)
+class _ExportAliases:
+    """The display aliases the exported figure applies — merged NOW, from the
+    plot's and the project's (``aliases.display_text``), and baked in as a
+    literal: a ``plot_`` step reading ``scistack.toml`` at run time would be a
+    hidden input outside lineage (the same reasoning as the literal ``ylim``).
+    A project alias edit reaches an exported step when it is re-exported.
+
+    TEXT only, like the renderers: every level in ``df``, every emitted order,
+    offset and palette key stays raw, and the drawn text is relabelled at the
+    end (:func:`_alias_relabel_lines`). Renaming the data instead would mean
+    translating every raw literal this module emits (``col_order``, the
+    nested ``order``, the declared orders, spaghetti positions) and would move
+    the dash styles, which the preview assigns by sorting the RAW ids.
+    """
+
+    #: ``{factor: {raw level: alias}}`` — drawn factors, differing text only.
+    levels: dict[str, dict[str, str]]
+    x_layers: list[str]
+    color: str | None
+    sample_color: str | None
+    #: Outermost first, as ``_dash`` ids are composed.
+    dash_layers: list[str]
+    facets: list[str]
+    text: DisplayText
+
+    def aliased(self, *factors: str | None) -> bool:
+        return any(self.levels.get(f) for f in factors if f)
+
+
+def _export_aliases(spec, table: LongTable, roles, shape) -> _ExportAliases:
+    """The aliases of every factor the exported figure draws as text.
+
+    Refuses (``aliases.check_distinct``) exactly what the preview refuses, so
+    a spec cannot export a figure whose marks read the same.
+    """
+    text = display_text(spec, table)
+    x = _x_expression(spec, table, roles, shape)
+    nested = _nested_x_layers(spec, table, roles, shape)
+    x_layers = nested or ([x] if table.has_factor(x) else [])
+    color = _color_of(spec, table, roles, shape)
+    sample_color = _sample_color_of(spec, table, roles, shape)
+    grouping = grouping_layers(spec, table, roles, spec.kind, shape=shape)
+    dash_layers = (
+        list(reversed([n for n in grouping.series if n != grouping.color and table.has_factor(n)]))
+        if _uses_dashes(spec, table, roles, shape)
+        else []
+    )
+    facets = [name for name, role in roles.items() if role is Role.FACET]
+    drawn = [*x_layers, color, sample_color, *dash_layers, *facets]
+    check_distinct(text, table, drawn)
+    levels: dict[str, dict[str, str]] = {}
+    for factor in dict.fromkeys(f for f in drawn if f and table.has_factor(f)):
+        changed = {
+            str(level): text.level(factor, level)
+            for level in table.factor(factor).levels
+            if text.level(factor, level) != str(level)
+        }
+        if changed:
+            levels[factor] = changed
+    return _ExportAliases(
+        levels=levels,
+        x_layers=x_layers,
+        color=color,
+        sample_color=sample_color,
+        dash_layers=dash_layers,
+        facets=facets,
+        text=text,
+    )
+
+
+def _alias_definition_lines(aliases: _ExportAliases) -> list[str]:
+    """The literal map and the one lookup every relabel goes through. Nothing
+    is emitted when no drawn factor has an alias."""
+    if not aliases.levels:
+        return []
+    return [
+        "# display aliases (the project's [aliases] and this plot's, merged at",
+        "# export): the TEXT drawn, never the data. Levels, orders and offsets",
+        "# stay raw, and the drawn labels are relabelled after drawing.",
+        f"_aliases = {aliases.levels!r}",
+        "def _alias(factor, value):",
+        "    return _aliases.get(factor, {}).get(str(value), str(value))",
+    ]
+
+
+def _alias_relabel_lines(aliases: _ExportAliases, x_categorical: bool) -> list[str]:
+    """Relabel the drawn x ticks and legend entries through ``_alias``.
+
+    Runs after everything that draws or rebuilds text (the overlay rebuilds
+    the legend) and before the fitted-tick replay, which then works on the
+    aliased labels — the ones the preview fitted.
+    """
+    lines: list[str] = []
+    layers = aliases.x_layers
+    if x_categorical and aliases.aliased(*layers):
+        if len(layers) > 1:
+            text = (
+                f"lambda t: {_NESTED_JOIN!r}.join(_alias(f, p) for f, p in "
+                f"zip({layers!r}, t.split({_NESTED_JOIN!r}))) "
+                f"if t.count({_NESTED_JOIN!r}) == {len(layers) - 1} else t"
+            )
+        else:
+            text = f"lambda t: _alias({layers[0]!r}, t)"
+        lines.extend(
+            [
+                f"_x_text = {text}",
+                "g.figure.canvas.draw()  # categorical tick labels exist once drawn",
+                "for _ax in g.axes.flat:",
+                "    _ax.set_xticks(_ax.get_xticks())",
+                "    _ax.set_xticklabels([_x_text(t.get_text()) for t in _ax.get_xticklabels()])",
+            ]
+        )
+    dashes = aliases.aliased(*aliases.dash_layers)
+    # seaborn names its legend by COLUMN: a catplot's title is the hue
+    # column, a relplot with hue and style lists the columns as entries.
+    # Those read as the preview's legend titles (`Labels.color` / `.dash`).
+    names: dict[str, str] = {}
+    for factor in (aliases.color, aliases.sample_color):
+        if factor and aliases.text.name(factor, factor) != factor:
+            names[factor] = aliases.text.name(factor, factor)
+    if aliases.dash_layers:
+        dash_title = " / ".join(aliases.text.name(n, n) for n in aliases.dash_layers)
+        if dash_title != " / ".join(aliases.dash_layers):
+            names[_DASH_COLUMN] = dash_title
+    if aliases.aliased(aliases.color, aliases.sample_color) or dashes or names:
+        # Levels win over names; the marks' colour levels win a text the
+        # overlay's key shares.
+        entries = {
+            **names,
+            **aliases.levels.get(aliases.sample_color or "", {}),
+            **aliases.levels.get(aliases.color or "", {}),
+        }
+        lines.extend(
+            [
+                f"_legend_text = {entries!r}",
+                "if g.legend is not None:",
+                "    _title = g.legend.get_title()",
+                "    if _title.get_text() in _legend_text:",
+                "        _title.set_text(_legend_text[_title.get_text()])",
+                "    for _t in g.legend.get_texts():",
+                "        _raw = _t.get_text()",
+                "        if _raw in _legend_text:",
+                "            _t.set_text(_legend_text[_raw])",
+            ]
+        )
+        if dashes:
+            separator = " | "
+            lines.extend(
+                [
+                    f"        elif _raw.count({separator!r}) == {len(aliases.dash_layers) - 1}:",
+                    "            # a dash id, part by part (outermost first)",
+                    f"            _t.set_text({separator!r}.join(_alias(f, p) for f, p in "
+                    f"zip({aliases.dash_layers!r}, _raw.split({separator!r}))))",
+                ]
+            )
+    return lines
+
+
 def _plot_call(spec, table, roles, shape) -> list[str]:
     if shape is Shape.MATRIX_2D:
-        return _heatmap_call(spec)
+        return _heatmap_call(spec, table)
 
     kind = spec.kind
     x = _x_expression(spec, table, roles, shape)
@@ -1278,6 +1448,19 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
         args.append('kind="scatter"')
         call = "sns.relplot"
 
+    if (
+        call == "sns.catplot"
+        and color
+        and color == x
+        and _color_level_count(spec, table, color) >= 2
+    ):
+        # Colour on the x axis itself (colour is paint): seaborn calls that
+        # hue "redundant" and, left at legend="auto", draws NO legend
+        # (catplot: `show_legend = not p._redundant_hue`). The preview lists
+        # the colours whenever there are two or more (render.base.shows_legend),
+        # and the export must be the previewed figure — so it is said.
+        args.append("legend=True")
+
     order_lines, order_args = _level_order_lines(
         spec, table, roles, shape, call, x, color, facets
     )
@@ -1295,7 +1478,14 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     if not share_y:
         args.append('facet_kws={"sharey": False}')
 
-    lines = [*order_lines, f"g = {call}(", *[f"    {arg}," for arg in args], ")"]
+    aliases = _export_aliases(spec, table, roles, shape)
+    lines = [
+        *order_lines,
+        *_alias_definition_lines(aliases),
+        f"g = {call}(",
+        *[f"    {arg}," for arg in args],
+        ")",
+    ]
     if kind is PlotKind.SPAGHETTI:
         # Positions back to level names, and the range a categorical axis
         # would have had — the same geometry the preview draws.
@@ -1314,32 +1504,51 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
         [] if x == _X_CONSTANT else _tick_layers(spec, table, roles, shape),
         x if shape is Shape.SERIES_1D else None,
     )
-    lines.append(
-        f"g.set_axis_labels({x_label!r}, "
-        f"{(style.y_label or spec.y_measure)!r})"
-    )
+    # The y title the preview draws (`reduce._labels_for`): the style's, else
+    # the measure's name alias, else its name.
+    y_label = style.y_label or aliases.text.name(spec.y_measure, spec.y_measure)
+    lines.append(f"g.set_axis_labels({x_label!r}, {y_label!r})")
     if facets:
         # Same rule as the preview (render.base.panel_y_title): the facet values
         # ARE the panel's y-axis title, and no caption sits above it. seaborn
         # does the opposite by default, so both halves have to be said here or
         # the exported figure spends vertical room the preview gave to the data.
         # A two-factor grid keys axes_dict by (row, col), which is the reverse
-        # of the panel key's order — hence the reversed().
+        # of the panel key's order — hence the reversed(). Each value is shown
+        # through `_alias` when a facet factor has one (the panel's display
+        # title, `DisplayText.panel_title`).
+        shown = (
+            f"_alias(_f, _v) for _f, _v in zip({facets!r}, reversed(_values))"
+            if aliases.aliased(*facets)
+            else "str(v) for v in reversed(_values)"
+        )
         lines.extend(
             [
                 'g.set_titles("")',
                 "for _key, _ax in g.axes_dict.items():",
                 "    _values = _key if isinstance(_key, tuple) else (_key,)",
-                '    _ax.set_ylabel(" · ".join(str(v) for v in reversed(_values)))',
+                f'    _ax.set_ylabel(" · ".join({shown}))',
             ]
         )
-    lines.extend(_sample_draw_lines(spec, table, roles, shape))
+    sizes = resolve_sizes(style)
+    if sizes.y_label != sizes.x_label:
+        # rc has one key for both axis titles (axes.labelsize = the x title),
+        # so a different y title size is said per axes, as render_matplotlib
+        # does. After the facet titles above, which are y titles too.
+        lines.extend(
+            [
+                "for _ax in g.axes.flat:",
+                f"    _ax.yaxis.label.set_size({sizes.y_label})",
+            ]
+        )
+    lines.extend(_sample_draw_lines(spec, table, roles, shape, aliases.text))
     if style.log_x:
         lines.append('g.set(xscale="log")')
     if style.log_y:
         lines.append('g.set(yscale="log")')
     if style.title:
         lines.append(f"g.figure.suptitle({style.title!r})")
+    lines.extend(_alias_relabel_lines(aliases, _x_is_categorical(spec, table, roles, shape)))
     lines.append(f"g.figure.set_size_inches({style.width}, {style.height})")
     lines.extend(_fitted_tick_lines(spec, table, roles, shape))
     lines.extend(_exact_size_layout_lines(style))
@@ -1376,7 +1585,9 @@ def _fitted_tick_lines(spec, table: LongTable, roles, shape) -> list[str]:
         return []
 
     nested = bool(_nested_x_layers(spec, table, roles, shape))
-    order = [str(v) for v in (resolved[0].x_order or [])]
+    # The labels as drawn by then: aliased (`_alias_relabel_lines` runs first),
+    # which is also what the preview fitted.
+    order = [resolved[0].text.x_tick(v) for v in (resolved[0].x_order or [])]
     wrapped = {}
     if fit.wrapped and not nested and len(order) == len(fit.rows[0]):
         for original, text in zip(order, fit.rows[0]):
@@ -1528,7 +1739,8 @@ def _level_order_lines(
     return [*_in_order_lines(), *lines], call_args
 
 
-def _heatmap_call(spec) -> list[str]:
+def _heatmap_call(spec, table: LongTable) -> list[str]:
+    title = spec.style.title or display_text(spec, table).name(spec.y_measure, spec.y_measure)
     return [
         "import numpy as np",
         "",
@@ -1537,7 +1749,7 @@ def _heatmap_call(spec) -> list[str]:
         f"fig, ax = plt.subplots(figsize=({spec.style.width}, {spec.style.height}))",
         'image = ax.imshow(matrix, aspect="auto", origin="lower")',
         "fig.colorbar(image, ax=ax)",
-        f"ax.set_title({(spec.style.title or spec.y_measure)!r})",
+        f"ax.set_title({title!r})",
         "return fig",
     ]
 

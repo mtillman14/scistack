@@ -20,6 +20,7 @@ from ..figsize import aspect_name
 from ..resolved import MPL_DASHES, ResolvedPlot
 from ..spec import PlotKind
 from ..table import natural_sort_key
+from ..textsize import ResolvedSizes, rc_params, resolve_sizes
 from ..ticklabels import (
     BRACKET_POLICY,
     TICK_POLICY,
@@ -82,21 +83,22 @@ def render(resolved: ResolvedPlot):
         # has to be open while every label, tick and legend entry is made —
         # and it must close afterwards, because this runs inside a server and
         # inside for_each, where a leaked rcParam would resize someone else's
-        # figure. One key: every other text size in matplotlib is relative to
-        # font.size, so this scales ticks, labels, legend and title together.
-        with plt.rc_context({"font.size": style.font_size}):
+        # figure. Every size is stated in points by the one owner
+        # (textsize.rc_params), so nothing here depends on a relative name.
+        sizes = resolve_sizes(style)
+        with plt.rc_context(rc_params(sizes)):
             n_rows, n_cols = grid_shape(resolved)
             # The size the file will have, exactly (figure_file.write_figure
             # never trims). Stated in the log because the preview never shows it: a
             # figure that "came out squashed" is diagnosed here, not in the GUI.
             Log.info(
-                "figure size %.2f x %.2f in (%s), font %gpt, %d x %d panel grid",
+                "figure size %.2f x %.2f in (%s), %d x %d panel grid, text %s",
                 style.width,
                 style.height,
                 aspect_name(style.width, style.height),
-                style.font_size,
                 n_rows,
                 n_cols,
+                sizes.describe(),
                 layer=LAYER,
             )
             fig, axes = plt.subplots(
@@ -231,7 +233,7 @@ def _draw_points(ax, frame, resolved, *, jitter: bool) -> None:
             s=style.marker_size,
             alpha=style.alpha,
             color=palette_for(resolved, level, index),
-            label=str(level) if level is not None else None,
+            label=resolved.text.color_level(level) if level is not None else None,
         )
 
 
@@ -266,7 +268,11 @@ def _draw_spaghetti(ax, frame, resolved) -> None:
                 # scatter's `s` is an area in pt²; plot's markersize is a
                 # diameter in pt. Same visual size as the scatter kinds.
                 markersize=float(np.sqrt(style.marker_size)),
-                label=str(level) if (level is not None and position == 0) else None,
+                label=(
+                    resolved.text.color_level(level)
+                    if (level is not None and position == 0)
+                    else None
+                ),
             )
 
 
@@ -291,7 +297,11 @@ def _draw_lines(ax, frame, resolved) -> None:
                 linestyle=_linestyle(resolved, line_rows),
                 # Only the first line of a colour group carries the legend entry,
                 # otherwise a 200-trial plot produces a 200-entry legend.
-                label=str(level) if (level is not None and position == 0) else None,
+                label=(
+                    resolved.text.color_level(level)
+                    if (level is not None and position == 0)
+                    else None
+                ),
             )
     _dash_legend_handles(ax, resolved)
 
@@ -311,7 +321,11 @@ def _draw_band(ax, frame, resolved) -> None:
                 color=color,
                 linewidth=1.8,
                 linestyle=_linestyle(resolved, rows),
-                label=str(level) if (level is not None and position == 0) else None,
+                label=(
+                    resolved.text.color_level(level)
+                    if (level is not None and position == 0)
+                    else None
+                ),
             )
             if encoding.has_error:
                 ax.fill_between(
@@ -333,7 +347,7 @@ def _dash_legend_handles(ax, resolved) -> None:
     if len(ids) < 2:
         return
     for sid in ids:
-        ax.plot([], [], color="#555555", linewidth=2, linestyle=MPL_DASHES[resolved.dash_styles[sid]], label=sid)
+        ax.plot([], [], color="#555555", linewidth=2, linestyle=MPL_DASHES[resolved.dash_styles[sid]], label=resolved.text.dash_id(sid))
 
 
 def _draw_bars(ax, frame, resolved) -> None:
@@ -364,11 +378,11 @@ def _draw_bars(ax, frame, resolved) -> None:
             capsize=3,
             color=palette_for(resolved, level, index),
             alpha=resolved.spec.style.alpha,
-            label=str(level) if level is not None else None,
+            label=resolved.text.color_level(level) if level is not None else None,
         )
         if ticks is not None:
             ax.set_xticks(range(len(ticks)))
-            ax.set_xticklabels(ticks)
+            ax.set_xticklabels([resolved.text.x_tick(t) for t in ticks])
 
 
 def _x_levels(frame: pd.DataFrame, resolved: ResolvedPlot) -> list[Any]:
@@ -428,10 +442,10 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
                 box.set_alpha(0.6)
         if level is not None:
             # Boxes carry no legend handle of their own; a proxy patch does.
-            ax.plot([], [], color=color, linewidth=6, label=str(level))
+            ax.plot([], [], color=color, linewidth=6, label=resolved.text.color_level(level))
 
     ax.set_xticks(range(len(order)))
-    ax.set_xticklabels([str(v) for v in order])
+    ax.set_xticklabels([resolved.text.x_tick(v) for v in order])
 
 
 def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
@@ -502,7 +516,7 @@ def _sample_legend_handles(ax, resolved: ResolvedPlot) -> None:
             marker="o",
             markeredgecolor=SAMPLE_EDGE_COLOR,
             markeredgewidth=0.5,
-            label=str(level),
+            label=resolved.text.sample_level(level),
         )
 
 
@@ -514,6 +528,9 @@ def _draw_heatmap(ax, frame, resolved) -> None:
 
 def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_cell) -> None:
     style = resolved.spec.style
+    # matplotlib has ONE rc key for both axis titles (axes.labelsize = the x
+    # title's size), so the y title is sized here.
+    y_label_pt = resolve_sizes(style).y_label
     for row in range(n_rows):
         for col in range(n_cols):
             ax = axes[row][col]
@@ -529,7 +546,9 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
             panel = at_cell.get((row, col))
             ax.set_xlabel(resolved.labels.x if bottom else "")
             # The facet values, when this is a facet — see base.panel_y_title.
-            ax.set_ylabel(panel_y_title(resolved, panel, leftmost=leftmost))
+            ax.set_ylabel(
+                panel_y_title(resolved, panel, leftmost=leftmost), fontsize=y_label_pt
+            )
             if style.log_x:
                 ax.set_xscale("log")
             if style.log_y:
@@ -555,9 +574,9 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
                 PlotKind.STRIP,
                 PlotKind.SPAGHETTI,
             ):
-                order = [str(v) for v in (resolved.x_order or [])]
+                order = list(resolved.x_order or [])
                 ax.set_xticks(range(len(order)))
-                ax.set_xticklabels(order)
+                ax.set_xticklabels([resolved.text.x_tick(v) for v in order])
 
             # tick_params, NOT set_visible() on the Text objects: with
             # sharex/sharey, get_xticklabels() regenerates the tick list and the
@@ -607,14 +626,6 @@ class _XTicks:
 
 def _pt(fig, pixels: float) -> float:
     return float(pixels) * 72.0 / fig.dpi
-
-
-def _font_pt(size) -> float:
-    """A matplotlib font size ("small", "medium", 12) in points, resolved
-    against the ``font.size`` currently in force (render's rc_context)."""
-    from matplotlib.font_manager import FontProperties
-
-    return FontProperties(size=size).get_size_in_points()
 
 
 def _text_measure(fig) -> Measure:
@@ -737,21 +748,15 @@ def _fit_x_ticks(fig, ticks: list[_XTicks], resolved: ResolvedPlot):
             round(row.positions[-1], 1) if row.positions else "-",
             layer=LAYER,
         )
-    import matplotlib
-
     style = resolved.spec.style
+    sizes = resolve_sizes(style)
     policy = replace(
         TICK_POLICY,
         pin_rotation=style.tick_rotation,
-        pin_font_pt=style.tick_font_size,
+        pin_font_pt=sizes.x_ticks if sizes.is_pinned("x_ticks") else None,
         pin_every=style.tick_every,
     )
-    fit = fit_labels(
-        rows,
-        _font_pt(matplotlib.rcParams["xtick.labelsize"]),
-        _text_measure(fig),
-        policy,
-    )
+    fit = fit_labels(rows, sizes.x_ticks, _text_measure(fig), policy)
     return fit, rows
 
 
@@ -861,7 +866,12 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
         for item in ticks
         for depth in depths
     ]
-    fit = fit_labels(rows, _font_pt("small"), measure, BRACKET_POLICY)
+    sizes = resolve_sizes(resolved.spec.style)
+    policy = replace(
+        BRACKET_POLICY,
+        pin_font_pt=sizes.groups if sizes.is_pinned("groups") else None,
+    )
+    fit = fit_labels(rows, sizes.groups, measure, policy)
     _log_fit("x bracket labels", fit, rows, measure)
     row_height = max(
         (
@@ -928,15 +938,13 @@ def _shared_x_title(
     figure fraction): above a legend that is below the panels. Safe to call
     again with a new ``y`` — matplotlib keeps one supxlabel per figure.
     """
-    import matplotlib
-
     title = resolved.labels.x
     if not title or len({col for _, col, _ in labelled}) < 2:
         return 0.0
     for _, _, ax in labelled:
         ax.set_xlabel("")
     text = fig.supxlabel(
-        title, y=y + 0.01, va="bottom", fontsize=matplotlib.rcParams["axes.labelsize"]
+        title, y=y + 0.01, va="bottom", fontsize=resolve_sizes(resolved.spec.style).x_label
     )
     height = text.get_window_extent(fig.canvas.get_renderer()).height
     figure_height = fig.get_size_inches()[1] * fig.dpi or 1.0
@@ -1053,7 +1061,7 @@ def _apply_legend(fig, resolved: ResolvedPlot) -> float:
     # The overlay's block goes LAST, in its levels' order. matplotlib lists
     # an axes' Line2D handles before its bar containers, so gathered as-is
     # the subjects would precede the bars they sit on.
-    sample_labels = [str(level) for level in sample_legend_levels(resolved)]
+    sample_labels = [resolved.text.sample_level(level) for level in sample_legend_levels(resolved)]
     if len(sample_labels) > 1:
         unique = {
             **{k: v for k, v in unique.items() if k not in sample_labels},
@@ -1137,11 +1145,16 @@ class _Legend:
     columns: int = 1
     steps: list[str] = field(default_factory=list)
     reason: str = ""
+    #: The title's size: fixed (``text.legend_title``) or the entries' size.
+    title_pt: float | None = None
+    #: The resolved text sizes the legend was fitted with (textsize owner).
+    text: ResolvedSizes | None = None
 
     def describe(self) -> dict:
         return {
             "below": self.below,
             "font_pt": self.font_pt,
+            "title_font_pt": self.title_pt if self.title_pt is not None else self.font_pt,
             "columns": self.columns,
             "width_frac": round(self.width_frac, 3),
             "height_frac": round(self.height_frac, 3),
@@ -1175,7 +1188,7 @@ def _legend_entries(fig, resolved: ResolvedPlot):
     # The overlay's block goes LAST, in its levels' order. matplotlib lists
     # an axes' Line2D handles before its bar containers, so gathered as-is
     # the subjects would precede the bars they sit on.
-    sample_labels = [str(level) for level in sample_legend_levels(resolved)]
+    sample_labels = [resolved.text.sample_level(level) for level in sample_legend_levels(resolved)]
     if len(sample_labels) > 1:
         unique = {
             **{k: v for k, v in unique.items() if k not in sample_labels},
@@ -1203,7 +1216,10 @@ def _legend_title(blocks: list[str], wrapped: bool) -> str | None:
     return " /\n".join(blocks) if wrapped else " / ".join(blocks)
 
 
-def _draw_legend(fig, handles, labels, title, font_pt, *, below=False, columns=1, handle_style=None):
+def _draw_legend(
+    fig, handles, labels, title, font_pt, *, title_pt=None, below=False, columns=1,
+    handle_style=None,
+):
     style = handle_style or LEGEND_HANDLES
     kwargs = (
         {"loc": "lower center", "bbox_to_anchor": (0.5, 0.0), "ncol": columns}
@@ -1216,7 +1232,8 @@ def _draw_legend(fig, handles, labels, title, font_pt, *, below=False, columns=1
         title=title,
         frameon=False,
         fontsize=font_pt,
-        title_fontsize=font_pt,
+        # Unfixed, the title follows the entries through every shrink.
+        title_fontsize=title_pt if title_pt is not None else font_pt,
         **style,
         **kwargs,
     )
@@ -1243,28 +1260,43 @@ def _legend_size(fig, artist, labels, title) -> tuple[float, float]:
         return inches * fig.dpi / width_px, 0.0
 
 
+def _legend_ladder(sizes: ResolvedSizes) -> list[float]:
+    """The entry sizes the legend fit may try, largest first.
+
+    A FIXED legend size (``text.legend``) is the whole ladder: the fit may
+    still wrap the title, shorten the handles or move the legend below, but
+    never shrinks what the user set. Otherwise it steps down to the tick
+    labels' floor (``LabelPolicy.font_floor``).
+    """
+    base = sizes.legend
+    if sizes.is_pinned("legend"):
+        return [base]
+    floor = TICK_POLICY.font_floor(base)
+    ladder = [base]
+    while ladder[-1] - TICK_POLICY.font_step_pt > floor + 1e-6:
+        ladder.append(round(ladder[-1] - TICK_POLICY.font_step_pt, 3))
+    if floor < base - 1e-6:
+        ladder.append(floor)
+    return ladder
+
+
 def _apply_legend(fig, resolved: ResolvedPlot) -> _Legend | None:
     """Draw the legend to the right of the panels, narrowed to fit
     :data:`LEGEND_BUDGET`; below the panels when it cannot be.
 
     The narrowing steps, least destructive first: wrap the title at " / ",
     shorten the line samples, shrink the text (never below the tick labels'
-    floor, ``LabelPolicy.font_floor``). None when there is no legend
+    floor, ``LabelPolicy.font_floor``, and never when the size is fixed —
+    :func:`_legend_ladder`). None when there is no legend
     (``base.shows_legend``).
     """
-    import matplotlib
-
     entries = _legend_entries(fig, resolved)
     if entries is None:
         return None
     handles, labels, blocks = entries
-    base = _font_pt(matplotlib.rcParams["legend.fontsize"])
-    floor = TICK_POLICY.font_floor(base)
-    sizes = [base]
-    while sizes[-1] - TICK_POLICY.font_step_pt > floor + 1e-6:
-        sizes.append(round(sizes[-1] - TICK_POLICY.font_step_pt, 3))
-    if floor < base - 1e-6:
-        sizes.append(floor)
+    text = resolve_sizes(resolved.spec.style)
+    sizes = _legend_ladder(text)
+    base = sizes[0]
 
     # (step name, wrapped title, handle style, font) in the order tried.
     attempts = [("as_is", False, LEGEND_HANDLES, base)]
@@ -1278,7 +1310,10 @@ def _apply_legend(fig, resolved: ResolvedPlot) -> _Legend | None:
     width = 1.0
     for step, wrapped, style, size in attempts:
         title = _legend_title(blocks, wrapped)
-        artist = _draw_legend(fig, handles, labels, title, size, handle_style=style)
+        title_pt = text.legend_title_for(size)
+        artist = _draw_legend(
+            fig, handles, labels, title, size, title_pt=title_pt, handle_style=style
+        )
         width, _ = _legend_size(fig, artist, labels, title)
         width += LEGEND_PAD
         if step != "as_is" and step not in steps:
@@ -1290,11 +1325,12 @@ def _apply_legend(fig, resolved: ResolvedPlot) -> _Legend | None:
         if width <= LEGEND_BUDGET:
             legend = _Legend(
                 artist, handles, labels, blocks, size,
-                width_frac=width, steps=steps,
+                width_frac=width, steps=steps, title_pt=title_pt, text=text,
             )
             Log.info(
-                "legend at the right: %d entr(ies), %.0f%% of the width, font %gpt%s",
-                len(labels), 100 * width, size,
+                "legend at the right: %d entr(ies), %.0f%% of the width, font %gpt, "
+                "title %gpt%s",
+                len(labels), 100 * width, size, title_pt,
                 f" ({', '.join(steps)})" if steps else "",
                 layer=LAYER,
             )
@@ -1303,8 +1339,9 @@ def _apply_legend(fig, resolved: ResolvedPlot) -> _Legend | None:
 
     return _legend_below(
         fig,
-        _Legend(None, handles, labels, blocks, base, steps=steps),
-        f"{100 * width:.0f}% of the width even narrowed (budget {100 * LEGEND_BUDGET:.0f}%)",
+        _Legend(None, handles, labels, blocks, base, steps=steps, text=text),
+        f"{100 * width:.0f}% of the width even narrowed (budget {100 * LEGEND_BUDGET:.0f}%)"
+        + (" — its font is fixed, so it was not shrunk" if text.is_pinned("legend") else ""),
     )
 
 
@@ -1313,30 +1350,27 @@ def _legend_below(fig, legend: _Legend, reason: str) -> _Legend:
 
     As many columns as fit :data:`LEGEND_BELOW_WIDTH` (fewest rows), at the
     full font; if that is still taller than :data:`LEGEND_BELOW_HEIGHT`, the
-    text shrinks towards the tick labels' floor. The height it reserves is the
-    height it has — never capped, since a capped reservation is a legend
-    drawn over the panels — and a figure too small for it is said so.
+    text shrinks towards the tick labels' floor (unless it is fixed). The
+    height it reserves is the height it has — never capped, since a capped
+    reservation is a legend drawn over the panels — and a figure too small
+    for it is said so.
     """
-    import matplotlib
-
     if legend.artist is not None:
         legend.artist.remove()
-    base = _font_pt(matplotlib.rcParams["legend.fontsize"])
-    floor = TICK_POLICY.font_floor(base)
-    sizes = [base]
-    while sizes[-1] - TICK_POLICY.font_step_pt > floor + 1e-6:
-        sizes.append(round(sizes[-1] - TICK_POLICY.font_step_pt, 3))
-    if floor < base - 1e-6:
-        sizes.append(floor)
+    text = legend.text
+    sizes = _legend_ladder(text)
+    base = sizes[0]
     title = _legend_title(legend.blocks, False)
 
     artist = None
     for size in sizes:
+        title_pt = text.legend_title_for(size)
         for columns in range(len(legend.labels), 0, -1):
             if artist is not None:
                 artist.remove()
             artist = _draw_legend(
-                fig, legend.handles, legend.labels, title, size, below=True, columns=columns
+                fig, legend.handles, legend.labels, title, size,
+                title_pt=title_pt, below=True, columns=columns,
             )
             width, height = _legend_size(fig, artist, legend.labels, title)
             if width <= LEGEND_BELOW_WIDTH or columns == 1:
@@ -1355,18 +1389,20 @@ def _legend_below(fig, legend: _Legend, reason: str) -> _Legend:
         columns=columns,
         steps=[*legend.steps, "below", *(["shrink"] if size < base else [])],
         reason=reason,
+        title_pt=title_pt,
+        text=text,
     )
     Log.info(
         "legend moved below the panels: %s — %d entr(ies) in %d column(s), "
-        "font %gpt, %.0f%% of the height",
-        reason, len(legend.labels), columns, size, 100 * moved.height_frac,
+        "font %gpt, title %gpt, %.0f%% of the height",
+        reason, len(legend.labels), columns, size, title_pt, 100 * moved.height_frac,
         layer=LAYER,
     )
     if height > LEGEND_BELOW_HEIGHT:
         Log.warn(
             "the legend needs %.0f%% of the figure height even at %gpt — the "
-            "figure is too small for %d entries; enlarge it, or untick Show "
-            "sample > Show in legend",
+            "figure is too small for %d entries; enlarge it, lower the legend "
+            "font, or untick Show sample > Show in legend",
             100 * height, size, len(legend.labels),
             layer=LAYER,
         )

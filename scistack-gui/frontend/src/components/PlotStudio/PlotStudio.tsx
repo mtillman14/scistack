@@ -69,6 +69,18 @@ import {
   type PreviewMeta,
   type PreviewMode,
 } from './preview'
+import {
+  fixedTickNote,
+  hasFixedSizes,
+  placeholderFor,
+  resetTextSizes,
+  textSizeRows,
+  withTextSize,
+  type ResolvedTextSizes,
+  type TextSizesValue,
+} from './textSizes'
+import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
+import { type Labelable, type SpecAliases } from './aliasEdit'
 
 /** The dpi `plot_save` renders a raster at when the request names none
  *  (`api/plot.py` SaveRequest). Only the readout uses it; the save itself
@@ -508,9 +520,7 @@ interface VariantSet {
 interface StylePatch {
   width?: number
   height?: number
-  font_size?: number
   tick_rotation?: number | null
-  tick_font_size?: number | null
   tick_every?: number | null
   hide_legend_ticks?: boolean
 }
@@ -571,7 +581,10 @@ interface Spec {
   variant_sets?: VariantSet[]
   /* Cosmetics. `width`/`height` are INCHES and size the SAVED figure (and
      the exported code); the preview fills its pane regardless. */
-  style?: { width?: number; height?: number; font_size?: number; [key: string]: unknown }
+  style?: { width?: number; height?: number; text?: TextSizesValue; [key: string]: unknown }
+  /** What this plot's factors, levels and measure read as (`PlotSpec.aliases`):
+   *  over the project's `[aliases]`. Edited by the Labels section. */
+  aliases?: SpecAliases
 }
 
 /**
@@ -1204,6 +1217,64 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, style: { ...(prev.style ?? {}), ...patch } } : prev))
   }, [])
 
+  /** Set one `style.text` size, or clear it (null) back to derived. */
+  const setTextSize = useCallback((key: string, value: number | null) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const style = prev.style ?? {}
+      return { ...prev, style: { ...style, text: withTextSize(style.text, key, value) } }
+    })
+  }, [])
+
+  /** Clear every per-element size; `base` stays. */
+  const resetText = useCallback(() => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const style = prev.style ?? {}
+      return { ...prev, style: { ...style, text: resetTextSizes(style.text) } }
+    })
+  }, [])
+
+  /** `style.title` / `x_label` / `y_label`: blank DELETES the key (the saved
+   *  spec drops nulls, so a stored null would read as "modified"). */
+  const setTitleText = useCallback((key: keyof TitleTexts, value: string | null) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const style: Record<string, unknown> = { ...(prev.style ?? {}) }
+      if (value === null) delete style[key]
+      else style[key] = value
+      return { ...prev, style: style as Spec['style'] }
+    })
+  }, [])
+
+  const setAliases = useCallback((next: SpecAliases) => {
+    setSpec(prev => (prev ? { ...prev, aliases: next } : prev))
+  }, [])
+
+  /** Resolve the SAME spec again: after a project alias is written the spec
+   *  has not changed, so nothing else would redraw the figure. Queues behind
+   *  a running resolve like any other. */
+  const refreshResolve = useCallback(() => {
+    if (!spec) return
+    if (inFlight.current) {
+      queued.current = { spec, figureIndex, specKey }
+      return
+    }
+    launchResolve(spec, figureIndex, specKey)
+  }, [spec, figureIndex, specKey, launchResolve])
+
+  /** One edit to the project's [aliases]; resolves to an error or null. */
+  const writeProjectAlias = useCallback(
+    (edit: ProjectAliasEdit): Promise<string | null> =>
+      callBackend('plot_project_alias_set', { ...edit }).then(reply => {
+        const result = reply as { ok: boolean; error?: string }
+        if (!result.ok) return result.error ?? 'The project alias was not written.'
+        refreshResolve()
+        return null
+      }),
+    [refreshResolve]
+  )
+
   /** Add or remove one factor from the y-limit scope, keeping panel order. */
   const toggleYScope = useCallback((name: string, on: boolean) => {
     setSpec(prev => {
@@ -1685,8 +1756,8 @@ export default function PlotStudio({
   const figWidth = typeof spec?.style?.width === 'number' ? spec.style.width : 8
   const figHeight = typeof spec?.style?.height === 'number' ? spec.style.height : 6
   // Points in the export, px in the preview — one number, so a change is
-  // visible before anything is saved. 14 is `StyleOptions.font_size`.
-  const fontSize = typeof spec?.style?.font_size === 'number' ? spec.style.font_size : 14
+  // visible before anything is saved. 14 is `TextSizes.base`.
+  const fontSize = typeof spec?.style?.text?.base === 'number' ? spec.style.text.base : 14
   const aspect = aspectChoice ?? aspectName(figWidth, figHeight, presets)
   const onAspect = useCallback(
     (name: string) => {
@@ -2667,13 +2738,47 @@ export default function PlotStudio({
               <PositiveNumberInput
                 label="Font (pt)"
                 value={fontSize}
-                onChange={font_size => setStyle({ font_size })}
-                title="matplotlib font.size: ticks, labels, legend and title all scale with it"
+                onChange={base => setTextSize('base', base)}
+                title="matplotlib font.size: every text size below that is empty scales with it"
               />
             </div>
             <div style={styles.layoutNote}>
               {pixelReadout(figWidth, figHeight, SAVE_DPI)} at {SAVE_DPI} dpi for a
               raster — exactly; labels and legend are fitted inside it.
+            </div>
+            {/* One box per text element (StyleOptions.text). Empty = derived
+                from Font; the placeholder is the size Python resolved
+                (layout.meta.text_sizes), never computed here. A typed size is
+                fixed: the label and legend fits never shrink it. */}
+            <div style={styles.textSizesHeader}>
+              <span style={styles.gridSizeLabel}>Text sizes (pt)</span>
+              {hasFixedSizes(spec?.style?.text) && (
+                <button
+                  type="button"
+                  style={styles.inlineButton}
+                  title="Clear every size below so they all follow Font again"
+                  onClick={resetText}
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+            <div style={styles.textSizesGrid}>
+              {textSizeRows(
+                (figures[0]?.figure?.layout?.meta as
+                  | { text_sizes?: ResolvedTextSizes }
+                  | undefined)?.text_sizes,
+                spec?.style?.text,
+              ).map(row => (
+                <SizeInput
+                  key={row.key}
+                  label={row.label}
+                  title={row.title}
+                  value={spec?.style?.text?.[row.key] ?? null}
+                  placeholder={placeholderFor(row)}
+                  onChange={value => setTextSize(row.key, value)}
+                />
+              ))}
             </div>
             {/* Which size the preview's labels and legend are decided at: the
                 file's (and drawn at it), or the pane's. A view setting. */}
@@ -2732,13 +2837,6 @@ export default function PlotStudio({
                 ))}
               </select>
             </label>
-            <div style={styles.gridSizeRow}>
-              <LimitInput
-                label="Tick font (pt)"
-                value={(spec?.style?.tick_font_size as number | null | undefined) ?? null}
-                onChange={value => setStyle({ tick_font_size: value !== null && value > 0 ? value : null })}
-              />
-            </div>
             <label
               style={styles.factorRow}
               title="Blank the labels of a layer that is also the colour, while the legend lists the same levels in the same colours. The ticks and brackets stay."
@@ -2760,6 +2858,7 @@ export default function PlotStudio({
                 <div style={styles.layoutNote}>
                   The x labels still overlap at this size ({fit.ticks}). Widen the
                   figure, lower the font, or show fewer labels.
+                  {fixedTickNote(spec?.style?.text) && ` ${fixedTickNote(spec?.style?.text)}`}
                 </div>
               )
             })()}
@@ -2786,6 +2885,27 @@ export default function PlotStudio({
                 </div>
               )
             })()}
+          </Section>
+
+          {/* Titles and display aliases. A CSV plot has no project, so it gets
+              the plot's own aliases without the project buttons. */}
+          <Section title="Labels">
+            <LabelsSection
+              labelable={
+                (figures[0]?.figure?.layout?.meta as { labelable?: Labelable[] } | undefined)
+                  ?.labelable ?? []
+              }
+              aliases={spec?.aliases}
+              titles={{
+                title: (spec?.style?.title as string | null | undefined) ?? null,
+                x_label: (spec?.style?.x_label as string | null | undefined) ?? null,
+                y_label: (spec?.style?.y_label as string | null | undefined) ?? null,
+              }}
+              onTitle={setTitleText}
+              onAliases={setAliases}
+              onProject={writeProjectAlias}
+              projectEnabled={!csvPath}
+            />
           </Section>
 
           <div style={{ ...styles.actions, flexWrap: 'wrap' }}>
@@ -3101,7 +3221,7 @@ export default function PlotStudio({
                 paper_bgcolor: 'transparent',
                 plot_bgcolor: 'transparent',
                 // Colour only. The size is the renderer's (`layout.font.size` =
-                // `StyleOptions.font_size`), so the setting shows before a save.
+                // `TextSizes.base`), so the setting shows before a save.
                 font: { ...(figure.figure.layout.font as object), color: '#ccc' },
               }}
               config={{
@@ -3398,6 +3518,48 @@ function PositiveNumberInput({ label, value, onChange, title }: PositiveNumberIn
         }}
         onBlur={() => setText(null)}
         title={title}
+        style={{ ...styles.select, width: 64 }}
+      />
+    </label>
+  )
+}
+
+interface SizeInputProps {
+  label: string
+  value: number | null
+  placeholder: string
+  onChange: (value: number | null) => void
+  title?: string
+}
+
+/**
+ * One text element's size in points. Blank = derived from Font (the
+ * placeholder says what that comes to); a positive number fixes it.
+ *
+ * `LimitInput`'s typing discipline plus `PositiveNumberInput`'s rule: the text
+ * is held while typed, blank commits null, and only a positive finite number
+ * commits a size (0 pt is a matplotlib error). "0" or "-" while typing is
+ * held without committing anything.
+ */
+function SizeInput({ label, value, placeholder, onChange, title }: SizeInputProps) {
+  const [text, setText] = useState<string | null>(null)
+  const shown = text ?? (value === null || value === undefined ? '' : String(value))
+  return (
+    <label style={styles.gridSizeField} title={title}>
+      <span style={styles.textSizeLabel}>{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={shown}
+        placeholder={placeholder}
+        onChange={e => {
+          const next = e.target.value
+          setText(next)
+          const parsed = Number(next)
+          if (next.trim() === '') onChange(null)
+          else if (Number.isFinite(parsed) && parsed > 0) onChange(parsed)
+        }}
+        onBlur={() => setText(null)}
         style={{ ...styles.select, width: 64 }}
       />
     </label>
@@ -4147,6 +4309,22 @@ const styles: Record<string, React.CSSProperties> = {
   gridSizeLabel: { fontSize: 11, color: '#bbb' },
   // An unpinned dimension reads as derived, not as something the user typed.
   gridSizeAuto: { color: '#8a8aa8', fontStyle: 'italic' },
+  // Text sizes: two columns of label + box, labels right-aligned so the boxes
+  // line up.
+  textSizesHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 8, marginBottom: 4,
+  },
+  textSizesGrid: {
+    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px', marginBottom: 6,
+  },
+  textSizeLabel: {
+    fontSize: 11, color: '#bbb', flex: 1, textAlign: 'right' as const, whiteSpace: 'nowrap' as const,
+  },
+  inlineButton: {
+    padding: '1px 8px', background: '#22223a', color: '#ccc',
+    border: '1px solid #3a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 10,
+  },
   layoutNote: {
     fontSize: 10, color: '#e0b050', marginTop: 6, lineHeight: 1.4,
   },

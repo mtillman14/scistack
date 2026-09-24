@@ -42,7 +42,7 @@ def _run(source: str, frame):
 
 def test_tick_settings_round_trip_and_default_to_fitted():
     spec = _single_axis_spec(4.0)
-    assert (spec.style.tick_rotation, spec.style.tick_font_size, spec.style.tick_every) == (
+    assert (spec.style.tick_rotation, spec.style.text.x_ticks, spec.style.tick_every) == (
         None,
         None,
         None,
@@ -50,7 +50,7 @@ def test_tick_settings_round_trip_and_default_to_fitted():
     pinned = replace(spec, style=replace(spec.style, tick_rotation=45, tick_every=3))
     again = PlotSpec.from_dict(pinned.to_dict())
     assert (again.style.tick_rotation, again.style.tick_every) == (45, 3)
-    assert again.style.tick_font_size is None
+    assert again.style.text.x_ticks is None
 
 
 def test_a_fixed_rotation_reaches_the_export():

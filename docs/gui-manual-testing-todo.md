@@ -11,6 +11,114 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zk. Labels: titles and display aliases, for one plot or the whole project — added 2026-09-24
+
+**What changed:** Plot Studio has a **Labels** section below Figure size:
+- **Title, X label and Y label** boxes. Empty means automatic.
+- One block per thing the figure draws as text: the measure, then each
+  factor on the x axis, the colour, the panels, the figures and the dashes.
+  Each block has a name box and a "▸ N levels" list with one box per level.
+- **Two layers.** A box holds THIS plot's alias; it is saved with the plot
+  and overrides the project. An empty box shows, greyed, what the figure
+  draws without it: the project's alias (marked "(project)") or the raw
+  text.
+- **"↑ project"** writes a plot alias into `scistack.toml`'s `[aliases]` so
+  that every plot reads it, and clears the plot's own copy.
+- **"✕ project"** removes a project alias.
+- A packaged (pyproject.toml) project refuses the project buttons with a
+  message, because the GUI does not edit pyproject.toml. A CSV plot has no
+  project buttons.
+
+Aliases change TEXT only: filters, the location picker, facet layout rules
+and the plot-data CSV still use raw levels. Two levels of one factor that
+would read the same are refused with a message naming where each alias came
+from. Exported code carries the aliases as a fixed copy, so re-export a step
+after you change a project alias. Plan:
+`.claude/plan-plot-text-sizes-and-aliases.md` (stages 3-6).
+
+**Backend**
+1. Pull, **reload the VS Code window** (webview bundle changed), then
+   **Restart** the GUI.
+
+**Frontend**
+1. Plot a variable grouped by a schema key such as `session`, and coloured
+   by it. The Labels section lists the measure, then `session` as "x axis"
+   (the colour is the same factor, so it appears once).
+2. Type `Visit` in session's name box. The x title and the legend title read
+   "Visit" after the redraw.
+3. Open "▸ N levels" and type `Baseline` for `BL`. The tick label and the
+   legend entry both change. The block header says "· 1 aliased".
+4. Click **↑ project** on that row. The box empties and now shows
+   "Baseline (project)" greyed, and the figure still reads Baseline. Open
+   `scistack.toml`: it has an `[aliases.session.levels]` table with
+   `"BL" = "Baseline"`, and everything else in the file is unchanged.
+5. Open ANOTHER variable's plot that also shows `session`. It reads
+   Baseline with no edit.
+6. Back in the first plot, type `Pre` in the BL box. This plot reads Pre and
+   the other still reads Baseline. Clear the box, and it goes back to
+   Baseline.
+7. Click **✕ project** on the BL row. The figure reads `BL` again, and the
+   entry is gone from `scistack.toml`.
+8. Give two levels the same alias. The panel shows an error naming both
+   levels and where each alias came from, and the figure is not drawn.
+   Clear one of them and the figure returns.
+9. With a faceted factor, alias a level. The panel's y title changes. A
+   facet layout rule you wrote against the raw name still places the panel.
+10. Save the plot in the Saved plots rail, reopen it, and check the aliases
+    and titles come back and it is not "● modified".
+11. Click **Export code**. The code has an `_aliases = {…}` literal, and the
+    exported figure reads like the preview.
+12. `scidb.log` has an `aliases: levels session 1/N (project 1, plot 0)…`
+    line on each resolve, and `[config] set_project_alias: wrote …` for each
+    project edit.
+
+---
+
+## 0zj. Set each text size separately — added 2026-09-24
+
+**What changed:** The Figure size section has a **Text sizes (pt)** block,
+with one box each for Title, X label, Y label, X ticks, Y ticks, Groups (the
+bracket rows under a nested x axis), Legend and Legend title. An empty box
+follows **Font (pt)**, and its grey placeholder shows the size it will be
+drawn at (`auto · 14`). A typed size is fixed: automatic fitting may still
+rotate, wrap or move that text, but never shrinks it. **Reset** clears them
+all. The old "Tick font (pt)" box is now "X ticks". The preview's bracket
+labels are now the same size as in the saved figure (previously slightly
+smaller). A plot saved before today opens with default fonts and a yellow
+note naming `font_size` / `tick_font_size`. Plan:
+`.claude/plan-plot-text-sizes-and-aliases.md` (stages 1-2).
+
+**Backend**
+1. Pull, **reload the VS Code window** (webview bundle changed), then
+   **Restart** the GUI.
+
+**Frontend**
+1. Plot a variable with a nested x axis (two grouping layers) and a colour
+   legend. The eight boxes are empty, with placeholders like `auto · 14`,
+   `auto · 16.8` (Title) and `auto · 11.7` (Groups). Legend title says
+   `= legend`.
+2. Set **Font (pt)** to 20. Every placeholder updates after the redraw
+   (Title 24, Groups 16.7), and all preview text grows.
+3. Type 30 in **Title**, then 9 in **Y ticks**. Only those change. A
+   **Reset** button appears beside the heading.
+4. Type 9 in **Groups** with X ticks empty. The bracket rows shrink and the
+   tick labels do not. Clear Groups, then type 10 in **X ticks**. The
+   bracket placeholder follows (`auto · 8.3`).
+5. Narrow the figure (Width 4). Type 18 in **Legend**. The legend moves below
+   the plot but stays at 18. If the x labels overlap, the yellow notice ends
+   with "The x tick font is fixed at 10 pt."
+6. Save the plot (Saved plots rail) and reopen it. Every size comes back, and
+   it is not marked "● modified". Clear a box and set it again to the same
+   value; the ● goes away when the value matches the saved one.
+7. Save the figure. In `scidb.log` the `figure size … text …` line lists every
+   size, and the fixed ones carry `*`.
+8. Click **Reset**. Every box empties, and Font stays at 20.
+9. Open a saved plot from before today. The yellow note names
+   `style.font_size` (and `style.tick_font_size` if it was set), and the
+   fonts are 14.
+
+---
+
 ## 0zi. Saved plots: name a plot, reopen it exactly as it was — added 2026-09-24
 
 **What changed:** Plot Studio has a **Saved plots** rail on the right. Save

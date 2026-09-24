@@ -2745,7 +2745,7 @@ def test_a_kept_resolve_is_never_served_for_a_different_spec(populated_db, monke
     calls = _count_resolves(monkeypatch)
     spec = _pooled_spec(populated_db)
     plot_service.resolve_figures(populated_db, spec, figure_index=0, preview={"mode": "export"})
-    changed = {**spec, "style": {**(spec.get("style") or {}), "font_size": 9.0}}
+    changed = {**spec, "style": {**(spec.get("style") or {}), "text": {"base": 9.0}}}
     plot_service.resolve_figures(
         populated_db, changed, figure_index=0, preview={"mode": "export"}, reuse_resolved=True
     )
@@ -2762,3 +2762,40 @@ def test_invalidate_drops_the_kept_resolve(populated_db, monkeypatch):
         populated_db, spec, figure_index=0, preview={"mode": "export"}, reuse_resolved=True
     )
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Project aliases (the Labels section's "↑ project" / "✕ project")
+# ---------------------------------------------------------------------------
+
+
+def test_a_project_alias_write_answers_ok_and_drops_the_kept_resolve(tmp_path, monkeypatch):
+    import scistack_gui.db as gui_db
+    from scidb import aliases
+
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text('modules = []\n')
+    monkeypatch.setattr(gui_db, "get_db_path", lambda: db_path)
+    plot_service._last_resolved[("db", "x")] = ("kept",)
+
+    reply = plot_service.set_project_alias("session", level="BL", alias="Baseline")
+
+    assert reply == {"ok": True, "aliases": {"session": {"levels": {"BL": "Baseline"}}}}
+    assert aliases.aliases_in(toml_file) == {"session": {"levels": {"BL": "Baseline"}}}
+    assert plot_service._last_resolved == {}, "a kept resolve holds text drawn before the edit"
+
+
+def test_a_refused_project_alias_is_an_answer_not_an_error(tmp_path, monkeypatch):
+    import scistack_gui.db as gui_db
+
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n\n[tool.scistack]\n")
+    monkeypatch.setattr(gui_db, "get_db_path", lambda: db_path)
+
+    reply = plot_service.set_project_alias("session", set_name=True, name="Session")
+
+    assert reply["ok"] is False
+    assert "pyproject.toml" in reply["error"]

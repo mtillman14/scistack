@@ -49,7 +49,7 @@ _sources: dict[tuple, Any] = {}
 #: Dropped with the source by :func:`invalidate`.
 _last_resolved: dict[tuple, tuple] = {}
 
-#: The preview is drawn at 1 pt = 1 px (the font_size convention), so a pane
+#: The preview is drawn at 1 pt = 1 px (the text.base convention), so a pane
 #: of N px is N / 72 inches of saved figure.
 PREVIEW_PX_PER_IN = 72.0
 
@@ -197,6 +197,45 @@ def invalidate(db=None) -> dict:
     # our back, so an event hook would only guess when — and that TTL already
     # expires well inside any run. See ``scidb.state.DISCOVERY_CACHE_SECONDS``.
     return {"ok": True}
+
+
+def set_project_alias(
+    thing: str,
+    *,
+    set_name: bool = False,
+    name: "str | None" = None,
+    level: "str | None" = None,
+    alias: "str | None" = None,
+) -> dict:
+    """Write one PROJECT display alias (``[aliases]`` in scistack.toml).
+
+    The write is ``scistack_gui.config.set_project_alias`` (the one writer of
+    the file; the grammar is ``scidb.aliases``'). No table is dropped: a
+    built table reads the project's aliases live
+    (``LongTable.aliases_source``), so the next resolve shows the edit. Only
+    the kept resolve used for resize re-renders is forgotten, because it
+    holds text drawn before the edit.
+
+    A refusal — a packaged project, no config — is ``{ok: False, error}``:
+    a state to show beside the box, not a fault.
+    """
+    from scistack_gui.config import _UNCHANGED
+    from scistack_gui.config import set_project_alias as write_alias
+    from scistack_gui.db import get_db_path
+
+    try:
+        table = write_alias(
+            get_db_path(),
+            thing,
+            name=name if set_name else _UNCHANGED,
+            level=level,
+            alias=alias,
+        )
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        logger.warning("[plot] project alias not written: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    _last_resolved.clear()
+    return {"ok": True, "aliases": table}
 
 
 # ---------------------------------------------------------------------------

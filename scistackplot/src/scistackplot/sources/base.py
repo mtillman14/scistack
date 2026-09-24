@@ -11,6 +11,7 @@ full scidb project. Everything above this line is pure long-table logic.
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from typing import Any, Callable, Hashable, Protocol, runtime_checkable
 
 from scistacklog import Log
@@ -243,6 +244,7 @@ class BaseSource:
                     table = self._build_table(
                         measures, x_measure=x_measure, factor_variables=factor_variables
                     )
+                    table = self._attach_aliases_source(table)
                 # Size the result in cells and SAMPLES, not just rows: a row count
                 # cannot tell 4190 short arrays from 4190 quarter-million-sample
                 # ones, and that distinction is the whole question for a plot that
@@ -285,6 +287,24 @@ class BaseSource:
         edit to scistack.toml reached no figure until the panel was reopened.
         """
         return None
+
+    def _aliases_source(self) -> "Callable[[], dict] | None":
+        """The live reader of this source's PROJECT display aliases, or None.
+
+        None here: a CSV or a DataFrame has no project. ``ScidbSource``
+        returns one that reads the project's ``[aliases]`` (``scidb.aliases``)
+        on every call. Deliberately NOT part of :meth:`_cache_generation`:
+        aliases are display only, so editing one must not drop a built table.
+        """
+        return None
+
+    def _attach_aliases_source(self, table: LongTable) -> LongTable:
+        """``table`` carrying :meth:`_aliases_source`, set once at build time
+        (a copy, before it is published to the memo — nothing is mutated)."""
+        source = self._aliases_source()
+        if source is None or table.aliases_source is not None:
+            return table
+        return replace(table, aliases_source=source)
 
     def _current_table_cache(self) -> dict:
         """The memo, emptied first if :meth:`_cache_generation` has moved.

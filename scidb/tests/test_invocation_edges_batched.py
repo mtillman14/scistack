@@ -136,3 +136,45 @@ def test_function_variant_configs_query_count_does_not_grow(db, monkeypatch):
     [config] = pq.function_variant_configs(db._duck, "scale")
     assert config["constants"] == {"k": 3.0}
     assert len(config["invocation_ids"]) == 8
+
+
+def make(k):
+    return np.arange(3.0) * k
+
+
+class InputlessOut(BaseVariable):
+    pass
+
+
+def test_realized_inputless_is_one_query_and_skips_variable_input_calls(
+    db, monkeypatch
+):
+    """Two queries PER INVOCATION until 2026-09-24 (~0.85 s of every canvas
+    build for a 450-file loader)."""
+    _run(2)  # `scale` has a variable input: never "inputless"
+    subjects = ["S00", "S01", "S02"]
+    for_each(make, {"k": 2.0}, [InputlessOut], subject=subjects, session=["A"])
+
+    realized = pq.realized_inputless_invocations(db._duck, "make")
+    assert realized, "an inputless loader's realized locations are its expected set"
+    inv_ids = {inv for inv, _sid in realized}
+    produced = {
+        (inv, sid)
+        for inv, sid in db._duck._fetchall(
+            "SELECT DISTINCT io.invocation_id, r.schema_id "
+            "FROM _invocation_output io "
+            "JOIN _record r ON r.record_id = io.output_record_id "
+            "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
+            "WHERE inv.function_name = 'make'"
+        )
+    }
+    assert realized == produced
+    assert {inv for inv, _ in produced} == inv_ids
+
+    assert pq.realized_inputless_invocations(db._duck, "scale") == set()
+    assert pq.realized_inputless_invocations(db._duck, "make", "no-such-hash") == set()
+
+    n = _count_queries(
+        db, monkeypatch, lambda: pq.realized_inputless_invocations(db._duck, "make")
+    )
+    assert n == 1

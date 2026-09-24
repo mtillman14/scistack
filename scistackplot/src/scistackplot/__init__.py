@@ -114,11 +114,15 @@ from .spec import (
     OVERLAY_KINDS,
     SCALAR_KINDS,
     Statistic,
+    Alias,
     StyleOptions,
+    TextSizes,
     VariantSet,
     YAxis,
     grid_shape_for,
 )
+from .textsize import ResolvedSizes, rc_params, resolve_sizes
+from .aliases import AliasError, DisplayText, display_text
 from .figsize import (
     ASPECT_PRESETS,
     CUSTOM as CUSTOM_ASPECT,
@@ -193,7 +197,16 @@ __all__ = [
     "grid_shape_for",
     "Matcher",
     "MatchOp",
+    "Alias",
+    "AliasError",
+    "DisplayText",
+    "display_text",
     "StyleOptions",
+    "TextSizes",
+    # text sizes (docs/claude/plot-text-and-labels.md)
+    "ResolvedSizes",
+    "resolve_sizes",
+    "rc_params",
     # figure size presets
     "ASPECT_PRESETS",
     "CUSTOM_ASPECT",

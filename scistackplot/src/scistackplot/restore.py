@@ -251,10 +251,49 @@ def reconcile(spec: PlotSpec, table: LongTable) -> Restored:
         )
         sample_color = None
 
+    notes.extend(_stale_aliases(spec, table, derived))
+
     if shown != spec.show_sample or sample_color != spec.sample_color:
         spec = replace(spec, show_sample=shown, sample_color=sample_color)
     _log_notes("reconcile", notes)
     return Restored(spec=spec, notes=notes)
+
+
+def _stale_aliases(spec: PlotSpec, table: LongTable, derived: LongTable) -> list[RestoreNote]:
+    """The plot's own aliases that name nothing in today's data — REPORTED,
+    never removed: an alias is inert when its level is absent, and the level
+    may come back when a filter or the data changes."""
+    columns = {group.label: group.factor_name for group in spec.factor_variables}
+    measures = set(table.measure_names)
+    notes: list[RestoreNote] = []
+    for thing, alias in spec.aliases.items():
+        factor = columns.get(thing, thing)
+        source = derived if derived.has_factor(factor) else table
+        if not source.has_factor(factor):
+            if thing not in measures:
+                notes.append(
+                    RestoreNote(
+                        f"aliases.{thing}",
+                        NoteKind.NOT_IN_DATA,
+                        f"no factor or measure named {thing!r} in today's data; "
+                        f"its alias is kept but shows nowhere",
+                        thing,
+                    )
+                )
+            continue
+        present = {str(level) for level in source.factor(factor).levels}
+        absent = [level for level in alias.levels if level not in present]
+        if absent:
+            notes.append(
+                RestoreNote(
+                    f"aliases.{thing}.levels",
+                    NoteKind.NOT_IN_DATA,
+                    f"{len(absent)} aliased level(s) of {thing!r} are not in "
+                    f"today's data ({', '.join(repr(a) for a in absent[:5])}); kept",
+                    absent,
+                )
+            )
+    return notes
 
 
 # ---------------------------------------------------------------------------

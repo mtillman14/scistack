@@ -20,6 +20,7 @@ from scistack_gui.config import (
     remove_path,
     resolve_project_root,
     set_entities_file,
+    set_project_alias,
     set_project_root_hint,
     tomllib,
 )
@@ -1853,6 +1854,137 @@ def test_a_preserved_schema_keys_table_is_rendered_last(tmp_path):
     data = _read_raw_section(toml_file)
     assert data["packages"] == ["foo"]
     assert set(data["schema_keys"]) == {"session"}
+
+
+def test_add_path_preserves_a_hand_authored_aliases_table(tmp_path):
+    """``[aliases]`` (scidb.aliases) must survive the Paths popup's whole-file
+    rewrite exactly as ``[schema_keys]`` does, including a quoted
+    ``"Var.Column"`` entry, zero-padded level keys, and the inline ``levels``
+    form — which comes back as a sub-table, the one form the writer emits."""
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text(
+        'modules = ["existing"]\n'
+        'packages = ["foo"]\n'
+        "\n"
+        "[schema_keys]\n"
+        'session = ["BL", "POST"]\n'
+        "\n"
+        "[aliases.session]\n"
+        'name = "Session"\n'
+        "\n"
+        "[aliases.session.levels]\n"
+        '"BL" = "Baseline"\n'
+        '"01" = "Visit 1"\n'
+        "\n"
+        '[aliases."Demographics.Sex"]\n'
+        'levels = { "F" = "Female" }\n'
+    )
+    (tmp_path / "existing").mkdir()
+    shared_repo = tmp_path / "shared_repo"
+    shared_repo.mkdir()
+
+    add_path(db_path, shared_repo)
+
+    data = _read_raw_section(toml_file)
+    assert data["aliases"] == {
+        "session": {"name": "Session", "levels": {"BL": "Baseline", "01": "Visit 1"}},
+        "Demographics.Sex": {"levels": {"F": "Female"}},
+    }
+    # Nothing swallowed by the tables emitted at the end.
+    assert data["packages"] == ["foo"]
+    assert data["schema_keys"] == {"session": ["BL", "POST"]}
+    assert str(_normalize(shared_repo)) in data["modules"]
+
+
+def test_no_aliases_table_writes_none(tmp_path):
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text('modules = ["existing"]\n')
+    (tmp_path / "existing").mkdir()
+    shared_repo = tmp_path / "shared_repo"
+    shared_repo.mkdir()
+
+    add_path(db_path, shared_repo)
+
+    # Not a substring check on the whole file: tmp_path contains this test's
+    # name ("test_no_aliases_…"), and the written module paths are absolute.
+    assert "aliases" not in _read_raw_section(toml_file)
+    assert "[aliases" not in toml_file.read_text()
+
+
+def _alias_project(tmp_path):
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text(
+        'modules = ["existing"]\n'
+        'packages = ["foo"]\n'
+        "\n"
+        "[schema_keys]\n"
+        'session = ["BL", "POST"]\n'
+        "\n"
+        "[aliases.session]\n"
+        'name = "Session"\n'
+    )
+    return db_path, toml_file
+
+
+def test_set_project_alias_writes_a_level_and_keeps_the_file(tmp_path):
+    """The Labels section's "↑ project": one edit, through the one writer,
+    with every other field of scistack.toml coming back as it was."""
+    db_path, toml_file = _alias_project(tmp_path)
+
+    table = set_project_alias(db_path, "session", level="BL", alias="Baseline")
+
+    data = _read_raw_section(toml_file)
+    assert data["aliases"] == {"session": {"name": "Session", "levels": {"BL": "Baseline"}}}
+    assert table == data["aliases"]
+    assert data["modules"] == ["existing"]
+    assert data["packages"] == ["foo"]
+    assert data["schema_keys"] == {"session": ["BL", "POST"]}
+
+
+def test_set_project_alias_sets_and_clears_names_and_levels(tmp_path):
+    db_path, toml_file = _alias_project(tmp_path)
+    set_project_alias(db_path, "Demographics.Sex", name="Sex")
+    assert _read_raw_section(toml_file)["aliases"]["Demographics.Sex"] == {"name": "Sex"}
+
+    set_project_alias(db_path, "session", name=None)  # "✕ project" on a name
+    assert "session" not in _read_raw_section(toml_file)["aliases"]
+
+    set_project_alias(db_path, "Demographics.Sex", name="")
+    assert "aliases" not in _read_raw_section(toml_file)
+
+
+def test_a_new_alias_is_read_back_at_once(tmp_path):
+    """The reader caches on mtime; the writer forgets that parse, so a figure
+    drawn in the same filesystem tick still sees the edit."""
+    from scidb import aliases
+
+    db_path, toml_file = _alias_project(tmp_path)
+    assert aliases.aliases_in(toml_file)["session"] == {"name": "Session"}
+    set_project_alias(db_path, "session", name="Visit")
+    assert aliases.aliases_in(toml_file)["session"] == {"name": "Visit"}
+
+
+def test_set_project_alias_refuses_a_packaged_project(tmp_path):
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n\n[tool.scistack]\n")
+    with pytest.raises(ValueError, match=r"tool\.scistack\.aliases\.session"):
+        set_project_alias(db_path, "session", name="Session")
+    assert "aliases" not in (tmp_path / "pyproject.toml").read_text()
+
+
+def test_set_project_alias_never_creates_a_config(tmp_path):
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    with pytest.raises(FileNotFoundError):
+        set_project_alias(db_path, "session", name="Session")
+    assert not (tmp_path / "scistack.toml").exists()
 
 
 # ---------------------------------------------------------------------------

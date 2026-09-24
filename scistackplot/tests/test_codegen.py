@@ -146,6 +146,49 @@ def test_generated_code_drops_the_legend_for_one_colour_level(
     matplotlib.pyplot.close(figure)
 
 
+@pytest.mark.parametrize("kind", [PlotKind.BAR, PlotKind.BOX])
+def test_the_legend_is_kept_when_the_colour_is_the_x_axis(scalar_table, scalar_frame, kind):
+    """Colour on x itself: seaborn 0.13 calls the hue redundant and, left at
+    legend="auto", draws no legend. The preview lists the colours
+    (render.base.shows_legend), so the export must say legend=True and draw
+    the same entries."""
+    from scistackplot import render_matplotlib, resolve
+
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.COLLAPSE, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session"],
+        color="session",
+        kind=kind,
+    )
+    source = generate_plot_function(spec, scalar_table)
+    assert "legend=True" in source
+
+    exported = _run(source, scalar_frame, "plot_steplength")
+    preview = render_matplotlib(resolve(spec, scalar_table)[0])
+    try:
+        def entries(figure):
+            return sorted(t.get_text() for legend in figure.legends for t in legend.get_texts())
+
+        assert entries(exported) == entries(preview) == ["post", "pre"]
+    finally:
+        matplotlib.pyplot.close(exported)
+        matplotlib.pyplot.close(preview)
+
+
+def test_a_nested_axis_needs_no_legend_override(scalar_table):
+    """With the colour composed into a nested `_x`, the hue is not redundant
+    and seaborn draws the legend by itself — nothing extra is emitted."""
+    spec = PlotSpec(
+        measures=["StepLength"],
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["session", "subject"],
+        color="session",
+        kind=PlotKind.BOX,
+    )
+    assert "legend=True" not in generate_plot_function(spec, scalar_table)
+
+
 def test_iterate_factors_are_documented_as_foreach_keys(scalar_table):
     spec = PlotSpec(
         measures=["StepLength"],

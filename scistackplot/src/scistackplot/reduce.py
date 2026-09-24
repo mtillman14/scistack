@@ -52,6 +52,7 @@ from .resolved import (
     Y_LOW,
     Z,
 )
+from .aliases import DisplayText, check_distinct, display_text, labelable, log_summary
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import (
     CollapseSteps,
@@ -121,7 +122,7 @@ MAX_TRANSPORT_POINTS = 20_000
 #: y limits (``_Plan.y_limits``), so a changed scope has to build a new one. It
 #: is a checkbox and two boxes rather than a dragged slider, so the re-plan is
 #: per click, not per frame.
-_PLAN_IRRELEVANT_FIELDS = ("kind", "facet", "style")
+_PLAN_IRRELEVANT_FIELDS = ("kind", "facet", "style", "aliases")
 
 #: How many plans are kept. Two: the pattern being served is narrow — the panel
 #: re-resolves the SAME data repeatedly while the user changes how it is drawn.
@@ -296,6 +297,10 @@ def resolve(
     ) as timing:
         with timing.phase("plan"):
             plan = _plan(spec, table)
+        # Merged once per resolve (the project layer is read live, here) and
+        # summarised once; each figure is told its roles by `_build_figure`.
+        text = display_text(plan.spec, plan.table)
+        log_summary(text, plan.table)
 
         total = len(plan.groups)
         Log.info(
@@ -327,6 +332,7 @@ def resolve(
                     narrate=narrate,
                     y_scope=plan.y_scope,
                     y_limits=plan.y_limits,
+                    text=text,
                 )
             )
         for figure in figures:
@@ -705,6 +711,8 @@ def resolve_one(
     ) as timing:
         with timing.phase("plan"):
             plan = _plan(spec, table)
+        text = display_text(plan.spec, plan.table)
+        log_summary(text, plan.table)
         position = max(0, min(int(index), len(plan.groups) - 1))
         key, group = plan.groups[position]
         if narrate:
@@ -731,6 +739,7 @@ def resolve_one(
             narrate=narrate,
             y_scope=plan.y_scope,
             y_limits=plan.y_limits,
+            text=text,
         )
         figure.fanout_notes = plan.notes
         Log.info(
@@ -1095,6 +1104,7 @@ def _build_figure(
     narrate: bool = False,
     y_scope: list[str] | None = None,
     y_limits: dict | None = None,
+    text: DisplayText | None = None,
 ) -> ResolvedPlot:
     # ``narrate`` makes this function announce each phase as it starts. A
     # full-resolution figure is minutes of work (scidb.log 2026-09-11: 1543s for
@@ -1339,17 +1349,36 @@ def _build_figure(
             encoding = _encoding_for(
                 spec.kind, color, shape, bool(series_layers or unit_layers), bool(dash_styles)
             )
+            # What this figure's text reads as (`aliases`): merged once per
+            # resolve, told here which factor plays which role. Checked before
+            # anything is drawn: two levels that would read the same are refused.
+            figure_text = (text or display_text(spec, table)).for_figure(
+                x_layers=x_layers,
+                color=color,
+                sample_color=sample_color,
+                # Outermost first, the order dash ids are composed in.
+                dash_layers=list(reversed(dash_layers)) if dash_styles else [],
+            )
+            check_distinct(
+                figure_text,
+                table,
+                [*x_layers, color, sample_color, *dash_layers, *facet_names, *figure_key],
+            )
             labels = _labels_for(
                 spec, table, x_layers, color, index_column, figure_key,
                 dash_layers=dash_layers if dash_styles else [],
                 sample_color=sample_color,
+                text=figure_text,
             )
 
             # A nested axis is composed once, here, from labels only — so both
             # renderers draw the same brackets and codegen can replay the result
             # instead of re-deriving it (same bargain as plan_layout).
+            # Its TEXT is aliased; its `order` (the keys marks are placed by) is not.
             x_plan = (
-                _plan_nested_x(panels, table, x_layers) if len(x_layers) > 1 else None
+                figure_text.x_plan(_plan_nested_x(panels, table, x_layers))
+                if len(x_layers) > 1
+                else None
             )
 
         # The FIGURE's limits: the panels' own, when they all agree. Not a
@@ -1447,6 +1476,20 @@ def _build_figure(
             sample_join=bool(join.join) if join is not None else False,
             sample_join_reason=join.reason if join is not None else "",
             sample_offsets=sample_offsets,
+            text=figure_text,
+            labelable=labelable(
+                figure_text,
+                table,
+                measure=spec.y_measure,
+                factors=[
+                    *((name, "x axis") for name in x_layers),
+                    (color, "colour"),
+                    (sample_color, "sample colour"),
+                    *((name, "dash") for name in dash_layers),
+                    *((name, "panels") for name in facet_names),
+                    *((name, "figures") for name in figure_key),
+                ],
+            ),
             sample_color=sample_color,
             sample_color_order=list(sample_color_order or []),
         )
@@ -2348,6 +2391,7 @@ def x_axis_title(
     table: LongTable,
     x_layers: list[str],
     index_column: str | None,
+    text: DisplayText | None = None,
 ) -> str:
     """The x axis title — the ONE owner, read by both renderers (through
     ``Labels.x``) and by ``codegen``.
@@ -2357,16 +2401,20 @@ def x_axis_title(
     repeated what sits directly above and below it, and in a saved figure it
     collided with the bracket row (user, 2026-09-23; spec/images/graph1.png).
     A single-layer axis keeps its factor's name: its tick labels (``BL``,
-    ``MID24``) do not say what they are. ``StyleOptions.x_label`` always wins.
+    ``MID24``) do not say what they are. ``StyleOptions.x_label`` always wins;
+    otherwise a name alias (``aliases``) does. ``text`` is the figure's merged
+    aliases; without one (``codegen``) they are merged here.
     """
     if spec.style.x_label:
         return spec.style.x_label
-    if spec.x_measure:
-        return table.measure(spec.x_measure).display
-    if len(x_layers) > 1:
+    if spec.x_measure is None and len(x_layers) > 1:
         return ""
+    if text is None:
+        text = display_text(spec, table)
+    if spec.x_measure:
+        return text.name(spec.x_measure, table.measure(spec.x_measure).display)
     if x_layers:
-        return table.factor(x_layers[0]).display
+        return text.name(x_layers[0], table.factor(x_layers[0]).display)
     return index_column or ""
 
 
@@ -2379,26 +2427,30 @@ def _labels_for(
     figure_key: dict[str, Any],
     dash_layers: list[str] = (),
     sample_color: str | None = None,
+    text: DisplayText | None = None,
 ) -> Labels:
+    """Every title the figure draws, with name and level aliases applied
+    (``text``: the figure's :class:`aliases.DisplayText`)."""
     style = spec.style
-    x_label = x_axis_title(spec, table, x_layers, index_column)
+    text = text if text is not None else display_text(spec, table)
+    x_label = x_axis_title(spec, table, x_layers, index_column, text)
 
-    y_label = style.y_label or table.measure(spec.y_measure).display
+    y_label = style.y_label or text.name(spec.y_measure, table.measure(spec.y_measure).display)
 
     title = style.title
     if title is None and figure_key:
-        title = ", ".join(f"{k}={v}" for k, v in figure_key.items())
+        title = text.figure_title(figure_key)
+
+    def named(factor: str) -> str:
+        return text.name(factor, table.factor(factor).display)
 
     return Labels(
         x=x_label,
         y=y_label,
-        color=table.factor(color).display if color else None,
+        color=named(color) if color else None,
         # Outermost first, as the dash ids themselves are composed.
-        dash=(
-            " / ".join(table.factor(name).display for name in reversed(list(dash_layers)))
-            or None
-        ),
-        sample=table.factor(sample_color).display if sample_color else None,
+        dash=(" / ".join(named(name) for name in reversed(list(dash_layers))) or None),
+        sample=named(sample_color) if sample_color else None,
         title=title,
     )
 

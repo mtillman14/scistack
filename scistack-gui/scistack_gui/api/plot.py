@@ -27,6 +27,7 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/plot/saved/rename             plot_saved_rename
     POST /api/plot/saved/hide               plot_saved_hide
     POST /api/plot/saved/history            plot_saved_history
+    POST /api/plot/project-alias            plot_project_alias_set
     POST /api/client-error                  report_client_error
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
@@ -181,6 +182,19 @@ class SavedOpenRequest(BaseModel):
 class SavedRenameRequest(BaseModel):
     plot_id: str
     name: str
+
+
+class ProjectAliasRequest(BaseModel):
+    """One edit to the project's ``[aliases]`` (scistack.toml)."""
+
+    #: The alias key: a schema key, a variable, ``Variable.Column``, ColName…
+    thing: str
+    #: When True, ``name`` replaces the thing's name alias ("" / None clears).
+    set_name: bool = False
+    name: str | None = None
+    #: When given, ``alias`` replaces that level's alias ("" / None clears).
+    level: str | None = None
+    alias: str | None = None
 
 
 class SavedHideRequest(BaseModel):
@@ -355,6 +369,16 @@ def _saved_history(db, req: SavedHistoryRequest) -> dict:
     return saved_plot_service.history(db, req.plot_id)
 
 
+def _project_alias_set(req: ProjectAliasRequest) -> dict:
+    return plot_service.set_project_alias(
+        req.thing,
+        set_name=req.set_name,
+        name=req.name,
+        level=req.level,
+        alias=req.alias,
+    )
+
+
 def _client_error(req: ClientErrorRequest) -> dict:
     """The webview caught a render error; write it into the shared log."""
     return report_client_error(req.model_dump())
@@ -462,6 +486,13 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_saved_history", "/plot/saved/history", SavedHistoryRequest,
         _saved_history, http_errors=_BAD_REQUEST,
+    ),
+    # Writes scistack.toml, never the database: the project's display aliases
+    # (scidb.aliases). A refusal (packaged project, no config) is an
+    # {ok: false, error} answer the Labels section shows, not an HTTP error.
+    Handler(
+        "plot_project_alias_set", "/plot/project-alias", ProjectAliasRequest,
+        _project_alias_set, holds_db_lock=False, needs_db=False,
     ),
     # Touches no database at all — it only writes a log line, and must still
     # work while MATLAB holds the file (that is exactly when a webview crash

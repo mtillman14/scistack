@@ -24,6 +24,7 @@ from ..figsize import describe_size
 from ..resolved import ResolvedPlot
 from ..roles import overlay_in_legend
 from ..spec import PlotKind
+from ..textsize import resolve_sizes
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
     MARK_OFFSET_GROUP,
@@ -79,6 +80,7 @@ def render(
     with Log.timer("render_plotly", layer=LAYER, extra=str(resolved.kind)):
         n_rows, n_cols = grid_shape(resolved)
         style = resolved.spec.style
+        sizes = resolve_sizes(style)
         traces: list[dict] = []
         legend_on = shows_legend(resolved)
         if not legend_on and resolved.encoding.color:
@@ -91,7 +93,11 @@ def render(
         layout: dict[str, Any] = {
             "showlegend": legend_on,
             "legend": {
-                "title": {"text": _legend_title(resolved)},
+                "title": {
+                    "text": _legend_title(resolved),
+                    "font": {"size": sizes.legend_title_for(sizes.legend)},
+                },
+                "font": {"size": sizes.legend},
                 # Stated, not defaulted: outside the plotting area on the right
                 # and vertically centred, which is exactly where the matplotlib
                 # export puts it. The margin below reserves the room it sits in
@@ -115,7 +121,7 @@ def render(
             # The same number as the export's font.size, read as px here. The
             # GUI adds the colour; it must not add a size, or the setting would
             # only be visible after a save.
-            "font": {"size": style.font_size},
+            "font": {"size": sizes.base},
             # The grid shape travels with the figure so the panel can size it:
             # 4 rows of subplots need more height than 1, and only the renderer
             # knows how the panels were laid out. The GUI also reads `rows`/
@@ -136,10 +142,16 @@ def render(
                 # pane regardless, so this is how the panel states what the
                 # export produces — the same numbers `render_mpl` logs.
                 "figure_size": describe_size(style.width, style.height),
+                # Every text size as the export resolves it, fixed ones listed —
+                # the GUI shows a derived size as the placeholder of its box.
+                "text_sizes": sizes.to_dict(),
+                # What the Labels section offers (aliases.labelable): the
+                # measure and every factor this figure draws as text.
+                "labelable": list(resolved.labelable),
             },
         }
         if resolved.labels.title:
-            layout["title"] = {"text": resolved.labels.title}
+            layout["title"] = {"text": resolved.labels.title, "font": {"size": sizes.title}}
 
         if resolved.kind is PlotKind.BAR:
             # Stated, never inferred — the same rule as `orientation: "v"` on
@@ -265,9 +277,10 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
                 "xref": "paper",
                 "yref": "paper",
                 "showarrow": False,
-                # "small" relative to the figure font, as the matplotlib side
-                # draws the same label.
-                "font": {"size": round(resolved.spec.style.font_size * 0.8)},
+                # The one owner's bracket size (textsize), which the matplotlib
+                # side draws the same label at. It was 0.8 x here and "small"
+                # (0.833 x) there: two owners of one number.
+                "font": {"size": resolve_sizes(resolved.spec.style).groups},
                 "xanchor": "center",
                 "yanchor": "top",
             }
@@ -332,7 +345,7 @@ def _panel_traces(
 
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         color = palette_for(resolved, level, index)
-        label = str(level) if level is not None else resolved.labels.y
+        label = resolved.text.color_level(level) if level is not None else resolved.labels.y
         show_legend = legend_on and level is not None and label not in seen_legend
         if show_legend:
             seen_legend.add(label)
@@ -509,7 +522,12 @@ def _sample_traces(
     traces: list[dict] = []
     for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
         color = sample_paint(resolved, level, index)
-        label = str(level) if level is not None else resolved.labels.y
+        # The overlay's own colour key when it has one, else the mark's colour.
+        label = (
+            (resolved.text.sample_level(level) if own_color else resolved.text.color_level(level))
+            if level is not None
+            else resolved.labels.y
+        )
         legend_group = f"sample:{label}" if own_color else label
         for identity, rows in sample_series(subset, resolved):
             positions = sample_positions(rows, resolved, identity)
@@ -582,7 +600,11 @@ def _x_ticks(resolved: ResolvedPlot) -> dict:
     plan = resolved.x_plan
     if _positional_x(resolved):
         order = list(plan.order) if plan else [str(v) for v in resolved.x_order or []]
-        labels = list(plan.tick_labels) if plan else order
+        labels = (
+            list(plan.tick_labels)
+            if plan
+            else [resolved.text.x_tick(v) for v in resolved.x_order or []]
+        )
         return {
             "tickmode": "array",
             "tickvals": list(range(len(order))),
@@ -595,6 +617,14 @@ def _x_ticks(resolved: ResolvedPlot) -> dict:
             "tickvals": list(plan.order),
             "ticktext": list(plan.tick_labels),
         }
+    if is_categorical_x(resolved):
+        # A plain category axis names its ticks by the category VALUES, which
+        # stay raw (the traces are placed by them). Aliased text, when any
+        # tick reads differently, goes on as ticktext over those same values.
+        order = [str(v) for v in resolved.x_order or []]
+        labels = [resolved.text.x_tick(v) for v in resolved.x_order or []]
+        if labels != order:
+            return {"tickmode": "array", "tickvals": order, "ticktext": labels}
     return {}
 
 
@@ -710,7 +740,7 @@ def _dash_legend_traces(resolved) -> list[dict]:
     group, after the colour entries."""
     return [
         {
-            "name": sid,
+            "name": resolved.text.dash_id(sid),
             "legendgroup": f"dash:{sid}",
             "showlegend": True,
             "type": "scatter",
@@ -746,13 +776,19 @@ def _add_axes(
     x0, y0, cell_width, cell_height = _cell(
         row, col, n_rows, n_cols, _x_depth(resolved)
     )
+    sizes = resolve_sizes(resolved.spec.style)
 
     layout[x_key] = {
         "domain": [x0, x0 + cell_width],
         "anchor": x_anchor,
         # Tick labels and the axis title share ONE rule (base.shows_x_labels).
         "showticklabels": bottom,
-        "title": {"text": resolved.labels.x if bottom else ""},
+        "title": {
+            "text": resolved.labels.x if bottom else "",
+            "font": {"size": sizes.x_label},
+        },
+        # The fitted size replaces this when decisions are applied.
+        "tickfont": {"size": sizes.x_ticks},
         # A nested axis is keyed by composed leaf keys the user must never see;
         # the ticks show the innermost layer's value, with the layers above it
         # drawn as brackets (see _add_x_groups). Spacer positions get no tick.
@@ -816,7 +852,11 @@ def _add_axes(
         # Tick labels and the axis title do NOT share a rule here (unlike x):
         # a faceted panel's title names that panel, so it is drawn even where
         # the shared tick labels are suppressed. See base.panel_y_title.
-        "title": {"text": panel_y_title(resolved, panel, leftmost=leftmost)},
+        "title": {
+            "text": panel_y_title(resolved, panel, leftmost=leftmost),
+            "font": {"size": sizes.y_label},
+        },
+        "tickfont": {"size": sizes.y_ticks},
         "type": "log" if resolved.spec.style.log_y else "-",
         # No automargin here, deliberately, even though the x axes use it: an
         # inner column's title is rotated text drawn into X_GAP (which is sized
@@ -856,8 +896,8 @@ MAX_LEGEND_PX = 320
 
 def _right_margin(resolved: ResolvedPlot) -> int:
     """Room on the right for the legend, sized from the longest entry."""
-    entries = [str(level) for level in legend_levels(resolved)]
-    entries.extend(dash_levels(resolved))
+    entries = [resolved.text.color_level(level) for level in legend_levels(resolved)]
+    entries.extend(resolved.text.dash_id(sid) for sid in dash_levels(resolved))
     entries.append(resolved.labels.color or "")
     entries.append(resolved.labels.dash or "")
     longest = max((len(text) for text in entries), default=0)
@@ -945,7 +985,7 @@ PREVIEW_FONT_FAMILY = "DejaVu Sans, Arial, sans-serif"
 #: ``name`` prefix of a bracket-label annotation (``_add_x_groups``).
 X_GROUP_TAG = "x-group"
 
-#: The preview is drawn at 1 pt = 1 px — the convention ``font_size`` already
+#: The preview is drawn at 1 pt = 1 px — the convention ``text.base`` already
 #: follows (`layout.font.size`), so a decision in points is one in pixels.
 PX_PER_IN = 72.0
 
@@ -1014,7 +1054,7 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
             title["text"] = " /<br>".join(
                 part for part in str(title.get("text", "")).split(" / ")
             )
-        title["font"] = {"size": legend["font_pt"]}
+        title["font"] = {"size": legend.get("title_font_pt", legend["font_pt"])}
         margin = layout.setdefault("margin", {})
         if legend["below"]:
             spec_legend.update(

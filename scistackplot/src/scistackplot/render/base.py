@@ -91,7 +91,9 @@ def panel_y_title(resolved: ResolvedPlot, panel, *, leftmost: bool) -> str:
     shared label being repeated) does not apply to it.
     """
     if panel is not None and panel.key:
-        return panel.title
+        # The TEXT of the facet values (aliased); `panel.title` stays the raw
+        # identity the layout rules match.
+        return resolved.text.panel_title(panel.key)
     return resolved.labels.y if leftmost else ""
 
 

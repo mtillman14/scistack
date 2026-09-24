@@ -8,6 +8,52 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-09-24-2 — Display aliases: project over raw, plot over project, text only
+
+**Context.** Figures show raw levels and names (`BL`, `F`, `StepLength`).
+The user wanted aliases for tick labels, legend entries and axis titles,
+without restating them in every plot, and a separate size for each piece
+of text.
+
+**Decision.**
+- **Where aliases live.** There are two layers.
+  - The project: `[aliases]` in the project config, one entry per thing
+    (`name`, plus a `levels` sub-table). Its grammar is owned by
+    `scidb.aliases`, and it is read live.
+  - The plot: `PlotSpec.aliases`, stored with the saved plot, which
+    overrides the project field by field.
+  - There is no per-plot .toml file, because it would be a second owner of
+    plot state.
+- **What an alias does.** It changes TEXT only. Every identity stays raw:
+  panel keys, orders, offsets, facet rules, y limits, the CSV export.
+  Within a factor the text must be one-to-one, and a clash is refused
+  (`AliasError`, a `RoleError`).
+- **How aliases reach a figure.**
+  - The ONE owner of how text reads is `scistackplot.aliases.DisplayText`,
+    on `ResolvedPlot.text`. The renderers never call `str(level)` for text.
+  - `aliases` is plan-irrelevant.
+  - Tables carry a live READER of the project layer
+    (`LongTable.aliases_source`), not a copy. The plan cache keys on
+    `id(table)`, so a copy would force a re-reduce.
+- **Exported code.** It bakes the merged aliases in as a literal (lineage)
+  and relabels the drawn text rather than renaming data.
+- **Text sizes.** They are `StyleOptions.text` (`TextSizes`), resolved by
+  `scistackplot.textsize`. A size the user sets is never shrunk by fitting.
+
+**Consequences.**
+- A project alias edit reaches the preview and saved figures at once, but an
+  exported step only when it is re-exported.
+- Hover text and the figure pager stay raw.
+- `font_size`/`tick_font_size` were a clean break: old saved plots revert
+  them with a note.
+- The export must match the preview everywhere. The colour-on-x legend was
+  fixed under that rule.
+
+**Full argument:** `docs/claude/plot-text-and-labels.md`; build notes in
+`.claude/plan-plot-text-sizes-and-aliases.md`.
+
+---
+
 ## D-2026-09-24-1 — Saved plots are salvaged on open, never migrated
 
 **Context.** Plot Studio saves named plots per variable (a `PlotSpec` plus

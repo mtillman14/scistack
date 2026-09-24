@@ -23,8 +23,10 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 import pandas as pd
+from scistacklog import Log
 
 from .shape import Shape, classify_column
+from .spec import Alias
 
 _NUM_CHUNK = re.compile(r"(\d+)")
 
@@ -193,6 +195,33 @@ class LongTable:
     #: says so by leaving this None. Typed loosely to keep ``table`` below
     #: ``reducer`` in the import graph; see ``reducer.Reducer`` for the contract.
     reducer: Any = None
+    #: Where the PROJECT's display aliases come from: a zero-argument callable
+    #: returning ``{thing: {"name": …, "levels": {…}}}`` (the plain form
+    #: ``scidb.aliases`` produces), or None for a source with no project.
+    #:
+    #: A reader, not a snapshot, for two reasons. The aliases are live — an
+    #: edit to scistack.toml must reach the next figure — while this table is
+    #: cached by its source and must NOT be rebuilt for a display change.
+    #: And the plan cache keys on this table's identity (``reduce``), so
+    #: handing out a fresh copy per alias edit would re-reduce the data for
+    #: a change of text. Read through :meth:`project_aliases`.
+    aliases_source: Any = None
+
+    def project_aliases(self) -> dict[str, Alias]:
+        """The project layer of display aliases, read now. ``{}`` when the
+        source has none or the read fails (a figure never fails over text)."""
+        if self.aliases_source is None:
+            return {}
+        try:
+            raw = self.aliases_source() or {}
+            return {str(thing): Alias.from_dict(entry) for thing, entry in raw.items()}
+        except Exception as exc:
+            Log.warn(
+                "project aliases unavailable (%s) — figures show raw names",
+                exc,
+                layer="scistackplot",
+            )
+            return {}
 
     # ---- lookups ---------------------------------------------------------
 

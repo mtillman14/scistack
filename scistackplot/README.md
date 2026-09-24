@@ -208,7 +208,7 @@ panel decides for every panel), trying the least destructive fix first:
 1. **Numbered labels** (every label is, or ends in, a number) drop the prefix
    they share: `SS01 … SS40` → `01 … 40`. Names are never touched.
 2. Wrap at `_ - / . space` onto two lines.
-3. Shrink the font, never below 8pt or 70% of `font_size`.
+3. Shrink the font, never below 8pt or 70% of the tick size.
 4. Rotate 45°, then 90°.
 5. Numbered labels only: show every k-th, keeping each bracket's first and
    last. Names stop at step 4 and the log WARNs that they still overlap.
@@ -218,7 +218,7 @@ number of points below the fitted tick labels and fitted too (shrink and wrap
 only). A nested axis has **no x title**: its tick and bracket rows already name
 every level. `StyleOptions.hide_legend_ticks=True` blanks the labels of a
 layer that is also the colour while the legend lists it. Any of the fitted
-settings can be fixed instead: `tick_rotation`, `tick_font_size`,
+settings can be fixed instead: `tick_rotation`, `text.x_ticks`,
 `tick_every` (None = fitted). A fixed value is kept even where it overlaps, and
 the fit reports that it does. The generated seaborn code replays the fit as
 operations on seaborn's own labels, and saves without `bbox_inches="tight"`. See
@@ -255,10 +255,51 @@ bracket and legend decisions; `render_plotly(resolved, decisions=...,
 fixed_size_px=...)` draws exactly those. The Plot Studio previews at the export
 size (drawn at Width x Height, 1 pt = 1 px) or at the pane's size ("Fit pane").
 
-`StyleOptions.font_size` (points, default 14) is matplotlib's `font.size`:
-ticks, axis labels, legend and title all scale from it, applied under
-`rc_context` so nothing leaks into the next figure. The plotly preview reads
-the same number as px, so the change is visible before a save.
+`StyleOptions.text` (`TextSizes`) sizes each piece of text separately:
+`base` (points, default 14) is matplotlib's `font.size`, and `title`,
+`x_label`, `y_label`, `x_ticks`, `y_ticks`, `groups` (the bracket rows),
+`legend` and `legend_title` are each either fixed or `None`, which derives
+them from `base` with matplotlib's own ratios. Only `base` set draws exactly
+what one font knob would. A fixed size is never shrunk by the label or legend
+fit, which may still rotate, wrap or move it. `scistackplot.textsize` is the
+one owner (`resolve_sizes`, `rc_params`). The export, the generated code and
+the plotly preview (as px) all read it, under `rc_context` so nothing leaks
+into the next figure. See `docs/claude/plot-text-and-labels.md`.
+
+## What the text reads as: display aliases
+
+A figure shows the data's own names, such as `BL`, `F` and `StepLength`.
+An alias says what one reads as, and it changes only the text:
+
+```python
+from scistackplot import Alias
+
+spec = PlotSpec(
+    measures=["StepLength"],
+    roles={"session": Role.GROUP, "subject": Role.COLLAPSE},
+    groups=["session"],
+    aliases={
+        "session": Alias(name="Visit", levels={"BL": "Baseline", "POST": "After"}),
+        "StepLength": Alias(name="Step length (cm)"),
+    },
+)
+```
+
+`name` is used where the figure says what a thing is (axis and legend
+titles). `levels` is used wherever a value appears: ticks, brackets,
+legend entries, panel titles and figure titles.
+
+A scidb-backed table also carries the project's aliases (`[aliases]` in
+`scistack.toml`, read live through `scidb.aliases`). The plot's own entries
+override them field by field, and `""` shows the raw text again.
+
+Only the text changes. Filters, facet layout rules, the level order and
+`plot_data` all keep raw levels, and so does the data the exported code
+draws. The exported code writes the merged aliases in as a literal and
+relabels what it drew. Two levels of one factor that would read the same are
+refused (`AliasError`), because the figure could not tell them apart.
+`scistackplot.aliases.DisplayText` (on `ResolvedPlot.text`) is the one owner
+of how every level and name reads. See `docs/claude/plot-text-and-labels.md`.
 
 ## Export: real code, not a call back into this library
 

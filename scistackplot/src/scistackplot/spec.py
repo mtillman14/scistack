@@ -752,19 +752,84 @@ class VariantSet:
 
 
 @dataclass(frozen=True)
+class Alias:
+    """What one thing reads as in a figure: its own name, and its levels'.
+
+    The same shape as one ``[aliases.<thing>]`` entry of the project config,
+    whose grammar ``scidb.aliases`` owns; a plot's own entries
+    (``PlotSpec.aliases``) override the project's. ``name``
+    renames the thing where the figure says what it IS (axis and legend
+    titles); ``levels`` maps a level's TEXT (``"01"`` stays ``"01"``) to what
+    it reads as, wherever it appears. Display only — see
+    docs/claude/plot-text-and-labels.md.
+    """
+
+    name: str | None = None
+    levels: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        raw: dict[str, Any] = {}
+        if self.name is not None:
+            raw["name"] = self.name
+        if self.levels:
+            raw["levels"] = dict(self.levels)
+        return raw
+
+    @classmethod
+    def from_dict(cls, raw: "dict | Alias | None") -> "Alias":
+        if isinstance(raw, Alias):
+            return raw
+        raw = raw or {}
+        name = raw.get("name")
+        return cls(
+            name=None if name is None else str(name),
+            levels={str(level): str(alias) for level, alias in (raw.get("levels") or {}).items()},
+        )
+
+
+@dataclass(frozen=True)
+class TextSizes:
+    """Point sizes of the figure's text, one per element.
+
+    ``base`` is matplotlib's ``font.size``. Every other field is a size you FIX:
+    ``None`` means "derived from ``base``" with the ratios matplotlib's own
+    relative names give (``medium``, ``large``, ``small``), so a spec that sets
+    only ``base`` draws exactly what the single ``font_size`` knob drew. A
+    fixed size is also a PIN: automatic fitting (tick labels, brackets, the
+    legend) may rotate, wrap, thin or move the text but never shrinks it.
+    ``scistackplot.textsize`` is the one reader (docs/claude/plot-text-and-labels.md).
+    """
+
+    #: 14 rather than matplotlib's 10: at 8 x 6 in the default was unreadable
+    #: once the figure sat in a slide or a two-column page (user, 2026-09-16).
+    #: The plotly preview uses the same number as px.
+    base: float = 14.0
+    #: The figure title (``suptitle``, a heatmap's axes title).
+    title: float | None = None
+    #: The x axis title, including the one shared under several columns.
+    x_label: float | None = None
+    #: The y axis title, and a faceted panel's y title (its facet levels).
+    y_label: float | None = None
+    x_ticks: float | None = None
+    y_ticks: float | None = None
+    #: The label rows under a nested x axis (brackets). Own size (user,
+    #: 2026-09-24); unset, it is the x ticks' size times ``small``.
+    groups: float | None = None
+    #: Legend entries.
+    legend: float | None = None
+    #: The legend title; unset, it follows the entries (including a shrink).
+    legend_title: float | None = None
+
+
+@dataclass(frozen=True)
 class StyleOptions:
     palette: str | None = None
     #: Inches — the SAVED figure and the generated code. The interactive preview
     #: fills its pane and does not read these (see docs/claude/figure-size.md).
     width: float = 8.0
     height: float = 6.0
-    #: Points, matplotlib's ``font.size``; every other text size (axis labels,
-    #: ticks, legend, title) is relative to it, so one number scales them all.
-    #: 14 rather than matplotlib's 10: at 8 x 6 in the default was unreadable
-    #: once the figure sat in a slide or a two-column page (user, 2026-09-16).
-    #: The plotly preview uses the same number as px, so the setting is visible
-    #: before anything is saved.
-    font_size: float = 14.0
+    #: Every text size, per element. See :class:`TextSizes`.
+    text: TextSizes = field(default_factory=TextSizes)
     log_x: bool = False
     log_y: bool = False
     title: str | None = None
@@ -777,12 +842,20 @@ class StyleOptions:
     #: bracket row). Opt-in (user, 2026-09-23): the ticks and brackets stay.
     hide_legend_ticks: bool = False
     #: The x tick labels' settings, fixed by the user; None = fitted
-    #: (``ticklabels.fit_labels``). Rotation in degrees (0 / 45 / 90), font in
-    #: points, ``tick_every`` = show every k-th label (1 = all). A fixed value
-    #: is kept even where it overlaps; the fit then reports that it does.
+    #: (``ticklabels.fit_labels``). Rotation in degrees (0 / 45 / 90),
+    #: ``tick_every`` = show every k-th label (1 = all). A fixed value is kept
+    #: even where it overlaps; the fit then reports that it does. The tick
+    #: FONT pin is ``text.x_ticks``.
     tick_rotation: int | None = None
-    tick_font_size: float | None = None
     tick_every: int | None = None
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> "StyleOptions":
+        """Strict, like :meth:`PlotSpec.from_dict`: an unknown key raises
+        (``restore_spec`` is the tolerant reader)."""
+        raw = dict(raw or {})
+        text = raw.pop("text", None) or {}
+        return cls(**raw, text=TextSizes(**text))
 
 
 @dataclass(frozen=True)
@@ -879,6 +952,12 @@ class PlotSpec:
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
     style: StyleOptions = field(default_factory=StyleOptions)
+    #: What this plot's factors, levels and measures read as: ``{thing:
+    #: Alias(name, levels)}``, the same shape as the project config's
+    #: ``[aliases]``, which these override field by field (a ``""`` shows the
+    #: raw text). Display only, and plan-irrelevant: an edit re-renders and
+    #: never re-reduces. ``aliases.display_text`` is the one reader.
+    aliases: dict[str, Alias] = field(default_factory=dict)
     filters: list[Filter] = field(default_factory=list)
     #: Which schema locations to draw. Written by the schema location picker,
     #: which REPLACED the flat per-key pickers — see :class:`LocationFilter` for
@@ -1025,6 +1104,7 @@ class PlotSpec:
         raw["factor_variables"] = [f.to_dict() for f in self.factor_variables]
         raw["groups"] = list(self.groups)
         raw["show_sample"] = list(self.show_sample)
+        raw["aliases"] = {thing: alias.to_dict() for thing, alias in self.aliases.items()}
         # TOML has no null; drop empty optionals so a round trip is stable.
         return _drop_nulls(raw)
 
@@ -1052,7 +1132,11 @@ class PlotSpec:
             sample_in_legend=bool(raw.get("sample_in_legend", True)),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
-            style=StyleOptions(**(raw.get("style") or {})),
+            style=StyleOptions.from_dict(raw.get("style")),
+            aliases={
+                str(thing): Alias.from_dict(entry)
+                for thing, entry in (raw.get("aliases") or {}).items()
+            },
             filters=[Filter(**f) for f in (raw.get("filters") or [])],
             location_filter=LocationFilter.from_dict(raw.get("location_filter") or {}),
             factor_variables=[

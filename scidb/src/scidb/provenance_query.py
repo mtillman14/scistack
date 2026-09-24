@@ -3351,35 +3351,25 @@ def realized_inputless_invocations(
     Pure structural read from the graph — no invocation_id recomputation, so no
     predicted-vs-realized drift.
     """
-    out: set = set()
-    if fn_hash is None:
-        rows = duck._fetchall(
-            "SELECT invocation_id FROM _invocation WHERE function_name = ?",
-            [fn_name],
-        )
-    else:
-        rows = duck._fetchall(
-            "SELECT invocation_id FROM _invocation "
-            "WHERE function_name = ? AND function_hash = ?",
-            [fn_name, fn_hash],
-        )
-    for (inv_id,) in rows:
-        has_var_input = duck._fetchall(
-            "SELECT 1 FROM _invocation_input ii "
-            "JOIN _record r ON r.record_id = ii.input_record_id "
-            "WHERE ii.invocation_id = ? AND r.type NOT IN (?, ?) LIMIT 1",
-            [inv_id, CONSTANT_TYPE, PATHINPUT_TYPE],
-        )
-        if has_var_input:
-            continue  # has variable inputs → live prediction handles it
-        for (sid,) in duck._fetchall(
-            "SELECT DISTINCT r.schema_id FROM _invocation_output io "
-            "JOIN _record r ON r.record_id = io.output_record_id "
-            "WHERE io.invocation_id = ?",
-            [inv_id],
-        ):
-            out.add((inv_id, sid))
-    return out
+    # One query. It was two PER INVOCATION — ~0.85 s of every canvas build for
+    # a 450-file loader (cleanup-audit F15, measured 2026-09-24). An invocation
+    # with a variable input is left to live prediction (the NOT EXISTS).
+    hash_clause = "" if fn_hash is None else "AND inv.function_hash = ? "
+    params = [fn_name] + ([] if fn_hash is None else [fn_hash])
+    rows = duck._fetchall(
+        "SELECT DISTINCT inv.invocation_id, r.schema_id "
+        "FROM _invocation inv "
+        "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
+        "JOIN _record r ON r.record_id = io.output_record_id "
+        f"WHERE inv.function_name = ? {hash_clause}"
+        "AND NOT EXISTS ("
+        "  SELECT 1 FROM _invocation_input ii "
+        "  JOIN _record ri ON ri.record_id = ii.input_record_id "
+        "  WHERE ii.invocation_id = inv.invocation_id AND ri.type NOT IN (?, ?)"
+        ")",
+        params + [CONSTANT_TYPE, PATHINPUT_TYPE],
+    )
+    return {(inv_id, sid) for inv_id, sid in rows}
 
 
 def is_inputless_function(duck, fn_name: str) -> bool:

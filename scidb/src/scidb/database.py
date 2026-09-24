@@ -2015,6 +2015,35 @@ class DatabaseManager:
                 _schema_order.validate(order, self.dataset_schema_keys)
         return order
 
+    @property
+    def dataset_aliases(self) -> "dict[str, dict]":
+        """``{thing: {"name": …, "levels": {…}}}`` from the project's
+        ``[aliases]``, LIVE — the display names every plot starts from.
+
+        Same discipline as :attr:`dataset_schema_key_order`: read through
+        :func:`scidb.aliases.project_aliases` on every access (a ``stat``, the
+        parse is cached on mtime), and validated against this dataset's schema
+        keys and variables each time the content CHANGES, so a typo is
+        reported when it is written. Display only: nothing in scidb reads it.
+        """
+        from . import aliases as _aliases
+
+        table = _aliases.project_aliases()
+        if table is not getattr(self, "_validated_aliases", None):
+            self._validated_aliases = table
+            if table:
+                try:
+                    variables = [
+                        str(name) for name in self.list_variables()["variable_name"]
+                    ]
+                except Exception as exc:  # a closed or half-open database
+                    Log.debug(f"[aliases] variable names unavailable for validation: {exc}")
+                    variables = []
+                _aliases.validate(
+                    table, schema_keys=self.dataset_schema_keys, variables=variables
+                )
+        return table
+
     def _sort_by_schema_keys(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort DataFrame by schema keys with numeric sorting for numeric-only columns.
 
