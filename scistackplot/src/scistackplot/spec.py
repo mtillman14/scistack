@@ -836,6 +836,12 @@ class StyleOptions:
     x_label: str | None = None
     y_label: str | None = None
     marker_size: float = 36.0
+    #: Multipliers on the point diameter AND line width, together (user,
+    #: 2026-09-24): ``sample_weight`` for the "Show sample" overlay,
+    #: ``line_weight`` for a spaghetti's own lines. 1 = the default look.
+    #: ``scistackplot.weights`` is the one reader.
+    sample_weight: float = 1.0
+    line_weight: float = 1.0
     alpha: float = 0.85
     #: Hide the labels of an x layer that is also the colour layer while the
     #: legend lists the same levels in the same colours (tick labels or a

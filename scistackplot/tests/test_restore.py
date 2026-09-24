@@ -99,6 +99,8 @@ def full_spec() -> PlotSpec:
             x_label="Session",
             y_label="m",
             marker_size=12.0,
+            sample_weight=2.5,
+            line_weight=0.5,
             alpha=0.5,
             hide_legend_ticks=True,
             tick_rotation=45,

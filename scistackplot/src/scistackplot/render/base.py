@@ -386,11 +386,10 @@ def mark_width() -> float:
 #: How the overlay's points draw against the marks they sit on: the mark's
 #: colour with a dark edge so they read on top of a bar of the same hue, a
 #: little more transparent, and smaller — the marks are the figure, the
-#: points are the evidence behind it.
+#: points are the evidence behind it. Their SIZE and line width are
+#: ``scistackplot.weights``' (``StyleOptions.sample_weight``).
 SAMPLE_ALPHA = 0.7
-SAMPLE_MARKER_FRACTION = 0.45
 SAMPLE_EDGE_COLOR = "#333333"
-SAMPLE_LINE_WIDTH = 1.0
 
 
 #: The overlay's OWN palette (``PlotSpec.sample_color``): one colour per

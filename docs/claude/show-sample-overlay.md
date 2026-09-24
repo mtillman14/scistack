@@ -168,6 +168,35 @@ the identity's offset. There is no dodge slot: colour is paint
 and `test_show_sample_codegen.py::test_generated_points_land_where_the_preview_draws_them`
 hold the three readers to it.
 
+## Mark weights (since 2026-09-24)
+
+Two multipliers (user decision: two knobs, multipliers; plan
+`.claude/plan-mark-weights.md`), each scaling the marker DIAMETER and the
+line WIDTH together:
+
+| field | scales | 1x = |
+|---|---|---|
+| `StyleOptions.sample_weight` | the overlay's points and joining lines | marker √(`marker_size` × 0.45) pt, line 1.0 pt |
+| `StyleOptions.line_weight` | a spaghetti's own points and polylines | marker √`marker_size` pt (6), line 1.2 pt |
+
+Independent on purpose: a spaghetti with a sample can have faint trials
+behind bold subject lines. `roles.validate` refuses a non-positive weight
+(`weights.weight_problem`). `style` is plan-irrelevant, so a weight change
+re-renders without re-reducing.
+
+The plotly preview draws a marker of `d` pt at `d × 4/3` px
+(`PLOTLY_PX_PER_PT`, the 96/72 ratio) — the 8 px it always drew for 6 pt —
+and lines at 1 pt = 1 px. The export previously let seaborn pick the
+spaghetti's line width, marker size and opacity; it now states the
+preview's (`test_mark_weights.py` compares the two).
+
+The GUI shows **Weight** in this section once a key is shown and **Line
+weight** under Plot type when `layout.meta.mark_weights.lines.applies`
+(Python decides; the panel never tests the kind). 1 or a cleared box
+deletes the key (`markWeights.withWeight`), so saved plots don't read as
+modified. The INFO `figure size …` line ends `marks lines 2x (…); sample …`
+when a weight applies.
+
 ## Where things live
 
 | question | owner |
@@ -187,6 +216,7 @@ hold the three readers to it.
 | export | `codegen._sample_preamble_lines` (before the emitted chain) + `codegen._sample_draw_lines` (after the `catplot`) |
 | report | `capability.sample_overlay_summary` → `sample_overlay {available, reason, factors[{name, checked, shown}], ignored, shown, averaged, join, granularity}` |
 | GUI | `PlotStudio.tsx` "Show sample" section; `showSample.ts` (toggle, join choice, ticked/locked) |
+| point size + line width (`style.sample_weight`; a spaghetti's own lines: `style.line_weight`) | `scistackplot.weights` (`sample_weight` / `spaghetti_weight` → `ResolvedWeight`), read by `mpl._draw_sample` / `_draw_spaghetti`, `plotly_._sample_traces` / `_spaghetti_traces`, `codegen._sample_draw_lines` + the spaghetti `relplot` args; GUI box shown from `layout.meta.mark_weights` (`markWeights.ts`). See "Mark weights" below |
 | the overlay's own colour | `roles.overlay_color` (active?), `resolved.SAMPLE_COLOR`, `reduce._overlay_frame` (column) + `sample_color_order`, `render.base.sample_groups` / `sample_paint` / `sample_palette_for` / `sample_legend_levels`, `codegen._sample_color_of` / `_sample_legend_lines`, `capability … color {setting, active, options}` |
 
 ## Traps

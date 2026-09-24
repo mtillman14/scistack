@@ -11,6 +11,39 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zn. Weight of the "Show sample" points and of spaghetti lines — added 2026-09-24
+
+**What changed:** two new boxes scale point size and line thickness
+together (a multiplier, empty = 1x = the old look). **Weight** in the Show
+sample section sizes the overlay's points and joining lines; **Line weight**
+under Plot type (only on a spaghetti) sizes the spaghetti's own points and
+lines. The exported code also now draws the spaghetti at the preview's line
+width, marker size and opacity (it used seaborn's defaults before).
+
+**Backend**
+1. Pull, then **Restart** the GUI (both bundles were rebuilt).
+
+**Frontend**
+1. Open a bar plot with a collapsed `subject`; in **Show sample** tick
+   `subject`. Type `2` in **Weight**, then `0.5`.
+2. Switch the kind to **Spaghetti**. A **Line weight** box appears under the
+   kinds; type `2`. With Show sample still ticked, set Weight to `0.5`.
+3. Clear both boxes. Save the plot, reopen it.
+4. Export the plot code and run it (or save the figure).
+
+**What you should see**
+- Step 1: the overlay points and lines get visibly bigger/thicker, then
+  thinner; the bars do not change. Hovering the box shows the resolved
+  sizes in pt.
+- Step 2: the spaghetti lines and points thicken; the overlay stays thin —
+  the two are independent. Line weight is absent on any non-spaghetti kind.
+- Step 3: cleared boxes show the `1×` placeholder; a reopened saved plot is
+  not "● modified".
+- Step 4: the saved/exported figure has the same weights as the preview.
+  `scidb.log` INFO `figure size … marks lines 2x (…); sample 0.5x (…)`.
+
+---
+
 ## 0zm. A Parameter named differently from its argument: staged and unchecked values work — added 2026-09-24
 
 **What changed:** staged (pending) and unchecked values on a Parameter now

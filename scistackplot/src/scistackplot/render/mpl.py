@@ -21,6 +21,7 @@ from ..resolved import MPL_DASHES, ResolvedPlot
 from ..spec import PlotKind
 from ..table import natural_sort_key
 from ..textsize import ResolvedSizes, rc_params, resolve_sizes
+from ..weights import describe_weights, sample_weight, spaghetti_weight
 from ..ticklabels import (
     BRACKET_POLICY,
     TICK_POLICY,
@@ -33,8 +34,6 @@ from ..ticklabels import (
 from .base import (
     SAMPLE_ALPHA,
     SAMPLE_EDGE_COLOR,
-    SAMPLE_LINE_WIDTH,
-    SAMPLE_MARKER_FRACTION,
     series_groups,
     color_groups,
     dash_levels,
@@ -92,13 +91,14 @@ def render(resolved: ResolvedPlot):
             # never trims). Stated in the log because the preview never shows it: a
             # figure that "came out squashed" is diagnosed here, not in the GUI.
             Log.info(
-                "figure size %.2f x %.2f in (%s), %d x %d panel grid, text %s",
+                "figure size %.2f x %.2f in (%s), %d x %d panel grid, text %s%s",
                 style.width,
                 style.height,
                 aspect_name(style.width, style.height),
                 n_rows,
                 n_cols,
                 sizes.describe(),
+                (f", marks {w}" if (w := describe_weights(resolved)) else ""),
                 layer=LAYER,
             )
             fig, axes = plt.subplots(
@@ -250,6 +250,7 @@ def _draw_spaghetti(ax, frame, resolved) -> None:
     "pre" from the wrong side.
     """
     style = resolved.spec.style
+    weight = spaghetti_weight(style)
     encoding = resolved.encoding
     offsets = resolved.series_offsets or {}
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
@@ -263,11 +264,11 @@ def _draw_spaghetti(ax, frame, resolved) -> None:
                 rows[encoding.y].to_numpy(dtype=float)[order],
                 color=color,
                 alpha=style.alpha,
-                linewidth=1.2,
+                linewidth=weight.line_pt,
                 marker="o",
-                # scatter's `s` is an area in pt²; plot's markersize is a
-                # diameter in pt. Same visual size as the scatter kinds.
-                markersize=float(np.sqrt(style.marker_size)),
+                # A diameter in pt (weights.spaghetti_weight): at 1x the same
+                # visual size as the scatter kinds' `s` area.
+                markersize=weight.marker_pt,
                 label=(
                     resolved.text.color_level(level)
                     if (level is not None and position == 0)
@@ -464,8 +465,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     sample = getattr(panel, "sample", None)
     if sample is None or sample.empty or sample_dropped_reason(panel, resolved):
         return
-    style = resolved.spec.style
-    size = style.marker_size * SAMPLE_MARKER_FRACTION
+    weight = sample_weight(resolved.spec.style)
     for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
         color = sample_paint(resolved, level, index)
         for identity, rows in sample_series(subset, resolved):
@@ -478,9 +478,9 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
                     values,
                     color=color,
                     alpha=SAMPLE_ALPHA,
-                    linewidth=SAMPLE_LINE_WIDTH,
+                    linewidth=weight.line_pt,
                     marker="o",
-                    markersize=float(np.sqrt(size)),
+                    markersize=weight.marker_pt,
                     markeredgecolor=SAMPLE_EDGE_COLOR,
                     markeredgewidth=0.5,
                     zorder=3,
@@ -489,7 +489,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
                 ax.scatter(
                     positions[order],
                     values,
-                    s=size,
+                    s=weight.marker_area,
                     color=color,
                     alpha=SAMPLE_ALPHA,
                     edgecolors=SAMPLE_EDGE_COLOR,

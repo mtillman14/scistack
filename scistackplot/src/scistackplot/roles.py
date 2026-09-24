@@ -29,6 +29,7 @@ from .shape import Shape
 from .spec import MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
 from .table import LongTable
 from .variants import VARIABLE_COLUMN, VARIANT_FACTOR
+from .weights import weight_problem
 
 LAYER = "scistackplot"
 
@@ -916,8 +917,14 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
                 f"Available measures: {table.measure_names}"
             )
 
+    # --- mark weights are positive multipliers ---------------------------
+    for name in ("sample_weight", "line_weight"):
+        problem = weight_problem(getattr(spec.style, name))
+        if problem is not None:
+            raise RoleError(f"style.{name} {problem}.")
+
     # --- roles name real factors ----------------------------------------
-    unknown = [name for name in spec.roles if not table.has_factor(name)]
+    unknown =[name for name in spec.roles if not table.has_factor(name)]
     if unknown:
         raise RoleError(
             f"Roles assigned to unknown factor(s) {unknown}. "

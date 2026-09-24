@@ -81,6 +81,7 @@ import {
 } from './textSizes'
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
 import { type Labelable, type SpecAliases } from './aliasEdit'
+import { type MarkWeightsMeta, type WeightKey, weightTitle, withWeight } from './markWeights'
 
 /** The dpi `plot_save` renders a raster at when the request names none
  *  (`api/plot.py` SaveRequest). Only the readout uses it; the save itself
@@ -1217,6 +1218,12 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, style: { ...(prev.style ?? {}), ...patch } } : prev))
   }, [])
 
+  /** Set a mark weight (`style.sample_weight` / `line_weight`); 1 or
+   *  cleared deletes the key (markWeights.withWeight). */
+  const setWeight = useCallback((key: WeightKey, value: number | null) => {
+    setSpec(prev => (prev ? { ...prev, style: withWeight(prev.style, key, value) } : prev))
+  }, [])
+
   /** Set one `style.text` size, or clear it (null) back to derived. */
   const setTextSize = useCallback((key: string, value: number | null) => {
     setSpec(prev => {
@@ -1685,6 +1692,9 @@ export default function PlotStudio({
   // "set one, the other follows" arithmetic is grid_shape_for's, in
   // scistackplot, and a second copy of it here would be the thing that drifts.
   const gridMeta = (figures[0]?.figure?.layout?.meta ?? {}) as GridMeta
+  // Which weight knob applies and what it resolves to (scistackplot.weights).
+  const markWeights = (figures[0]?.figure?.layout?.meta as { mark_weights?: MarkWeightsMeta } | undefined)
+    ?.mark_weights
   const effRows = Math.max(1, gridMeta.rows ?? 1)
   const effCols = Math.max(1, gridMeta.cols ?? 1)
   const layoutNotes = gridMeta.layout_notes ?? []
@@ -2432,6 +2442,16 @@ export default function PlotStudio({
                 {KIND_LABELS[info.kind] ?? info.kind}
               </label>
             ))}
+            {/* A spaghetti's own points + lines (StyleOptions.line_weight).
+                Python says when it applies (layout.meta.mark_weights). */}
+            {markWeights?.lines?.applies && (
+              <WeightInput
+                label="Line weight"
+                value={typeof spec?.style?.line_weight === 'number' ? spec.style.line_weight : null}
+                title={weightTitle(markWeights.lines, 'lines')}
+                onChange={value => setWeight('line_weight', value)}
+              />
+            )}
             {/* Shown only for a 1-D measure, because only there is there
                 anything to reduce. No on/off switch beside it: the KIND says
                 whether the vectors are drawn or summarized, so "collapse on,
@@ -2690,6 +2710,14 @@ export default function PlotStudio({
                           onChange={e => setSampleInLegend(e.target.checked)}
                         />
                       </label>
+                      {/* Point size and line thickness together, one
+                          multiplier (StyleOptions.sample_weight). */}
+                      <WeightInput
+                        label="Weight"
+                        value={typeof spec?.style?.sample_weight === 'number' ? spec.style.sample_weight : null}
+                        title={weightTitle(markWeights?.sample, 'sample points')}
+                        onChange={value => setWeight('sample_weight', value)}
+                      />
                       <div style={styles.hint}>{capabilities.sample_overlay.granularity}</div>
                     </>
                   )}
@@ -3552,6 +3580,43 @@ function SizeInput({ label, value, placeholder, onChange, title }: SizeInputProp
         inputMode="decimal"
         value={shown}
         placeholder={placeholder}
+        onChange={e => {
+          const next = e.target.value
+          setText(next)
+          const parsed = Number(next)
+          if (next.trim() === '') onChange(null)
+          else if (Number.isFinite(parsed) && parsed > 0) onChange(parsed)
+        }}
+        onBlur={() => setText(null)}
+        style={{ ...styles.select, width: 64 }}
+      />
+    </label>
+  )
+}
+
+interface WeightInputProps {
+  label: string
+  /** The stored multiplier, or null for the default (1). */
+  value: number | null
+  title: string
+  onChange: (value: number | null) => void
+}
+
+/**
+ * A mark-weight multiplier box. Same typing rule as `SizeInput` (a half-typed
+ * value is kept locally, only a positive number is sent) on a factor row.
+ */
+function WeightInput({ label, value, title, onChange }: WeightInputProps) {
+  const [text, setText] = useState<string | null>(null)
+  const shown = text ?? (value === null ? '' : String(value))
+  return (
+    <label style={styles.factorRow} title={title}>
+      <span style={styles.factorName}>{label}</span>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={shown}
+        placeholder={'1\u00d7'}
         onChange={e => {
           const next = e.target.value
           setText(next)

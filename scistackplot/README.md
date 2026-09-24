@@ -266,6 +266,12 @@ one owner (`resolve_sizes`, `rc_params`). The export, the generated code and
 the plotly preview (as px) all read it, under `rc_context` so nothing leaks
 into the next figure. See `docs/claude/plot-text-and-labels.md`.
 
+`StyleOptions.sample_weight` and `StyleOptions.line_weight` are multipliers
+(default 1) on the point size AND line thickness together: the first for the
+"Show sample" overlay's points and joining lines, the second for a
+spaghetti's own points and lines. `scistackplot.weights` is the one owner;
+matplotlib, the plotly preview and the generated code all read it.
+
 ## What the text reads as: display aliases
 
 A figure shows the data's own names, such as `BL`, `F` and `StepLength`.

@@ -50,6 +50,7 @@ from .spec import (
 )
 from .table import MISSING_LEVEL, LongTable
 from .textsize import rc_params, resolve_sizes
+from .weights import sample_weight, spaghetti_weight
 from .ylimits import eligible_scope, limits_by_scope
 from .variants import (
     LATEST,
@@ -884,8 +885,6 @@ def _sample_draw_lines(
     from .render.base import (
         SAMPLE_ALPHA,
         SAMPLE_EDGE_COLOR,
-        SAMPLE_LINE_WIDTH,
-        SAMPLE_MARKER_FRACTION,
         SAMPLE_PALETTE,
     )
     from .spaghetti import SPAGHETTI_SPREAD
@@ -903,7 +902,7 @@ def _sample_draw_lines(
     facet_names = [facets[1], facets[0]] if len(facets) > 1 else facets[:1]
     nested = _nested_x_order(spec, table, roles, shape)
     palette = spec.style.palette
-    marker = float(spec.style.marker_size * SAMPLE_MARKER_FRACTION) ** 0.5
+    weight = sample_weight(spec.style)
     linestyle = "-" if join.join else "none"
 
     spaghetti = spec.kind is PlotKind.SPAGHETTI
@@ -1009,10 +1008,10 @@ def _sample_draw_lines(
             f"        _part = _part.sort_values({_X_POSITION!r})",
             "        _ax.plot(",
             f"            _part[{_X_POSITION!r}], _part[{y!r}],",
-            f"            linestyle={linestyle!r}, marker='o', markersize={marker:.3f},",
+            f"            linestyle={linestyle!r}, marker='o', markersize={weight.marker_pt:.3f},",
             f"            markeredgecolor={SAMPLE_EDGE_COLOR!r}, markeredgewidth=0.5,",
             f"            color={paint}, alpha={SAMPLE_ALPHA}, "
-            f"linewidth={SAMPLE_LINE_WIDTH}, zorder=3,",
+            f"linewidth={weight.line_pt:.3f}, zorder=3,",
             "        )",
         ]
     )
@@ -1412,12 +1411,18 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     elif kind is PlotKind.SPAGHETTI:
         # Markers and lines in one call: one polyline per series, no estimator,
         # on the numeric position axis. The tick labels are restored below.
+        # Sizes and opacity are the preview's (weights.spaghetti_weight,
+        # style.alpha), stated: seaborn's defaults are not what it draws.
+        weight = spaghetti_weight(spec.style)
         args.extend(
             [
                 'kind="line"',
                 "estimator=None",
                 f"units={_spaghetti_units(spec, table, roles, shape)!r}",
                 'marker="o"',
+                f"linewidth={weight.line_pt:.3f}",
+                f"markersize={weight.marker_pt:.3f}",
+                f"alpha={spec.style.alpha}",
             ]
         )
         call = "sns.relplot"

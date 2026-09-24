@@ -25,13 +25,12 @@ from ..resolved import ResolvedPlot
 from ..roles import overlay_in_legend
 from ..spec import PlotKind
 from ..textsize import resolve_sizes
+from ..weights import mark_weights_meta, sample_weight, spaghetti_weight
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
     MARK_OFFSET_GROUP,
     SAMPLE_ALPHA,
     SAMPLE_EDGE_COLOR,
-    SAMPLE_LINE_WIDTH,
-    SAMPLE_MARKER_FRACTION,
     series_groups,
     color_groups,
     dash_levels,
@@ -145,6 +144,10 @@ def render(
                 # Every text size as the export resolves it, fixed ones listed —
                 # the GUI shows a derived size as the placeholder of its box.
                 "text_sizes": sizes.to_dict(),
+                # Which weight knob applies here and what it resolves to
+                # (weights.mark_weights_meta): the GUI shows a knob only when
+                # this says so, never by testing the kind itself.
+                "mark_weights": mark_weights_meta(resolved),
                 # What the Labels section offers (aliases.labelable): the
                 # measure and every factor this figure draws as text.
                 "labelable": list(resolved.labelable),
@@ -518,7 +521,7 @@ def _sample_traces(
     own_color = bool(resolved.sample_color)
     # Listed only when the one rule says so (roles.overlay_in_legend).
     listed = overlay_in_legend(resolved.spec, resolved.sample_color)
-    size = 8.0 * float(np.sqrt(SAMPLE_MARKER_FRACTION))  # the marks draw at 8
+    weight = sample_weight(resolved.spec.style)
     traces: list[dict] = []
     for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
         color = sample_paint(resolved, level, index)
@@ -554,10 +557,10 @@ def _sample_traces(
                     "y": _values(rows[resolved.encoding.y].iloc[order]),
                     "marker": {
                         "color": color,
-                        "size": size,
+                        "size": weight.marker_px,
                         "line": {"color": SAMPLE_EDGE_COLOR, "width": 0.5},
                     },
-                    "line": {"color": color, "width": SAMPLE_LINE_WIDTH},
+                    "line": {"color": color, "width": weight.line_pt},
                     "opacity": SAMPLE_ALPHA,
                     # Hover-only (see `_level_hover` on why not `text`).
                     "customdata": [
@@ -638,6 +641,7 @@ def _spaghetti_traces(subset, resolved, base, color) -> list[dict]:
     """
     encoding = resolved.encoding
     offsets = resolved.series_offsets or {}
+    weight = spaghetti_weight(resolved.spec.style)
 
     traces = []
     for position, (series_id, rows) in enumerate(series_runs(subset, resolved)):
@@ -657,8 +661,8 @@ def _spaghetti_traces(subset, resolved, base, color) -> list[dict]:
                 "mode": "lines+markers",
                 "x": [None if np.isnan(v) else float(v) for v in positions[order]],
                 "y": _values(rows[encoding.y].iloc[order]),
-                "line": {"color": color, "width": 1.2},
-                "marker": {"color": color, "size": 8},
+                "line": {"color": color, "width": weight.line_pt},
+                "marker": {"color": color, "size": weight.marker_px},
                 "opacity": resolved.spec.style.alpha,
                 # The axis shows level labels, but the x values are indices;
                 # hover names the level and the series so neither is lost.
