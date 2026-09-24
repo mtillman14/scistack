@@ -11,7 +11,6 @@ from scifor import PathInput
 
 from scistack_gui.domain.graph_builder import (
     AggregatedData,
-    aggregate_variants,
     auto_clean_pending_constants,
     build_parameter_nodes,
     build_edges,
@@ -39,7 +38,36 @@ from scistack_gui.domain.graph_builder import (
     wiring_id,
     wirings_downstream_of,
 )
+
 from scistack_gui.ids import fn_node_id
+
+
+def aggregate_variants(
+    variants,
+    listed_var_names=frozenset(),
+    path_input_registry=None,
+    path_input_history=None,
+    project_root=None,
+):
+    """Variant rows -> AggregatedData through the two PRODUCTION conversions
+    (scidb's pure ``aggregate_pipeline_variants``, then
+    ``graph_builder.aggregate_from_scidb``). The GUI's own test-only
+    converter of the same name was deleted (cleanup-audit F19); this keeps the
+    tests' call shape while exercising the real path. ``listed_var_names``
+    adds types that exist with no variants, as the old helper did.
+    """
+    from scidb.database import aggregate_pipeline_variants
+
+    from scistack_gui.domain.graph_builder import aggregate_from_scidb
+
+    agg = aggregate_from_scidb(
+        aggregate_pipeline_variants(variants),
+        path_input_registry,
+        path_input_history,
+        project_root,
+    )
+    agg.all_var_types |= set(listed_var_names)
+    return agg
 
 
 def _all_current(_fn_name: str, _wiring: str) -> bool:
@@ -1153,10 +1181,10 @@ class TestResolvePathInputNameProjectRoot:
 
         result = convert_scidb_path_inputs(
             {
-                "filepath": {
+                "spec": {
                     "template": "data/f.csv",
                     "root_folder": self.ROOT,
-                    "functions": [("load_file", "call1")],
+                    "functions": [(("load_file", "call1"), "filepath")],
                 }
             },
             {"delsysEMG": PathInput("data/f.csv")},
@@ -2454,8 +2482,6 @@ class TestMatlabParamNameHandles:
 
 from scistack_gui.domain.graph_builder import (  # noqa: E402
     group_call_sites_by_wiring,
-    legacy_edge_rewrites,
-    legacy_position_adoptions,
     wiring_id,
 )
 
@@ -2660,55 +2686,6 @@ class TestGroupCallSitesByWiring:
         # HR hasn't run 25 -> gets the staged row and downgrades to pending.
         assert any(r.get("staged") for r in hr_rows)
         assert node_states[fn_node_id("compute_rolling_vo2", hr_wid)] == "pending"
-
-
-class TestLegacyMigrationHelpers:
-    GROUP = fn_node_id("bp", "c" * 16)
-    LEGACY_A = fn_node_id("bp", "a" * 16)
-    LEGACY_B = fn_node_id("bp", "b" * 16)
-
-    def test_first_member_position_adopted_others_dropped(self):
-        member_map = {self.GROUP: [self.LEGACY_A, self.LEGACY_B]}
-        positions = {
-            "main": {self.LEGACY_A: {"x": 1, "y": 2}, self.LEGACY_B: {"x": 3, "y": 4}}
-        }
-
-        adoptions, drops = legacy_position_adoptions(member_map, positions)
-
-        assert adoptions == [{"new_id": self.GROUP, "scope": "main", "x": 1, "y": 2}]
-        assert set(drops) == {self.LEGACY_A, self.LEGACY_B}
-
-    def test_scope_of_adopted_position_is_kept(self):
-        member_map = {self.GROUP: [self.LEGACY_A]}
-        positions = {"pipe_sub": {self.LEGACY_A: {"x": 5, "y": 6}}}
-
-        adoptions, _ = legacy_position_adoptions(member_map, positions)
-
-        assert adoptions[0]["scope"] == "pipe_sub"
-
-    def test_already_placed_group_only_drops_legacy_keys(self):
-        member_map = {self.GROUP: [self.LEGACY_A]}
-        positions = {
-            "main": {self.GROUP: {"x": 9, "y": 9}, self.LEGACY_A: {"x": 1, "y": 2}}
-        }
-
-        adoptions, drops = legacy_position_adoptions(member_map, positions)
-
-        assert adoptions == []
-        assert drops == [self.LEGACY_A]
-
-    def test_manual_edges_rewritten_to_group_id(self):
-        member_map = {self.GROUP: [self.LEGACY_A]}
-        edges = [
-            {"id": "m1", "source": "var__Raw", "target": self.LEGACY_A},
-            {"id": "m2", "source": self.LEGACY_A, "target": "var__Filtered"},
-            {"id": "m3", "source": "var__Raw", "target": "var__Filtered"},
-        ]
-
-        rewrites = legacy_edge_rewrites(member_map, edges)
-
-        assert {r["id"] for r in rewrites} == {"m1", "m2"}
-        assert all(self.GROUP in (r["source"], r["target"]) for r in rewrites)
 
 
 # ---------------------------------------------------------------------------
@@ -3493,8 +3470,6 @@ class TestManualEdgeHandleIndexKeepsEveryEdge:
         assert manual_input_overrides(self.FN, wid, history, set(), index) == {
             "side": "Demographics"
         }
-
-
 
 
 class TestStatedWiringClaims:

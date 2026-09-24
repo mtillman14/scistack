@@ -5,9 +5,9 @@ mode), what happens when records in a batch disagree on shape, and a subtle
 length-1-array normalization that must be kept symmetric between two functions.
 
 Relevant code:
-- `sciduckdb/src/sciduckdb/sciduckdb.py`: `_infer_data_columns`,
-  `_python_to_storage`, `_value_to_storage_row`, `_storage_signature`,
-  `_record_schema_mismatch`
+- `sciduckdb/src/sciduckdb/sciduckdb.py`: `infer_data_columns`,
+  `_python_to_storage`, `value_to_storage_row`, `_storage_signature`,
+  `record_schema_mismatch`
 - `scidb/src/scidb/database.py`: `save_batch`
 - `scidb/src/scidb/foreach.py`: `_batch_save_outputs` (the for_each save phase)
 
@@ -15,7 +15,7 @@ Relevant code:
 
 ## 1. Storage modes
 
-`_infer_data_columns(value)` picks one of three modes from a **single sample**:
+`infer_data_columns(value)` picks one of three modes from a **single sample**:
 
 | Sample value      | Mode            | Columns                                   |
 |-------------------|-----------------|-------------------------------------------|
@@ -32,7 +32,7 @@ This note is about **`multi_column`** — e.g. a Delsys EMG record
 ## 2. The schema is inferred from the FIRST record
 
 In `save_batch`, the column set and per-column types come from the **first
-record only** (`data_col_types, dtype_meta = _infer_data_columns(first_data)`),
+record only** (`data_col_types, dtype_meta = infer_data_columns(first_data)`),
 and that `dtype_meta` is persisted in `_variables`. Consequences:
 
 - Every other record in the batch is assumed to have the **same dict keys** and
@@ -56,7 +56,7 @@ batch is skipped and `save_batch` returns all `None`.
 ## 3. Contract: incompatible records are SKIPPED with a warning
 
 Before the heavy save loop, `save_batch` validates each record against the
-reference schema via `_record_schema_mismatch(ref_col_types, rec_col_types)`.
+reference schema via `record_schema_mismatch(ref_col_types, rec_col_types)`.
 A record is **skipped (not saved, not fatal)** when it would break the insert:
 
 - **empty / partial dict** → missing keys
@@ -94,7 +94,7 @@ frames). It has its own one-row-per-frame-row handling.
 
 ## 4. The length-1 array unwrap — keep it SYMMETRIC
 
-`_infer_data_columns` deliberately unwraps a length-1 ndarray to a scalar when
+`infer_data_columns` deliberately unwraps a length-1 ndarray to a scalar when
 choosing the column type:
 
 ```python
@@ -128,7 +128,7 @@ not — hence the bug appeared only for dict values that were specifically a
 size-1 ndarray (real EMG/time-series vectors are long, so it stayed hidden).
 
 ### Knock-on for validation
-Because `_record_schema_mismatch` infers per-record types the same way, a batch
+Because `record_schema_mismatch` infers per-record types the same way, a batch
 mixing a 1-sample dict value (scalar column) with multi-sample ones (`DOUBLE[]`)
 flags the 1-sample record as a **shape mismatch** and skips it. Consistent
 behavior, and an extreme edge case for real time-series, but worth knowing.

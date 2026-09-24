@@ -772,6 +772,17 @@ class StyleOptions:
     y_label: str | None = None
     marker_size: float = 36.0
     alpha: float = 0.85
+    #: Hide the labels of an x layer that is also the colour layer while the
+    #: legend lists the same levels in the same colours (tick labels or a
+    #: bracket row). Opt-in (user, 2026-09-23): the ticks and brackets stay.
+    hide_legend_ticks: bool = False
+    #: The x tick labels' settings, fixed by the user; None = fitted
+    #: (``ticklabels.fit_labels``). Rotation in degrees (0 / 45 / 90), font in
+    #: points, ``tick_every`` = show every k-th label (1 = all). A fixed value
+    #: is kept even where it overlaps; the fit then reports that it does.
+    tick_rotation: int | None = None
+    tick_font_size: float | None = None
+    tick_every: int | None = None
 
 
 @dataclass(frozen=True)
@@ -859,6 +870,11 @@ class PlotSpec:
     #: ``roles.overlay_color`` is the one reader, ``validate`` refuses a name
     #: that is no factor at all.
     sample_color: str | None = None
+    #: Whether the overlay's own colour levels (:attr:`sample_color`) are
+    #: listed in the legend. Off, the legend reads as though nothing were
+    #: shown — the points keep their colours. ``roles.overlay_in_legend`` is
+    #: the one reader.
+    sample_in_legend: bool = True
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
@@ -1033,6 +1049,7 @@ class PlotSpec:
             show_sample=[str(n) for n in (raw.get("show_sample") or [])],
             join_sample=_optional_bool(raw.get("join_sample")),
             sample_color=raw.get("sample_color"),
+            sample_in_legend=bool(raw.get("sample_in_legend", True)),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions(**(raw.get("style") or {})),

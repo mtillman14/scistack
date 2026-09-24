@@ -33,7 +33,7 @@ _LAZY_LOCK = threading.Lock()
 _UNSET = object()
 
 
-def _lazy_attr(obj: Any, name: str, factory: Callable[[], Any]) -> Any:
+def lazy_attr(obj: Any, name: str, factory: Callable[[], Any]) -> Any:
     """``obj.<name>``, created once by ``factory`` even under concurrency."""
     existing = getattr(obj, name, None)
     if existing is not None:
@@ -326,7 +326,7 @@ class BaseSource:
         without having to remember to call up — including the ones that define
         no ``__init__`` at all.
         """
-        return _lazy_attr(self, "_built_tables", dict)
+        return lazy_attr(self, "_built_tables", dict)
 
     def _table_single_flight(self) -> SingleFlight:
         """The in-flight map for :meth:`get_table`, created on first use.
@@ -335,7 +335,7 @@ class BaseSource:
         callers and let the builds race, which is the bug this exists to fix —
         hence the locked lazy init rather than ``getattr``-or-create.
         """
-        return _lazy_attr(self, "_table_inflight", SingleFlight)
+        return lazy_attr(self, "_table_inflight", SingleFlight)
 
     def invalidate_tables(self) -> None:
         """Drop built tables. Call when the rows underneath may have changed."""

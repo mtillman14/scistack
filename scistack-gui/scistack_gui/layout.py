@@ -102,12 +102,11 @@ def _layout_path() -> Path:
 
 
 def _load() -> dict:
-    """Load and normalise the layout file (positions only, post-migration).
+    """Load and normalise the layout file (positions only).
 
     Positions are PER-SCOPE (nested pipelines): ``positions`` maps
-    ``pipeline_id -> {node_id: {x, y}}``. Pre-scoping files (flat
-    ``node_id -> {x, y}``) migrate under the root scope on load, marked by
-    the ``positions_scoped`` flag.
+    ``pipeline_id -> {node_id: {x, y}}``. No older layout shape is upgraded:
+    beta, no installed base (migrations removed 2026-09-23).
     """
     p = _layout_path()
     logger.debug("[layout] Loading layout file from %s", p)
@@ -131,58 +130,9 @@ def _load() -> dict:
             with p.open() as f:
                 raw = json.load(f)
     logger.debug("[layout] Loaded layout file with %d top-level keys", len(raw))
-    # Migrate legacy flat format: { "node_id": {"x":..,"y":..}, ... }
-    if raw and "positions" not in raw:
-        logger.debug(
-            "[layout] Migrating legacy flat format to nested positions structure"
-        )
-        raw = {"positions": raw, "constants": []}
     raw.setdefault("positions", {})
     raw.setdefault("constants", [])
-    # "path_inputs"/"sweeps" keys are no longer read or written (both are
-    # source-scanned now — see docs/claude/code-discovery-categories.md) but
-    # are deliberately left in place if present on an old file rather than
-    # popped, so a downgrade to a pre-migration build doesn't lose data.
     raw.setdefault("notes", {})
-    # Migrate flat positions to per-scope: everything predating scoping
-    # lived on the one canvas that is now the root pipeline.
-    if not raw.get("positions_scoped"):
-        logger.info(
-            "[layout] scoping migration: moving %d flat position(s) "
-            "under root scope '%s'",
-            len(raw["positions"]),
-            ROOT_SCOPE,
-        )
-        raw["positions"] = (
-            {ROOT_SCOPE: raw["positions"]}
-            if raw["positions"]
-            else {}
-        )
-        raw["positions_scoped"] = True
-    # One-time migration: DB-derived position keys (var__/fn__/param__/
-    # pathInput__) become placement-qualified (canonical_id::scope) so the
-    # SAME wiring can be independently placed in more than one scope
-    # (see ids.placement_id). A bare id's current scope
-    # bucket IS its one existing placement, so this preserves today's
-    # behavior exactly for every pre-existing document.
-    if not raw.get("placements_migrated"):
-        from scistack_gui.ids import DB_DERIVED_PREFIXES, PLACEMENT_SEP, placement_id
-
-        n_migrated = 0
-        for scope, positions in raw["positions"].items():
-            for node_id in list(positions.keys()):
-                if PLACEMENT_SEP in node_id:
-                    continue
-                if not node_id.startswith(DB_DERIVED_PREFIXES):
-                    continue
-                positions[placement_id(node_id, scope)] = positions.pop(node_id)
-                n_migrated += 1
-        raw["placements_migrated"] = True
-        if n_migrated:
-            logger.info(
-                "[layout] placement migration: qualified %d DB-derived "
-                "position(s) with their scope", n_migrated,
-            )
     logger.debug(
         "[layout] Layout has %d scope(s), %d constants",
         len(raw["positions"]),
@@ -455,10 +405,6 @@ def write_manual_node(
     logger.info("[layout] Manual node written successfully")
 
 
-def get_manual_nodes() -> dict[str, dict]:
-    return pipeline_store.get_manual_nodes(get_db())
-
-
 def delete_node(node_id: str) -> None:
     """Remove a node's position (JSON) and manual-node entry (DB).
 
@@ -571,47 +517,6 @@ def write_note(key: str, text: str) -> None:
             data["notes"].pop(key, None)
         _save(data)
     logger.debug("[layout] Note written successfully (key=%r)", key)
-
-
-def read_manual_edges() -> list[dict]:
-    return pipeline_store.get_manual_edges(get_db())
-
-
-def write_manual_edge(edge: dict) -> None:
-    logger.info(
-        "[layout] write_manual_edge called (edge_id=%r, source=%r, target=%r)",
-        edge.get("id"),
-        edge.get("source"),
-        edge.get("target"),
-    )
-    pipeline_store.write_manual_edge(get_db(), edge)
-    logger.info("[layout] Edge written to DuckDB successfully")
-
-
-def delete_manual_edge(edge_id: str) -> None:
-    logger.info("[layout] delete_manual_edge called (edge_id=%r)", edge_id)
-    pipeline_store.delete_manual_edge(get_db(), edge_id)
-    logger.info("[layout] Edge deleted from DuckDB successfully")
-
-
-def add_pending_constant(const_name: str, value: str) -> None:
-    logger.info(
-        "[layout] add_pending_constant called (name=%r, value=%r)", const_name, value
-    )
-    pipeline_store.add_pending_constant(get_db(), const_name, value)
-    logger.info("[layout] Pending constant added to DuckDB successfully")
-
-
-def remove_pending_constant(const_name: str, value: str) -> None:
-    logger.info(
-        "[layout] remove_pending_constant called (name=%r, value=%r)", const_name, value
-    )
-    pipeline_store.remove_pending_constant(get_db(), const_name, value)
-    logger.info("[layout] Pending constant removed from DuckDB successfully")
-
-
-def get_pending_constants() -> dict[str, set[str]]:
-    return pipeline_store.get_pending_constants(get_db())
 
 
 def graduate_manual_node(old_id: str, new_id: str) -> None:

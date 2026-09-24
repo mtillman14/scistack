@@ -193,11 +193,13 @@ class TestDbHistoryPathInputBinding:
             db,
             "get_aggregated_variants",
             lambda *a, **k: {
+                # Spec-keyed, each call site with the parameter it fills
+                # (scidb.database.aggregate_pipeline_variants, F37).
                 "path_inputs": {
-                    "filepath_or_buffer": {
+                    "spec": {
                         "template": template,
                         "root_folder": root_folder,
-                        "functions": [("read_csv_like", "call1")],
+                        "functions": [(("read_csv_like", "call1"), "filepath_or_buffer")],
                     }
                 }
             },
@@ -296,7 +298,7 @@ class TestGraduatedPathInputNodeIsRunnable:
     still resolve to its own history when Run is clicked.
 
     The canvas hashes ``AggregatedData.fn_input_params``, where
-    ``aggregate_variants`` has already partitioned the PathInput out into
+    ``aggregate_from_scidb`` has already partitioned the PathInput out into
     ``path_inputs``. derive_target_for_node hashed the RAW variant's
     ``input_types``, which still carries the PathInput spec — so the same
     call site hashed two different ways, the graduated node's embedded wiring
@@ -328,10 +330,10 @@ class TestGraduatedPathInputNodeIsRunnable:
             "get_aggregated_variants",
             lambda *a, **k: {
                 "path_inputs": {
-                    "filepath_or_buffer": {
+                    "spec": {
                         "template": "{subject}/data.csv",
                         "root_folder": None,
-                        "functions": [("read_csv_like", "call1")],
+                        "functions": [(("read_csv_like", "call1"), "filepath_or_buffer")],
                     }
                 }
             },

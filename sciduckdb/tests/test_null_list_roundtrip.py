@@ -5,7 +5,7 @@ DuckDB returns a LIST that holds NULL elements as a ``numpy.ma.MaskedArray``.
 buffer — zeros — which is how a NaN saved from MATLAB reached the next
 function as ``0`` (``GAITRiteLoaded.L_StepLengths_GR``, 2026-09-15; plan
 ``.claude/plan-null-list-elements-to-nan.md``). Every load path funnels
-through ``_storage_to_python``, so that is where the mask is honoured.
+through ``storage_to_python``, so that is where the mask is honoured.
 
 Contract pinned here: NULL in storage ≡ NaN in Python. Integer/bool array
 columns that hold a NULL upcast to float64, the only dtype that can carry it.
@@ -17,7 +17,7 @@ import pytest
 
 from sciduckdb import SciDuck
 from sciduckdb.sciduckdb import (
-    _storage_to_python,
+    storage_to_python,
     count_nan_array_elements,
     count_null_list_elements,
 )
@@ -38,20 +38,20 @@ def duck():
 class TestStorageToPython:
     def test_masked_float_array_restores_nan_not_zero(self):
         masked = np.ma.MaskedArray([0.0, 0.5, 0.4], mask=[True, False, False])
-        out = _storage_to_python(masked, {"python_type": "ndarray", "numpy_dtype": "float64"})
+        out = storage_to_python(masked, {"python_type": "ndarray", "numpy_dtype": "float64"})
         assert not isinstance(out, np.ma.MaskedArray)
         assert np.isnan(out[0]), out
         np.testing.assert_array_equal(out[1:], [0.5, 0.4])
 
     def test_masked_int_array_upcasts_to_float64(self):
         masked = np.ma.MaskedArray([1, 0, 3], mask=[False, True, False])
-        out = _storage_to_python(masked, {"python_type": "ndarray", "numpy_dtype": "int64"})
+        out = storage_to_python(masked, {"python_type": "ndarray", "numpy_dtype": "int64"})
         assert out.dtype == np.float64
         assert np.isnan(out[1])
         assert out[0] == 1 and out[2] == 3
 
     def test_unmasked_int_array_keeps_dtype(self):
-        out = _storage_to_python(
+        out = storage_to_python(
             np.array([1, 2, 3]), {"python_type": "ndarray", "numpy_dtype": "int64"}
         )
         assert out.dtype == np.int64
@@ -62,16 +62,16 @@ class TestStorageToPython:
         declared dtype is still int64 — casting NaN to int64 yields INT_MIN, so
         the upcast must survive re-restoration."""
         meta = {"python_type": "ndarray", "numpy_dtype": "int64"}
-        once = _storage_to_python(
+        once = storage_to_python(
             np.ma.MaskedArray([1, 0, 3], mask=[False, True, False]), meta
         )
-        twice = _storage_to_python(once, meta)
+        twice = storage_to_python(once, meta)
         assert twice.dtype == np.float64
         assert np.isnan(twice[1])
         assert twice[0] == 1 and twice[2] == 3
 
     def test_nan_is_never_cast_to_an_integer(self):
-        out = _storage_to_python(
+        out = storage_to_python(
             np.array([1.0, np.nan]), {"python_type": "ndarray", "numpy_dtype": "int64"}
         )
         assert out.dtype == np.float64
@@ -83,7 +83,7 @@ class TestStorageToPython:
         rows = np.empty(4, dtype=object)
         for i in range(4):
             rows[i] = np.array([3 * i, 3 * i + 1, 3 * i + 2])
-        out = _storage_to_python(
+        out = storage_to_python(
             rows, {"python_type": "ndarray", "numpy_dtype": "int64", "ndim": 2}
         )
         assert out.shape == (4, 3), out
@@ -94,7 +94,7 @@ class TestStorageToPython:
         rows = np.empty(2, dtype=object)
         rows[0] = np.ma.MaskedArray([1.0, 0.0], mask=[False, True])
         rows[1] = np.array([3.0, 4.0])
-        out = _storage_to_python(
+        out = storage_to_python(
             rows, {"python_type": "ndarray", "numpy_dtype": "float64", "ndim": 2}
         )
         assert out.shape == (2, 2)
@@ -103,7 +103,7 @@ class TestStorageToPython:
 
     def test_list_of_ndarray_column(self):
         cells = [np.ma.MaskedArray([0.0, 2.0], mask=[True, False]), np.array([5.0])]
-        out = _storage_to_python(
+        out = storage_to_python(
             cells,
             {"python_type": "list", "contains_ndarray": True, "ndarray_dtype": "float64"},
         )

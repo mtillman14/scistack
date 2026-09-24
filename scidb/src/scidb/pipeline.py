@@ -521,6 +521,12 @@ _active_stack: list[Pipeline] = []
 _all_pipelines: list[Pipeline] = []
 
 
+def all_pipelines() -> "list[Pipeline]":
+    """Every Pipeline constructed in this process (a copy) — the public read of
+    the registry, for callers outside scidb (the GUI's pipeline discovery)."""
+    return list(_all_pipelines)
+
+
 def active_pipeline() -> Pipeline | None:
     """The pipeline currently receiving deferred ``for_each`` registrations."""
     return _active_stack[-1] if _active_stack else None

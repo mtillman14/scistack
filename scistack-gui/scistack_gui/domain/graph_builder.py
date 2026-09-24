@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from scidb.provenance import compute_wiring_id as _compute_wiring_id
 from scidb.provenance import parse_path_input_spec as _parse_path_input_spec
 from scidb.provenance import strip_path_input_specs as _strip_path_input_specs
-from scidb.parameter import parameter_node_name
 
 from scistack_gui.ids import (
     FN_ID_PREFIX,
@@ -464,71 +463,6 @@ def group_call_sites_by_wiring(
     return grouped, node_states, member_map
 
 
-def legacy_position_adoptions(
-    member_map: dict[str, list[str]],
-    positions_by_scope: dict[str, dict],
-) -> tuple[list[dict], list[str]]:
-    """One-time migration plan (pure): pre-grouping documents saved
-    positions under per-call-site node ids; the group node adopts the first
-    member position found (keeping its SCOPE — position location IS scope
-    membership) and every legacy key is dropped.
-
-    Returns (adoptions [{new_id, scope, x, y}], drop_ids [legacy ids]).
-    """
-    adoptions: list[dict] = []
-    drop_ids: list[str] = []
-    for group_id, legacy_ids in member_map.items():
-        placed = any(group_id in pos for pos in positions_by_scope.values())
-        for legacy_id in legacy_ids:
-            if legacy_id == group_id:
-                continue
-            for scope, positions in positions_by_scope.items():
-                if legacy_id not in positions:
-                    continue
-                if not placed:
-                    xy = positions[legacy_id]
-                    adoptions.append(
-                        {
-                            "new_id": group_id,
-                            "scope": scope,
-                            "x": xy.get("x", 0),
-                            "y": xy.get("y", 0),
-                        }
-                    )
-                    placed = True
-                if legacy_id not in drop_ids:
-                    drop_ids.append(legacy_id)
-    return adoptions, drop_ids
-
-
-def legacy_edge_rewrites(
-    member_map: dict[str, list[str]],
-    manual_edges: list[dict],
-) -> list[dict]:
-    """Manual edges whose endpoints reference legacy per-call-site node ids,
-    rewritten to the group node id (pure; caller persists via the edge
-    upsert)."""
-    legacy_to_group = {
-        legacy_id: group_id
-        for group_id, legacy_ids in member_map.items()
-        for legacy_id in legacy_ids
-        if legacy_id != group_id
-    }
-    rewrites = []
-    for edge in manual_edges:
-        new_source = legacy_to_group.get(edge["source"])
-        new_target = legacy_to_group.get(edge["target"])
-        if new_source or new_target:
-            rewrites.append(
-                {
-                    **edge,
-                    "source": new_source or edge["source"],
-                    "target": new_target or edge["target"],
-                }
-            )
-    return rewrites
-
-
 def parse_path_input(value: str) -> dict | None:
     """If *value* (from __inputs) represents a PathInput spec, return
     ``{"template": ..., "root_folder": ...}``, else ``None``.
@@ -698,10 +632,10 @@ def convert_scidb_path_inputs(
     path_input_history: "dict[tuple, str] | None" = None,
     project_root=None,
 ) -> dict[str, dict]:
-    """``db.get_aggregated_variants()["path_inputs"]`` (keyed by PARAM NAME
-    — raw DB-history extraction, no knowledge of source code) ->
-    ``AggregatedData.path_inputs`` shape (keyed by resolved registry name,
-    ``"functions"`` as ``set[(FnKey, param_name)]``).
+    """``db.get_aggregated_variants()["path_inputs"]`` (keyed by SPEC, each
+    entry naming its ``(fkey, param_name)`` pairs — raw DB-history extraction,
+    no knowledge of source code) -> ``AggregatedData.path_inputs`` shape (keyed
+    by resolved registry name, ``"functions"`` as ``set[(FnKey, param_name)]``).
 
     Single shared conversion — do not re-inline this at a new call site;
     ``api/pipeline.py`` and ``execution_service.disconnected_report_entries``
@@ -712,14 +646,16 @@ def convert_scidb_path_inputs(
     and the two sides stop lining up.
     """
     result: dict[str, dict] = {}
-    for param_name, pi_data in scidb_path_inputs.items():
+    for pi_data in scidb_path_inputs.values():
         pi_name, display = resolve_path_input_name(
             {"template": pi_data["template"], "root_folder": pi_data["root_folder"]},
             path_input_registry,
             path_input_history,
             project_root,
         )
-        entry_functions = {(tuple(f), param_name) for f in pi_data["functions"]}
+        entry_functions = {
+            (tuple(fkey), param_name) for fkey, param_name in pi_data["functions"]
+        }
         existing = result.get(pi_name)
         if existing is None:
             result[pi_name] = {**display, "functions": entry_functions}
@@ -741,117 +677,62 @@ def seed_undiscovered_path_inputs(
     return path_inputs
 
 
-def aggregate_variants(
-    variants: list[dict],
-    listed_var_names: set[str],
+def aggregate_from_scidb(
+    scidb_agg: dict,
     path_input_registry: "dict[str, object] | None" = None,
     path_input_history: "dict[tuple, str] | None" = None,
     project_root=None,
 ) -> AggregatedData:
-    """Parse DB variants into aggregated data structures.
+    """``get_aggregated_variants()`` (or the pure
+    ``scidb.database.aggregate_pipeline_variants``) -> :class:`AggregatedData`.
 
-    Function-keyed fields use ``FnKey = (fn_name, call_id)`` so the same
-    function reused from multiple for_each call sites becomes multiple
-    entries.  call_id is taken from the variant dict (added by
-    ``list_pipeline_variants``).
+    PURE — the registry, history index and root are passed in; ``api/pipeline
+    .build_aggregate`` is the thin wrapper that reads them. THE one conversion:
+    a second, test-only one (``aggregate_variants``, from raw variant rows)
+    was deleted 2026-09-23 so the tests exercise the path production runs
+    (cleanup-audit F19).
 
-    Args:
-        variants: From db.list_pipeline_variants().
-        listed_var_names: Variable names from db.list_variables() to fill in
-            types that exist but haven't been run through for_each.
-        path_input_registry: ``registry.get_path_inputs_registry()`` — used
-            to resolve a historically-recorded PathInput value (template/
-            root_folder only, no name) back to its source-declared name via
-            content matching (see ``resolve_path_input_name``).
-        project_root: ``registry.get_project_root()`` — lets a run recorded
-            with the project root as its ``root_folder`` attribute to a
-            rootless declaration (``resolve_path_input_name`` step 3).
-
-    Returns:
-        AggregatedData with all parsed fields.
+    PathInputs are keyed by DECLARED name, not by the parameter they fill: a
+    PathInput's identity is its source declaration (see
+    ``docs/claude/code-discovery-categories.md``), and the raw DB extraction
+    knows nothing about source. Declared PathInputs with no history are seeded
+    so they still appear as available nodes.
     """
-    logger.info(
-        "[graph_builder] aggregate_variants: processing %d variant(s)", len(variants)
-    )
     path_input_registry = path_input_registry or {}
     agg = AggregatedData()
+    for (fn_name, call_id), fn_data in scidb_agg["functions"].items():
+        fkey = (fn_name, call_id)
+        agg.fn_input_params[fkey] = fn_data["input_params"]
+        agg.fn_outputs[fkey] = set(fn_data["outputs"])
+        # {argument: Parameter node} as scidb resolved it — never re-derived
+        # here (cleanup-audit B1: the canvas invented param__{argument}).
+        agg.fn_parameter_names[fkey] = dict(fn_data.get("parameter_names") or {})
+        for arg, values in fn_data["constants"].items():
+            agg.fn_constants[fkey].add(arg)
+            node = agg.constant_node(fkey, arg)
+            for val in values:
+                # No per-value record counts in this projection; const_counts
+                # is display-only, so an approximation is honest here and the
+                # real counts land from scidb_agg["constants"] below.
+                agg.const_counts[node][str(val)] = 1
+        agg.fn_variants_map[fkey] = fn_data["variants"]
 
-    for v in variants:
-        fn = v["function_name"]
-        cid = v.get("call_id", "")
-        if not cid:
-            # Legacy variant without call_id — skip rather than collide
-            # other call sites under an empty key.  Logged so we notice.
-            logger.warning(
-                "aggregate_variants: variant missing call_id, skipping: fn=%s out=%s",
-                fn,
-                v.get("output_type"),
-            )
-            continue
-        fkey: FnKey = (fn, cid)
-        out = v["output_type"]
-        inputs = v["input_types"]
-        constants = v["constants"]
-        count = v["record_count"]
+    for const_name, const_data in scidb_agg["constants"].items():
+        for val_entry in const_data["values"]:
+            agg.const_counts[const_name][val_entry["value"]] = val_entry["record_count"]
+        for fkey in const_data["functions"]:
+            agg.const_fns[const_name].add(tuple(fkey))
 
-        agg.all_var_types.add(out)
-
-        for param_name, type_val in inputs.items():
-            pi = parse_path_input(type_val)
-            if pi is not None:
-                pi_name, display = resolve_path_input_name(
-                    pi, path_input_registry, path_input_history, project_root
-                )
-                existing = agg.path_inputs.get(pi_name)
-                if existing is None:
-                    agg.path_inputs[pi_name] = {
-                        **display,
-                        "functions": {(fkey, param_name)},
-                    }
-                else:
-                    existing["functions"].add((fkey, param_name))
-            else:
-                agg.all_var_types.add(type_val)
-                agg.fn_input_params[fkey][param_name] = type_val
-
-        agg.fn_outputs[fkey].add(out)
-
-        # Ensure fkey is tracked even with only PathInput/constant inputs
-        if fkey not in agg.fn_input_params:
-            agg.fn_input_params[fkey] = {}
-
-        recorded = v.get("parameter_names") or {}
-        for k, val in constants.items():
-            node = parameter_node_name(k, recorded)
-            agg.fn_parameter_names[fkey].setdefault(k, node)
-            agg.const_counts[node][str(val)] += count
-            agg.const_fns[node].add(fkey)
-            agg.fn_constants[fkey].add(k)
-
-        # Per-call-site variant list (currently always one entry per FnKey
-        # because list_pipeline_variants groups by version_keys, but kept
-        # as a list to match the existing settings-panel contract).
-        agg.fn_variants_map[fkey].append(
-            {
-                "constants": constants,
-                "input_types": inputs,
-                "output_type": out,
-                "record_count": count,
-            }
-        )
-
-    # Add variable types from the DB that weren't in any for_each run.
-    agg.all_var_types |= listed_var_names
-    logger.debug(
-        "[graph_builder] added %d variable type(s) from list_variables",
-        len(listed_var_names),
+    agg.all_var_types = set(scidb_agg["variables"].keys())
+    agg.path_inputs = convert_scidb_path_inputs(
+        scidb_agg["path_inputs"], path_input_registry, path_input_history, project_root
     )
-
+    seed_undiscovered_path_inputs(agg.path_inputs, path_input_registry)
     logger.info(
-        "[graph_builder] aggregate_variants complete: %d variants → %d var types, %d call sites, %d constants, %d path inputs",
-        len(variants),
-        len(agg.all_var_types),
+        "[graph_builder] aggregate_from_scidb: %d call site(s), %d var type(s), "
+        "%d constant(s), %d path input(s)",
         len(agg.fn_outputs),
+        len(agg.all_var_types),
         len(agg.const_counts),
         len(agg.path_inputs),
     )

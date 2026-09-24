@@ -1344,13 +1344,117 @@ var PanelRegistry = class {
 var import_child_process = require("child_process");
 var readline = __toESM(require("readline"));
 var vscode4 = __toESM(require("vscode"));
+
+// src/rpcPending.ts
+var EXPIRED_MEMORY = 100;
+var PendingRequests = class {
+  constructor(log, now = Date.now) {
+    this.log = log;
+    this.now = now;
+    this.entries = /* @__PURE__ */ new Map();
+    this.expired = /* @__PURE__ */ new Map();
+  }
+  /**
+   * Register request `id` and return the promise its response settles.
+   * `timeoutMs <= 0` disables the backstop.
+   */
+  open(id, method, timeoutMs) {
+    return new Promise((resolve2, reject) => {
+      const startedAt = this.now();
+      const timer = timeoutMs > 0 ? setTimeout(() => {
+        if (!this.entries.has(id))
+          return;
+        const elapsed = this.now() - startedAt;
+        this.log.appendLine(
+          `RPC timeout: ${method} (id=${id}) got no response in ${elapsed}ms. The Python server may have dropped the request \u2014 check the stderr above for a traceback.`
+        );
+        this.rememberExpired(id, { method, startedAt, timedOutAt: this.now() });
+        this.take(id)?.reject(new Error(
+          `SciStack: no response from the Python server for '${method}' after ${Math.round(elapsed / 1e3)}s.`
+        ));
+      }, timeoutMs) : null;
+      this.entries.set(id, { resolve: resolve2, reject, method, startedAt, timer });
+    });
+  }
+  /** Deliver a response. Returns false when no request was waiting for it. */
+  resolve(id, result) {
+    const entry = this.take(id);
+    if (!entry) {
+      this.logUnmatched(id);
+      return false;
+    }
+    entry.resolve(result);
+    return true;
+  }
+  /** Deliver an error response. Returns false when nothing was waiting. */
+  reject(id, message) {
+    const entry = this.take(id);
+    if (!entry) {
+      this.logUnmatched(id);
+      return false;
+    }
+    this.log.appendLine(
+      `RPC error: ${entry.method} (id=${id}, ${this.now() - entry.startedAt}ms): ${message}`
+    );
+    entry.reject(new Error(message));
+    return true;
+  }
+  /** Fail one request without a server response (e.g. the write failed). */
+  fail(id, error) {
+    this.take(id)?.reject(error);
+  }
+  /** Fail every outstanding request — the process is gone. */
+  failAll(error) {
+    for (const id of [...this.entries.keys()])
+      this.fail(id, error);
+  }
+  get size() {
+    return this.entries.size;
+  }
+  take(id) {
+    const entry = this.entries.get(id);
+    if (!entry)
+      return void 0;
+    if (entry.timer)
+      clearTimeout(entry.timer);
+    this.entries.delete(id);
+    return entry;
+  }
+  rememberExpired(id, info) {
+    this.expired.set(id, info);
+    if (this.expired.size > EXPIRED_MEMORY) {
+      const oldest = this.expired.keys().next().value;
+      this.expired.delete(oldest);
+    }
+  }
+  /**
+   * A response nobody is waiting for. When it is a request the backstop gave
+   * up on, say so with the numbers: "answered 40s after we stopped listening"
+   * is what distinguishes a timeout that is too short from a lost request.
+   */
+  logUnmatched(id) {
+    const late = this.expired.get(id);
+    if (late) {
+      this.expired.delete(id);
+      const now = this.now();
+      this.log.appendLine(
+        `RPC late response: ${late.method} (id=${id}) answered after ${now - late.startedAt}ms, ${now - late.timedOutAt}ms after the timeout gave up on it \u2014 result dropped. If this is routine, raise scistack.rpcTimeoutMs or move the method onto a job.`
+      );
+      return;
+    }
+    this.log.appendLine(
+      `[stdout] response for unknown request id=${id} \u2014 ignored`
+    );
+  }
+};
+
+// src/pythonProcess.ts
 var STDERR_TAIL_LINES = 200;
 var PythonProcess = class {
   constructor(pythonPath, args, outputChannel2, options = {}) {
     this.pythonPath = pythonPath;
     this.outputChannel = outputChannel2;
     this.nextId = 1;
-    this.pending = /* @__PURE__ */ new Map();
     this.notificationHandlers = [];
     this.readyResolve = null;
     this.readyReject = null;
@@ -1360,6 +1464,7 @@ var PythonProcess = class {
     this.stderrTail = [];
     this.exitCode = null;
     this.args = args;
+    this.pending = new PendingRequests(outputChannel2);
     this.outputChannel.appendLine(`Spawning: ${pythonPath} ${args.join(" ")}`);
     const childEnv = { ...process.env };
     if (options.debugPort !== void 0) {
@@ -1393,10 +1498,7 @@ var PythonProcess = class {
       this.exitCode = code;
       const msg = `Python process exited (code=${code}, signal=${signal})`;
       this.outputChannel.appendLine(msg);
-      for (const [, pending] of this.pending) {
-        pending.reject(new Error(msg));
-      }
-      this.pending.clear();
+      this.pending.failAll(new Error(msg));
       if (this.readyReject) {
         if (this.readyTimer) {
           clearTimeout(this.readyTimer);
@@ -1506,46 +1608,17 @@ var PythonProcess = class {
     }
     const id = this.nextId++;
     const timeoutMs = vscode4.workspace.getConfiguration("scistack").get("rpcTimeoutMs", 3e5);
-    return new Promise((resolve2, reject) => {
-      const settle = (fn) => {
-        const pending = this.pending.get(id);
-        if (pending?.timer)
-          clearTimeout(pending.timer);
-        this.pending.delete(id);
-        fn();
-      };
-      const timer = timeoutMs > 0 ? setTimeout(() => {
-        const pending = this.pending.get(id);
-        if (!pending)
-          return;
-        const elapsed = Date.now() - pending.startedAt;
-        this.outputChannel.appendLine(
-          `RPC timeout: ${method} (id=${id}) got no response in ${elapsed}ms. The Python server may have dropped the request \u2014 check the stderr above for a traceback.`
-        );
-        settle(() => reject(new Error(
-          `SciStack: no response from the Python server for '${method}' after ${Math.round(elapsed / 1e3)}s.`
-        )));
-      }, timeoutMs) : null;
-      this.pending.set(id, {
-        resolve: (value) => settle(() => resolve2(value)),
-        reject: (reason) => settle(() => reject(reason)),
-        method,
-        startedAt: Date.now(),
-        timer
-      });
-      const msg = JSON.stringify({ jsonrpc: "2.0", method, params, id });
-      this.proc.stdin?.write(msg + "\n", (err) => {
-        if (err) {
-          this.outputChannel.appendLine(`RPC write failed: ${method} \u2014 ${err.message}`);
-          const pending = this.pending.get(id);
-          if (pending) {
-            pending.reject(new Error(
-              `SciStack: could not send '${method}' to the Python server (${err.message}). It may have exited \u2014 check the SciStack output channel.`
-            ));
-          }
-        }
-      });
+    const reply = this.pending.open(id, method, timeoutMs);
+    const msg = JSON.stringify({ jsonrpc: "2.0", method, params, id });
+    this.proc.stdin?.write(msg + "\n", (err) => {
+      if (err) {
+        this.outputChannel.appendLine(`RPC write failed: ${method} \u2014 ${err.message}`);
+        this.pending.fail(id, new Error(
+          `SciStack: could not send '${method}' to the Python server (${err.message}). It may have exited \u2014 check the SciStack output channel.`
+        ));
+      }
     });
+    return reply;
   }
   /**
    * Register a handler for push notifications from Python.
@@ -1569,21 +1642,10 @@ var PythonProcess = class {
     }
     if ("id" in msg && msg.id !== null && msg.id !== void 0) {
       const id = msg.id;
-      const pending = this.pending.get(id);
-      if (pending) {
-        if ("error" in msg) {
-          const err = msg.error;
-          this.outputChannel.appendLine(
-            `RPC error: ${pending.method} (id=${id}, ${Date.now() - pending.startedAt}ms): ${err.message}`
-          );
-          pending.reject(new Error(err.message));
-        } else {
-          pending.resolve(msg.result);
-        }
+      if ("error" in msg) {
+        this.pending.reject(id, msg.error.message);
       } else {
-        this.outputChannel.appendLine(
-          `[stdout] response for unknown/expired request id=${id} \u2014 ignored`
-        );
+        this.pending.resolve(id, msg.result);
       }
       return;
     }

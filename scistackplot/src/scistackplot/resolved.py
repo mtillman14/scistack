@@ -192,6 +192,13 @@ class ResolvedPlot:
     #: so every existing consumer keeps working; renderers read this only to
     #: draw the group labels and brackets beneath the ticks.
     x_plan: Any = None
+    #: The factors sharing the x axis, outermost first: ``x_plan`` depth ``d``
+    #: is ``x_layers[d]`` and the last entry is the tick labels' own layer.
+    #: With ``color_factor``, how a renderer knows which labelled row repeats
+    #: the legend (``StyleOptions.hide_legend_ticks``).
+    x_layers: list[str] = field(default_factory=list)
+    #: The factor the marks are painted by, as resolved, or None.
+    color_factor: str | None = None
     color_order: list[Any] | None = None
     #: Subplot grid shape, decided in ``reduce`` from FacetOptions.
     grid_rows: int = 1

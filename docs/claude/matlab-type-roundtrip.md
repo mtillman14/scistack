@@ -121,7 +121,7 @@ Save path: `to_python` → `py.dict` with recursive field conversion →
 `_python_to_storage` calls `json.dumps(_convert_for_json(value))` which converts
 all ndarrays to nested lists.
 
-Load path: JSON string → `json.loads` → dict → `_storage_to_python` restores
+Load path: JSON string → `json.loads` → dict → `storage_to_python` restores
 top-level `ndarray_keys` to numpy arrays → `from_python(py.dict)` →
 `pydict_to_struct` → MATLAB struct.
 
@@ -206,4 +206,4 @@ needs additional stacking helpers.
 - `sci-matlab/src/sci_matlab/matlab/+scidb/+internal/to_python.m` — MATLAB → Python
 - `sci-matlab/src/sci_matlab/matlab/+scidb/+internal/from_python.m` — Python → MATLAB
 - `sci-matlab/src/sci_matlab/matlab/+scidb/BaseVariable.m` — save_from_table struct metadata
-- `sciduck/src/sciduck/sciduck.py` — `_convert_for_json`, `_python_to_storage`, `_storage_to_python`, `_infer_duckdb_type`
+- `sciduck/src/sciduck/sciduck.py` — `_convert_for_json`, `_python_to_storage`, `storage_to_python`, `_infer_duckdb_type`

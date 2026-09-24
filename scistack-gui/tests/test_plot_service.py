@@ -920,7 +920,7 @@ def test_an_unwritable_format_is_refused_before_anything_is_done(
         scistackplot, "resolve_one", lambda *a, **k: touched.append("resolve_one")
     )
     monkeypatch.setattr(
-        scistackplot, "render_matplotlib", lambda item: touched.append("render")
+        scistackplot, "write_figure", lambda *a, **k: touched.append("render")
     )
     folder = tmp_path / "out"
 
@@ -1082,13 +1082,14 @@ def test_a_save_job_does_not_hold_the_database_while_rendering(
 
     db_mod = per_request_policy
     seen = []
-    original = scistackplot.render_matplotlib
+    # write_figure renders and writes (scistackplot owns the saved size).
+    original = scistackplot.write_figure
 
-    def spy(item):
+    def spy(item, *args, **kwargs):
         seen.append((db_mod._db_refcount, db_mod._db_open))
-        return original(item)
+        return original(item, *args, **kwargs)
 
-    monkeypatch.setattr(scistackplot, "render_matplotlib", spy)
+    monkeypatch.setattr(scistackplot, "write_figure", spy)
 
     spec = _pooled_spec(populated_db)
     spec = _with_roles(spec, subject="iterate")
@@ -1110,10 +1111,10 @@ def test_a_failing_save_job_announces_itself(
     that can never arrive."""
     import scistackplot
 
-    def boom(item):
+    def boom(*args, **kwargs):
         raise RuntimeError("renderer exploded")
 
-    monkeypatch.setattr(scistackplot, "render_matplotlib", boom)
+    monkeypatch.setattr(scistackplot, "write_figure", boom)
 
     spec = _pooled_spec(populated_db)
     plot_service.start_save_job(populated_db, spec, str(tmp_path / "emg.png"))
@@ -1133,8 +1134,8 @@ def test_a_failed_save_job_releases_the_database(
     db_mod = per_request_policy
     monkeypatch.setattr(
         scistackplot,
-        "render_matplotlib",
-        lambda item: (_ for _ in ()).throw(RuntimeError("boom")),
+        "write_figure",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
     spec = _pooled_spec(populated_db)
@@ -2171,7 +2172,7 @@ def test_save_reduces_and_renders_with_the_connection_released(
 
     seen: dict = {}
     original_resolve = scistackplot.resolve
-    original_render = scistackplot.render_matplotlib
+    original_render = scistackplot.write_figure
 
     def spy_resolve(*args, **kwargs):
         seen["open_during_resolve"] = per_request_policy._db_open
@@ -2182,7 +2183,7 @@ def test_save_reduces_and_renders_with_the_connection_released(
         return original_render(*args, **kwargs)
 
     monkeypatch.setattr(scistackplot, "resolve", spy_resolve)
-    monkeypatch.setattr(scistackplot, "render_matplotlib", spy_render)
+    monkeypatch.setattr(scistackplot, "write_figure", spy_render)
 
     with caplog.at_level(logging.INFO):
         result = plot_service.save_figure(populated_db, spec, str(tmp_path / "f.png"))
@@ -2666,3 +2667,98 @@ class TestVariantPinsAreStatements:
         plot_service.save_variant_sets(populated_db, "FilteredSignal", [])
         reopened = plot_service.describe(populated_db, "FilteredSignal")["spec"]
         assert all(s.get("name") != "gone" for s in reopened["variant_sets"])
+
+
+# --- the preview decides at a size (label-legibility plan, stage 4) ----------
+
+
+def _saved_size(spec_payload) -> tuple[float, float]:
+    from scistackplot import PlotSpec
+
+    style = PlotSpec.from_dict(spec_payload).style
+    return style.width, style.height
+
+
+def test_the_export_preview_is_drawn_at_the_saved_size(populated_db):
+    spec = _pooled_spec(populated_db)
+    result = plot_service.resolve_figures(
+        populated_db, spec, figure_index=0, preview={"mode": "export"}
+    )
+    assert result["ok"], result
+    meta = result["figures"][0]["figure"]["layout"]["meta"]
+    width, height = _saved_size(spec)
+    assert meta["fixed_size"] == [round(width * 72), round(height * 72)]
+    assert meta["preview"] == {"mode": "export", "width_in": width, "height_in": height}
+    assert "label_fit" in meta, "the export's decisions were applied"
+
+
+def test_a_pane_preview_fills_the_pane_and_states_its_export_size(populated_db):
+    spec = _pooled_spec(populated_db)
+    result = plot_service.resolve_figures(
+        populated_db,
+        spec,
+        figure_index=0,
+        preview={"mode": "pane", "width_px": 720, "height_px": 360},
+    )
+    meta = result["figures"][0]["figure"]["layout"]["meta"]
+    assert "fixed_size" not in meta
+    assert meta["preview"] == {"mode": "pane", "width_in": 10.0, "height_in": 5.0}
+
+
+def test_without_a_preview_the_payload_is_as_before(populated_db):
+    result = plot_service.resolve_figures(populated_db, _pooled_spec(populated_db), figure_index=0)
+    meta = result["figures"][0]["figure"]["layout"]["meta"]
+    assert "preview" not in meta and "fixed_size" not in meta
+
+
+def _count_resolves(monkeypatch) -> list:
+    import scistackplot
+
+    calls: list = []
+    original = scistackplot.resolve_one
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scistackplot, "resolve_one", spy)
+    return calls
+
+
+def test_a_resize_re_renders_without_resolving(populated_db, monkeypatch):
+    calls = _count_resolves(monkeypatch)
+    spec = _pooled_spec(populated_db)
+    plot_service.resolve_figures(populated_db, spec, figure_index=0, preview={"mode": "export"})
+    again = plot_service.resolve_figures(
+        populated_db,
+        spec,
+        figure_index=0,
+        preview={"mode": "pane", "width_px": 600, "height_px": 400},
+        reuse_resolved=True,
+    )
+    assert again["ok"], again
+    assert len(calls) == 1, "the resize resolved again"
+    assert again["figures"][0]["figure"]["layout"]["meta"]["preview"]["mode"] == "pane"
+
+
+def test_a_kept_resolve_is_never_served_for_a_different_spec(populated_db, monkeypatch):
+    calls = _count_resolves(monkeypatch)
+    spec = _pooled_spec(populated_db)
+    plot_service.resolve_figures(populated_db, spec, figure_index=0, preview={"mode": "export"})
+    changed = {**spec, "style": {**(spec.get("style") or {}), "font_size": 9.0}}
+    plot_service.resolve_figures(
+        populated_db, changed, figure_index=0, preview={"mode": "export"}, reuse_resolved=True
+    )
+    assert len(calls) == 2
+
+
+def test_invalidate_drops_the_kept_resolve(populated_db, monkeypatch):
+    """A run that wrote records must never be answered from before it."""
+    calls = _count_resolves(monkeypatch)
+    spec = _pooled_spec(populated_db)
+    plot_service.resolve_figures(populated_db, spec, figure_index=0, preview={"mode": "export"})
+    plot_service.invalidate(populated_db)
+    plot_service.resolve_figures(
+        populated_db, spec, figure_index=0, preview={"mode": "export"}, reuse_resolved=True
+    )
+    assert len(calls) == 2

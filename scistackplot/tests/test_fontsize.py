@@ -28,7 +28,11 @@ def big_spec():
         groups=["session", "subject"],
         color="session",
         kind=PlotKind.BOX,
-        style=StyleOptions(font_size=20.0),
+        # Wide enough that the 20pt "pre"/"post" ticks fit upright: on the
+        # default 8in with a legend they need ~40pt per slot and get ~37, and
+        # the label fit (ticklabels) rightly shrinks them to 19pt. This test
+        # is about the setting reaching every label, not about crowding.
+        style=StyleOptions(font_size=20.0, width=14.0),
     )
 
 
@@ -92,7 +96,9 @@ def test_generated_code_draws_at_the_spec_size_without_leaking(
 def test_plotly_preview_uses_the_same_number(scalar_table, big_spec):
     """Visible before a save: the preview font follows the setting as px."""
     layout = render_plotly(resolve(big_spec, scalar_table)[0])["layout"]
-    assert layout["font"] == {"size": 20.0}
+    assert layout["font"]["size"] == 20.0
+    # The family is the one the label decisions were measured in (stage 4).
+    assert layout["font"]["family"].startswith("DejaVu Sans")
 
 
 def test_font_size_survives_the_spec_round_trip(big_spec):

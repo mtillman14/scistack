@@ -14,14 +14,14 @@ import pandas as pd
 
 from sciduckdb import (
     SciDuck,
-    _bulk_df_to_storage_rows,
-    _dataframe_to_storage_rows,
-    _infer_data_columns,
-    _record_schema_mismatch,
-    _storage_to_python,
-    _storage_to_python_column,
-    _unflatten_dict,
-    _value_to_storage_row,
+    bulk_df_to_storage_rows,
+    dataframe_to_storage_rows,
+    infer_data_columns,
+    record_schema_mismatch,
+    storage_to_python,
+    storage_to_python_column,
+    unflatten_dict,
+    value_to_storage_row,
     count_null_list_elements,
 )
 
@@ -774,6 +774,21 @@ def get_database() -> "DatabaseManager":
     return db
 
 
+def set_current_database(db) -> None:
+    """Install *db* as the thread's current database — what ``get_database``
+    returns. Public so a package that supplies its own database object (the
+    scidb-net remote client) does not reach into ``_local``
+    (cleanup-audit F2/F7: private cross-package imports)."""
+    _local.database = db
+
+
+def clear_current_database() -> None:
+    """Forget the thread's current database, if any (a tool that configured
+    one only to scaffold a project leaves none behind)."""
+    if hasattr(_local, "database"):
+        delattr(_local, "database")
+
+
 def database_or_none(db: "DatabaseManager | None" = None) -> "DatabaseManager | None":
     """*db* if given, else the configured database, else ``None`` — for a
     caller that can proceed without one.
@@ -803,6 +818,164 @@ def dataset_schema_keys_of(db: "DatabaseManager | None" = None) -> list[str]:
     """
     active = database_or_none(db)
     return list(getattr(active, "dataset_schema_keys", None) or [])
+
+
+def aggregate_pipeline_variants(variants: list[dict]) -> dict:
+    """Pipeline variant rows (``list_pipeline_variants``) -> the aggregated
+    shape :meth:`DatabaseManager.get_aggregated_variants` returns — PURE, no
+    database. THE one conversion: the GUI used to keep a second, test-only copy
+    of it (``graph_builder.aggregate_variants``), so its tests exercised a path
+    production never ran (cleanup-audit F19).
+
+    ``variables`` carries ``record_count: None``; the method fills the real
+    counts. ``path_inputs`` is keyed by the PathInput SPEC (its JSON), each
+    entry ``{"template", "root_folder", "functions": [(fkey, param_name), ...]}``.
+    """
+    from collections import defaultdict
+
+    from .provenance import parse_path_input_spec as _parse_path_input
+
+    # Initialize result structure
+    functions = defaultdict(
+        lambda: {
+            "input_params": {},
+            "outputs": [],
+            "constants": defaultdict(list),
+            "parameter_names": {},
+            "variant_count": 0,
+            "variants": [],
+        }
+    )
+    all_var_types = set()
+    const_counts = defaultdict(lambda: defaultdict(int))
+    const_fns = defaultdict(set)
+    fn_constants_map = defaultdict(set)
+    path_inputs = {}
+
+    # Aggregate variants by (fn_name, call_id)
+    for v in variants:
+        fn = v["function_name"]
+        cid = v.get("call_id", "")
+        if not cid:
+            continue  # Skip legacy variants without call_id
+
+        fkey = (fn, cid)
+        out = v["output_type"]
+        inputs = v["input_types"]
+        constants = v["constants"]
+        count = v["record_count"]
+
+        # Track variable types
+        all_var_types.add(out)
+
+        # Process inputs
+        for param_name, type_val in inputs.items():
+            # Check if it's a PathInput
+            pi = _parse_path_input(type_val)
+            if pi is not None:
+                # Keyed by the SPEC, never the parameter name: two
+                # functions whose PathInput parameters share a name
+                # (`filePath`) but not a template used to be filed under
+                # the FIRST one's template (cleanup-audit F37).
+                spec_key = json.dumps(pi, sort_keys=True, default=str)
+                entry = path_inputs.setdefault(
+                    spec_key, {**pi, "functions": set()}
+                )
+                entry["functions"].add((fkey, param_name))
+            else:
+                all_var_types.add(type_val)
+                functions[fkey]["input_params"][param_name] = type_val
+
+        # Track outputs
+        if out not in functions[fkey]["outputs"]:
+            functions[fkey]["outputs"].append(out)
+
+        # Track constants. A constant's NODE is the declared Parameter its
+        # run recorded, else the argument it filled (cleanup-audit B1):
+        # the value lives under the argument in `functions[...]` (that is
+        # what the function receives), and under the node everywhere a
+        # Parameter is named (`constants`, `parameter_names`).
+        recorded_names = v.get("parameter_names") or {}
+        for k, val in constants.items():
+            node = parameter_node_name(k, recorded_names)
+            seen = functions[fkey]["parameter_names"].get(k)
+            if seen is not None and seen != node:
+                Log.warn(
+                    f"aggregate_pipeline_variants: {fn} call {cid} argument "
+                    f"{k!r} was fed by Parameter {seen!r} in one run and "
+                    f"{node!r} in another; showing {seen!r}"
+                )
+                node = seen
+            functions[fkey]["parameter_names"][k] = node
+            const_counts[node][str(val)] += count
+            const_fns[node].add(fkey)
+            fn_constants_map[fkey].add(k)
+            if val not in functions[fkey]["constants"][k]:
+                functions[fkey]["constants"][k].append(val)
+
+        # Track variant. output_num is carried through because for a
+        # MULTI-OUTPUT fn it tells the GUI which slot of the signature
+        # produced this output, and for MATLAB fns that is the sole
+        # DB-derived source for the fn->output edge (see api/pipeline.py
+        # matlab_param_to_class). Dropping it silently forced that edge to
+        # depend on a hand-drawn manual edge instead.
+        #
+        # It is NOT variant identity (2026-09-22): a distributed run
+        # numbers its slices, so keying on it made one call N variants.
+        # Each output_type is now its own group and this is that type's
+        # own (lowest) slot — which is what the GUI wanted all along.
+        # A single-output fn must ignore it entirely; see
+        # _matlab_param_to_class_from_db for the two cases where the
+        # number is not a signature position at all.
+        functions[fkey]["variants"].append(
+            {
+                "input_types": inputs,
+                "constants": constants,
+                "parameter_names": dict(recorded_names),
+                "output_type": out,
+                "output_num": v.get("output_num"),
+                "record_count": count,
+            }
+        )
+        functions[fkey]["variant_count"] += 1
+
+    # Record counts need the database; the caller fills them in.
+    variables = {t: {"record_count": None} for t in sorted(all_var_types)}
+
+    # Build constants result
+    constants_result = {}
+    for const_name in const_counts:
+        values = [
+            {"value": val, "record_count": cnt}
+            for val, cnt in sorted(const_counts[const_name].items())
+        ]
+        constants_result[const_name] = {
+            "values": values,
+            "functions": list(const_fns[const_name]),
+        }
+
+    # Convert functions dict to regular dict (remove defaultdict)
+    functions_result = {}
+    for fkey, data in functions.items():
+        functions_result[fkey] = {
+            "input_params": dict(data["input_params"]),
+            "outputs": data["outputs"],
+            "constants": {k: list(v) for k, v in data["constants"].items()},
+            "parameter_names": dict(data["parameter_names"]),
+            "variant_count": data["variant_count"],
+            "variants": data["variants"],
+        }
+
+    # Functions as a sorted list of (fkey, param_name) pairs.
+    for entry in path_inputs.values():
+        entry["functions"] = sorted(entry["functions"])
+
+    return {
+        "functions": functions_result,
+        "variables": variables,
+        "constants": constants_result,
+        "path_inputs": path_inputs,
+    }
 
 
 def _declared_rank_column(col, declared: list[str]) -> list[int]:
@@ -1239,7 +1412,7 @@ class DatabaseManager:
         else:
             schema_id = 0
 
-        data_col_types, dtype_meta = _infer_data_columns(data)
+        data_col_types, dtype_meta = infer_data_columns(data)
         is_dataframe = isinstance(data, pd.DataFrame)
 
         # Ensure table exists
@@ -1271,7 +1444,7 @@ class DatabaseManager:
                 col_names = ["record_id"] + list(data_col_types.keys())
                 col_str = ", ".join(f'"{c}"' for c in col_names)
                 placeholders = ", ".join(["?"] * len(col_names))
-                for storage_row in _dataframe_to_storage_rows(data, dtype_meta):
+                for storage_row in dataframe_to_storage_rows(data, dtype_meta):
                     self._duck._execute(
                         f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders})',
                         [record_id] + storage_row,
@@ -1284,7 +1457,7 @@ class DatabaseManager:
                     f"_save_native: record_id={record_id[:12]} already exists in '{table_name}', skipped"
                 )
         else:
-            storage_values = _value_to_storage_row(data, dtype_meta)
+            storage_values = value_to_storage_row(data, dtype_meta)
             col_names = ["record_id"] + list(data_col_types.keys())
             col_str = ", ".join(f'"{c}"' for c in col_names)
             placeholders = ", ".join(["?"] * len(col_names))
@@ -1351,7 +1524,7 @@ class DatabaseManager:
         # --- One-time setup from first item ---
         first_data, first_meta = data_items[0]
 
-        data_col_types, dtype_meta = _infer_data_columns(first_data)
+        data_col_types, dtype_meta = infer_data_columns(first_data)
         is_dataframe = dtype_meta.get("mode") == "dataframe"
 
         # Reference-schema selection: a leading degenerate record (e.g. an
@@ -1360,7 +1533,7 @@ class DatabaseManager:
         # degenerate record itself is caught by the validation pass below.
         if not data_col_types and not is_dataframe:
             for _dv, _ in data_items:
-                _ct, _dm = _infer_data_columns(_dv)
+                _ct, _dm = infer_data_columns(_dv)
                 if _ct:
                     first_data = _dv
                     data_col_types, dtype_meta = _ct, _dm
@@ -1403,8 +1576,8 @@ class DatabaseManager:
             valid_items = []
             valid_orig_idx = []
             for _idx, (_dv, _fm) in enumerate(data_items):
-                _rec_col_types, _ = _infer_data_columns(_dv)
-                _reason = _record_schema_mismatch(data_col_types, _rec_col_types)
+                _rec_col_types, _ = infer_data_columns(_dv)
+                _reason = record_schema_mismatch(data_col_types, _rec_col_types)
                 if _reason is None:
                     valid_items.append((_dv, _fm))
                     valid_orig_idx.append(_idx)
@@ -1455,7 +1628,7 @@ class DatabaseManager:
         # which only works when `data_val` is a dict (i.e. multi_column mode).
         # Single-column mode stores data_val as a bare ndarray/scalar, so
         # `data_val["value"]` would raise IndexError — exclude it here and
-        # let it fall through to the generic _value_to_storage_row path.
+        # let it fall through to the generic value_to_storage_row path.
         _use_arrow = False
         pa = None
         if not is_dataframe and dtype_meta.get("mode") == "multi_column":
@@ -1527,8 +1700,8 @@ class DatabaseManager:
         t4_meta = 0.0
 
         # Accumulate DataFrames for bulk storage-row conversion after the loop.
-        # Per-row _dataframe_to_storage_rows (54 iloc calls × 7k records) was
-        # the dominant cost; _bulk_df_to_storage_rows processes column-by-column.
+        # Per-row dataframe_to_storage_rows (54 iloc calls × 7k records) was
+        # the dominant cost; bulk_df_to_storage_rows processes column-by-column.
         _df_bulk: list = []
         _df_bulk_rids: list = []
 
@@ -1598,7 +1771,7 @@ class DatabaseManager:
                 _df_bulk.append(data_val)
                 _df_bulk_rids.append(record_id)
             else:
-                storage_values = _value_to_storage_row(data_val, dtype_meta)
+                storage_values = value_to_storage_row(data_val, dtype_meta)
                 data_table_rows.append((record_id,) + tuple(storage_values))
             t4_storage += time.perf_counter() - _t
 
@@ -1619,7 +1792,7 @@ class DatabaseManager:
         # --- Bulk DataFrame → storage rows (replaces 7k per-row iloc calls) ---
         if _df_bulk:
             _t = time.perf_counter()
-            data_table_rows = _bulk_df_to_storage_rows(
+            data_table_rows = bulk_df_to_storage_rows(
                 _df_bulk, _df_bulk_rids, dtype_meta
             )
             t4_storage += time.perf_counter() - _t
@@ -3003,7 +3176,7 @@ class DatabaseManager:
                 n_null = count_null_list_elements(data_df[col])
                 if n_null:
                     null_counts[col] = n_null
-                data_df[col] = _storage_to_python_column(data_df[col], col_meta)
+                data_df[col] = storage_to_python_column(data_df[col], col_meta)
         if null_counts:
             Log.info(
                 f"load_all_as_df({variable_class.__name__}): restored "
@@ -3670,7 +3843,7 @@ class DatabaseManager:
                                 if c in group_df.columns:
                                     # Optimized: use tolist() instead of iloc[i] (5-10x faster)
                                     result[c] = [
-                                        _storage_to_python(val, meta)
+                                        storage_to_python(val, meta)
                                         for val in group_df[c].tolist()
                                     ]
                             data_lookup[rid] = pd.DataFrame(result, columns=df_columns)
@@ -3687,11 +3860,11 @@ class DatabaseManager:
                             for i, rid in enumerate(chunk_df["record_id"].tolist()):
                                 result = {}
                                 for c, meta in columns_meta.items():
-                                    result[c] = _storage_to_python(
+                                    result[c] = storage_to_python(
                                         restored[c].iloc[i], meta
                                     )
                                 if dtype_meta.get("nested"):
-                                    data_lookup[rid] = _unflatten_dict(
+                                    data_lookup[rid] = unflatten_dict(
                                         result, dtype_meta["path_map"]
                                     )
                                 else:
@@ -4207,177 +4380,45 @@ class DatabaseManager:
                     }
 
             ``"path_inputs"`` (dict)
-                PathInput parameters::
+                PathInputs, keyed by SPEC (its JSON), not by parameter name —
+                two functions may name different PathInputs alike::
 
                     {
-                        param_name: {
+                        spec_json: {
                             "template": str,
                             "root_folder": str | None,
-                            "functions": [(fn_name, call_id), ...],
+                            "functions": [((fn_name, call_id), param_name), ...],
                         }
                     }
+
+            The conversion itself is :func:`aggregate_pipeline_variants`
+            (pure); this method adds the database-only record counts.
         """
-        from collections import defaultdict
-
-        from .provenance import parse_path_input_spec as _parse_path_input
-
-        # Fetch base variant data
         variants = self.list_pipeline_variants()
-
-        # Apply filters
         if fn_name is not None:
             variants = [v for v in variants if v["function_name"] == fn_name]
         if call_id is not None:
             variants = [v for v in variants if v.get("call_id") == call_id]
 
-        # Initialize result structure
-        functions = defaultdict(
-            lambda: {
-                "input_params": {},
-                "outputs": [],
-                "constants": defaultdict(list),
-                "parameter_names": {},
-                "variant_count": 0,
-                "variants": [],
+        result = aggregate_pipeline_variants(variants)
+
+        # Every variable type's record count in ONE query (it was one per type).
+        types = list(result["variables"])
+        counts: dict = {}
+        if types:
+            ph = ", ".join("?" for _ in types)
+            counts = {
+                t: n
+                for t, n in self._duck._fetchall(
+                    "SELECT type, COUNT(DISTINCT record_id) FROM _record "  # noqa: S608
+                    f"WHERE type IN ({ph}) AND COALESCE(excluded, FALSE) = FALSE "
+                    "GROUP BY type",
+                    types,
+                )
             }
-        )
-        all_var_types = set()
-        const_counts = defaultdict(lambda: defaultdict(int))
-        const_fns = defaultdict(set)
-        fn_constants_map = defaultdict(set)
-        path_inputs = {}
-
-        # Aggregate variants by (fn_name, call_id)
-        for v in variants:
-            fn = v["function_name"]
-            cid = v.get("call_id", "")
-            if not cid:
-                continue  # Skip legacy variants without call_id
-
-            fkey = (fn, cid)
-            out = v["output_type"]
-            inputs = v["input_types"]
-            constants = v["constants"]
-            count = v["record_count"]
-
-            # Track variable types
-            all_var_types.add(out)
-
-            # Process inputs
-            for param_name, type_val in inputs.items():
-                # Check if it's a PathInput
-                pi = _parse_path_input(type_val)
-                if pi is not None:
-                    if param_name not in path_inputs:
-                        path_inputs[param_name] = {
-                            **pi,
-                            "functions": set(),
-                        }
-                    path_inputs[param_name]["functions"].add(fkey)
-                else:
-                    all_var_types.add(type_val)
-                    functions[fkey]["input_params"][param_name] = type_val
-
-            # Track outputs
-            if out not in functions[fkey]["outputs"]:
-                functions[fkey]["outputs"].append(out)
-
-            # Track constants. A constant's NODE is the declared Parameter its
-            # run recorded, else the argument it filled (cleanup-audit B1):
-            # the value lives under the argument in `functions[...]` (that is
-            # what the function receives), and under the node everywhere a
-            # Parameter is named (`constants`, `parameter_names`).
-            recorded_names = v.get("parameter_names") or {}
-            for k, val in constants.items():
-                node = parameter_node_name(k, recorded_names)
-                seen = functions[fkey]["parameter_names"].get(k)
-                if seen is not None and seen != node:
-                    Log.warn(
-                        f"get_aggregated_variants: {fn} call {cid} argument "
-                        f"{k!r} was fed by Parameter {seen!r} in one run and "
-                        f"{node!r} in another; showing {seen!r}"
-                    )
-                    node = seen
-                functions[fkey]["parameter_names"][k] = node
-                const_counts[node][str(val)] += count
-                const_fns[node].add(fkey)
-                fn_constants_map[fkey].add(k)
-                if val not in functions[fkey]["constants"][k]:
-                    functions[fkey]["constants"][k].append(val)
-
-            # Track variant. output_num is carried through because for a
-            # MULTI-OUTPUT fn it tells the GUI which slot of the signature
-            # produced this output, and for MATLAB fns that is the sole
-            # DB-derived source for the fn->output edge (see api/pipeline.py
-            # matlab_param_to_class). Dropping it silently forced that edge to
-            # depend on a hand-drawn manual edge instead.
-            #
-            # It is NOT variant identity (2026-09-22): a distributed run
-            # numbers its slices, so keying on it made one call N variants.
-            # Each output_type is now its own group and this is that type's
-            # own (lowest) slot — which is what the GUI wanted all along.
-            # A single-output fn must ignore it entirely; see
-            # _matlab_param_to_class_from_db for the two cases where the
-            # number is not a signature position at all.
-            functions[fkey]["variants"].append(
-                {
-                    "input_types": inputs,
-                    "constants": constants,
-                    "parameter_names": dict(recorded_names),
-                    "output_type": out,
-                    "output_num": v.get("output_num"),
-                    "record_count": count,
-                }
-            )
-            functions[fkey]["variant_count"] += 1
-
-        # Get variable record counts
-        variables = {}
-        for var_type in all_var_types:
-            rows = self._duck._fetchall(
-                "SELECT COUNT(DISTINCT record_id) FROM _record "
-                "WHERE type = ? AND COALESCE(excluded, FALSE) = FALSE",
-                [var_type],
-            )
-            record_count = rows[0][0] if rows else 0
-            variables[var_type] = {"record_count": record_count}
-
-        # Build constants result
-        constants_result = {}
-        for const_name in const_counts:
-            values = [
-                {"value": val, "record_count": cnt}
-                for val, cnt in sorted(const_counts[const_name].items())
-            ]
-            constants_result[const_name] = {
-                "values": values,
-                "functions": list(const_fns[const_name]),
-            }
-
-        # Convert functions dict to regular dict (remove defaultdict)
-        functions_result = {}
-        for fkey, data in functions.items():
-            functions_result[fkey] = {
-                "input_params": dict(data["input_params"]),
-                "outputs": data["outputs"],
-                "constants": {k: list(v) for k, v in data["constants"].items()},
-                "parameter_names": dict(data["parameter_names"]),
-                "variant_count": data["variant_count"],
-                "variants": data["variants"],
-            }
-
-        # Convert path_inputs functions to lists
-        for param_name in path_inputs:
-            path_inputs[param_name]["functions"] = list(
-                path_inputs[param_name]["functions"]
-            )
-
-        return {
-            "functions": functions_result,
-            "variables": variables,
-            "constants": constants_result,
-            "path_inputs": path_inputs,
-        }
+        for t in types:
+            result["variables"][t] = {"record_count": counts.get(t, 0)}
+        return result
 
     def filter_variants_for_execution(
         self,
@@ -4919,7 +4960,7 @@ class DatabaseManager:
 
     def set_current_db(self):
         """Set this DatabaseManager as the active global database."""
-        _local.database = self
+        set_current_database(self)
         self._closed = False
 
     def __enter__(self):

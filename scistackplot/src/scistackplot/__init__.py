@@ -62,7 +62,8 @@ from .export import (
     plot_data,
 )
 from .reduce import MAX_TRANSPORT_POINTS, resolve, resolve_one
-from .render import render_matplotlib, render_plotly
+from .figure_file import WrittenFigure, canvas_overflow, write_figure
+from .render import layout_decisions, render_matplotlib, render_plotly
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import (
     Assignment,
@@ -125,6 +126,15 @@ from .figsize import (
     describe_size,
     height_for,
     presets_payload,
+)
+from .ticklabels import (
+    BRACKET_POLICY,
+    TICK_POLICY,
+    LabelFit,
+    LabelPolicy,
+    LabelRow,
+    fit_labels,
+    slot_row,
 )
 from .xaxis import XGroup, XPlan, leaf_key, plan_x_axis
 from .ylimits import describe as describe_y_limits
@@ -272,6 +282,13 @@ __all__ = [
     "XPlan",
     "XGroup",
     "plan_x_axis",
+    "LabelFit",
+    "LabelPolicy",
+    "LabelRow",
+    "fit_labels",
+    "slot_row",
+    "TICK_POLICY",
+    "BRACKET_POLICY",
     "leaf_key",
     "ResolvedPlot",
     "Panel",
@@ -280,6 +297,10 @@ __all__ = [
     "render",
     "render_all",
     "render_matplotlib",
+    "write_figure",
+    "layout_decisions",
+    "WrittenFigure",
+    "canvas_overflow",
     "render_plotly",
     "MAX_TRANSPORT_POINTS",
     # export

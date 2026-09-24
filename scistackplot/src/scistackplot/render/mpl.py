@@ -9,6 +9,7 @@ expected to reproduce.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,15 @@ from ..figsize import aspect_name
 from ..resolved import MPL_DASHES, ResolvedPlot
 from ..spec import PlotKind
 from ..table import natural_sort_key
+from ..ticklabels import (
+    BRACKET_POLICY,
+    TICK_POLICY,
+    LabelFit,
+    LabelRow,
+    Measure,
+    fit_labels,
+    label_block,
+)
 from .base import (
     SAMPLE_ALPHA,
     SAMPLE_EDGE_COLOR,
@@ -76,8 +86,8 @@ def render(resolved: ResolvedPlot):
         # font.size, so this scales ticks, labels, legend and title together.
         with plt.rc_context({"font.size": style.font_size}):
             n_rows, n_cols = grid_shape(resolved)
-            # The size the file will have (before bbox_inches="tight" trims the
-            # margins). Stated in the log because the preview never shows it: a
+            # The size the file will have, exactly (figure_file.write_figure
+            # never trims). Stated in the log because the preview never shows it: a
             # figure that "came out squashed" is diagnosed here, not in the GUI.
             Log.info(
                 "figure size %.2f x %.2f in (%s), font %gpt, %d x %d panel grid",
@@ -146,13 +156,32 @@ def render(resolved: ResolvedPlot):
 
             if resolved.labels.title:
                 fig.suptitle(resolved.labels.title)
-            # tight_layout is told how much width the legend took. A FIGURE legend
+            # tight_layout is told how much room the legend took. A FIGURE legend
             # is invisible to tight_layout, so laying the axes out across the whole
             # width put the legend on top of the rightmost panels in the exported
             # PNG while the interactive plotly view kept it outside — the same
             # figure reading two different ways depending on how you looked at it.
-            reserved = _apply_legend(fig, resolved)
-            fig.tight_layout(rect=(0.0, 0.0, 1.0 - reserved, 1.0))
+            legend = _apply_legend(fig, resolved)
+            labelled = _labelled_cells(axes, resolved, n_rows, n_cols)
+            rect = _arrange(fig, labelled, resolved, legend)
+            fig.tight_layout(rect=rect)
+            # The data's labels outrank the legend: if, with the legend at the
+            # right, the x labels still cannot fit, the legend gives the width
+            # back and goes below the panels (spec/images/graph2.png).
+            if legend is not None and not legend.below:
+                overlap = _x_labels_crowded(fig, labelled, resolved)
+                if overlap is not None:
+                    legend = _legend_below(
+                        fig,
+                        legend,
+                        f"at the right it left the x labels overlapping by {overlap:.1f}pt",
+                    )
+                    rect = _arrange(fig, labelled, resolved, legend)
+                    fig.tight_layout(rect=rect)
+            setattr(fig, LEGEND_ATTR, legend.describe() if legend is not None else None)
+            # After a layout pass: the room each label has is the laid-out
+            # panel width (spec/images/graph1.png, graph2.png).
+            _fit_x_labels(fig, [ax for _, _, ax in labelled], resolved, rect)
             return fig
 
 
@@ -519,8 +548,8 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
                 plan = resolved.x_plan
                 ax.set_xticks(range(len(plan.order)))
                 ax.set_xticklabels(plan.tick_labels)
-                if bottom:
-                    _draw_x_groups(ax, plan)
+                # The brackets are drawn after layout (`_fit_x_labels`): they
+                # sit a measured distance below the FITTED tick labels.
             elif is_categorical_x(resolved) and resolved.kind in (
                 PlotKind.SCATTER,
                 PlotKind.STRIP,
@@ -536,50 +565,450 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
             # param — so per-Text visibility silently reverts. This must also
             # come LAST, after every set_xticklabels above (here and in the
             # _draw_* helpers), so the rule wins rather than being overwritten.
-            # rotation=0 alongside it: panel content stays upright at every grid
-            # size, matching the plotly path's tickangle (a figure must not read
-            # differently just because it gained a facet).
+            # rotation=0 alongside it: upright is the starting point. Whether a
+            # label must shrink, wrap, rotate or thin is decided once for the
+            # whole figure after layout (`_fit_x_labels`), so every panel still
+            # reads the same way.
             ax.tick_params(labelbottom=bottom, labelleft=leftmost)
             ax.tick_params(axis="x", rotation=0)
 
 
-#: Height of one nested-group label row, as a fraction of the axes height.
-X_GROUP_ROW = 0.07
+# ---------------------------------------------------------------------------
+# Fitting the x labels — scistackplot.ticklabels decides, this measures and
+# applies. Runs after a first layout pass, because the room a label has is the
+# laid-out axes width, which nothing knows before then.
+
+#: Clear space below the tick labels before the first bracket row, and between
+#: bracket rows, in points. Points, not a fraction of the axes: a fraction of
+#: a short panel is smaller than the tick labels, which is how brackets came to
+#: sit on top of them (spec/images/graph2.png).
+X_GROUP_GAP_PT = 4.0
+
+#: Between a bracket's rule and its label, in points.
+X_GROUP_RULE_GAP_PT = 2.0
+
+#: Brackets overhang their outer leaves by this much, in leaf widths.
+X_GROUP_OVERHANG = 0.35
+
+#: Attribute on a rendered Figure holding ``{"ticks": LabelFit, "brackets":
+#: LabelFit | None}`` — what the x-label fit decided for it.
+LABEL_FIT_ATTR = "scistackplot_label_fit"
 
 
-def _draw_x_groups(ax, plan) -> None:
+@dataclass
+class _XTicks:
+    """One labelled axes' ticks, as drawn BEFORE fitting — every refit starts
+    from these, never from an already-stripped or thinned set."""
+
+    ax: Any
+    locs: list[float]
+    labels: list[str]
+
+
+def _pt(fig, pixels: float) -> float:
+    return float(pixels) * 72.0 / fig.dpi
+
+
+def _font_pt(size) -> float:
+    """A matplotlib font size ("small", "medium", 12) in points, resolved
+    against the ``font.size`` currently in force (render's rc_context)."""
+    from matplotlib.font_manager import FontProperties
+
+    return FontProperties(size=size).get_size_in_points()
+
+
+def _text_measure(fig) -> Measure:
+    """``ticklabels.Measure`` from the figure's own renderer: the real extents
+    of the font the file is drawn in, not an estimate."""
+    from matplotlib.font_manager import FontProperties
+
+    renderer = fig.canvas.get_renderer()
+    line_heights: dict[float, float] = {}
+
+    def measure(text: str, font_pt: float) -> tuple[float, float]:
+        prop = FontProperties(size=font_pt)
+        width, height, _descent = renderer.get_text_width_height_descent(
+            text, prop, ismath=False
+        )
+        # A drawn line is never shorter than "lp" — matplotlib's Text layout
+        # sizes every line by it, so "BL" (no descender) is drawn as tall as
+        # "lp". Measured by its own glyphs, a 90-degree "BL" looked thinner
+        # than the strip it is drawn in, and neighbours were packed into
+        # each other (graph1: BL / MID24).
+        if font_pt not in line_heights:
+            line_heights[font_pt] = renderer.get_text_width_height_descent(
+                "lp", prop, ismath=False
+            )[1]
+        return _pt(fig, width), _pt(fig, max(height, line_heights[font_pt]))
+
+    return measure
+
+
+def _labelled_cells(axes, resolved: ResolvedPlot, n_rows, n_cols) -> list[tuple[int, int, Any]]:
+    """``(row, col, ax)`` of every visible panel that carries x labels
+    (``base.shows_x_labels`` — the same rule the cosmetics pass used)."""
+    return [
+        (row, col, axes[row][col])
+        for row in range(n_rows)
+        for col in range(n_cols)
+        if axes[row][col].get_visible() and shows_x_labels(resolved, row, col)
+    ]
+
+
+def _legend_duplicate_depths(resolved: ResolvedPlot) -> set[int]:
+    """The x layers (``x_layers`` indices) whose labels the legend already
+    gives — only when ``StyleOptions.hide_legend_ticks`` asks (opt-in)."""
+    if not resolved.spec.style.hide_legend_ticks or not shows_legend(resolved):
+        return set()
+    return {
+        depth
+        for depth, name in enumerate(resolved.x_layers)
+        if name == resolved.color_factor
+    }
+
+
+def _collect_x_ticks(
+    labelled: list[Any], resolved: ResolvedPlot, *, quiet: bool = False
+) -> list[_XTicks]:
+    """The categorical tick labels of each labelled axes. A numeric x axis is
+    left to matplotlib's locator, which already spaces its ticks."""
+    if resolved.kind is PlotKind.HEATMAP or not (
+        resolved.x_plan or is_categorical_x(resolved)
+    ):
+        return []
+    hide = (len(resolved.x_layers) - 1) in _legend_duplicate_depths(resolved)
+    if hide and not quiet:
+        Log.info(
+            "x tick labels hidden: %r is the colour layer and the legend lists it",
+            resolved.color_factor,
+            layer=LAYER,
+        )
+    collected = []
+    for ax in labelled:
+        # Every tick, unfiltered: a FixedFormatter labels by tick INDEX, so
+        # dropping one would shift every label after it.
+        locs = [float(v) for v in ax.get_xticks()]
+        labels = [
+            str(text) for text in ax.xaxis.get_major_formatter().format_ticks(locs)
+        ]
+        collected.append(_XTicks(ax, locs, [""] * len(labels) if hide else labels))
+    return collected
+
+
+def _positions_pt(fig, ax, xs) -> list[float]:
+    """Data x positions on ``ax`` as points from the figure's left edge."""
+    if not len(xs):
+        return []
+    # get_xlim() first: autoscaling is deferred, and transData reads the view
+    # limits WITHOUT bringing them up to date. Measured on a stale range, the
+    # labels were fitted to room they did not have (graph1 overlapped) or
+    # denied room they had (a 20pt label shrank to 19pt).
+    ax.get_xlim()
+    pixels = ax.transData.transform([(float(x), 0.0) for x in xs])[:, 0]
+    return [_pt(fig, value) for value in pixels]
+
+
+def _fit_x_ticks(fig, ticks: list[_XTicks], resolved: ResolvedPlot):
+    """One :class:`LabelFit` for every labelled panel, measured on the
+    current layout. Returns ``(fit, rows)``; rows are kept for the log."""
+    plan = resolved.x_plan
+    # Thinning keeps each innermost bracket's first and last label.
+    spans = (
+        [(g.start, g.end) for g in plan.groups if g.depth == plan.depth - 1]
+        if plan and plan.groups
+        else []
+    )
+    # Spans index `plan.order`; only meaningful when the ticks ARE that order.
+    rows = [
+        LabelRow(
+            item.labels,
+            _positions_pt(fig, item.ax, item.locs),
+            groups=spans if plan and len(item.locs) == len(plan.order) else [],
+        )
+        for item in ticks
+    ]
+    for item, row in zip(ticks, rows):
+        Log.debug(
+            "x tick fit input: xlim=%s axes width %.1fpt, %d tick(s) at %s…%spt",
+            tuple(round(v, 3) for v in item.ax.get_xlim()),
+            _pt(fig, item.ax.get_window_extent(fig.canvas.get_renderer()).width),
+            len(row.positions),
+            round(row.positions[0], 1) if row.positions else "-",
+            round(row.positions[-1], 1) if row.positions else "-",
+            layer=LAYER,
+        )
+    import matplotlib
+
+    style = resolved.spec.style
+    policy = replace(
+        TICK_POLICY,
+        pin_rotation=style.tick_rotation,
+        pin_font_pt=style.tick_font_size,
+        pin_every=style.tick_every,
+    )
+    fit = fit_labels(
+        rows,
+        _font_pt(matplotlib.rcParams["xtick.labelsize"]),
+        _text_measure(fig),
+        policy,
+    )
+    return fit, rows
+
+
+def _apply_x_fit(ticks: list[_XTicks], fit: LabelFit) -> None:
+    """Draw the decision. A rotated label is right-anchored at its tick with
+    its centre line through it — the geometry ``ticklabels`` fitted."""
+    rotated = fit.rotation != 0
+    for item, texts in zip(ticks, fit.rows):
+        item.ax.set_xticks(item.locs)
+        item.ax.set_xticklabels(
+            list(texts),
+            fontsize=fit.font_pt,
+            rotation=fit.rotation,
+            ha="right" if rotated else "center",
+            va="center" if rotated else "top",
+            rotation_mode="anchor" if rotated else "default",
+            multialignment="center",
+        )
+
+
+def _same_decision(a: LabelFit, b: LabelFit) -> bool:
+    return (a.rows, a.font_pt, a.rotation, a.every) == (
+        b.rows,
+        b.font_pt,
+        b.rotation,
+        b.every,
+    )
+
+
+def _log_fit(what: str, fit: LabelFit, rows: list[LabelRow], measure) -> None:
+    """INFO: what was decided and why; WARN when it still overlaps."""
+    gaps: list[float] = []
+    for row in rows:
+        shown = [at for at, label in zip(row.positions, row.labels) if label]
+        gaps.extend(b - a for a, b in zip(shown, shown[1:]))
+    widest = max(
+        (
+            label_block(label, fit.font_pt, measure)[0]
+            for row in rows
+            for label in row.labels
+            if label
+        ),
+        default=0.0,
+    )
+    Log.info(
+        "%s: %d panel row(s), %d position(s), narrowest slot %.1fpt, widest "
+        "label %.1fpt at the fitted font -> %s",
+        what,
+        len(rows),
+        max((len(row.labels) for row in rows), default=0),
+        min(gaps, default=0.0),
+        widest,
+        fit.describe(),
+        layer=LAYER,
+    )
+    if not fit.fits:
+        Log.warn(
+            "%s still overlap by %.1fpt after every allowed step — widen the "
+            "figure, lower the font size or show fewer positions (names are "
+            "never thinned, only numbered labels are)",
+            what,
+            fit.worst_overlap_pt,
+            layer=LAYER,
+        )
+
+
+def _tick_label_depth_pt(fig, ax, renderer) -> float:
+    """How far below the axes' bottom edge its tick labels reach, in points.
+    Measured, so a rotated or wrapped label pushes the brackets down with it."""
+    bottoms = [
+        text.get_window_extent(renderer).y0
+        for text in ax.xaxis.get_ticklabels()
+        if text.get_visible() and text.get_text()
+    ]
+    if not bottoms:
+        return 0.0
+    return max(0.0, _pt(fig, ax.get_window_extent(renderer).y0 - min(bottoms)))
+
+
+def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFit | None:
     """Label and bracket each higher x layer beneath the tick labels.
 
-    Blended coordinates — x in DATA space (leaf positions are data positions on
-    a categorical axis) and y in AXES space (a fixed distance below the axis
-    regardless of the measure's range). The alternative, data coordinates for
-    both, would put the brackets at a y that moves with the data.
+    x in DATA space (leaf positions are data positions on a categorical axis);
+    y a fixed number of POINTS below the measured bottom of the tick labels,
+    one row per layer. The labels are fitted like the ticks
+    (``ticklabels.BRACKET_POLICY``: shrink and wrap, never rotate or thin). The
+    axis title, when there is one, is pushed below the last row.
     """
-    from matplotlib.transforms import blended_transform_factory
+    from matplotlib.lines import Line2D
+    from matplotlib.transforms import blended_transform_factory, offset_copy
 
-    transform = blended_transform_factory(ax.transData, ax.transAxes)
-    for group in plan.groups:
-        rows_below = plan.depth - group.depth
-        y = -0.10 - X_GROUP_ROW * rows_below
-        ax.plot(
-            [group.start - 0.35, group.end + 0.35],
-            [y + 0.02, y + 0.02],
-            transform=transform,
-            color="#888888",
-            linewidth=0.8,
-            clip_on=False,
+    plan = resolved.x_plan
+    if not plan or not plan.groups or not ticks:
+        return None
+    hidden = _legend_duplicate_depths(resolved)
+    fig.draw_without_rendering()
+    renderer = fig.canvas.get_renderer()
+    measure = _text_measure(fig)
+    depths = sorted({group.depth for group in plan.groups})
+    by_depth = {d: [g for g in plan.groups if g.depth == d] for d in depths}
+
+    rows = [
+        LabelRow(
+            ["" if depth in hidden else g.label for g in by_depth[depth]],
+            _positions_pt(fig, item.ax, [g.centre for g in by_depth[depth]]),
         )
-        ax.text(
-            group.centre,
-            y,
-            group.label,
-            transform=transform,
-            ha="center",
-            va="top",
-            # Relative, so it follows StyleOptions.font_size like every other label.
-            fontsize="small",
-            clip_on=False,
+        for item in ticks
+        for depth in depths
+    ]
+    fit = fit_labels(rows, _font_pt("small"), measure, BRACKET_POLICY)
+    _log_fit("x bracket labels", fit, rows, measure)
+    row_height = max(
+        (
+            label_block(text, fit.font_pt, measure)[1]
+            for row in fit.rows
+            for text in row
+            if text
+        ),
+        default=0.0,
+    )
+    step = row_height + X_GROUP_RULE_GAP_PT + X_GROUP_GAP_PT
+
+    fitted = iter(fit.rows)
+    for item in ticks:
+        ax = item.ax
+        below = _tick_label_depth_pt(fig, ax, renderer)
+        blended = blended_transform_factory(ax.transData, ax.transAxes)
+        for depth in depths:
+            texts = next(fitted)
+            # Deeper layers sit closer to the axis; depth 0 is furthest below.
+            top = below + X_GROUP_GAP_PT + (plan.depth - depth - 1) * step
+            rule = offset_copy(blended, fig=fig, y=-top, units="points")
+            under = offset_copy(
+                blended, fig=fig, y=-(top + X_GROUP_RULE_GAP_PT), units="points"
+            )
+            for group, text in zip(by_depth[depth], texts):
+                # add_artist, not plot(): a plotted line would join the data
+                # limits and could move the ticks the labels were fitted to.
+                ax.add_artist(
+                    Line2D(
+                        [group.start - X_GROUP_OVERHANG, group.end + X_GROUP_OVERHANG],
+                        [0.0, 0.0],
+                        transform=rule,
+                        color="#888888",
+                        linewidth=0.8,
+                        clip_on=False,
+                    )
+                )
+                if text:
+                    ax.text(
+                        group.centre,
+                        0.0,
+                        text,
+                        transform=under,
+                        ha="center",
+                        va="top",
+                        multialignment="center",
+                        fontsize=fit.font_pt,
+                        clip_on=False,
+                    )
+        ax.xaxis.labelpad = X_GROUP_GAP_PT + plan.depth * step
+    return fit
+
+
+def _shared_x_title(
+    fig, labelled: list[tuple[int, int, Any]], resolved: ResolvedPlot, *, y: float = 0.0
+) -> float:
+    """One x title under the whole figure when several COLUMNS would each
+    repeat it; returns the fraction of the figure height it reserves.
+
+    Each column's copy was centred under its own panel, so a title wider than
+    a panel ran into its neighbour's (spec/images/graph2.png). A single
+    column keeps the ordinary per-axes title. ``y`` is where it sits (a
+    figure fraction): above a legend that is below the panels. Safe to call
+    again with a new ``y`` — matplotlib keeps one supxlabel per figure.
+    """
+    import matplotlib
+
+    title = resolved.labels.x
+    if not title or len({col for _, col, _ in labelled}) < 2:
+        return 0.0
+    for _, _, ax in labelled:
+        ax.set_xlabel("")
+    text = fig.supxlabel(
+        title, y=y + 0.01, va="bottom", fontsize=matplotlib.rcParams["axes.labelsize"]
+    )
+    height = text.get_window_extent(fig.canvas.get_renderer()).height
+    figure_height = fig.get_size_inches()[1] * fig.dpi or 1.0
+    reserved = (height + 2 * X_GROUP_GAP_PT * fig.dpi / 72.0) / figure_height
+    Log.debug("x title %r drawn once for %d columns", title, len(labelled), layer=LAYER)
+    return min(0.25, reserved)
+
+
+def _fit_x_labels(fig, labelled: list[Any], resolved: ResolvedPlot, rect) -> None:
+    """Fit the tick labels, lay out again, confirm, then draw the brackets.
+
+    Two measurements, because fitting changes the layout it was measured on:
+    a rotated label deepens the bottom margin, which can narrow the panels a
+    little. The second pass refits on the new widths; if the decision holds,
+    that is the answer.
+    """
+    ticks = _collect_x_ticks(labelled, resolved)
+    if not ticks:
+        return
+    fit, rows = _fit_x_ticks(fig, ticks, resolved)
+    _apply_x_fit(ticks, fit)
+    fig.tight_layout(rect=rect)
+    refit, rows = _fit_x_ticks(fig, ticks, resolved)
+    if not _same_decision(fit, refit):
+        Log.debug("x tick labels refitted after layout: %s", refit.describe(), layer=LAYER)
+        _apply_x_fit(ticks, refit)
+        fig.tight_layout(rect=rect)
+        fit = refit
+    _log_fit("x tick labels", fit, rows, _text_measure(fig))
+    brackets = _draw_x_groups(fig, ticks, resolved)
+    if brackets is not None:
+        fig.tight_layout(rect=rect)
+    # The decisions travel with the Figure, so a caller (a test today, the
+    # GUI's "labels still overlap" notice later) can read what was decided
+    # instead of re-deriving it from the drawing.
+    setattr(fig, LABEL_FIT_ATTR, {"ticks": fit, "brackets": brackets})
+    if fit.fits:
+        _verify_x_ticks(fig, ticks, fit)
+
+
+def _verify_x_ticks(fig, ticks: list[_XTicks], fit: LabelFit) -> None:
+    """Check the DRAWN labels against the decision, and WARN if they collide.
+
+    The fit is only as good as the positions and extents it was given; a
+    wrong measurement (a stale axis range, a font the renderer substitutes)
+    would otherwise surface only as an unreadable PNG. Upright and 90 degree
+    labels only, where a label's bounding box is the text itself.
+    """
+    if fit.rotation not in (0, 90):
+        return
+    fig.draw_without_rendering()
+    renderer = fig.canvas.get_renderer()
+    for item in ticks:
+        drawn = sorted(
+            (
+                text.get_window_extent(renderer)
+                for text in item.ax.xaxis.get_ticklabels()
+                if text.get_visible() and text.get_text()
+            ),
+            key=lambda box: box.x0,
         )
+        worst = max(
+            (_pt(fig, a.x1 - b.x0) for a, b in zip(drawn, drawn[1:])), default=0.0
+        )
+        if worst > 0.5:
+            Log.warn(
+                "x tick labels were fitted (%s) but the drawn labels overlap by "
+                "%.1fpt — the measurement disagrees with the drawing",
+                fit.describe(),
+                worst,
+                layer=LAYER,
+            )
 
 
 #: Breathing room between the panels and the legend strip, as a fraction of the
@@ -665,4 +1094,344 @@ def _legend_width_fraction(fig, legend, labels, title) -> float:
             len(list(labels)),
             layer=LAYER,
         )
-    return min(MAX_LEGEND_FRACTION, inches / figure_width + LEGEND_PAD)
+#: Breathing room between the panels and the legend strip, as a fraction of the
+#: figure width.
+LEGEND_PAD = 0.02
+
+#: Share of the figure width a legend at the right may take. Past it the
+#: legend is narrowed (title wrapped, shorter line samples, smaller text) and,
+#: if still too wide, moved below the panels. The old cap was 0.4, and at it a
+#: 14-subject legend took half of spec/images/graph2.png.
+LEGEND_BUDGET = 0.30
+
+#: Widest a legend BELOW the panels may be, as a share of the figure width;
+#: columns are added until it is.
+LEGEND_BELOW_WIDTH = 0.95
+
+#: Tallest a legend below the panels should be, as a share of the figure
+#: height, before its text shrinks (and past which the log WARNs).
+LEGEND_BELOW_HEIGHT = 0.4
+
+#: matplotlib's defaults, and the shortened line samples of the narrowing step.
+LEGEND_HANDLES = {"handlelength": 2.0, "handletextpad": 0.8}
+LEGEND_SHORT_HANDLES = {"handlelength": 1.0, "handletextpad": 0.4}
+
+#: Attribute on a rendered Figure describing where its legend went and why.
+LEGEND_ATTR = "scistackplot_legend"
+
+
+@dataclass
+class _Legend:
+    """The drawn legend and what it reserves. One per figure."""
+
+    artist: Any
+    handles: list[Any]
+    labels: list[str]
+    #: The title's blocks ("session", "subject"), joined per placement.
+    blocks: list[str]
+    font_pt: float
+    below: bool = False
+    #: Fractions of the figure the layout keeps free for it.
+    width_frac: float = 0.0
+    height_frac: float = 0.0
+    columns: int = 1
+    steps: list[str] = field(default_factory=list)
+    reason: str = ""
+
+    def describe(self) -> dict:
+        return {
+            "below": self.below,
+            "font_pt": self.font_pt,
+            "columns": self.columns,
+            "width_frac": round(self.width_frac, 3),
+            "height_frac": round(self.height_frac, 3),
+            "steps": list(self.steps),
+            "reason": self.reason,
+        }
+
+
+def _legend_entries(fig, resolved: ResolvedPlot):
+    """``(handles, labels, title blocks)`` for the figure legend, or None."""
+    if not shows_legend(resolved):
+        Log.debug(
+            "legend omitted: %d colour level(s) drawn for %r",
+            len(legend_levels(resolved)),
+            resolved.labels.color,
+            layer=LAYER,
+        )
+        return None
+    # Every VISIBLE axes, not just the first: with facets, a level can be
+    # absent from panel 1 and present in panel 5, and reading one panel's
+    # handles would drop it from the legend of a figure that draws it.
+    unique: dict[str, Any] = {}
+    for ax in fig.axes:
+        if not ax.get_visible():
+            continue
+        handles, labels = ax.get_legend_handles_labels()
+        for handle, label in zip(handles, labels, strict=False):
+            unique.setdefault(label, handle)
+    if not unique:
+        return None
+    # The overlay's block goes LAST, in its levels' order. matplotlib lists
+    # an axes' Line2D handles before its bar containers, so gathered as-is
+    # the subjects would precede the bars they sit on.
+    sample_labels = [str(level) for level in sample_legend_levels(resolved)]
+    if len(sample_labels) > 1:
+        unique = {
+            **{k: v for k, v in unique.items() if k not in sample_labels},
+            **{k: unique[k] for k in sample_labels if k in unique},
+        }
+    # One title naming every block: the colours, the dash styles, and the
+    # overlay's own colour key when its levels are listed too.
+    blocks = [
+        t
+        for t in (
+            resolved.labels.color,
+            resolved.labels.dash,
+            resolved.labels.sample if len(sample_labels) > 1 else None,
+        )
+        if t
+    ]
+    return list(unique.values()), list(unique.keys()), blocks
+
+
+def _legend_title(blocks: list[str], wrapped: bool) -> str | None:
+    """``"a / b"``, or one block per line (``"a /\\nb"``) when wrapped — the
+    title is usually the legend's widest line."""
+    if not blocks:
+        return None
+    return " /\n".join(blocks) if wrapped else " / ".join(blocks)
+
+
+def _draw_legend(fig, handles, labels, title, font_pt, *, below=False, columns=1, handle_style=None):
+    style = handle_style or LEGEND_HANDLES
+    kwargs = (
+        {"loc": "lower center", "bbox_to_anchor": (0.5, 0.0), "ncol": columns}
+        if below
+        else {"loc": "center right"}
+    )
+    return fig.legend(
+        handles,
+        labels,
+        title=title,
+        frameon=False,
+        fontsize=font_pt,
+        title_fontsize=font_pt,
+        **style,
+        **kwargs,
+    )
+
+
+def _legend_size(fig, artist, labels, title) -> tuple[float, float]:
+    """``(width, height)`` of a drawn legend as fractions of the figure."""
+    width_px = fig.get_size_inches()[0] * fig.dpi or 1.0
+    height_px = fig.get_size_inches()[1] * fig.dpi or 1.0
+    try:
+        box = artist.get_window_extent(fig.canvas.get_renderer())
+        return box.width / width_px, box.height / height_px
+    except Exception:  # a backend without a usable renderer
+        # Estimate rather than reserve nothing: a wrong-by-a-little strip still
+        # keeps the legend off the panels, an unmeasured one does not.
+        longest = max((len(str(text)) for text in [*labels, title or ""]), default=0)
+        inches = 0.55 + 0.085 * longest
+        Log.debug(
+            "legend width not measurable; estimating %.2fin from %d labels",
+            inches,
+            len(list(labels)),
+            layer=LAYER,
+        )
+        return inches * fig.dpi / width_px, 0.0
+
+
+def _apply_legend(fig, resolved: ResolvedPlot) -> _Legend | None:
+    """Draw the legend to the right of the panels, narrowed to fit
+    :data:`LEGEND_BUDGET`; below the panels when it cannot be.
+
+    The narrowing steps, least destructive first: wrap the title at " / ",
+    shorten the line samples, shrink the text (never below the tick labels'
+    floor, ``LabelPolicy.font_floor``). None when there is no legend
+    (``base.shows_legend``).
+    """
+    import matplotlib
+
+    entries = _legend_entries(fig, resolved)
+    if entries is None:
+        return None
+    handles, labels, blocks = entries
+    base = _font_pt(matplotlib.rcParams["legend.fontsize"])
+    floor = TICK_POLICY.font_floor(base)
+    sizes = [base]
+    while sizes[-1] - TICK_POLICY.font_step_pt > floor + 1e-6:
+        sizes.append(round(sizes[-1] - TICK_POLICY.font_step_pt, 3))
+    if floor < base - 1e-6:
+        sizes.append(floor)
+
+    # (step name, wrapped title, handle style, font) in the order tried.
+    attempts = [("as_is", False, LEGEND_HANDLES, base)]
+    if len(blocks) > 1:
+        attempts.append(("wrap_title", True, LEGEND_HANDLES, base))
+    wrap = len(blocks) > 1
+    attempts.append(("short_handles", wrap, LEGEND_SHORT_HANDLES, base))
+    attempts.extend(("shrink", wrap, LEGEND_SHORT_HANDLES, size) for size in sizes[1:])
+
+    steps: list[str] = []
+    width = 1.0
+    for step, wrapped, style, size in attempts:
+        title = _legend_title(blocks, wrapped)
+        artist = _draw_legend(fig, handles, labels, title, size, handle_style=style)
+        width, _ = _legend_size(fig, artist, labels, title)
+        width += LEGEND_PAD
+        if step != "as_is" and step not in steps:
+            steps.append(step)
+        Log.debug(
+            "legend at the right, %s: %.0f%% of the width (budget %.0f%%)",
+            step, 100 * width, 100 * LEGEND_BUDGET, layer=LAYER,
+        )
+        if width <= LEGEND_BUDGET:
+            legend = _Legend(
+                artist, handles, labels, blocks, size,
+                width_frac=width, steps=steps,
+            )
+            Log.info(
+                "legend at the right: %d entr(ies), %.0f%% of the width, font %gpt%s",
+                len(labels), 100 * width, size,
+                f" ({', '.join(steps)})" if steps else "",
+                layer=LAYER,
+            )
+            return legend
+        artist.remove()
+
+    return _legend_below(
+        fig,
+        _Legend(None, handles, labels, blocks, base, steps=steps),
+        f"{100 * width:.0f}% of the width even narrowed (budget {100 * LEGEND_BUDGET:.0f}%)",
+    )
+
+
+def _legend_below(fig, legend: _Legend, reason: str) -> _Legend:
+    """Move the legend below the panels.
+
+    As many columns as fit :data:`LEGEND_BELOW_WIDTH` (fewest rows), at the
+    full font; if that is still taller than :data:`LEGEND_BELOW_HEIGHT`, the
+    text shrinks towards the tick labels' floor. The height it reserves is the
+    height it has — never capped, since a capped reservation is a legend
+    drawn over the panels — and a figure too small for it is said so.
+    """
+    import matplotlib
+
+    if legend.artist is not None:
+        legend.artist.remove()
+    base = _font_pt(matplotlib.rcParams["legend.fontsize"])
+    floor = TICK_POLICY.font_floor(base)
+    sizes = [base]
+    while sizes[-1] - TICK_POLICY.font_step_pt > floor + 1e-6:
+        sizes.append(round(sizes[-1] - TICK_POLICY.font_step_pt, 3))
+    if floor < base - 1e-6:
+        sizes.append(floor)
+    title = _legend_title(legend.blocks, False)
+
+    artist = None
+    for size in sizes:
+        for columns in range(len(legend.labels), 0, -1):
+            if artist is not None:
+                artist.remove()
+            artist = _draw_legend(
+                fig, legend.handles, legend.labels, title, size, below=True, columns=columns
+            )
+            width, height = _legend_size(fig, artist, legend.labels, title)
+            if width <= LEGEND_BELOW_WIDTH or columns == 1:
+                break
+        if height <= LEGEND_BELOW_HEIGHT:
+            break
+    pad = X_GROUP_GAP_PT / 72.0 / (fig.get_size_inches()[1] or 1.0)
+    moved = _Legend(
+        artist,
+        legend.handles,
+        legend.labels,
+        legend.blocks,
+        size,
+        below=True,
+        height_frac=height + pad,
+        columns=columns,
+        steps=[*legend.steps, "below", *(["shrink"] if size < base else [])],
+        reason=reason,
+    )
+    Log.info(
+        "legend moved below the panels: %s — %d entr(ies) in %d column(s), "
+        "font %gpt, %.0f%% of the height",
+        reason, len(legend.labels), columns, size, 100 * moved.height_frac,
+        layer=LAYER,
+    )
+    if height > LEGEND_BELOW_HEIGHT:
+        Log.warn(
+            "the legend needs %.0f%% of the figure height even at %gpt — the "
+            "figure is too small for %d entries; enlarge it, or untick Show "
+            "sample > Show in legend",
+            100 * height, size, len(legend.labels),
+            layer=LAYER,
+        )
+    return moved
+
+
+def _arrange(fig, labelled, resolved: ResolvedPlot, legend: _Legend | None) -> tuple:
+    """The ``tight_layout`` rect leaving room for the legend and a shared x
+    title (which sits just above a legend that is below the panels)."""
+    below = legend.height_frac if legend is not None and legend.below else 0.0
+    title = _shared_x_title(fig, labelled, resolved, y=below)
+    right = legend.width_frac if legend is not None and not legend.below else 0.0
+    return (0.0, below + title, 1.0 - right, 1.0)
+
+
+def _x_labels_crowded(fig, labelled, resolved: ResolvedPlot) -> float | None:
+    """How far the x tick labels would still overlap on the current layout,
+    or None when they fit. A dry run — nothing on the axes is changed."""
+    ticks = _collect_x_ticks([ax for _, _, ax in labelled], resolved, quiet=True)
+    if not ticks:
+        return None
+    fit, _ = _fit_x_ticks(fig, ticks, resolved)
+    return None if fit.fits else fit.worst_overlap_pt
+
+
+# ---------------------------------------------------------------------------
+# The decisions, for a renderer that cannot measure text (the plotly preview)
+
+
+def layout_decisions(
+    resolved: ResolvedPlot,
+    *,
+    width_in: float | None = None,
+    height_in: float | None = None,
+) -> dict:
+    """The export's label and legend decisions for ``resolved`` at a size.
+
+    Lays the figure out exactly as the export does, at ``width_in x
+    height_in`` (the spec's own size when omitted), and reads back what
+    was decided: ``{"ticks": LabelFit | None, "brackets": LabelFit | None,
+    "legend": dict | None, "width_in", "height_in"}``. The plotly preview
+    applies these rather than estimating text of its own, so what the preview
+    shows and what the file gets cannot come from two different rules.
+    """
+    import matplotlib.pyplot as plt
+
+    style = resolved.spec.style
+    width = float(width_in or style.width)
+    height = float(height_in or style.height)
+    target = resolved
+    if (width, height) != (style.width, style.height):
+        target = replace(
+            resolved,
+            spec=replace(resolved.spec, style=replace(style, width=width, height=height)),
+        )
+    with Log.timer("layout_decisions", layer=LAYER, extra=f"{width:.2f}x{height:.2f}in"):
+        fig = render(target)
+        try:
+            fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
+            return {
+                "ticks": fits.get("ticks"),
+                "brackets": fits.get("brackets"),
+                "legend": getattr(fig, LEGEND_ATTR, None),
+                "width_in": width,
+                "height_in": height,
+            }
+        finally:
+            plt.close(fig)

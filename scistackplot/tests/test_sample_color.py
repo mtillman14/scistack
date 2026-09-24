@@ -400,3 +400,72 @@ def test_capability_report_says_what_may_colour_the_overlay(table):
     assert report["color"] == {"setting": "trial", "active": None, "options": ["subject"]}
     report = capabilities(_spec("session"), table)["sample_overlay"]
     assert report["color"] == {"setting": None, "active": None, "options": ["subject"]}
+
+
+# --- sample_in_legend: the overlay's colours may stay out of the legend ----------
+# (user, 2026-09-23: a 14-subject block took half of spec/images/graph2.png)
+
+
+def test_sample_in_legend_defaults_on_and_round_trips():
+    from scistackplot import PlotSpec as Spec
+
+    on = _spec("session", "subject")
+    assert on.sample_in_legend is True
+    off = _spec("session", "subject", sample_in_legend=False)
+    assert Spec.from_dict(off.to_dict()).sample_in_legend is False
+    raw = on.to_dict()
+    raw.pop("sample_in_legend", None)
+    assert Spec.from_dict(raw).sample_in_legend is True, "absent means on"
+
+
+def test_the_rule_lists_only_an_own_coloured_overlay():
+    from scistackplot.roles import overlay_in_legend
+
+    assert overlay_in_legend(_spec("session", "subject"), "subject")
+    assert not overlay_in_legend(_spec("session", "subject", sample_in_legend=False), "subject")
+    assert not overlay_in_legend(_spec("session"), None), "mark's colour: nothing to list"
+
+
+def test_mpl_unlisted_overlay_reads_as_though_nothing_were_shown(table):
+    figure = _figure(_spec("session", "subject", sample_in_legend=False), table)
+    drawn = render_matplotlib(figure)
+    try:
+        (legend,) = drawn.legends
+        assert [t.get_text() for t in legend.get_texts()] == ["s1", "s2"]
+        assert legend.get_title().get_text() == "session"
+        # The points and their lines are still drawn, in the subjects' colours.
+        lines = _overlay_lines(drawn)
+        assert len(lines) == 4
+        assert len({line.get_color() for line in lines}) == 4
+    finally:
+        plt.close(drawn)
+
+
+def test_plotly_unlisted_overlay_reads_as_though_nothing_were_shown(table):
+    payload = render_plotly(_figure(_spec("session", "subject", sample_in_legend=False), table))
+    traces = _overlay_traces(payload)
+    assert len(traces) == 4
+    assert not any(t["showlegend"] for t in traces)
+    assert [t["marker"]["color"] for t in traces] == list(SAMPLE_PALETTE[:4])
+    assert payload["layout"]["legend"]["title"]["text"] == "session"
+
+
+def test_a_legend_that_only_listed_the_overlay_disappears(table):
+    """No mark colour, overlay coloured by subject: the subjects were the whole
+    legend. Unlisted, there is no legend — as with nothing shown."""
+    listed = _figure(_spec("", "subject"), table)
+    unlisted = _figure(_spec("", "subject", sample_in_legend=False), table)
+    drawn = render_matplotlib(listed)
+    assert len(drawn.legends) == 1
+    plt.close(drawn)
+    drawn = render_matplotlib(unlisted)
+    assert drawn.legends == []
+    plt.close(drawn)
+    assert render_plotly(unlisted)["layout"]["showlegend"] is False
+
+
+def test_generated_code_leaves_an_unlisted_overlay_out_of_the_legend(table):
+    listed = generate_plot_function(_spec("session", "subject"), table)
+    unlisted = generate_plot_function(_spec("session", "subject", sample_in_legend=False), table)
+    assert "add_legend(legend_data=_entries" in listed
+    assert "add_legend(legend_data=_entries" not in unlisted

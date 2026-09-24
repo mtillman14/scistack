@@ -339,9 +339,11 @@ class TestGetAggregatedVariants:
 
         result = db.get_aggregated_variants()
 
-        # Should have path_inputs entry
-        assert "filepath" in result["path_inputs"]
-        assert result["path_inputs"]["filepath"]["template"] == "{subject}/data.csv"
+        # One entry per PathInput SPEC, naming the call site and the
+        # parameter it filled (keyed by spec since cleanup-audit F37).
+        [entry] = result["path_inputs"].values()
+        assert entry["template"] == "{subject}/data.csv"
+        assert [param for _fkey, param in entry["functions"]] == ["filepath"]
 
     def test_filter_by_function_name(self, db):
         """Filter results by function name."""
@@ -702,3 +704,31 @@ class TestIntegration:
         assert "low_hz" in agg["constants"]
         assert "high_hz" in agg["constants"]
         assert "window_size" in agg["constants"]
+
+
+def test_same_named_pathinput_params_with_different_templates_stay_apart():
+    """cleanup-audit F37: path_inputs were keyed by PARAMETER name, so a
+    second function whose PathInput parameter shared the name but not the
+    template was filed under the FIRST one's template (and so resolved to the
+    first declared PathInput on the canvas)."""
+    from scidb.database import aggregate_pipeline_variants
+
+    def row(fn, template):
+        return {
+            "function_name": fn,
+            "call_id": f"{fn}-cid",
+            "output_type": "Out",
+            "input_types": {
+                "filepath": '{"__type": "PathInput", "template": "%s", "root_folder": null}'
+                % template
+            },
+            "constants": {},
+            "record_count": 1,
+        }
+
+    agg = aggregate_pipeline_variants([row("load_a", "{subject}/a.csv"), row("load_b", "{subject}/b.csv")])
+    by_template = {e["template"]: e["functions"] for e in agg["path_inputs"].values()}
+    assert by_template == {
+        "{subject}/a.csv": [(("load_a", "load_a-cid"), "filepath")],
+        "{subject}/b.csv": [(("load_b", "load_b-cid"), "filepath")],
+    }

@@ -551,14 +551,6 @@ def init_db(db_path: Path) -> DatabaseManager:
     _db_open = True
     logger.info("[db] database connection established")
 
-    # Migrate manual_nodes / manual_edges from JSON into DuckDB (one-time, idempotent).
-    logger.info("[db] migrating legacy JSON layout to DuckDB (if needed)")
-    from scistack_gui import pipeline_store
-
-    layout_path = db_path.with_suffix(".layout.json")
-    pipeline_store.migrate_from_json(_db, layout_path)
-    logger.info("[db] migration complete")
-
     logger.info("[db] init_db complete: database ready at %s", db_path)
     return _db
 

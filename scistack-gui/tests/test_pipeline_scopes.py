@@ -367,30 +367,6 @@ class TestScopedPositions:
         assert sub["positions"] == {"n2": {"x": 3.0, "y": 4.0}}
         assert sub["pipeline_id"] == pid
 
-    def test_flat_positions_migrate_to_root_scope(self, layout_path):
-        # A pre-scoping layout file: flat node_id -> {x, y} positions.
-        layout_path.write_text(
-            json.dumps(
-                {
-                    "positions": {"var__RawSignal": {"x": 10.0, "y": 20.0}},
-                    "pipeline_db_migrated": True,
-                }
-            )
-        )
-
-        result = layout_store.read_layout()
-
-        # DB-derived ids also pick up the one-time placement-qualification
-        # migration — root (their one existing scope) becomes their one
-        # existing placement (ids.placement_id).
-        assert result["positions"]["var__RawSignal::main"] == {"x": 10.0, "y": 20.0}
-        # And the migration is scope-shaped on disk after the next write.
-        layout_store.write_node_position("n_new", 1.0, 1.0)
-        on_disk = json.loads(layout_path.read_text())
-        assert on_disk["positions_scoped"] is True
-        assert on_disk["positions"]["main"]["var__RawSignal::main"] == {"x": 10.0, "y": 20.0}
-        assert on_disk["positions"]["main"]["n_new"] == {"x": 1.0, "y": 1.0}
-
     def test_scoped_manual_node_write_and_read(self, layout_path):
         db = get_db()
         pid = ps.create_pipeline(db, "loading")
@@ -2453,7 +2429,8 @@ class TestDeriveTargetForNode:
             "in__signal",
             "main",
         )
-        layout_store.write_manual_edge(
+        ps.write_manual_edge(
+            get_db(),
             {
                 "id": "manual__reconnect7",
                 "source": "var__OtherSignal7",
@@ -2655,7 +2632,7 @@ class TestDeriveTargetForNode:
         # Next graph build: pending auto-cleans, node green with both
         # variant chips.
         nodes = client.get("/api/pipeline").json()["nodes"]
-        assert "42" not in layout_store.get_pending_constants().get("low_hz", set())
+        assert "42" not in ps.get_pending_constants(get_db()).get("low_hz", set())
         node = next(
             n
             for n in nodes

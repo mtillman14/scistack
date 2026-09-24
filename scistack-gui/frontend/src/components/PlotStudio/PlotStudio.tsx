@@ -52,6 +52,13 @@ import {
   heightFor,
   pixelReadout,
 } from './figureSize'
+import {
+  paneExportSize,
+  previewKey,
+  previewRequest,
+  type PreviewMeta,
+  type PreviewMode,
+} from './preview'
 
 /** The dpi `plot_save` renders a raster at when the request names none
  *  (`api/plot.py` SaveRequest). Only the readout uses it; the save itself
@@ -486,6 +493,18 @@ interface VariantSet {
   variable?: string | null
 }
 
+/** The `StyleOptions` fields this panel edits. The tick settings are null
+ *  for "fitted" (scistackplot.fit_labels) and a value for "fixed". */
+interface StylePatch {
+  width?: number
+  height?: number
+  font_size?: number
+  tick_rotation?: number | null
+  tick_font_size?: number | null
+  tick_every?: number | null
+  hide_legend_ticks?: boolean
+}
+
 interface Spec {
   measures: string[]
   /** Variable supplying the x axis of a relational plot. Separate from
@@ -512,6 +531,9 @@ interface Spec {
   join_sample?: boolean | null
   /** The shown key colouring the overlay points (null: the mark's colour). */
   sample_color?: string | null
+  /** Whether the overlay's own colour levels are listed in the legend
+   *  (`roles.overlay_in_legend`); absent = true. */
+  sample_in_legend?: boolean
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
@@ -728,6 +750,12 @@ export default function PlotStudio({
   const [aspectChoice, setAspectChoice] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [canvasHeight, setCanvasHeight] = useState(0)
+  const [canvasWidth, setCanvasWidth] = useState(0)
+  // Preview at the EXPORT size (the label and legend decisions Save will make,
+  // drawn at width x height) or fitted to the PANE (decided at the pane's size;
+  // the Figure size section then says what export size reproduces it). A
+  // view setting, not part of the spec.
+  const [previewMode, setPreviewMode] = useState<PreviewMode>('export')
   const observerRef = useRef<ResizeObserver | null>(null)
 
   // A CSV has no variable type; name the file instead.
@@ -749,8 +777,10 @@ export default function PlotStudio({
     observerRef.current?.disconnect()
     if (!node || typeof ResizeObserver === 'undefined') return
     setCanvasHeight(node.getBoundingClientRect().height)
+    setCanvasWidth(node.getBoundingClientRect().width)
     const observer = new ResizeObserver(entries => {
       setCanvasHeight(entries[0].contentRect.height)
+      setCanvasWidth(entries[0].contentRect.width)
     })
     observer.observe(node)
     observerRef.current = observer
@@ -861,14 +891,24 @@ export default function PlotStudio({
   // again 2026-09-11: four to six full resolves in flight at once, each
   // re-exploding millions of rows and slowing the others down, with resolve
   // times climbing 3.3s -> 7.6s -> 15.2s -> 27.7s as they piled up — until one
-  // crossed the fixed 30 s transport timeout and surfaced as "Request
-  // plot_resolve timed out". Nothing had hung; the panel was competing with its
-  // own abandoned work.
+  // crossed the webview's fixed 30 s timeout (since removed — see webviewRpc.ts)
+  // and surfaced as "Request plot_resolve timed out". Nothing had hung; the
+  // panel was competing with its own abandoned work.
   //
   // Holding one back turns that drag into two resolves total: the one already
   // running, and the state the user actually stopped on. Intermediate specs are
   // never sent at all, which is the only way to not pay for them — the
   // transport has no cancel, so anything already dispatched runs to completion.
+  // The preview size every resolve is decided at (see preview.ts). A ref,
+  // read at send time, so launchResolve keeps its identity; `sentPreview`
+  // is what the figures on screen were decided at.
+  const preview = useMemo(
+    () => previewRequest(previewMode, canvasWidth - 8, canvasHeight - 16),
+    [previewMode, canvasWidth, canvasHeight]
+  )
+  const previewRef = useRef(preview)
+  previewRef.current = preview
+  const sentPreview = useRef<string | null>(null)
   const inFlight = useRef(false)
   const queued = useRef<{ spec: Spec; figureIndex: number; specKey: string } | null>(null)
 
@@ -878,12 +918,14 @@ export default function PlotStudio({
     (nextSpec: Spec, nextIndex: number, nextKey: string) => {
       inFlight.current = true
       const mine = ++generation.current
+      sentPreview.current = previewKey(previewRef.current)
       setBusy(true)
       const needCapabilities = capsSpecRef.current !== nextKey
       Promise.all([
         callBackend('plot_resolve', {
           spec: nextSpec,
           figure_index: nextIndex,
+          preview: previewRef.current,
           ...sourceParams,
         }),
         needCapabilities
@@ -950,6 +992,41 @@ export default function PlotStudio({
     }, 180)
     return () => { if (timer.current) window.clearTimeout(timer.current) }
   }, [spec, specKey, figureIndex, sourceParams, launchResolve])
+
+  // A resize or a preview-mode toggle changes only the SIZE the labels and
+  // legend are decided at. Re-render the last resolve (`reuse_resolved`)
+  // instead of resolving again — resolving is the 4-16 s part, re-rendering
+  // is one matplotlib layout.
+  const rerenderTimer = useRef<number | null>(null)
+  useEffect(() => {
+    if (!spec || sentPreview.current === null) return
+    if (previewKey(preview) === sentPreview.current) return
+    if (rerenderTimer.current) window.clearTimeout(rerenderTimer.current)
+    rerenderTimer.current = window.setTimeout(() => {
+      if (inFlight.current) {
+        // The running resolve was sent at the old size; the queued one reads
+        // the new size when it goes.
+        queued.current = { spec, figureIndex, specKey }
+        return
+      }
+      sentPreview.current = previewKey(previewRef.current)
+      const mine = ++generation.current
+      callBackend('plot_resolve', {
+        spec,
+        figure_index: figureIndex,
+        preview: previewRef.current,
+        reuse_resolved: true,
+        ...sourceParams,
+      })
+        .then(resolved => {
+          if (mine !== generation.current) return
+          const result = resolved as ResolveResponse
+          if (result.ok) setFigures(result.figures ?? [])
+        })
+        .catch(err => console.warn('[plot] preview re-render failed', err))
+    }, 300)
+    return () => { if (rerenderTimer.current) window.clearTimeout(rerenderTimer.current) }
+  }, [preview, spec, specKey, figureIndex, sourceParams])
 
   // --- figure navigation --------------------------------------------------
   const figureCount = figureLabels.length
@@ -1075,6 +1152,11 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, sample_color: sampleColorSetting(choice) } : prev))
   }, [])
 
+  /** Unticked, the legend reads as though no key were shown. */
+  const setSampleInLegend = useCallback((on: boolean) => {
+    setSpec(prev => (prev ? { ...prev, sample_in_legend: on } : prev))
+  }, [])
+
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
     setSpec(prev => (prev ? { ...prev, facet: { ...(prev.facet ?? {}), ...patch } } : prev))
   }, [])
@@ -1083,7 +1165,7 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, y_axis: { ...(prev.y_axis ?? {}), ...patch } } : prev))
   }, [])
 
-  const setStyle = useCallback((patch: { width?: number; height?: number; font_size?: number }) => {
+  const setStyle = useCallback((patch: StylePatch) => {
     setSpec(prev => (prev ? { ...prev, style: { ...(prev.style ?? {}), ...patch } } : prev))
   }, [])
 
@@ -2325,6 +2407,26 @@ export default function PlotStudio({
                             )}
                         </select>
                       </label>
+                      {/* Listing the overlay's levels can take half the
+                          figure's width (14 subjects); unticked, the legend
+                          reads as though nothing were shown. Only an
+                          overlay with its OWN colour is ever listed. */}
+                      <label
+                        style={styles.factorRow}
+                        title={
+                          capabilities.sample_overlay.color.active
+                            ? "List the points' colours in the legend. Unticked, the legend reads as though nothing were shown here; the points keep their colours."
+                            : "The points take their mark's colour, so the legend has nothing to list for them. Colour them by a shown key to use this."
+                        }
+                      >
+                        <span style={styles.factorName}>Show in legend</span>
+                        <input
+                          type="checkbox"
+                          checked={spec?.sample_in_legend !== false}
+                          disabled={!capabilities.sample_overlay.color.active}
+                          onChange={e => setSampleInLegend(e.target.checked)}
+                        />
+                      </label>
                       <div style={styles.hint}>{capabilities.sample_overlay.granularity}</div>
                     </>
                   )}
@@ -2379,8 +2481,119 @@ export default function PlotStudio({
             </div>
             <div style={styles.layoutNote}>
               {pixelReadout(figWidth, figHeight, SAVE_DPI)} at {SAVE_DPI} dpi for a
-              raster, before the whitespace trim takes a little off each edge.
+              raster — exactly; labels and legend are fitted inside it.
             </div>
+            {/* Which size the preview's labels and legend are decided at: the
+                file's (and drawn at it), or the pane's. A view setting. */}
+            <label
+              style={styles.factorRow}
+              title="Export size: the preview is drawn at Width x Height, with exactly the label and legend decisions Save makes. Fit pane: fills the pane, decided at the pane's size."
+            >
+              <span style={styles.factorName}>Preview at</span>
+              <select
+                value={previewMode}
+                onChange={e => setPreviewMode(e.target.value as PreviewMode)}
+                style={styles.select}
+              >
+                <option value="export">Export size</option>
+                <option value="pane">Fit pane</option>
+              </select>
+            </label>
+            {/* x tick labels: fitted by default (strip a shared ID prefix,
+                wrap, shrink, rotate, every k-th). Any of these may be fixed;
+                a fixed value is kept even where it overlaps, and the notice
+                below says so. */}
+            <label
+              style={styles.factorRow}
+              title="Auto rotates only when the labels would overlap upright"
+            >
+              <span style={styles.factorName}>Tick rotation</span>
+              <select
+                value={spec?.style?.tick_rotation == null ? 'auto' : String(spec.style.tick_rotation)}
+                onChange={e =>
+                  setStyle({ tick_rotation: e.target.value === 'auto' ? null : Number(e.target.value) })
+                }
+                style={styles.select}
+              >
+                <option value="auto">Auto</option>
+                <option value="0">0°</option>
+                <option value="45">45°</option>
+                <option value="90">90°</option>
+              </select>
+            </label>
+            <label
+              style={styles.factorRow}
+              title="Auto shows every label when they fit; numbered labels (01, SS02…) are thinned when they cannot"
+            >
+              <span style={styles.factorName}>Show tick labels</span>
+              <select
+                value={spec?.style?.tick_every == null ? 'auto' : String(spec.style.tick_every)}
+                onChange={e =>
+                  setStyle({ tick_every: e.target.value === 'auto' ? null : Number(e.target.value) })
+                }
+                style={styles.select}
+              >
+                <option value="auto">Auto</option>
+                <option value="1">Every label</option>
+                {[2, 3, 4, 5, 10].map(k => (
+                  <option key={k} value={String(k)}>Every {k}{k === 2 ? 'nd' : k === 3 ? 'rd' : 'th'}</option>
+                ))}
+              </select>
+            </label>
+            <div style={styles.gridSizeRow}>
+              <LimitInput
+                label="Tick font (pt)"
+                value={(spec?.style?.tick_font_size as number | null | undefined) ?? null}
+                onChange={value => setStyle({ tick_font_size: value !== null && value > 0 ? value : null })}
+              />
+            </div>
+            <label
+              style={styles.factorRow}
+              title="Blank the labels of a layer that is also the colour, while the legend lists the same levels in the same colours. The ticks and brackets stay."
+            >
+              <span style={styles.factorName}>Hide labels the legend repeats</span>
+              <input
+                type="checkbox"
+                checked={spec?.style?.hide_legend_ticks === true}
+                onChange={e => setStyle({ hide_legend_ticks: e.target.checked })}
+              />
+            </label>
+            {(() => {
+              // The fit's own verdict, from the figure on screen.
+              const fit = (figures[0]?.figure?.layout?.meta as
+                | { label_fit?: { fits?: boolean; ticks?: string | null } }
+                | undefined)?.label_fit
+              if (!fit || fit.fits !== false) return null
+              return (
+                <div style={styles.layoutNote}>
+                  The x labels still overlap at this size ({fit.ticks}). Widen the
+                  figure, lower the font, or show fewer labels.
+                </div>
+              )
+            })()}
+            {(() => {
+              const paneSize = paneExportSize(
+                (figures[0]?.figure?.layout?.meta as { preview?: PreviewMeta } | undefined)?.preview
+              )
+              if (!paneSize) return null
+              return (
+                <div style={styles.layoutNote}>
+                  This view would save as {paneSize.width} × {paneSize.height} in.{' '}
+                  <button
+                    type="button"
+                    style={styles.button}
+                    title="Set Width and Height to this view's size and preview at it"
+                    onClick={() => {
+                      setAspectChoice(null)
+                      setStyle({ width: paneSize.width, height: paneSize.height })
+                      setPreviewMode('export')
+                    }}
+                  >
+                    Use this size
+                  </button>
+                </div>
+              )
+            })()}
           </Section>
 
           <div style={{ ...styles.actions, flexWrap: 'wrap' }}>
@@ -2656,6 +2869,37 @@ export default function PlotStudio({
                 the exported figure uses every point.
               </div>
             )}
+            {(() => {
+              // Export-size preview: drawn at the file's size (meta.fixed_size,
+              // 1 pt = 1 px), scrolling if the pane is smaller. Otherwise the
+              // figure fills the pane as it always has.
+              const fixed = (figure.figure.layout?.meta as { fixed_size?: [number, number] } | undefined)
+                ?.fixed_size
+              if (!fixed) return null
+              return (
+                <div style={{ overflow: 'auto', maxWidth: '100%' }}>
+                  <Plot
+                    data={figure.figure.data}
+                    layout={{
+                      ...figure.figure.layout,
+                      autosize: false,
+                      width: fixed[0],
+                      height: fixed[1],
+                      paper_bgcolor: 'transparent',
+                      plot_bgcolor: 'transparent',
+                      font: { ...(figure.figure.layout.font as object), color: '#ccc' },
+                    }}
+                    config={{
+                      displaylogo: false,
+                      responsive: false,
+                      modeBarButtonsToRemove: isVSCodeMode ? ['toImage'] : [],
+                    }}
+                    style={{ width: fixed[0], height: fixed[1] }}
+                  />
+                </div>
+              )
+            })()}
+            {!(figure.figure.layout?.meta as { fixed_size?: unknown } | undefined)?.fixed_size && (
             <Plot
               data={figure.figure.data}
               layout={{
@@ -2677,6 +2921,7 @@ export default function PlotStudio({
               style={{ width: '100%' }}
               useResizeHandler
             />
+            )}
           </div>
         ))}
       </div>

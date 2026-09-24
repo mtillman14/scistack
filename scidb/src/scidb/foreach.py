@@ -1588,42 +1588,18 @@ def _build_skip_hook(
 # ---------------------------------------------------------------------------
 
 
-def _for_each_prepare(
-    *,
-    fn: Callable,
-    fn_name: str,
-    inputs: dict,
-    outputs: list,
-    dry_run: bool,
-    as_table,
-    db,
-    distribute: bool,
-    where,
-    _pre_combo_hook,
-    _cancel_check,
-    metadata_iterables: dict,
-    glue: "dict[str, Any] | None" = None,
-    glue_language: str = "python",
-    locations: "Any" = None,
-    generates_file: bool = False,
-    endpoint_kind: "str | None" = None,
-    parameter_names: "dict[str, str] | None" = None,
-) -> "_ForEachState | None":
-    """Run scidb.for_each's pre-loop work (Steps 2-15).
+def _normalize_glue(
+    glue: "dict[str, Any] | None", inputs: dict, glue_language: str
+) -> "tuple[dict, dict, dict]":
+    """Prepare stage: normalize and validate the call's glue chains, and apply
+    the constant-fed ones. Returns ``(glue_chains, deferred_glue_chains,
+    inputs)``.
 
-    On ``dry_run=True`` runs the dry-run shortcut (Step 7) and returns
-    ``None`` to signal the caller to stop. Otherwise returns the prepared
-    state object the loop and save phases consume.
-
-    ``glue_language`` names the language the *run* executes in. Chains
-    authored in another language are refused (a glue node executes in the
-    language of the run); in a MATLAB run the whole chain is carried through
-    on the returned state for ``+scidb/for_each.m`` to apply, because a ``.m``
-    function cannot execute inside this prepare step.
+    Runs first so a malformed chain fails before any data is loaded (and
+    before the dry-run shortcut, which must display the same call the real
+    run would make). ``inputs`` comes back as a COPY when a Parameter-fed
+    chain was applied to it, else unchanged.
     """
-    # --- Glue chains: normalized and validated up front so a malformed chain
-    #     fails before any data is loaded (and before the dry-run shortcut,
-    #     which must display the same call the real run would make). ---
     glue_chains = _glue.normalize_glue(glue)
     # Chains still to apply downstream (the fusion point, or MATLAB's loop).
     # ``glue_chains`` itself stays WHOLE: it feeds ForEachConfig, where glue
@@ -1654,7 +1630,23 @@ def _for_each_prepare(
             _glue.apply_constant_glue(inputs, constant_chains)
     else:
         Log.debug("[glue] no glue chains on this call")
+    return glue_chains, deferred_glue_chains, inputs
 
+
+def _resolve_iterables(
+    metadata_iterables: dict, inputs: dict, db, distribute: bool
+) -> "tuple[dict, list | None, list, Any]":
+    """Prepare stage: settle the metadata iterables before any data loads.
+
+    Records which keys the caller passed explicitly, fills ``[]`` from the
+    database, lets PathInput discovery fill (or drive) the rest and reports
+    what nothing could fill, propagates the schema to scifor, and stringifies
+    schema-key values (numeric keys canonicalized, discovered combos too).
+
+    Returns ``(metadata_iterables, discovered_combos, needs_resolve,
+    resolved_db)`` — discovery may hand back a NEW iterables dict;
+    ``discovered_combos`` is None unless discovery drives iteration.
+    """
     # Track which keys the user passed with explicit (non-empty) values.
     # Keys passed as an empty sequence ([], (), empty numpy array) are
     # about to be resolved from the DB (Step 2) or the filesystem
@@ -1933,91 +1925,21 @@ def _for_each_prepare(
                 )
     else:
         Log.debug("no database available for schema stringification, skipping")
+    return metadata_iterables, _discovered_combos, needs_resolve, resolved_db
 
-    # Step 6: Build output_names for scifor
-    output_names = [_output_name(o) for o in outputs] if outputs else ["result"]
-    Log.debug(f"resolved {len(output_names)} output name(s): {output_names}")
 
-    # --- Step 7: Dry-run shortcut: convert inputs for display only, call
-    # scifor, return.  Also runs the same combo prefilter Step 9 applies
-    # to non-dry runs so the printed iteration count reflects what would
-    # actually be processed (combos missing from the DB are dropped). ---
-    if dry_run:
-        Log.debug(
-            "dry_run=True, converting inputs for display and delegating to scifor"
-        )
-        display_inputs = _convert_inputs_for_display(inputs)
+def _existing_combos(
+    metadata_iterables: dict, inputs: dict, needs_resolve: list, resolved_db, db
+) -> "list[dict] | None":
+    """Prepare stage: the combos to run, restricted to schema combinations that
+    exist in the database and not excluded — or None when the iterables were
+    explicit (or a PathInput drives discovery), leaving the Cartesian product
+    to scifor.
 
-        # Prefilter combos to existing schema combinations (mirrors Step 9
-        # for the non-dry path). Only meaningful when at least one key
-        # was DB-resolved AND no PathInput is present.
-        _dryrun_all_combos = None
-        if needs_resolve and not _has_pathinput(inputs):
-
-            filter_db = resolved_db
-            if filter_db is not None and hasattr(filter_db, "dataset_schema_keys"):
-                schema_keys_set = set(filter_db.dataset_schema_keys)
-                keys = list(metadata_iterables.keys())
-                schema_indices = [i for i, k in enumerate(keys) if k in schema_keys_set]
-                filter_keys = [keys[i] for i in schema_indices]
-                if filter_keys:
-                    from itertools import product
-
-                    value_lists = [metadata_iterables[k] for k in keys]
-                    raw_combos = list(product(*value_lists))
-                    existing = filter_db.distinct_schema_combinations(filter_keys)
-                    existing_set = set(existing)
-                    _dryrun_all_combos = [
-                        dict(zip(keys, combo, strict=False))
-                        for combo in raw_combos
-                        if tuple(schema_str(combo[i]) for i in schema_indices)
-                        in existing_set
-                    ]
-
-        # Apply schema exclusions to dry-run combos (mirrors Step 9.5)
-        if _dryrun_all_combos is not None:
-            _dry_excl_db = db or resolved_db
-            if _dry_excl_db is not None:
-                from .exclusions import filter_excluded_combos
-
-                _dryrun_all_combos = filter_excluded_combos(
-                    _dryrun_all_combos,
-                    _dry_excl_db.dataset_schema_keys,
-                    _dry_excl_db,
-                )
-
-        scifor_kwargs = dict(metadata_iterables)
-        if _dryrun_all_combos is not None:
-            scifor_kwargs["_all_combos"] = _dryrun_all_combos
-        _scifor_for_each(
-            fn,
-            display_inputs,
-            dry_run=True,
-            as_table=as_table,
-            distribute=distribute,
-            output_names=output_names,
-            locations=locations,
-            _cancel_check=_cancel_check,
-            **scifor_kwargs,
-        )
-        return None
-
-    # Step 8: Build ForEachConfig version keys (DB-specific; not part of scifor)
-    Log.debug("building ForEachConfig version keys")
-    config = ForEachConfig(
-        fn=fn,
-        inputs=inputs,
-        where=where,
-        distribute=distribute,
-        as_table=as_table,
-        glue=glue_chains,
-    )
-    config_keys = config.to_version_keys()
-    call_id = config.to_call_id()
-    Log.debug(
-        f"ForEachConfig: call_id={call_id}, version_keys={list(config_keys.keys())}"
-    )
-
+    THE one spelling of this filter: the dry-run preview calls it too, so the
+    printed iteration count is the real run's (it used to carry its own copy,
+    which skipped the configured-database fallback for exclusions).
+    """
     # Step 9: Pre-filter to only schema combinations that actually exist in the database.
     all_combos = None
     if needs_resolve and not _has_pathinput(inputs):
@@ -2090,7 +2012,79 @@ def _for_each_prepare(
             )
     else:
         Log.debug("no database available, skipping schema exclusion filtering")
+    return all_combos
 
+
+def _dry_run_preview(
+    fn,
+    inputs: dict,
+    metadata_iterables: dict,
+    *,
+    needs_resolve: list,
+    resolved_db,
+    db,
+    as_table,
+    distribute: bool,
+    output_names: list,
+    locations,
+    cancel_check,
+) -> None:
+    """Prepare stage (dry run only): convert inputs for display and let scifor
+    print the iteration, over the SAME combos the real run would process
+    (:func:`_existing_combos`)."""
+    Log.debug("dry_run=True, converting inputs for display and delegating to scifor")
+    display_inputs = _convert_inputs_for_display(inputs)
+    scifor_kwargs = dict(metadata_iterables)
+    all_combos = _existing_combos(
+        metadata_iterables, inputs, needs_resolve, resolved_db, db
+    )
+    if all_combos is not None:
+        scifor_kwargs["_all_combos"] = all_combos
+    _scifor_for_each(
+        fn,
+        display_inputs,
+        dry_run=True,
+        as_table=as_table,
+        distribute=distribute,
+        output_names=output_names,
+        locations=locations,
+        _cancel_check=cancel_check,
+        **scifor_kwargs,
+    )
+
+
+def _build_call_identity(
+    fn, inputs: dict, where, distribute: bool, as_table, glue_chains
+) -> "tuple[dict, str]":
+    """Prepare stage: the call's ``ForEachConfig`` version keys and call_id.
+    Built after constant-fed glue has been applied, so the recorded constant
+    is the glued value; glue names are part of the call site."""
+    Log.debug("building ForEachConfig version keys")
+    config = ForEachConfig(
+        fn=fn,
+        inputs=inputs,
+        where=where,
+        distribute=distribute,
+        as_table=as_table,
+        glue=glue_chains,
+    )
+    config_keys = config.to_version_keys()
+    call_id = config.to_call_id()
+    Log.debug(
+        f"ForEachConfig: call_id={call_id}, version_keys={list(config_keys.keys())}"
+    )
+    return config_keys, call_id
+
+
+def _load_all_inputs(
+    fn_name: str, inputs: dict, db, where, deferred_glue_chains, glue_language
+):
+    """Prepare stage: bulk-load every input into a DataFrame (with
+    ``__record_id`` / ``__branch_params``), resolve mapping inputs, and fuse
+    deferred glue onto the loaded tables.
+
+    Returns ``(loaded_inputs, mapping_inputs, glue_fusion)``.
+    """
     # Step 10: Load all inputs into DataFrames (with __record_id and __branch_params)
     Log.debug(f"loading {len(inputs)} input(s) into DataFrames")
     loaded_inputs = _convert_inputs(inputs, db, where)
@@ -2129,8 +2123,20 @@ def _for_each_prepare(
                 schema_keys=dataset_schema_keys_of(db),
                 apply_bulk=(glue_language == "python"),
             )
-    per_combo_glue = glue_fusion.per_combo
+    return loaded_inputs, mapping_inputs, glue_fusion
 
+
+def _track_variants(loaded_inputs: dict):
+    """Prepare stage: map every loaded record_id to its branch_params and sort
+    the inputs by kind (plain = rid-tracked, Fixed = one pinned rid,
+    ColumnSelection = pruning only). ``__branch_params`` is then stripped
+    from the frames — it lives on in ``rid_to_bp``.
+
+    Returns ``(loaded_inputs, rid_to_bp, tracked_params, fixed_rid_values,
+    colsel_params)``; ``loaded_inputs`` is a new dict, the argument is not
+    mutated.
+    """
+    loaded_inputs = dict(loaded_inputs)
     # --- Step 11: Variant tracking: build the rid→bp mapping and sort inputs by kind ---
     #
     # A loaded frame keeps its `__record_id` column exactly as the loader
@@ -2139,8 +2145,6 @@ def _for_each_prepare(
     # scifor through the `_select_rows` hook — NOT by renaming the column per
     # input and pushing those names into scifor's schema, which is what this
     # step did until 2026-09-20 (and then stripped back out in four places).
-    from itertools import product as _iproduct
-
     import pandas as pd
 
     Log.debug("building variant tracking (rid->branch_params mapping)")
@@ -2263,67 +2267,73 @@ def _for_each_prepare(
     for param_name, data in list(loaded_inputs.items()):
         if isinstance(data, pd.DataFrame) and "__branch_params" in data.columns:
             loaded_inputs[param_name] = data.drop(columns=["__branch_params"])
+    return loaded_inputs, rid_to_bp, tracked_params, fixed_rid_values, colsel_params
 
-    # --- Step 12: Build full combos: base_combos × valid rid-combos per schema location ---
-    Log.debug("expanding combos with record-ID variants")
-    # The database is the one holder of the dataset's schema keys; scifor's
-    # set_schema copy is for scifor, never read back here (cleanup-audit F14).
-    current_schema_keys = dataset_schema_keys_of(db)
 
-    base_combos = all_combos
-    Log.debug(
-        f"all_combos={'None' if all_combos is None else len(all_combos)}, "
-        f"_discovered_combos={'None' if _discovered_combos is None else len(_discovered_combos)}"
-    )
-    if base_combos is None and _discovered_combos is not None:
-        # Use filesystem-discovered combos directly (avoids non-existent Cartesian combos)
-        base_combos = _discovered_combos
-        Log.debug(f"using {len(base_combos)} filesystem-discovered combos")
-    if base_combos is None:
-        keys = list(metadata_iterables.keys())
-        value_lists = [metadata_iterables[k] for k in keys]
-        base_combos = [
-            dict(zip(keys, combo, strict=False)) for combo in _iproduct(*value_lists)
-        ]
-        Log.debug(f"built {len(base_combos)} base combos from metadata iterables")
+@dataclass
+class _RidIndex:
+    """Where each rid-bearing input's records sit, over one run's lookup keys.
 
-    # Detect aggregation mode: not all schema keys are being iterated, so
-    # lower-level records should be aggregated into multi-row DataFrames
-    # rather than being separated into individual combos via rid expansion.
-    _iterated_schema_keys = set(metadata_iterables.keys()) & set(current_schema_keys)
-    _aggregation_mode = len(current_schema_keys) > 0 and len(
-        _iterated_schema_keys
-    ) < len(current_schema_keys)
-    if _aggregation_mode:
-        Log.debug(
-            f"aggregation mode detected: iterating {len(_iterated_schema_keys)}/{len(current_schema_keys)} schema keys"
+    The ONE owner of the combo-location geometry both expansion modes read:
+    the rid mappings (plain and ColumnSelection inputs, kept apart — see the
+    comment in :func:`_build_rid_index`), which lookup positions each input
+    populates, and ColumnSelection existence coverage. The two probes are the
+    comparisons a combo location is matched with; they used to be closures
+    inside ``_for_each_prepare``.
+    """
+
+    lookup_keys: list
+    rid_per_combo: dict
+    rid_populated_idx: dict
+    colsel_rid_per_combo: dict
+    colsel_existence: dict
+    colsel_coverage: list
+
+    def probe_key(self, param: str, schema_vals: tuple) -> tuple:
+        """The key to look up *param*'s mapping with for a combo location.
+
+        ``schema_vals`` carries a real value in every position; a coarse input's
+        mapping keys carry "" wherever that input has no axis. Blank the same
+        positions before probing, so a subject-level input matches at every
+        session/trial below it instead of matching nothing — which pruned the
+        ENTIRE grid, since a combo with no rids for any rid key is skipped.
+
+        An input that populates every lookup key probes with ``schema_vals``
+        unchanged: the overwhelmingly common case, byte-identical to the exact
+        match this replaced. Same shape as ``colsel_present``, which has
+        always compared this way — that asymmetry is why a coarse
+        ``ColumnSelection`` input worked while a coarse plain one did not.
+        """
+        populated = self.rid_populated_idx.get(param)
+        if populated is None or len(populated) == len(self.lookup_keys):
+            return schema_vals
+        return tuple(
+            schema_vals[i] if i in populated else "" for i in range(len(self.lookup_keys))
         )
-    else:
-        Log.debug("full iteration mode: all schema keys being iterated")
 
-    # Lookup keys for rid disambiguation: schema keys + any non-schema metadata
-    # iterable keys.  Using only schema keys misses non-schema iterables (e.g.
-    # "session") that ARE present in the loaded DataFrame and should distinguish
-    # which record belongs to which combo.
-    _lookup_keys = list(
-        dict.fromkeys(
-            current_schema_keys
-            + [k for k in metadata_iterables if k not in set(current_schema_keys)]
-        )
-    )
+    def colsel_present(self, schema_vals: tuple) -> bool:
+        """True if every ColumnSelection input has data at this combo location.
 
-    # PathOutput variant placeholders: names referenced by templates that are
-    # NOT combo-supplied — these resolve from each expanded combo's variant
-    # group branch_params and are injected below (then stripped before save).
-    _path_placeholder_names, _path_outputs = _pathoutput_placeholders(
-        inputs, set(current_schema_keys) | set(metadata_iterables)
-    )
-    _path_missing_placeholders: set = set()
-    if _path_placeholder_names:
-        Log.debug(
-            f"PathOutput branch_param placeholder(s) detected: "
-            f"{sorted(_path_placeholder_names)}"
-        )
+        ``schema_vals`` is the combo key over ``self.lookup_keys``. Compared only on
+        the keys each input actually populates, so a ColumnSelection stored at a
+        coarser level (finer keys absent from its frame) still matches.
+        """
+        n = len(self.lookup_keys)
+        for present, populated_idx in self.colsel_coverage:
+            probe = tuple(
+                schema_vals[i] if i in populated_idx else "" for i in range(n)
+            )
+            if probe not in present:
+                return False
+        return True
+
+
+def _build_rid_index(
+    loaded_inputs: dict, tracked_params: list, colsel_params: list, _lookup_keys: list
+) -> _RidIndex:
+    """Combo expansion: index every rid-tracked and ColumnSelection input by
+    schema location (see :class:`_RidIndex`)."""
+    import pandas as pd
 
     # For each tracked input, map combo_tuple → [rid_values at that combo].
     # Keyed by PARAM (2026-09-20; was the `__rid_{param}` column name).
@@ -2367,11 +2377,11 @@ def _for_each_prepare(
         # keys this input does not populate filled with "". Those "" positions
         # are why rid_populated_idx exists: a combo key has REAL values in every
         # position, so the full-iteration lookup below has to blank the same
-        # positions before probing or it would never match (see _rid_probe_key).
+        # positions before probing or it would never match (see _RidIndex.probe_key).
         schema_cols_in_df = [
             k for k in _lookup_keys if k in df.columns and not df[k].isna().all()
         ]
-        # Populated for BOTH kinds. It is read only by `_rid_probe_key`, and
+        # Populated for BOTH kinds. It is read only by `_RidIndex.probe_key`, and
         # the full-iteration expansion loop probes `rid_per_combo` alone — so a
         # ColumnSelection entry here changes no combo, and lets the lineage
         # lookup below blank the same positions a coarse input leaves empty.
@@ -2400,28 +2410,6 @@ def _for_each_prepare(
             colsel_rid_per_combo[param_name] = mapping
         else:
             rid_per_combo[param_name] = mapping
-
-    def _rid_probe_key(param: str, schema_vals: tuple) -> tuple:
-        """The key to look up *param*'s mapping with for a combo location.
-
-        ``schema_vals`` carries a real value in every position; a coarse input's
-        mapping keys carry "" wherever that input has no axis. Blank the same
-        positions before probing, so a subject-level input matches at every
-        session/trial below it instead of matching nothing — which pruned the
-        ENTIRE grid, since a combo with no rids for any rid key is skipped.
-
-        An input that populates every lookup key probes with ``schema_vals``
-        unchanged: the overwhelmingly common case, byte-identical to the exact
-        match this replaced. Same shape as ``_colsel_combo_present``, which has
-        always compared this way — that asymmetry is why a coarse
-        ``ColumnSelection`` input worked while a coarse plain one did not.
-        """
-        populated = rid_populated_idx.get(param)
-        if populated is None or len(populated) == len(_lookup_keys):
-            return schema_vals
-        return tuple(
-            schema_vals[i] if i in populated else "" for i in range(len(_lookup_keys))
-        )
 
     # Existence coverage for ColumnSelection inputs: the set of schema-location
     # keys (over _lookup_keys) each one actually has data for. Used purely to
@@ -2473,21 +2461,21 @@ def _for_each_prepare(
         )
         _colsel_coverage.append((present, populated_idx))
 
-    def _colsel_combo_present(schema_vals: tuple) -> bool:
-        """True if every ColumnSelection input has data at this combo location.
+    return _RidIndex(
+        lookup_keys=_lookup_keys,
+        rid_per_combo=rid_per_combo,
+        rid_populated_idx=rid_populated_idx,
+        colsel_rid_per_combo=colsel_rid_per_combo,
+        colsel_existence=colsel_existence,
+        colsel_coverage=_colsel_coverage,
+    )
 
-        ``schema_vals`` is the combo key over ``_lookup_keys``. Compared only on
-        the keys each input actually populates, so a ColumnSelection stored at a
-        coarser level (finer keys absent from its frame) still matches.
-        """
-        n = len(_lookup_keys)
-        for present, populated_idx in _colsel_coverage:
-            probe = tuple(
-                schema_vals[i] if i in populated_idx else "" for i in range(n)
-            )
-            if probe not in present:
-                return False
-        return True
+
+def _log_input_multiplicity(loaded_inputs: dict, _lookup_keys: list, rid_to_bp: dict) -> None:
+    """Combo expansion diagnostic: say, per input, whether extra rows at one
+    schema location come from several records (variants) or one multi-row
+    record."""
+    import pandas as pd
 
     # --- Step 12 diagnostic: record/row multiplicity per schema location ---
     # When a per-combo call receives MORE rows than expected, the cause is almost
@@ -2554,466 +2542,541 @@ def _for_each_prepare(
                 + "; ".join(_samples)
             )
 
-    if _aggregation_mode:
-        # Aggregation mode: skip per-record rid expansion, but AUTO-SPLIT by
-        # upstream branch_param signature (decision D1,
-        # endpoints-viz-and-stats-design.md): one call per distinct variant
-        # group, as if the user had written EachOf(Variant(...), Variant(...)) —
-        # implemented here at signature granularity so nothing is reloaded.
-        # Pooling distinct variants into one table double-counts aggregates and
-        # destroys variant identity; AcrossVariants inputs opt out explicitly
-        # (multiverse analysis) and pool with branch_params attached as columns.
-        # __rid_* columns are stripped so the user's function doesn't see
-        # internal tracking columns.
-        #
-        # Also drop schema columns BELOW the lowest iterated level when
-        # they are entirely NULL.  Loaded DataFrames carry one column per
-        # dataset_schema_key; for a variable stored at a higher schema
-        # level, columns for finer-grained keys come back all-NULL.  In
-        # aggregation mode those un-iterated schema keys carry no per-row
-        # meaning — leaving them in clutters the user-facing table and,
-        # on the MATLAB bridge, surfaces as an empty cell column the
-        # caller has to special-case.
-        iterated_indices = [
-            i for i, k in enumerate(current_schema_keys) if k in _iterated_schema_keys
-        ]
-        if iterated_indices:
-            below_iterated_keys = set(current_schema_keys[max(iterated_indices) + 1 :])
-        else:
-            # No schema keys iterated — every schema key is "below"
-            # (this is the no-iteration case; aggregate across everything).
-            below_iterated_keys = set(current_schema_keys)
 
-        # --- D1 auto-split bookkeeping (before __rid_* columns are stripped) ---
-        # Every rid-tracked input becomes a `RecordPool`: its records per
-        # iterated location, per variant group (`scidb.bindings`). A plain
-        # input SPLITS — one call per group, the group named on the combo as
-        # `__vsig_{param}`; an AcrossVariants or ColumnSelection input POOLS
-        # every group into the one call. The pools are the only thing the
-        # save path, the skip gate and the draft stamp read to answer "which
-        # records did this call consume".
-        _across_params = {
-            name for name, spec in inputs.items() if isinstance(spec, AcrossVariants)
-        }
-        _sig_cache: dict = {}
+def _expand_aggregation(
+    *,
+    inputs: dict,
+    loaded_inputs: dict,
+    base_combos: list,
+    current_schema_keys: list,
+    _iterated_schema_keys: set,
+    rid_index: _RidIndex,
+    rid_to_bp: dict,
+    tracked_params: list,
+    fixed_rid_values: dict,
+    colsel_params: list,
+    _path_placeholder_names,
+    _path_missing_placeholders: set,
+):
+    """Combo expansion, aggregation mode: one call per iterated location per
+    variant group (auto-split), pooled for AcrossVariants / ColumnSelection
+    inputs. Drops all-NULL schema columns below the iterated level from
+    ``loaded_inputs`` IN PLACE.
 
-        def _sig_of(rid) -> str:
-            """Canonical signature of a record's upstream branch_params group."""
-            try:
-                if rid in _sig_cache:
-                    return _sig_cache[rid]
-            except TypeError:
-                rid = str(rid)
-                if rid in _sig_cache:
-                    return _sig_cache[rid]
-            sig = variant_signature(rid_to_bp.get(rid, {}))
-            _sig_cache[rid] = sig
-            return sig
+    Returns ``(full_combos, run_bindings)``.
+    """
+    from itertools import product as _iproduct
 
-        _iterated_keys_ordered = [k for k in _lookup_keys if k in _iterated_schema_keys]
-        _iter_idx = [_lookup_keys.index(k) for k in _iterated_keys_ordered]
+    import pandas as pd
 
-        def _pool_from_mapping(param: str, mapping: dict, *, split: bool) -> RecordPool:
-            """A `RecordPool` from `rid_per_combo`'s ``{full_key: [rids]}``,
-            keyed by the iterated keys THIS input populates ("" positions in
-            its keys are axes it does not have — a coarse input is found at
-            every location beneath it, the aggregation twin of
-            `_rid_probe_key`)."""
-            populated = rid_populated_idx.get(param, set(range(len(_lookup_keys))))
-            loc_idx = [i for i in _iter_idx if i in populated]
-            loc_keys = tuple(_lookup_keys[i] for i in loc_idx)
-            grouped: dict = {}
-            for full_key, rids in mapping.items():
-                loc = tuple(full_key[i] for i in loc_idx)
-                for rid in rids:
-                    grouped.setdefault(loc, {}).setdefault(_sig_of(rid), []).append(rid)
-            return RecordPool(
-                loc_keys,
-                {
-                    loc: {sig: VariantGroup(sig, tuple(rids)) for sig, rids in groups.items()}
-                    for loc, groups in grouped.items()
-                },
-                split=split,
-            )
+    _lookup_keys = rid_index.lookup_keys
+    rid_per_combo = rid_index.rid_per_combo
+    rid_populated_idx = rid_index.rid_populated_idx
+    colsel_rid_per_combo = rid_index.colsel_rid_per_combo
 
-        pools: dict = {}  # param -> RecordPool
-        for param_name, mapping in colsel_rid_per_combo.items():
-            pools[param_name] = _pool_from_mapping(param_name, mapping, split=False)
+    # Aggregation mode: skip per-record rid expansion, but AUTO-SPLIT by
+    # upstream branch_param signature (decision D1,
+    # endpoints-viz-and-stats-design.md): one call per distinct variant
+    # group, as if the user had written EachOf(Variant(...), Variant(...)) —
+    # implemented here at signature granularity so nothing is reloaded.
+    # Pooling distinct variants into one table double-counts aggregates and
+    # destroys variant identity; AcrossVariants inputs opt out explicitly
+    # (multiverse analysis) and pool with branch_params attached as columns.
+    # __rid_* columns are stripped so the user's function doesn't see
+    # internal tracking columns.
+    #
+    # Also drop schema columns BELOW the lowest iterated level when
+    # they are entirely NULL.  Loaded DataFrames carry one column per
+    # dataset_schema_key; for a variable stored at a higher schema
+    # level, columns for finer-grained keys come back all-NULL.  In
+    # aggregation mode those un-iterated schema keys carry no per-row
+    # meaning — leaving them in clutters the user-facing table and,
+    # on the MATLAB bridge, surfaces as an empty cell column the
+    # caller has to special-case.
+    iterated_indices = [
+        i for i, k in enumerate(current_schema_keys) if k in _iterated_schema_keys
+    ]
+    if iterated_indices:
+        below_iterated_keys = set(current_schema_keys[max(iterated_indices) + 1 :])
+    else:
+        # No schema keys iterated — every schema key is "below"
+        # (this is the no-iteration case; aggregate across everything).
+        below_iterated_keys = set(current_schema_keys)
 
-        for param_name in tracked_params:
-            data = loaded_inputs.get(param_name)
-            _df = data if isinstance(data, pd.DataFrame) else None
-            if _df is None or RECORD_ID_COLUMN not in _df.columns:
-                continue
+    # --- D1 auto-split bookkeeping (before __rid_* columns are stripped) ---
+    # Every rid-tracked input becomes a `RecordPool`: its records per
+    # iterated location, per variant group (`scidb.bindings`). A plain
+    # input SPLITS — one call per group, the group named on the combo as
+    # `__vsig_{param}`; an AcrossVariants or ColumnSelection input POOLS
+    # every group into the one call. The pools are the only thing the
+    # save path, the skip gate and the draft stamp read to answer "which
+    # records did this call consume".
+    _across_params = {
+        name for name, spec in inputs.items() if isinstance(spec, AcrossVariants)
+    }
+    _sig_cache: dict = {}
 
-            if param_name in _across_params:
-                # Opt-out: pool all variants, attaching each namespaced
-                # branch_param key as an ordinary column so the function can
-                # group by specification (variant identity is preserved).
-                pools[param_name] = _pool_from_mapping(
-                    param_name, rid_per_combo.get(param_name, {}), split=False
-                )
-                bp_keys = sorted(
-                    {
-                        k
-                        for rid in _df[RECORD_ID_COLUMN].dropna().unique()
-                        for k in rid_to_bp.get(rid, {})
-                    }
-                )
-                _attached, _collided = [], []
-                for k in bp_keys:
-                    if k in _df.columns:
-                        _collided.append(k)
-                        continue
-                    _df[k] = _df[RECORD_ID_COLUMN].map(
-                        lambda r, _k=k: rid_to_bp.get(r, {}).get(_k)
-                    )
-                    _attached.append(k)
-                if _collided:
-                    _msg = (
-                        f"AcrossVariants('{param_name}'): branch_param "
-                        f"column(s) {_collided} collide with existing data "
-                        f"columns — not attached."
-                    )
-                    warnings.warn(_msg, UserWarning, stacklevel=2)
-                    Log.warn(_msg)
-                Log.debug(
-                    f"AcrossVariants('{param_name}'): pooling "
-                    f"{len(pools[param_name].signatures())} variant group(s); "
-                    f"attached branch_param column(s): {_attached}"
-                )
-                continue
+    def _sig_of(rid) -> str:
+        """Canonical signature of a record's upstream branch_params group."""
+        try:
+            if rid in _sig_cache:
+                return _sig_cache[rid]
+        except TypeError:
+            rid = str(rid)
+            if rid in _sig_cache:
+                return _sig_cache[rid]
+        sig = variant_signature(rid_to_bp.get(rid, {}))
+        _sig_cache[rid] = sig
+        return sig
 
-            # Split input: one call per variant group. The group a call reads
-            # is named in its `Selection` (built below) and applied by scifor
-            # through `_select_rows`, by record id — no discriminator column
-            # on the frame, no key in scifor's schema.
+    _iterated_keys_ordered = [k for k in _lookup_keys if k in _iterated_schema_keys]
+    _iter_idx = [_lookup_keys.index(k) for k in _iterated_keys_ordered]
+
+    def _pool_from_mapping(param: str, mapping: dict, *, split: bool) -> RecordPool:
+        """A `RecordPool` from `rid_per_combo`'s ``{full_key: [rids]}``,
+        keyed by the iterated keys THIS input populates ("" positions in
+        its keys are axes it does not have — a coarse input is found at
+        every location beneath it, the aggregation twin of
+        `_RidIndex.probe_key`)."""
+        populated = rid_populated_idx.get(param, set(range(len(_lookup_keys))))
+        loc_idx = [i for i in _iter_idx if i in populated]
+        loc_keys = tuple(_lookup_keys[i] for i in loc_idx)
+        grouped: dict = {}
+        for full_key, rids in mapping.items():
+            loc = tuple(full_key[i] for i in loc_idx)
+            for rid in rids:
+                grouped.setdefault(loc, {}).setdefault(_sig_of(rid), []).append(rid)
+        return RecordPool(
+            loc_keys,
+            {
+                loc: {sig: VariantGroup(sig, tuple(rids)) for sig, rids in groups.items()}
+                for loc, groups in grouped.items()
+            },
+            split=split,
+        )
+
+    pools: dict = {}  # param -> RecordPool
+    for param_name, mapping in colsel_rid_per_combo.items():
+        pools[param_name] = _pool_from_mapping(param_name, mapping, split=False)
+
+    for param_name in tracked_params:
+        data = loaded_inputs.get(param_name)
+        _df = data if isinstance(data, pd.DataFrame) else None
+        if _df is None or RECORD_ID_COLUMN not in _df.columns:
+            continue
+
+        if param_name in _across_params:
+            # Opt-out: pool all variants, attaching each namespaced
+            # branch_param key as an ordinary column so the function can
+            # group by specification (variant identity is preserved).
             pools[param_name] = _pool_from_mapping(
-                param_name, rid_per_combo.get(param_name, {}), split=True
+                param_name, rid_per_combo.get(param_name, {}), split=False
             )
-
-            # Ragged variant groups: a group missing schema locations that other
-            # groups cover aggregates a PARTIAL set of rows. Decided policy
-            # (D1): warn and proceed.
-            per_combo_locs: dict = {}
-            for full_key, rids in rid_per_combo.get(param_name, {}).items():
-                ck = tuple(full_key[i] for i in _iter_idx)
-                for rid in rids:
-                    per_combo_locs.setdefault(ck, {}).setdefault(_sig_of(rid), set()).add(
-                        full_key
-                    )
-            _ragged_examples: list = []
-            for ck, sig_map in per_combo_locs.items():
-                if len(sig_map) <= 1:
+            bp_keys = sorted(
+                {
+                    k
+                    for rid in _df[RECORD_ID_COLUMN].dropna().unique()
+                    for k in rid_to_bp.get(rid, {})
+                }
+            )
+            _attached, _collided = [], []
+            for k in bp_keys:
+                if k in _df.columns:
+                    _collided.append(k)
                     continue
-                union_locs = set().union(*sig_map.values())
-                for sig, locs in sig_map.items():
-                    missing = union_locs - locs
-                    if missing and len(_ragged_examples) < 5:
-                        combo_disp = (
-                            dict(zip(_iterated_keys_ordered, ck, strict=False))
-                            or "(grand aggregation)"
-                        )
-                        miss_disp = [
-                            {
-                                k: v
-                                for k, v in zip(_lookup_keys, m, strict=False)
-                                if v != ""
-                            }
-                            for m in sorted(missing)[:3]
-                        ]
-                        _ragged_examples.append(
-                            f"combo {combo_disp}: group {json.loads(sig)} missing "
-                            f"{len(missing)} location(s), e.g. {miss_disp}"
-                        )
-            if _ragged_examples:
+                _df[k] = _df[RECORD_ID_COLUMN].map(
+                    lambda r, _k=k: rid_to_bp.get(r, {}).get(_k)
+                )
+                _attached.append(k)
+            if _collided:
                 _msg = (
-                    f"aggregation auto-split: input '{param_name}' has "
-                    f"RAGGED variant groups — some branch_param groups cover "
-                    f"fewer schema locations than others; each group aggregates "
-                    f"only the rows it has. Pin one group with Variant(...) or "
-                    f"pool explicitly with AcrossVariants(...) if this is not "
-                    f"intended. " + " | ".join(_ragged_examples)
+                    f"AcrossVariants('{param_name}'): branch_param "
+                    f"column(s) {_collided} collide with existing data "
+                    f"columns — not attached."
                 )
                 warnings.warn(_msg, UserWarning, stacklevel=2)
                 Log.warn(_msg)
+            Log.debug(
+                f"AcrossVariants('{param_name}'): pooling "
+                f"{len(pools[param_name].signatures())} variant group(s); "
+                f"attached branch_param column(s): {_attached}"
+            )
+            continue
 
-        for param_name, data in list(loaded_inputs.items()):
-            # Drop schema columns BELOW the lowest iterated level when they are
-            # entirely NULL (see above). `__record_id` stays: scifor's
-            # `_select_rows` hook selects the call's rows by it and drops it.
-            if isinstance(data, pd.DataFrame):
-                _df = data
-            elif isinstance(data, _scifor.ColumnSelection) and isinstance(
-                data.data, pd.DataFrame
-            ):
-                _df = data.data
-            else:
-                continue
-            empty_schema_cols = [
-                c
-                for c in _df.columns
-                if c in below_iterated_keys and _df[c].isna().all()
-            ]
-            if empty_schema_cols:
-                _stripped = _df.drop(columns=empty_schema_cols)
-                if isinstance(data, pd.DataFrame):
-                    loaded_inputs[param_name] = _stripped
-                else:
-                    data.data = _stripped
-                Log.debug(
-                    f"aggregation: dropped all-null schema "
-                    f"column(s) {empty_schema_cols} from loaded input "
-                    f"'{param_name}' (below iterated schema level)"
+        # Split input: one call per variant group. The group a call reads
+        # is named in its `Selection` (built below) and applied by scifor
+        # through `_select_rows`, by record id — no discriminator column
+        # on the frame, no key in scifor's schema.
+        pools[param_name] = _pool_from_mapping(
+            param_name, rid_per_combo.get(param_name, {}), split=True
+        )
+
+        # Ragged variant groups: a group missing schema locations that other
+        # groups cover aggregates a PARTIAL set of rows. Decided policy
+        # (D1): warn and proceed.
+        per_combo_locs: dict = {}
+        for full_key, rids in rid_per_combo.get(param_name, {}).items():
+            ck = tuple(full_key[i] for i in _iter_idx)
+            for rid in rids:
+                per_combo_locs.setdefault(ck, {}).setdefault(_sig_of(rid), set()).add(
+                    full_key
                 )
-
-        # Step 13: every input's binding, typed — decided once from what Step
-        # 11 sorted the inputs into (`RunBindings`). Built BEFORE expansion so
-        # each combination's `Selection` can be registered on it.
-        run_bindings = _build_run_bindings(
-            inputs,
-            tracked_params=tracked_params,
-            fixed_rid_values=fixed_rid_values,
-            colsel_params=colsel_params,
-            aggregation_mode=True,
-            pools=pools,
-            iterated_keys=_iterated_keys_ordered,
-            rid_to_bp=rid_to_bp,
-        )
-
-        # Expand combos over the observed signature combinations per combo —
-        # one call per variant group (auto-split), Cartesian across split
-        # inputs (mirroring full-iteration rid expansion at signature
-        # granularity). A split input with NO data at a combo expands with the
-        # empty signature so the combo still flows through and skips
-        # gracefully, matching pre-split behavior for empty locations.
-        #
-        # Each call gets ONE `Selection` — per input, the records it reads —
-        # and the combo carries only its handle (`COMBO_KEY`). scifor's frame
-        # filter and the save path's edges both read the selection, so each
-        # output saves with only ITS group's contributing rids and the
-        # branch_params merge is conflict-free by construction.
-        split_params = [p for p, pool in pools.items() if pool.split]
-
-        full_combos = []
-        for combo in base_combos:
-            sig_options = []
-            for p in split_params:
-                sigs = sorted(pools[p].groups_at(combo).keys()) or [EMPTY_SIGNATURE]
-                aligned = [s for s in sigs if not signature_conflicts_with(s, combo)]
-                if len(aligned) < len(sigs):
-                    Log.debug(
-                        f"aggregation auto-split: input '{p}' at combo {combo}: "
-                        f"aligned __save__.* signature(s) to iterated value(s) — "
-                        f"kept {len(aligned)}/{len(sigs)} group(s)"
+        _ragged_examples: list = []
+        for ck, sig_map in per_combo_locs.items():
+            if len(sig_map) <= 1:
+                continue
+            union_locs = set().union(*sig_map.values())
+            for sig, locs in sig_map.items():
+                missing = union_locs - locs
+                if missing and len(_ragged_examples) < 5:
+                    combo_disp = (
+                        dict(zip(_iterated_keys_ordered, ck, strict=False))
+                        or "(grand aggregation)"
                     )
-                # All groups conflicting = no matching data at this combo:
-                # flow through with the empty signature and skip gracefully,
-                # same as a combo with no data at all.
-                sig_options.append(aligned or [EMPTY_SIGNATURE])
-            for sig_combo in _iproduct(*sig_options) if sig_options else [()]:
-                groups = dict(zip(split_params, sig_combo, strict=False))
-                rids: dict = {}
-                for p, pool in pools.items():
-                    chosen = pool.rids_at(combo, groups.get(p))
-                    if chosen:
-                        rids[p] = tuple(chosen)
-                for p, rid in fixed_rid_values.items():
-                    if rid:
-                        rids[p] = (str(rid),)
-                fc = dict(combo)
-                fc[COMBO_KEY] = run_bindings.add_selection(Selection(rids, groups))
-                if _path_placeholder_names:
-                    # Group bp = the parsed split-input signatures + any Fixed
-                    # inputs' bp; {variant} digests the merged coordinate.
-                    _bp_dicts = [json.loads(s) for s in sig_combo]
-                    _bp_dicts += [
-                        rid_to_bp.get(r, {}) for r in fixed_rid_values.values() if r
+                    miss_disp = [
+                        {
+                            k: v
+                            for k, v in zip(_lookup_keys, m, strict=False)
+                            if v != ""
+                        }
+                        for m in sorted(missing)[:3]
                     ]
-                    _merged, _confl = merge_branch_params(_bp_dicts)
-                    _inject_path_placeholders(
-                        fc,
-                        _path_placeholder_names,
-                        _merged,
-                        _confl,
-                        _path_missing_placeholders,
+                    _ragged_examples.append(
+                        f"combo {combo_disp}: group {json.loads(sig)} missing "
+                        f"{len(missing)} location(s), e.g. {miss_disp}"
                     )
-                full_combos.append(fc)
-
-        total_rids = sum(
-            len(g.rids)
-            for pool in pools.values()
-            for groups in pool.groups_by_location.values()
-            for g in groups.values()
-        )
-        Log.debug(
-            f"aggregation mode (auto-split by branch_param signature): "
-            f"iterating {sorted(_iterated_schema_keys) or '(none)'} "
-            f"of schema {current_schema_keys}, "
-            f"{len(base_combos)} base combo(s) -> {len(full_combos)} call(s), "
-            f"variant groups per split input: "
-            f"{ {p: len(pools[p].signatures()) for p in split_params} }, "
-            f"pooled (AcrossVariants) inputs: {sorted(_across_params) or 'none'}, "
-            f"{total_rids} contributing rids"
-        )
-    else:
-        # Full iteration mode: expand combos with rid variants.
-        #
-        # Every plain input's record is an iteration AXIS: one combination per
-        # record at a location. A Fixed input's pin and a ColumnSelection's
-        # (lineage-only) record are added to every combination's `Selection`
-        # without expanding it. No pools in this mode.
-        pools = {}
-        _iterated_keys_ordered = []
-
-        # AcrossVariants only changes aggregation-mode behavior: in full
-        # iteration every combo sees exactly one variant row (rid expansion),
-        # so pooling is a no-op and the input behaves as if unwrapped.
-        _across_noop = sorted(
-            name for name, spec in inputs.items() if isinstance(spec, AcrossVariants)
-        )
-        if _across_noop:
+        if _ragged_examples:
             _msg = (
-                f"AcrossVariants input(s) {_across_noop} in FULL "
-                f"iteration mode: every combo sees exactly one variant, so "
-                f"pooling is a no-op — the input(s) behave as if unwrapped "
-                f"(variants expand into separate combos). AcrossVariants only "
-                f"affects aggregation-mode for_each calls."
+                f"aggregation auto-split: input '{param_name}' has "
+                f"RAGGED variant groups — some branch_param groups cover "
+                f"fewer schema locations than others; each group aggregates "
+                f"only the rows it has. Pin one group with Variant(...) or "
+                f"pool explicitly with AcrossVariants(...) if this is not "
+                f"intended. " + " | ".join(_ragged_examples)
             )
             warnings.warn(_msg, UserWarning, stacklevel=2)
             Log.warn(_msg)
 
-        # Step 13: the typed bindings, BEFORE expansion so each combination's
-        # `Selection` can be registered on them.
-        run_bindings = _build_run_bindings(
-            inputs,
-            tracked_params=tracked_params,
-            fixed_rid_values=fixed_rid_values,
-            colsel_params=colsel_params,
-            aggregation_mode=False,
-            pools=None,
-            iterated_keys=None,
-            rid_to_bp=rid_to_bp,
-        )
-
-        # Expand each base combo with all valid rid-combos for that schema location
-        Log.debug(
-            f"expanding combos: {len(base_combos)} base combos, "
-            f"{len(rid_per_combo)} rid dimensions"
-        )
-        full_combos: list = []
-        _pruned_colsel = 0
-        for combo in base_combos:
-            schema_vals = tuple(str(combo.get(k, "")) for k in _lookup_keys)
-
-            # Prune Cartesian combos that no ColumnSelection input has data for.
-            # (Plain DataFrame inputs prune via the rid-validity check below;
-            # ColumnSelection inputs deliberately don't expand, so they prune
-            # here instead — without this, non-existent grid points leak through
-            # as empty per-combo calls.)
-            if colsel_existence and not _colsel_combo_present(schema_vals):
-                _pruned_colsel += 1
-                continue
-
-            # The records every expansion of this location binds without
-            # iterating over: a Fixed input's pin, and a ColumnSelection's
-            # record(s) at this location (lineage only). Computed once per
-            # location rather than per expanded combo.
-            _fixed_rids: dict = {p: (str(r),) for p, r in fixed_rid_values.items() if r}
-            for _cs_param, _cs_map in colsel_rid_per_combo.items():
-                _rids = _cs_map.get(_rid_probe_key(_cs_param, schema_vals), [])
-                if not _rids:
-                    continue
-                if len(_rids) > 1:
-                    # ColumnSelection pools variants rather than expanding them
-                    # (that is the whole point of keeping it out of the tracked
-                    # set); it used to bind only the first because a `__rid_*`
-                    # combo key held one id. A Selection holds them all.
-                    Log.debug(
-                        f"ColumnSelection '{_cs_param}' has {len(_rids)} "
-                        f"record(s) at this location; binding all for lineage"
-                    )
-                _fixed_rids[_cs_param] = tuple(str(r) for r in _rids)
-
-            rid_lists: list = []
-            rid_params: list = []
-            valid = True
-            for param, mapping in rid_per_combo.items():
-                rids = mapping.get(_rid_probe_key(param, schema_vals), [])
-                if not rids:
-                    valid = False
-                    break
-                rid_lists.append(rids)
-                rid_params.append(param)
-
-            if not valid:
-                continue
-
-            def _register(full_combo: dict, chosen: dict) -> None:
-                rids = {**_fixed_rids, **{p: (str(r),) for p, r in chosen.items()}}
-                full_combo[COMBO_KEY] = run_bindings.add_selection(Selection(rids))
-                if _path_placeholder_names:
-                    _bp_dicts = [rid_to_bp.get(r, {}) for rs in rids.values() for r in rs]
-                    _merged, _confl = merge_branch_params(_bp_dicts)
-                    _inject_path_placeholders(
-                        full_combo,
-                        _path_placeholder_names,
-                        _merged,
-                        _confl,
-                        _path_missing_placeholders,
-                    )
-                full_combos.append(full_combo)
-
-            if rid_lists:
-                for rid_combo in _iproduct(*rid_lists):
-                    _register(dict(combo), dict(zip(rid_params, rid_combo, strict=False)))
-            else:
-                _register(dict(combo), {})
-
-        if _pruned_colsel:
-            Log.debug(
-                f"pruned {_pruned_colsel} non-existent combo(s) "
-                f"via ColumnSelection coverage"
-            )
-        if len(full_combos) != len(base_combos):
-            Log.debug(
-                f"expanded {len(base_combos)} base combos -> "
-                f"{len(full_combos)} full combos (rid variants / pruning)"
-            )
-        else:
-            Log.debug(f"{len(full_combos)} combos (no rid expansion needed)")
-
-        # Existence-pruning health check. In full iteration mode the rid-validity
-        # skip and the ColumnSelection coverage prune are the ONLY things that
-        # drop Cartesian combos with no backing data. If there are DataFrame-backed
-        # inputs but NEITHER pruning mechanism is active, the entire Cartesian
-        # product leaks through — every non-existent location becomes an empty
-        # per-combo call. This is exactly the failure mode when an input wrapper
-        # fails to register either a rid key or ColumnSelection coverage.
-        _has_df_inputs = any(
-            isinstance(v, pd.DataFrame)
-            or (
-                isinstance(v, (_scifor.ColumnSelection, _scifor.Fixed))
-                and isinstance(getattr(v, "data", None), pd.DataFrame)
-            )
-            for v in loaded_inputs.values()
-        )
-        if (
-            _has_df_inputs
-            and not rid_per_combo
-            and not colsel_existence
-            and len(full_combos) == len(base_combos)
+    for param_name, data in list(loaded_inputs.items()):
+        # Drop schema columns BELOW the lowest iterated level when they are
+        # entirely NULL (see above). `__record_id` stays: scifor's
+        # `_select_rows` hook selects the call's rows by it and drops it.
+        if isinstance(data, pd.DataFrame):
+            _df = data
+        elif isinstance(data, _scifor.ColumnSelection) and isinstance(
+            data.data, pd.DataFrame
         ):
-            Log.warn(
-                "expand_combos: full iteration over all schema keys kept the "
-                f"ENTIRE Cartesian product ({len(full_combos)} combos) with no "
-                "pruning — DataFrame-backed inputs registered neither a rid key nor "
-                "ColumnSelection coverage, so non-existent schema locations will be "
-                "passed to the function as EMPTY tables. This usually means an "
-                "input's __record_id was lost before variant tracking. "
-                "Check the per-input logs above."
+            _df = data.data
+        else:
+            continue
+        empty_schema_cols = [
+            c
+            for c in _df.columns
+            if c in below_iterated_keys and _df[c].isna().all()
+        ]
+        if empty_schema_cols:
+            _stripped = _df.drop(columns=empty_schema_cols)
+            if isinstance(data, pd.DataFrame):
+                loaded_inputs[param_name] = _stripped
+            else:
+                data.data = _stripped
+            Log.debug(
+                f"aggregation: dropped all-null schema "
+                f"column(s) {empty_schema_cols} from loaded input "
+                f"'{param_name}' (below iterated schema level)"
             )
 
+    # Step 13: every input's binding, typed — decided once from what Step
+    # 11 sorted the inputs into (`RunBindings`). Built BEFORE expansion so
+    # each combination's `Selection` can be registered on it.
+    run_bindings = _build_run_bindings(
+        inputs,
+        tracked_params=tracked_params,
+        fixed_rid_values=fixed_rid_values,
+        colsel_params=colsel_params,
+        aggregation_mode=True,
+        pools=pools,
+        iterated_keys=_iterated_keys_ordered,
+        rid_to_bp=rid_to_bp,
+    )
+
+    # Expand combos over the observed signature combinations per combo —
+    # one call per variant group (auto-split), Cartesian across split
+    # inputs (mirroring full-iteration rid expansion at signature
+    # granularity). A split input with NO data at a combo expands with the
+    # empty signature so the combo still flows through and skips
+    # gracefully, matching pre-split behavior for empty locations.
+    #
+    # Each call gets ONE `Selection` — per input, the records it reads —
+    # and the combo carries only its handle (`COMBO_KEY`). scifor's frame
+    # filter and the save path's edges both read the selection, so each
+    # output saves with only ITS group's contributing rids and the
+    # branch_params merge is conflict-free by construction.
+    split_params = [p for p, pool in pools.items() if pool.split]
+
+    full_combos = []
+    for combo in base_combos:
+        sig_options = []
+        for p in split_params:
+            sigs = sorted(pools[p].groups_at(combo).keys()) or [EMPTY_SIGNATURE]
+            aligned = [s for s in sigs if not signature_conflicts_with(s, combo)]
+            if len(aligned) < len(sigs):
+                Log.debug(
+                    f"aggregation auto-split: input '{p}' at combo {combo}: "
+                    f"aligned __save__.* signature(s) to iterated value(s) — "
+                    f"kept {len(aligned)}/{len(sigs)} group(s)"
+                )
+            # All groups conflicting = no matching data at this combo:
+            # flow through with the empty signature and skip gracefully,
+            # same as a combo with no data at all.
+            sig_options.append(aligned or [EMPTY_SIGNATURE])
+        for sig_combo in _iproduct(*sig_options) if sig_options else [()]:
+            groups = dict(zip(split_params, sig_combo, strict=False))
+            rids: dict = {}
+            for p, pool in pools.items():
+                chosen = pool.rids_at(combo, groups.get(p))
+                if chosen:
+                    rids[p] = tuple(chosen)
+            for p, rid in fixed_rid_values.items():
+                if rid:
+                    rids[p] = (str(rid),)
+            fc = dict(combo)
+            fc[COMBO_KEY] = run_bindings.add_selection(Selection(rids, groups))
+            if _path_placeholder_names:
+                # Group bp = the parsed split-input signatures + any Fixed
+                # inputs' bp; {variant} digests the merged coordinate.
+                _bp_dicts = [json.loads(s) for s in sig_combo]
+                _bp_dicts += [
+                    rid_to_bp.get(r, {}) for r in fixed_rid_values.values() if r
+                ]
+                _merged, _confl = merge_branch_params(_bp_dicts)
+                _inject_path_placeholders(
+                    fc,
+                    _path_placeholder_names,
+                    _merged,
+                    _confl,
+                    _path_missing_placeholders,
+                )
+            full_combos.append(fc)
+
+    total_rids = sum(
+        len(g.rids)
+        for pool in pools.values()
+        for groups in pool.groups_by_location.values()
+        for g in groups.values()
+    )
+    Log.debug(
+        f"aggregation mode (auto-split by branch_param signature): "
+        f"iterating {sorted(_iterated_schema_keys) or '(none)'} "
+        f"of schema {current_schema_keys}, "
+        f"{len(base_combos)} base combo(s) -> {len(full_combos)} call(s), "
+        f"variant groups per split input: "
+        f"{ {p: len(pools[p].signatures()) for p in split_params} }, "
+        f"pooled (AcrossVariants) inputs: {sorted(_across_params) or 'none'}, "
+        f"{total_rids} contributing rids"
+    )
+    return full_combos, run_bindings
+
+
+def _expand_full_iteration(
+    *,
+    inputs: dict,
+    loaded_inputs: dict,
+    base_combos: list,
+    rid_index: _RidIndex,
+    rid_to_bp: dict,
+    tracked_params: list,
+    fixed_rid_values: dict,
+    colsel_params: list,
+    _path_placeholder_names,
+    _path_missing_placeholders: set,
+):
+    """Combo expansion, full iteration: every plain input's record is an
+    iteration axis; Fixed pins and ColumnSelection records ride along in each
+    combination's ``Selection``.
+
+    Returns ``(full_combos, run_bindings)``.
+    """
+    from itertools import product as _iproduct
+
+    import pandas as pd
+
+    _lookup_keys = rid_index.lookup_keys
+    rid_per_combo = rid_index.rid_per_combo
+    colsel_rid_per_combo = rid_index.colsel_rid_per_combo
+    colsel_existence = rid_index.colsel_existence
+    _rid_probe_key = rid_index.probe_key
+    _colsel_combo_present = rid_index.colsel_present
+
+    # Full iteration mode: expand combos with rid variants.
+    #
+    # Every plain input's record is an iteration AXIS: one combination per
+    # record at a location. A Fixed input's pin and a ColumnSelection's
+    # (lineage-only) record are added to every combination's `Selection`
+    # without expanding it. No pools in this mode.
+    pools = {}
+    _iterated_keys_ordered = []
+
+    # AcrossVariants only changes aggregation-mode behavior: in full
+    # iteration every combo sees exactly one variant row (rid expansion),
+    # so pooling is a no-op and the input behaves as if unwrapped.
+    _across_noop = sorted(
+        name for name, spec in inputs.items() if isinstance(spec, AcrossVariants)
+    )
+    if _across_noop:
+        _msg = (
+            f"AcrossVariants input(s) {_across_noop} in FULL "
+            f"iteration mode: every combo sees exactly one variant, so "
+            f"pooling is a no-op — the input(s) behave as if unwrapped "
+            f"(variants expand into separate combos). AcrossVariants only "
+            f"affects aggregation-mode for_each calls."
+        )
+        warnings.warn(_msg, UserWarning, stacklevel=2)
+        Log.warn(_msg)
+
+    # Step 13: the typed bindings, BEFORE expansion so each combination's
+    # `Selection` can be registered on them.
+    run_bindings = _build_run_bindings(
+        inputs,
+        tracked_params=tracked_params,
+        fixed_rid_values=fixed_rid_values,
+        colsel_params=colsel_params,
+        aggregation_mode=False,
+        pools=None,
+        iterated_keys=None,
+        rid_to_bp=rid_to_bp,
+    )
+
+    # Expand each base combo with all valid rid-combos for that schema location
+    Log.debug(
+        f"expanding combos: {len(base_combos)} base combos, "
+        f"{len(rid_per_combo)} rid dimensions"
+    )
+    full_combos: list = []
+    _pruned_colsel = 0
+    for combo in base_combos:
+        schema_vals = tuple(str(combo.get(k, "")) for k in _lookup_keys)
+
+        # Prune Cartesian combos that no ColumnSelection input has data for.
+        # (Plain DataFrame inputs prune via the rid-validity check below;
+        # ColumnSelection inputs deliberately don't expand, so they prune
+        # here instead — without this, non-existent grid points leak through
+        # as empty per-combo calls.)
+        if colsel_existence and not _colsel_combo_present(schema_vals):
+            _pruned_colsel += 1
+            continue
+
+        # The records every expansion of this location binds without
+        # iterating over: a Fixed input's pin, and a ColumnSelection's
+        # record(s) at this location (lineage only). Computed once per
+        # location rather than per expanded combo.
+        _fixed_rids: dict = {p: (str(r),) for p, r in fixed_rid_values.items() if r}
+        for _cs_param, _cs_map in colsel_rid_per_combo.items():
+            _rids = _cs_map.get(_rid_probe_key(_cs_param, schema_vals), [])
+            if not _rids:
+                continue
+            if len(_rids) > 1:
+                # ColumnSelection pools variants rather than expanding them
+                # (that is the whole point of keeping it out of the tracked
+                # set); it used to bind only the first because a `__rid_*`
+                # combo key held one id. A Selection holds them all.
+                Log.debug(
+                    f"ColumnSelection '{_cs_param}' has {len(_rids)} "
+                    f"record(s) at this location; binding all for lineage"
+                )
+            _fixed_rids[_cs_param] = tuple(str(r) for r in _rids)
+
+        rid_lists: list = []
+        rid_params: list = []
+        valid = True
+        for param, mapping in rid_per_combo.items():
+            rids = mapping.get(_rid_probe_key(param, schema_vals), [])
+            if not rids:
+                valid = False
+                break
+            rid_lists.append(rids)
+            rid_params.append(param)
+
+        if not valid:
+            continue
+
+        def _register(full_combo: dict, chosen: dict) -> None:
+            rids = {**_fixed_rids, **{p: (str(r),) for p, r in chosen.items()}}
+            full_combo[COMBO_KEY] = run_bindings.add_selection(Selection(rids))
+            if _path_placeholder_names:
+                _bp_dicts = [rid_to_bp.get(r, {}) for rs in rids.values() for r in rs]
+                _merged, _confl = merge_branch_params(_bp_dicts)
+                _inject_path_placeholders(
+                    full_combo,
+                    _path_placeholder_names,
+                    _merged,
+                    _confl,
+                    _path_missing_placeholders,
+                )
+            full_combos.append(full_combo)
+
+        if rid_lists:
+            for rid_combo in _iproduct(*rid_lists):
+                _register(dict(combo), dict(zip(rid_params, rid_combo, strict=False)))
+        else:
+            _register(dict(combo), {})
+
+    if _pruned_colsel:
+        Log.debug(
+            f"pruned {_pruned_colsel} non-existent combo(s) "
+            f"via ColumnSelection coverage"
+        )
+    if len(full_combos) != len(base_combos):
+        Log.debug(
+            f"expanded {len(base_combos)} base combos -> "
+            f"{len(full_combos)} full combos (rid variants / pruning)"
+        )
+    else:
+        Log.debug(f"{len(full_combos)} combos (no rid expansion needed)")
+
+    # Existence-pruning health check. In full iteration mode the rid-validity
+    # skip and the ColumnSelection coverage prune are the ONLY things that
+    # drop Cartesian combos with no backing data. If there are DataFrame-backed
+    # inputs but NEITHER pruning mechanism is active, the entire Cartesian
+    # product leaks through — every non-existent location becomes an empty
+    # per-combo call. This is exactly the failure mode when an input wrapper
+    # fails to register either a rid key or ColumnSelection coverage.
+    _has_df_inputs = any(
+        isinstance(v, pd.DataFrame)
+        or (
+            isinstance(v, (_scifor.ColumnSelection, _scifor.Fixed))
+            and isinstance(getattr(v, "data", None), pd.DataFrame)
+        )
+        for v in loaded_inputs.values()
+    )
+    if (
+        _has_df_inputs
+        and not rid_per_combo
+        and not colsel_existence
+        and len(full_combos) == len(base_combos)
+    ):
+        Log.warn(
+            "expand_combos: full iteration over all schema keys kept the "
+            f"ENTIRE Cartesian product ({len(full_combos)} combos) with no "
+            "pruning — DataFrame-backed inputs registered neither a rid key nor "
+            "ColumnSelection coverage, so non-existent schema locations will be "
+            "passed to the function as EMPTY tables. This usually means an "
+            "input's __record_id was lost before variant tracking. "
+            "Check the per-input logs above."
+        )
+    return full_combos, run_bindings
+
+
+def _check_path_outputs(
+    inputs: dict,
+    _path_outputs,
+    full_combos: list,
+    run_bindings,
+    _path_placeholder_names,
+    _path_missing_placeholders: set,
+) -> None:
+    """Combo expansion: warn about unresolved PathOutput placeholders and
+    refuse variant-group path collisions before anything renders."""
     # PathOutput placeholders: warn once per unresolved name (the literal
     # ``{name}`` stays in the path), then guard against variant-group path
     # collisions BEFORE anything renders — a shared path means each group's
@@ -3044,6 +3107,12 @@ def _for_each_prepare(
             _path_placeholder_names,
         )
 
+
+def _apply_pre_combo_hook(
+    full_combos: list, _pre_combo_hook, run_bindings, _aggregation_mode: bool
+) -> "tuple[list, int]":
+    """Prepare stage: drop the combos the pre-combo hook (skip_computed)
+    claims. Returns ``(full_combos, skipped_count)``."""
     # Step 14: Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
     # combos where the hook returns True.
     _skip_computed_count = 0
@@ -3073,6 +3142,248 @@ def _for_each_prepare(
             )
     else:
         Log.debug("no pre-combo hook provided, skipping")
+    return full_combos, _skip_computed_count
+
+
+def _expand_combos(
+    *,
+    inputs: dict,
+    loaded_inputs: dict,
+    metadata_iterables: dict,
+    all_combos,
+    _discovered_combos,
+    db,
+    rid_to_bp: dict,
+    tracked_params: list,
+    fixed_rid_values: dict,
+    colsel_params: list,
+):
+    """Prepare stage: every call this run makes — base combos (existing,
+    discovered, or the Cartesian product) expanded by record / variant group,
+    each carrying its ``Selection`` handle on ``run_bindings``.
+
+    Returns ``(full_combos, run_bindings, aggregation_mode,
+    current_schema_keys, path_placeholder_names)``.
+    """
+    from itertools import product as _iproduct
+
+    # --- Step 12: Build full combos: base_combos × valid rid-combos per schema location ---
+    Log.debug("expanding combos with record-ID variants")
+    # The database is the one holder of the dataset's schema keys; scifor's
+    # set_schema copy is for scifor, never read back here (cleanup-audit F14).
+    current_schema_keys = dataset_schema_keys_of(db)
+
+    base_combos = all_combos
+    Log.debug(
+        f"all_combos={'None' if all_combos is None else len(all_combos)}, "
+        f"_discovered_combos={'None' if _discovered_combos is None else len(_discovered_combos)}"
+    )
+    if base_combos is None and _discovered_combos is not None:
+        # Use filesystem-discovered combos directly (avoids non-existent Cartesian combos)
+        base_combos = _discovered_combos
+        Log.debug(f"using {len(base_combos)} filesystem-discovered combos")
+    if base_combos is None:
+        keys = list(metadata_iterables.keys())
+        value_lists = [metadata_iterables[k] for k in keys]
+        base_combos = [
+            dict(zip(keys, combo, strict=False)) for combo in _iproduct(*value_lists)
+        ]
+        Log.debug(f"built {len(base_combos)} base combos from metadata iterables")
+
+    # Detect aggregation mode: not all schema keys are being iterated, so
+    # lower-level records should be aggregated into multi-row DataFrames
+    # rather than being separated into individual combos via rid expansion.
+    _iterated_schema_keys = set(metadata_iterables.keys()) & set(current_schema_keys)
+    _aggregation_mode = len(current_schema_keys) > 0 and len(
+        _iterated_schema_keys
+    ) < len(current_schema_keys)
+    if _aggregation_mode:
+        Log.debug(
+            f"aggregation mode detected: iterating {len(_iterated_schema_keys)}/{len(current_schema_keys)} schema keys"
+        )
+    else:
+        Log.debug("full iteration mode: all schema keys being iterated")
+
+    # Lookup keys for rid disambiguation: schema keys + any non-schema metadata
+    # iterable keys.  Using only schema keys misses non-schema iterables (e.g.
+    # "session") that ARE present in the loaded DataFrame and should distinguish
+    # which record belongs to which combo.
+    _lookup_keys = list(
+        dict.fromkeys(
+            current_schema_keys
+            + [k for k in metadata_iterables if k not in set(current_schema_keys)]
+        )
+    )
+
+    # PathOutput variant placeholders: names referenced by templates that are
+    # NOT combo-supplied — these resolve from each expanded combo's variant
+    # group branch_params and are injected below (then stripped before save).
+    _path_placeholder_names, _path_outputs = _pathoutput_placeholders(
+        inputs, set(current_schema_keys) | set(metadata_iterables)
+    )
+    _path_missing_placeholders: set = set()
+    if _path_placeholder_names:
+        Log.debug(
+            f"PathOutput branch_param placeholder(s) detected: "
+            f"{sorted(_path_placeholder_names)}"
+        )
+
+    rid_index = _build_rid_index(
+        loaded_inputs, tracked_params, colsel_params, _lookup_keys
+    )
+    _log_input_multiplicity(loaded_inputs, _lookup_keys, rid_to_bp)
+
+    _expand = dict(
+        inputs=inputs,
+        loaded_inputs=loaded_inputs,
+        base_combos=base_combos,
+        rid_index=rid_index,
+        rid_to_bp=rid_to_bp,
+        tracked_params=tracked_params,
+        fixed_rid_values=fixed_rid_values,
+        colsel_params=colsel_params,
+        _path_placeholder_names=_path_placeholder_names,
+        _path_missing_placeholders=_path_missing_placeholders,
+    )
+    if _aggregation_mode:
+        full_combos, run_bindings = _expand_aggregation(
+            current_schema_keys=current_schema_keys,
+            _iterated_schema_keys=_iterated_schema_keys,
+            **_expand,
+        )
+    else:
+        full_combos, run_bindings = _expand_full_iteration(**_expand)
+
+    _check_path_outputs(
+        inputs,
+        _path_outputs,
+        full_combos,
+        run_bindings,
+        _path_placeholder_names,
+        _path_missing_placeholders,
+    )
+    return (
+        full_combos,
+        run_bindings,
+        _aggregation_mode,
+        current_schema_keys,
+        _path_placeholder_names,
+    )
+
+
+def _for_each_prepare(
+    *,
+    fn: Callable,
+    fn_name: str,
+    inputs: dict,
+    outputs: list,
+    dry_run: bool,
+    as_table,
+    db,
+    distribute: bool,
+    where,
+    _pre_combo_hook,
+    _cancel_check,
+    metadata_iterables: dict,
+    glue: "dict[str, Any] | None" = None,
+    glue_language: str = "python",
+    locations: "Any" = None,
+    generates_file: bool = False,
+    endpoint_kind: "str | None" = None,
+    parameter_names: "dict[str, str] | None" = None,
+) -> "_ForEachState | None":
+    """Run scidb.for_each's pre-loop work, as a sequence of named stages:
+    :func:`_normalize_glue`, :func:`_resolve_iterables`,
+    :func:`_build_call_identity`, :func:`_existing_combos`,
+    :func:`_load_all_inputs`, :func:`_track_variants`, :func:`_expand_combos`,
+    :func:`_apply_pre_combo_hook`.
+
+    On ``dry_run=True`` runs :func:`_dry_run_preview` and returns ``None`` to
+    signal the caller to stop. Otherwise returns the prepared state object
+    the loop and save phases consume.
+
+    ``glue_language`` names the language the *run* executes in. Chains
+    authored in another language are refused (a glue node executes in the
+    language of the run); in a MATLAB run the whole chain is carried through
+    on the returned state for ``+scidb/for_each.m`` to apply, because a ``.m``
+    function cannot execute inside this prepare step.
+    """
+    # Glue chains: normalized and validated up front, constant-fed ones applied.
+    glue_chains, deferred_glue_chains, inputs = _normalize_glue(
+        glue, inputs, glue_language
+    )
+
+    # The metadata iterables: [] filled from the database / disk, schema
+    # propagated, schema-key values stringified.
+    metadata_iterables, _discovered_combos, needs_resolve, resolved_db = (
+        _resolve_iterables(metadata_iterables, inputs, db, distribute)
+    )
+
+    output_names = [_output_name(o) for o in outputs] if outputs else ["result"]
+    Log.debug(f"resolved {len(output_names)} output name(s): {output_names}")
+
+    # Dry run: preview the iteration through scifor and stop.
+    if dry_run:
+        _dry_run_preview(
+            fn,
+            inputs,
+            metadata_iterables,
+            needs_resolve=needs_resolve,
+            resolved_db=resolved_db,
+            db=db,
+            as_table=as_table,
+            distribute=distribute,
+            output_names=output_names,
+            locations=locations,
+            cancel_check=_cancel_check,
+        )
+        return None
+
+    # The call's identity: version keys and call_id (glue names included).
+    config_keys, call_id = _build_call_identity(
+        fn, inputs, where, distribute, as_table, glue_chains
+    )
+
+    # Only the schema combinations that exist (and are not excluded).
+    all_combos = _existing_combos(
+        metadata_iterables, inputs, needs_resolve, resolved_db, db
+    )
+
+    # Bulk-load every input (+ glue fusion on the loaded tables).
+    loaded_inputs, mapping_inputs, glue_fusion = _load_all_inputs(
+        fn_name, inputs, db, where, deferred_glue_chains, glue_language
+    )
+    per_combo_glue = glue_fusion.per_combo
+
+    # Variant tracking: rid -> branch_params, and each input's kind.
+    loaded_inputs, rid_to_bp, tracked_params, fixed_rid_values, colsel_params = (
+        _track_variants(loaded_inputs)
+    )
+
+    # Every call this run makes, each with its Selection on run_bindings.
+    (
+        full_combos,
+        run_bindings,
+        _aggregation_mode,
+        current_schema_keys,
+        _path_placeholder_names,
+    ) = _expand_combos(
+        inputs=inputs,
+        loaded_inputs=loaded_inputs,
+        metadata_iterables=metadata_iterables,
+        all_combos=all_combos,
+        _discovered_combos=_discovered_combos,
+        db=db,
+        rid_to_bp=rid_to_bp,
+        tracked_params=tracked_params,
+        fixed_rid_values=fixed_rid_values,
+        colsel_params=colsel_params,
+    )
+
+    # skip_computed: drop the combos whose outputs are already current.
+    full_combos, _skip_computed_count = _apply_pre_combo_hook(
+        full_combos, _pre_combo_hook, run_bindings, _aggregation_mode
+    )
 
     # (Step 15 — extending scifor's schema with `__rid_*` / `__vsig_*` keys so
     # its schema filter would select rows by them — is gone as of 2026-09-20.
@@ -4916,7 +5227,7 @@ def _resolve_per_combo_merge(
     pcl_merge: "PerComboLoaderMerge", load_kw: dict
 ) -> "pd.DataFrame":
     """Resolve a PerComboLoaderMerge per-combo by loading each constituent."""
-    from scifor.foreach import _merge_parts as _scifor_merge_parts
+    from scifor.foreach import merge_parts as _scifor_merge_parts
 
     parts = []
     for spec in pcl_merge.merge_spec.tables:
@@ -5574,9 +5885,9 @@ def _save_results(
             if fn is not None and stored_hash:
                 derived_hash, entry, units = function_sources_for(fn)
                 if not units:
-                    # Expected for MATLAB today: the bridge supplies a digest
-                    # but no text. Not an error, and not worth a warning on
-                    # every run.
+                    # A digest with no text: a MATLAB run whose .m text did
+                    # not reach the bridge (a hash override, or text that did
+                    # not re-hash to the digest — the bridge warns then).
                     Log.debug(f"[provenance] no source captured for fn={fn_name}")
                 elif derived_hash != stored_hash:
                     # Filing source under the wrong key would be worse than not

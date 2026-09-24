@@ -68,6 +68,11 @@ class SpecRequest(BaseModel):
     #: Which figure of an ITERATE fan-out to render; None renders all of them.
     figure_index: int | None = None
     csv_path: str | None = None
+    #: The preview's size for label/legend decisions: {"mode": "export"} or
+    #: {"mode": "pane", "width_px", "height_px"} (plot_service._render_preview).
+    preview: dict | None = None
+    #: Re-render the last resolve of this exact request (a pane resize).
+    reuse_resolved: bool = False
 
 
 class ExportRequest(BaseModel):
@@ -202,6 +207,8 @@ def _resolve(db, req: SpecRequest) -> dict:
         max_points=req.max_points,
         figure_index=req.figure_index,
         csv_path=req.csv_path,
+        preview=req.preview,
+        reuse_resolved=req.reuse_resolved,
     )
 
 

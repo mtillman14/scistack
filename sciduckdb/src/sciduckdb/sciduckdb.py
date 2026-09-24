@@ -208,7 +208,7 @@ def _python_to_storage(value: Any, meta: dict) -> Any:
     """Convert a Python value to its DuckDB-storable form."""
     ptype = meta.get("python_type", "")
 
-    # _infer_data_columns unwraps length-1 arrays to scalars when it picks the
+    # infer_data_columns unwraps length-1 arrays to scalars when it picks the
     # column type, e.g. {"x": np.array([1.0])} -> DOUBLE column with
     # python_type="float". Mirror that unwrap here so the stored value is a
     # scalar matching the column; otherwise the row carries a DOUBLE[] into a
@@ -274,7 +274,7 @@ def array_from_storage(value: Any, dtype: np.dtype) -> np.ndarray:
     # NaN the value actually has — either a column that acquired a NULL after
     # its dtype was recorded, or a second restoration pass over an array this
     # function already upcast (SciDuck.load runs _restore_types AND then
-    # _storage_to_python on the same cell, so restoration must be idempotent).
+    # storage_to_python on the same cell, so restoration must be idempotent).
     arr = np.asarray(value)
     if dtype.kind != "f" and arr.dtype.kind == "f" and arr.size and np.isnan(arr).any():
         logger.debug(
@@ -328,7 +328,7 @@ def count_nan_array_elements(values) -> int:
     return n
 
 
-def _storage_to_python(value: Any, meta: dict) -> Any:
+def storage_to_python(value: Any, meta: dict) -> Any:
     """Restore a stored DuckDB value back to its original Python type."""
     ptype = meta.get("python_type", "")
 
@@ -399,8 +399,8 @@ def _storage_to_python(value: Any, meta: dict) -> Any:
     return value
 
 
-def _storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
-    """Vectorized column-level dispatch of _storage_to_python.
+def storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
+    """Vectorized column-level dispatch of storage_to_python.
 
     Applied once per column in bulk loads instead of once per cell (N records ×
     M columns calls vs N×M calls for the per-element path).  Pass-through types
@@ -419,9 +419,9 @@ def _storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
         return series.apply(lambda v: json.loads(v) if isinstance(v, str) else v)
 
     # All remaining types (ndarray, ndarray_json, list, …): delegate per-element.
-    # NULL list elements are restored as NaN inside _storage_to_python; the
+    # NULL list elements are restored as NaN inside storage_to_python; the
     # caller aggregates count_null_list_elements() into one INFO line per load.
-    return series.apply(lambda v: _storage_to_python(v, meta))
+    return series.apply(lambda v: storage_to_python(v, meta))
 
 
 def _flatten_dict(d, _prefix=()):
@@ -443,7 +443,7 @@ def _flatten_dict(d, _prefix=()):
     return flat, paths
 
 
-def _unflatten_dict(flat, path_map):
+def unflatten_dict(flat, path_map):
     """Reconstruct a nested dict from flat dot-keys using stored path_map."""
     result = {}
     for dot_key, value in flat.items():
@@ -461,7 +461,7 @@ def _unflatten_dict(flat, path_map):
 # ---------------------------------------------------------------------------
 
 
-def _infer_data_columns(
+def infer_data_columns(
     sample_value: Any, data_col_name: str | None = None
 ) -> tuple[dict, dict]:
     """
@@ -576,7 +576,7 @@ def _storage_signature(ddb_type: str) -> tuple[str, int]:
     return (category, depth)
 
 
-def _record_schema_mismatch(ref_col_types: dict, rec_col_types: dict) -> str | None:
+def record_schema_mismatch(ref_col_types: dict, rec_col_types: dict) -> str | None:
     """Return a human-readable reason a record can't join the batch, or None.
 
     A record "fits" the batch schema when it has exactly the reference column
@@ -613,7 +613,7 @@ def _record_schema_mismatch(ref_col_types: dict, rec_col_types: dict) -> str | N
     return None
 
 
-def _dataframe_to_storage_rows(df: pd.DataFrame, dtype_meta: dict) -> list:
+def dataframe_to_storage_rows(df: pd.DataFrame, dtype_meta: dict) -> list:
     """Convert a DataFrame to a list of per-row storage values.
 
     Returns a list of lists: one inner list per DataFrame row, each containing
@@ -636,10 +636,10 @@ def _dataframe_to_storage_rows(df: pd.DataFrame, dtype_meta: dict) -> list:
     return rows
 
 
-def _bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) -> list:
+def bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) -> list:
     """Bulk convert N DataFrames to (record_id, ...storage_values) rows.
 
-    Equivalent to calling _dataframe_to_storage_rows N times and assembling
+    Equivalent to calling dataframe_to_storage_rows N times and assembling
     (record_id, ...) tuples, but processes each column as a whole to avoid
     O(N×C) per-cell pandas iloc overhead.
 
@@ -655,7 +655,7 @@ def _bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) 
     if not all(list(df.columns) == first_cols for df in df_list):
         rows: list = []
         for rid, df in zip(record_ids, df_list, strict=False):
-            for storage_row in _dataframe_to_storage_rows(df, dtype_meta):
+            for storage_row in dataframe_to_storage_rows(df, dtype_meta):
                 rows.append((rid,) + tuple(storage_row))
         return rows
 
@@ -718,10 +718,10 @@ def _bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) 
     ]
 
 
-def _value_to_storage_row(value: Any, dtype_meta: dict) -> list:
+def value_to_storage_row(value: Any, dtype_meta: dict) -> list:
     """Convert a data value to a list of storage-ready column values.
 
-    For DataFrames use _dataframe_to_storage_rows() instead.
+    For DataFrames use dataframe_to_storage_rows() instead.
     """
     mode = dtype_meta.get("mode", "single_column")
     col_metas = dtype_meta["columns"]
@@ -1592,7 +1592,7 @@ class SciDuck:
             if isinstance(value, pd.DataFrame):
                 # Delete old rows for this schema_id, then insert one per DataFrame row.
                 self._execute(f'DELETE FROM "{name}" WHERE schema_id = ?', [schema_id])
-                for storage_row in _dataframe_to_storage_rows(value, dtype_meta):
+                for storage_row in dataframe_to_storage_rows(value, dtype_meta):
                     self._execute(
                         f'INSERT INTO "{name}" ({col_str}) VALUES ({placeholders})',
                         [schema_id] + storage_row,
@@ -1647,12 +1647,12 @@ class SciDuck:
     def _infer_data_columns(
         self, sample_value: Any, data_col_name: str | None = None
     ) -> tuple[dict, dict]:
-        """Delegate to module-level _infer_data_columns."""
-        return _infer_data_columns(sample_value, data_col_name)
+        """Delegate to module-level infer_data_columns."""
+        return infer_data_columns(sample_value, data_col_name)
 
     def _value_to_storage_row(self, value: Any, dtype_meta: dict) -> list:
-        """Delegate to module-level _value_to_storage_row."""
-        return _value_to_storage_row(value, dtype_meta)
+        """Delegate to module-level value_to_storage_row."""
+        return value_to_storage_row(value, dtype_meta)
 
     def _ensure_variable_table(
         self,
@@ -1749,14 +1749,14 @@ class SciDuck:
         columns_meta = dtype_meta.get("columns", {})
 
         if mode == "dataframe":
-            # One DuckDB row per DataFrame row: apply _storage_to_python per cell.
+            # One DuckDB row per DataFrame row: apply storage_to_python per cell.
             # Drop schema columns; keep only data columns.
             data_cols = list(columns_meta.keys())
             result = {}
             for c, meta in columns_meta.items():
                 if c in df.columns:
                     result[c] = [
-                        _storage_to_python(df[c].iloc[i], meta) for i in range(len(df))
+                        storage_to_python(df[c].iloc[i], meta) for i in range(len(df))
                     ]
             df_columns = dtype_meta.get("df_columns", data_cols)
             return pd.DataFrame(result, columns=df_columns)
@@ -1769,13 +1769,13 @@ class SciDuck:
                 col_name = next(iter(columns_meta))
                 col_meta = columns_meta[col_name]
                 raw_val = df[col_name].iloc[0]
-                return _storage_to_python(raw_val, col_meta)
+                return storage_to_python(raw_val, col_meta)
             elif mode == "multi_column":
                 result = {}
                 for c, meta in columns_meta.items():
-                    result[c] = _storage_to_python(df[c].iloc[0], meta)
+                    result[c] = storage_to_python(df[c].iloc[0], meta)
                 if dtype_meta.get("nested"):
-                    return _unflatten_dict(result, dtype_meta["path_map"])
+                    return unflatten_dict(result, dtype_meta["path_map"])
                 return result
 
         return df
@@ -1790,7 +1790,7 @@ class SciDuck:
                 if n_null:
                     null_counts[col_name] = n_null
                 restored = [
-                    _storage_to_python(df[col_name].iloc[i], col_meta)
+                    storage_to_python(df[col_name].iloc[i], col_meta)
                     for i in range(len(df))
                 ]
                 df[col_name] = restored

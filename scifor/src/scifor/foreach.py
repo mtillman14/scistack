@@ -1841,10 +1841,10 @@ def _prepare_merge(
 
         parts.append(part_df)
 
-    return _merge_parts(parts)
+    return merge_parts(parts)
 
 
-def _merge_parts(parts: list["pd.DataFrame"]) -> "pd.DataFrame":
+def merge_parts(parts: list["pd.DataFrame"]) -> "pd.DataFrame":
     """Merge multiple DataFrames column-wise."""
     import pandas as pd
 

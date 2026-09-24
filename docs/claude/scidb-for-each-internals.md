@@ -6,6 +6,24 @@
 
 All source references are to `/workspace/scidb/src/scidb/foreach.py` unless otherwise noted.
 
+> **Stage map (2026-09-23, cleanup-audit F4).** `_for_each_prepare` is now a
+> short sequence of named stage functions; the "Step N" sections below still
+> describe what each does, but their line numbers are historical. Steps →
+> function:
+>
+> | Steps | Function |
+> |---|---|
+> | glue normalization | `_normalize_glue` |
+> | 2–5 | `_resolve_iterables` |
+> | 6 | inline in prepare (`output_names`) |
+> | 7 | `_dry_run_preview` (calls `_existing_combos`, so the preview count is the real run's) |
+> | 8 | `_build_call_identity` |
+> | 9, 9.5 | `_existing_combos` (the ONE prefilter + exclusion pass) |
+> | 10 + glue fusion | `_load_all_inputs` |
+> | 11 | `_track_variants` |
+> | 12–13 | `_expand_combos` → `_build_rid_index` (`_RidIndex`: rid mappings, `probe_key`, `colsel_present`), `_log_input_multiplicity`, `_expand_aggregation` / `_expand_full_iteration`, `_check_path_outputs` |
+> | 14 | `_apply_pre_combo_hook` |
+
 ---
 
 ## What problem does it solve?

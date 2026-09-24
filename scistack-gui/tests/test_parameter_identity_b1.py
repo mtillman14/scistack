@@ -13,13 +13,42 @@ import hashlib
 from scidb import Parameter
 
 from scistack_gui.domain.graph_builder import (
-    aggregate_variants,
     build_edges,
     build_parameter_nodes,
     edge_dedup_key,
     pending_value_group_coverage,
 )
+
 from scistack_gui.ids import param_handle, param_node_id
+
+
+def aggregate_variants(
+    variants,
+    listed_var_names=frozenset(),
+    path_input_registry=None,
+    path_input_history=None,
+    project_root=None,
+):
+    """Variant rows -> AggregatedData through the two PRODUCTION conversions
+    (scidb's pure ``aggregate_pipeline_variants``, then
+    ``graph_builder.aggregate_from_scidb``). The GUI's own test-only
+    converter of the same name was deleted (cleanup-audit F19); this keeps the
+    tests' call shape while exercising the real path. ``listed_var_names``
+    adds types that exist with no variants, as the old helper did.
+    """
+    from scidb.database import aggregate_pipeline_variants
+
+    from scistack_gui.domain.graph_builder import aggregate_from_scidb
+
+    agg = aggregate_from_scidb(
+        aggregate_pipeline_variants(variants),
+        path_input_registry,
+        path_input_history,
+        project_root,
+    )
+    agg.all_var_types |= set(listed_var_names)
+    return agg
+
 
 FN = "loadGaitRiteOneFile"
 ARG = "gaitRiteConfig"

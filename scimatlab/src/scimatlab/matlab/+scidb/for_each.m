@@ -149,13 +149,18 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
     % --- Resolve source hash (fn_name/hash_fn already resolved above,
     %     ahead of Step 0) ---
+    % fn_source is the .m text behind fn_hash, sent with prepare so the save
+    % can store the code under that hash (cleanup-audit F35). None for an
+    % override: the text would not be what that hash names.
+    fn_source = '';
     if ~isempty(opts.fn_hash_override)
         fn_hash = opts.fn_hash_override;
     elseif ~isempty(hash_fn)
         try
-            fn_hash = scidb.internal.hash_function(hash_fn);
+            [fn_hash, fn_source] = scidb.internal.hash_function(hash_fn);
         catch
             fn_hash = '';
+            fn_source = '';
         end
     else
         fn_hash = '';
@@ -340,7 +345,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'schema_filter', py_schema_filter, ...
                'glue', py_glue, ...
                'parameter_names', py_parameter_names, ...
-               'locations', py_locations));
+               'locations', py_locations, ...
+               'source_text', fn_source));
     scidb.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
 
     % Dry-run: Python ran the scifor.for_each(dry_run=true) call itself

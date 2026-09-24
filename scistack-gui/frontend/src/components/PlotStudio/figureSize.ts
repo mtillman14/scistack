@@ -58,8 +58,9 @@ export function aspectName(width: number, height: number, presets: AspectPreset[
   return CUSTOM_ASPECT
 }
 
-/** `1600 x 900 px` — what the saved raster will be, before the whitespace
- *  trim (`bbox_inches="tight"`) takes a little off each edge. */
+/** `1600 x 900 px` — exactly what the saved raster will be: the file is the
+ *  requested size (scistackplot.write_figure; no whitespace trim since
+ *  2026-09-23). */
 export function pixelReadout(width: number, height: number, dpi: number): string {
   return `${Math.round(width * dpi)} × ${Math.round(height * dpi)} px`
 }

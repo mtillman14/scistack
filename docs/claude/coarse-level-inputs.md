@@ -108,13 +108,13 @@ combo and the entire grid is pruned. Zero calls, zero records, no error.
 
 `ColumnSelection` inputs escaped this by accident of design: they are
 registered as *pruning-only* (`colsel_params`, no rid expansion), and their
-pruning check `_colsel_combo_present` has always compared on populated
+pruning check (now `_RidIndex.colsel_present`) has always compared on populated
 positions only. That asymmetry is exactly why a coarse `ColumnSelection`
 worked while a coarse plain variable did not — and why the first round of this
 fix made the `grSides` shape pass while `"side": Demographics` still returned
 nothing.
 
-`_rid_probe_key` closes it: blank the positions the input does not populate
+`_RidIndex.probe_key` (formerly the `_rid_probe_key` closure) closes it: blank the positions the input does not populate
 before probing, the same way `_colsel_combo_present` does. An input that
 populates every lookup key probes unchanged, so the common path and all
 non-existent-combo pruning (`test_column_selection_combo_pruning.py`) are
@@ -159,7 +159,7 @@ incidental, since filtering happens before any column extraction. Binding bare
 
 | File | Role |
 |------|------|
-| `scidb/src/scidb/foreach.py` | `_drop_unpopulated_schema_columns` (the owner), applied in `_load_input`; `_rid_probe_key` in `_for_each_prepare` for the full-iteration lookup |
+| `scidb/src/scidb/foreach.py` | `_drop_unpopulated_schema_columns` (the owner), applied in `_load_input`; `_RidIndex.probe_key` (built by `_build_rid_index`) for the full-iteration lookup |
 | `scidb/src/scidb/database.py` | `_assemble_df_from_records_and_data` — emits one column per dataset schema key (the source of the shape) |
 | `scifor/src/scifor/foreach.py` | `_filter_df_for_combo` — the Python victim |
 | `scimatlab/src/scimatlab/matlab/+scifor/for_each.m` | `filter_table_for_combo` — the MATLAB victim |

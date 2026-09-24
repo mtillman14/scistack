@@ -176,6 +176,38 @@ payload = render_plotly(resolved[0])     # interactive — a plotly.js dict
 
 `render_plotly` builds plain JSON and needs no plotly package.
 
+## Legible x labels
+
+Crowded tick labels are fitted, not left to collide. One pure function,
+`scistackplot.fit_labels`, decides for the whole figure (the most crowded
+panel decides for every panel), trying the least destructive fix first:
+
+1. **Numbered labels** (every label is, or ends in, a number) drop the prefix
+   they share: `SS01 … SS40` → `01 … 40`. Names are never touched.
+2. Wrap at `_ - / . space` onto two lines.
+3. Shrink the font, never below 8pt or 70% of `font_size`.
+4. Rotate 45°, then 90°.
+5. Numbered labels only: show every k-th, keeping each bracket's first and
+   last. Names stop at step 4 and the log WARNs that they still overlap.
+
+The matplotlib export measures the real text; bracket rows are placed a fixed
+number of points below the fitted tick labels and fitted too (shrink and wrap
+only). A nested axis has **no x title**: its tick and bracket rows already name
+every level. `StyleOptions.hide_legend_ticks=True` blanks the labels of a
+layer that is also the colour while the legend lists it. Any of the fitted
+settings can be fixed instead: `tick_rotation`, `tick_font_size`,
+`tick_every` (None = fitted). A fixed value is kept even where it overlaps, and
+the fit reports that it does. The generated seaborn code replays the fit as
+operations on seaborn's own labels, and saves without `bbox_inches="tight"`. See
+`.claude/plan-tick-label-legibility.md`.
+
+The exported legend fits too. At the right it may take 30% of the width
+(`LEGEND_BUDGET`); past that the title wraps at " / ", the line samples
+shorten and the text shrinks (never below the tick labels' floor). Still too
+wide, or leaving the x labels no room, it moves below the panels in as many
+columns as fit. `PlotSpec.sample_in_legend=False` (the Show sample pane's
+"Show in legend") leaves the overlay's colours out of it.
+
 ## Figure size
 
 `StyleOptions.width` / `height` are inches and size the **saved** figure and
@@ -187,6 +219,18 @@ ratio, name a width — a journal column is 3.5 in, a double column 7.2 in — a
 spec reports the ratio it was saved with, and `render_matplotlib` logs the
 size it drew at INFO. The Plot Studio panel's "Figure size" section is this
 module with a dropdown on it.
+
+`write_figure(resolved, path, dpi=200)` writes the file at exactly that size.
+There's no whitespace trim: it refuses `bbox_inches`, and the renderer fits the
+labels and legend inside the canvas. Anything still drawn past the edge is
+measured (`canvas_overflow`) and WARNed. The file is never resized to make room.
+The GUI's Save goes through it.
+
+The preview never decides for itself. `layout_decisions(resolved, width_in=,
+height_in=)` lays the figure out with matplotlib at a size and returns the tick,
+bracket and legend decisions; `render_plotly(resolved, decisions=...,
+fixed_size_px=...)` draws exactly those. The Plot Studio previews at the export
+size (drawn at Width x Height, 1 pt = 1 px) or at the pane's size ("Fit pane").
 
 `StyleOptions.font_size` (points, default 14) is matplotlib's `font.size`:
 ticks, axis labels, legend and title all scale from it, applied under

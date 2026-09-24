@@ -1424,6 +1424,8 @@ def _build_figure(
                 )
             ),
             x_plan=x_plan,
+            x_layers=list(x_layers),
+            color_factor=color,
             color_order=color_order,
             grid_rows=n_rows,
             grid_cols=n_cols,
@@ -2341,6 +2343,33 @@ def _encoding_for(
     )
 
 
+def x_axis_title(
+    spec: PlotSpec,
+    table: LongTable,
+    x_layers: list[str],
+    index_column: str | None,
+) -> str:
+    """The x axis title — the ONE owner, read by both renderers (through
+    ``Labels.x``) and by ``codegen``.
+
+    A **nested** categorical axis gets none. Its tick labels and bracket
+    rows already name every level, so "session / InterventionGroup" only
+    repeated what sits directly above and below it, and in a saved figure it
+    collided with the bracket row (user, 2026-09-23; spec/images/graph1.png).
+    A single-layer axis keeps its factor's name: its tick labels (``BL``,
+    ``MID24``) do not say what they are. ``StyleOptions.x_label`` always wins.
+    """
+    if spec.style.x_label:
+        return spec.style.x_label
+    if spec.x_measure:
+        return table.measure(spec.x_measure).display
+    if len(x_layers) > 1:
+        return ""
+    if x_layers:
+        return table.factor(x_layers[0]).display
+    return index_column or ""
+
+
 def _labels_for(
     spec: PlotSpec,
     table: LongTable,
@@ -2352,22 +2381,7 @@ def _labels_for(
     sample_color: str | None = None,
 ) -> Labels:
     style = spec.style
-    if style.x_label:
-        x_label = style.x_label
-    elif spec.x_measure:
-        x_label = table.measure(spec.x_measure).display
-    elif len(x_layers) > 1:
-        # Nested: the layers read outermost-last, matching how the rows of
-        # labels stack under the axis (leaf ticks nearest the plot).
-        x_label = " / ".join(
-            table.factor(name).display for name in reversed(x_layers)
-        )
-    elif x_layers:
-        x_label = table.factor(x_layers[0]).display
-    elif index_column:
-        x_label = index_column
-    else:
-        x_label = ""
+    x_label = x_axis_title(spec, table, x_layers, index_column)
 
     y_label = style.y_label or table.measure(spec.y_measure).display
 

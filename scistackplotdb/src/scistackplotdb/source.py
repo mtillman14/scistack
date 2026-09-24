@@ -488,9 +488,9 @@ class ScidbSource(BaseSource):
 
     def _frame_single_flight(self):
         """The in-flight map for :meth:`_variable_frame`, created on first use."""
-        from scistackplot.sources.base import _lazy_attr
+        from scistackplot.sources.base import lazy_attr
 
-        return _lazy_attr(self, "_frame_inflight", SingleFlight)
+        return lazy_attr(self, "_frame_inflight", SingleFlight)
 
     def _build_table(
         self,

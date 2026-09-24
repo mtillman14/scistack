@@ -90,15 +90,17 @@ snap straight back to 4:3 on the next render. So:
 only a finite positive number) with one difference: blank means nothing.
 `Number('') === 0`, and a 0-inch figure is a matplotlib error, not a size.
 
-## The trim: why the file is not exactly the ratio
+## The file is exactly the size (since 2026-09-23)
 
-`plot_service` saves with `bbox_inches="tight"`, which crops the PNG/SVG to the
-drawn content, so a 7.2 x 4.05 in figure at 200 dpi is *roughly* 1440 x 810 px,
-a little less on each edge. The renderer already reserves the legend's room
-via `fig.tight_layout(rect=…)`, so the trim mostly removes margin. Decision
-2026-09-16: keep the trim; the readout under the inputs says "before the
-whitespace trim". If an exact pixel size is ever needed, the change is
-`bbox_inches=None` in `save_figures` — and then check the legend still fits.
+The GUI used to save with `bbox_inches="tight"`, which cropped or grew the
+PNG/SVG around the drawn content, so a 7.2 x 4.05 in figure was only *roughly*
+1440 x 810 px, and long labels made it grow (spec/images/graph1.png). Decision
+2026-09-23 (reversing 2026-09-16): no trim. `scistackplot.write_figure` is the
+one owner of render-and-write; it refuses `bbox_inches`, and the renderer fits
+the x labels and the legend INSIDE the canvas (`.claude/plan-tick-label-legibility.md`,
+stages 2 and 2b). Content that still reaches past the edge is measured
+(`canvas_overflow`) and WARNed, never fixed by resizing the file. The readout
+under the inputs now says "exactly".
 
 The readout's dpi is `SAVE_DPI = 200` in `PlotStudio.tsx`, mirroring the
 `SaveRequest.dpi` default in `api/plot.py`. The GUI does not send a dpi; if a

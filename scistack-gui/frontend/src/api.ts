@@ -7,17 +7,14 @@
  * Components import `callBackend` and don't need to know which mode is active.
  */
 
-type PendingRequest = {
-  resolve: (value: unknown) => void;
-  reject: (reason: Error) => void;
-};
-
-let nextId = 1;
-const pending = new Map<number, PendingRequest>();
+import { WebviewRpc } from './webviewRpc';
 
 // Detect VS Code Webview environment
 const isVSCode = typeof acquireVsCodeApi === 'function';
 const vscode = isVSCode ? acquireVsCodeApi() : null;
+
+/** Webview requests awaiting the extension's reply. No timer: see webviewRpc.ts. */
+const rpc = vscode ? new WebviewRpc((msg) => vscode.postMessage(msg)) : null;
 
 // In VS Code mode, listen for messages from the extension host
 if (isVSCode) {
@@ -26,15 +23,7 @@ if (isVSCode) {
 
     // Response to a request (has id)
     if (msg.id !== undefined && msg.id !== null) {
-      const req = pending.get(msg.id);
-      if (req) {
-        pending.delete(msg.id);
-        if (msg.error) {
-          req.reject(new Error(msg.error.message));
-        } else {
-          req.resolve(msg.result);
-        }
-      }
+      rpc?.handleResponse(msg);
       return;
     }
 
@@ -120,18 +109,7 @@ export async function callBackend(method: string, params: Record<string, unknown
 }
 
 function callVSCode(method: string, params: Record<string, unknown>): Promise<unknown> {
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    vscode!.postMessage({ jsonrpc: '2.0', method, params, id });
-    // Timeout after 30 seconds
-    setTimeout(() => {
-      if (pending.has(id)) {
-        pending.delete(id);
-        reject(new Error(`Request ${method} timed out`));
-      }
-    }, 30000);
-  });
+  return rpc!.call(method, params);
 }
 
 /**

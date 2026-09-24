@@ -4,7 +4,7 @@
 a thin wrapper that writes it to a ``.csv``. Both back ``Merge.as_df`` and
 ``Merge.to_csv`` respectively.
 
-Unlike the ``for_each`` merge path (``_prepare_merge``/``_merge_parts`` in
+Unlike the ``for_each`` merge path (``_prepare_merge``/``merge_parts`` in
 ``foreach.py``), which combo-filters each constituent then positionally
 concatenates after *dropping* the schema columns, this performs a real
 ``pd.merge(how="inner")`` across the constituents and keeps a single copy of the

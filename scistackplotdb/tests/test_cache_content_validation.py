@@ -151,7 +151,7 @@ class TestFailureIsNotFatal:
 
 
 class TestSharedStorageRule:
-    """The plot stack loads BYPASSING ``_storage_to_python`` — deliberately,
+    """The plot stack loads BYPASSING ``storage_to_python`` — deliberately,
     for measured reasons (``load.load_variable``: 18x on a 17.4 M-sample
     column). What it must not have is its own COPY of what a stored cell
     means: it did, and the identical mask-dropping bug was found and fixed
@@ -167,11 +167,11 @@ class TestSharedStorageRule:
         assert out[1] == 0.5
 
     def test_both_layers_agree_on_a_null_bearing_cell(self):
-        from sciduckdb.sciduckdb import _storage_to_python
+        from sciduckdb.sciduckdb import storage_to_python
         from scistackplotdb.load import _float_row
 
         cell = np.ma.MaskedArray([0.0, 0.49, 0.45], mask=[True, False, False])
-        via_storage = _storage_to_python(
+        via_storage = storage_to_python(
             cell, {"python_type": "ndarray", "numpy_dtype": "float64"}
         )
         via_plot = _float_row(cell)
@@ -179,13 +179,13 @@ class TestSharedStorageRule:
         np.testing.assert_allclose(via_storage[1:], via_plot[1:])
 
     def test_a_real_zero_survives_both_layers(self):
-        from sciduckdb.sciduckdb import _storage_to_python
+        from sciduckdb.sciduckdb import storage_to_python
         from scistackplotdb.load import _float_row
 
         cell = np.array([0.0, 0.49])
         assert _float_row(cell)[0] == 0.0
         assert (
-            _storage_to_python(
+            storage_to_python(
                 cell, {"python_type": "ndarray", "numpy_dtype": "float64"}
             )[0]
             == 0.0

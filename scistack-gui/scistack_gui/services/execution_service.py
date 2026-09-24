@@ -191,52 +191,6 @@ def _db_path_input_params(db, function_name: str) -> dict[str, dict[str, str]]:
     return by_call
 
 
-def _fold_indexed_params(variant: dict, function_name: str) -> dict:
-    """Repair LEGACY history recorded as ``cycles_0 .. cycles_9`` for a
-    parameter ``cycles`` — the aggregation path's per-record upstream keys,
-    written as separate parameters until 2026-09-20 (edges now carry the
-    real name, several per parameter; ``scidb/tests/test_identity_parity.py``
-    keeps it so). Rows written before that still hold the split names, and a
-    target derived from them handed the function ten arguments it never had.
-    Folded against the function's real signature, so a parameter genuinely
-    named ``x_1`` is left alone. Retire once no database predates the
-    change."""
-    input_types = variant.get("input_types") or {}
-    if not input_types:
-        return variant
-    try:
-        from scistack_gui.services.pipeline_service import get_function_params
-
-        signature = set(get_function_params(function_name))
-    except Exception:  # noqa: BLE001 — an unregistered function keeps its history as is
-        return variant
-    folded: dict = {}
-    changed = False
-    for param, type_val in input_types.items():
-        target = param
-        if param not in signature:
-            base, sep, index = param.rpartition("_")
-            if sep and index.isdigit() and base in signature:
-                target = base
-                changed = True
-        if target in folded and folded[target] != type_val:
-            # Two records of DIFFERENT types under one parameter: keep both
-            # names rather than guess.
-            folded[param] = type_val
-            continue
-        folded[target] = type_val
-    if not changed:
-        return variant
-    logger.info(
-        "[execution] '%s': folded indexed upstream parameters %s onto %s "
-        "(history written before 2026-09-19)",
-        function_name,
-        sorted(p for p in input_types if p not in folded),
-        sorted(p for p in folded if p not in input_types),
-    )
-    return {**variant, "input_types": folded}
-
-
 def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[dict]:
     """Give each DB-history target its unified ``bindings``, so every target
     reaching ``build_run_inputs`` has the same shape regardless of whether it
@@ -550,11 +504,7 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
     fn_variants = _attach_db_path_inputs(
         db,
         function_name,
-        [
-            _fold_indexed_params(v, function_name)
-            for v in all_variants
-            if v["function_name"] == function_name
-        ],
+        [v for v in all_variants if v["function_name"] == function_name],
     )
 
     all_edges = pipeline_store.get_manual_edges(db)

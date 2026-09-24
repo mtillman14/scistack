@@ -35,7 +35,7 @@ def configure_remote_database(
     Returns:
         The ``RemoteDatabaseManager`` instance.
     """
-    from scidb.database import _local
+    from scidb.database import set_current_database
     from scidb.variable import BaseVariable
 
     from scilineage import configure_backend
@@ -47,5 +47,5 @@ def configure_remote_database(
         client.register(cls)
 
     configure_backend(client)
-    _local.database = client
+    set_current_database(client)
     return client

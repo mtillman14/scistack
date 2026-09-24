@@ -498,9 +498,7 @@ class TestGraduationMovesNodeConfig:
     only the rest staying in the ``_node_config`` blob. So
     ``migrate_node_config`` alone moves only the blob remainder — the
     statements move via ``intent_store.rekey_subject``, and the tests below
-    ask the entry point that does both. (``migrate_node_config`` is still
-    tested directly where the source really is the blob: the legacy
-    ``_pipeline_nodes.config`` column.)
+    ask the entry point that does both.
     """
 
     OLD = "fn__grSides__5c9r0r"
@@ -574,16 +572,6 @@ class TestGraduationMovesNodeConfig:
         pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
         assert pipeline_store.get_node_config(db, self.NEW)["schemaLevel"] == ["session"]
 
-    def test_legacy_pipeline_nodes_column_is_a_source(self, populated_db):
-        db = populated_db
-        self._fresh(db)
-        pipeline_store._duck(db)._execute(
-            "UPDATE _pipeline_nodes SET config = ? WHERE node_id = ?",
-            ['{"runOptions": {"as_table": true}}', self.OLD],
-        )
-        pipeline_store.migrate_node_config(db, self.OLD, self.NEW)
-        assert pipeline_store.get_node_config(db, self.NEW)["runOptions"] == {"as_table": True}
-
     def test_fresh_node_wins_and_previous_value_is_logged(self, populated_db, caplog):
         """The fresh node's location statement REPLACES the graduated id's,
         whole — not merged key by key as the old blob was.
@@ -631,10 +619,7 @@ class TestGraduationMovesNodeConfig:
     def test_graduate_manual_node_moves_config_before_deleting_the_row(self, populated_db):
         db = populated_db
         self._fresh(db)
-        pipeline_store._duck(db)._execute(
-            "UPDATE _pipeline_nodes SET config = ? WHERE node_id = ?",
-            ['{"schemaLevel": ["subject"]}', self.OLD],
-        )
+        pipeline_store.update_node_config(db, self.OLD, {"schemaLevel": ["subject"]})
         pipeline_store.graduate_manual_node(db, self.OLD, self.NEW)
         assert self.OLD not in pipeline_store.get_manual_nodes(db)
         assert pipeline_store.get_node_config(db, self.NEW) == {"schemaLevel": ["subject"]}

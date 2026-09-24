@@ -8,7 +8,7 @@ positions (x/y) remain in the JSON file as cosmetic data only.
 Tables created in the user's .duckdb file:
 
     _pipelines      (pipeline_id, name)
-    _pipeline_nodes (node_id, node_type, label, config, pipeline_id)
+    _pipeline_nodes (node_id, node_type, label, pipeline_id)
     _pipeline_edges (edge_id, source, target, source_handle, target_handle)
     _pipeline_uses  (use_id, parent_pipeline_id, child_pipeline_id, binding_json)
     _hypotheses     (pipeline_id, research_question, hypothesis_statement,
@@ -45,29 +45,22 @@ Edges carry no scope column: an edge lives in the scope of the nodes it
 connects (both endpoints are always in one scope; service-level queries
 filter edges via node membership).
 
-Migration
----------
-On first access (detected by the migration sentinel key in the JSON layout),
-any manual_nodes and manual_edges entries in the JSON are written to the DB
-and removed from the JSON.  This is a one-time, idempotent operation.
-
-``_ensure_tables`` itself creates every table with its final schema
-directly — no ALTER-TABLE migration steps. This is a beta project with no
-installed base to migrate (see ``feedback_beta_no_deprecation`` in
-project memory); once real databases exist that need a schema change,
-add a guarded ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` at that point.
+No migrations
+-------------
+``_ensure_tables`` creates every table with its final schema directly, and
+nothing upgrades an older database: beta, no installed base (decision
+2026-09-23; see ``feedback_beta_no_deprecation``). Execution intent (hides,
+wiring, pending values, node settings) lives in ``_intent``
+(``intent_store``), not in per-aspect tables.
 """
 
 import json
 import logging
 import uuid
-from pathlib import Path
 
 from scistack_gui.ids import ROOT_SCOPE
 
 logger = logging.getLogger(__name__)
-
-_MIGRATION_SENTINEL = "pipeline_db_migrated"
 
 # The reserved root scope is ``scistack_gui.ids.ROOT_SCOPE``.
 
@@ -78,23 +71,13 @@ def _duck(db):
 
 
 def _ensure_tables(db) -> None:
-    """Create pipeline tables if they don't already exist.
-
-    Beta project, no pre-existing databases to migrate: every table is
-    created with its final schema directly rather than via CREATE-then-
-    ALTER migration steps. If a schema change is ever needed against a
-    real installed base, add a guarded
-    ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` at that point —
-    sciduckdb's ``_execute`` et al. already recover the shared connection
-    from a failed autocommit statement, so a migration that fails safely
-    won't cascade into breaking unrelated queries.
-    """
+    """Create pipeline tables if they don't already exist, each with its
+    final schema (no migrations — see the module docstring)."""
     _duck(db)._execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_nodes (
             node_id     VARCHAR PRIMARY KEY,
             node_type   VARCHAR NOT NULL,
             label       VARCHAR NOT NULL,
-            config      VARCHAR DEFAULT '{}',
             pipeline_id VARCHAR NOT NULL DEFAULT 'main'
         )
     """)
@@ -119,55 +102,9 @@ def _ensure_tables(db) -> None:
         )
     """)
     _duck(db)._execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_edges (
-            edge_id       VARCHAR PRIMARY KEY,
-            source        VARCHAR NOT NULL,
-            target        VARCHAR NOT NULL,
-            source_handle VARCHAR,
-            target_handle VARCHAR
-        )
-    """)
-    _duck(db)._execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_pending_constants (
-            constant_name VARCHAR NOT NULL,
-            value         VARCHAR NOT NULL,
-            PRIMARY KEY (constant_name, value)
-        )
-    """)
-    _duck(db)._execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_builtin_functions (
             name     VARCHAR PRIMARY KEY,
             language VARCHAR NOT NULL
-        )
-    """)
-    _duck(db)._execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_hidden_nodes (
-            pipeline_id VARCHAR NOT NULL DEFAULT 'main',
-            node_id     VARCHAR NOT NULL,
-            PRIMARY KEY (pipeline_id, node_id)
-        )
-    """)
-    _duck(db)._execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_hidden_combos (
-            node_id       VARCHAR PRIMARY KEY,
-            function_name VARCHAR NOT NULL,
-            variant_key   VARCHAR NOT NULL
-        )
-    """)
-    # Constant-value hides (checkbox in ConstantNode.tsx) — a coarser
-    # granularity than _pipeline_hidden_combos: hiding (const_name, value)
-    # excludes every call site across every function that uses that pair,
-    # not just one function's one Cartesian-product row. Pipeline-id scoped
-    # from the start, unlike _pipeline_hidden_combos which was left globally
-    # scoped (see get_hidden_node_ids docstring) as a still-deferred
-    # follow-up — see .claude/plan-constant-source-of-truth-26-08-22.md
-    # design item 2.
-    _duck(db)._execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_hidden_constant_values (
-            pipeline_id VARCHAR NOT NULL DEFAULT 'main',
-            const_name  VARCHAR NOT NULL,
-            value       VARCHAR NOT NULL,
-            PRIMARY KEY (pipeline_id, const_name, value)
         )
     """)
     # Values written in one go by ParameterSettingsPanel's Generate section
@@ -188,7 +125,7 @@ def _ensure_tables(db) -> None:
     #
     # ``member_values`` holds the members as RENDERED STRINGS -- the same
     # form build_parameter_nodes puts on a node and
-    # _pipeline_hidden_constant_values stores -- so membership, hidden state
+    # the hidden-value statements store -- so membership, hidden state
     # and history rows all key alike. (Named ``member_values`` and not
     # ``values`` because VALUES is a SQL keyword and would need quoting at
     # every reference.) ``spec`` is kept as well as the members so the
@@ -237,17 +174,6 @@ def _ensure_tables(db) -> None:
             PRIMARY KEY (name, template, root_folder)
         )
     """)
-    _duck(db)._execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_hidden_edges (
-            pipeline_id   VARCHAR NOT NULL DEFAULT 'main',
-            edge_id       VARCHAR NOT NULL,
-            source        VARCHAR NOT NULL,
-            target        VARCHAR NOT NULL,
-            source_handle VARCHAR,
-            target_handle VARCHAR,
-            PRIMARY KEY (pipeline_id, edge_id)
-        )
-    """)
     # Hidden subpipeline ports (to-do #9) — a scope's exposed inputs/
     # outputs are computed automatically from wiring (see
     # domain.scope_filter.document_interface); this table is a per-scope
@@ -278,7 +204,7 @@ def _ensure_tables(db) -> None:
             binding_json       VARCHAR DEFAULT '{}'
         )
     """)
-    # The root scope always exists; pre-scoping nodes backfill into it.
+    # The root scope always exists.
     _duck(db)._execute(
         "INSERT INTO _pipelines (pipeline_id, name) VALUES (?, ?) "
         "ON CONFLICT DO NOTHING",
@@ -296,16 +222,15 @@ def _ensure_tables(db) -> None:
         )
     """)
     # The root pipeline is the default hypothesis, tagged the same as any
-    # other (one-time, idempotent — existing DBs backfill on next access).
+    # other.
     _duck(db)._execute(
         "INSERT INTO _hypotheses (pipeline_id) VALUES (?) ON CONFLICT DO NOTHING",
         [ROOT_SCOPE],
     )
 
-    # The intent store (`_intent`): one table, one shape, for statements
-    # about runs — replacing the tables above one ASPECT at a time.
-    # `columns` has moved; the rest still live where they always did. See
-    # docs/claude/intent-and-fact.md and scistack_gui/intent_store.py.
+    # The intent store (`_intent`): one table, one shape, for every
+    # statement about runs. See docs/claude/intent-and-fact.md and
+    # scistack_gui/intent_store.py.
     from scistack_gui import intent_store
 
     intent_store.ensure_tables(db)
@@ -317,75 +242,6 @@ def _ensure_tables(db) -> None:
     from scistack_gui import node_wiring
 
     node_wiring.ensure_tables(db)
-
-
-def migrate_from_json(db, layout_path: Path) -> None:
-    """One-time migration: move manual_nodes/manual_edges from JSON into DB.
-
-    Safe to call repeatedly — checks the migration sentinel before acting.
-    """
-    logger.info(
-        "[pipeline_store] migrate_from_json called (layout_path=%s)", layout_path
-    )
-    _ensure_tables(db)
-
-    if not layout_path.exists():
-        logger.debug("[pipeline_store] Layout file does not exist, skipping migration")
-        return
-
-    logger.info("[pipeline_store] Loading layout JSON file")
-    with layout_path.open() as f:
-        try:
-            data = json.load(f)
-        except Exception:
-            logger.debug("[pipeline_store] Failed to parse JSON, skipping migration")
-            return
-
-    if data.get(_MIGRATION_SENTINEL):
-        logger.debug(
-            "[pipeline_store] Migration already completed (sentinel found), skipping"
-        )
-        return  # Already migrated.
-
-    logger.info("[pipeline_store] Migrating manual_nodes and manual_edges to DuckDB")
-    manual_nodes: dict = data.get("manual_nodes", {})
-    manual_edges: list = data.get("manual_edges", [])
-    logger.debug(
-        "[pipeline_store] Found %d manual nodes and %d manual edges in JSON",
-        len(manual_nodes),
-        len(manual_edges),
-    )
-
-    migrated_nodes = 0
-    for node_id, meta in manual_nodes.items():
-        node_type = meta.get("type", "")
-        label = meta.get("label", "")
-        if node_type and label:
-            _upsert_node(db, node_id, node_type, label)
-            migrated_nodes += 1
-
-    migrated_edges = 0
-    for edge in manual_edges:
-        edge_id = edge.get("id", "")
-        if edge_id:
-            write_manual_edge(db, edge)
-            migrated_edges += 1
-
-    logger.info(
-        "[pipeline_store] Writing migration sentinel to JSON and removing migrated data"
-    )
-    # Clear migrated keys from JSON and write sentinel.
-    data.pop("manual_nodes", None)
-    data.pop("manual_edges", None)
-    data[_MIGRATION_SENTINEL] = True
-    with layout_path.open("w") as f:
-        json.dump(data, f, indent=2)
-
-    logger.info(
-        "[pipeline_store] Migration complete - migrated %d nodes and %d edges from JSON to DuckDB",
-        migrated_nodes,
-        migrated_edges,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,16 +279,16 @@ def get_manual_nodes(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
     _ensure_tables(db)
     if pipeline_id is None:
         rows = _duck(db)._fetchall(
-            "SELECT node_id, node_type, label, config, pipeline_id FROM _pipeline_nodes"
+            "SELECT node_id, node_type, label, pipeline_id FROM _pipeline_nodes"
         )
     else:
         rows = _duck(db)._fetchall(
-            "SELECT node_id, node_type, label, config, pipeline_id "
+            "SELECT node_id, node_type, label, pipeline_id "
             "FROM _pipeline_nodes WHERE pipeline_id = ?",
             [pipeline_id],
         )
-    # _node_config is the live store; the row's own `config` column is the
-    # legacy one. Overlaying here rather than at each call site keeps every
+    # A manual node's "config" is its _node_config blob plus its intent
+    # statements. Overlaying here rather than at each call site keeps every
     # existing consumer (export, copy/paste, graph build) reading one
     # "config" key that means the same thing everywhere -- otherwise each
     # would have to learn about the split and one of them would be missed.
@@ -451,14 +307,9 @@ def get_manual_nodes(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
         entry: dict = {
             "type": row[1],
             "label": row[2],
-            "pipeline_id": row[4] or ROOT_SCOPE,
+            "pipeline_id": row[3] or ROOT_SCOPE,
         }
         overrides = _overrides(entry["pipeline_id"])
-        if row[3] and row[3] != "{}":
-            try:
-                entry["config"] = json.loads(row[3])
-            except (json.JSONDecodeError, TypeError):
-                pass
         override = overrides.get(row[0])
         if override:
             entry["config"] = override
@@ -544,20 +395,11 @@ def update_node_config(db, node_id: str, config: dict) -> None:
 
 
 def get_node_config(db, node_id: str) -> dict:
-    """One node's saved config, or ``{}``.
-
-    Falls back to the legacy ``_pipeline_nodes.config`` column so configs saved
-    before the ``_node_config`` split are not orphaned. Nothing writes that
-    column any more.
-    """
+    """One node's saved config, or ``{}``."""
     _ensure_tables(db)
     row = _duck(db)._fetchone(
         "SELECT config FROM _node_config WHERE node_id = ?", [node_id]
     )
-    if row is None:
-        row = _duck(db)._fetchone(
-            "SELECT config FROM _pipeline_nodes WHERE node_id = ?", [node_id]
-        )
     config: dict = {}
     if row is not None and row[0]:
         try:
@@ -593,8 +435,7 @@ def _with_graduated_aspects(db, node_id: str, config: dict) -> dict:
 
 
 def get_node_configs(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
-    """``{node_id: config}`` for every node that has one, legacy column
-    included (``_node_config`` wins where both exist).
+    """``{node_id: config}`` for every node that has one.
 
     With *pipeline_id*, the graduated aspects are RESOLVED for that scope
     and keyed by the bare id — what a canvas build wants. Without it they
@@ -604,23 +445,19 @@ def get_node_configs(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
     """
     _ensure_tables(db)
     configs: dict[str, dict] = {}
-    for table in ("_pipeline_nodes", "_node_config"):
-        for node_id, raw in _duck(db)._fetchall(
-            f"SELECT node_id, config FROM {table}"  # noqa: S608 - fixed literals
-        ):
-            if not raw:
-                continue
-            try:
-                parsed = json.loads(raw)
-            except (ValueError, TypeError):
-                logger.warning(
-                    "[pipeline_store] node %r has unparseable config JSON — "
-                    "ignoring it",
-                    node_id,
-                )
-                continue
-            if parsed:
-                configs[node_id] = parsed
+    for node_id, raw in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            logger.warning(
+                "[pipeline_store] node %r has unparseable config JSON — ignoring it",
+                node_id,
+            )
+            continue
+        if parsed:
+            configs[node_id] = parsed
 
     # Graduated aspects, merged back in for display — including for nodes
     # that have NO `_node_config` row at all, which is the normal case once
@@ -690,8 +527,7 @@ def migrate_node_config(db, old_id: str, new_id: str) -> dict:
     """Move a node's saved settings from *old_id* to *new_id* — the third
     thing graduation has to carry across, beside position and edges.
 
-    Sources, in increasing precedence: the legacy ``_pipeline_nodes.config``
-    column, then ``_node_config`` rows whose bare id is *old_id*'s (a fresh
+    Sources: the ``_node_config`` rows whose bare id is *old_id*'s (a fresh
     node's config is usually keyed bare, sometimes ``::scope``-qualified).
     The merged result is written OVER whatever *new_id* already has — the
     fresh node's settings win: the realistic route to a conflict is a wired
@@ -703,8 +539,7 @@ def migrate_node_config(db, old_id: str, new_id: str) -> dict:
     The migrated ``_node_config`` row(s) are renamed away: this is a move —
     the content lives on under *new_id* — and leaving the source row would
     keep ``apply_placement_configs``' orphan WARN firing forever for a
-    setting that did rehydrate. Must run BEFORE the ``_pipeline_nodes`` row
-    is deleted, or the legacy column is gone.
+    setting that did rehydrate.
 
     Returns ``{"moved": [keys], "replaced": {key: previous_value}}``; both
     empty when there was nothing to move.
@@ -726,11 +561,6 @@ def migrate_node_config(db, old_id: str, new_id: str) -> dict:
             return {}
 
     merged: dict = {}
-    legacy = _duck(db)._fetchone(
-        "SELECT config FROM _pipeline_nodes WHERE node_id = ?", [old_id]
-    )
-    if legacy is not None:
-        merged.update(_parse(legacy[0], f"legacy row {old_id!r}"))
     source_rows: list[str] = []
     for nid, raw in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
         if strip_placement(nid) != old_bare:
@@ -1464,7 +1294,7 @@ def list_path_input_history(db, name: "str | None" = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Hidden constant values — see _pipeline_hidden_constant_values above.
+# Hidden constant values — stored as `hidden` statements in the intent store.
 # ---------------------------------------------------------------------------
 
 

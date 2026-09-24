@@ -612,6 +612,21 @@ class OverlayJoin:
     reason: str
 
 
+def overlay_in_legend(spec: PlotSpec, color: str | None) -> bool:
+    """Whether the overlay's own colour levels are listed in the legend.
+
+    ``color`` is the ACTIVE overlay colour (:func:`overlay_color`, or
+    ``ResolvedPlot.sample_color``). Painted in its mark's colour the overlay
+    adds nothing a legend could say, so there is nothing to list; with its
+    own colour it is listed unless ``PlotSpec.sample_in_legend`` is off, and
+    then the legend reads exactly as though no key were shown (user,
+    2026-09-23: a 14-subject block took half of spec/images/graph2.png).
+    The ONE statement of that rule: ``render.base.sample_legend_levels``
+    (both renderers) and ``codegen`` read it, never the field.
+    """
+    return bool(color) and spec.sample_in_legend
+
+
 def overlay_join(
     spec: PlotSpec,
     roles: dict[str, Role],

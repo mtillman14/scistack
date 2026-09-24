@@ -399,7 +399,9 @@ def test_matplotlib_ticks_name_the_inner_layer(study_table):
 
     drawn = render_matplotlib(resolve(_study_spec(), study_table)[0])
     labels = [t.get_text() for t in drawn.axes[0].get_xticklabels() if t.get_text()]
-    assert labels == SESSIONS * len(GROUPS)
+    # S1..S3 are numbered labels sharing "S", which the label fit drops
+    # (ticklabels.strip_prefix) — still the inner layer, one run per bracket.
+    assert labels == [s.removeprefix("S") for s in SESSIONS] * len(GROUPS)
     matplotlib.pyplot.close(drawn)
 
 

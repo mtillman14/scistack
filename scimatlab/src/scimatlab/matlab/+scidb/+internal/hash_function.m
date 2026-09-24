@@ -1,7 +1,12 @@
-function hash = hash_function(fcn)
+function [hash, source] = hash_function(fcn)
 %HASH_FUNCTION  Compute a SHA-256 hash identifying a MATLAB function.
 %
 %   hash = scidb.internal.hash_function(@my_function)
+%   [hash, source] = scidb.internal.hash_function(@my_function)
+%
+%   SOURCE is the exact .m text that was hashed, so the save can store the
+%   code behind the hash (cleanup-audit F35: MATLAB source was never
+%   captured, only its digest).
 %
 %   For named functions, hashes the full source code of the .m file.
 %   Anonymous functions are not supported (error).

@@ -79,10 +79,9 @@ def function_sources_for(fn) -> tuple[str, str | None, dict]:
 
     MATLAB is handled by duck-typing a ``source_text`` attribute, matching how
     ``function_hash_for`` duck-types ``source_hash`` (scidb does not import
-    scimatlab). **Nothing supplies it yet** — ``MatlabLineageFcn`` and the
-    bridge's sentinel carry only the digest — so MATLAB functions currently
-    capture no source. The hook is here so closing that is a bridge-side change
-    rather than a scidb one.
+    scimatlab). The bridge's sentinel carries both since 2026-09-23 — the .m
+    text MATLAB hashed, attached only when it re-hashes to the digest
+    (cleanup-audit F35). ``MatlabLineageFcn`` still carries only the digest.
 
     A ``source_hash`` with NO text means exactly that: nothing to capture,
     returned as no units. The object in hand is then only a stand-in for the

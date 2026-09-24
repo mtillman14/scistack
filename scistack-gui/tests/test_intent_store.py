@@ -222,16 +222,6 @@ class TestResolution:
         assert plan.columns == {"cycles": _sel("ankle")}
 
 
-class TestImport:
-    def test_the_one_time_import_does_not_resurrect_a_deletion(self, populated_db):
-        """The marker makes the import idempotent: a selection deleted after
-        it ran must stay deleted on the next start."""
-        intent_store.set_column_selections(populated_db, NODE, {"cycles": _sel("ankle")})
-        intent_store.clear_aspect(populated_db, NODE, ASPECT_COLUMNS, ROOT_SCOPE)
-        intent_store.ensure_tables(populated_db)
-        assert intent_store.load_statements(populated_db, subject_refs=[NODE]) == []
-
-
 # ---------------------------------------------------------------------------
 # Every other execution-intent aspect, through pipeline_store's unchanged API
 # ---------------------------------------------------------------------------
@@ -355,34 +345,6 @@ class TestWiringAndConstants:
         assert pipeline_store.get_pending_constants(populated_db) == {"low_hz": {"50"}}
 
 
-class TestImports:
-    def test_legacy_rows_are_carried_over_once(self, populated_db):
-        """Rows written straight into the OLD tables (a database from before
-        the store) are imported on the next start, and left in place."""
-        pipeline_store._ensure_tables(populated_db)
-        duck = pipeline_store._duck(populated_db)
-        duck._execute(
-            "INSERT INTO _pipeline_hidden_constant_values (pipeline_id, const_name, value) "
-            "VALUES ('main', 'legacy', '7')"
-        )
-        duck._execute(
-            "INSERT INTO _pipeline_edges (edge_id, source, target) VALUES ('old_e', 'a', 'b')"
-        )
-        duck._execute("DELETE FROM _intent WHERE subject_kind = 'migration'")
-        intent_store.run_imports(populated_db)
-
-        assert {"const_name": "legacy", "value": "7"} in pipeline_store.list_hidden_parameter_values(
-            populated_db, "main"
-        )
-        assert any(e["id"] == "old_e" for e in pipeline_store.get_manual_edges(populated_db))
-        # the source rows are untouched
-        assert duck._fetchone("SELECT count(*) FROM _pipeline_edges")[0] == 1
-        # and a second start does not re-import what the user then removes
-        pipeline_store.delete_manual_edge(populated_db, "old_e")
-        intent_store.run_imports(populated_db)
-        assert not any(e["id"] == "old_e" for e in pipeline_store.get_manual_edges(populated_db))
-
-
 class TestScopeAware:
     """Stage 6 of `.claude/plan-architecture-2026-09-20.md`: a statement is
     made ON a canvas and applies on that canvas. The scope comes from the
@@ -498,35 +460,3 @@ class TestScopeAware:
         assert _hidden_constant_values(populated_db, "pipe_b") == {"HZ": {"10"}}
         assert _hidden_constant_values(populated_db, ROOT_SCOPE) == {}
         assert _hidden_constant_values(populated_db, None) == {"HZ": {"10"}}
-
-
-class TestImportOnceNeverDropsRowsOnAFailure:
-    """cleanup-audit F1: the one-time legacy import marked itself done on ANY
-    error, so a lock during it dropped the legacy rows for good."""
-
-    def test_a_transient_failure_is_retried_not_marked_done(self, populated_db):
-        import duckdb
-
-        intent_store.ensure_tables(populated_db)
-
-        def locked(_db):
-            raise duckdb.IOException("IO Error: Could not set lock on file")
-
-        intent_store._import_once(populated_db, "test_f1_locked", "hidden", locked)
-        assert not intent_store._imported(populated_db, "test_f1_locked")
-
-        intent_store._import_once(populated_db, "test_f1_locked", "hidden", lambda _db: 3)
-        assert intent_store._imported(populated_db, "test_f1_locked")
-
-    def test_a_missing_source_table_is_nothing_to_copy(self, populated_db):
-        import duckdb
-
-        intent_store.ensure_tables(populated_db)
-
-        def missing(_db):
-            raise duckdb.CatalogException(
-                "Catalog Error: Table with name _pipeline_x does not exist!"
-            )
-
-        intent_store._import_once(populated_db, "test_f1_missing", "hidden", missing)
-        assert intent_store._imported(populated_db, "test_f1_missing")

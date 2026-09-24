@@ -32,11 +32,10 @@ answers. This is the one shape:
 normalizers and the resolver are ``scidb.intent``; if that layer ever had to
 import this one, the design would be wrong.
 
-**Aspect by aspect.** Every execution-intent aspect has graduated — see
-``GRADUATED_ASPECTS`` for which table each replaced. ``pipeline_store`` keeps
-its public accessors and delegates to the functions here, so no caller
-changed; the old tables are left in place, rows untouched, until the copy has
-been seen complete on a real database.
+**Every execution-intent aspect lives here.** ``pipeline_store`` keeps its
+public accessors and delegates to the functions here. The per-aspect tables
+this replaced, and the one-time import from them, were removed 2026-09-23:
+beta, no databases to migrate (cleanup-audit, migrations).
 """
 
 from __future__ import annotations
@@ -66,30 +65,11 @@ from scistack_gui.ids import PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX, VAR_ID_PREFI
 
 logger = logging.getLogger(__name__)
 
-#: Aspects that have moved into this table, with the table each replaced.
-#: Every execution-intent table has moved; the old tables are left in place
-#: (rows untouched) until the copy has been seen complete on a real database.
-#: Display intent (layout, value groups, hidden ports, hypothesis prose) is
-#: deliberately not here — see docs/claude/intent-and-fact.md §4.
-GRADUATED_ASPECTS = {
-    ASPECT_COLUMNS: "_node_config.columnSelections",
-    ASPECT_RUN_OPTIONS: "_node_config.runOptions",
-    ASPECT_SCHEMA_LOCATION: "_node_config.schemaSelection/schemaLevel/whereFilters",
-    ASPECT_HIDDEN: "_pipeline_hidden_nodes/_combos/_constant_values/_edges",
-    ASPECT_WIRING: "_pipeline_edges",
-    ASPECT_CONSTANTS: "_pipeline_pending_constants",
-}
-
 #: The `_node_config` blob key each single-key node aspect used to live under.
 NODE_CONFIG_KEYS = {
     ASPECT_COLUMNS: "columnSelections",
     ASPECT_RUN_OPTIONS: "runOptions",
 }
-
-#: Marker rows recording each one-time import (subject_ref = import name), so
-#: none can run twice and re-create statements the user has since deleted.
-_MIGRATION_SUBJECT = ("migration", "")
-
 
 def _duck(db):
     from scistack_gui.pipeline_store import _duck as _d
@@ -98,7 +78,7 @@ def _duck(db):
 
 
 def ensure_tables(db) -> None:
-    """Create ``_intent`` if absent and run the one-time import.
+    """Create ``_intent`` if absent.
 
     Called from ``pipeline_store._ensure_tables`` so every path that touches
     the GUI database gets it, exactly like the tables it replaces.
@@ -116,7 +96,6 @@ def ensure_tables(db) -> None:
             PRIMARY KEY (subject_kind, subject_ref, scope, aspect, aspect_key)
         )
     """)
-    run_imports(db)
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +187,6 @@ def load_statements(
     for kind, ref, scope, asp, akey, raw, origin, stated_at in _duck(db)._fetchall(
         sql, params
     ):
-        if kind == _MIGRATION_SUBJECT[0]:
-            continue  # bookkeeping, not a statement about any subject
         try:
             value = json.loads(raw) if raw else None
         except (TypeError, ValueError):
@@ -420,82 +397,8 @@ def copy_scope(db, src_scope: str, dst_scope: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# One-time imports
+# Helpers
 # ---------------------------------------------------------------------------
-# Each source table is carried over exactly once, guarded by a marker row, so
-# a statement the user deletes afterwards is never resurrected on the next
-# start. The source rows are left alone: a user's saved state is data, and
-# "remove" means hide, never delete. Dropping the old tables is a separate,
-# deliberate step after the copy has been seen to be complete on a real
-# database — not something a startup path does on its own.
-
-
-def _imported(db, name: str) -> bool:
-    return (
-        _duck(db)._fetchone(
-            "SELECT 1 FROM _intent WHERE subject_kind = ? AND subject_ref = ?",
-            [_MIGRATION_SUBJECT[0], name],
-        )
-        is not None
-    )
-
-
-def _mark_imported(db, name: str, aspect: str, detail: dict) -> None:
-    _duck(db)._execute(
-        """
-        INSERT INTO _intent (subject_kind, subject_ref, scope, aspect,
-                             aspect_key, value_json, origin, stated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT DO NOTHING
-        """,
-        [
-            _MIGRATION_SUBJECT[0],
-            name,
-            GLOBAL_SCOPE,
-            aspect,
-            "",
-            json.dumps(detail),
-            "migration",
-            datetime.now().isoformat(),
-        ],
-    )
-
-
-def _import_once(db, name: str, aspect: str, importer) -> None:
-    """Run *importer(db) -> int* once, ever, under *name*."""
-    if _imported(db, name):
-        return
-    from scidb.intent import is_missing_table
-
-    try:
-        count = importer(db)
-    except Exception as exc:
-        if not is_missing_table(exc):
-            # NOT marked imported: a lock or any other transient failure must
-            # be retried on the next open. Marking it done here (as this used
-            # to, for every error) dropped the legacy rows for good
-            # (cleanup-audit F1).
-            logger.error(
-                "[intent_store] import %s FAILED (%s: %s) — will retry on the "
-                "next open; legacy rows not yet carried over",
-                name,
-                type(exc).__name__,
-                exc,
-            )
-            return
-        # A source table this database never had (fresh DB): nothing to copy.
-        logger.debug("[intent_store] import %s: no source table", name)
-        count = 0
-    _mark_imported(db, name, aspect, {"imported": count})
-    logger.info("[intent_store] import %s: %d row(s) carried over", name, count)
-
-
-def _rows(db, sql: str, params=None) -> list:
-    # scidb owns what a failed intent read means: a missing table is "nothing
-    # stated", anything else (a lock, above all) raises (cleanup-audit F1).
-    from scidb.intent import fetch_intent_rows
-
-    return fetch_intent_rows(_duck(db), sql, params)
 
 
 def _subject_kind_for_node(node_id: str) -> str:
@@ -759,22 +662,6 @@ def node_config_overlay_every_scope(db) -> dict[str, dict]:
     return out
 
 
-def _import_node_config(db) -> int:
-    imported = 0
-    for node_id, raw in _rows(db, "SELECT node_id, config FROM _node_config"):
-        try:
-            config = json.loads(raw) if raw else {}
-        except (TypeError, ValueError):
-            continue
-        if not config:
-            continue
-        before = len(config)
-        rest = split_node_config(db, node_id, config)
-        if len(rest) != before:
-            imported += 1
-    return imported
-
-
 # ---------------------------------------------------------------------------
 # `hidden`: nodes, one-combo-of-a-node, parameter values, edges
 # ---------------------------------------------------------------------------
@@ -937,32 +824,6 @@ def hidden_edges(db, pipeline_id: str | None) -> list[dict]:
     ]
 
 
-def _import_hidden(db) -> int:
-    n = 0
-    for pipeline_id, node_id in _rows(db, "SELECT pipeline_id, node_id FROM _pipeline_hidden_nodes"):
-        hide_node(db, node_id, pipeline_id)
-        n += 1
-    for node_id, fn, vk in _rows(db, "SELECT node_id, function_name, variant_key FROM _pipeline_hidden_combos"):
-        try:
-            hide_combo(db, node_id, fn, json.loads(vk) if vk else {})
-            n += 1
-        except (TypeError, ValueError):
-            continue
-    for pipeline_id, const_name, value in _rows(
-        db, "SELECT pipeline_id, const_name, value FROM _pipeline_hidden_constant_values"
-    ):
-        hide_parameter_values(db, const_name, [value], pipeline_id)
-        n += 1
-    for pipeline_id, edge_id, src, tgt, sh, th in _rows(
-        db,
-        "SELECT pipeline_id, edge_id, source, target, source_handle, target_handle "
-        "FROM _pipeline_hidden_edges",
-    ):
-        hide_edge(db, edge_id, src, tgt, sh, th, pipeline_id)
-        n += 1
-    return n
-
-
 # ---------------------------------------------------------------------------
 # `wiring`: manual edges
 # ---------------------------------------------------------------------------
@@ -1039,17 +900,6 @@ def delete_edges_touching(db, node_id: str) -> int:
             n += delete_manual_edge(db, s.subject_ref)
     return n
 
-def _import_edges(db) -> int:
-    n = 0
-    for edge_id, src, tgt, sh, th in _rows(
-        db, "SELECT edge_id, source, target, source_handle, target_handle FROM _pipeline_edges"
-    ):
-        write_manual_edge(
-            db, {"id": edge_id, "source": src, "target": tgt, "sourceHandle": sh, "targetHandle": th}
-        )
-        n += 1
-    return n
-
 
 # ---------------------------------------------------------------------------
 # `constants`: pending (staged) constant values
@@ -1089,14 +939,6 @@ def pending_constants(db) -> dict[str, set[str]]:
         if s.key is not None:
             out.setdefault(s.subject_ref, set()).add(s.key)
     return out
-
-
-def _import_pending_constants(db) -> int:
-    n = 0
-    for const_name, value in _rows(db, "SELECT constant_name, value FROM _pipeline_pending_constants"):
-        add_pending_constant(db, const_name, value)
-        n += 1
-    return n
 
 
 # ---------------------------------------------------------------------------
@@ -1156,23 +998,3 @@ def variant_selections(db, variable: str, scope: str | None = None) -> list[dict
     )
     rows.sort(key=lambda s: (str(s.stated_at or ""), s.key or ""))
     return [dict(s.value) for s in rows if isinstance(s.value, dict)]
-
-
-# ---------------------------------------------------------------------------
-# Startup: every import, once
-# ---------------------------------------------------------------------------
-
-#: ``(name, aspect, importer)`` — the migration's progress bar. An aspect is
-#: graduated when its importer is here and its accessors above are what
-#: `pipeline_store` delegates to.
-IMPORTS = (
-    ("node_config_import", ASPECT_COLUMNS, _import_node_config),
-    ("hidden_import", ASPECT_HIDDEN, _import_hidden),
-    ("edges_import", ASPECT_WIRING, _import_edges),
-    ("pending_constants_import", ASPECT_CONSTANTS, _import_pending_constants),
-)
-
-
-def run_imports(db) -> None:
-    for name, aspect, importer in IMPORTS:
-        _import_once(db, name, aspect, importer)

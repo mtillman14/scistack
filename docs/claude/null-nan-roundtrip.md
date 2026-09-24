@@ -35,7 +35,7 @@ MATLAB writes  [NaN 0.49146 0.45202]
   → loaded     [0.0,  0.49146, 0.45202]      (WRONG — the mask was dropped)
 ```
 
-That one `np.asarray` in `_storage_to_python` sat under **every** load path, so
+That one `np.asarray` in `storage_to_python` sat under **every** load path, so
 the corruption was uniform and invisible: `load()`, `load_all_as_df`, the
 `for_each` spread load, and both MATLAB bridge routes all funnel through it.
 
@@ -64,7 +64,7 @@ about *values* at the same location, check `0 new rows` first. It separates
 ## Where the fix lives
 
 `sciduckdb.sciduckdb._array_from_storage` — one helper, called from every
-`ndarray`/`list`-of-array branch of `_storage_to_python`:
+`ndarray`/`list`-of-array branch of `storage_to_python`:
 
 ```python
 if isinstance(value, np.ma.MaskedArray) and np.ma.is_masked(value):
@@ -87,7 +87,7 @@ Two consequences worth knowing:
 
 `SciDuck.load` restores each cell **twice** — `_restore_types` walks every
 column, then the `multi_column` / `single_column` branch calls
-`_storage_to_python` again on the same cell. That was harmless while
+`storage_to_python` again on the same cell. That was harmless while
 restoration was a pure re-cast, and stopped being harmless the moment the
 upcast existed: the second pass sees a plain `float64` array whose *declared*
 dtype is still `int64`, and `np.asarray([1., nan], dtype=int64)` casts the NaN

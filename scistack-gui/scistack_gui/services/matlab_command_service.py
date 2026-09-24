@@ -439,7 +439,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     Returns:
         {"command": str} with the MATLAB command string.
     """
-    from scistack_gui import layout as layout_store
+    from scistack_gui import pipeline_store
     from scistack_gui import matlab_registry
     from scistack_gui import registry
     from scistack_gui.api.matlab_command import generate_matlab_command as _fmt
@@ -541,8 +541,8 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         name: path_input_display(obj)
         for name, obj in registry.get_path_inputs_registry().items()
     }
-    manual_edges = layout_store.read_manual_edges()
-    manual_nodes = layout_store.get_manual_nodes()
+    manual_edges = pipeline_store.get_manual_edges(db)
+    manual_nodes = pipeline_store.get_manual_nodes(db)
     path_input_params.update(
         _collect_edge_path_inputs(function_name, saved_pis, manual_edges, manual_nodes)
     )
@@ -784,7 +784,6 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     Returns:
         {"command": str, "warnings": list[str]}
     """
-    from scistack_gui import layout as layout_store
     from scistack_gui import matlab_registry
     from scistack_gui import pipeline_store
     from scistack_gui import registry as _reg
@@ -838,8 +837,8 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     saved_sweeps = {
         name: list(sw.alternatives) for name, sw in _reg.get_parameters_registry().items()
     }
-    manual_edges = layout_store.read_manual_edges()
-    manual_nodes = layout_store.get_manual_nodes()
+    manual_edges = pipeline_store.get_manual_edges(db)
+    manual_nodes = pipeline_store.get_manual_nodes(db)
 
     steps: list[dict] = []
     warnings: list[str] = []

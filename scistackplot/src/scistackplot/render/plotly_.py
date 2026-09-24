@@ -22,6 +22,7 @@ from scistacklog import Log
 
 from ..figsize import describe_size
 from ..resolved import ResolvedPlot
+from ..roles import overlay_in_legend
 from ..spec import PlotKind
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
@@ -63,8 +64,18 @@ LAYER = "scistackplot"
 BARE_RIGHT_MARGIN = 20
 
 
-def render(resolved: ResolvedPlot) -> dict:
-    """Build a plotly.js figure dict."""
+def render(
+    resolved: ResolvedPlot,
+    *,
+    decisions: dict | None = None,
+    fixed_size_px: tuple[float, float] | None = None,
+) -> dict:
+    """Build a plotly.js figure dict.
+
+    ``decisions`` (``mpl.layout_decisions``) are applied as they are — see
+    :func:`_apply_decisions`. ``fixed_size_px`` draws at that size instead of
+    filling the pane.
+    """
     with Log.timer("render_plotly", layer=LAYER, extra=str(resolved.kind)):
         n_rows, n_cols = grid_shape(resolved)
         style = resolved.spec.style
@@ -198,6 +209,15 @@ def render(resolved: ResolvedPlot) -> dict:
         if legend_on and len(dash_levels(resolved)) > 1:
             traces.extend(_dash_legend_traces(resolved))
 
+        # The font the decisions were measured in (matplotlib's default),
+        # so the preview's glyphs are the ones the export was fitted to.
+        layout["font"]["family"] = PREVIEW_FONT_FAMILY
+        if decisions is not None:
+            _apply_decisions(layout, resolved, decisions)
+        if fixed_size_px is not None:
+            width, height = (round(float(v)) for v in fixed_size_px)
+            layout.update(width=width, height=height, autosize=False)
+            layout["meta"]["fixed_size"] = [width, height]
         return {"data": traces, "layout": layout}
 
 
@@ -236,6 +256,9 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
 
         layout["annotations"].append(
             {
+                # Tagged so `_apply_decisions` can find this bracket label
+                # (a valid plotly annotation attribute, used for templates).
+                "name": f"{X_GROUP_TAG}:{group.depth}:{group.start}",
                 "text": group.label,
                 "x": (left + right) / 2.0,
                 "y": y,
@@ -480,6 +503,8 @@ def _sample_traces(
         return []
     seen = seen_legend if seen_legend is not None else set()
     own_color = bool(resolved.sample_color)
+    # Listed only when the one rule says so (roles.overlay_in_legend).
+    listed = overlay_in_legend(resolved.spec, resolved.sample_color)
     size = 8.0 * float(np.sqrt(SAMPLE_MARKER_FRACTION))  # the marks draw at 8
     traces: list[dict] = []
     for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
@@ -493,7 +518,7 @@ def _sample_traces(
             levels = [
                 str(v).replace(LEAF_SEPARATOR, " · ") for v in rows[resolved.encoding.x].to_numpy()
             ]
-            show_legend = own_color and legend_on and legend_group not in seen
+            show_legend = listed and legend_on and legend_group not in seen
             if show_legend:
                 seen.add(legend_group)
             traces.append(
@@ -822,7 +847,9 @@ def _add_axes(
 LEGEND_CHAR_PX = 8
 #: Swatch, padding and the gap between the panels and the legend.
 LEGEND_FIXED_PX = 48
-#: Same cap as the matplotlib path (mpl.MAX_LEGEND_FRACTION), in pixels against
+#: The preview's own cap (the export now narrows its legend to
+#: mpl.LEGEND_BUDGET or moves it below the panels; the preview follows in
+#: stage 4 of .claude/plan-tick-label-legibility.md), in pixels against
 #: the default figure width.
 MAX_LEGEND_PX = 320
 
@@ -905,3 +932,103 @@ def _rgba(hex_color: str, alpha: float) -> str:
     hex_color = hex_color.lstrip("#")
     r, g, b = (int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r},{g},{b},{alpha})"
+
+
+# ---------------------------------------------------------------------------
+# Applying the export's decisions (mpl.layout_decisions) to the preview
+
+#: matplotlib's default font first: the decisions were measured in it. Arial
+#: is the fallback because it is NARROWER than DejaVu Sans, so a label fitted
+#: in DejaVu still fits; Verdana, wider, would not.
+PREVIEW_FONT_FAMILY = "DejaVu Sans, Arial, sans-serif"
+
+#: ``name`` prefix of a bracket-label annotation (``_add_x_groups``).
+X_GROUP_TAG = "x-group"
+
+#: The preview is drawn at 1 pt = 1 px — the convention ``font_size`` already
+#: follows (`layout.font.size`), so a decision in points is one in pixels.
+PX_PER_IN = 72.0
+
+
+def _html(text: str) -> str:
+    return str(text).replace("\n", "<br>")
+
+
+def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> None:
+    """Draw what the export decided, rather than deciding again.
+
+    Tick labels (stripped, wrapped, thinned), their angle and font; bracket
+    labels' font and wrapping; the legend's font, wrapped title and place
+    (right, or below the panels) with the margin it needs. Anything the
+    decisions do not cover is left as the renderer drew it.
+    """
+    width_px = float(decisions.get("width_in") or resolved.spec.style.width) * PX_PER_IN
+    height_px = float(decisions.get("height_in") or resolved.spec.style.height) * PX_PER_IN
+    ticks = decisions.get("ticks")
+    if ticks is not None and ticks.rows:
+        texts = [_html(t) for t in ticks.rows[0]]
+        applied = 0
+        for key, axis in layout.items():
+            if not (key.startswith("xaxis") and isinstance(axis, dict)):
+                continue
+            if len(axis.get("ticktext") or []) == len(texts):
+                axis["ticktext"] = texts
+            elif len(axis.get("categoryarray") or []) == len(texts):
+                axis.update(
+                    tickmode="array", tickvals=list(axis["categoryarray"]), ticktext=texts
+                )
+            else:
+                Log.debug(
+                    "preview %s: %d tick(s) here, %d decided — left as drawn",
+                    key, len(axis.get("ticktext") or axis.get("categoryarray") or []),
+                    len(texts), layer=LAYER,
+                )
+                continue
+            # matplotlib turns counter-clockwise; plotly's angle is clockwise.
+            axis["tickangle"] = -int(ticks.rotation)
+            axis["tickfont"] = {"size": ticks.font_pt}
+            applied += 1
+        Log.debug("preview: tick decision applied to %d x axis/axes", applied, layer=LAYER)
+
+    brackets = decisions.get("brackets")
+    plan = resolved.x_plan
+    if brackets is not None and plan is not None and plan.groups:
+        depths = sorted({g.depth for g in plan.groups})
+        fitted: dict[str, str] = {}
+        for depth, row in zip(depths, brackets.rows):
+            spans = [g for g in plan.groups if g.depth == depth]
+            for group, text in zip(spans, row):
+                fitted[f"{X_GROUP_TAG}:{group.depth}:{group.start}"] = text
+        for note in layout.get("annotations", []):
+            name = note.get("name", "")
+            if name in fitted:
+                note["text"] = _html(fitted[name])
+                note["font"] = {**note.get("font", {}), "size": brackets.font_pt}
+
+    legend = decisions.get("legend")
+    if legend is not None and layout.get("showlegend"):
+        spec_legend = layout.setdefault("legend", {})
+        spec_legend["font"] = {"size": legend["font_pt"]}
+        title = spec_legend.setdefault("title", {})
+        if "wrap_title" in legend["steps"] and not legend["below"]:
+            title["text"] = " /<br>".join(
+                part for part in str(title.get("text", "")).split(" / ")
+            )
+        title["font"] = {"size": legend["font_pt"]}
+        margin = layout.setdefault("margin", {})
+        if legend["below"]:
+            spec_legend.update(
+                orientation="h", x=0.5, xanchor="center", y=0.0, yanchor="bottom",
+                yref="container",
+            )
+            margin["r"] = BARE_RIGHT_MARGIN
+            margin["b"] = margin.get("b", 50) + round(legend["height_frac"] * height_px)
+        else:
+            margin["r"] = max(BARE_RIGHT_MARGIN, round(legend["width_frac"] * width_px))
+
+    layout["meta"]["label_fit"] = {
+        "decided_at_in": [decisions.get("width_in"), decisions.get("height_in")],
+        "ticks": ticks.describe() if ticks is not None else None,
+        "fits": ticks.fits if ticks is not None else True,
+        "legend": legend,
+    }

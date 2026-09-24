@@ -42,6 +42,84 @@ logger = logging.getLogger(__name__)
 #: key and inherit another database's cached frames.
 _sources: dict[tuple, Any] = {}
 
+#: The last figure resolved per source: ``source key -> (request key, spec,
+#: figure, labels, index)``. Read ONLY for ``reuse_resolved`` requests — a
+#: pane resize or preview-mode toggle, where the panel knows the spec did not
+#: change — so it can never serve data the panel was not already showing.
+#: Dropped with the source by :func:`invalidate`.
+_last_resolved: dict[tuple, tuple] = {}
+
+#: The preview is drawn at 1 pt = 1 px (the font_size convention), so a pane
+#: of N px is N / 72 inches of saved figure.
+PREVIEW_PX_PER_IN = 72.0
+
+
+def _resolved_keys(db, spec_payload, figure_index, budget, csv_path) -> tuple:
+    """``(source key, request key)`` naming one resolve request."""
+    import json
+
+    source = ("csv", csv_path) if csv_path else ("db", _database_path(db))
+    request = (
+        json.dumps(spec_payload, sort_keys=True, default=str),
+        figure_index,
+        budget,
+    )
+    return source, request
+
+
+def _render_preview(figure, preview: dict | None, render_plotly) -> dict:
+    """The plotly payload for one figure, with the EXPORT's label and legend
+    decisions applied (``scistackplot.layout_decisions``).
+
+    ``preview`` is what the panel asked for:
+
+    * ``{"mode": "export"}``: decided at ``style.width x height`` and drawn at
+      that size, so the preview shows what Save writes;
+    * ``{"mode": "pane", "width_px", "height_px"}``: decided at the pane's
+      size (px / 72 in) and left to fill the pane. ``meta.preview`` then states
+      the export size that would reproduce this view.
+
+    ``None`` (library callers, older panels) renders as before, undecided.
+    If the decisions fail, the preview still renders, undecided, and the
+    failure is logged; a preview never breaks over its labels.
+    """
+    if preview is None:
+        return render_plotly(figure)
+    from scistackplot import layout_decisions
+
+    style = figure.spec.style
+    mode = preview.get("mode", "export")
+    width_px, height_px = preview.get("width_px"), preview.get("height_px")
+    if mode == "pane" and width_px and height_px:
+        width_in = float(width_px) / PREVIEW_PX_PER_IN
+        height_in = float(height_px) / PREVIEW_PX_PER_IN
+        fixed = None
+    else:
+        mode = "export"
+        width_in, height_in = float(style.width), float(style.height)
+        fixed = (width_in * PREVIEW_PX_PER_IN, height_in * PREVIEW_PX_PER_IN)
+    try:
+        decisions = layout_decisions(figure, width_in=width_in, height_in=height_in)
+    except Exception:
+        logger.exception("[plot] label/legend decisions failed — preview drawn undecided")
+        decisions = None
+    payload = render_plotly(figure, decisions=decisions, fixed_size_px=fixed)
+    payload["layout"]["meta"]["preview"] = {
+        "mode": mode,
+        "width_in": round(width_in, 2),
+        "height_in": round(height_in, 2),
+    }
+    ticks = (decisions or {}).get("ticks")
+    logger.info(
+        "[plot] preview (%s) decided at %.2f x %.2f in: ticks %s; legend %s",
+        mode,
+        width_in,
+        height_in,
+        ticks.describe() if ticks is not None else "n/a",
+        "below" if ((decisions or {}).get("legend") or {}).get("below") else "right/none",
+    )
+    return payload
+
 
 def _database_path(db) -> str:
     """The database file a source is keyed on.
@@ -105,8 +183,10 @@ def invalidate(db=None) -> dict:
     if db is None:
         dropped = len(_sources)
         _sources.clear()
+        _last_resolved.clear()
     else:
         dropped = 1 if _sources.pop(("db", _database_path(db)), None) else 0
+        _last_resolved.pop(("db", _database_path(db)), None)
     logger.info(
         "[plot] source cache invalidated (%s, %d source(s) dropped)",
         "all" if db is None else _database_path(db),
@@ -696,6 +776,8 @@ def resolve_figures(
     max_points: int | None = None,
     figure_index: int | None = None,
     csv_path: str | None = None,
+    preview: dict | None = None,
+    reuse_resolved: bool = False,
 ) -> dict:
     """
     Reduce and render for the interactive panel.
@@ -713,6 +795,12 @@ def resolve_figures(
     from the group keys, which never required the figures
     (``reduce.resolve_one``). ``None`` returns them all, which is what a library
     caller or a test wants.
+
+    ``preview`` sizes the label and legend decisions (see
+    :func:`_render_preview`); None renders as before, with no decisions.
+    ``reuse_resolved`` re-renders the last figure resolved for this exact
+    request instead of resolving again: the panel sends it ONLY when the pane
+    was resized or the preview mode toggled, so nothing but the size changed.
     """
     from scistackplot import (
         MAX_TRANSPORT_POINTS,
@@ -724,18 +812,31 @@ def resolve_figures(
 
     budget = MAX_TRANSPORT_POINTS if max_points is None else max_points
 
-    # The hold ends with the load (see `_load`); reducing and rendering are
-    # pure memory.
-    _, spec, table = _load(db, spec_payload, csv_path=csv_path, label="plot_resolve")
-    try:
-        if figure_index is not None:
-            figure, labels, index = resolve_one(
-                spec, table, figure_index, max_points=budget
-            )
-        else:
-            resolved = resolve(spec, table, max_points=budget)
-    except RoleError as exc:
-        return _invalid_spec(exc)
+    source_key, request_key = _resolved_keys(
+        db, spec_payload, figure_index, budget, csv_path
+    )
+    cached = _last_resolved.get(source_key) if reuse_resolved else None
+    if cached is not None and cached[0] == request_key:
+        # A resize: same request, new size. Re-render only — resolving is the
+        # 4-16 s part, and nothing it depends on changed.
+        _, spec, figure, labels, index = cached
+        logger.info("[plot] preview re-rendered from the last resolve (size change)")
+    else:
+        if reuse_resolved:
+            logger.info("[plot] re-render asked for, but no matching resolve is kept — resolving")
+        # The hold ends with the load (see `_load`); reducing and rendering are
+        # pure memory.
+        _, spec, table = _load(db, spec_payload, csv_path=csv_path, label="plot_resolve")
+        try:
+            if figure_index is not None:
+                figure, labels, index = resolve_one(
+                    spec, table, figure_index, max_points=budget
+                )
+                _last_resolved[source_key] = (request_key, spec, figure, labels, index)
+            else:
+                resolved = resolve(spec, table, max_points=budget)
+        except RoleError as exc:
+            return _invalid_spec(exc)
 
     if figure_index is not None:
         rendered = [
@@ -743,7 +844,7 @@ def resolve_figures(
                 "index": index,
                 "key": figure.to_dict()["figure_key"],
                 "label": figure.figure_label,
-                "figure": render_plotly(figure),
+                "figure": _render_preview(figure, preview, render_plotly),
                 "row_count": figure.row_count,
                 "downsampled_from": figure.downsampled_from,
             }
@@ -774,7 +875,7 @@ def resolve_figures(
             "index": position,
             "key": item.to_dict()["figure_key"],
             "label": item.figure_label,
-            "figure": render_plotly(item),
+            "figure": _render_preview(item, preview, render_plotly),
             "row_count": item.row_count,
             "downsampled_from": item.downsampled_from,
         }
@@ -899,10 +1000,9 @@ def save_figure(
     label or the file just written. Resolving is the dominant cost, so a caller
     that only reported written files said nothing for the first twelve minutes.
     """
-    import time
 
     from scidb.log import Log
-    from scistackplot import RoleError, render_matplotlib, resolve, resolve_one
+    from scistackplot import RoleError, resolve, resolve_one, write_figure
 
     def report(stage: str, done: int, total: int, detail: str | None = None) -> None:
         if on_progress is not None:
@@ -1028,30 +1128,25 @@ def save_figure(
                     out.name,
                 )
 
-                # Rendering and writing are timed apart because we did not know
-                # which dominates, and the answer decides where any further
-                # work goes.
-                started = time.perf_counter()
-                figure = render_matplotlib(item)
-                rendered = time.perf_counter()
-                try:
-                    figure.savefig(out, dpi=dpi, bbox_inches="tight")
-                finally:
-                    import matplotlib.pyplot as plt
-
-                    plt.close(figure)
-                finished = time.perf_counter()
+                # scistackplot owns render-and-write (write_figure): the file is
+                # exactly StyleOptions.width x height. This used to savefig with
+                # bbox_inches="tight", which cropped or grew every file around
+                # whatever stuck out. Rendering and writing are still timed apart.
+                done = write_figure(item, out, dpi=dpi)
 
                 written.append(str(out))
                 logger.info(
-                    "[plot] saved figure %d/%d: %s — %d row(s), "
-                    "render=%.3fs savefig=%.3fs",
+                    "[plot] saved figure %d/%d: %s — %d row(s), %.2f x %.2f in = "
+                    "%d x %d px, render=%.3fs savefig=%.3fs",
                     len(written),
                     len(resolved),
                     out.name,
                     item.row_count,
-                    rendered - started,
-                    finished - rendered,
+                    done.width_in,
+                    done.height_in,
+                    *done.pixels,
+                    done.render_s,
+                    done.write_s,
                 )
                 report("writing", len(written), len(resolved), str(out))
 

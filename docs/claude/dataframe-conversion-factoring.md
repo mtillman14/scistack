@@ -8,9 +8,9 @@ Would it be beneficial to factor out the data type conversion to/from `pd.DataFr
 ### `sciduck/src/sciduckdb/sciduckdb.py` (primary location)
 All the substantive conversion logic lives here as module-level functions:
 - `_infer_duckdb_type()` — maps Python/numpy types to DuckDB column type strings (`DOUBLE[]`, `JSON`, `LIST`, etc.)
-- `_python_to_storage()` / `_storage_to_python()` — serialize/deserialize individual cell values
-- `_infer_data_columns()` — infers column schema from a sample value; handles DataFrame "mode" (one DuckDB row per DataFrame row), dict mode (multi-column), and single-column mode
-- `_dataframe_to_storage_rows()` — converts all rows of a DataFrame to storage-ready lists
+- `_python_to_storage()` / `storage_to_python()` — serialize/deserialize individual cell values
+- `infer_data_columns()` — infers column schema from a sample value; handles DataFrame "mode" (one DuckDB row per DataFrame row), dict mode (multi-column), and single-column mode
+- `dataframe_to_storage_rows()` — converts all rows of a DataFrame to storage-ready lists
 - `_convert_for_json()` — recursively converts ndarrays/DataFrames to JSON-serializable form
 - `_restore_types()` — applies `dtype_meta` restoration to a loaded DuckDB result DataFrame
 

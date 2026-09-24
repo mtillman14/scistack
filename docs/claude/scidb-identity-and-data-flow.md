@@ -61,7 +61,7 @@ MyVar.load(                 _find_record() builds:
                               Fetch data from MyVar_data  |
                               by record_id                |
                                                           v
-                              _storage_to_python()     BaseVariable
+                              storage_to_python()     BaseVariable
                               from_db()                  instance
                               --> native data
 
@@ -520,7 +520,7 @@ DatabaseManager.load_variable(MyVar, version="latest", subject=1, session="A")
     |     |
     |     +-- Look up dtype from _variables
     |     +-- SELECT * FROM "MyVar_data" WHERE record_id = ?
-    |     +-- [native]:  _storage_to_python(value, dtype_meta)
+    |     +-- [native]:  storage_to_python(value, dtype_meta)
     |     |   [custom]:  from_db(df) or _unflatten_struct_columns(df, ...)
     |     +-- Construct BaseVariable instance with data, record_id, metadata, branch_params
     |

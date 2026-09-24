@@ -113,7 +113,13 @@ def test_scalar_variable_resolves_to_a_box_plot(seeded):
 
     resolved = resolve(spec, table)[0]
     assert resolved.row_count == 12
-    assert resolved.x_order == ["pre", "post"] or resolved.x_order == ["post", "pre"]
+    # Colour is paint (2026-09-21): the coloured subject layer keeps its tick
+    # layer, so the x axis is session x subject, sessions outermost.
+    from scistackplot.xaxis import LEAF_SEPARATOR
+
+    outer = [x.split(LEAF_SEPARATOR)[0] for x in resolved.x_order]
+    assert set(outer) == {"pre", "post"}
+    assert len(resolved.x_order) == 2 * len(SUBJECTS)
 
 
 def test_1d_variable_explodes_into_samples(seeded):
@@ -431,9 +437,20 @@ def _one_figure(spec, table, *, color=None):
     not about the opening figure, so they flatten the fan-out first."""
     from dataclasses import replace
 
+    from scistackplot.spec import MAX_X_LAYERS
+
     plain = [f.name for f in table.factors if not f.is_variant and not f.is_field]
-    roles = {**spec.roles, **{name: Role.GROUP for name in plain}}
-    groups = [*([color] if color else []), *reversed(plain)]
+    # Since colour is paint (2026-09-21) a coloured layer is a tick layer too
+    # and counts toward MAX_X_LAYERS; the outermost plain key moves to a facet
+    # so the figure still holds one point per record.
+    faceted = plain[:1] if color and len(plain) + 1 > MAX_X_LAYERS else []
+    grouped = [name for name in plain if name not in faceted]
+    roles = {
+        **spec.roles,
+        **{name: Role.GROUP for name in grouped},
+        **{name: Role.FACET for name in faceted},
+    }
+    groups = [*([color] if color else []), *reversed(grouped)]
     return replace(spec, roles=roles, groups=groups, color=color, kind=PlotKind.SCATTER)
 
 

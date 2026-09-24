@@ -11,6 +11,241 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zg. Fix the tick settings yourself; exported code matches — added 2026-09-23
+
+**What changed:** the Figure size section has new controls:
+- **Tick rotation** (Auto / 0° / 45° / 90°)
+- **Show tick labels** (Auto / every label / every 2nd…10th)
+- **Tick font (pt)** (blank = auto)
+- **Hide labels the legend repeats**
+
+A fixed value is kept even where it overlaps; then a note says "The x labels
+still overlap at this size (…)". **Export code** now replays the fitted labels
+(prefix, wrapping, every k-th, rotation, font), and the exported script saves
+at exactly the figure size. Both bundles rebuilt.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. On graph1, set Tick rotation = 45°, then 0°.
+2. Set Show tick labels = Every 2nd on a plot with named ticks.
+3. Tick **Hide labels the legend repeats** on graph1 (session is the colour).
+4. On the 40-subject plot, click **Export code** and run the script.
+
+**What you should see**
+- 1: the preview (and a saved PNG) use exactly that rotation. At 0° on
+  graph1 the overlap note appears.
+- 2: every other name is blank, the first and last are shown.
+- 3: the session tick labels disappear, the brackets and legend stay.
+- 4: the script's `figure.png` has `01, 02, …` labels (no `SS`) and is
+  exactly the figure size; the code has a
+  `# x tick labels as scistackplot fitted them at …` block.
+
+---
+
+## 0zf. The preview shows the export's labels and legend — added 2026-09-23
+
+**What changed:** the Plot Studio preview now draws the SAME label and legend
+decisions Save makes (stripped IDs, wrapping, smaller font, rotation, every
+k-th label, legend wrapped or below). The Figure size section has **Preview
+at: Export size | Fit pane**:
+- **Export size** (default): the preview is drawn at the saved size
+  (Width x Height at 72 px per inch), so it can be smaller than the pane, or
+  scroll if larger.
+- **Fit pane**: fills the pane, with the decisions made at the pane's size.
+  Below the setting: "This view would save as W × H in. [Use this size]".
+Resizing the pane in Fit pane mode re-renders after ~0.3 s without
+re-resolving. Both bundles rebuilt.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Open graph1 and graph2. Compare each preview with the PNG from 0ze.
+2. Switch to **Fit pane**, then drag the pane wider and narrower.
+3. Click **Use this size**.
+
+**What you should see**
+- Step 1: the preview matches the PNG — same tick text/rotation, same
+  legend place and title wrapping.
+- Step 2: the labels re-fit within about a second after you stop dragging,
+  without the long "resolving" wait; the readout's inches change with the
+  pane.
+- Step 3: Width/Height take the readout's numbers, the mode goes back to
+  Export size, and the preview looks the same as it did in Fit pane.
+- `scidb.log`: `[plot] preview (export|pane) decided at W x H in: ticks …;
+  legend …` and, on a resize, `re-rendered from the last resolve`.
+
+---
+
+## 0ze. Saved files are exactly the size you set — added 2026-09-23
+
+**What changed:** Save no longer trims or grows the file around its content
+(`bbox_inches="tight"` is gone). The file is exactly Width x Height at the
+save dpi. The readout under the Figure size inputs now says "exactly". Both
+bundles rebuilt.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Set Figure size to 7.2 in wide at 16:9 and note the readout (e.g.
+   `1440 × 810 px at 200 dpi … exactly`).
+2. Save graph1 and graph2 as PNG.
+3. Open each PNG's properties / Get Info.
+
+**What you should see**
+- Both PNGs are exactly the readout's pixel size, whatever their labels
+  and legend.
+- Nothing is cut off at the edges. If something is, `scidb.log` has a
+  `figure content reaches …in past the … canvas` WARN; send it to Claude.
+- `scidb.log`: `[plot] saved figure …: … 7.20 x 4.05 in = 1440 x 810 px`.
+
+---
+
+## 0zd. Saved figures fit their legend — added 2026-09-23
+
+**What changed:** in the SAVED figure, a legend at the right may take at most
+30% of the width. Past that its title wraps at " / " ("InterventionGroup /" on
+one line, "subject" on the next), the line samples shorten, and the text
+shrinks (never below the tick-label minimum). If it's still too wide, or if
+beside it the x labels can't fit, the legend moves **below** the panels, in as
+many columns as fit. The preview is not changed yet (stage 4).
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Save the graph1 plot at its usual size.
+2. Save the graph2 plot at 8 in wide, with Show in legend ticked.
+3. Save graph2 again with Show in legend unticked.
+
+**What you should see**
+- graph1: the legend stays at the right, title on two lines ("session /",
+  "subject"), and the panel is wider than before.
+- graph2 (ticked): the legend sits below the panels in several columns; the
+  panels use the full width, and the session labels are readable (or
+  `scidb.log` WARNs that they still overlap).
+- graph2 (unticked): a short legend (Digitimer / Onward / Sham), and still
+  no overlap with the panels.
+- `scidb.log`: `legend at the right: …` or `legend moved below the panels:
+  <reason> …` per saved figure.
+
+---
+
+## 0zc. "Show in legend" checkbox for Show sample — added 2026-09-23
+
+**What changed:** the Show sample pane has a **Show in legend** checkbox
+(`PlotSpec.sample_in_legend`, default on). Unticked, the legend reads as
+though nothing in the Show sample pane were ticked: no subject entries and no
+"/ subject" in the legend title. The points keep their colours. The checkbox
+is greyed out while the points take their mark's colour, because then nothing
+of theirs is listed anyway. Both bundles rebuilt.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Open the graph2 plot (bars coloured by InterventionGroup, Show sample =
+   subject, Colour points by = subject).
+2. Untick **Show in legend**.
+3. Set Colour points by = Mark's colour, and hover the checkbox.
+4. Save the figure with the box unticked.
+
+**What you should see**
+- After step 2 the preview legend lists only Digitimer / Onward / Sham, titled
+  "InterventionGroup"; the subject points and lines are still drawn, still in
+  their own colours. Ticking it again brings SS01… back.
+- In step 3 the checkbox is greyed out, and its tooltip says the points take
+  their mark's colour.
+- The saved PNG has the same short legend, and the panels are visibly wider.
+- Reopening the saved figure keeps the box unticked.
+
+---
+
+## 0zb. Saved figures fit their x labels; nested axes lose the "a / b" title — added 2026-09-23
+
+**What changed:** the SAVED figure (matplotlib) now measures its x tick
+labels and, if they collide, drops a shared ID prefix (`SS01` → `01`, numbered
+labels only), wraps, shrinks the font (never below 8pt or 70% of the font
+size), rotates 45°/90°, and as a last resort shows every k-th label (numbered
+labels only). Bracket rows sit a fixed distance below the tick labels. A
+nested axis no longer has an x title ("session / InterventionGroup"). With
+several facet columns, a single-layer axis title is drawn once under the
+figure. The preview is NOT changed yet (stage 4).
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Open the plot from spec/images/graph1.png (bars: session ticks inside
+   InterventionGroup brackets, Show sample = subject) and **Save**.
+2. Open the plot from spec/images/graph2.png (same, two speed facets) and **Save**.
+3. Plot a scalar by `subject` alone (many subjects) at a narrow width and **Save**.
+
+**What you should see**
+- Graph 1 / 2 PNGs: session labels readable, not overlapping; "Digitimer /
+  Onward / Sham" on their own row below them, not on the tick labels; no
+  "session / InterventionGroup" text anywhere.
+- Subject plot: labels `01, 02, …` (no `SS`), rotated and/or every k-th, first
+  and last always shown.
+- `scidb.log`: an INFO line `x tick labels: … -> font …` (and `x bracket
+  labels: …`) per saved figure; a WARN only if labels still overlap.
+- Not yet: the preview may still overlap, and the saved file size may still
+  differ from the requested size (stage 3).
+
+---
+
+## 0za. Edges and pending values read/write the session's own database — added 2026-09-23
+
+**What changed:** drawing/deleting a manual edge, adding/removing a pending
+Parameter value, the canvas build and both MATLAB command generators now use
+the database of the request's session, instead of a global lookup beside it
+(cleanup-audit F10). Backend only; nothing should look different.
+
+**Backend**
+1. Pull, then **Restart** the GUI.
+
+**Frontend**
+1. Open two databases in two tabs.
+2. In tab A: draw an edge, add a pending value to a Parameter, delete the edge.
+3. In tab B: refresh.
+
+**What you should see**
+- Tab A's edge and pending value appear (and the edge disappears) in tab A only.
+- Tab B shows none of them.
+- "Copy MATLAB command" in tab A includes tab A's manual wiring.
+
+---
+
+## 0z. Saving a figure never times out in the save dialog — added 2026-09-23
+
+The webview used to fail any request not answered within 30 s. That included
+the Save dialog itself, so taking longer than 30 s to choose where to save gave
+"Could not save: Request pick_save_path timed out". The webview now has no
+timer. The extension's `scistack.rpcTimeoutMs` (default 300 s) is the only one,
+and it applies only to requests that go to Python.
+
+**Backend**
+1. Pull, then **reload the VS Code window**. This change is in the extension
+   bundle (`extension/dist/extension.js`) as well as the webview bundle, and
+   a GUI Restart does not reload the extension.
+2. Open the extension's SciStack output channel.
+
+**Frontend**
+1. Open a plot tab, click **Save figure**, and leave the Save dialog open for
+   over a minute. Then pick a file.
+   - Expect: the save starts ("Saving this figure at full resolution…") and
+     completes. No "timed out" message.
+2. Do the same with **Save all** (folder picker) and **Save data** (CSV).
+3. Optional: set `scistack.rpcTimeoutMs` to `5000`, reload, and trigger a slow
+   plot resolve.
+   - Expect: the panel shows "no response from the Python server for
+     'plot_resolve' after 5s". When the server does answer, the output channel
+     shows `RPC late response: plot_resolve (id=…) answered after …ms, …ms
+     after the timeout gave up on it`. Reset the setting afterwards.
+
 ## Before any session: common setup
 
 **Backend**
@@ -92,6 +327,9 @@ directory (addpath was ~4.4 s of every run's ~4.7 s preamble). Backend only.
   network folder.
 - Set the log level to DEBUG to see one `addpath … already_on_path=… <dir>`
   line per folder.
+- Also after that run (F35): `[provenance] captured 1 source unit(s) for
+  fn=<name> @ <hash>` and NO `source NOT captured … recipes have drifted`
+  warning. MATLAB functions now keep their code per version.
 
 ---
 

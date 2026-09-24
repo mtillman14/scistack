@@ -19,9 +19,11 @@ import keyword
 import re
 from typing import NamedTuple
 
+from scistacklog import Log
+
 from .cell import apply_cell_collapse, cell_collapses, effective_shape
 from .groups import apply_level_groups
-from .reduce import plan_layout
+from .reduce import plan_layout, x_axis_title
 from .resolved import DASH_CYCLE
 from .roles import (
     collapse_steps,
@@ -29,6 +31,7 @@ from .roles import (
     fanout_keys,
     grouping_layers,
     overlay_color,
+    overlay_in_legend,
     overlay_join,
     overlay_steps,
     overlay_unavailable,
@@ -52,6 +55,8 @@ from .variants import (
     defined_sets,
     set_name,
 )
+
+LAYER = "scistackplot"
 
 #: Marker delimiting the embedded spec inside a generated docstring.
 SPEC_BEGIN = "scistackplot-spec:"
@@ -1006,7 +1011,7 @@ def _sample_draw_lines(spec, table: LongTable, roles, shape) -> list[str]:
             "        )",
         ]
     )
-    if sample_color:
+    if overlay_in_legend(spec, sample_color):
         lines.extend(_sample_legend_lines(spec, sample_color, hue, linestyle))
     return lines
 
@@ -1300,9 +1305,15 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
         )
     if ylim is not None:
         lines.append(f"g.set(ylim={(float(ylim[0]), float(ylim[1]))!r})")
-    # The constant-x column is scaffolding, not a variable anyone measured —
-    # reduce._labels_for leaves the label empty in that case, so this must too.
-    x_label = style.x_label or ("" if x == _X_CONSTANT else x)
+    # The one owner (reduce.x_axis_title): no title on a nested axis, none
+    # for the constant-x scaffolding column, the factor's display name
+    # otherwise — exactly what the preview labels the axis.
+    x_label = x_axis_title(
+        spec,
+        table,
+        [] if x == _X_CONSTANT else _tick_layers(spec, table, roles, shape),
+        x if shape is Shape.SERIES_1D else None,
+    )
     lines.append(
         f"g.set_axis_labels({x_label!r}, "
         f"{(style.y_label or spec.y_measure)!r})"
@@ -1330,8 +1341,98 @@ def _plot_call(spec, table, roles, shape) -> list[str]:
     if style.title:
         lines.append(f"g.figure.suptitle({style.title!r})")
     lines.append(f"g.figure.set_size_inches({style.width}, {style.height})")
+    lines.extend(_fitted_tick_lines(spec, table, roles, shape))
+    lines.extend(_exact_size_layout_lines(style))
     lines.append("return g.figure")
     return lines
+
+
+def _fitted_tick_lines(spec, table: LongTable, roles, shape) -> list[str]:
+    """The x tick labels as the export fitted them, replayed on seaborn's.
+
+    The decision is ``layout_decisions`` at the spec's size, the same one Save
+    and the preview draw (``ticklabels.fit_labels``). It is emitted as
+    OPERATIONS on the labels seaborn drew rather than a literal list, so the
+    same function stays right for every figure of a fan-out: drop the shared
+    prefix, the wrap mapping, every k-th label, then rotation and font. On a
+    nested axis seaborn's labels are the composed keys, so only rotation,
+    font and every-k carry over (said in the comment). Nothing is emitted when
+    the labels fit as they are.
+    """
+    if not _x_is_categorical(spec, table, roles, shape):
+        return []
+    try:
+        from .reduce import MAX_TRANSPORT_POINTS, resolve
+        from .render import layout_decisions
+
+        resolved = resolve(spec, table, max_points=MAX_TRANSPORT_POINTS)
+        if not resolved:
+            return []
+        fit = layout_decisions(resolved[0])["ticks"]
+    except Exception as exc:  # no matplotlib, an unresolvable spec, …
+        Log.warn("generated code: x tick labels not fitted (%s)", exc, layer=LAYER)
+        return [f"# x tick labels: not fitted ({type(exc).__name__})"]
+    if fit is None or not fit.steps:
+        return []
+
+    nested = bool(_nested_x_layers(spec, table, roles, shape))
+    order = [str(v) for v in (resolved[0].x_order or [])]
+    wrapped = {}
+    if fit.wrapped and not nested and len(order) == len(fit.rows[0]):
+        for original, text in zip(order, fit.rows[0]):
+            if "\n" in text:
+                wrapped[original[len(fit.prefix):]] = text
+    rotated = fit.rotation != 0
+    style = spec.style
+    lines = [
+        f"# x tick labels as scistackplot fitted them at {style.width} x {style.height} in:"
+        f" {fit.describe()}"
+        + (" (nested axis: rotation, font and every-k only)" if nested else ""),
+        "g.figure.canvas.draw()  # categorical tick labels exist once drawn",
+        "for _ax in g.axes.flat:",
+        "    _labels = [t.get_text() for t in _ax.get_xticklabels()]",
+    ]
+    if fit.prefix and not nested:
+        lines.append(
+            f"    _labels = [s[{len(fit.prefix)}:] if s.startswith({fit.prefix!r}) "
+            "else s for s in _labels]"
+        )
+    if wrapped:
+        lines.append(f"    _labels = [{wrapped!r}.get(s, s) for s in _labels]")
+    if fit.every > 1:
+        lines.append(
+            f"    _labels = [s if i % {fit.every} == 0 or i == len(_labels) - 1 else '' "
+            "for i, s in enumerate(_labels)]"
+        )
+    lines.extend(
+        [
+            "    _ax.set_xticks(_ax.get_xticks())",
+            f"    _ax.set_xticklabels(_labels, fontsize={fit.font_pt}, rotation={fit.rotation}, "
+            f"ha={'right' if rotated else 'center'!r}, va={'center' if rotated else 'top'!r}, "
+            f"rotation_mode={'anchor' if rotated else 'default'!r})",
+        ]
+    )
+    return lines
+
+
+def _exact_size_layout_lines(style) -> list[str]:
+    """Lay the grid out INSIDE the figure, so it saves at exactly its size.
+
+    seaborn places its legend at the figure's right edge and, when it adds
+    it, grows the figure to make room; setting the size afterwards undoes
+    that, so the panels are laid out beside the legend's measured width here.
+    The script then saves without ``bbox_inches="tight"`` — the same contract
+    as ``figure_file.write_figure``.
+    """
+    return [
+        "# Laid out inside the figure: it saves at exactly this size.",
+        "if g.legend is not None:",
+        "    g.figure.canvas.draw()",
+        f"    _legend = g.legend.get_window_extent().width / g.figure.dpi / {style.width}",
+        "    g.figure.tight_layout(rect=(0, 0, 1 - _legend - 0.02, 1))",
+        "else:",
+        "    g.figure.tight_layout()",
+    ]
 
 
 #: The generated helper that orders a column's levels. Emitted into the
@@ -1672,7 +1773,7 @@ def generate_script(
         f"    df = {source_expression}\n"
         + "".join(f"    {line}\n" if line else "\n" for line in setup)
         + f'    figure = {name}({call_args}"figure.png")\n'
-        '    figure.savefig("figure.png", dpi=150, bbox_inches="tight")\n'
+        '    figure.savefig("figure.png", dpi=150)  # exactly the size the spec states\n'
     )
 
 

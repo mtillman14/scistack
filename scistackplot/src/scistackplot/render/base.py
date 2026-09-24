@@ -17,6 +17,7 @@ import pandas as pd
 from scistacklog import Log
 
 from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, RUN, SERIES, ResolvedPlot
+from ..roles import overlay_in_legend
 from ..spec import PlotKind
 
 LAYER = "scistackplot"
@@ -439,7 +440,7 @@ def sample_legend_levels(resolved: ResolvedPlot) -> list[Any]:
     empty when the overlay takes its mark's colour. Read off the panels'
     sample frames, like :func:`legend_levels` off their mark frames, so a
     level this figure never draws is not listed."""
-    if not resolved.sample_color:
+    if not overlay_in_legend(resolved.spec, resolved.sample_color):
         return []
     present: dict[str, Any] = {}
     for panel in resolved.panels:

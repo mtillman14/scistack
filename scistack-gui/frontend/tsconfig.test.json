@@ -22,6 +22,8 @@
     "types": ["node"]
   },
   "include": [
+    "src/webviewRpc.ts",
+    "src/webviewRpc.test.ts",
     "src/components/PlotStudio/locationSelection.ts",
     "src/components/PlotStudio/locationSelection.test.ts",
     "src/components/PlotStudio/groups.ts",
@@ -30,6 +32,8 @@
     "src/components/PlotStudio/showSample.test.ts",
     "src/components/PlotStudio/figureSize.ts",
     "src/components/PlotStudio/figureSize.test.ts",
+    "src/components/PlotStudio/preview.ts",
+    "src/components/PlotStudio/preview.test.ts",
     "src/components/PlotStudio/pickerCanvas.test.ts",
     "src/components/Variants/topologies.ts",
     "src/components/Variants/topologies.test.ts",

@@ -482,6 +482,17 @@ def ensure_provenance_tables(duck) -> None:
     # Activities: one row per UNIQUE function call (content-addressed).
     # as_table/distribute are identity-bearing and stored as queryable columns.
     # where is NOT here — it is batch-level (see _run).
+    #
+    # ``for_columns``: which params ran once per column. Purely DESCRIPTIVE —
+    # derived from the edges' selectors and NOT folded into invocation_id (the
+    # selector already is, so adding it would count the same fact twice). It
+    # exists so a run-option query does not have to parse selector JSON.
+    #
+    # ``across_variants``: which params pooled every variant group into the
+    # one call. NOT derivable from the edges (a pooled call and a one-group
+    # split call write the same edges), so it is the stored fact the call id
+    # and the expected-invocation predictor rebuild from; it IS folded into
+    # invocation_id (only when non-empty).
     duck._execute("""
         CREATE TABLE IF NOT EXISTS _invocation (
             invocation_id VARCHAR PRIMARY KEY,
@@ -553,6 +564,9 @@ def ensure_provenance_tables(duck) -> None:
 
     # Audit log: one row per for_each EXECUTION (fresh row every run, even when
     # it reproduces existing invocations). Captures when/who/where.
+    # ``origin`` on _run — which surfaces the run read (rule 3 of
+    # docs/claude/intent-and-fact.md): ``gui`` / ``script`` / ``replay``. NULL
+    # is treated by every consumer as "unknown", never as any origin.
     duck._execute("""
         CREATE TABLE IF NOT EXISTS _run (
             run_id        VARCHAR PRIMARY KEY,
@@ -572,90 +586,6 @@ def ensure_provenance_tables(duck) -> None:
             PRIMARY KEY (run_id, invocation_id)
         )
     """)
-
-    # Backfill: add the selector column to _invocation_input tables created
-    # before it existed (additive migration over an in-progress beta DB).
-    try:
-        cols = {
-            r[0]
-            for r in duck._fetchall(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = '_invocation_input'"
-            )
-        }
-        if "selector" not in cols:
-            duck._execute("ALTER TABLE _invocation_input ADD COLUMN selector VARCHAR")
-            logger.debug(
-                "ensure_provenance_tables: added selector column to _invocation_input"
-            )
-        if "declared_name" not in cols:
-            duck._execute(
-                "ALTER TABLE _invocation_input ADD COLUMN declared_name VARCHAR"
-            )
-            logger.info(
-                "ensure_provenance_tables: added declared_name column to "
-                "_invocation_input (older rows read as NULL = argument name)"
-            )
-    except Exception:
-        logger.debug(
-            "ensure_provenance_tables: column backfill check skipped", exc_info=True
-        )
-
-    # Backfill: ``for_columns`` on _invocation — which params ran once per
-    # column. Purely DESCRIPTIVE: it is derived from the edges' selectors and
-    # is NOT folded into ``invocation_id`` (the selector already is, so adding
-    # it would count the same fact twice and re-identify every per-column call
-    # ever recorded). It exists so a run-option query does not have to parse
-    # selector JSON to answer "did this run once per column?".
-    try:
-        inv_cols = {
-            r[0]
-            for r in duck._fetchall(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = '_invocation'"
-            )
-        }
-        if "for_columns" not in inv_cols:
-            duck._execute("ALTER TABLE _invocation ADD COLUMN for_columns VARCHAR[]")
-            logger.debug(
-                "ensure_provenance_tables: added for_columns column to _invocation"
-            )
-        # ``across_variants``: which params pooled every variant group into
-        # the one call. Unlike for_columns this is NOT derivable from the
-        # edges (a pooled call and a one-group split call write the same
-        # edges), so it is the stored fact the call id and the expected-
-        # invocation predictor rebuild from; it IS folded into invocation_id
-        # (only when non-empty).
-        if "across_variants" not in inv_cols:
-            duck._execute("ALTER TABLE _invocation ADD COLUMN across_variants VARCHAR[]")
-            logger.debug(
-                "ensure_provenance_tables: added across_variants column to _invocation"
-            )
-    except Exception:
-        logger.debug(
-            "ensure_provenance_tables: for_columns backfill check skipped",
-            exc_info=True,
-        )
-
-    # Backfill: ``origin`` on _run — which surfaces the run read (rule 3 of
-    # docs/claude/intent-and-fact.md): ``gui`` / ``script`` / ``replay``. A
-    # row written before the column existed reads as NULL, which every
-    # consumer treats as "unknown", never as any particular origin.
-    try:
-        run_cols = {
-            r[0]
-            for r in duck._fetchall(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = '_run'"
-            )
-        }
-        if "origin" not in run_cols:
-            duck._execute("ALTER TABLE _run ADD COLUMN origin VARCHAR")
-            logger.debug("ensure_provenance_tables: added origin column to _run")
-    except Exception:
-        logger.debug(
-            "ensure_provenance_tables: origin backfill check skipped", exc_info=True
-        )
 
     # Indexes for upward/downward traversal (the recursive CTEs in §6/§8 join
     # output_record_id → invocation_id → input_record_id repeatedly).

@@ -226,7 +226,7 @@ def scaffold_project(
 
 def _create_database(project_root: Path, name: str, schema_keys: list[str]) -> None:
     """Create and configure the project's DuckDB file."""
-    from scidb.database import _local
+    from scidb.database import clear_current_database
 
     from scidb import configure_database
 
@@ -236,5 +236,4 @@ def _create_database(project_root: Path, name: str, schema_keys: list[str]) -> N
 
     # Clear the global state so the scaffolder doesn't leave a configured
     # database behind (the scaffolder is a tool, not the user's pipeline).
-    if hasattr(_local, "database"):
-        delattr(_local, "database")
+    clear_current_database()

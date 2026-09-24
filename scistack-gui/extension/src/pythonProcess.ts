@@ -21,16 +21,9 @@ import { spawn, ChildProcess } from 'child_process';
 import * as readline from 'readline';
 import * as vscode from 'vscode';
 import { LogSink } from './sessionCore';
+import { PendingRequests } from './rpcPending';
 
 type NotificationHandler = (method: string, params: Record<string, unknown>) => void;
-
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (reason: Error) => void;
-  method: string;
-  startedAt: number;
-  timer: NodeJS.Timeout | null;
-}
 
 interface ReadyParams {
   db_name: string;
@@ -57,7 +50,8 @@ const STDERR_TAIL_LINES = 200;
 export class PythonProcess {
   private proc: ChildProcess;
   private nextId = 1;
-  private pending = new Map<number, PendingRequest>();
+  /** Requests awaiting a response; owns the rpcTimeoutMs backstop. */
+  private pending: PendingRequests;
   private notificationHandlers: NotificationHandler[] = [];
   private readyResolve: ((params: ReadyParams) => void) | null = null;
   private readyReject: ((err: Error) => void) | null = null;
@@ -78,6 +72,7 @@ export class PythonProcess {
     options: PythonProcessOptions = {},
   ) {
     this.args = args;
+    this.pending = new PendingRequests(outputChannel);
 
     this.outputChannel.appendLine(`Spawning: ${pythonPath} ${args.join(' ')}`);
 
@@ -135,10 +130,7 @@ export class PythonProcess {
       this.outputChannel.appendLine(msg);
 
       // Reject all pending requests
-      for (const [, pending] of this.pending) {
-        pending.reject(new Error(msg));
-      }
-      this.pending.clear();
+      this.pending.failAll(new Error(msg));
 
       // Reject ready promise if still waiting
       if (this.readyReject) {
@@ -262,52 +254,20 @@ export class PythonProcess {
     const timeoutMs = vscode.workspace
       .getConfiguration('scistack')
       .get<number>('rpcTimeoutMs', 300000);
-    return new Promise((resolve, reject) => {
-      const settle = (fn: () => void) => {
-        const pending = this.pending.get(id);
-        if (pending?.timer) clearTimeout(pending.timer);
-        this.pending.delete(id);
-        fn();
-      };
-      const timer = timeoutMs > 0
-        ? setTimeout(() => {
-            const pending = this.pending.get(id);
-            if (!pending) return;
-            const elapsed = Date.now() - pending.startedAt;
-            this.outputChannel.appendLine(
-              `RPC timeout: ${method} (id=${id}) got no response in ${elapsed}ms. ` +
-              `The Python server may have dropped the request — check the ` +
-              `stderr above for a traceback.`,
-            );
-            settle(() => reject(new Error(
-              `SciStack: no response from the Python server for '${method}' ` +
-              `after ${Math.round(elapsed / 1000)}s.`,
-            )));
-          }, timeoutMs)
-        : null;
+    // Registered before the write, so a response can never beat its entry.
+    const reply = this.pending.open(id, method, timeoutMs);
 
-      this.pending.set(id, {
-        resolve: (value) => settle(() => resolve(value)),
-        reject: (reason) => settle(() => reject(reason)),
-        method,
-        startedAt: Date.now(),
-        timer,
-      });
-
-      const msg = JSON.stringify({ jsonrpc: '2.0', method, params, id });
-      this.proc.stdin?.write(msg + '\n', (err) => {
-        if (err) {
-          this.outputChannel.appendLine(`RPC write failed: ${method} — ${err.message}`);
-          const pending = this.pending.get(id);
-          if (pending) {
-            pending.reject(new Error(
-              `SciStack: could not send '${method}' to the Python server ` +
-              `(${err.message}). It may have exited — check the SciStack output channel.`,
-            ));
-          }
-        }
-      });
+    const msg = JSON.stringify({ jsonrpc: '2.0', method, params, id });
+    this.proc.stdin?.write(msg + '\n', (err) => {
+      if (err) {
+        this.outputChannel.appendLine(`RPC write failed: ${method} — ${err.message}`);
+        this.pending.fail(id, new Error(
+          `SciStack: could not send '${method}' to the Python server ` +
+          `(${err.message}). It may have exited — check the SciStack output channel.`,
+        ));
+      }
     });
+    return reply;
   }
 
   /**
@@ -336,26 +296,12 @@ export class PythonProcess {
     // Response (has id)
     if ('id' in msg && msg.id !== null && msg.id !== undefined) {
       const id = msg.id as number;
-      const pending = this.pending.get(id);
-      if (pending) {
-        // Deliberately NOT deleting here: pending.resolve/reject are the
-        // wrappers installed by request(), which clear the timeout and
-        // remove the entry themselves. Deleting first would strand the
-        // timer.
-        if ('error' in msg) {
-          const err = msg.error as { message: string };
-          this.outputChannel.appendLine(
-            `RPC error: ${pending.method} (id=${id}, ` +
-            `${Date.now() - pending.startedAt}ms): ${err.message}`,
-          );
-          pending.reject(new Error(err.message));
-        } else {
-          pending.resolve(msg.result);
-        }
+      // Unmatched ids (unknown, or answered after the timeout gave up) are
+      // logged by PendingRequests itself.
+      if ('error' in msg) {
+        this.pending.reject(id, (msg.error as { message: string }).message);
       } else {
-        this.outputChannel.appendLine(
-          `[stdout] response for unknown/expired request id=${id} — ignored`,
-        );
+        this.pending.resolve(id, msg.result);
       }
       return;
     }

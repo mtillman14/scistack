@@ -68,9 +68,9 @@ def discover_and_seed_pipelines(db) -> dict:
 
     Returns ``{"created": [name, ...], "skipped": [name, ...]}``.
     """
-    from scidb.pipeline import _all_pipelines
+    from scidb.pipeline import all_pipelines
 
-    candidates = [p for p in _all_pipelines if p.db is None]
+    candidates = [p for p in all_pipelines() if p.db is None]
     if not candidates:
         return {"created": [], "skipped": []}
 

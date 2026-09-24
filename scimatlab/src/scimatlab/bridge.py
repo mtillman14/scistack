@@ -336,7 +336,9 @@ def _rename_rid_columns_in_value(val, rename_map):
     return val
 
 
-def _make_matlab_fn_sentinel(fn_name: str, fn_hash: "str | None" = None):
+def _make_matlab_fn_sentinel(
+    fn_name: str, fn_hash: "str | None" = None, source_text: "str | None" = None
+):
     """Build a Python callable that records its name but errors if invoked.
 
     The MATLAB-driven path runs the user function inside MATLAB's
@@ -368,6 +370,23 @@ def _make_matlab_fn_sentinel(fn_name: str, fn_hash: "str | None" = None):
     )
     if fn_hash:
         _sentinel.source_hash = str(fn_hash)
+        # The .m text behind that digest, so the save stores the CODE under
+        # the hash (cleanup-audit F35) — duck-typed as ``source_text``, read
+        # by scidb's function_sources_for. Attached only when it re-hashes to
+        # the digest with the one recipe (compute_matlab_function_hash):
+        # filing text under a hash it does not produce would return the wrong
+        # code for that version later.
+        if source_text:
+            text = str(source_text)
+            if compute_matlab_function_hash(text, fn_name) == str(fn_hash):
+                _sentinel.source_text = text
+            else:
+                from scidb.log import Log
+
+                Log.warn(
+                    f"[bridge] {fn_name}: source text does not hash to "
+                    f"{str(fn_hash)[:12]}; not capturing it"
+                )
     return _sentinel
 
 
@@ -417,6 +436,7 @@ def for_each_prepare(
     glue=None,
     locations=None,
     parameter_names=None,
+    source_text=None,
 ):
     """Bridge entry: run scidb.for_each's prepare phase in Python.
 
@@ -520,11 +540,7 @@ def for_each_prepare(
     # JSON text from +scidb/for_each.m -> mapping (cleanup-audit F6).
     locations = _locations_from_matlab(locations)
     from scidb.bindings import COMBO_KEY, RECORD_ID_COLUMN
-    from scidb.foreach import (
-        _build_skip_hook,
-        _for_each_prepare,
-        _resolve_for_columns,
-    )
+    from scidb import external_loop
     from scidb.log import Log
     from scidb.per_combo import PerComboLoader, PerComboLoaderMerge
 
@@ -541,13 +557,13 @@ def for_each_prepare(
     # The Python-only path does this in scidb.for_each before _for_each_prepare;
     # the MATLAB path calls _for_each_prepare directly, so resolve here so the
     # concrete column set drives version keys and the per-column MATLAB loop.
-    inputs = _resolve_for_columns(inputs, resolved_db)
+    inputs = external_loop.resolve_for_columns(inputs, resolved_db)
 
     # Resolve output class names → surrogate classes
     outputs = [get_surrogate_class(str(n)) for n in list(output_class_names)]
 
     # Build the no-op Python sentinel for ForEachConfig
-    fn = _make_matlab_fn_sentinel(fn_name, fn_hash)
+    fn = _make_matlab_fn_sentinel(fn_name, fn_hash, source_text)
 
     # Normalize metadata_iterables: each value must be a Python list of
     # values to iterate over.  MATLAB sends scalars (subject=1 →
@@ -583,10 +599,8 @@ def for_each_prepare(
     # plot-requires-PathOutput contract, the stat_ as_table default, draft
     # save suppression (applied in for_each_save), and warnings. MATLAB does
     # the language-specific fn wrapping itself from the returned kind.
-    from scidb.foreach import _endpoint_policy
-
     endpoint_kind, endpoint_path_param, as_table_arg, save_suppressed = (
-        _endpoint_policy(str(fn_name), inputs, bool(finalized), as_table_arg)
+        external_loop.endpoint_policy(str(fn_name), inputs, bool(finalized), as_table_arg)
     )
 
     # Glue chains: MATLAB structs → GlueSpec, language "matlab". Bodies stay
@@ -645,7 +659,7 @@ def for_each_prepare(
     # MATLAB's scifor.for_each on its own cannot do.
     if dry_run:
         try:
-            _for_each_prepare(
+            external_loop.prepare(
                 fn=fn,
                 fn_name=fn_name,
                 inputs=inputs,
@@ -700,7 +714,7 @@ def for_each_prepare(
                 "(pass db= or configure a global database)"
             )
         else:
-            pre_combo_hook = _build_skip_hook(
+            pre_combo_hook = external_loop.build_skip_hook(
                 fn,
                 outputs,
                 skip_db,
@@ -714,7 +728,7 @@ def for_each_prepare(
                 f"(fn_hash={fn_hash[:12] if fn_hash else '<none>'})"
             )
 
-    state = _for_each_prepare(
+    state = external_loop.prepare(
         fn=fn,
         fn_name=fn_name,
         inputs=inputs,
@@ -1039,7 +1053,7 @@ def for_each_save(
         output columns. Same shape Python's ``scidb.for_each`` returns.
     """
     import pandas as pd
-    from scidb.foreach import _for_each_save_resolved
+    from scidb import external_loop
     from scifor.foreach import spread_nested_results as _spread_nested_results
 
     cached = _for_each_state_cache.pop(int(handle), None)
@@ -1138,7 +1152,7 @@ def for_each_save(
         f"columns={list(result_tbl.columns)}"
     )
 
-    result_tbl = _for_each_save_resolved(
+    result_tbl = external_loop.save_resolved(
         state=state,
         result_tbl=result_tbl,
         # state.inputs, not the cached spec: prepare folded any constant-fed
@@ -1153,10 +1167,10 @@ def for_each_save(
     if introspect and result_tbl is not None and not result_tbl.empty:
         import json as _json
 
-        from scidb.foreach import _apply_introspect
+        from scidb import external_loop
 
         cached_where = cached.get("where")
-        result_tbl = _apply_introspect(result_tbl, state, cached_where)
+        result_tbl = external_loop.apply_introspect(result_tbl, state, cached_where)
         # Serialize dict-valued columns to JSON strings for MATLAB compatibility.
         for col in list(result_tbl.columns):
             if col.startswith("_branch_params_"):

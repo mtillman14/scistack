@@ -212,36 +212,6 @@ def test_partial_run_reddens_only_its_own_variant_chip(tmp_path):
     )
 
 
-def test_legacy_call_site_position_is_adopted(two_call_sites_client):
-    """One-time migration: a position saved under a pre-grouping
-    per-call-site node id is adopted by the group node (same scope) and the
-    legacy key is dropped."""
-    from scidb.foreach_config import ForEachConfig
-    from scistack_gui import layout as layout_store
-
-    cid = ForEachConfig(
-        fn=bandpass_filter,
-        inputs={"signal": RawSignal, "low_hz": 20},
-    ).to_call_id()
-    legacy_id = fn_node_id("bandpass_filter", cid)
-    # Build once so the node exists: its id is allocated, not derived, so
-    # there is nothing to name before something has named it.
-    two_call_sites_client.get("/api/pipeline")
-    group_id = _bp_group_node_id()
-
-    # Simulate a pre-grouping document: position keyed by the call-site id.
-    layout_store.write_node_position(legacy_id, 123.0, 456.0, pipeline_id="main")
-    layout_store.drop_node_positions(group_id)
-
-    # A graph build runs the migration.
-    two_call_sites_client.get("/api/pipeline")
-
-    positions = layout_store.read_positions_by_scope()
-    main_positions = positions.get("main", {})
-    assert legacy_id not in main_positions, "legacy key must be dropped"
-    assert main_positions.get(group_id) == {"x": 123.0, "y": 456.0}
-
-
 # ---------------------------------------------------------------------------
 # Manual function node vs. a same-name, differently-wired real call site
 # ---------------------------------------------------------------------------

@@ -266,13 +266,12 @@ def ensure_node_identities(db):
     runs the same ONE resolution `_build_graph` does. Idempotent: on the
     common path every wiring is already associated and nothing is written.
     """
-    from scistack_gui import layout as _layout
     from scistack_gui import pipeline_store as _store
 
     plan, _warnings = _resolve_node_identity(
         db,
         build_aggregate(db, db.get_aggregated_variants()),
-        _layout.read_manual_edges(),
+        _store.get_manual_edges(db),
         _store.get_manual_nodes(db),
         _store.get_hidden_edge_ids(db),
     )
@@ -297,41 +296,12 @@ def build_aggregate(db, scidb_agg: dict):
     from scistack_gui import pipeline_store as _store
     from scistack_gui.domain import graph_builder as gb
 
-    agg = gb.AggregatedData()
-    for (fn_name, call_id), fn_data in scidb_agg["functions"].items():
-        fkey = (fn_name, call_id)
-        agg.fn_input_params[fkey] = fn_data["input_params"]
-        agg.fn_outputs[fkey] = set(fn_data["outputs"])
-        # {argument: Parameter node} as scidb resolved it — never re-derived
-        # here (cleanup-audit B1: the canvas invented param__{argument}).
-        agg.fn_parameter_names[fkey] = dict(fn_data.get("parameter_names") or {})
-        for arg, values in fn_data["constants"].items():
-            agg.fn_constants[fkey].add(arg)
-            node = agg.constant_node(fkey, arg)
-            for val in values:
-                # No per-value record counts in this projection; const_counts
-                # is display-only, so an approximation is honest here and the
-                # real counts land from scidb_agg["constants"] below.
-                agg.const_counts[node][str(val)] = 1
-        agg.fn_variants_map[fkey] = fn_data["variants"]
-
-    for const_name, const_data in scidb_agg["constants"].items():
-        for val_entry in const_data["values"]:
-            agg.const_counts[const_name][val_entry["value"]] = val_entry["record_count"]
-        for fkey in const_data["functions"]:
-            agg.const_fns[const_name].add(tuple(fkey))
-
-    agg.all_var_types = set(scidb_agg["variables"].keys())
-
-    path_input_registry = registry.get_path_inputs_registry()
-    agg.path_inputs = gb.convert_scidb_path_inputs(
-        scidb_agg["path_inputs"],
-        path_input_registry,
+    return gb.aggregate_from_scidb(
+        scidb_agg,
+        registry.get_path_inputs_registry(),
         _store.path_input_history_index(db),
         registry.get_project_root(),
     )
-    gb.seed_undiscovered_path_inputs(agg.path_inputs, path_input_registry)
-    return agg
 
 
 def _resolve_node_identity(
@@ -738,13 +708,13 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
         vtype: vdata["record_count"] for vtype, vdata in scidb_agg["variables"].items()
     }
 
-    pending_constants = layout_store.get_pending_constants()
+    pending_constants = _ps.get_pending_constants(db)
     logger.debug("[pipeline] loaded %d pending constant(s)", len(pending_constants))
     pending_constants, removals = gb.auto_clean_pending_constants(
         pending_constants, agg
     )
     for const_name, pval in removals:
-        layout_store.remove_pending_constant(const_name, pval)
+        _ps.remove_pending_constant(db, const_name, pval)
     if removals:
         logger.debug(
             "[pipeline] removed %d pending constant value(s) that are now in database",
@@ -762,7 +732,7 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
     # graph_builder.hidden_wirings' manual_edges param. manual_nodes moved up
     # beside it 2026-09-22: run-state propagation now follows manual edges, and
     # resolving one whose source is a hand-dragged node needs this map.
-    manual_edges_for_fn_lookup = layout_store.read_manual_edges()
+    manual_edges_for_fn_lookup = _ps.get_manual_edges(db)
     manual_nodes = _ps.get_manual_nodes(db)
     logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
 
@@ -1472,47 +1442,11 @@ def _build_graph(db: DatabaseManager, pipeline_id: str = ROOT_SCOPE) -> dict:
             len(graduations),
         )
 
-    # --- One-time wiring migration ---
-    # Pre-grouping documents keyed positions (= scope membership) and manual
-    # edges by per-call-site node ids; adopt them onto the group node ids.
-    # Idempotent: legacy keys are dropped after adoption.
-    adoptions, drop_ids = gb.legacy_position_adoptions(
-        wiring_member_map, positions_by_scope
-    )
-    for action in adoptions:
-        layout_store.write_node_position(
-            action["new_id"], action["x"], action["y"], pipeline_id=action["scope"]
-        )
-        logger.info(
-            "[pipeline] wiring migration: adopted position of "
-            "legacy call-site node into %s (scope=%s)",
-            action["new_id"],
-            action["scope"],
-        )
-    for old_id in drop_ids:
-        layout_store.drop_node_positions(old_id)
-    edge_rewrites = gb.legacy_edge_rewrites(wiring_member_map, manual_edges_list)
-    for rewritten in edge_rewrites:
-        _ps.write_manual_edge(db, rewritten)
-        # Patch the already-built in-memory edge too so THIS response is
-        # correct without a second fetch.
-        for e in edges:
-            if e["id"] == rewritten["id"]:
-                e["source"] = rewritten["source"]
-                e["target"] = rewritten["target"]
-        logger.info(
-            "[pipeline] wiring migration: rewrote manual edge %s "
-            "endpoints to group node ids",
-            rewritten["id"],
-        )
-    if adoptions or drop_ids:
-        positions_by_scope = layout_store.read_positions_by_scope()
-
     # --- Re-dedup after endpoint rewrites ---
     # build_edges deduped manual edges against DB-derived ones, but that ran
-    # BEFORE graduation and before the wiring migration above — both of which
-    # rewrite manual-edge endpoints onto DB-derived node ids, which is exactly
-    # what turns a manual edge into a duplicate of a DB-derived one. Without
+    # BEFORE graduation above, which rewrites manual-edge endpoints onto
+    # DB-derived node ids — exactly what turns a manual edge into a
+    # duplicate of a DB-derived one. Without
     # this pass the FIRST build after a run returns both copies of every
     # just-graduated wire (the next, unrelated rebuild returns the correct
     # set), so the canvas draws doubled edges until something else refreshes
@@ -1709,17 +1643,17 @@ def _get_function_doc(req: FunctionName) -> dict:
     return get_function_doc(req.name)
 
 
-def _put_pending_constant(req: PendingValue) -> dict:
+def _put_pending_constant(db, req: PendingValue) -> dict:
     from scistack_gui.services.layout_service import put_pending_constant
 
-    put_pending_constant(req.name, req.value)
+    put_pending_constant(db, req.name, req.value)
     return {"ok": True}
 
 
-def _delete_pending_constant(req: PendingValue) -> dict:
+def _delete_pending_constant(db, req: PendingValue) -> dict:
     from scistack_gui.services.layout_service import delete_pending_constant
 
-    delete_pending_constant(req.name, req.value)
+    delete_pending_constant(db, req.name, req.value)
     return {"ok": True}
 
 
@@ -1774,8 +1708,8 @@ PIPELINE_HANDLERS: tuple[Handler, ...] = (
     Handler("get_function_params", "/function/{name}/params", FunctionName, _get_function_params, needs_db=False, http_method="GET"),
     Handler("get_function_source", "/function/{name}/source", FunctionName, _get_function_source, needs_db=False, http_method="GET"),
     Handler("get_function_doc", "/function/{name}/doc", FunctionName, _get_function_doc, needs_db=False, http_method="GET"),
-    Handler("put_pending_constant", "/parameters/{name}/pending/{value}", PendingValue, _put_pending_constant, needs_db=False, http_method="PUT", notify_dag_updated=True),
-    Handler("delete_pending_constant", "/parameters/{name}/pending/{value}", PendingValue, _delete_pending_constant, needs_db=False, http_method="DELETE", notify_dag_updated=True),
+    Handler("put_pending_constant", "/parameters/{name}/pending/{value}", PendingValue, _put_pending_constant, http_method="PUT", notify_dag_updated=True),
+    Handler("delete_pending_constant", "/parameters/{name}/pending/{value}", PendingValue, _delete_pending_constant, http_method="DELETE", notify_dag_updated=True),
     Handler("hide_combo", "/functions/{function_name}/hidden_combos", HideComboRequest, _hide_combo),
     Handler("unhide_combo", "/functions/hidden_combos/{node_id}", NodeRef, _unhide_combo, http_method="DELETE"),
     Handler("list_hidden_combos", "/functions/{function_name}/hidden_combos", FunctionRef, _list_hidden_combos, http_method="GET"),

@@ -20,9 +20,10 @@ Node state (green/red) reuses ``state.py`` §9c semantics
   inputs are detected, but a source edit since the last run is NOT.
 - ``state_basis="none"``      — no stored hash at all; state="unknown".
 
-The variant-aggregation concept is moved down from scistack-gui
-``domain/graph_builder.aggregate_variants`` (owning-layer rule); migrating
-the GUI onto this module is a noted follow-up.
+Variant rows -> per-call-site aggregate is ``database.aggregate_pipeline_variants``
+(the GUI converts that with ``graph_builder.aggregate_from_scidb``). The STEP
+grouping here (function + variable wiring) still has a GUI twin,
+``graph_builder.group_call_sites_by_wiring`` (cleanup-audit F38).
 """
 
 from __future__ import annotations

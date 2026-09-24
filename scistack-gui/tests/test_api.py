@@ -23,6 +23,7 @@ from conftest import (
 )
 from scidb.database import _local
 from scistack_gui import layout as layout_store
+from scistack_gui import pipeline_store as _pipeline_store
 from scistack_gui import registry as _registry
 
 from scidb import BaseVariable, configure_database, for_each
@@ -1547,7 +1548,7 @@ class TestPendingConstantLifecycle:
         assert self._fn_state(client) == "green"
 
         # The layout_store no longer reports "42" as pending.
-        pending = layout_store.get_pending_constants()
+        pending = _pipeline_store.get_pending_constants(_gui_db.get_db())
         assert "42" not in pending.get("low_hz", set())
 
     def test_already_red_not_affected_by_pending(self, client, populated_db):
@@ -1655,7 +1656,7 @@ class TestPendingConstantRecovery:
 
         # Auto-clean removes pending; all variants fully populated → green.
         assert self._fn_state(client_partial) == "green"
-        pending = layout_store.get_pending_constants()
+        pending = _pipeline_store.get_pending_constants(_gui_db.get_db())
         assert "42" not in pending.get("low_hz", set())
 
     def test_red_never_run_plus_pending_resolves_to_green(self, client_never_run):
@@ -1683,7 +1684,7 @@ class TestPendingConstantRecovery:
         )
 
         assert self._fn_state(client_never_run) == "green"
-        pending = layout_store.get_pending_constants()
+        pending = _pipeline_store.get_pending_constants(_gui_db.get_db())
         assert "42" not in pending.get("low_hz", set())
 
 

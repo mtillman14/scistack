@@ -8,6 +8,8 @@ points at a temp directory, so layout.py reads/writes a temp JSON file.
 import json
 
 from scistack_gui import layout as layout_store
+from scistack_gui import pipeline_store
+from scistack_gui.db import get_db
 
 # ---------------------------------------------------------------------------
 # read_layout — default state
@@ -40,24 +42,6 @@ class TestReadLayout:
         result = layout_store.read_layout()
         assert result["positions"] == {}
         assert result["manual_nodes"] == {}
-
-    def test_legacy_flat_format_is_migrated(self, layout_path):
-        """Old format had node positions at the top level, no 'positions' key.
-
-        A DB-derived id also picks up the one-time placement-qualification
-        migration (ids.placement_id) — its one existing
-        scope (root, from the flat->scoped migration) becomes its one
-        existing placement.
-        """
-        legacy = {"var__RawSignal": {"x": 10.0, "y": 20.0}}
-        layout_path.write_text(json.dumps(legacy))
-        result = layout_store.read_layout()
-        # positions should contain the legacy entries, placement-qualified
-        assert result["positions"]["var__RawSignal::main"] == {"x": 10.0, "y": 20.0}
-        # new keys default to empty
-        assert result["manual_nodes"] == {}
-        assert result["constants"] == []
-        assert result["manual_edges"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -104,14 +88,14 @@ class TestManualNodes:
     def test_get_manual_nodes_returns_only_manual(self, layout_path):
         layout_store.write_node_position("fn__real", 0.0, 0.0)
         layout_store.write_manual_node("manual__x", 1.0, 2.0, "variableNode", "Foo")
-        manual = layout_store.get_manual_nodes()
+        manual = pipeline_store.get_manual_nodes(get_db())
         assert "manual__x" in manual
         assert "fn__real" not in manual
 
     def test_multiple_manual_nodes(self, layout_path):
         layout_store.write_manual_node("m1", 0.0, 0.0, "functionNode", "fn_a")
         layout_store.write_manual_node("m2", 1.0, 1.0, "variableNode", "VarB")
-        manual = layout_store.get_manual_nodes()
+        manual = pipeline_store.get_manual_nodes(get_db())
         assert len(manual) == 2
         assert manual["m1"]["type"] == "functionNode"
         assert manual["m2"]["label"] == "VarB"
@@ -223,7 +207,7 @@ class TestNotes:
 
 class TestManualEdges:
     def test_read_empty(self, layout_path):
-        assert layout_store.read_manual_edges() == []
+        assert pipeline_store.get_manual_edges(get_db()) == []
 
     def test_write_and_read(self, layout_path):
         edge = {
@@ -233,8 +217,8 @@ class TestManualEdges:
             "sourceHandle": None,
             "targetHandle": "in__signal",
         }
-        layout_store.write_manual_edge(edge)
-        edges = layout_store.read_manual_edges()
+        pipeline_store.write_manual_edge(get_db(), edge)
+        edges = pipeline_store.get_manual_edges(get_db())
         assert len(edges) == 1
         assert edges[0]["id"] == "e__foo__bar"
         assert edges[0]["target"] == "fn__bar"
@@ -242,23 +226,23 @@ class TestManualEdges:
     def test_upsert_replaces_existing_edge(self, layout_path):
         edge_v1 = {"id": "e1", "source": "A", "target": "B"}
         edge_v2 = {"id": "e1", "source": "A", "target": "C"}
-        layout_store.write_manual_edge(edge_v1)
-        layout_store.write_manual_edge(edge_v2)
-        edges = layout_store.read_manual_edges()
+        pipeline_store.write_manual_edge(get_db(), edge_v1)
+        pipeline_store.write_manual_edge(get_db(), edge_v2)
+        edges = pipeline_store.get_manual_edges(get_db())
         assert len(edges) == 1
         assert edges[0]["target"] == "C"
 
     def test_delete_edge(self, layout_path):
-        layout_store.write_manual_edge({"id": "e1", "source": "A", "target": "B"})
-        layout_store.write_manual_edge({"id": "e2", "source": "C", "target": "D"})
-        layout_store.delete_manual_edge("e1")
-        edges = layout_store.read_manual_edges()
+        pipeline_store.write_manual_edge(get_db(), {"id": "e1", "source": "A", "target": "B"})
+        pipeline_store.write_manual_edge(get_db(), {"id": "e2", "source": "C", "target": "D"})
+        pipeline_store.delete_manual_edge(get_db(), "e1")
+        edges = pipeline_store.get_manual_edges(get_db())
         assert len(edges) == 1
         assert edges[0]["id"] == "e2"
 
     def test_delete_nonexistent_edge_is_a_noop(self, layout_path):
-        layout_store.delete_manual_edge("does_not_exist")  # must not raise
-        assert layout_store.read_manual_edges() == []
+        pipeline_store.delete_manual_edge(get_db(), "does_not_exist")  # must not raise
+        assert pipeline_store.get_manual_edges(get_db()) == []
 
 
 # ---------------------------------------------------------------------------

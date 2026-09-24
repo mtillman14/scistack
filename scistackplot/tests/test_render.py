@@ -499,19 +499,22 @@ def test_plotly_rows_clear_each_other_without_paying_for_captions(
 def test_matplotlib_keeps_ticklabels_above_an_empty_cell(struct_table, wrapped_grid):
     """
     3 panels in a 2x2 grid: the one at (0, 1) has an EMPTY cell below it, so it
-    is the bottom of its own column and must keep BOTH its x label and its tick
-    labels — sharex would otherwise strip them from the whole top row.
+    is the bottom of its own column and must keep its tick labels — sharex
+    would otherwise strip them from the whole top row. The x title is drawn
+    once under the figure (two columns would each repeat it).
     """
     resolved = resolve(wrapped_grid, struct_table)[0]
     figure = render_matplotlib(resolved)
 
     labelled = [
-        ax for ax in figure.axes if ax.get_visible() and ax.get_xlabel()
+        ax
+        for ax in figure.axes
+        if ax.get_visible() and any(t.get_visible() for t in ax.get_xticklabels())
     ]
     # (0, 1) and (1, 0) are both bottom-of-column; (0, 0) is not.
     assert len(labelled) == 2
-    for ax in labelled:
-        assert any(t.get_visible() for t in ax.get_xticklabels())
+    assert all(ax.get_xlabel() == "" for ax in figure.axes)
+    assert figure.get_supxlabel() == resolved.labels.x
     matplotlib.pyplot.close(figure)
 
 
@@ -824,7 +827,8 @@ def test_plotly_tick_labels_stay_upright(struct_table, wrapped_grid):
     assert all(axis["tickangle"] == 0 for axis in x_axes)
 
 
-def test_matplotlib_tick_labels_stay_upright(scalar_table, box_spec):
+def test_matplotlib_labels_that_fit_stay_upright(scalar_table, box_spec):
+    """Rotation is the fitting ladder's answer to crowding, never a default."""
     figure = render_matplotlib(resolve(box_spec, scalar_table)[0])
     for ax in figure.axes:
         assert all(label.get_rotation() == 0 for label in ax.get_xticklabels())
@@ -845,10 +849,23 @@ def test_x_ticklabels_and_title_follow_the_same_rule(struct_table, wrapped_grid)
 def test_matplotlib_ticklabels_and_title_follow_the_same_rule(
     struct_table, wrapped_grid
 ):
-    figure = render_matplotlib(resolve(wrapped_grid, struct_table)[0])
-    for ax in figure.axes:
-        if not ax.get_visible():
-            continue
+    """Tick labels follow `shows_x_labels` per panel; with several columns the
+    title is ONE figure-level label rather than a copy per panel (which ran
+    into its neighbour, spec/images/graph2.png)."""
+    from scistackplot.render.base import shows_x_labels
+
+    resolved = resolve(wrapped_grid, struct_table)[0]
+    figure = render_matplotlib(resolved)
+    for panel in resolved.panels:
+        ax = next(
+            a
+            for a in figure.axes
+            if a.get_visible()
+            and a.get_subplotspec().rowspan.start == panel.grid_row
+            and a.get_subplotspec().colspan.start == panel.grid_col
+        )
         ticks_shown = any(t.get_visible() for t in ax.get_xticklabels())
-        assert ticks_shown is bool(ax.get_xlabel())
+        assert ticks_shown is shows_x_labels(resolved, panel.grid_row, panel.grid_col)
+        assert ax.get_xlabel() == ""
+    assert figure.get_supxlabel() == resolved.labels.x
     matplotlib.pyplot.close(figure)

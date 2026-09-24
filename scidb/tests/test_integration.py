@@ -691,7 +691,7 @@ class TestSaveBatchSingleColumn:
 
     The PyArrow fast path indexes data_val[col], which only works when
     data_val is a dict (multi_column mode).  Bare ndarrays/scalars must
-    fall through to the generic _value_to_storage_row path.
+    fall through to the generic value_to_storage_row path.
     """
 
     def test_save_batch_1d_ndarray_single_column(self, db, array_class):
@@ -774,7 +774,7 @@ class TestSaveBatchSchemaValidation:
         class EmgValue2(BaseVariable):
             schema_version = 1
 
-        # NOTE: use length>=2 arrays. _infer_data_columns unwraps length-1
+        # NOTE: use length>=2 arrays. infer_data_columns unwraps length-1
         # arrays to scalars (DOUBLE), which mismatches the DOUBLE[] storage row
         # — a separate pre-existing quirk unrelated to schema validation.
         full = {
@@ -858,7 +858,7 @@ class TestSaveBatchSchemaValidation:
 class TestSaveBatchSingleElementArrayDict:
     """Regression: a multi_column dict whose value is a length-1 ndarray.
 
-    _infer_data_columns unwraps length-1 arrays to scalars when choosing the
+    infer_data_columns unwraps length-1 arrays to scalars when choosing the
     column type (-> DOUBLE), so _python_to_storage must unwrap too. Before the
     fix, the row still carried np.array([x]) (DOUBLE[]) into the DOUBLE column
     and DuckDB raised: Conversion Error (DOUBLE[] -> DOUBLE).

@@ -178,7 +178,9 @@ def put_edge(
     # friends). A cycle closed purely through immutable, already-executed
     # DB-derived edges plus this one new manual edge won't be caught here —
     # it still surfaces at run time as scidb's PipelineCycleError.
-    existing_edges = [e for e in layout_store.read_manual_edges() if e["id"] != edge_id]
+    existing_edges = [
+        e for e in pipeline_store.get_manual_edges(db) if e["id"] != edge_id
+    ]
     cycle_path = find_cycle(existing_edges, source, target)
     if cycle_path is not None:
         logger.warning(
@@ -189,7 +191,8 @@ def put_edge(
             f"connecting '{source}' to '{target}' would create a dependency "
             f"cycle: {' -> '.join(cycle_path)}"
         )
-    layout_store.write_manual_edge(
+    pipeline_store.write_manual_edge(
+        db,
         {
             "id": edge_id,
             "source": source,
@@ -223,9 +226,9 @@ def delete_edge(
     # onConnect; put_edge accepts any caller-supplied id, so a manual edge
     # can legitimately have a differently-shaped id (e.g. existing tests
     # PUT arbitrary ids like "e_del").
-    is_manual = any(e["id"] == edge_id for e in layout_store.read_manual_edges())
+    is_manual = any(e["id"] == edge_id for e in pipeline_store.get_manual_edges(db))
     if is_manual:
-        layout_store.delete_manual_edge(edge_id)
+        pipeline_store.delete_manual_edge(db, edge_id)
         logger.info("[layout_service] Manual edge hard-deleted")
     else:
         # DB-derived edge: never delete data, only hide it — build_edges
@@ -492,26 +495,26 @@ def _unique_path_input_name(base: str, existing: dict) -> str:
     return f"{base}_copy{i}"
 
 
-def put_pending_constant(name: str, value: str) -> dict:
-    from scistack_gui import layout as layout_store
+def put_pending_constant(db, name: str, value: str) -> dict:
+    from scistack_gui import pipeline_store
 
     logger.info(
         "[layout_service] put_pending_constant called (name=%r, value=%r)", name, value
     )
-    layout_store.add_pending_constant(name, value)
+    pipeline_store.add_pending_constant(db, name, value)
     logger.info("[layout_service] Pending constant value added successfully")
     return {"ok": True}
 
 
-def delete_pending_constant(name: str, value: str) -> dict:
-    from scistack_gui import layout as layout_store
+def delete_pending_constant(db, name: str, value: str) -> dict:
+    from scistack_gui import pipeline_store
 
     logger.info(
         "[layout_service] delete_pending_constant called (name=%r, value=%r)",
         name,
         value,
     )
-    layout_store.remove_pending_constant(name, value)
+    pipeline_store.remove_pending_constant(db, name, value)
     logger.info("[layout_service] Pending constant value removed successfully")
     return {"ok": True}
 
