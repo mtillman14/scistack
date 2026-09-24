@@ -1,6 +1,8 @@
 # Plan: faster canonical_hash with byte-identical output (F30)
 
-Status: DRAFT 2026-09-24. Step 0 MEASURED (user, numpy 2.4.6 / pandas 3.0.3):
+Status: BUILT 2026-09-24 on branch perf/fast-canonical-hash (uncommitted). RE-MEASURED by user: wide 1x54 0.746 -> 0.177 ms/record (4.2x), 30x4 0.164 -> 0.074; json.dumps 62 -> 4 calls/record. Two corpus frames (pd.NA string column, tz-aware datetime) are unserializable in the FROZEN code too — the test asserts identical raising. Oracle = tests/reference_serializer.py (verbatim dad361a4). A = fast column path via `_mgr.iget_values`, verified once per (columns, dtypes) signature against `df[col].to_numpy()`, WARN+fallback on mismatch (no batch API needed: save_batch just calls canonical_hash). B = exact-type scalar dispatch + dtype-string cache. save_batch timing line: `hash frames fast=N reference=M`.
+
+Step 0 MEASURED (user, numpy 2.4.6 / pandas 3.0.3):
 
 | shape | total | column_access | serialize num | serialize obj | sha256 |
 |---|---|---|---|---|---|

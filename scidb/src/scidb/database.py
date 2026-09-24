@@ -33,7 +33,7 @@ from .exceptions import (
     NotFoundError,
     NotRegisteredError,
 )
-from .hashing import canonical_hash, generate_record_id
+from .hashing import canonical_hash, frame_path_counts, generate_record_id
 from .log import Log
 from .parameter import parameter_node_name
 from .schema_values import (
@@ -1766,6 +1766,10 @@ class DatabaseManager:
         metadata_rows = []  # (rid,ts,type,schema_id,content_hash,sv,user) → _record_save + _record
 
         t4_hash = 0.0
+        # Which DataFrame serialization path the hashes took (F30): "fast"
+        # skips pandas' per-column Series; "reference" is the public-API path
+        # (unaddressable frames, or a signature whose fast path disagreed).
+        _frames_before = frame_path_counts()
         t4_record_id = 0.0
         t4_storage = 0.0
         t4_meta = 0.0
@@ -1870,6 +1874,11 @@ class DatabaseManager:
 
         timings["per_row_hashing"] = time.perf_counter() - t4
         timings["canonical_hash"] = t4_hash
+        _frames_after = frame_path_counts()
+        _hash_paths = (
+            f"hash frames fast={_frames_after['fast'] - _frames_before['fast']} "
+            f"reference={_frames_after['reference'] - _frames_before['reference']}"
+        )
         timings["record_id"] = t4_record_id
         timings["storage_row"] = t4_storage
         timings["meta_row"] = t4_meta
@@ -2030,7 +2039,7 @@ class DatabaseManager:
             timings,
             extra=(
                 f"{n} items ({n_new} new rows, {n_total_rows} total storage rows), "
-                f"{len(unique_schema_combos)} schemas"
+                f"{len(unique_schema_combos)} schemas, {_hash_paths}"
             ),
             top=6,
         )
