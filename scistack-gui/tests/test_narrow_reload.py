@@ -61,9 +61,9 @@ def counters(monkeypatch):
 
     real_modules = _registry._load_file_modules
 
-    def counting_modules(paths):
+    def counting_modules(paths, *args, **kwargs):
         calls["modules"] += 1
-        return real_modules(paths)
+        return real_modules(paths, *args, **kwargs)
 
     monkeypatch.setattr(_registry, "_load_file_modules", counting_modules)
 

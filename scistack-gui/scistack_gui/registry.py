@@ -19,8 +19,9 @@ import inspect
 import io
 import logging
 import os
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from scidb import BaseVariable, EachOf, Parameter, PathInput
 from scidb.discover import is_parameter, is_path_input
@@ -37,6 +38,9 @@ from scistack_gui import library_functions
 
 if TYPE_CHECKING:
     from scistack_gui.config import SciStackConfig
+
+ProgressCallback = Callable[[str], None]
+"""Receives a short human-readable status line, e.g. ``Importing 3/25: x.py``."""
 
 logger = logging.getLogger(__name__)
 
@@ -228,9 +232,14 @@ def refresh_module() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def load_from_config(config: SciStackConfig) -> dict:
+def load_from_config(
+    config: SciStackConfig, on_progress: ProgressCallback | None = None
+) -> dict:
     """
     Load all functions and variables from a [tool.scistack] config.
+
+    *on_progress*, if given, receives one short message per module file
+    before it is imported (the server's startup passes ``_send_progress``).
 
     This is the project-mode equivalent of register_module(). It loads
     from three sources in order:
@@ -275,7 +284,7 @@ def load_from_config(config: SciStackConfig) -> dict:
     _unregister_tracked_variables()
 
     logger.info("[registry] Loading %d file modules", len(config.modules))
-    _load_file_modules(config.modules)
+    _load_file_modules(config.modules, on_progress)
 
     logger.info("[registry] Loading %d packages", len(config.packages))
     src_dir = config.project_root / "src"
@@ -340,7 +349,9 @@ def refresh_all() -> dict:
     return load_from_config(_config)
 
 
-def _load_file_modules(paths: list[Path]) -> None:
+def _load_file_modules(
+    paths: list[Path], on_progress: ProgressCallback | None = None
+) -> None:
     """Import each .py file and scan for functions.
 
     Loose files are loaded by location (``spec_from_file_location``) rather
@@ -357,8 +368,14 @@ def _load_file_modules(paths: list[Path]) -> None:
         len(search_dirs),
         search_dirs,
     )
+    started = time.perf_counter()
     with PathInsertAll(search_dirs), headless_matplotlib():
-        _exec_file_modules(paths)
+        _exec_file_modules(paths, on_progress)
+    logger.info(
+        "[registry] Imported %d module files in %.2fs",
+        len(paths),
+        time.perf_counter() - started,
+    )
 
 
 def _screen_for_side_effects(path: Path) -> str | None:
@@ -393,10 +410,40 @@ def _screen_for_side_effects(path: Path) -> str | None:
     )
 
 
-def _exec_file_modules(paths: list[Path]) -> None:
-    """Import/scan each file. Assumes sys.path is already prepared."""
+SLOW_IMPORT_WARN_S = 5.0
+"""Importing a file that only defines things takes well under a second. Past
+this, its top-level code is almost certainly doing work the side-effect
+screen did not catch (see ``scifor.discovery.find_top_level_side_effects``).
+The extension kills a startup that sends no progress for 60 s."""
+
+
+def _warn_if_slow_import(path: Path, seconds: float) -> None:
+    if seconds < SLOW_IMPORT_WARN_S:
+        return
+    logger.warning(
+        "[registry] Slow import: %s took %.1fs to import. Its top-level code "
+        "probably runs work on import (loops, file writes, analysis); move it "
+        'under `if __name__ == "__main__":` so discovery only reads its '
+        "definitions.",
+        path,
+        seconds,
+    )
+
+
+def _exec_file_modules(
+    paths: list[Path], on_progress: ProgressCallback | None = None
+) -> None:
+    """Import/scan each file. Assumes sys.path is already prepared.
+
+    *on_progress* is told about each file BEFORE it is imported. At startup
+    the server forwards it as a ``progress`` notification, which is what
+    resets the extension's inactivity timer -- one per file, so a single slow
+    script is named instead of silently eating the whole window.
+    """
     for i, path in enumerate(paths):
         logger.debug("[registry] Processing module %d/%d: %s", i + 1, len(paths), path)
+        if on_progress is not None:
+            on_progress(f"Importing {i + 1}/{len(paths)}: {path.name}")
         if not path.exists():
             logger.warning("[registry] Skipping missing module: %s", path)
             _record_load_error(str(path), "File does not exist")
@@ -414,11 +461,18 @@ def _exec_file_modules(paths: list[Path]) -> None:
 
         mod_name = f"scistack_user_{i}_{path.stem}"
         _module_paths[mod_name] = str(path)
+        started = time.perf_counter()
         try:
             spec = importlib.util.spec_from_file_location(mod_name, path)
             mod = importlib.util.module_from_spec(spec)
-            with _suppress_user_code_output():
-                spec.loader.exec_module(mod)
+            try:
+                with _suppress_user_code_output():
+                    spec.loader.exec_module(mod)
+            finally:
+                # Timed whether or not the import raised: a script that runs
+                # 40 s of analysis and then dies is exactly the one to name.
+                import_s = time.perf_counter() - started
+                _warn_if_slow_import(path, import_s)
             fn_count_before = len(_functions)
             _scan_module_functions(mod, source=str(path))
             fn_count_after = len(_functions)
@@ -426,9 +480,10 @@ def _exec_file_modules(paths: list[Path]) -> None:
             _scan_module_path_inputs(mod, source=str(path))
             _scan_module_variables(mod, source=str(path))
             logger.info(
-                "[registry] Loaded module file: %s (%d functions)",
+                "[registry] Loaded module file: %s (%d functions, import %.2fs)",
                 path,
                 fn_count_after - fn_count_before,
+                import_s,
             )
         except Exception as e:
             # DEBUG, not ERROR: a failed import during discovery is routine

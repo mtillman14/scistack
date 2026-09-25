@@ -49,6 +49,74 @@ def test_send_progress_writes_json_rpc_notification(capsys):
     assert "id" not in msg
 
 
+def test_startup_discovery_reports_progress_per_module():
+    """Every ``registry.load_from_config`` in ``server.main`` must forward
+    ``_send_progress``.
+
+    The extension's ready timer is an INACTIVITY timer reset only by
+    ``progress`` notifications. With one notification before discovery,
+    all module imports shared a single 60 s window, and two stats scripts
+    doing their analysis on import exhausted it (Stroke-R01-Aim1,
+    2026-09-25). Source guard because ``main`` blocks on stdin.
+    """
+    import ast
+
+    from scistack_gui import server
+
+    tree = ast.parse(Path(server.__file__).read_text(encoding="utf-8"))
+    main_fn = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+    calls = [
+        n
+        for n in ast.walk(main_fn)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "load_from_config"
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "registry"
+    ]
+    assert calls, "server.main no longer calls registry.load_from_config"
+    for call in calls:
+        kw = {k.arg: k.value for k in call.keywords}
+        assert (
+            isinstance(kw.get("on_progress"), ast.Name)
+            and kw["on_progress"].id == "_send_progress"
+        ), f"registry.load_from_config at line {call.lineno} lacks on_progress=_send_progress"
+
+
+def test_load_from_config_forwards_progress_to_module_imports(tmp_path, monkeypatch):
+    """The callback reaches the per-file import loop (not just the signature)."""
+    from scistack_gui import registry
+
+    seen: list = []
+
+    def fake_load_file_modules(paths, on_progress=None):
+        seen.append(on_progress)
+
+    monkeypatch.setattr(registry, "_load_file_modules", fake_load_file_modules)
+    monkeypatch.setattr(registry, "_load_packages", lambda names: None)
+    monkeypatch.setattr(registry, "_load_entry_points", lambda: None)
+    # load_from_config pins scifor's project root globally; keep it out of
+    # other tests.
+    import scifor.pathinput
+
+    monkeypatch.setattr(scifor.pathinput, "set_project_root", lambda root: None)
+
+    class _Cfg:
+        project_root = tmp_path
+        modules: list = []
+        packages: list = []
+        auto_discover = False
+        entities_file = None
+
+    def cb(msg: str) -> None:
+        pass
+
+    registry.load_from_config(_Cfg(), on_progress=cb)
+    assert seen == [cb]
+
+
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------

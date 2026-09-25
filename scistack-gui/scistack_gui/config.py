@@ -1280,12 +1280,7 @@ def add_path(db_path: Path, new_path: Path) -> Path:
     raw_sources = list(matlab_section.get("sources", []))
 
     if is_first_write:
-        for seed in _first_write_seed_roots(db_path, project_root):
-            raw_modules.append(seed)
-            raw_sources.append(seed)
-            logger.info(
-                "[config] add_path: seeding new scistack.toml with %s", seed
-            )
+        _seed_first_write(db_path, project_root, raw_modules, raw_sources, "add_path")
 
     normalized_new = _normalize(new_path)
     new_str = str(normalized_new)
@@ -1402,8 +1397,34 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
     return toml_path
 
 
-def _first_write_seed_roots(db_path: Path, project_root: Path) -> list[str]:
-    """Directories to seed a brand-new scistack.toml's ``modules`` with.
+def _seed_first_write(
+    db_path: Path,
+    project_root: Path,
+    raw_modules: list,
+    raw_sources: list,
+    op: str,
+) -> None:
+    """Seed a brand-new scistack.toml's ``modules`` and ``matlab.sources``.
+
+    The one owner of first-write seeding for ``add_path``,
+    ``set_entities_file`` and ``set_glue_dir`` (*op* only labels the log).
+    """
+    py_seeds, m_seeds = _first_write_seed_roots(db_path, project_root)
+    for seed in py_seeds:
+        raw_modules.append(seed)
+        logger.info("[config] %s: seeding new scistack.toml modules with %s", op, seed)
+    for seed in m_seeds:
+        raw_sources.append(seed)
+        logger.info(
+            "[config] %s: seeding new scistack.toml matlab.sources with %s", op, seed
+        )
+
+
+def _first_write_seed_roots(
+    db_path: Path, project_root: Path
+) -> tuple[list[str], list[str]]:
+    """Directories to seed a brand-new scistack.toml with, as
+    ``(modules, matlab_sources)``.
 
     Creating the first config file switches discovery from folder-scan mode
     (which walks the database's own directory) to config-driven, so the
@@ -1412,6 +1433,14 @@ def _first_write_seed_roots(db_path: Path, project_root: Path) -> list[str]:
     directory now that it is inferred rather than assumed to be the
     database's -- that is the point of the fix, but it must add a root, not
     silently swap one.
+
+    The database directory is seeded into a list only when it actually holds
+    that list's source files (``.py`` for ``modules``, ``.m`` for
+    ``matlab.sources``), found by the same walk discovery uses. A data folder
+    with no code in it has nothing to keep, and seeding it anyway made every
+    later startup warn "directory contains no .py files" (Stroke-R01-Aim1,
+    2026-09-25). The project root is always seeded: it is where the user's
+    code will go even if none exists yet.
 
     Identity, not spelling, decides whether those are two roots or one: the
     database is routinely opened by one spelling (a UNC path) while the
@@ -1425,14 +1454,27 @@ def _first_write_seed_roots(db_path: Path, project_root: Path) -> list[str]:
     root = _normalize(project_root)
     if _same_path(db_dir, root):
         logger.info(
-            "[config] add_path: database directory %s is the same directory as "
+            "[config] database directory %s is the same directory as "
             "the project root %s — seeding once, keeping the project-root "
             "spelling",
             db_dir,
             root,
         )
-        return [str(root)]
-    return [str(db_dir), str(root)]
+        return [str(root)], [str(root)]
+
+    has_py = bool(_walk_source_files(db_dir, ".py"))
+    has_m = bool(_walk_source_files(db_dir, ".m", matlab=True))
+    for label, present in (("modules (.py)", has_py), ("matlab.sources (.m)", has_m)):
+        if not present:
+            logger.info(
+                "[config] Not seeding %s with database directory %s: it holds "
+                "no such source files",
+                label,
+                db_dir,
+            )
+    py_seeds = ([str(db_dir)] if has_py else []) + [str(root)]
+    m_seeds = ([str(db_dir)] if has_m else []) + [str(root)]
+    return py_seeds, m_seeds
 
 
 def _covered_by_modules(target: Path, raw_modules: list, project_root: Path) -> bool:
@@ -1499,12 +1541,9 @@ def set_entities_file(
     raw_sources = list(matlab_section.get("sources", []))
 
     if is_first_write:
-        for seed in _first_write_seed_roots(db_path, project_root):
-            raw_modules.append(seed)
-            raw_sources.append(seed)
-            logger.info(
-                "[config] set_entities_file: seeding new scistack.toml with %s", seed
-            )
+        _seed_first_write(
+            db_path, project_root, raw_modules, raw_sources, "set_entities_file"
+        )
 
     # scidb owns both the default location and the file's initial contents
     # -- it owns the format (CLAUDE.md NOTE 3), so the GUI never hard-codes
@@ -1601,10 +1640,9 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
     raw_sources = list(matlab_section.get("sources", []))
 
     if is_first_write:
-        for seed in _first_write_seed_roots(db_path, project_root):
-            raw_modules.append(seed)
-            raw_sources.append(seed)
-            logger.info("[config] set_glue_dir: seeding new scistack.toml with %s", seed)
+        _seed_first_write(
+            db_path, project_root, raw_modules, raw_sources, "set_glue_dir"
+        )
 
     if dir_path is not None:
         raw_target = Path(dir_path)

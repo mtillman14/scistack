@@ -393,6 +393,46 @@ def _render_callee(node: ast.expr) -> str:
     return "<expr>"
 
 
+_TRY_NODES: tuple[type, ...] = (ast.Try,) + (
+    (ast.TryStar,) if hasattr(ast, "TryStar") else ()
+)
+
+
+def _is_main_guard(test: ast.expr) -> bool:
+    """True for ``__name__ == "__main__"`` in either operand order."""
+    if not (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+    ):
+        return False
+    sides = [test.left, test.comparators[0]]
+    has_name = any(isinstance(s, ast.Name) and s.id == "__name__" for s in sides)
+    has_main = any(
+        isinstance(s, ast.Constant) and s.value == "__main__" for s in sides
+    )
+    return has_name and has_main
+
+
+def _module_level_function_names(body: list[ast.stmt]) -> set[str]:
+    """Names of functions ``def``'d at module level, including inside
+    top-level ``if``/``try``/``for``/``with`` blocks (``try: from fast import f
+    except ImportError: def f(...)``), but never inside another ``def`` or
+    ``class``."""
+    names: set[str] = set()
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            continue
+        else:
+            for field in ("body", "orelse", "finalbody"):
+                names |= _module_level_function_names(getattr(node, field, []) or [])
+            for handler in getattr(node, "handlers", []) or []:
+                names |= _module_level_function_names(handler.body)
+    return names
+
+
 def find_top_level_side_effects(
     source: str, *, allow: frozenset[str] = BENIGN_TOPLEVEL_CALLS
 ) -> list[TopLevelSideEffect]:
@@ -429,8 +469,18 @@ def find_top_level_side_effects(
       -- likewise imported, and assignments are *only* flagged for local
       functions precisely so these stay silent without maintenance.
     - Docstrings: ``Expr`` wrapping a ``Constant``, not a ``Call``.
-    - ``if __name__ == "__main__": main()`` -- the ``If`` is the module-body
-      child and only direct children are inspected, never descended into.
+    - ``if __name__ == "__main__": main()`` (either operand order) -- the
+      guard's body never runs on import, so it is never descended into.
+    - Anything inside a ``def`` or ``class`` body.
+
+    Both forms also apply inside top-level ``for``/``while``/``with``/``if``/
+    ``try`` blocks, recursively, because those bodies run on import exactly
+    like the module body does. A stats script that loops over conditions
+    calling ``df.to_csv(...)`` did its whole analysis during discovery before
+    this. A call to a local function in a loop's iterable, a ``while`` test,
+    an ``if`` test or a ``with`` context expression is flagged too. The
+    ``reason`` names the enclosing block and its line so the refusal tells the
+    user where to look.
 
     ``allow`` suppresses form-1 calls that are configuration or console output
     rather than work (see :data:`BENIGN_TOPLEVEL_CALLS`); a callee matches if
@@ -444,7 +494,6 @@ def find_top_level_side_effects(
 
     Known gaps, all chosen for a low false-positive rate:
 
-    - A bare top-level ``for``/``while``/``with`` executes and is not reported.
     - ``df = pd.read_csv("huge.csv")`` reads a file, but flagging *imported*
       callees in assignments would also flag every ``logging.getLogger`` and
       ``Path(...)`` in the wild -- far too noisy to be useful.
@@ -455,44 +504,90 @@ def find_top_level_side_effects(
     Raises ``SyntaxError`` if *source* does not parse.
     """
     tree = ast.parse(source)
-    local_fns = {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    local_fns = _module_level_function_names(tree.body)
     found: list[TopLevelSideEffect] = []
 
-    for node in tree.body:
-        # Form 1: a bare call. The result is thrown away, so the call exists
-        # only for what it does.
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
-            callee = _render_callee(node.value.func)
-            if _is_benign_call(callee, allow):
-                logger.debug(
-                    "Allowing benign top-level call %s at line %d", callee, node.lineno
-                )
+    def local_calls_in(expr: ast.expr | None, context: str) -> None:
+        if expr is None:
+            return
+        for sub in ast.walk(expr):
+            if not isinstance(sub, ast.Call):
                 continue
-            found.append(TopLevelSideEffect(lineno=node.lineno, call=callee))
-
-        # Form 2: an assignment that calls one of *this file's own*
-        # functions. Statement form alone can't separate
-        # ``RATE = Parameter(1, 2, 3)`` from ``data = plot_gait(...)`` --
-        # both are Assign-of-Call -- so the callee decides.
-        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            if node.value is None:  # bare annotation: ``x: int``
-                continue
-            for sub in ast.walk(node.value):
-                if not isinstance(sub, ast.Call):
-                    continue
-                callee = _render_callee(sub.func)
-                if callee in local_fns:
-                    found.append(
-                        TopLevelSideEffect(
-                            lineno=sub.lineno,
-                            call=callee,
-                            reason="calls a function defined in this file",
-                        )
+            callee = _render_callee(sub.func)
+            if callee in local_fns:
+                found.append(
+                    TopLevelSideEffect(
+                        lineno=sub.lineno,
+                        call=callee,
+                        reason="calls a function defined in this file" + context,
                     )
+                )
+
+    def scan(body: list[ast.stmt], context: str) -> None:
+        for node in body:
+            # Form 1: a bare call. The result is thrown away, so the call
+            # exists only for what it does.
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                callee = _render_callee(node.value.func)
+                if _is_benign_call(callee, allow):
+                    logger.debug(
+                        "Allowing benign top-level call %s at line %d",
+                        callee,
+                        node.lineno,
+                    )
+                    continue
+                found.append(
+                    TopLevelSideEffect(
+                        lineno=node.lineno,
+                        call=callee,
+                        reason="its result is discarded" + context,
+                    )
+                )
+
+            # Form 2: an assignment that calls one of *this file's own*
+            # functions. Statement form alone can't separate
+            # ``RATE = Parameter(1, 2, 3)`` from ``data = plot_gait(...)`` --
+            # both are Assign-of-Call -- so the callee decides.
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                local_calls_in(node.value, context)
+
+            # Compound statements run their bodies on import just like the
+            # module body does, so the same two forms apply inside them.
+            # ``def``/``class`` bodies don't run on import and are skipped.
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                inner = f", inside a top-level for loop at line {node.lineno}"
+                local_calls_in(node.iter, inner)
+                scan(node.body, inner)
+                scan(node.orelse, inner)
+            elif isinstance(node, ast.While):
+                inner = f", inside a top-level while loop at line {node.lineno}"
+                local_calls_in(node.test, inner)
+                scan(node.body, inner)
+                scan(node.orelse, inner)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                inner = f", inside a top-level with block at line {node.lineno}"
+                for item in node.items:
+                    local_calls_in(item.context_expr, inner)
+                scan(node.body, inner)
+            elif isinstance(node, ast.If):
+                if _is_main_guard(node.test):
+                    # The whole point of the guard: never runs on import. Its
+                    # ``else`` does, though.
+                    scan(node.orelse, context)
+                    continue
+                inner = f", inside a top-level if block at line {node.lineno}"
+                local_calls_in(node.test, inner)
+                scan(node.body, inner)
+                scan(node.orelse, inner)
+            elif isinstance(node, _TRY_NODES):
+                inner = f", inside a top-level try block at line {node.lineno}"
+                scan(node.body, inner)
+                for handler in node.handlers:
+                    scan(handler.body, inner)
+                scan(node.orelse, inner)
+                scan(node.finalbody, inner)
+
+    scan(tree.body, "")
 
     # ast.walk is unordered, and a nested call (``x = f(f(1))``) can report
     # the same site twice.

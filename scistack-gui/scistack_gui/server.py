@@ -634,7 +634,7 @@ def main():
         try:
             _send_progress("Loading project config...")
             config = load_config(args.project, db_path)
-            result = registry.load_from_config(config)
+            result = registry.load_from_config(config, on_progress=_send_progress)
             logger.info(
                 "Project mode: %d functions, %d variables",
                 len(result["functions"]),
@@ -726,7 +726,7 @@ def main():
         try:
             _send_progress("Auto-discovering pipeline code...")
             config = load_config(None, db_path)
-            result = registry.load_from_config(config)
+            result = registry.load_from_config(config, on_progress=_send_progress)
             logger.info(
                 "Auto-discovered: %d functions, %d variables",
                 len(result["functions"]),

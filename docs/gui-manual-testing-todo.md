@@ -11,6 +11,37 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zr. Startup names each file it imports; analysis scripts are refused — added 2026-09-25
+
+**What changed:** during startup discovery, the server sends a progress line
+for every file ("Importing 16/25: csv-stats-change-score.py"), so the 60 s
+startup timeout applies to each file instead of all of them. Scripts that do
+their work inside a top-level `for`/`with`/`if` block are now refused instead
+of run. A new database's folder is only added to `scistack.toml` if it has
+`.py`/`.m` files in it. Plan: `.claude/plan-discovery-import-timeout.md`.
+
+**Backend**
+1. Open `Stroke-R01-Aim1.duckdb` again (with the stats scripts unchanged).
+2. The SciStack output channel should show `Importing i/25: ...` lines and the
+   server should reach ready, not time out.
+3. `src/stats/create_change_score_df.py` and `create_cohensd_df.py` should
+   show `Refusing to import ... inside a top-level for loop at line N` (or
+   `with`/`if` block), and no new "Saved ANOVA df ..." CSVs should appear.
+4. In `scidb.log`, each "Loaded module file" line ends with `import X.XXs`,
+   and there is one "Imported 25 module files in ..." line. Any file taking
+   over 5 s logs a `Slow import` WARN naming it.
+5. With a brand-new database in a folder with no code, the new
+   `scistack.toml`'s `modules` and `[matlab] sources` should list only the
+   project root, and there should be no "directory contains no .py/.m files"
+   WARNs on the next start. (For the existing Stroke project, you can delete
+   the `/Users/.../Documents/Aim1` entries from `scistack.toml` by hand.)
+
+**Frontend**
+1. Paths → Discovered Code lists the refused stats scripts with the new
+   "inside a top-level ... at line N" reason.
+
+---
+
 ## 0zq. Plot Studio light mode = the saved figure, exactly — added 2026-09-24
 
 **What changed:** there is now a ☀ / ☾ button at the top right of the Plot

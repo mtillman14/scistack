@@ -464,6 +464,95 @@ class TestDiscoveryOutputSuppression:
         assert "Failed to load module file" in caplog.text
         assert "RuntimeError: boom" in caplog.text
 
+
+# ---------------------------------------------------------------------------
+# Per-module progress + import timing. Regression: startup sent ONE progress
+# notification before importing 25 files; two stats scripts ran their whole
+# analysis on import and the extension's 60 s inactivity timer killed the
+# server with no hint of which file was slow (Stroke-R01-Aim1, 2026-09-25).
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoveryProgressAndTiming:
+    def _files(self, tmp_path):
+        a = tmp_path / "a.py"
+        a.write_text("def fa(x):\n    return x\n")
+        refused = tmp_path / "refused.py"
+        refused.write_text("for i in range(3):\n    do_work(i)\n")
+        b = tmp_path / "b.py"
+        b.write_text("def fb(x):\n    return x\n")
+        return [a, refused, b]
+
+    def test_on_progress_called_once_per_module_in_order(self, tmp_path):
+        registry._load_errors.clear()
+        messages: list[str] = []
+
+        registry._load_file_modules(self._files(tmp_path), messages.append)
+
+        assert messages == [
+            "Importing 1/3: a.py",
+            "Importing 2/3: refused.py",
+            "Importing 3/3: b.py",
+        ]
+
+    def test_top_level_loop_file_is_refused_not_imported(self, tmp_path):
+        registry._load_errors.clear()
+
+        registry._load_file_modules(self._files(tmp_path))
+
+        errors = {e["source"]: e["error"] for e in registry.get_load_errors()}
+        assert "inside a top-level for loop" in errors[str(tmp_path / "refused.py")]
+
+    def test_no_progress_callback_is_fine(self, tmp_path):
+        registry._load_errors.clear()
+        registry._load_file_modules(self._files(tmp_path))
+        assert "fa" in registry._functions and "fb" in registry._functions
+
+    def test_slow_import_warns_naming_the_file(self, tmp_path, caplog, monkeypatch):
+        import logging
+
+        monkeypatch.setattr(registry, "SLOW_IMPORT_WARN_S", 0.0)
+        f = tmp_path / "slowish.py"
+        f.write_text("def g(x):\n    return x\n")
+
+        with caplog.at_level(logging.INFO):
+            registry._load_file_modules([f])
+
+        warns = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            "Slow import" in r.getMessage() and "slowish.py" in r.getMessage()
+            for r in warns
+        )
+
+    def test_slow_import_warns_even_when_import_raises(
+        self, tmp_path, caplog, monkeypatch
+    ):
+        import logging
+
+        monkeypatch.setattr(registry, "SLOW_IMPORT_WARN_S", 0.0)
+        registry._load_errors.clear()
+        f = tmp_path / "slow_then_boom.py"
+        f.write_text("raise RuntimeError('boom')\n")
+
+        with caplog.at_level(logging.INFO):
+            registry._load_file_modules([f])
+
+        assert "Slow import" in caplog.text and "slow_then_boom.py" in caplog.text
+        assert len(registry.get_load_errors()) == 1
+
+    def test_fast_import_does_not_warn(self, tmp_path, caplog):
+        import logging
+
+        f = tmp_path / "quick.py"
+        f.write_text("def q(x):\n    return x\n")
+
+        with caplog.at_level(logging.INFO):
+            registry._load_file_modules([f])
+
+        assert "Slow import" not in caplog.text
+        assert "import " in caplog.text  # duration is on the Loaded line
+        assert "Imported 1 module files in" in caplog.text
+
     def test_error_message_includes_class_name(self):
         with pytest.raises(KeyError) as exc_info:
             registry.get_variable_class("GhostClass")

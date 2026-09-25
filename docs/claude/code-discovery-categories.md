@@ -499,6 +499,45 @@ support the MATLAB test suite — previously fully discoverable if a project
 config pointed at that directory; used as a regression-test fixture in
 `scistack-gui/tests/test_config.py`.
 
+## 7. Import-time side-effect screen (updated 2026-09-25)
+
+Discovery reads a `.py` file's definitions by **importing** it, and importing
+runs every module-level statement. A script with its analysis at the top level
+therefore does that analysis during discovery. It writes files relative to the
+server's cwd, takes time, and can exhaust the extension's startup window.
+
+**Owner:** `scifor.discovery.find_top_level_side_effects`. The GUI's
+`registry._screen_for_side_effects` is only a consumer: a file with any
+finding is refused (recorded as a load error, shown in Paths → Discovered
+Code) and never imported.
+
+Rules:
+- **Form 1:** a bare call whose result is discarded (`df.to_csv(...)`),
+  unless it is benign configuration/output (`BENIGN_TOPLEVEL_CALLS`: `print`,
+  `matplotlib.use`, `pd.set_option`, any `*.info/debug/...` logger call).
+- **Form 2:** an assignment calling a function `def`'d in the same file
+  (`data = plot_gait(...)`). Imported callees (`Parameter(...)`,
+  `Path(...)`, `logging.getLogger`) never count.
+- Both forms apply **recursively inside top-level `for`/`while`/`with`/`if`/
+  `try` blocks**, and a local-function call in a loop iterable, `while`/`if`
+  test or `with` context expression counts too. `def`/`class` bodies and the
+  `if __name__ == "__main__":` guard (either operand order) are never entered;
+  the guard's `else` is.
+- The reason in the refusal names the enclosing block and its line, e.g.
+  `top-level call df.to_csv() at line 5 (its result is discarded, inside a
+  top-level for loop at line 3)`.
+
+Why the recursion exists: before 2026-09-25 only direct module-body children
+were inspected. Stroke-R01-Aim1's `src/stats/create_*_df.py` scripts looped
+over conditions writing CSVs, passed the screen, ran for 13 s and 8 s on
+import, and the next file used up the rest of the 60 s startup window.
+
+Remaining gaps (for a low false-positive rate): an assignment calling an
+*imported* heavy function (`df = pd.read_csv("huge.csv")`) and instantiation
+of a locally-defined class are not flagged. The backstop is timing: the
+registry logs each file's import duration on its "Loaded module file" line
+and WARNs "Slow import" above `registry.SLOW_IMPORT_WARN_S` (5 s).
+
 ## See also
 
 - `docs/claude/multi-source-discovery.md` — the `[tool.scistack]` config

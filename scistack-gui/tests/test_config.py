@@ -1264,6 +1264,7 @@ def test_first_write_seeds_both_the_db_folder_and_the_project_root(tmp_path):
     project_root.mkdir()
     datasets = tmp_path / "datasets"
     datasets.mkdir()
+    (datasets / "analysis.py").write_text("def f(x):\n    return x\n")
     db_path = datasets / "proj.duckdb"
     db_path.write_text("")
     set_project_root_hint(project_root)
@@ -1273,6 +1274,62 @@ def test_first_write_seeds_both_the_db_folder_and_the_project_root(tmp_path):
     data = _read_raw_section(project_root / "scistack.toml")
     assert str(_normalize(datasets)) in data["modules"]
     assert str(_normalize(project_root)) in data["modules"]
+
+
+# Regression (Stroke-R01-Aim1, 2026-09-25): a brand-new database in a data
+# folder with no code got that folder seeded into BOTH lists, so every later
+# startup warned "modules directory contains no .py files" and "matlab.sources
+# directory contains no .m files" for it.
+
+
+def _new_db_in(tmp_path, *files: str):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    for name in files:
+        (datasets / name).write_text("")
+    db_path = datasets / "proj.duckdb"
+    db_path.write_text("")
+    set_project_root_hint(project_root)
+    return project_root, datasets, db_path
+
+
+def test_first_write_skips_a_db_folder_without_source_files(tmp_path):
+    project_root, datasets, db_path = _new_db_in(tmp_path, "notes.txt")
+
+    set_entities_file(db_path, None)
+
+    data = _read_raw_section(project_root / "scistack.toml")
+    assert data["modules"] == [str(_normalize(project_root))]
+    assert data["matlab"]["sources"] == [str(_normalize(project_root))]
+
+
+def test_first_write_seeds_db_folder_only_into_the_matching_list(tmp_path):
+    project_root, datasets, db_path = _new_db_in(tmp_path, "process.m")
+
+    set_entities_file(db_path, None)
+
+    data = _read_raw_section(project_root / "scistack.toml")
+    assert str(_normalize(datasets)) not in data["modules"]
+    assert str(_normalize(datasets)) in data["matlab"]["sources"]
+    assert str(_normalize(project_root)) in data["modules"]
+    assert str(_normalize(project_root)) in data["matlab"]["sources"]
+
+
+def test_first_write_via_add_path_also_skips_empty_db_folder(tmp_path):
+    from scistack_gui.config import add_path
+
+    project_root, datasets, db_path = _new_db_in(tmp_path)
+    library = tmp_path / "lib"
+    library.mkdir()
+    (library / "helper.py").write_text("")
+
+    written = add_path(db_path, library)
+
+    data = _read_raw_section(written)
+    assert str(_normalize(datasets)) not in data["modules"]
+    assert str(_normalize(datasets)) not in data["matlab"]["sources"]
 
 
 def test_set_entities_file_does_not_overwrite_existing_file(tmp_path):

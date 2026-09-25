@@ -409,6 +409,131 @@ class TestFindTopLevelSideEffects:
         src = "def fn():\n    plot_gait(1, 2, 3)\n"
         assert find_top_level_side_effects(src) == []
 
+    # -- Compound statements: their bodies run on import too ---------------
+    # Regression: stats scripts that loop over conditions writing CSVs passed
+    # the screen, ran their whole analysis during discovery, and blew the
+    # GUI's 60 s startup window (Stroke-R01-Aim1, 2026-09-25).
+
+    def test_flags_bare_call_inside_top_level_for_loop(self):
+        src = textwrap.dedent(
+            """\
+            import pandas as pd
+
+            for cond in ["SSV", "FV"]:
+                df = pd.DataFrame()
+                df.to_csv(f"{cond}.csv")
+            """
+        )
+        effects = find_top_level_side_effects(src)
+        assert [(e.lineno, e.call) for e in effects] == [(5, "df.to_csv")]
+        assert "inside a top-level for loop at line 3" in effects[0].describe()
+
+    def test_flags_local_function_assignment_inside_for_loop(self):
+        src = textwrap.dedent(
+            """\
+            def make_df(c):
+                return c
+
+            for cond in ["SSV", "FV"]:
+                out = make_df(cond)
+            """
+        )
+        effects = find_top_level_side_effects(src)
+        assert [(e.lineno, e.call) for e in effects] == [(5, "make_df")]
+        assert "calls a function defined in this file" in effects[0].reason
+
+    def test_flags_local_function_in_loop_iterable(self):
+        src = "def rows():\n    return []\n\nfor r in rows():\n    pass\n"
+        assert [e.call for e in find_top_level_side_effects(src)] == ["rows"]
+
+    def test_flags_nested_loops(self):
+        src = textwrap.dedent(
+            """\
+            for a in [1, 2]:
+                for b in [3, 4]:
+                    save(a, b)
+            """
+        )
+        effects = find_top_level_side_effects(src)
+        assert [(e.lineno, e.call) for e in effects] == [(3, "save")]
+
+    def test_flags_while_loop_body(self):
+        src = "i = 0\nwhile i < 3:\n    step(i)\n    i += 1\n"
+        assert [e.call for e in find_top_level_side_effects(src)] == ["step"]
+
+    def test_flags_with_block_body(self):
+        src = 'with open("out.txt", "w") as f:\n    f.write("x")\n'
+        effects = find_top_level_side_effects(src)
+        assert [e.call for e in effects] == ["f.write"]
+        assert "inside a top-level with block at line 1" in effects[0].describe()
+
+    def test_flags_non_main_if_block(self):
+        src = "DEBUG = True\nif DEBUG:\n    render_everything()\n"
+        assert [e.call for e in find_top_level_side_effects(src)] == [
+            "render_everything"
+        ]
+
+    def test_flags_else_branch_of_if(self):
+        src = "if False:\n    pass\nelse:\n    render_everything()\n"
+        assert [e.call for e in find_top_level_side_effects(src)] == [
+            "render_everything"
+        ]
+
+    def test_does_not_flag_reversed_main_guard(self):
+        src = 'if "__main__" == __name__:\n    render_everything()\n'
+        assert find_top_level_side_effects(src) == []
+
+    def test_flags_try_block_body(self):
+        src = "try:\n    run_all()\nexcept Exception:\n    report()\n"
+        assert [e.call for e in find_top_level_side_effects(src)] == [
+            "run_all",
+            "report",
+        ]
+
+    def test_does_not_flag_try_import_fallback(self):
+        src = textwrap.dedent(
+            """\
+            try:
+                import fastlib as lib
+            except ImportError:
+                lib = None
+            """
+        )
+        assert find_top_level_side_effects(src) == []
+
+    def test_local_function_defined_in_try_fallback_is_known(self):
+        src = textwrap.dedent(
+            """\
+            try:
+                from fastlib import work
+            except ImportError:
+                def work():
+                    return 1
+
+            data = work()
+            """
+        )
+        assert [e.call for e in find_top_level_side_effects(src)] == ["work"]
+
+    def test_does_not_flag_print_only_loop(self):
+        src = 'for name in ["a", "b"]:\n    print(name)\n    logger.info(name)\n'
+        assert find_top_level_side_effects(src) == []
+
+    def test_does_not_flag_loop_building_entities(self):
+        src = textwrap.dedent(
+            """\
+            from scidb import Parameter
+
+            for n in [1, 2]:
+                RATE = Parameter(n)
+            """
+        )
+        assert find_top_level_side_effects(src) == []
+
+    def test_does_not_descend_into_class_bodies(self):
+        src = "class Cfg:\n    for x in []:\n        render(x)\n"
+        assert find_top_level_side_effects(src) == []
+
     # -- Allowlist ---------------------------------------------------------
 
     @pytest.mark.parametrize(

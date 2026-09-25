@@ -88,6 +88,18 @@ Three startup-relevant notification methods:
 `progress` notification restarts it, so a slow-but-progressing startup on a
 network drive completes while a genuinely stuck server is still killed.
 
+**Only `progress` resets it.** stderr log lines do not, however many there
+are. Discovery therefore reports every file: `server.main` passes
+`on_progress=_send_progress` to `registry.load_from_config`, which sends
+`Importing i/n: <file>` before each module import. The 60 s window then
+applies to each file rather than to all of them together, and a stuck file
+is named in the last progress line. Before 2026-09-25 there was one
+notification for the whole discovery step, so 25 imports (two of them
+running analysis on import) shared one window and the server was killed
+at the 16th file (`tests/test_startup.py::test_startup_discovery_reports_progress_per_module`
+guards the wiring). Per-file import times and the "Slow import" WARN are in
+`scidb.log`; see `code-discovery-categories.md` §7.
+
 `waitForReady` can also reject from the `exit` handler (child died) or the
 `error` handler (spawn failed).
 
