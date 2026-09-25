@@ -214,7 +214,7 @@ class TestScanModulePathInputs:
     def test_registers_path_input(self):
         from scidb import PathInput
 
-        raw_emg = PathInput("{subject}/{trial}.mat")
+        raw_emg = PathInput("{subject}/{trial}.mat", name="RAW_EMG")
         mod = _make_module(RAW_EMG=raw_emg)
         registry.register_module(mod)
         assert "RAW_EMG" in registry._path_inputs
@@ -223,7 +223,7 @@ class TestScanModulePathInputs:
     def test_get_path_inputs_registry_returns_copy(self):
         from scidb import PathInput
 
-        pi = PathInput("{subject}.mat")
+        pi = PathInput("{subject}.mat", name="MY_PATH")
         mod = _make_module(MY_PATH=pi)
         registry.register_module(mod)
         result = registry.get_path_inputs_registry()
@@ -234,7 +234,7 @@ class TestScanModulePathInputs:
     def test_get_path_input_looks_up_by_name(self):
         from scidb import PathInput
 
-        pi = PathInput("{subject}.mat")
+        pi = PathInput("{subject}.mat", name="MY_PATH")
         mod = _make_module(MY_PATH=pi)
         registry.register_module(mod)
         assert registry.get_path_input("MY_PATH") is pi
@@ -246,7 +246,7 @@ class TestScanModulePathInputs:
         concept, see docs/claude/code-discovery-categories.md."""
         from scidb import EachOf, PathInput
 
-        alts = EachOf(PathInput("primary.mat"), PathInput("alt.mat"))
+        alts = EachOf(PathInput("primary.mat", name="GAIT_DATA"), PathInput("alt.mat", name="GAIT_DATA"))
         mod = _make_module(GAIT_DATA=alts)
         registry.register_module(mod)
         assert registry._path_inputs["GAIT_DATA"] is alts
@@ -264,7 +264,7 @@ class TestScanModulePathInputs:
         from scidb import PathInput
 
         mod = _make_module(
-            _HIDDEN=PathInput("{subject}.mat"), PLAIN_NUMBER=42, PLAIN_STRING="hello"
+            _HIDDEN=PathInput("{subject}.mat", name="{subject}.mat"), PLAIN_NUMBER=42, PLAIN_STRING="hello"
         )
         registry.register_module(mod)
         assert "_HIDDEN" not in registry._path_inputs
@@ -276,7 +276,7 @@ class TestScanModulePathInputs:
         # __module__ that would let us filter re-exports out.
         from scidb import PathInput
 
-        pi = PathInput("{subject}.mat")
+        pi = PathInput("{subject}.mat", name="SHARED_PATH")
         mod = _make_module_with_reexport(SHARED_PATH=pi)
         registry.register_module(mod)
         assert "SHARED_PATH" in registry._path_inputs
@@ -287,7 +287,7 @@ class TestScanModulePathInputs:
 
         from scidb import PathInput
 
-        mod = _make_module(RAW_EMG=PathInput("{subject}.mat"))
+        mod = _make_module(RAW_EMG=PathInput("{subject}.mat", name="RAW_EMG"))
         registry.register_module(mod, module_path=Path("/fake/pipeline.py"))
         assert registry._path_input_sources["RAW_EMG"] == "/fake/pipeline.py"
 
@@ -612,7 +612,7 @@ class TestLoadPackagesExcludesTestSubmodules:
             "from scidb import Parameter, PathInput\n"
             "def real_fn(x):\n    return x\n"
             "RATE = Parameter(1000)\n"
-            "RAW = PathInput('{subject}.mat')\n"
+            "RAW = PathInput('{subject}.mat', name='RAW')\n"
             "WINDOW = Parameter(1, 2, 3)\n"
         )
 
@@ -830,7 +830,7 @@ class TestTopLevelSideEffectRefusal:
             "logger = logging.getLogger(__name__)\n"
             "HERE = Path(__file__).parent\n"
             "RATE = Parameter(1, 2, 3)\n"
-            "RAW = PathInput('{subject}.mat')\n\n"
+            "RAW = PathInput('{subject}.mat', name='RAW')\n\n"
             "def use_it(x):\n"
             "    return x\n"
         )
@@ -878,7 +878,7 @@ class TestTopLevelSideEffectRefusal:
         f.write_text(
             "from scidb import Parameter, PathInput\n\n"
             "RATE = Parameter(1, 2, 3)\n"
-            "RAW = PathInput('{subject}.mat')\n\n"
+            "RAW = PathInput('{subject}.mat', name='RAW')\n\n"
             "def use_it(x):\n"
             "    return x\n"
         )

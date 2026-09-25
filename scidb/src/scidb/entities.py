@@ -77,7 +77,7 @@ from scifor.discovery import (
 )
 from scistacklog import Log
 
-from .parameter import Parameter, stamp_path_input_name
+from .parameter import Parameter
 from .source_edit import Span, line_number, splice
 from .variable import BaseVariable
 
@@ -380,15 +380,14 @@ def _load_path_inputs(data: dict, result: EntitiesFile) -> None:
             )
             continue
 
-        arms, arm_err = _build_path_input_arms(raw_alts)
+        arms, arm_err = _build_path_input_arms(raw_alts, name)
         if arm_err is not None:
             result.errors.append(EntityError(name, line, arm_err))
             continue
 
+        # The TOML key IS the name (`name=`, the PathInput's identity); every
+        # arm of an EachOf carries it.
         obj = arms[0] if len(arms) == 1 else EachOf(*arms)
-        # The declared name travels on the object, so a run records WHICH
-        # PathInput fed it (parameter.declared_input_names, cleanup-audit F38).
-        stamp_path_input_name(obj, name)
         result.path_inputs[name] = obj
         result.lines[name] = line
         Log.debug(
@@ -396,12 +395,12 @@ def _load_path_inputs(data: dict, result: EntitiesFile) -> None:
         )
 
 
-def _build_path_input_arms(raw_alts: list) -> "tuple[list, str | None]":
+def _build_path_input_arms(raw_alts: list, name: str) -> "tuple[list, str | None]":
     """``(arms, error)`` -- exactly one is meaningful."""
     arms = []
     for alt in raw_alts:
         if isinstance(alt, str):
-            arms.append(PathInput(alt))
+            arms.append(PathInput(alt, name=name))
             continue
         if not isinstance(alt, dict):
             return [], (
@@ -421,7 +420,7 @@ def _build_path_input_arms(raw_alts: list) -> "tuple[list, str | None]":
         root = alt.get("root_folder")
         if root is not None and not isinstance(root, str):
             return [], f"root_folder must be a string, got {type(root).__name__}"
-        arms.append(PathInput(template, root_folder=root))
+        arms.append(PathInput(template, root_folder=root, name=name))
     return arms, None
 
 
@@ -639,7 +638,14 @@ def _scan_entries(text: str) -> "dict[str, Span]":
     """``{"section.name" | "name": span-of-its-value}`` for every top-level
     key assignment, keyed by section-qualified name (unqualified for keys
     above the first section header, i.e. ``variables``)."""
-    spans: dict[str, Span] = {}
+    return {qualified: value for qualified, (_key, value) in _scan(text).items()}
+
+
+def _scan(text: str) -> "dict[str, tuple[Span, Span]]":
+    """``{qualified-name: (span-of-its-key, span-of-its-value)}`` -- the one
+    scanner. The key span covers the key as written, quotes included, so a
+    rename replaces exactly the token and nothing around it."""
+    spans: dict[str, tuple[Span, Span]] = {}
     section: str | None = None
     i = 0
     n = len(text)
@@ -664,30 +670,35 @@ def _scan_entries(text: str) -> "dict[str, Span]":
         if eq is None:
             i = line_end + 1
             continue
-        key, value_start = eq
+        key, key_span, value_start = eq
         value_end = _value_end(text, value_start)
         qualified = f"{section}.{key}" if section else key
-        spans[qualified] = Span(value_start, value_end)
+        spans[qualified] = (key_span, Span(value_start, value_end))
         i = max(value_end, line_end) + 1
 
     return spans
 
 
-def _key_assignment_end(text: str, start: int, line_end: int) -> "tuple[str, int] | None":
-    """``(key, offset-of-value)`` for a ``key = `` at *start*, else None."""
+def _key_assignment_end(
+    text: str, start: int, line_end: int
+) -> "tuple[str, Span, int] | None":
+    """``(key, span-of-the-key-token, offset-of-value)`` for a ``key = `` at
+    *start*, else None."""
     line = text[start:line_end]
     eq = line.find("=")
     if eq == -1:
         return None
-    key = line[:eq].strip().strip("\"'")
+    raw = line[:eq]
+    key = raw.strip().strip("\"'")
     if not key or "." in key:
         # Dotted keys (`a.b = 1`) address a nested table; nothing in this
         # format uses them, and pretending otherwise would mis-key the span.
         return None
+    key_span = Span(start + len(raw) - len(raw.lstrip()), start + len(raw.rstrip()))
     value_start = start + eq + 1
     while value_start < line_end and text[value_start] in " \t":
         value_start += 1
-    return key, value_start
+    return key, key_span, value_start
 
 
 def _value_end(text: str, start: int) -> int:
@@ -884,6 +895,56 @@ def initial_text() -> str:
         "\n"
         f"[{PATH_INPUTS}]\n"
     )
+
+
+def declared_names(text: str) -> set[str]:
+    """Every name *text* declares, across all three kinds -- the namespace a
+    new name must not collide with (see :func:`_name_error`). Unparseable
+    TOML declares nothing it can vouch for, so the scanner's keys are used
+    instead of guessing."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return {q.rsplit(".", 1)[-1] for q in _scan(text) if q != VARIABLES}
+    names = {str(v) for v in data.get(VARIABLES) or [] if isinstance(v, str)}
+    for section in (PARAMETERS, PATH_INPUTS):
+        table = data.get(section)
+        if isinstance(table, dict):
+            names.update(table)
+    return names
+
+
+def rename_entry(text: str, section: str, old: str, new: str) -> str:
+    """*text* with the key ``old`` in *section* renamed to ``new``.
+
+    Only the key token is replaced: the value, any trailing comment and
+    every other entry survive byte for byte -- the same guarantee
+    :func:`find_entry_span` gives a value edit. Raises ``ValueError`` when
+    ``old`` is not in *section*, or when ``new`` is not a valid name or is
+    already declared as ANY kind (one name, one entity -- see
+    :func:`_name_error`).
+    """
+    entry = _scan(text).get(f"{section}.{old}")
+    if entry is None:
+        raise ValueError(f"No entry '{old}' in [{section}].")
+    if new == old:
+        return text
+    if not new or not new.isidentifier() or keyword.iskeyword(new):
+        raise ValueError(f"'{new}' is not a valid name.")
+    if new.startswith("_"):
+        raise ValueError("Names must not start with an underscore.")
+    if new in declared_names(text):
+        raise ValueError(f"'{new}' is already declared in the entities file.")
+    key_span, _value = entry
+    Log.info(
+        "[entities] rename_entry: [%s] %s -> %s (key at %d:%d)",
+        section,
+        old,
+        new,
+        key_span.start,
+        key_span.end,
+    )
+    return splice(text, key_span, new)
 
 
 def upsert_entry(text: str, section: str, name: str, rendered: str) -> str:

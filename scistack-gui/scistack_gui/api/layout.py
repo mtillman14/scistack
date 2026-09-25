@@ -16,6 +16,7 @@ table for both transports (``api/handlers.py``).
     GET    /api/path-inputs                     get_path_inputs
     POST   /api/path-inputs                     create_path_input
     PUT    /api/path-inputs/{name}              update_path_input
+    POST   /api/path-inputs/{name}/rename       rename_path_input
     DELETE /api/path-inputs/{name}              delete_path_input
     POST   /api/path-inputs/{node_id}/deep-copy deep_copy_path_input
     GET    /api/entities/{kind}/{name}/editability get_entity_editability
@@ -119,6 +120,11 @@ class PathInputUpdate(BaseModel):
     template: str
     root_folder: str | None = None
     alternate_templates: list[dict] | None = None
+
+
+class PathInputRename(BaseModel):
+    name: str
+    new_name: str
 
 
 class EntityRef(BaseModel):
@@ -249,6 +255,14 @@ def _update_path_input(req: PathInputUpdate) -> dict:
     )
 
 
+def _rename_path_input(req: PathInputRename) -> dict:
+    """Rename a PathInput's declaration in the entities file, and move every
+    canvas placement, edge and note keyed by its name
+    (``layout_service.rename_path_input``). The template is unchanged, so
+    its run history stays attached."""
+    return layout_service.rename_path_input(req.name, req.new_name)
+
+
 def _delete_path_input(req: NamedInScope) -> dict:
     """Hides the node only — the source declaration is untouched (never
     delete, mark hidden). To CHANGE a template, use ``update_path_input``."""
@@ -324,6 +338,7 @@ LAYOUT_HANDLERS: tuple[Handler, ...] = (
     Handler("get_path_inputs", "/path-inputs", None, _get_path_inputs, needs_db=False, http_method="GET"),
     Handler("create_path_input", "/path-inputs", PathInputCreate, _create_path_input, needs_db=False),
     Handler("update_path_input", "/path-inputs/{name}", PathInputUpdate, _update_path_input, needs_db=False, http_method="PUT"),
+    Handler("rename_path_input", "/path-inputs/{name}/rename", PathInputRename, _rename_path_input, needs_db=False),
     Handler("delete_path_input", "/path-inputs/{name}", NamedInScope, _delete_path_input, needs_db=False, http_method="DELETE", body=True),
     Handler("deep_copy_path_input", "/path-inputs/{node_id}/deep-copy", NodeRef, _deep_copy_path_input, needs_db=False, http_errors=_BAD_REQUEST, body=False),
     Handler("get_entity_editability", "/entities/{kind}/{name}/editability", EntityRef, _get_entity_editability, needs_db=False, http_method="GET"),

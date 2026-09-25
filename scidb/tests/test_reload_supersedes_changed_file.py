@@ -54,7 +54,7 @@ def read_file(filepath):
 def _load(root):
     for_each(
         read_file,
-        {"filepath": PathInput("{subject}/{subject}_{trial}.txt", root_folder=str(root))},
+        {"filepath": PathInput("{subject}/{subject}_{trial}.txt", root_folder=str(root), name="{subject}/{subject}_{trial}.txt")},
         [Reading],
         subject=[],
         trial=[],

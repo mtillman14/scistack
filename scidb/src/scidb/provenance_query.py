@@ -1534,7 +1534,8 @@ def stored_invocation_signature(duck, record_id: str):
     """Signature of the invocation that produced ``record_id``, for skip_computed.
 
     Returns ``None`` if the record has no producing invocation (raw/manual), else
-    ``{"function_hash", "var_inputs", "const_hashes", "run_options"}`` —
+    ``{"function_hash", "var_inputs", "const_hashes", "path_inputs",
+    "run_options"}`` —
     ``run_options`` being :func:`run_options_label` of the invocation, so the
     gate can refuse a record produced under other options (pooled vs split,
     distributed vs not) that happens to share the edge set — where ``var_inputs`` maps
@@ -1543,7 +1544,8 @@ def stored_invocation_signature(duck, record_id: str):
     one of them is an edge (since 2026-09-20 under the real parameter name;
     keeping one edge per param here is what made folding the names break
     skip_computed the first time) — and ``const_hashes`` maps
-    ``param -> content_hash``. This is the new-table replacement for the old
+    ``param -> content_hash``, and ``path_inputs`` maps ``param -> PathInput
+    spec record id``. This is the new-table replacement for the old
     ``_lineage`` reads (function hash + input edges + constant records).
     """
     inv = producing_invocation(duck, record_id)
@@ -1565,9 +1567,13 @@ def stored_invocation_signature(duck, record_id: str):
     )
     var_inputs: dict[str, list] = {}
     const_hashes: dict[str, str] = {}
+    path_inputs: dict[str, str] = {}
     for param, in_rid, selector, rtype, chash in rows:
         if rtype == PATHINPUT_TYPE:
-            continue  # PathInput spec — excluded from identity / staleness
+            # PathInput spec record — identity since 2026-09-25, so staleness
+            # compares it too (a different file is a different call).
+            path_inputs[param] = in_rid
+            continue
         if rtype == CONSTANT_TYPE:
             const_hashes[param] = chash
         else:
@@ -1576,6 +1582,7 @@ def stored_invocation_signature(duck, record_id: str):
         "function_hash": fn_hash,
         "var_inputs": var_inputs,
         "const_hashes": const_hashes,
+        "path_inputs": path_inputs,
         "run_options": run_options_label(*opts) if opts else run_options_label(False, None),
     }
 
@@ -3112,7 +3119,11 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     """
     import itertools
 
-    from .provenance import compute_constant_record_id, compute_invocation_id
+    from .provenance import (
+        compute_constant_record_id,
+        compute_invocation_id,
+        compute_pathinput_record_id,
+    )
 
     input_types = cfg["input_types"]
     if not input_types:
@@ -3121,6 +3132,12 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
     across_variants = sorted(cfg.get("across_variants") or [])
     const_bindings = [
         (p, compute_constant_record_id(v)) for p, v in cfg["constants"].items()
+    ]
+    # PathInput edges are identity (provenance_save._pathinput_bindings): the
+    # stored spec is the verbatim `to_key()` the save path hashed.
+    const_bindings += [
+        (p, compute_pathinput_record_id(spec))
+        for p, spec in sorted((cfg.get("path_inputs") or {}).items())
     ]
     per_param = {
         param: _current_records_by_schema(duck, vtype)
@@ -3260,8 +3277,9 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
     Mirrors ``ForEachConfig``'s own call-site view: a loadable spec becomes
     its variable TYPE name (every wrapper peeled through
     :mod:`scidb.input_spec`, the one unwrap), ColumnSelection contributes a
-    selector, AcrossVariants a run option, PathInput/PathOutput/ColName are
-    excluded, everything else is a constant. ``as_table``/``distribute``
+    selector, AcrossVariants a run option, a PathInput its name key
+    (``path_inputs``), PathOutput/ColName are excluded, everything else is a
+    constant. ``as_table``/``distribute``
     aren't expressible here → defaults.
 
     A ``Variant`` pin narrows WHICH records a run consumes but does not
@@ -3289,9 +3307,15 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
 
     input_types: dict = {}
     constants: dict = {}
+    path_inputs: dict = {}
     across_variants: list = []
     for name, spec in inputs.items():
         if _PathInput is not None and isinstance(spec, _PathInput):
+            # Its NAME, as the recorded configs carry it (reduced to the key
+            # by `config_call_id` / the predict side): without it this call
+            # id never matched the recorded one, and a run node predicted
+            # extra, PathInput-less invocations that were never written.
+            path_inputs[name] = spec.to_key()
             continue
         if _PathOutput is not None and isinstance(spec, _PathOutput):
             continue
@@ -3320,6 +3344,7 @@ def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
         "selectors": compute_input_selectors(inputs),
         "constants": constants,
         "glue_chains": glue_chains,
+        "path_inputs": path_inputs,
         "as_table": [],
         "distribute": False,
         "across_variants": sorted(across_variants),

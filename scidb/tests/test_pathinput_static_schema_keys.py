@@ -38,7 +38,7 @@ def empty_db(tmp_path):
 
 class TestStaticPathInputDropsUnresolvedSchemaKeys:
     def test_schema_keys_dropped_runs_once(self, empty_db, literal_file):
-        pi = _scifor.PathInput(str(literal_file))
+        pi = _scifor.PathInput(str(literal_file), name=str(str(literal_file)))
 
         result = for_each(
             read_content,
@@ -60,7 +60,7 @@ class TestStaticPathInputDropsUnresolvedSchemaKeys:
         # pre-existing "0 iterations" behavior (not a hard error, but not a
         # drop-and-run-once either) is preserved.
         pi = _scifor.PathInput(
-            "{subject}/6MWT_GR.xlsx", root_folder=str(tmp_path)
+            "{subject}/6MWT_GR.xlsx", root_folder=str(tmp_path), name="{subject}/6MWT_GR.xlsx"
         )
 
         result = for_each(

@@ -11,7 +11,9 @@
  *
  * So: mark a run in flight when we dispatch it to MATLAB, note (rather than
  * act on) DB changes while it is, and replay one refresh when MATLAB lets
- * go. Deliberately free of any `vscode` import so it can be unit-tested
+ * go. It also gates the watcher during this session's own Python runs
+ * (`beginPythonRun`), the one other writer whose WAL traffic the watcher
+ * would otherwise mistake for an external change. Deliberately free of any `vscode` import so it can be unit-tested
  * under `node --test` (see tsconfig.test.json).
  */
 
@@ -22,6 +24,12 @@ export class MatlabRunTracker {
    * MATLAB — see `noteSharedEngine`.
    */
   private sharedEngine = new Set<string>();
+  /**
+   * Python runs in flight on this session's own server — see
+   * `beginPythonRun`. Kept apart from `inFlight`: a Python run never holds
+   * the lock between requests, so nothing MATLAB-specific may read it.
+   */
+  private pythonInFlight = new Set<string>();
   private refreshPending = false;
   private finishedCallbacks: (() => void)[] = [];
 
@@ -69,6 +77,7 @@ export class MatlabRunTracker {
    */
   end(runId: string | undefined): boolean {
     if (!runId) return false;
+    this.pythonInFlight.delete(runId);
     this.sharedEngine.delete(runId);
     const wasTracked = this.inFlight.delete(runId);
     if (wasTracked && this.inFlight.size === 0) {
@@ -83,15 +92,46 @@ export class MatlabRunTracker {
   }
 
   /**
+   * Mark a run on this session's own Python server as writing the database,
+   * from its `run_start` until its `run_done` (cleared by {@link end}).
+   *
+   * Why: the DB file-watcher cannot tell the server's own save from an
+   * external write. A 15k-record save kept firing it, and the canvas rebuilt
+   * mid-save, contending with the writer (26.5s vs 1.9s; scidb.log
+   * 2026-09-25) and drawing the pre-save graph. Safe to call once per target
+   * of a multi-target run: the id is a set member.
+   */
+  beginPythonRun(runId: string): void {
+    this.pythonInFlight.add(runId);
+  }
+
+  /** Whether this session's Python server is mid-run. */
+  get pythonRunActive(): boolean {
+    return this.pythonInFlight.size > 0;
+  }
+
+  /**
+   * Forget every Python run. For when the server process is replaced: a
+   * dead server sends no `run_done`, and a stuck mark would silence the
+   * watcher for the rest of the session.
+   */
+  clearPythonRuns(): void {
+    this.pythonInFlight.clear();
+  }
+
+  /**
    * Called by the DB file-watcher. Returns true when the caller should
    * refresh the DAG now; false when MATLAB owns the database, in which case
-   * the change is remembered for {@link takeDeferredRefresh}.
+   * the change is remembered for {@link takeDeferredRefresh}; false too
+   * while a Python run is in flight, but NOT remembered — that run's own
+   * `dag_updated` (pushed after `run_done`) re-reads everything.
    */
   noteDbChange(): boolean {
     if (this.isActive) {
       this.refreshPending = true;
       return false;
     }
+    if (this.pythonRunActive) return false;
     return true;
   }
 

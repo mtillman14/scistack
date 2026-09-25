@@ -301,6 +301,7 @@ def build_aggregate(db, scidb_agg: dict):
         registry.get_path_inputs_registry(),
         _store.path_input_history_index(db),
         registry.get_project_root(),
+        path_input_renames=_store.path_input_rename_index(db),
     )
 
 
@@ -1408,18 +1409,36 @@ def _build_graph(
                     )
                 else:
                     manual_fn_state = "red"
-                logger.debug(
-                    "manual fn %s: computed state=%s (outputs=%s, "
-                    "trust_history=%s)",
+                # INFO: a manual node's colour is decided here and nowhere
+                # the run-state pass logs (propagate_run_states covers only
+                # DB-derived call sites), so without this line "why is this
+                # node red/green" has no answer in scidb.log.
+                logger.info(
+                    "[pipeline] manual fn node %s (%s): state=%s — outputs=%s, "
+                    "inputs=%s, history for %s: %s",
+                    node_id,
                     fn_label,
                     manual_fn_state,
                     state_output_types,
-                    trust_history,
+                    inferred_inputs,
+                    fn_label,
+                    (
+                        "none (state read by function name + outputs)"
+                        if not found_any_history
+                        else "compatible call site found (state read by "
+                        "function name + outputs)"
+                        if compatible_with_some_history
+                        else "every call site conflicts with this wiring "
+                        "(forced red)"
+                    ),
                 )
             else:
                 manual_fn_state = "red"
-                logger.debug(
-                    "manual fn %s: no inferred outputs, defaulting to red", fn_label
+                logger.info(
+                    "[pipeline] manual fn node %s (%s): state=red — no output "
+                    "edge wired, so no output to look up",
+                    node_id,
+                    fn_label,
                 )
 
         node = gb.build_manual_node(

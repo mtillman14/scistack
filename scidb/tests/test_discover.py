@@ -104,14 +104,14 @@ class TestSharedPredicates:
         from scidb import PathInput
         from scidb.discover import is_path_input
 
-        assert is_path_input(PathInput("{s}.mat"))
+        assert is_path_input(PathInput("{s}.mat", name="{s}.mat"))
         assert not is_path_input(1)
 
     def test_is_path_input_each_of_of_path_inputs(self):
         from scidb import EachOf, PathInput
         from scidb.discover import is_path_input
 
-        assert is_path_input(EachOf(PathInput("{s}.mat"), PathInput("{t}.mat")))
+        assert is_path_input(EachOf(PathInput("{s}.mat", name="{s}.mat"), PathInput("{t}.mat", name="{s}.mat")))
 
     def test_is_path_input_each_of_of_plain_values_is_not(self):
         from scidb import EachOf
@@ -201,7 +201,7 @@ class TestDiscoverModule:
                 "paths.py": """
                     from scidb import PathInput
 
-                    RAW_EMG = PathInput("{subject}/{trial}.mat")
+                    RAW_EMG = PathInput("{subject}/{trial}.mat", name="RAW_EMG")
                 """,
             },
         )
@@ -222,8 +222,8 @@ class TestDiscoverModule:
                     from scidb import EachOf, PathInput
 
                     GAIT_DATA = EachOf(
-                        PathInput("assessment/{subject}.mat"),
-                        PathInput("training/{subject}.mat"),
+                        PathInput("assessment/{subject}.mat", name="GAIT_DATA"),
+                        PathInput("training/{subject}.mat", name="GAIT_DATA"),
                     )
                 """,
             },
@@ -644,7 +644,7 @@ class TestModuleExportsProperties:
         from scidb import PathInput
         from scidb.discover import ModuleExports
 
-        pi = PathInput("{subject}.mat")
+        pi = PathInput("{subject}.mat", name="{subject}.mat")
         exports = ModuleExports(module_name="test", path_inputs=[("X", pi)])
         assert not exports.is_empty
         assert exports.total_count == 1
@@ -670,7 +670,7 @@ class TestModuleExportsProperties:
             variables=[object, object],
             functions=[object],
             parameters=[("X", c), ("Y", c), ("S", Parameter(1, 2))],
-            path_inputs=[("P", PathInput("{s}.mat"))],
+            path_inputs=[("P", PathInput("{s}.mat", name="{s}.mat"))],
         )
         assert exports.total_count == 7
 
@@ -689,7 +689,7 @@ class TestPackageResultProperties:
             module_name="b",
             functions=[object],
             parameters=[("X", Parameter(1)), ("S", Parameter(1, 2))],
-            path_inputs=[("P", PathInput("{s}.mat"))],
+            path_inputs=[("P", PathInput("{s}.mat", name="{s}.mat"))],
         )
         result = PackageResult(name="test", modules=[m1, m2])
         assert result.variable_count == 2

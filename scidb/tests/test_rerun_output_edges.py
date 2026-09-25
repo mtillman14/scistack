@@ -1,9 +1,9 @@
 """Regression tests for Fix B: cross-run output-edge assignment (immutable).
 
 Bug: ``_invocation_output`` has PK ``(invocation_id, output_num)`` and the
-output-edge insert used ``ON CONFLICT DO NOTHING``. ``invocation_id`` excludes
-PathInput specs (folder moves must not recompute), so two separate for_each runs
-that share an ``invocation_id`` (same fn + same constants) but write to DISJOINT
+output-edge insert used ``ON CONFLICT DO NOTHING``. Two separate for_each runs
+that share an ``invocation_id`` (same fn + same constants, no variable input —
+and, since 2026-09-25, the same PathInput spec, which is now identity) but write to DISJOINT
 schema locations reused the same ``output_num`` sequence — the second run's edges
 collided with the first run's committed slots and were silently dropped, orphaning
 those records (no producing-invocation edge).
@@ -38,8 +38,8 @@ class Out(BaseVariable):
 
 def make_val(c):
     """Constant-only function — no variable input, so the invocation_id depends
-    only on (fn, constants) and is SHARED across separate runs (mirrors a
-    PathInput input, which is excluded from invocation identity)."""
+    only on (fn, constants) and is SHARED across separate runs (as is a
+    PathInput-only call re-run over the SAME spec)."""
     return float(c)
 
 

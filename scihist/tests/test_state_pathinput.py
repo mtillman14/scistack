@@ -61,7 +61,7 @@ def _write_combo_files(root, combos):
 def _path_input(root):
     from scifor import PathInput
 
-    return PathInput("sub{subject}/trial{trial}.txt", root_folder=str(root))
+    return PathInput("sub{subject}/trial{trial}.txt", root_folder=str(root), name="sub{subject}/trial{trial}.txt")
 
 
 # ---------------------------------------------------------------------------

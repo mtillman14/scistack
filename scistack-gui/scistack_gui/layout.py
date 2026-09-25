@@ -519,6 +519,46 @@ def write_note(key: str, text: str) -> None:
     logger.debug("[layout] Note written successfully (key=%r)", key)
 
 
+def rebase_node_positions(
+    old_bare: str,
+    new_bare: str,
+    note_keys: "tuple[str, str] | None" = None,
+) -> int:
+    """Move the saved position of EVERY placement of *old_bare* (bare and
+    ``::scope``-qualified) onto the same placement of *new_bare* — the
+    layout.json half of a canonical id changing (a rename; the DB half is
+    ``pipeline_store.rebase_node``). ``note_keys=(old, new)`` also moves
+    that item's note, which is keyed by name (see :func:`write_note`).
+    Returns how many positions moved."""
+    from scistack_gui.intent_store import _rebase
+
+    moved = 0
+    with _layout_write("rebase_node_positions"):
+        data = _load()
+        for scope in data["positions"].values():
+            for nid in list(scope):
+                new_id = _rebase(nid, old_bare, new_bare)
+                if new_id is None:
+                    continue
+                pos = scope.pop(nid)
+                scope.setdefault(new_id, pos)
+                moved += 1
+        note_moved = False
+        if note_keys is not None:
+            old_key, new_key = note_keys
+            note = data["notes"].pop(old_key, None)
+            if note is not None:
+                data["notes"].setdefault(new_key, note)
+                note_moved = True
+        if moved or note_moved:
+            _save(data)
+    logger.info(
+        "[layout] rebase_node_positions %s -> %s: %d position(s), note moved=%s",
+        old_bare, new_bare, moved, note_moved,
+    )
+    return moved
+
+
 def graduate_manual_node(old_id: str, new_id: str) -> None:
     """Transfer position from a manual node to a DB-derived node ID and
     remove the manual entry. Scope-aware: the new id stays on whichever

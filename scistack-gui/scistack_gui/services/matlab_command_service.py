@@ -345,12 +345,13 @@ def _warn_on_glue_language(
 def _collect_edge_path_inputs(
     function_name: str, saved_pis: dict, manual_edges: list[dict], manual_nodes: dict
 ) -> dict[str, dict]:
-    """``{param_name: {"template", "root_folder"}}`` for every PathInput node
+    """``{param_name: {"name", "template", "root_folder"}}`` for every PathInput node
     wired into *function_name*, resolved from the edge that names the
     parameter — never from a name coincidence."""
     resolved = _resolve_matlab_wiring(function_name, manual_edges, manual_nodes)
     return {
         param_name: {
+            "name": decl_name,
             "template": saved_pis[decl_name].get("template", ""),
             "root_folder": saved_pis[decl_name].get("root_folder"),
         }

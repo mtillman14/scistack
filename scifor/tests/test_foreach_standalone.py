@@ -1981,7 +1981,7 @@ def test_case_a_adopts_template_keys_in_placeholder_order(tmp_path):
 
     path_input = scifor.PathInput(
         "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx",
-        root_folder=str(tmp_path),
+        root_folder=str(tmp_path), name="{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx",
     )
 
     # The parameter name must BE the input name: for_each calls fn(**kwargs).

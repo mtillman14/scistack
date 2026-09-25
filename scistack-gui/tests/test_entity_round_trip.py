@@ -84,13 +84,13 @@ class TestGuiEditRoundTrip:
         from scistack_gui.services.path_input_service import update_path_input
 
         entities = _project(
-            tmp_path, "import scidb\n\nRAW = scidb.PathInput('a.csv')\n"
+            tmp_path, "import scidb\n\nRAW = scidb.PathInput('a.csv', name='RAW')\n"
         )
 
         assert update_path_input("RAW", "{subject}/b.csv", "/data")["ok"]
 
         assert (
-            "scidb.PathInput('{subject}/b.csv', root_folder='/data')"
+            "scidb.PathInput('{subject}/b.csv', root_folder='/data', name='RAW')"
             in entities.read_text()
         )
         _rescan()
@@ -332,7 +332,7 @@ class TestMatlabEntitiesRoundTrip:
         updated = splice(
             read_source_text(f),
             binding.expr_span,
-            render_matlab_path_input("{subject}/b.mat", "/data"),
+            render_matlab_path_input("{subject}/b.mat", "/data", name="raw"),
         )
         f.write_text(updated)
 

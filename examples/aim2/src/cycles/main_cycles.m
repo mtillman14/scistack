@@ -15,7 +15,7 @@ scidb.configure_database(fullfile(projectRoot, 'aim2.duckdb'), schema);
 % Every key is delimited in the file name, so no key_regex is needed; the
 % empty key lists let PathInput discover what is actually on disk.
 symmetryTemplate = '{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_c{cycle}.csv';
-symmetryPath = scifor.PathInput(symmetryTemplate, 'root_folder', root_load);
+symmetryPath = scifor.PathInput(symmetryTemplate, 'root_folder', root_load, 'name', 'symmetryPath');
 
 scidb.for_each(@loadGaitSymmetryOneCycle, ...
     struct('csv_file_path', symmetryPath), ...

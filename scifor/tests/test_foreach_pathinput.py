@@ -30,7 +30,7 @@ def test_schema_keys_dropped_for_static_pathinput(tmp_path):
     literal path, as if the key had never been requested."""
     f = tmp_path / "6MWT_GR.xlsx"
     f.write_text("hello")
-    pi = PathInput(str(f))
+    pi = PathInput(str(f), name=str(str(f)))
 
     result = for_each(
         lambda filepath: Path(str(filepath)).read_text(),
@@ -47,7 +47,7 @@ def test_not_dropped_when_pathinput_is_templated(tmp_path):
     candidate source for 'subject', so the drop leniency must not kick in --
     'pass' has no source at all (not a placeholder, no DataFrame column) and
     still hard-errors, exactly like the no-PathInput-at-all case."""
-    pi = PathInput("{subject}/6MWT_GR.xlsx", root_folder=str(tmp_path))
+    pi = PathInput("{subject}/6MWT_GR.xlsx", root_folder=str(tmp_path), name="{subject}/6MWT_GR.xlsx")
 
     with pytest.raises(ValueError, match="pass"):
         for_each(
@@ -82,7 +82,7 @@ def discovery_tree(tmp_path):
 def test_case_a_no_metadata_adopts_all_discovered_keys(discovery_tree):
     """No metadata_iterables at all -> every placeholder key + its discovered
     values are adopted directly from disk."""
-    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree))
+    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
 
     result = for_each(
         lambda filepath: Path(str(filepath)).read_text(),
@@ -95,7 +95,7 @@ def test_case_a_no_metadata_adopts_all_discovered_keys(discovery_tree):
 
 def test_case_b_empty_keys_filled_from_disk(discovery_tree):
     """Explicit empty lists for the template keys -> filled from disk."""
-    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree))
+    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
 
     result = for_each(
         lambda filepath: Path(str(filepath)).read_text(),
@@ -116,7 +116,7 @@ def test_case_b_empty_keys_filled_from_disk(discovery_tree):
 def test_discovered_zero_padded_trial_condenses_to_int(discovery_tree):
     """'trial' is discovered as '001'/'002' on disk; standalone scifor
     condenses digit-only discovered values automatically."""
-    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree))
+    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
 
     result = for_each(
         lambda filepath: Path(str(filepath)).read_text(),
@@ -134,7 +134,7 @@ def test_discovered_zero_padded_trial_condenses_to_int(discovery_tree):
 def test_explicit_padded_trial_not_condensed(discovery_tree):
     """An explicit zero-padded string value is user intent, not a discovery
     -- it must stay verbatim, matching the literal file on disk."""
-    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree))
+    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
 
     result = for_each(
         lambda filepath: str(filepath),
@@ -153,7 +153,7 @@ def test_explicit_padded_trial_not_condensed(discovery_tree):
 
 
 def test_per_combo_resolution_receives_path(discovery_tree):
-    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree))
+    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
 
     result = for_each(
         lambda filepath: str(filepath),
@@ -169,7 +169,7 @@ def test_per_combo_resolution_receives_path(discovery_tree):
 def test_path_input_resolver_override_hook(discovery_tree):
     """A custom ``_path_input_resolver`` overrides the default
     ``pathinput.load(**metadata)`` resolution."""
-    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree))
+    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
     seen = []
 
     def fake_resolver(pathinput, metadata):
@@ -196,7 +196,7 @@ def test_path_input_resolver_override_hook(discovery_tree):
 def test_for_columns_with_pathinput_constant(discovery_tree):
     set_schema(["subject"])
     df = pd.DataFrame({"subject": [1], "a": [1.0], "b": [3.0]})
-    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree))
+    pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
 
     def fn(v, filepath):
         return {"sum": float(v.sum()), "path": str(filepath)}

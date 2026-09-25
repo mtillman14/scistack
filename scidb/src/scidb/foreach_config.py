@@ -244,9 +244,16 @@ class CallSite:
 
     def version_keys(self) -> dict:
         """The call-site keys, spelled the one way ``call_id`` hashes them."""
+        from .provenance import path_input_key_of
+
         keys: dict = {"__fn": self.fn_name}
         if self.inputs:
-            keys["__inputs"] = {k: self.inputs[k] for k in sorted(self.inputs)}
+            # A PathInput counts by its NAME whichever form arrives — the live
+            # key forward, a stored spec backward (path_input_key_of).
+            keys["__inputs"] = {
+                k: path_input_key_of(self.inputs[k]) or self.inputs[k]
+                for k in sorted(self.inputs)
+            }
         # Always present, even when empty (a record's version keys carry it).
         keys["__constants"] = dict(self.constants)
         if self.options.distribute:
@@ -440,8 +447,8 @@ class ForEachConfig:
             if inner is not None:
                 result[name] = inner
                 continue
-            # Not a variable type: a PathInput (its template IS the call
-            # site), or a Merge / DataFrame that spells itself.
+            # Not a variable type: a PathInput (its NAME is the call site —
+            # `to_key()`), or a Merge / DataFrame that spells itself.
             if is_loadable(spec) or isinstance(spec, PathInput):
                 if hasattr(spec, "to_key"):
                     result[name] = spec.to_key()
@@ -502,8 +509,9 @@ class ForEachConfig:
         PathInput is included too even though is_loadable excludes it (its
         resolution moved to scifor's for_each loop, not scidb's variable
         loader) -- it still needs a stable identity in ``__inputs`` via its
-        own ``to_key()``, or two different templates would collapse into the
-        same version-key group.
+        own ``to_key()``, which is its NAME alone: two differently named
+        PathInputs are two version-key groups, and a moved data folder is not
+        (so record ids stay the same on another machine).
 
         Returns a dict (not JSON string) so it can be carried in the in-memory
         config keys that build save_metadata.

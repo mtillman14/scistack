@@ -174,6 +174,21 @@ def _ensure_tables(db) -> None:
             PRIMARY KEY (name, template, root_folder)
         )
     """)
+    # PathInput renames — the NAME counterpart of the template history
+    # above. Runs record the declared name they were given
+    # (_invocation_input.declared_name, F38) and that recorded name wins over
+    # a content match, so after a GUI rename every earlier run would name a
+    # PathInput that is no longer declared and draw as a ghost node beside
+    # the renamed one. Written from ONE place (layout_service.
+    # rename_path_input); read through path_input_rename_index and resolved
+    # only by graph_builder.resolve_renamed_path_input. Append-only.
+    _duck(db)._execute("""
+        CREATE TABLE IF NOT EXISTS _pipeline_path_input_renames (
+            old_name   VARCHAR NOT NULL,
+            new_name   VARCHAR NOT NULL,
+            renamed_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+        )
+    """)
     # Hidden subpipeline ports (to-do #9) — a scope's exposed inputs/
     # outputs are computed automatically from wiring (see
     # domain.scope_filter.document_interface); this table is a per-scope
@@ -629,6 +644,90 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     node_wiring.rekey_node(db, old_id, new_id)
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id])
     rename_edge_endpoints(db, old_id, new_id)
+
+
+def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None) -> dict:
+    """Move every piece of DB-held GUI state keyed by the canonical node id
+    *old_bare* — at EVERY placement — onto *new_bare*, keeping each
+    ``::scope`` suffix. What a rename needs, because a PathInput's node id
+    embeds its declared name (``ids.path_input_node_id``).
+
+    Not graduation: graduation folds ONE manual placement into a DB-derived
+    node and merges configs (:func:`graduate_manual_node`); this renames a
+    canonical id, so each placement keeps its own rows as they are.
+
+    ``new_label`` also rewrites the label of the ``_pipeline_nodes`` rows
+    it moves (and of still-ungraduated manual rows — ``pathInput__OLD__abc``
+    — whose label is the old name, so they graduate onto the new node).
+    Layout positions live in layout.json, not here — see
+    ``layout.rebase_node_positions``. Returns per-store counts, for the log.
+    """
+    from scistack_gui import intent_store, node_wiring
+    from scistack_gui.domain.graph_builder import candidate_edge_id
+    from scistack_gui.ids import strip_placement
+
+    _ensure_tables(db)
+    old_bare, new_bare = str(strip_placement(old_bare)), str(strip_placement(new_bare))
+    counts = {"nodes": 0, "configs": 0, "statements": 0, "wiring": 0,
+              "edges": 0, "hidden_edges": 0}
+    if old_bare == new_bare:
+        return counts
+
+    def _rebased(nid: str) -> "str | None":
+        return intent_store._rebase(nid, old_bare, new_bare)
+
+    # Insert-then-delete rather than UPDATE: node_id is the PRIMARY KEY, and
+    # DuckDB's handling of key updates has varied between versions.
+    for nid, node_type, label, pipeline_id in _duck(db)._fetchall(
+        "SELECT node_id, node_type, label, pipeline_id FROM _pipeline_nodes"
+    ):
+        new_id = _rebased(nid)
+        if new_id is None:
+            continue
+        _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [nid])
+        _duck(db)._execute(
+            "INSERT INTO _pipeline_nodes (node_id, node_type, label, pipeline_id) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            [new_id, node_type, new_label or label, pipeline_id],
+        )
+        counts["nodes"] += 1
+    for nid, config in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
+        new_id = _rebased(nid)
+        if new_id is None:
+            continue
+        _duck(db)._execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
+        _duck(db)._execute(
+            "INSERT INTO _node_config (node_id, config) VALUES (?, ?) ON CONFLICT DO NOTHING",
+            [new_id, config],
+        )
+        counts["configs"] += 1
+
+    counts["statements"] = intent_store.rekey_subject(db, old_bare, new_bare)
+    counts["wiring"] = node_wiring.rekey_node(db, old_bare, new_bare)
+    counts["edges"] = intent_store.rebase_edge_endpoints(db, old_bare, new_bare)
+    counts["hidden_edges"] = intent_store.rebase_hidden_edges(
+        db, old_bare, new_bare, candidate_edge_id
+    )
+    logger.info("[pipeline_store] rebase_node %s -> %s: %s", old_bare, new_bare, counts)
+    return counts
+
+
+def relabel_manual_nodes(db, node_type: str, old_label: str, new_label: str) -> int:
+    """Rewrite the label of manual rows of *node_type* still labelled
+    *old_label* — the ungraduated ``{prefix}__{label}__{rand}`` rows
+    :func:`rebase_node` cannot find by id. Their label is what graduation
+    matches on (``graph_builder.merge_manual_nodes``)."""
+    _ensure_tables(db)
+    rows = _duck(db)._fetchall(
+        "SELECT node_id FROM _pipeline_nodes WHERE node_type = ? AND label = ?",
+        [node_type, old_label],
+    )
+    if rows:
+        _duck(db)._execute(
+            "UPDATE _pipeline_nodes SET label = ? WHERE node_type = ? AND label = ?",
+            [new_label, node_type, old_label],
+        )
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1291,6 +1390,33 @@ def list_path_input_history(db, name: "str | None" = None) -> list[dict]:
         {"name": r[0], "template": r[1], "root_folder": r[2] or None}
         for r in _duck(db)._fetchall(sql, params)
     ]
+
+
+def record_path_input_rename(db, old_name: str, new_name: str) -> None:
+    """Remember that the PathInput *old_name* is now called *new_name*.
+
+    Called from exactly one place — ``layout_service.rename_path_input``,
+    after the entities file has been rewritten.
+    """
+    _ensure_tables(db)
+    _duck(db)._execute(
+        "INSERT INTO _pipeline_path_input_renames (old_name, new_name) VALUES (?, ?)",
+        [old_name, new_name],
+    )
+    logger.info(
+        "[pipeline_store] recorded PathInput rename %r -> %r", old_name, new_name
+    )
+
+
+def path_input_rename_index(db) -> dict[str, str]:
+    """``{old_name: new_name}``, the latest rename of each old name winning —
+    the shape ``graph_builder.resolve_renamed_path_input`` follows."""
+    _ensure_tables(db)
+    rows = _duck(db)._fetchall(
+        "SELECT old_name, new_name FROM _pipeline_path_input_renames "
+        "ORDER BY renamed_at, rowid"
+    )
+    return {old: new for old, new in rows}
 
 
 # ---------------------------------------------------------------------------

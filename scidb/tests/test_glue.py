@@ -599,7 +599,7 @@ class TestFusionThroughForEach:
         with pytest.raises(GlueUnsupportedInputError) as exc:
             for_each(
                 pass_raw,
-                inputs={"raw": PathInput("{subject}/{session}.csv")},
+                inputs={"raw": PathInput("{subject}/{session}.csv", name="{subject}/{session}.csv")},
                 outputs=[Analyzed],
                 db=db,
                 glue={"raw": _spec(glue_drop_baseline)},

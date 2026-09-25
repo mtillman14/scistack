@@ -51,9 +51,23 @@ classdef TestPathInput < matlab.unittest.TestCase
     end
 
     methods (Test)
+        function test_name_is_required(testCase)
+            % The name is the PathInput's identity (2026-09-25).
+            testCase.verifyError(@() scifor.PathInput("{subject}/data.mat"), ...
+                'scifor:PathInput:NameRequired');
+            testCase.verifyError(@() scifor.PathInput("{subject}/data.mat", 'name', "  "), ...
+                'scifor:PathInput:NameRequired');
+        end
+
+        function test_name_reaches_python(testCase)
+            pi = scifor.PathInput("{subject}/data.mat", 'name', "RawData");
+            testCase.verifyEqual(string(pi.name), "RawData");
+            testCase.verifyEqual(string(pi.py_obj.name), "RawData");
+        end
+
         function test_basic_resolution(testCase)
             pi = scifor.PathInput("{subject}/data.mat", ...
-                'root_folder', '/data');
+                'root_folder', '/data', 'name', "{subject}/data.mat");
             path = pi.load('subject', 1);
             expected = string(fullfile('/data', '1', 'data.mat'));
             testCase.verifyEqual(path, expected);
@@ -61,7 +75,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
         function test_multiple_placeholders(testCase)
             pi = scifor.PathInput("{subject}/session_{session}/trial.mat", ...
-                'root_folder', '/experiment');
+                'root_folder', '/experiment', 'name', "{subject}/session_{session}/trial.mat");
             path = pi.load('subject', 1, 'session', 'A');
             expected = string(fullfile('/experiment', '1', 'session_A', 'trial.mat'));
             testCase.verifyEqual(path, expected);
@@ -69,7 +83,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
         function test_numeric_value_in_template(testCase)
             pi = scifor.PathInput("sub{subject}_trial{trial}.mat", ...
-                'root_folder', '/data');
+                'root_folder', '/data', 'name', "sub{subject}_trial{trial}.mat");
             path = pi.load('subject', 3, 'trial', 7);
             testCase.verifyTrue(contains(path, "sub3"));
             testCase.verifyTrue(contains(path, "trial7"));
@@ -77,7 +91,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
         function test_string_value_in_template(testCase)
             pi = scifor.PathInput("{group}/results.csv", ...
-                'root_folder', '/output');
+                'root_folder', '/output', 'name', "{group}/results.csv");
             path = pi.load('group', 'control');
             expected = string(fullfile('/output', 'control', 'results.csv'));
             testCase.verifyEqual(path, expected);
@@ -96,13 +110,13 @@ classdef TestPathInput < matlab.unittest.TestCase
             expected_py = py.pathlib.Path(root_str).joinpath('1', 'data.mat').resolve();
             expected = string(char(py.str(expected_py)));
 
-            pi = scifor.PathInput("{x}/data.mat");
+            pi = scifor.PathInput("{x}/data.mat", 'name', "{x}/data.mat");
             path = pi.load('x', 1);
             testCase.verifyEqual(path, expected);
         end
 
         function test_returns_string(testCase)
-            pi = scifor.PathInput("{x}.mat", 'root_folder', '/data');
+            pi = scifor.PathInput("{x}.mat", 'root_folder', '/data', 'name', "{x}.mat");
             path = pi.load('x', 1);
             testCase.verifyClass(path, 'string');
         end
@@ -110,7 +124,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_unused_metadata_ignored(testCase)
             % Extra metadata keys not in template should not cause errors
             pi = scifor.PathInput("{subject}/data.mat", ...
-                'root_folder', '/data');
+                'root_folder', '/data', 'name', "{subject}/data.mat");
             path = pi.load('subject', 1, 'session', 'A');
             expected = string(fullfile('/data', '1', 'data.mat'));
             testCase.verifyEqual(path, expected);
@@ -118,7 +132,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
         function test_absolute_path_in_template(testCase)
             pi = scifor.PathInput("{subject}/data.mat", ...
-                'root_folder', '/absolute/root');
+                'root_folder', '/absolute/root', 'name', "{subject}/data.mat");
             path = pi.load('subject', 5);
             % Verify the path contains the root folder and resolved template
             testCase.verifyTrue(contains(path, "absolute"));
@@ -130,7 +144,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         %% Absolute path template tests (no root_folder needed)
 
         function test_absolute_template_no_root_folder(testCase)
-            pi = scifor.PathInput("/data/{subject}/trial_{trial}.mat");
+            pi = scifor.PathInput("/data/{subject}/trial_{trial}.mat", 'name', "/data/{subject}/trial_{trial}.mat");
             path = pi.load('subject', 1, 'trial', 2);
             testCase.verifyEqual(path, "/data/1/trial_2.mat");
         end
@@ -138,25 +152,25 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_absolute_template_ignores_root_folder(testCase)
             % When template resolves to absolute path, root_folder is ignored
             pi = scifor.PathInput("/data/{subject}/file.mat", ...
-                'root_folder', '/other/root');
+                'root_folder', '/other/root', 'name', "/data/{subject}/file.mat");
             path = pi.load('subject', 5);
             testCase.verifyEqual(path, "/data/5/file.mat");
         end
 
         function test_absolute_template_string_placeholder(testCase)
-            pi = scifor.PathInput("/mnt/share/{group}/{subject}.csv");
+            pi = scifor.PathInput("/mnt/share/{group}/{subject}.csv", 'name', "/mnt/share/{group}/{subject}.csv");
             path = pi.load('group', 'control', 'subject', 'p01');
             testCase.verifyEqual(path, "/mnt/share/control/p01.csv");
         end
 
         function test_absolute_template_no_placeholders(testCase)
-            pi = scifor.PathInput("/fixed/path/data.mat");
+            pi = scifor.PathInput("/fixed/path/data.mat", 'name', "/fixed/path/data.mat");
             path = pi.load();
             testCase.verifyEqual(path, "/fixed/path/data.mat");
         end
 
         function test_absolute_template_returns_string(testCase)
-            pi = scifor.PathInput("/data/{x}.mat");
+            pi = scifor.PathInput("/data/{x}.mat", 'name', "/data/{x}.mat");
             path = pi.load('x', 1);
             testCase.verifyClass(path, 'string');
         end
@@ -168,7 +182,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             fclose(fopen(fullfile(sub_dir, 'result_final.csv'), 'w'));
 
             template = testCase.tmp_dir + "/abs_regex/result_final\.csv";
-            pi = scifor.PathInput(template, 'regex', true);
+            pi = scifor.PathInput(template, 'regex', true, 'name', char(template));
             path = pi.load();
             expected = string(fullfile(sub_dir, 'result_final.csv'));
             testCase.verifyEqual(path, expected);
@@ -179,7 +193,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_regex_basic(testCase)
             % An exact filename used as the regex pattern should match
             pi = scifor.PathInput("exact/report\.txt", ...
-                'root_folder', testCase.tmp_dir, 'regex', true);
+                'root_folder', testCase.tmp_dir, 'regex', true, 'name', "exact/report\.txt");
             path = pi.load();
             expected = string(fullfile(testCase.tmp_dir, 'exact', 'report.txt'));
             testCase.verifyEqual(path, expected);
@@ -188,7 +202,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_regex_zero_padding(testCase)
             % Pattern with regex quantifier matches zero-padded filename
             pi = scifor.PathInput("{subject}/6mwt-0{0,2}1\.xlsx", ...
-                'root_folder', testCase.tmp_dir, 'regex', true);
+                'root_folder', testCase.tmp_dir, 'regex', true, 'name', "{subject}/6mwt-0{0,2}1\.xlsx");
             path = pi.load('subject', 1);
             expected = string(fullfile(testCase.tmp_dir, '1', '6mwt-001.xlsx'));
             testCase.verifyEqual(path, expected);
@@ -197,7 +211,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_regex_no_match_errors(testCase)
             % Pattern that matches nothing should error
             pi = scifor.PathInput("{subject}/nonexistent.*\.xyz", ...
-                'root_folder', testCase.tmp_dir, 'regex', true);
+                'root_folder', testCase.tmp_dir, 'regex', true, 'name', "{subject}/nonexistent.*\.xyz");
             testCase.verifyError(@() pi.load('subject', 1), ...
                 'scifor:PathInput:NoMatch');
         end
@@ -205,7 +219,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_regex_multiple_match_errors(testCase)
             % Pattern that matches multiple files should error
             pi = scifor.PathInput("dup/data_v\d\.csv", ...
-                'root_folder', testCase.tmp_dir, 'regex', true);
+                'root_folder', testCase.tmp_dir, 'regex', true, 'name', "dup/data_v\d\.csv");
             testCase.verifyError(@() pi.load(), ...
                 'scifor:PathInput:MultipleMatches');
         end
@@ -215,7 +229,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_padded_fallback_numeric_double(testCase)
             % A plain MATLAB double finds the zero-padded file natively.
             pi = scifor.PathInput("{subject}/6mwt-{trial}.xlsx", ...
-                'root_folder', testCase.tmp_dir);
+                'root_folder', testCase.tmp_dir, 'name', "{subject}/6mwt-{trial}.xlsx");
             path = pi.load('subject', 1, 'trial', 1);
             expected = string(fullfile(testCase.tmp_dir, '1', '6mwt-001.xlsx'));
             testCase.verifyEqual(path, expected);
@@ -223,7 +237,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
         function test_padded_fallback_multi_digit(testCase)
             pi = scifor.PathInput("{subject}/6mwt-{trial}.xlsx", ...
-                'root_folder', testCase.tmp_dir);
+                'root_folder', testCase.tmp_dir, 'name', "{subject}/6mwt-{trial}.xlsx");
             path = pi.load('subject', 1, 'trial', 10);
             expected = string(fullfile(testCase.tmp_dir, '1', '6mwt-010.xlsx'));
             testCase.verifyEqual(path, expected);
@@ -236,7 +250,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             amb_dir = fullfile(testCase.tmp_dir, '1');
             fclose(fopen(fullfile(amb_dir, '6mwt-1.xlsx'), 'w'));
             pi = scifor.PathInput("{subject}/6mwt-{trial}.xlsx", ...
-                'root_folder', testCase.tmp_dir);
+                'root_folder', testCase.tmp_dir, 'name', "{subject}/6mwt-{trial}.xlsx");
             testCase.verifyError(@() pi.load('subject', 1, 'trial', "01"), ...
                 'scifor:PathInput:MultipleMatches');
         end
@@ -245,7 +259,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             % Historical behavior preserved: missing files still return the
             % literally-resolved path (the caller's function surfaces it).
             pi = scifor.PathInput("{subject}/6mwt-{trial}.xlsx", ...
-                'root_folder', testCase.tmp_dir);
+                'root_folder', testCase.tmp_dir, 'name', "{subject}/6mwt-{trial}.xlsx");
             path = pi.load('subject', 1, 'trial', 99);
             expected = string(fullfile(testCase.tmp_dir, '1', '6mwt-99.xlsx'));
             testCase.verifyEqual(path, expected);
@@ -257,7 +271,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             % session="BL" finds the on-disk "Baseline" folder.
             pi = scifor.PathInput("alias/sub1/{session}/data.mat", ...
                 'root_folder', testCase.tmp_dir, ...
-                'aliases', struct('session', struct('BL', ["Baseline", "1. Baseline"])));
+                'aliases', struct('session', struct('BL', ["Baseline", "1. Baseline"])), 'name', "alias/sub1/{session}/data.mat");
             path = pi.load('session', 'BL');
             expected = string(fullfile(testCase.tmp_dir, 'alias', 'sub1', 'Baseline', 'data.mat'));
             testCase.verifyEqual(path, expected);
@@ -267,7 +281,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             % session="BL" finds a folder literally named "BL" too.
             pi = scifor.PathInput("alias/sub2/{session}/data.mat", ...
                 'root_folder', testCase.tmp_dir, ...
-                'aliases', struct('session', struct('BL', "Baseline")));
+                'aliases', struct('session', struct('BL', "Baseline")), 'name', "alias/sub2/{session}/data.mat");
             path = pi.load('session', 'BL');
             expected = string(fullfile(testCase.tmp_dir, 'alias', 'sub2', 'BL', 'data.mat'));
             testCase.verifyEqual(path, expected);
@@ -281,7 +295,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             fclose(fopen(fullfile(alt_dir, 'data.mat'), 'w'));
             pi = scifor.PathInput("alias/sub1/{session}/data.mat", ...
                 'root_folder', testCase.tmp_dir, ...
-                'aliases', struct('session', struct('BL', ["Baseline", "1. Baseline"])));
+                'aliases', struct('session', struct('BL', ["Baseline", "1. Baseline"])), 'name', "alias/sub1/{session}/data.mat");
             testCase.verifyError(@() pi.load('session', 'BL'), ...
                 'scifor:PathInput:MultipleMatches');
         end
@@ -289,7 +303,7 @@ classdef TestPathInput < matlab.unittest.TestCase
         function test_discover_canonicalizes_alias_spelling(testCase)
             pi = scifor.PathInput("alias/{subject}/{session}/data.mat", ...
                 'root_folder', testCase.tmp_dir, ...
-                'aliases', struct('session', struct('BL', "Baseline")));
+                'aliases', struct('session', struct('BL', "Baseline")), 'name', "alias/{subject}/{session}/data.mat");
             combos = pi.discover();
             sessions = containers.Map();
             for i = 1:numel(combos)
@@ -307,7 +321,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             % bridge as some MException; the specific identifier is an
             % implementation detail of that bridge, so match generically.
             testCase.verifyError(@() scifor.PathInput("{subject}/data.mat", ...
-                'key_regex', struct('session', '\d+')), ...
+                'key_regex', struct('session', '\d+'), 'name', "{subject}/data.mat"), ...
                 ?MException);
         end
 
@@ -319,7 +333,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             fclose(fopen(fullfile(emg_dir, 'SS01_EMG_SSV10.mat'), 'w'));
 
             pi = scifor.PathInput("{subject}_EMG_{speed}{trial}.mat", ...
-                'root_folder', emg_dir);
+                'root_folder', emg_dir, 'name', "{subject}_EMG_{speed}{trial}.mat");
             combos = pi.discover();
             testCase.verifyLength(combos, 1);
             testCase.verifyEqual(combos{1}.speed, 'SSV1');
@@ -335,7 +349,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
             pi = scifor.PathInput("{subject}_EMG_{speed}{trial}.mat", ...
                 'root_folder', emg_dir, ...
-                'key_regex', struct('speed', '[A-Za-z]+', 'trial', '\d+'));
+                'key_regex', struct('speed', '[A-Za-z]+', 'trial', '\d+'), 'name', "{subject}_EMG_{speed}{trial}.mat");
             combos = pi.discover();
             testCase.verifyLength(combos, 3);
 
@@ -353,7 +367,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
             pi = scifor.PathInput("EMG_{speed}{trial}.mat", ...
                 'root_folder', emg_dir, ...
-                'key_regex', struct('speed', '[A-Za-z]+', 'trial', '\d+'));
+                'key_regex', struct('speed', '[A-Za-z]+', 'trial', '\d+'), 'name', "EMG_{speed}{trial}.mat");
             combos = pi.discover();
             testCase.verifyEmpty(combos);
         end
@@ -361,31 +375,31 @@ classdef TestPathInput < matlab.unittest.TestCase
         %% placeholder_keys tests
 
         function test_placeholder_keys_simple(testCase)
-            pi = scifor.PathInput("{subject}/data.mat");
+            pi = scifor.PathInput("{subject}/data.mat", 'name', "{subject}/data.mat");
             keys = pi.placeholder_keys();
             testCase.verifyEqual(keys, {'subject'});
         end
 
         function test_placeholder_keys_multiple(testCase)
-            pi = scifor.PathInput("{subject}/{session}/data.mat");
+            pi = scifor.PathInput("{subject}/{session}/data.mat", 'name', "{subject}/{session}/data.mat");
             keys = pi.placeholder_keys();
             testCase.verifyEqual(keys, {'subject', 'session'});
         end
 
         function test_placeholder_keys_mixed_segment(testCase)
-            pi = scifor.PathInput("{subject}_XSENS_{session}_{speed}-001.xlsx");
+            pi = scifor.PathInput("{subject}_XSENS_{session}_{speed}-001.xlsx", 'name', "{subject}_XSENS_{session}_{speed}-001.xlsx");
             keys = pi.placeholder_keys();
             testCase.verifyEqual(keys, {'subject', 'session', 'speed'});
         end
 
         function test_placeholder_keys_none(testCase)
-            pi = scifor.PathInput("data/raw/file.mat");
+            pi = scifor.PathInput("data/raw/file.mat", 'name', "data/raw/file.mat");
             keys = pi.placeholder_keys();
             testCase.verifyEmpty(keys);
         end
 
         function test_placeholder_keys_duplicates(testCase)
-            pi = scifor.PathInput("{subject}/{subject}_data.mat");
+            pi = scifor.PathInput("{subject}/{subject}_data.mat", 'name', "{subject}/{subject}_data.mat");
             keys = pi.placeholder_keys();
             testCase.verifyEqual(keys, {'subject'});
         end
@@ -404,7 +418,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             end
 
             pi = scifor.PathInput("{subject}/{session}/{subject}_{session}.csv", ...
-                'root_folder', disc_dir);
+                'root_folder', disc_dir, 'name', "{subject}/{session}/{subject}_{session}.csv");
             combos = pi.discover();
             testCase.verifyLength(combos, 4);
 
@@ -427,7 +441,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             empty_dir = fullfile(testCase.tmp_dir, 'empty_disc');
             mkdir(empty_dir);
             pi = scifor.PathInput("{x}/data/{file}.csv", ...
-                'root_folder', empty_dir);
+                'root_folder', empty_dir, 'name', "{x}/data/{file}.csv");
             combos = pi.discover();
             testCase.verifyEmpty(combos);
         end
@@ -441,7 +455,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             fclose(fopen(fullfile(disc_dir, 'OTHER', 'data.csv'), 'w'));
 
             pi = scifor.PathInput("XSENS/{file}.csv", ...
-                'root_folder', disc_dir);
+                'root_folder', disc_dir, 'name', "XSENS/{file}.csv");
             combos = pi.discover();
             testCase.verifyLength(combos, 1);
             testCase.verifyEqual(combos{1}.file, 'data');
@@ -455,7 +469,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             fclose(fopen(fullfile(disc_dir, 'A', 'B_data.csv'), 'w')); % inconsistent
 
             pi = scifor.PathInput("{x}/{x}_data.csv", ...
-                'root_folder', disc_dir);
+                'root_folder', disc_dir, 'name', "{x}/{x}_data.csv");
             combos = pi.discover();
             testCase.verifyLength(combos, 1);
             testCase.verifyEqual(combos{1}.x, 'A');
@@ -467,7 +481,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             mkdir(disc_dir);
             fclose(fopen(fullfile(disc_dir, 'data.mat'), 'w'));
 
-            pi = scifor.PathInput("data.mat", 'root_folder', disc_dir);
+            pi = scifor.PathInput("data.mat", 'root_folder', disc_dir, 'name', "data.mat");
             combos = pi.discover();
             testCase.verifyLength(combos, 1);
             testCase.verifyEmpty(fieldnames(combos{1}));
@@ -482,7 +496,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             fclose(fopen(fullfile(disc_dir, 'other.csv'), 'w'));
 
             pi = scifor.PathInput("report_{year}_{status}.csv", ...
-                'root_folder', disc_dir);
+                'root_folder', disc_dir, 'name', "report_{year}_{status}.csv");
             combos = pi.discover();
             testCase.verifyLength(combos, 2);
         end
@@ -493,7 +507,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             fclose(fopen(fullfile(disc_dir, '1', 'data.csv'), 'w'));
 
             pi = scifor.PathInput("{num}/data.csv", ...
-                'root_folder', disc_dir);
+                'root_folder', disc_dir, 'name', "{num}/data.csv");
             combos = pi.discover();
             testCase.verifyLength(combos, 1);
             testCase.verifyClass(combos{1}.num, 'char');
@@ -538,7 +552,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             root = testCase.makeGaitTree(testCase.tmp_dir);
             pi = scifor.PathInput( ...
                 "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx", ...
-                'root_folder', root);
+                'root_folder', root, 'name', "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx");
             iter = struct('subject', {{}}, 'session', {{}}, 'speed', {{}});
             [filled, combos] = pi.apply_discovery(iter, string.empty);
             testCase.verifyEqual(sort(string(filled.subject)), ["1" "2"]);
@@ -552,7 +566,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             root = testCase.makeGaitTree(testCase.tmp_dir);
             pi = scifor.PathInput( ...
                 "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx", ...
-                'root_folder', root);
+                'root_folder', root, 'name', "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx");
             iter = struct('subject', {{'1'}}, 'session', {{}}, 'speed', {{}});
             [filled, combos] = pi.apply_discovery(iter, "subject");
             % Empty keys still filled from disk...
@@ -569,7 +583,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             scifor.set_schema(["subject", "session", "speed"]);
             cleanup = onCleanup(@() scifor.set_schema(string.empty(1,0))); %#ok<NASGU>
             pathTemplate = "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx";
-            gaitPath = scifor.PathInput(pathTemplate, 'root_folder', root);
+            gaitPath = scifor.PathInput(pathTemplate, 'root_folder', root, 'name', char(pathTemplate));
 
             % fn receives the resolved path; return its basename to verify.
             fn = @(p) string(p);
@@ -598,7 +612,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             scifor.set_schema(string.empty(1, 0));
             cleanup = onCleanup(@() scifor.set_schema(string.empty(1,0))); %#ok<NASGU>
             pathTemplate = "{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-001.xlsx";
-            gaitPath = scifor.PathInput(pathTemplate, 'root_folder', root);
+            gaitPath = scifor.PathInput(pathTemplate, 'root_folder', root, 'name', char(pathTemplate));
 
             fn = @(p) string(p);
             result = scifor.for_each(fn, struct('xlsx_file_path', gaitPath));
@@ -623,7 +637,7 @@ classdef TestPathInput < matlab.unittest.TestCase
 
         function test_apply_discovery_condense_numeric_collapses_zero_padding(testCase)
             root = testCase.makePaddedNumericTree(testCase.tmp_dir);
-            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root);
+            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root, 'name', '{subject}/6MWT-{trial}.mat');
             iter = struct('subject', {{}}, 'trial', {{}});
             [filled, combos] = pi.apply_discovery(iter, string.empty, true);
 
@@ -640,7 +654,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             % Default (3-arg call, matching every pre-existing call site)
             % stays verbatim char -- no behavior change without opt-in.
             root = testCase.makePaddedNumericTree(testCase.tmp_dir);
-            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root);
+            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root, 'name', '{subject}/6MWT-{trial}.mat');
             iter = struct('subject', {{}}, 'trial', {{}});
             [filled, ~] = pi.apply_discovery(iter, string.empty);
 
@@ -652,7 +666,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             % An explicit (non-empty) value is user intent -- condensation
             % only ever touches values PathInput itself discovered from disk.
             root = testCase.makePaddedNumericTree(testCase.tmp_dir);
-            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root);
+            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root, 'name', '{subject}/6MWT-{trial}.mat');
             iter = struct('subject', {{'001'}}, 'trial', {{}});
             [filled, ~] = pi.apply_discovery(iter, "subject", true);
 
@@ -666,7 +680,7 @@ classdef TestPathInput < matlab.unittest.TestCase
             root = testCase.makePaddedNumericTree(testCase.tmp_dir);
             scifor.set_schema(["subject", "trial"]);
             cleanup = onCleanup(@() scifor.set_schema(string.empty(1,0))); %#ok<NASGU>
-            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root);
+            pi = scifor.PathInput('{subject}/6MWT-{trial}.mat', 'root_folder', root, 'name', '{subject}/6MWT-{trial}.mat');
 
             fn = @(filepath) str2double(fileread(filepath));
             result = scifor.for_each(fn, struct('filepath', pi), subject=[], trial=[]);

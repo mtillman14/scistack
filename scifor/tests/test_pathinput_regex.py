@@ -50,7 +50,7 @@ def tmp_files(tmp_path):
 class TestRegexLoad:
     def test_basic_match(self, tmp_files):
         # An exact filename used as a regex pattern matches itself.
-        pi = PathInput(r"exact/report\.txt", root_folder=str(tmp_files), regex=True)
+        pi = PathInput(r"exact/report\.txt", root_folder=str(tmp_files), regex=True, name=r"exact/report\.txt")
         path = pi.load()
         assert path == (tmp_files / "exact" / "report.txt").resolve()
 
@@ -59,7 +59,7 @@ class TestRegexLoad:
         pi = PathInput(
             r"{subject}/6mwt-0{0,2}1\.xlsx",
             root_folder=str(tmp_files),
-            regex=True,
+            regex=True, name=r"{subject}/6mwt-0{0,2}1\.xlsx",
         )
         path = pi.load(subject=1)
         assert path == (tmp_files / "1" / "6mwt-001.xlsx").resolve()
@@ -68,20 +68,20 @@ class TestRegexLoad:
         pi = PathInput(
             r"{subject}/nonexistent.*\.xyz",
             root_folder=str(tmp_files),
-            regex=True,
+            regex=True, name=r"{subject}/nonexistent.*\.xyz",
         )
         with pytest.raises(FileNotFoundError):
             pi.load(subject="nomatch")
 
     def test_multiple_matches_errors(self, tmp_files):
-        pi = PathInput(r"dup/data_v\d\.csv", root_folder=str(tmp_files), regex=True)
+        pi = PathInput(r"dup/data_v\d\.csv", root_folder=str(tmp_files), regex=True, name=r"dup/data_v\d\.csv")
         with pytest.raises(RuntimeError):
             pi.load()
 
     def test_absolute_template_regex(self, tmp_files):
         # Absolute path in the template (no root_folder), regex matched on last segment.
         template = f"{tmp_files}/abs_regex/result_final\\.csv"
-        pi = PathInput(template, regex=True)
+        pi = PathInput(template, regex=True, name=str(template))
         path = pi.load()
         assert path == (tmp_files / "abs_regex" / "result_final.csv").resolve()
 
@@ -89,30 +89,30 @@ class TestRegexLoad:
         # Result is a pathlib.Path (the API contract).
         from pathlib import Path
 
-        pi = PathInput(r"exact/report\.txt", root_folder=str(tmp_files), regex=True)
+        pi = PathInput(r"exact/report\.txt", root_folder=str(tmp_files), regex=True, name=r"exact/report\.txt")
         assert isinstance(pi.load(), Path)
 
 
 class TestRegexFlagPropagation:
-    def test_to_key_includes_regex_when_true(self):
+    def test_to_spec_includes_regex_when_true(self):
         import json
 
-        pi = PathInput("{x}/a.csv", root_folder="/data", regex=True)
-        key = json.loads(pi.to_key())
+        pi = PathInput("{x}/a.csv", root_folder="/data", regex=True, name="{x}/a.csv")
+        key = json.loads(pi.to_spec())
         assert key["regex"] is True
 
-    def test_to_key_omits_regex_when_false(self):
+    def test_to_spec_omits_regex_when_false(self):
         # Backwards compatible: pre-regex saved keys stay byte-identical.
         import json
 
-        pi = PathInput("{x}/a.csv", root_folder="/data")
-        key = json.loads(pi.to_key())
+        pi = PathInput("{x}/a.csv", root_folder="/data", name="{x}/a.csv")
+        key = json.loads(pi.to_spec())
         assert "regex" not in key
 
     def test_discover_unaffected_by_regex(self, tmp_files):
         # ``regex`` is a load()-time flag only; discover() ignores it.
-        pi_plain = PathInput("{subject}/6mwt-001.xlsx", root_folder=str(tmp_files))
+        pi_plain = PathInput("{subject}/6mwt-001.xlsx", root_folder=str(tmp_files), name="{subject}/6mwt-001.xlsx")
         pi_regex = PathInput(
-            "{subject}/6mwt-001.xlsx", root_folder=str(tmp_files), regex=True
+            "{subject}/6mwt-001.xlsx", root_folder=str(tmp_files), regex=True, name="{subject}/6mwt-001.xlsx"
         )
         assert pi_plain.discover() == pi_regex.discover()

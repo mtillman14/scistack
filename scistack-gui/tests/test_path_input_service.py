@@ -56,7 +56,7 @@ class TestCreatePathInputWrite:
         assert result["ok"] is True, result.get("error")
         content = module_file.read_text()
         assert "import scidb" in content
-        assert "RAW_EMG = scidb.PathInput('{subject}/{trial}.mat')" in content
+        assert "RAW_EMG = scidb.PathInput('{subject}/{trial}.mat', name='RAW_EMG')" in content
         assert "RAW_EMG" in _registry.get_path_inputs_registry()
 
     def test_second_entity_does_not_duplicate_import(self, tmp_path):

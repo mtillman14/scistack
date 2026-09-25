@@ -21,7 +21,6 @@ from scistack_gui.domain.graph_builder import (
 from scidb import BaseVariable, configure_database, for_each
 from scidb import provenance_query as pq
 from scidb.database import aggregate_pipeline_variants, call_site_wiring_ids
-from scidb.parameter import stamp_path_input_name
 
 
 class ParityLoaded(BaseVariable):
@@ -47,9 +46,7 @@ def db(tmp_path):
 
 
 def _pi(tmp_path, folder, name):
-    pi = PathInput("{subject}/value.txt", root_folder=str(tmp_path / folder))
-    stamp_path_input_name(pi, name)
-    return pi
+    return PathInput("{subject}/value.txt", root_folder=str(tmp_path / folder), name=name)
 
 
 def test_gui_and_scidb_agree_on_every_call_site(db, tmp_path):

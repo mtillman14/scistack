@@ -1,9 +1,13 @@
 /**
  * PathInputSettingsPanel — shown in the sidebar when a PathInput node is
- * selected. Edit its template, or add alternates.
+ * selected. Rename it, edit its template, or add alternates.
  *
- * Edits rewrite the `scidb.PathInput(...)` declaration in source via
- * `update_path_input` (docs/claude/entity-editability-model.md). Adding
+ * Edits rewrite its entry in the entities file (`src/scistack_entities.toml`
+ * by default — never scistack.toml) via `update_path_input`
+ * (docs/claude/entity-editability-model.md). Renaming goes through
+ * `rename_path_input`, which also moves every canvas placement, edge and
+ * note keyed by the old name, and records the rename so runs that recorded
+ * the old name stay on this node (.claude/plan-pathinput-rename.md). Adding
  * alternates re-renders it as `EachOf(PathInput(...), PathInput(...))` under
  * the same name — that IS "multiple templates", not a separate concept.
  *
@@ -90,6 +94,19 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
   const removeAlternate = (index: number) =>
     write(template, rootDraft, alternate_templates.filter((_, i) => i !== index))
 
+  const [nameDraft, setNameDraft] = useState(label)
+  const saveName = async () => {
+    const next = nameDraft.trim()
+    if (!next || next === label) { setNameDraft(label); return }
+    // Success re-keys this node to pathInput__{next}: the refreshed graph
+    // no longer holds the selected id, so the panel closes on its own.
+    if (await submit('rename_path_input', { name: label, new_name: next })) bumpGraph()
+  }
+
+  // Where the declaration lives, named so nobody goes looking for it in
+  // scistack.toml (project config, which never holds entities).
+  const declaredIn = editability?.file ? formatLocation({ file: editability.file, line: null }) : 'the entities file'
+
   const keys = parseTemplateKeys(template)
 
   const handleDeepCopy = useCallback(() => {
@@ -100,7 +117,22 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
 
   return (
     <div style={styles.root}>
-      <div style={styles.name}>{label}</div>
+      <input
+        style={locked ? { ...styles.name, ...styles.nameLocked } : styles.name}
+        value={nameDraft}
+        disabled={inputsDisabled}
+        aria-label="PathInput name"
+        title={locked ? undefined : 'Rename — Enter to save, Escape to cancel'}
+        onChange={e => { setNameDraft(e.target.value); clearError() }}
+        onBlur={saveName}
+        onKeyDown={e => {
+          // Enter saves BY blurring, so the save runs once — calling
+          // saveName here as well would fire a second rename of the
+          // already-renamed old name when the panel unmounts.
+          if (e.key === 'Enter') e.currentTarget.blur()
+          if (e.key === 'Escape') { setNameDraft(label); clearError() }
+        }}
+      />
 
       {locked && editability?.file && (
         <ReadOnlyDeclarationBanner file={editability.file} line={editability.line} />
@@ -122,10 +154,10 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
         />
         {!locked && (
           <div style={styles.hint}>
-            Shared by name — this rewrites the{' '}
-            <span style={styles.mono}>scidb.PathInput(...)</span> declaration in
-            source. Replacing the template re-points existing runs at the new
-            one; adding an alternate below never does.
+            Shared by name — saving rewrites this PathInput's entry in{' '}
+            <span style={styles.mono}>{declaredIn}</span> (not scistack.toml).
+            Replacing the template re-points existing runs at the new one;
+            adding an alternate below never does. Renaming keeps its runs.
           </div>
         )}
       </section>
@@ -314,7 +346,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: '#fbbf24',
     marginBottom: 12,
-    wordBreak: 'break-all',
+    width: '100%',
+    boxSizing: 'border-box',
+    background: 'transparent',
+    border: '1px solid transparent',
+    borderBottom: '1px dashed #555',
+    padding: '2px 4px',
+  },
+  nameLocked: {
+    borderBottom: '1px solid transparent',
+    cursor: 'not-allowed',
   },
   section: {
     marginBottom: 16,

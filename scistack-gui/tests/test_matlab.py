@@ -1362,25 +1362,25 @@ class TestFormatPathInput:
     def test_explicit_root_folder_used_as_is(self):
         from scistack_gui.api.matlab_command import _format_path_input
 
-        pi = {"template": "{subject}/data.mat", "root_folder": "/my/data"}
+        pi = {"name": "RAW", "template": "{subject}/data.mat", "root_folder": "/my/data"}
         result = _format_path_input(pi)
-        assert (
-            result == 'scifor.PathInput("{subject}/data.mat", root_folder="/my/data")'
+        assert result == (
+            'scifor.PathInput("{subject}/data.mat", root_folder="/my/data", name="RAW")'
         )
 
     def test_no_root_folder_no_project_root(self):
         from scistack_gui.api.matlab_command import _format_path_input
 
-        pi = {"template": "{subject}/data.mat", "root_folder": None}
+        pi = {"name": "RAW", "template": "{subject}/data.mat", "root_folder": None}
         result = _format_path_input(pi)
-        assert result == 'scifor.PathInput("{subject}/data.mat")'
+        assert result == 'scifor.PathInput("{subject}/data.mat", name="RAW")'
 
     def test_absolute_template_without_root_folder(self):
         from scistack_gui.api.matlab_command import _format_path_input
 
-        pi = {"template": "/absolute/path/{subject}.mat", "root_folder": None}
+        pi = {"name": "RAW", "template": "/absolute/path/{subject}.mat", "root_folder": None}
         result = _format_path_input(pi)
-        assert result == 'scifor.PathInput("/absolute/path/{subject}.mat")'
+        assert result == 'scifor.PathInput("/absolute/path/{subject}.mat", name="RAW")'
 
     def test_generate_matlab_command_never_substitutes_project_root(self):
         """A rootless declaration must stay rootless in the generated script.
@@ -1398,11 +1398,11 @@ class TestFormatPathInput:
             db_path="/data/exp.duckdb",
             schema_keys=["subject"],
             path_inputs={
-                "filepath": {"template": "{subject}/data.mat", "root_folder": None}
+                "filepath": {"name": "RAW", "template": "{subject}/data.mat", "root_folder": None}
             },
             project_root="/projects/myexp",
         )
-        assert 'scifor.PathInput("{subject}/data.mat")' in cmd
+        assert 'scifor.PathInput("{subject}/data.mat", name="RAW")' in cmd
         assert 'root_folder="/projects/myexp"' not in cmd
 
     def test_generate_matlab_command_keeps_declared_root_folder(self):
@@ -1414,6 +1414,7 @@ class TestFormatPathInput:
             schema_keys=["subject"],
             path_inputs={
                 "filepath": {
+                    "name": "RAW",
                     "template": "{subject}/data.mat",
                     "root_folder": "/explicit/root",
                 }
@@ -1421,8 +1422,8 @@ class TestFormatPathInput:
             project_root="/projects/myexp",
         )
         assert (
-            'scifor.PathInput("{subject}/data.mat", root_folder="/explicit/root")'
-            in cmd
+            'scifor.PathInput("{subject}/data.mat", root_folder="/explicit/root", '
+            'name="RAW")' in cmd
         )
 
     def test_generate_matlab_command_pins_project_root(self):
@@ -1435,7 +1436,7 @@ class TestFormatPathInput:
             db_path="/data/exp.duckdb",
             schema_keys=["subject"],
             path_inputs={
-                "filepath": {"template": "{subject}/data.mat", "root_folder": None}
+                "filepath": {"name": "RAW", "template": "{subject}/data.mat", "root_folder": None}
             },
             project_root="/projects/myexp",
         )
@@ -1495,7 +1496,7 @@ class TestFormatPathInput:
             db_path="/data/exp.duckdb",
             schema_keys=["subject"],
             path_inputs={
-                "filepath": {"template": "{subject}/data.mat", "root_folder": None}
+                "filepath": {"name": "RAW", "template": "{subject}/data.mat", "root_folder": None}
             },
             sweeps={"low_hz": [10, 20]},
             project_root="/projects/myexp",
@@ -2319,7 +2320,11 @@ class TestCollectEdgePathInputs:
             {},
         )
         assert result == {
-            "filepath": {"template": "{subject}.csv", "root_folder": "/data"}
+            "filepath": {
+                "name": "test_pi",
+                "template": "{subject}.csv",
+                "root_folder": "/data",
+            }
         }
 
     def test_unknown_declared_name_is_skipped(self):
@@ -3612,7 +3617,7 @@ class TestPathInputNeverRegisteredAsVariable:
 
         return {
             "input_types": {
-                "emgFilePath": PathInput("data/{pass}/emg.mat").to_key(),
+                "emgFilePath": PathInput("data/{pass}/emg.mat", name="emgFile").to_spec(),
                 "reference": "RefSignal",
             },
             "output_type": "RawEMG",
@@ -3662,7 +3667,7 @@ class TestPathInputNeverRegisteredAsVariable:
             db_path="/db.duckdb",
             schema_keys=["pass"],
             variants=[],
-            path_inputs={"emgFilePath": {"template": "data/{pass}/emg.mat"}},
+            path_inputs={"emgFilePath": {"name": "emgFile", "template": "data/{pass}/emg.mat"}},
             output_types=["RawEMG"],
         )
         second = generate_matlab_command(

@@ -256,6 +256,17 @@ green; only genuinely new values run.
   value. Editing `2` → `5` adds a row.
 - **PathInput**: same outcome, by a different route — see below.
 
+> **REVERSED 2026-09-25 (user decision).** The name IS now the identity:
+> `name=` is required and `to_key()` is the name alone
+> (`docs/claude/identity-layers-pathinput.md`). The objection below — two
+> runs with one name and different templates collide into one provenance
+> node — is now the INTENDED behaviour: one name is one PathInput wherever
+> its files live, so moved data and other machines keep every id; a
+> genuinely different input gets a different name. Two arguments sharing a
+> name with different templates inside one call are refused
+> (`parameter.check_path_input_names`). The paragraph is kept for the
+> history of the decision.
+
 **Do not "fix" PathInput identity by putting the name in `to_key()`.** This
 is the trap; an earlier draft of this doc suggested it. `to_key()` feeds
 `version_keys` *and*
@@ -286,6 +297,22 @@ Consequences: GUI template edits stop detaching history; PathInput obeys the
 same show-historical-values-beside-the-current-one rule as Parameters;
 renames are covered from the other direction (the template is unchanged, so
 strategy 1 still matches).
+
+> **Update 2026-09-25: that last clause holds only for runs recorded without
+> a name.** Since F38 (2026-09-24), runs record `declared_name` on the
+> PathInput edge, and that name wins over the content match. So a rename,
+> even one with the template unchanged, would draw every earlier run as a
+> ghost node under the old name. The GUI rename control
+> (`layout_service.rename_path_input`, `.claude/plan-pathinput-rename.md`)
+> therefore also writes `_pipeline_path_input_renames` (old → new). The only
+> reader of that table is `graph_builder.resolve_renamed_path_input`, which
+> redirects a recorded name only when it is no longer declared. The rename
+> also moves every piece of state keyed by the node id
+> `pathInput__NAME[::scope]` (`pipeline_store.rebase_node` +
+> `layout.rebase_node_positions`), because the name is part of that id.
+> **A rename done by hand in the TOML still leaves those ghosts**, for the
+> same reason a hand template edit detaches history. `scidb graph` (CLI)
+> does not read the GUI rename record either.
 
 **Scoped deliberately narrowly.** The table pays for the capability Stage 5
 introduced — one-click template editing — and nothing else. In particular it

@@ -76,10 +76,10 @@ function varargout = entities(project_root)
             % cannot accept the name=value syntax.
             try
                 if isempty(arm.root_folder)
-                    objs{j} = scidb.PathInput(arm.template);
+                    objs{j} = scidb.PathInput(arm.template, 'name', name);
                 else
                     objs{j} = scidb.PathInput(arm.template, ...
-                        'root_folder', string(arm.root_folder));
+                        'root_folder', string(arm.root_folder), 'name', name);
                 end
             catch err
                 % Without this the failure reads as a bare constructor error

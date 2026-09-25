@@ -105,7 +105,7 @@ def _seed_forces(db, subjects=SUBJECTS, trials=TRIALS):
 def _path_input():
     return PathInput(
         "sub{subject}/trial{trial}.csv",
-        root_folder=str(DATA_DIR),
+        root_folder=str(DATA_DIR), name="sub{subject}/trial{trial}.csv",
     )
 
 
@@ -150,7 +150,7 @@ class TestCsvLoadNodeState:
                     continue  # leave this one missing → FileNotFoundError
                 shutil.copy(src, dst)
 
-        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path))
+        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path), name="sub{subject}/trial{trial}.csv")
         for_each(
             load_time,
             inputs={"filepath": pi},
@@ -181,7 +181,7 @@ class TestCsvLoadNodeState:
                         tmp_path / f"sub{subj}" / f"trial{trial}.csv",
                     )
 
-        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path))
+        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path), name="sub{subject}/trial{trial}.csv")
         for_each(
             load_time,
             inputs={"filepath": pi},
@@ -203,7 +203,7 @@ class TestCsvLoadNodeState:
         for subj in SUBJECTS:
             (tmp_path / f"sub{subj}").mkdir()
 
-        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path))
+        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path), name="sub{subject}/trial{trial}.csv")
         for_each(
             load_time,
             inputs={"filepath": pi},
@@ -276,7 +276,7 @@ class TestMultiOutputNodeState:
                         tmp_path / f"sub{subj}" / f"trial{trial}.csv",
                     )
 
-        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path))
+        pi = PathInput("sub{subject}/trial{trial}.csv", root_folder=str(tmp_path), name="sub{subject}/trial{trial}.csv")
         for_each(
             load_force_left,
             inputs={"filepath": pi},

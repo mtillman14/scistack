@@ -763,13 +763,15 @@ def render_matlab_path_input(
     template: str,
     root_folder: "str | None" = None,
     alternates: "list[dict] | None" = None,
+    *,
+    name: str,
 ) -> str:
-    """``scidb.PathInput('{s}/x.csv', root_folder='/d')``, or an
+    """``scidb.PathInput('{s}/x.csv', root_folder='/d', name='X')``, or an
     ``scidb.EachOf(...)`` of them when *alternates* is given — the same
     shape :func:`scidb.source_edit.render_path_input` produces for Python."""
-    calls = [_matlab_path_input_call(template, root_folder)]
+    calls = [_matlab_path_input_call(template, root_folder, name)]
     calls.extend(
-        _matlab_path_input_call(alt.get("template", ""), alt.get("root_folder"))
+        _matlab_path_input_call(alt.get("template", ""), alt.get("root_folder"), name)
         for alt in (alternates or [])
     )
     if len(calls) == 1:
@@ -777,10 +779,12 @@ def render_matlab_path_input(
     return f"scidb.EachOf({', '.join(calls)})"
 
 
-def _matlab_path_input_call(template: str, root_folder: "str | None") -> str:
+def _matlab_path_input_call(template: str, root_folder: "str | None", name: str) -> str:
     args = [render_matlab_value(template)]
     if root_folder:
         args.append(f"root_folder={render_matlab_value(root_folder)}")
+    # Required — the name is the PathInput's identity (+scifor/PathInput.m).
+    args.append(f"name={render_matlab_value(name)}")
     return f"scidb.PathInput({', '.join(args)})"
 
 

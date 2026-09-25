@@ -609,3 +609,70 @@ class TestResolveEntitiesPath:
 
         with pytest.raises(AttributeError, match="Declared: A"):
             entities.NOT_DECLARED
+
+
+# ---------------------------------------------------------------------------
+# Renaming (.claude/plan-pathinput-rename.md)
+# ---------------------------------------------------------------------------
+
+
+class TestRenameEntry:
+    def test_renames_only_the_key(self):
+        text = textwrap.dedent("""\
+            # header
+            [path_inputs]
+            RAW = { template = "{subject}/raw.csv", root_folder = "/d" }  # keep
+            OTHER = "b.csv"
+        """)
+
+        out = entities.rename_entry(text, "path_inputs", "RAW", "RAW_EMG")
+
+        assert out == text.replace("RAW = ", "RAW_EMG = ", 1)
+
+    def test_renamed_entry_parses_under_the_new_name(self, tmp_path):
+        path = tmp_path / "e.toml"
+        path.write_text(
+            entities.rename_entry('[path_inputs]\nRAW = "a.csv"\n', "path_inputs", "RAW", "NEW"),
+            encoding="utf-8",
+        )
+
+        loaded = entities.load(path)
+
+        assert loaded.get("RAW") is None
+        assert loaded.get("NEW").path_template == "a.csv"
+
+    def test_quoted_key_is_replaced_whole(self):
+        text = '[path_inputs]\n"RAW" = "a.csv"\n'
+
+        assert entities.rename_entry(text, "path_inputs", "RAW", "NEW") == (
+            '[path_inputs]\nNEW = "a.csv"\n'
+        )
+
+    def test_same_name_in_another_section_is_untouched(self):
+        text = '[parameters]\nX = 1\n\n[path_inputs]\nRAW = "a.csv"\n'
+
+        out = entities.rename_entry(text, "path_inputs", "RAW", "NEW")
+
+        assert "X = 1" in out and 'NEW = "a.csv"' in out
+
+    def test_collision_with_any_kind_is_refused(self):
+        text = 'variables = ["Taken"]\n\n[path_inputs]\nRAW = "a.csv"\n'
+
+        with pytest.raises(ValueError, match="already declared"):
+            entities.rename_entry(text, "path_inputs", "RAW", "Taken")
+
+    def test_invalid_name_is_refused(self):
+        with pytest.raises(ValueError, match="not a valid name"):
+            entities.rename_entry('[path_inputs]\nRAW = "a"\n', "path_inputs", "RAW", "1bad")
+
+    def test_missing_entry_is_refused(self):
+        with pytest.raises(ValueError, match="No entry 'RAW'"):
+            entities.rename_entry("[path_inputs]\n", "path_inputs", "RAW", "NEW")
+
+    def test_value_spans_are_unchanged_by_the_key_scan(self):
+        """find_entry_span is served by the same scanner now -- its value
+        span must be exactly what it was."""
+        text = "[parameters]\nA = [\n    1,\n]  # c\n"
+        span = entities.find_entry_span(text, "parameters", "A")
+
+        assert text[span.start : span.end] == "[\n    1,\n]"

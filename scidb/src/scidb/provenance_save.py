@@ -296,11 +296,12 @@ def _constant_bindings(meta: dict) -> dict[str, Any]:
 
 
 def _pathinput_specs(meta: dict) -> dict[str, str]:
-    """PathInput specs from ``__inputs`` → ``{param_name: spec_json_str}``.
+    """PathInput identity keys from ``__inputs`` → ``{param_name: key_json_str}``.
 
-    ``__inputs`` carries each loadable input's ``to_key()``; PathInput's is a JSON
-    string ``{"__type": "PathInput", ...}``. Returns those entries verbatim (the
-    exact spec string) so they can be stored as PathInput input records.
+    ``__inputs`` carries each loadable input's ``to_key()``; a PathInput's is its
+    NAME as JSON (``{"__type": "PathInput", "name": ...}``). The full spec is
+    not in the metadata (it would reach the record id) — ``record_run`` gets it
+    as ``path_input_specs``.
     """
     inputs = _parse_json_dict(meta.get("__inputs"))
     out: dict[str, str] = {}
@@ -314,6 +315,55 @@ def _pathinput_specs(meta: dict) -> dict[str, str]:
         if isinstance(parsed, dict) and parsed.get("__type") == "PathInput":
             out[param] = val
     return out
+
+
+def _log_moved_path_inputs(duck, pathinput_spec_rows: dict[str, str]) -> None:
+    """INFO for every PathInput whose stored spec this run changes — the
+    "data moved / other machine" case. Identity (the name) is unchanged, so
+    nothing re-runs because of it; this line is how the move is visible."""
+    if not pathinput_spec_rows:
+        return
+    from .log import Log
+    from .provenance import parse_path_input_spec
+
+    ids = list(pathinput_spec_rows)
+    stored = dict(
+        duck._fetchall(
+            f"SELECT record_id, value_repr FROM _constant WHERE record_id IN "
+            f"({', '.join(['?'] * len(ids))})",
+            ids,
+        )
+    )
+    for rid, spec in pathinput_spec_rows.items():
+        old = stored.get(rid)
+        if old is None or old == spec:
+            continue
+        before, after = parse_path_input_spec(old) or {}, parse_path_input_spec(spec) or {}
+        Log.info(
+            f"[provenance] PathInput {after.get('name')!r}: location changed "
+            f"({before.get('template')!r}, root {before.get('root_folder')!r}) -> "
+            f"({after.get('template')!r}, root {after.get('root_folder')!r}); "
+            f"identity is the name, so nothing re-runs because of it"
+        )
+
+
+def _pathinput_bindings(meta: dict) -> list[Binding]:
+    """The PathInput edges of a call, as identity bindings — one per
+    PathInput-fed parameter, bound to the spec's ``__pathinput__`` record.
+
+    Part of ``invocation_id`` since 2026-09-25 (reversing the 2026-06-21
+    WON'T DO, ``docs/claude/database-model.md`` §11 item 6): without it a
+    function whose only input is a PathInput — a library loader such as
+    ``pandas.read_csv`` — got ONE invocation for every file it ever read, so
+    two canvas nodes reading two files merged into one call site and their
+    wiring was rewritten onto it. The binding is the PathInput's NAME (its
+    ``to_key()``), never its template or root_folder, so moved data keeps its
+    invocations.
+    """
+    return [
+        Binding(param, compute_pathinput_record_id(spec), None)
+        for param, spec in sorted(_pathinput_specs(meta).items())
+    ]
 
 
 def variable_input_params(meta: dict) -> list[str]:
@@ -355,7 +405,8 @@ def invocation_identity(meta: dict, bindings) -> str:
     now.
 
     *bindings* are the variable edges (``bindings.Binding``); the constants
-    come from ``meta["__constants"]`` and become edges here.
+    come from ``meta["__constants"]`` and the PathInput specs from
+    ``meta["__inputs"]`` (:func:`_pathinput_bindings`), and become edges here.
     """
     from .provenance import compute_invocation_id
 
@@ -369,6 +420,7 @@ def invocation_identity(meta: dict, bindings) -> str:
     edges: list[Binding] = list(var_b)
     for param, value in const_b.items():
         edges.append(Binding(param, compute_constant_record_id(value), None))
+    edges.extend(_pathinput_bindings(meta))
     return compute_invocation_id(
         meta.get("__fn_hash") or "",
         as_table,
@@ -436,8 +488,16 @@ def record_run(
     glue_virtual: dict | None = None,
     glue_chains: dict | None = None,
     parameter_names: dict | None = None,
+    path_input_specs: dict | None = None,
 ) -> str | None:
     """Write the bipartite graph for ``graph_records`` plus a fresh ``_run`` row.
+
+    ``path_input_specs`` is ``{argument: PathInput.to_spec()}`` — what each
+    PathInput-fed argument's record STORES (template, root_folder, ...). The
+    identity is the name in ``__inputs``; the spec rides beside it, like
+    ``parameter_names``, because anything in the metadata would reach the
+    record id. The stored spec is refreshed to this run's, so re-discovery
+    looks where the files are now.
 
     Returns the ``run_id`` (or ``None`` if there was nothing to record).
 
@@ -460,6 +520,7 @@ def record_run(
     if not graph_records:
         return None
     parameter_names = dict(parameter_names or {})
+    path_input_specs = dict(path_input_specs or {})
 
     import time
 
@@ -479,6 +540,7 @@ def record_run(
     # Accumulators (deduped by key so we can ON CONFLICT DO NOTHING cheaply).
     entity_rows: dict[str, tuple] = {}  # record_id -> _record row
     constant_rows: dict[str, tuple] = {}  # record_id -> _constant row
+    pathinput_spec_rows: dict[str, str] = {}  # PathInput record_id -> spec to store
     invocation_rows: dict[str, tuple] = {}  # invocation_id -> _invocation row
     input_edges: dict[
         tuple[str, str, str], str | None
@@ -559,6 +621,16 @@ def record_run(
                 entity_rows.setdefault(
                     crid, (crid, created_at, CONSTANT_TYPE, None, ch, None, False)
                 )
+            # PathInput-spec edges are identity too (`_pathinput_bindings`):
+            # two files read by one function are two invocations.
+            pathinput_b = _pathinput_bindings(meta)
+            bindings.extend(pathinput_b)
+            if pathinput_b:
+                Log.debug(
+                    f"[provenance] fn={fn_name}: {len(pathinput_b)} PathInput "
+                    f"edge(s) folded into invocation "
+                    f"{dict((b.param, b.rid) for b in pathinput_b)}"
+                )
 
             # Identity — the same recipe as `invocation_identity`, spelled with
             # the constant hashes already in hand. The save path stamped ITS
@@ -615,17 +687,20 @@ def record_run(
                     crid = next(b.rid for b in bindings if b.param == param)
                     declared_edges[(inv_id, param, crid)] = declared
 
-            # PathInput-spec edges: config-level (template+root_folder), recorded as
-            # distinctly-typed input records so variant queries can surface them.
-            # Added AFTER inv_id is computed → deliberately NOT part of identity.
-            for param, spec in _pathinput_specs(meta).items():
-                prid = compute_pathinput_record_id(spec)
-                ch = canonical_hash(spec)
+            # PathInput records: ONE per name (the identity key), distinctly
+            # typed so variant queries can surface them. The stored value is
+            # the full SPEC (template, root_folder, ...) the run actually used,
+            # for display and re-discovery — never hashed. Their edges were
+            # written with `bindings` above — they are part of identity.
+            for param, key in _pathinput_specs(meta).items():
+                prid = compute_pathinput_record_id(key)
+                spec = path_input_specs.get(param) or key
+                ch = canonical_hash(key)
                 constant_rows[prid] = (prid, spec, PATHINPUT_VALUE_TYPE, ch)
+                pathinput_spec_rows[prid] = spec
                 entity_rows.setdefault(
                     prid, (prid, created_at, PATHINPUT_TYPE, None, ch, None, False)
                 )
-                input_edges[(inv_id, param, prid)] = None
                 # Which DECLARED PathInput fed this argument — what groups
                 # PathInput-fed steps, on the canvas and in `scidb graph`
                 # alike (cleanup-audit F38). Same column as a Parameter's.
@@ -753,6 +828,7 @@ def record_run(
             f"PathInput edge(s) named by declared PathInput; argument->declared "
             f"{renamed or 'all same-named'}"
         )
+    _log_moved_path_inputs(duck, pathinput_spec_rows)
     _t_commit = time.perf_counter()
     _commit_graph(
         duck,
@@ -769,6 +845,7 @@ def record_run(
         run_inv_ids,
         timings=timings,
         declared_edges=declared_edges,
+        pathinput_spec_rows=pathinput_spec_rows,
     )
     timings["3_commit"] = time.perf_counter() - _t_commit
     timings["total"] = time.perf_counter() - _t_start
@@ -898,6 +975,7 @@ def _commit_graph(
     run_inv_ids,
     timings: dict | None = None,
     declared_edges: dict | None = None,
+    pathinput_spec_rows: dict | None = None,
 ) -> None:
     """Transactionally insert the assembled graph rows + the append-only run.
 
@@ -946,6 +1024,19 @@ def _commit_graph(
                 conflict_cols=["record_id"],
             ),
         )
+        # A PathInput's record is keyed by its NAME, so a run over moved files
+        # hits the existing row (DO NOTHING above); its stored spec is
+        # refreshed here so display and re-discovery follow the files.
+        if pathinput_spec_rows:
+            _timed(
+                "3b_pathinput_spec",
+                lambda: duck._bulk_update(
+                    "_constant",
+                    ("record_id",),
+                    ("value_repr",),
+                    [(rid, spec) for rid, spec in pathinput_spec_rows.items()],
+                ),
+            )
         _timed(
             "3c_invocation",
             lambda: duck._bulk_insert(

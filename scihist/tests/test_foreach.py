@@ -1406,7 +1406,7 @@ class TestForEachSchemaFiltering:
 
         for_each(
             process,
-            inputs={"filepath": PathInput("{subject}/data.csv"), "x": MockVariableA},
+            inputs={"filepath": PathInput("{subject}/data.csv", name="{subject}/data.csv"), "x": MockVariableA},
             outputs=[MockOutput],
             db=db,
             subject=[],
@@ -1434,7 +1434,7 @@ class TestForEachSchemaFiltering:
         for_each(
             process,
             inputs={
-                "filepath": Fixed(PathInput("{subject}/data.csv"), session="BL"),
+                "filepath": Fixed(PathInput("{subject}/data.csv", name="{subject}/data.csv"), session="BL"),
                 "x": MockVariableA,
             },
             outputs=[MockOutput],

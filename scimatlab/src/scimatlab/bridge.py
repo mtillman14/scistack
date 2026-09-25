@@ -138,7 +138,7 @@ def _reconstruct_input_for_keys(spec):
         - {"kind": "fixed", "inner": <spec>, "fixed_metadata": dict}
         - {"kind": "variant", "inner": <spec>, "branch_params": dict}
         - {"kind": "merge", "specs": list[<spec>]}
-        - {"kind": "pathinput", "template": str, "root_folder": str}
+        - {"kind": "pathinput", "name": str, "template": str, "root_folder": str}
 
     Anything else is returned unchanged (treated as a constant value).
     """
@@ -192,7 +192,9 @@ def _reconstruct_input_for_keys(spec):
         if root == "":
             root = None
         regex_flag = bool(spec.get("regex", False))
-        return PathInput(spec["template"], root_folder=root, regex=regex_flag)
+        return PathInput(
+            spec["template"], root_folder=root, regex=regex_flag, name=spec["name"]
+        )
     if kind == "path_output":
         from scifor import PathOutput
 
@@ -1003,6 +1005,7 @@ def for_each_describe_loaded_input(val):
         # can construct a matching MATLAB-side scifor.PathInput.
         return {
             "kind": "pathinput",
+            "name": val.name,
             "template": val.path_template,
             "root_folder": (
                 str(val.root_folder) if val.root_folder is not None else ""

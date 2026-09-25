@@ -694,14 +694,14 @@ def pathinput_configs(duck, fn_name: str) -> list[tuple[dict, dict]]:
         inputs: dict = dict(constants)
         for param, spec in specs.items():
             info = parse_path_input(spec)
-            if info is None:
+            if info is None or not info.get("template") or not info.get("name"):
                 raise ValueError(
                     f"Unparseable PathInput spec for {fn_name}.{param}: {spec!r}"
                 )
-            inputs[param] = (
-                PathInput(info["template"], root_folder=info["root_folder"])
-                if info.get("root_folder")
-                else PathInput(info["template"])
+            inputs[param] = PathInput(
+                info["template"],
+                root_folder=info.get("root_folder") or None,
+                name=info["name"],
             )
         out.append((inputs, constants))
     return out

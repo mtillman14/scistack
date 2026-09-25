@@ -54,7 +54,7 @@ else:  # pragma: no cover
 from scifor import EachOf, PathInput
 from scifor.discovery import PathInsert, purge_module, read_project_name, walk_package
 
-from .parameter import Parameter, stamp_path_input_name
+from .parameter import Parameter, path_input_declaration
 from .pipeline import is_scistack_function
 from .roles import FunctionRole, function_role
 from .variable import BaseVariable
@@ -205,6 +205,7 @@ def discover_module(module: ModuleType) -> ModuleExports:
     """
     module_name = module.__name__
     exports = ModuleExports(module_name=module_name)
+    unbound: dict[str, str] = {}  # binding -> PathInput name it does not match
 
     for name, obj in vars(module).items():
         if name.startswith("_"):
@@ -242,12 +243,29 @@ def discover_module(module: ModuleType) -> ModuleExports:
         # --- PathInput instances, or an EachOf of PathInputs (alternate
         # templates) ---
         if is_path_input(obj):
-            # Same as a Parameter: the binding name IS the declared name,
-            # stamped so a script's for_each records it (cleanup-audit F38).
-            stamp_path_input_name(obj, name)
-            exports.path_inputs.append((name, obj))
+            # The declared name is the object's own `name=` (its identity).
+            # Exported only under a binding that matches it; any other binding
+            # is a re-export or a mismatch (checked after the loop).
+            declared, problem = path_input_declaration(obj, name)
+            if problem:
+                logger.warning(f"[discover] {module_name}: {problem}")
+            elif declared == name:
+                exports.path_inputs.append((name, obj))
+            else:
+                unbound[name] = declared
             continue
 
+    exported = {n for n, _ in exports.path_inputs}
+    for binding, declared in unbound.items():
+        if declared in exported:
+            logger.debug(f"[discover] {module_name}: {binding} re-exports PathInput {declared!r}")
+        else:
+            logger.warning(
+                f"[discover] {module_name}: {binding} is a PathInput named {declared!r} "
+                f"but nothing binds it as {declared} — declare it as "
+                f"{declared} = PathInput(..., name={declared!r}) so the name and "
+                f"the declaration agree"
+            )
     return exports
 
 

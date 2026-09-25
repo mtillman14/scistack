@@ -35,7 +35,7 @@ def example_processing_function(val: np.ndarray, const: float) -> np.ndarray:
 # Load every file matching "path/to/{subject}/{condition}/{trial}_data.ext"
 # Returns a df with columns ["subject", "condition", "trial", "loaded_variable"]
 loaded_df = scifor.for_each(example_loading_function,
-  filepath=scifor.PathInput("path/to/{subject}/{condition}/{trial}_data.ext"),
+  filepath=scifor.PathInput("path/to/{subject}/{condition}/{trial}_data.ext", name="trial_data"),
   outputs=["loaded_variable"]
 )
 
@@ -73,7 +73,7 @@ def load_data(file_path: str) -> pd.DataFrame:
     """Example logic to load the data"""
     return pd.read_csv(file_path)
 
-path_template = scifor.PathInput("path/to/data/{subject}/{session}/{trial}.csv")
+path_template = scifor.PathInput("path/to/data/{subject}/{session}/{trial}.csv", name="trial_data")
 loaded_df = scifor.for_each(load_data,
     file_path=path_template,
     subject=[], session=[], trial=[],

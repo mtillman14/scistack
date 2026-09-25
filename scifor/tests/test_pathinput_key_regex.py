@@ -28,11 +28,11 @@ def emg_tree(tmp_path):
 class TestKeyRegexValidation:
     def test_unknown_key_raises(self):
         with pytest.raises(ValueError, match="not a placeholder"):
-            PathInput("{subject}/data.mat", key_regex={"session": r"\d+"})
+            PathInput("{subject}/data.mat", key_regex={"session": r"\d+"}, name="{subject}/data.mat")
 
     def test_stored_on_instance(self):
         pi = PathInput(
-            "{speed}{trial}.mat", key_regex={"speed": r"[A-Za-z]+", "trial": r"\d+"}
+            "{speed}{trial}.mat", key_regex={"speed": r"[A-Za-z]+", "trial": r"\d+"}, name="{speed}{trial}.mat"
         )
         assert pi.key_regex == {"speed": r"[A-Za-z]+", "trial": r"\d+"}
 
@@ -43,7 +43,7 @@ class TestKeyRegexDiscovery:
         # but the last character to the first placeholder.
         pi = PathInput(
             "{subject}_EMG_{speed}{trial}.mat",
-            root_folder=emg_tree,
+            root_folder=emg_tree, name="{subject}_EMG_{speed}{trial}.mat",
         )
         combos = pi.discover()
         by_subject_trial = {(c["subject"], c["speed"]): c["trial"] for c in combos}
@@ -54,7 +54,7 @@ class TestKeyRegexDiscovery:
         pi = PathInput(
             "{subject}_EMG_{speed}{trial}.mat",
             root_folder=emg_tree,
-            key_regex={"speed": r"[A-Za-z]+", "trial": r"\d+"},
+            key_regex={"speed": r"[A-Za-z]+", "trial": r"\d+"}, name="{subject}_EMG_{speed}{trial}.mat",
         )
         combos = pi.discover()
         by_key = {(c["subject"], c["speed"], c["trial"]) for c in combos}
@@ -70,12 +70,12 @@ class TestKeyRegexDiscovery:
         (tmp_path / "1").mkdir()
         (tmp_path / "1" / "session_A_fast.mat").touch()
         pi_plain = PathInput(
-            "{subject}/session_{session}_{speed}.mat", root_folder=tmp_path
+            "{subject}/session_{session}_{speed}.mat", root_folder=tmp_path, name="{subject}/session_{session}_{speed}.mat"
         )
         pi_with_key_regex = PathInput(
             "{subject}/session_{session}_{speed}.mat",
             root_folder=tmp_path,
-            key_regex={"speed": r"[A-Za-z]+"},
+            key_regex={"speed": r"[A-Za-z]+"}, name="{subject}/session_{session}_{speed}.mat",
         )
         assert pi_plain.discover() == pi_with_key_regex.discover()
 
@@ -86,23 +86,23 @@ class TestKeyRegexDiscovery:
         pi = PathInput(
             "EMG_{speed}{trial}.mat",
             root_folder=tmp_path,
-            key_regex={"speed": r"[A-Za-z]+", "trial": r"\d+"},
+            key_regex={"speed": r"[A-Za-z]+", "trial": r"\d+"}, name="EMG_{speed}{trial}.mat",
         )
         assert pi.discover() == []
 
 
 class TestKeyRegexToKey:
-    def test_to_key_includes_key_regex_when_set(self):
+    def test_to_spec_includes_key_regex_when_set(self):
         import json
 
-        pi = PathInput("{speed}{trial}.mat", key_regex={"speed": r"[A-Za-z]+"})
-        key = json.loads(pi.to_key())
+        pi = PathInput("{speed}{trial}.mat", key_regex={"speed": r"[A-Za-z]+"}, name="{speed}{trial}.mat")
+        key = json.loads(pi.to_spec())
         assert key["key_regex"] == {"speed": r"[A-Za-z]+"}
 
-    def test_to_key_omits_key_regex_when_default(self):
+    def test_to_spec_omits_key_regex_when_default(self):
         # Backwards compatible: pre-key_regex saved keys stay byte-identical.
         import json
 
-        pi = PathInput("{speed}/{trial}.mat")
-        key = json.loads(pi.to_key())
+        pi = PathInput("{speed}/{trial}.mat", name="{speed}/{trial}.mat")
+        key = json.loads(pi.to_spec())
         assert "key_regex" not in key

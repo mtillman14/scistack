@@ -140,3 +140,53 @@ test('the shared mark is ignored for a run that is not in flight', () => {
   tracker.noteSharedEngine('never-begun');
   assert.equal(tracker.sharedEngineActive, false);
 });
+
+// Regression (scidb.log 2026-09-25): a GUI Python run's own WAL writes fired
+// the file watcher mid-save, so the canvas rebuilt against the writer (26.5s)
+// and drew the pre-save graph. The run's own dag_updated is the refresh.
+test('db changes are dropped, not deferred, during a Python run', () => {
+  const tracker = new MatlabRunTracker();
+  tracker.beginPythonRun('py-1');
+
+  assert.equal(tracker.pythonRunActive, true);
+  assert.equal(tracker.isActive, false, 'a Python run never counts as MATLAB');
+  assert.equal(tracker.noteDbChange(), false);
+
+  tracker.end('py-1');
+  assert.equal(tracker.pythonRunActive, false);
+  // Not replayed: the backend pushes its own dag_updated after run_done.
+  assert.equal(tracker.takeDeferredRefresh(), false);
+  assert.equal(tracker.noteDbChange(), true);
+});
+
+test('a multi-target Python run (one run_start per target) clears on one run_done', () => {
+  const tracker = new MatlabRunTracker();
+  tracker.beginPythonRun('py-1');
+  tracker.beginPythonRun('py-1');
+  tracker.end('py-1');
+  assert.equal(tracker.pythonRunActive, false);
+});
+
+test('ending a Python run neither fires onAllFinished nor clears MATLAB', () => {
+  const tracker = new MatlabRunTracker();
+  let fired = 0;
+  tracker.onAllFinished(() => { fired++; });
+  tracker.begin('m-1');
+  tracker.beginPythonRun('py-1');
+
+  tracker.end('py-1');
+  assert.equal(fired, 0);
+  assert.equal(tracker.isActive, true);
+  // MATLAB still owns the database, so the change is deferred as before.
+  assert.equal(tracker.noteDbChange(), false);
+  tracker.end('m-1');
+  assert.equal(tracker.takeDeferredRefresh(), true);
+});
+
+test('clearPythonRuns releases a run whose server died before run_done', () => {
+  const tracker = new MatlabRunTracker();
+  tracker.beginPythonRun('py-1');
+  tracker.clearPythonRuns();
+  assert.equal(tracker.pythonRunActive, false);
+  assert.equal(tracker.noteDbChange(), true);
+});

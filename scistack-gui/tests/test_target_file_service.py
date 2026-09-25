@@ -386,7 +386,7 @@ class TestUpdateDeclaration:
         other.write_text(
             "import scidb\n\n"
             "OUTSIDE = scidb.Parameter(7, description='')\n"
-            "RAW = scidb.PathInput('{subject}/a.csv')\n"
+            "RAW = scidb.PathInput('{subject}/a.csv', name='RAW')\n"
         )
         entities = tmp_path / "entities.toml"
         entities.write_text("[parameters]\nINSIDE = 1\n")

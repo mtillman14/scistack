@@ -69,8 +69,8 @@ classdef TestEachOf < matlab.unittest.TestCase
                 {'1', 'T1', 'train-1T1'; '2', 'T1', 'train-2T1'});
 
             template = "{subject}/{session}/data.txt";
-            pi_assessment = scifor.PathInput(template, 'root_folder', assessment_root);
-            pi_training = scifor.PathInput(template, 'root_folder', training_root);
+            pi_assessment = scifor.PathInput(template, 'root_folder', assessment_root, 'name', char(template));
+            pi_training = scifor.PathInput(template, 'root_folder', training_root, 'name', char(template));
 
             fn = @(filepath) string(fileread(filepath));
             result = scidb.for_each(fn, ...

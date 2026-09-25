@@ -255,18 +255,19 @@ class TestSerializationHelpers:
     def test_matlab_literal_real_path_input(self):
         from scidb import PathInput
 
-        pi = PathInput("{subject}/{trial}.mat")
+        pi = PathInput("{subject}/{trial}.mat", name="RAW")
         assert (
-            _matlab_literal(pi) == 'scifor.PathInput("{subject}/{trial}.mat")'
+            _matlab_literal(pi)
+            == 'scifor.PathInput("{subject}/{trial}.mat", \'name\', "RAW")'
         )
 
     def test_matlab_literal_real_path_input_with_root_folder(self):
         from scidb import PathInput
 
-        pi = PathInput("{subject}.mat", root_folder="/data")
+        pi = PathInput("{subject}.mat", root_folder="/data", name="RAW")
         assert (
             _matlab_literal(pi)
-            == 'scifor.PathInput("{subject}.mat", \'root_folder\', "/data")'
+            == 'scifor.PathInput("{subject}.mat", \'root_folder\', "/data", \'name\', "RAW")'
         )
 
     def test_py_literal_real_parameter_round_trips(self):
@@ -283,7 +284,7 @@ class TestSerializationHelpers:
     def test_py_literal_real_path_input(self):
         from scidb import PathInput
 
-        pi = PathInput("{subject}/{trial}.mat")
+        pi = PathInput("{subject}/{trial}.mat", name="{subject}/{trial}.mat")
         assert _py_literal(pi) == repr(pi)
         assert "PathInput" in _py_literal(pi)
         assert "{subject}/{trial}.mat" in _py_literal(pi)

@@ -1246,10 +1246,11 @@ function val = build_scifor_input_from_desc(desc)
             tmpl = char(desc{'template'});
             root = char(desc{'root_folder'});
             is_regex = logical(desc{'regex'});
+            pi_name = char(desc{'name'});
             if isempty(root)
-                val = scifor.PathInput(tmpl, 'regex', is_regex);
+                val = scifor.PathInput(tmpl, 'regex', is_regex, 'name', pi_name);
             else
-                val = scifor.PathInput(tmpl, 'root_folder', root, 'regex', is_regex);
+                val = scifor.PathInput(tmpl, 'root_folder', root, 'regex', is_regex, 'name', pi_name);
             end
 
         case 'colname'
@@ -1507,6 +1508,7 @@ function spec = describe_input_for_python(val)
             root_str = '';
         end
         spec = py.dict(pyargs('kind', 'pathinput', ...
+            'name', char(val.name), ...
             'template', char(val.path_template), ...
             'root_folder', root_str, ...
             'regex', logical(val.regex)));

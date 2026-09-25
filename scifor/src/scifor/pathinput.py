@@ -32,6 +32,32 @@ from scistacklog import Log
 _DIR_CACHE: dict[str, tuple[int, list[str]]] = {}
 
 
+def validate_path_input_name(name: Any) -> str:
+    """*name* as a PathInput name, or ``ValueError``.
+
+    A non-empty string with no surrounding whitespace. The one rule, used by
+    the constructor and by anything that rebuilds a PathInput from stored
+    data.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(
+            "PathInput requires a non-empty name=, e.g. "
+            "PathInput('{subject}/data.csv', name='RawData'). The name is the "
+            f"PathInput's identity; the template is only where to look (got {name!r})."
+        )
+    if name != name.strip():
+        raise ValueError(f"PathInput name {name!r} has leading/trailing whitespace")
+    return name
+
+
+def path_input_key(name: str) -> str:
+    """The identity key of the PathInput named *name* — what
+    :meth:`PathInput.to_key` returns. THE one spelling: scidb derives the key
+    of a stored spec through this, so forward and backward agree by
+    construction."""
+    return json.dumps({"__type": "PathInput", "name": name})
+
+
 def clear_listing_cache() -> None:
     """Forget every cached directory listing."""
     _DIR_CACHE.clear()
@@ -199,18 +225,20 @@ class PathInput:
         regex: bool = False,
         aliases: "dict[str, dict[str, list[str]]] | None" = None,
         key_regex: "dict[str, str] | None" = None,
+        *,
+        name: str,
     ):
         self.path_template = path_template
         self.root_folder = Path(root_folder) if root_folder is not None else None
         self.regex = bool(regex)
-        self.__name__ = f"PathInput({path_template!r})"
-        # The DECLARED name — the binding in the entities file or module that
-        # made this a PathInput. Set by whoever declares it (scidb's entities
-        # loader, the discovery scanner), never by a for_each caller. scidb
-        # records it on the PathInput's provenance edge so history can say
-        # WHICH declared PathInput fed a step (cleanup-audit F38). Not part of
-        # to_key(): identity is still the template.
-        self.name: "str | None" = None
+        # The NAME is the PathInput's identity (2026-09-25): `to_key()` is the
+        # name alone, so the template and root_folder — where the files are on
+        # THIS machine — never reach a call id, an invocation id or a record
+        # id. Moving the data, or running on another computer, changes nothing;
+        # two differently named PathInputs never share an invocation. Required,
+        # in scripts as in declarations, so there is no fallback to a path.
+        self.name: str = validate_path_input_name(name)
+        self.__name__ = f"PathInput({self.name!r})"
         # Numeric-fallback caches (see load()): learned zero-pad width per
         # placeholder key, and per-directory listings validated by mtime.
         self._pad_width: dict[str, int] = {}
@@ -268,14 +296,25 @@ class PathInput:
         return dict(key_regex)
 
     def to_key(self) -> str:
-        """Return a structured JSON string for version_keys serialization.
+        """The IDENTITY of this PathInput: its name, as a JSON string.
 
-        ``regex`` and ``aliases`` are only included when non-default so
-        existing version keys remain byte-identical to records saved before
-        those fields existed.
+        What version keys, call ids, invocation ids and the skip gate all
+        hash. Deliberately path-free — see ``__init__``. The full spec is
+        :meth:`to_spec`.
+        """
+        return path_input_key(self.name)
+
+    def to_spec(self) -> str:
+        """The full DESCRIPTION of this PathInput as a JSON string — name,
+        template, root_folder and the matching options.
+
+        Stored on the PathInput's provenance record so history can show and
+        re-discover it, but never hashed: see :meth:`to_key`. ``regex``,
+        ``aliases`` and ``key_regex`` are only included when non-default.
         """
         payload: dict = {
             "__type": "PathInput",
+            "name": self.name,
             "template": self.path_template,
             "root_folder": str(self.root_folder)
             if self.root_folder is not None
@@ -1011,4 +1050,7 @@ class PathInput:
         return regex
 
     def __repr__(self) -> str:
-        return f"PathInput({self.path_template!r}, root_folder={self.root_folder!r})"
+        return (
+            f"PathInput({self.path_template!r}, root_folder={self.root_folder!r}, "
+            f"name={self.name!r})"
+        )

@@ -156,7 +156,7 @@ class TestExportImportSameDatabase:
         from scistack_gui import registry
 
         registry._module_path.write_text(
-            'from scidb import PathInput\ngait_data = PathInput("{subject}_edited.csv")\n'
+            'from scidb import PathInput\ngait_data = PathInput("{subject}_edited.csv", name="gait_data")\n'
         )
         registry.refresh_module()
 
@@ -273,7 +273,7 @@ class TestExportImportCrossDatabase:
         # — no API endpoint authors it, so write it directly.
         with open(registry._module_path, "a") as f:
             f.write(
-                '\ngait_data = EachOf(gait_data, PathInput("alt.csv"))\n'
+                '\ngait_data = EachOf(gait_data, PathInput("alt.csv", name="gait_data"))\n'
             )
         registry.refresh_module()
         client.put("/api/layout/pi_a", json={

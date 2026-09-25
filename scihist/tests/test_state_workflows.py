@@ -405,7 +405,7 @@ class TestMixedInputTypes:
             inputs={
                 "filepath": PathInput(
                     "sub{subject}/trial{trial}.csv",
-                    root_folder=root,
+                    root_folder=root, name="sub{subject}/trial{trial}.csv",
                 ),
                 "baseline": WfBaseline,
                 "scale": 2.0,

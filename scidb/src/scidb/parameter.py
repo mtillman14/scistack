@@ -346,22 +346,73 @@ class Parameter(EachOf):
 # ---------------------------------------------------------------------------
 # Which declared entity (Parameter or PathInput) fed which argument
 # ---------------------------------------------------------------------------
-def stamp_path_input_name(obj: Any, name: str) -> None:
-    """Record *name* as the declared name of a PathInput declaration.
+def path_input_declaration(obj: Any, binding: str) -> "tuple[str | None, str | None]":
+    """``(name, problem)`` for a PathInput declaration bound as *binding*.
 
-    *obj* is what the declaration binds: a ``PathInput``, or an ``EachOf`` of
-    them (alternate templates), in which case every alternative is named —
-    ``for_each`` runs each alternative as its own call, so the name has to
-    travel with the alternative. First binding wins (``B = A`` re-exports A,
-    it does not rename it), exactly as for a Parameter. The entities loader
-    and the discovery scanner both call this; neither spells the rule.
+    *obj* is a ``PathInput`` or an ``EachOf`` of them (alternate templates).
+    Its name is the ``name=`` every arm carries (required since 2026-09-25 —
+    the name IS the identity). The rules, owned here for both scanners (scidb
+    discovery and the GUI registry):
+
+    * every arm of an ``EachOf`` must carry the SAME name — the alternatives
+      are one PathInput in several places (``problem`` otherwise);
+    * a binding whose name differs from ``name=`` is a re-export (``B = A``)
+      or a mismatch; either way it is not a declaration of *binding*:
+      ``name`` is returned and the caller registers it only if *name* is also
+      bound under itself (``problem`` is ``None``; the caller decides).
     """
     from scifor.pathinput import PathInput
 
     arms = obj.alternatives if isinstance(obj, EachOf) else [obj]
-    for arm in arms:
-        if isinstance(arm, PathInput) and not getattr(arm, "name", None):
-            arm.name = name
+    names = {a.name for a in arms if isinstance(a, PathInput)}
+    if len(names) != 1:
+        return None, (
+            f"{binding}: the alternatives of one PathInput must share one name=, "
+            f"got {sorted(names)}"
+        )
+    return names.pop(), None
+
+
+def check_path_input_names(inputs: "dict[str, Any]") -> None:
+    """Refuse one ``for_each`` call in which two arguments carry the SAME
+    PathInput name but point at different files.
+
+    A name is a PathInput's identity (``PathInput.to_key``), so two such
+    arguments would be recorded as one input and their runs could not be
+    told apart. The same PathInput fed to two arguments is fine, and so are
+    the alternatives of one ``EachOf`` (one PathInput in several places, by
+    design). Raises ``ValueError`` naming both arguments.
+    """
+    from scifor.pathinput import PathInput
+
+    seen: dict[str, tuple[str, frozenset]] = {}
+    for arg, value in inputs.items():
+        arms = value.alternatives if isinstance(value, EachOf) else [value]
+        pis = [a for a in arms if isinstance(a, PathInput)]
+        if not pis:
+            continue
+        for name in {p.name for p in pis}:
+            specs = frozenset(p.to_spec() for p in pis if p.name == name)
+            prior = seen.get(name)
+            if prior is not None and prior[1] != specs:
+                raise ValueError(
+                    f"PathInput name {name!r} is used by arguments {prior[0]!r} and "
+                    f"{arg!r} with different templates/root folders "
+                    f"({sorted(prior[1])} vs {sorted(specs)}). The name is the "
+                    f"PathInput's identity — give each a distinct name=."
+                )
+            seen.setdefault(name, (arg, specs))
+
+
+def path_input_specs_of(inputs: "dict[str, Any]") -> dict[str, str]:
+    """``{argument: PathInput.to_spec()}`` for the bare PathInputs of one
+    (already EachOf-expanded) call — what ``record_run`` stores on each
+    PathInput record. Descriptive only; identity is ``to_key()``."""
+    from scifor.pathinput import PathInput
+
+    return {
+        arg: value.to_spec() for arg, value in inputs.items() if isinstance(value, PathInput)
+    }
 
 
 def _declared_name_of(value: Any) -> "str | None":
@@ -411,7 +462,7 @@ def declared_input_names(
       recorded in history reaches ``for_each`` as a bare scalar, which
       carries no name;
     * a named input in *inputs* (``.name``, set by the entities loader and
-      the discovery scanner — :func:`stamp_path_input_name` for PathInputs)
+      the discovery scanner — for a PathInput it is its required ``name=``)
       — how a plain script run gets it.
 
     An argument with neither is absent; readers fall back to the argument

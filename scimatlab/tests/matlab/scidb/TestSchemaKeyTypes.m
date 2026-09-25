@@ -63,7 +63,7 @@ classdef TestSchemaKeyTypes < matlab.unittest.TestCase
 
         function pi = padded_pathinput(testCase)
             pi = scifor.PathInput("{subject}/6MWT-{trial}.txt", ...
-                'root_folder', testCase.data_root);
+                'root_folder', testCase.data_root, 'name', "{subject}/6MWT-{trial}.txt");
         end
     end
 

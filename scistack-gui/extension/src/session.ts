@@ -124,6 +124,11 @@ export class Session {
     }
     if (!this.dagPanel) return;
     this.dagPanel.postMessage({ method, params });
+    if (method === 'run_start' && typeof params.run_id === 'string') {
+      // The server is about to write; its own run_done + dag_updated will
+      // refresh the canvas, so the file watcher must stay quiet until then.
+      this.dagPanel.matlabRuns.beginPythonRun(params.run_id);
+    }
     if (method === 'run_done') {
       this.dagPanel.stopDebugSession();
       // Sidecar-driven MATLAB runs end here; the tracker fires the
@@ -159,6 +164,13 @@ export class Session {
       // holds the file lock on, and every one of them can only fail — so
       // the tracker remembers the change and we refresh once it lets go.
       if (!this.dagPanel.matlabRuns.noteDbChange()) {
+        if (!this.dagPanel.matlabRuns.isActive) {
+          this.log.appendLine(
+            'DuckDB file changed during this session\'s own Python run — ' +
+            'skipping the watcher refresh; the run\'s dag_updated follows run_done',
+          );
+          return;
+        }
         this.log.appendLine(
           'DuckDB file changed while MATLAB owns the database — ' +
           'deferring DAG refresh until the run finishes',
@@ -195,6 +207,8 @@ export class Session {
    */
   adoptProcess(python: PythonProcess): void {
     this.python = python;
+    // The old server's runs died with it and will never send run_done.
+    this.dagPanel?.matlabRuns.clearPythonRuns();
     this.log.appendLine('server replaced — panels now talk to the new process');
   }
 

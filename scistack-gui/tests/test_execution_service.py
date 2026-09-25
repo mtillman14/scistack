@@ -217,7 +217,7 @@ class TestDbHistoryPathInputBinding:
         monkeypatch.setattr(
             registry,
             "get_path_inputs_registry",
-            lambda: {"test_pi": PathInput("{subject}/data.csv")},
+            lambda: {"test_pi": PathInput("{subject}/data.csv", name="{subject}/data.csv")},
         )
 
         by_call = _db_path_input_params(
@@ -240,7 +240,7 @@ class TestDbHistoryPathInputBinding:
         monkeypatch.setattr(
             registry,
             "get_path_inputs_registry",
-            lambda: {"test_pi": PathInput("{subject}/data.csv")},
+            lambda: {"test_pi": PathInput("{subject}/data.csv", name="{subject}/data.csv")},
         )
 
         by_call = _db_path_input_params(
@@ -261,7 +261,7 @@ class TestDbHistoryPathInputBinding:
         monkeypatch.setattr(
             registry,
             "get_path_inputs_registry",
-            lambda: {"test_pi": PathInput("{subject}/data.csv")},
+            lambda: {"test_pi": PathInput("{subject}/data.csv", name="{subject}/data.csv")},
         )
 
         targets = [
@@ -323,7 +323,7 @@ class TestGraduatedPathInputNodeIsRunnable:
         monkeypatch.setattr(
             registry,
             "get_path_inputs_registry",
-            lambda: {"test_pi": PathInput("{subject}/data.csv")},
+            lambda: {"test_pi": PathInput("{subject}/data.csv", name="{subject}/data.csv")},
         )
         monkeypatch.setattr(
             db,
@@ -523,7 +523,7 @@ class TestDefaultSchemaLevel:
         monkeypatch.setattr(
             registry,
             "get_path_inputs_registry",
-            lambda: {"files": PathInput("{subject}/{not_a_key}.csv")},
+            lambda: {"files": PathInput("{subject}/{not_a_key}.csv", name="{subject}/{not_a_key}.csv")},
         )
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(f=pathinput_binding("files"))]
@@ -545,7 +545,7 @@ class TestDefaultSchemaLevel:
             "get_path_inputs_registry",
             lambda: {
                 "files": EachOf(
-                    PathInput("{subject}/a.csv"), PathInput("{subject}/b.csv")
+                    PathInput("{subject}/a.csv", name="{subject}/a.csv"), PathInput("{subject}/b.csv", name="{subject}/a.csv")
                 )
             },
         )
@@ -586,7 +586,7 @@ class TestDatasetLevelDefault:
         monkeypatch.setattr(
             registry,
             "get_path_inputs_registry",
-            lambda: {"config": PathInput("demographics.xlsx")},
+            lambda: {"config": PathInput("demographics.xlsx", name="demographics.xlsx")},
         )
         level, why = default_schema_level(
             populated_db, "never_ran", [self._target(f=pathinput_binding("config"))]

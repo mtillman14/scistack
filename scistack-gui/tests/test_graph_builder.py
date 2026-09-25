@@ -133,7 +133,11 @@ class TestParsePathInput:
             }
         )
         result = parse_path_input(val)
-        assert result == {"template": "{subject}/raw.csv", "root_folder": "/data"}
+        assert result == {
+            "name": None,
+            "template": "{subject}/raw.csv",
+            "root_folder": "/data",
+        }
 
     def test_json_format_no_root_folder(self):
         val = json.dumps({"__type": "PathInput", "template": "{subject}/raw.csv"})
@@ -145,17 +149,16 @@ class TestParsePathInput:
         val = json.dumps({"__type": "Other", "template": "x"})
         assert parse_path_input(val) is None
 
-    def test_legacy_format(self):
-        val = "PathInput('{subject}/raw.csv', root_folder=PosixPath('/data'))"
-        result = parse_path_input(val)
-        assert result["template"] == "{subject}/raw.csv"
-        assert result["root_folder"] == "/data"
+    def test_named_spec_carries_its_name(self):
+        val = json.dumps(
+            {"__type": "PathInput", "name": "RAW", "template": "{subject}/raw.csv"}
+        )
+        assert parse_path_input(val)["name"] == "RAW"
 
-    def test_legacy_format_no_root(self):
-        val = "PathInput('{subject}/raw.csv')"
-        result = parse_path_input(val)
-        assert result["template"] == "{subject}/raw.csv"
-        assert result["root_folder"] is None
+    def test_repr_format_is_not_a_spec(self):
+        """Only the JSON of to_spec()/to_key() is a PathInput (beta: no legacy
+        formats)."""
+        assert parse_path_input("PathInput('{subject}/raw.csv')") is None
 
     def test_plain_string_returns_none(self):
         assert parse_path_input("RawEMG") is None
@@ -199,7 +202,7 @@ class TestAggregateVariants:
     def test_path_input_parsed_and_not_added_to_var_types(self):
         pi_json = json.dumps({"__type": "PathInput", "template": "{s}/f.csv"})
         variants = [_variant("f", "Out", inputs={"path": pi_json})]
-        registry = {"path": PathInput("{s}/f.csv")}
+        registry = {"path": PathInput("{s}/f.csv", name="{s}/f.csv")}
         agg = aggregate_variants(
             variants, listed_var_names=set(), path_input_registry=registry
         )
@@ -223,7 +226,7 @@ class TestAggregateVariants:
             _variant("f1", "Out1", inputs={"path": pi_json}),
             _variant("f2", "Out2", inputs={"path": pi_json}),
         ]
-        registry = {"path": PathInput("{s}/f.csv")}
+        registry = {"path": PathInput("{s}/f.csv", name="{s}/f.csv")}
         agg = aggregate_variants(
             variants, listed_var_names=set(), path_input_registry=registry
         )
@@ -993,7 +996,7 @@ class TestParameterMerge:
 
 class TestPathInputDisplay:
     def test_bare_path_input(self):
-        display = path_input_display(PathInput("{s}/f.csv", root_folder="/data"))
+        display = path_input_display(PathInput("{s}/f.csv", root_folder="/data", name="{s}/f.csv"))
         assert display == {
             "template": "{s}/f.csv",
             "root_folder": "/data",
@@ -1003,7 +1006,7 @@ class TestPathInputDisplay:
     def test_each_of_path_inputs_first_is_primary(self):
         from scifor import EachOf
 
-        obj = EachOf(PathInput("{s}/a.csv"), PathInput("{s}/b.csv", root_folder="/x"))
+        obj = EachOf(PathInput("{s}/a.csv", name="{s}/a.csv"), PathInput("{s}/b.csv", root_folder="/x", name="{s}/a.csv"))
         display = path_input_display(obj)
         assert display["template"] == "{s}/a.csv"
         assert display["alternate_templates"] == [
@@ -1013,7 +1016,7 @@ class TestPathInputDisplay:
 
 class TestResolvePathInputName:
     def test_matches_registry_by_content(self):
-        registry = {"RAW_EMG": PathInput("{s}/f.csv", root_folder="/data")}
+        registry = {"RAW_EMG": PathInput("{s}/f.csv", root_folder="/data", name="{s}/f.csv")}
         name, display = resolve_path_input_name(
             {"template": "{s}/f.csv", "root_folder": "/data"}, registry
         )
@@ -1031,7 +1034,7 @@ class TestResolvePathInputName:
         """D7: after a GUI template edit, a run recorded against the OLD
         template must still resolve to the node instead of detaching into
         __unresolved__."""
-        registry = {"RAW": PathInput("new.csv")}
+        registry = {"RAW": PathInput("new.csv", name="new.csv")}
         history = {("old.csv", None): "RAW"}
 
         name, display = resolve_path_input_name(
@@ -1044,7 +1047,7 @@ class TestResolvePathInputName:
         assert display["template"] == "new.csv"
 
     def test_live_registry_wins_over_history(self):
-        registry = {"RAW": PathInput("old.csv")}
+        registry = {"RAW": PathInput("old.csv", name="old.csv")}
         history = {("old.csv", None): "SOMETHING_ELSE"}
 
         name, _ = resolve_path_input_name(
@@ -1065,7 +1068,7 @@ class TestResolvePathInputName:
         assert name == "__unresolved__:old.csv"
 
     def test_root_folder_distinguishes_history_entries(self):
-        registry = {"RAW": PathInput("new.csv")}
+        registry = {"RAW": PathInput("new.csv", name="new.csv")}
         history = {("old.csv", "/data"): "RAW"}
 
         assert resolve_path_input_name(
@@ -1091,7 +1094,7 @@ class TestResolvePathInputNameProjectRoot:
     ROOT = "/projects/myexp"
 
     def test_project_rooted_history_attributes_to_rootless_declaration(self):
-        registry = {"delsysEMG": PathInput("data/10MWT_{pass}.mat")}
+        registry = {"delsysEMG": PathInput("data/10MWT_{pass}.mat", name="data/10MWT_{pass}.mat")}
 
         name, display = resolve_path_input_name(
             {"template": "data/10MWT_{pass}.mat", "root_folder": self.ROOT},
@@ -1108,7 +1111,7 @@ class TestResolvePathInputNameProjectRoot:
     def test_a_different_root_is_still_unresolved(self):
         """Only the project root is equivalent to no root. Another absolute
         root is a genuinely different input and must not be absorbed."""
-        registry = {"delsysEMG": PathInput("data/10MWT_{pass}.mat")}
+        registry = {"delsysEMG": PathInput("data/10MWT_{pass}.mat", name="data/10MWT_{pass}.mat")}
 
         name, _ = resolve_path_input_name(
             {"template": "data/10MWT_{pass}.mat", "root_folder": "/somewhere/else"},
@@ -1123,8 +1126,8 @@ class TestResolvePathInputNameProjectRoot:
         """A declaration that really does declare the project root as its root
         must win over the rootless one — the normalization is a fallback."""
         registry = {
-            "ROOTLESS": PathInput("data/f.csv"),
-            "ROOTED": PathInput("data/f.csv", root_folder=self.ROOT),
+            "ROOTLESS": PathInput("data/f.csv", name="data/f.csv"),
+            "ROOTED": PathInput("data/f.csv", root_folder=self.ROOT, name="data/f.csv"),
         }
 
         name, _ = resolve_path_input_name(
@@ -1137,7 +1140,7 @@ class TestResolvePathInputNameProjectRoot:
         assert name == "ROOTED"
 
     def test_unnormalized_root_still_matches(self):
-        registry = {"delsysEMG": PathInput("data/f.csv")}
+        registry = {"delsysEMG": PathInput("data/f.csv", name="data/f.csv")}
 
         name, _ = resolve_path_input_name(
             {"template": "data/f.csv", "root_folder": f"{self.ROOT}/./"},
@@ -1151,7 +1154,7 @@ class TestResolvePathInputNameProjectRoot:
     def test_project_rooted_history_reaches_the_name_history_table(self):
         """The two repair paths compose: a template edited in the GUI *and*
         recorded under the injected root still finds its node."""
-        registry = {"RAW": PathInput("new.csv")}
+        registry = {"RAW": PathInput("new.csv", name="new.csv")}
         history = {("old.csv", None): "RAW"}
 
         name, _ = resolve_path_input_name(
@@ -1166,7 +1169,7 @@ class TestResolvePathInputNameProjectRoot:
     def test_no_project_root_leaves_behavior_unchanged(self):
         """Callers that pass no project root keep the old three-strategy
         behavior — there is nothing to normalize against."""
-        registry = {"delsysEMG": PathInput("data/f.csv")}
+        registry = {"delsysEMG": PathInput("data/f.csv", name="data/f.csv")}
 
         name, _ = resolve_path_input_name(
             {"template": "data/f.csv", "root_folder": self.ROOT}, registry
@@ -1187,7 +1190,7 @@ class TestResolvePathInputNameProjectRoot:
                     "functions": [(("load_file", "call1"), "filepath")],
                 }
             },
-            {"delsysEMG": PathInput("data/f.csv")},
+            {"delsysEMG": PathInput("data/f.csv", name="data/f.csv")},
             None,
             self.ROOT,
         )
@@ -1198,7 +1201,7 @@ class TestResolvePathInputNameProjectRoot:
 class TestSeedUndiscoveredPathInputs:
     def test_adds_registry_entries_with_no_history(self):
         result = seed_undiscovered_path_inputs(
-            {}, {"newpath": PathInput("{s}/x.csv")}
+            {}, {"newpath": PathInput("{s}/x.csv", name="{s}/x.csv")}
         )
         assert "newpath" in result
         assert result["newpath"]["functions"] == set()
@@ -1207,7 +1210,7 @@ class TestSeedUndiscoveredPathInputs:
         path_inputs = {
             "p": {"template": "existing", "root_folder": None, "functions": set()}
         }
-        seed_undiscovered_path_inputs(path_inputs, {"p": PathInput("{s}/new.csv")})
+        seed_undiscovered_path_inputs(path_inputs, {"p": PathInput("{s}/new.csv", name="{s}/new.csv")})
         # Already has DB-history-derived data — not clobbered by the seed step.
         assert path_inputs["p"]["template"] == "existing"
 
@@ -2531,7 +2534,6 @@ class TestWiringIdPathInputNormalisation:
             "root_folder": "examples/vo2max/data",
         }
     )
-    PI_LEGACY = "PathInput('{subject}/raw.csv', root_folder=PosixPath('/data'))"
 
     def test_raw_and_partitioned_views_agree(self):
         canvas = wiring_id("read_csv", {}, {"cpet_data_raw"}, {"fp": "test_pi"})
@@ -2546,10 +2548,6 @@ class TestWiringIdPathInputNormalisation:
             "process", {"signal": "Raw", "fp": self.PI_JSON}, {"Out"}, {"fp": "p"}
         )
         assert canvas == run_path
-
-    def test_legacy_repr_spec_also_stripped(self):
-        canvas = wiring_id("load", {}, {"Out"}, {"fp": "p"})
-        assert wiring_id("load", {"fp": self.PI_LEGACY}, {"Out"}, {"fp": "p"}) == canvas
 
     def test_path_input_term_still_discriminates(self):
         """Stripping the spec must not collapse two call sites fed by

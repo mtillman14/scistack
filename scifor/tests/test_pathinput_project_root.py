@@ -76,7 +76,7 @@ class TestResolution:
         inside it."""
         monkeypatch.chdir(tmp_path / "elsewhere")
         set_project_root(project)
-        pi = PathInput("data/{subject}.mat")
+        pi = PathInput("data/{subject}.mat", name="data/{subject}.mat")
         assert pi.load(subject="s01") == (project / "data" / "s01.mat").resolve()
 
     def test_without_override_cwd_decides(self, project, tmp_path, monkeypatch):
@@ -84,7 +84,7 @@ class TestResolution:
         project resolves somewhere else entirely (``load`` returns the
         non-existent path rather than raising)."""
         monkeypatch.chdir(tmp_path / "elsewhere")
-        resolved = PathInput("data/{subject}.mat").load(subject="s01")
+        resolved = PathInput("data/{subject}.mat", name="data/{subject}.mat").load(subject="s01")
         assert resolved != (project / "data" / "s01.mat").resolve()
         assert not resolved.exists()
 
@@ -95,7 +95,7 @@ class TestResolution:
         (other / "data").mkdir(parents=True)
         (other / "data" / "s01.mat").touch()
         set_project_root(project)
-        pi = PathInput("data/{subject}.mat", root_folder=str(other))
+        pi = PathInput("data/{subject}.mat", root_folder=str(other), name="data/{subject}.mat")
         assert pi.load(subject="s01") == (other / "data" / "s01.mat").resolve()
 
     def test_the_pin_wins_over_a_config_bearing_cwd(self, project, tmp_path, monkeypatch):
@@ -109,7 +109,7 @@ class TestResolution:
         monkeypatch.chdir(tmp_path / "elsewhere")
         (project / "data" / "s02.mat").touch()
         set_project_root(project)
-        found = PathInput("data/{subject}.mat").discover()
+        found = PathInput("data/{subject}.mat", name="data/{subject}.mat").discover()
         assert sorted(c["subject"] for c in found) == ["s01", "s02"]
 
 
@@ -120,22 +120,22 @@ class TestIdentityUnaffected:
         or GUI-launched and terminal-launched runs of the same input land under
         different keys and the canvas shows two nodes for one input."""
         monkeypatch.chdir(tmp_path / "elsewhere")
-        unpinned = PathInput("data/{subject}.mat").to_key()
+        unpinned = PathInput("data/{subject}.mat", name="data/{subject}.mat").to_key()
         set_project_root(project)
-        assert PathInput("data/{subject}.mat").to_key() == unpinned
+        assert PathInput("data/{subject}.mat", name="data/{subject}.mat").to_key() == unpinned
         assert "proj" not in unpinned
 
     def test_root_folder_attribute_stays_none(self, project):
         set_project_root(project)
-        assert PathInput("data/{subject}.mat").root_folder is None
+        assert PathInput("data/{subject}.mat", name="data/{subject}.mat").root_folder is None
 
-    def test_pinning_is_not_the_same_as_declaring(self, project):
-        """A pinned root and a declared root are different identities even
-        when they name the same directory — which is why the GUI's
-        graph_builder has to normalize the two when reading old history."""
+    def test_pinned_and_declared_roots_are_one_identity(self, project):
+        """Where the files are never reaches identity (2026-09-25): a pinned
+        root and a declared root name one PathInput when the name is the
+        same."""
         set_project_root(project)
-        assert PathInput("data/{s}.mat").to_key() != PathInput(
-            "data/{s}.mat", root_folder=str(project)
+        assert PathInput("data/{s}.mat", name="data/{s}.mat").to_key() == PathInput(
+            "data/{s}.mat", root_folder=str(project), name="data/{s}.mat"
         ).to_key()
 
 

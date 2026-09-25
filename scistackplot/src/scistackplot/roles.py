@@ -33,6 +33,10 @@ from .weights import weight_problem
 
 LAYER = "scistackplot"
 
+#: A table with more fields than this opens on its first field alone
+#: (``default_spec``); at or below it every field opens faceted.
+WIDE_FIELD_LIMIT = 24
+
 
 class RoleError(ValueError):
     """An invalid role assignment. Message names the one-line fix."""
@@ -1151,7 +1155,7 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
     the same figure (CLAUDE.md NOTE 3).
     """
     from .capability import default_plot
-    from .spec import FacetOptions, PlotKind, VariantSet, YAxis, grid_shape_for
+    from .spec import Filter, FacetOptions, PlotKind, VariantSet, YAxis, grid_shape_for
 
     from .variants import apply_variant_sets, default_selection
 
@@ -1202,13 +1206,38 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
         resolved.shape_of(measure), roles, n_groups=len(assignment.groups)
     ) or PlotKind.SCATTER
 
+    # A WIDE table opens on its first field only. 80 fields faceted at once was
+    # 80 panels × 1,195 figures — ~35 s before anything appeared, for a figure
+    # too dense to read at 8×6 in (2026-09-25). The user ticks more fields in
+    # the field filter; up to WIDE_FIELD_LIMIT they all open faceted as before.
+    filters = []
+    visible_levels: dict[str, int] = {}
+    for fld in resolved.field_factors:
+        if len(fld.levels) > WIDE_FIELD_LIMIT:
+            filters.append(Filter(column=fld.name, include=[fld.levels[0]]))
+            visible_levels[fld.name] = 1
+            Log.info(
+                "default_spec(%s): %d field(s) in %r — opening on the first, %r "
+                "(more than %d open one at a time; tick others in the filter)",
+                measure,
+                len(fld.levels),
+                fld.name,
+                fld.levels[0],
+                WIDE_FIELD_LIMIT,
+                layer=LAYER,
+            )
+
     # A 13-muscle struct wants a grid, not a 13-wide strip of subplots. The
     # arithmetic lives in grid_shape_for so the panel, the renderer and this
     # default cannot disagree about what "auto" means. Only the width is pinned:
     # leaving n_rows open lets the height follow the panel count if the data
     # gains a field.
     facet_panels = math.prod(
-        [len(f.levels) for f in resolved.factors if roles.get(f.name) is Role.FACET]
+        [
+            visible_levels.get(f.name, len(f.levels))
+            for f in resolved.factors
+            if roles.get(f.name) is Role.FACET
+        ]
         or [0]
     )
     _, n_cols = grid_shape_for(facet_panels) if facet_panels > 1 else (1, None)
@@ -1229,5 +1258,6 @@ def default_spec(table: LongTable, measure: str | None = None) -> PlotSpec:
             facet=FacetOptions(n_cols=n_cols),
             variant_sets=variant_sets,
             y_axis=YAxis(scope=y_scope),
+            filters=filters,
         )
     )

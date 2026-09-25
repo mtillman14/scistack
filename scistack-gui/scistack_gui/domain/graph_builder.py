@@ -626,11 +626,54 @@ def resolve_path_input_name(
     }
 
 
+def resolve_renamed_path_input(
+    recorded: str,
+    renames: "dict[str, str] | None",
+    registry: "dict[str, object]",
+) -> str:
+    """The name a run's RECORDED PathInput name goes by now.
+
+    The one reader of the GUI's rename record
+    (``pipeline_store.path_input_rename_index``). A name that is declared
+    right now is returned as is -- a rename only redirects a name that no
+    longer exists, so re-using an old name for a new declaration is never
+    second-guessed. Otherwise the chain ``A -> B -> C`` is followed to the
+    first declared name. A cycle (``A -> B -> A`` with neither declared), or
+    a chain that ends at an undeclared name, returns *recorded* unchanged, so
+    the caller's existing "not declared now" handling applies.
+    """
+    if not renames or recorded in registry:
+        return recorded
+    seen = {recorded}
+    current = recorded
+    while current in renames:
+        current = renames[current]
+        if current in registry:
+            logger.info(
+                "[graph_builder] recorded PathInput name %r was renamed -> "
+                "attributing to %r",
+                recorded,
+                current,
+            )
+            return current
+        if current in seen:
+            logger.warning(
+                "[graph_builder] PathInput rename cycle from %r (%s) — none "
+                "of them is declared now",
+                recorded,
+                sorted(seen),
+            )
+            return recorded
+        seen.add(current)
+    return recorded
+
+
 def convert_scidb_path_inputs(
     scidb_path_inputs: dict,
     path_input_registry: "dict[str, object]",
     path_input_history: "dict[tuple, str] | None" = None,
     project_root=None,
+    path_input_renames: "dict[str, str] | None" = None,
 ) -> dict[str, dict]:
     """``db.get_aggregated_variants()["path_inputs"]`` (keyed by SPEC, each
     entry naming its ``(fkey, param_name)`` pairs — raw DB-history extraction,
@@ -643,7 +686,10 @@ def convert_scidb_path_inputs(
     their hidden-edge-id lookups to line up with what ``build_edges``
     actually produced. That includes ``project_root``: a caller that omits it
     resolves one PathInput to a different name than a caller that passes it,
-    and the two sides stop lining up.
+    and the two sides stop lining up. The same goes for
+    ``path_input_renames`` (``pipeline_store.path_input_rename_index``): a
+    recorded name the GUI has since renamed resolves to its new name only
+    where the index is passed.
     """
     result: dict[str, dict] = {}
     for pi_data in scidb_path_inputs.values():
@@ -679,6 +725,10 @@ def convert_scidb_path_inputs(
         for fkey, param_name in pi_data["functions"]:
             membership = (tuple(fkey), param_name)
             pi_name = recorded.get(membership)
+            if pi_name is not None:
+                pi_name = resolve_renamed_path_input(
+                    pi_name, path_input_renames, path_input_registry
+                )
             if pi_name is None:
                 pi_name = _match()[0]
             elif pi_name not in path_input_registry:
@@ -725,6 +775,7 @@ def aggregate_from_scidb(
     path_input_registry: "dict[str, object] | None" = None,
     path_input_history: "dict[tuple, str] | None" = None,
     project_root=None,
+    path_input_renames: "dict[str, str] | None" = None,
 ) -> AggregatedData:
     """``get_aggregated_variants()`` (or the pure
     ``scidb.database.aggregate_pipeline_variants``) -> :class:`AggregatedData`.
@@ -768,9 +819,11 @@ def aggregate_from_scidb(
 
     agg.all_var_types = set(scidb_agg["variables"].keys())
     agg.path_inputs = convert_scidb_path_inputs(
-        scidb_agg["path_inputs"], path_input_registry, path_input_history, project_root
+        scidb_agg["path_inputs"], path_input_registry, path_input_history, project_root,
+        path_input_renames=path_input_renames,
     )
     seed_undiscovered_path_inputs(agg.path_inputs, path_input_registry)
+    _log_multi_output_call_sites(agg)
     logger.info(
         "[graph_builder] aggregate_from_scidb: %d call site(s), %d var type(s), "
         "%d constant(s), %d path input(s)",
@@ -780,6 +833,40 @@ def aggregate_from_scidb(
         len(agg.path_inputs),
     )
     return agg
+
+
+def _log_multi_output_call_sites(agg: "AggregatedData") -> None:
+    """Name every call site whose history node will draw >1 output.
+
+    A call site is the function plus its inputs (a PathInput by its template)
+    and constants — NOT its output type. So two runs reading the same inputs
+    into different variables are ONE call site, and its node shows both
+    outputs. Legitimate for a multi-output function; for a one-output function
+    it means a run saved into a variable its inputs were not meant for
+    (scidb.log 2026-09-25: GaitSpeedTable read from the Symmetry CSV).
+    """
+    path_inputs_by_fkey: dict[FnKey, dict[str, str]] = defaultdict(dict)
+    for pi_name, pi in agg.path_inputs.items():
+        for fkey, param_name in pi.get("functions", ()):
+            path_inputs_by_fkey[tuple(fkey)][param_name] = pi_name
+    for fkey, outputs in agg.fn_outputs.items():
+        if len(outputs) < 2:
+            continue
+        fn_name, call_id = fkey
+        logger.info(
+            "[graph_builder] call site %s/%s records %d output types %s from ONE "
+            "set of inputs (inputs %s, path inputs %s, constants %s) — its node "
+            "draws every one. Unless %s returns several values, separate runs "
+            "saved the same inputs into different variables.",
+            fn_name,
+            call_id,
+            len(outputs),
+            sorted(outputs),
+            agg.fn_input_params.get(fkey, {}),
+            path_inputs_by_fkey.get(fkey, {}),
+            sorted(agg.fn_constants.get(fkey, ())),
+            fn_name,
+        )
 
 
 def filter_hidden(
@@ -1529,6 +1616,10 @@ def build_edges(
     seen_edges: set[tuple] = set()
     p2c_all = matlab_param_to_class or {}
     hidden_edge_ids = hidden_edge_ids or set()
+    # Named, not just counted: "an edge appeared that I never drew" is only
+    # answerable from the log when it says WHICH edges came from history.
+    hidden_hits: list[str] = []
+    superseded_ids: list[str] = []
 
     # Variable → function edges (one per call-site target).
     logger.debug("[graph_builder] building variable → function edges")
@@ -1543,6 +1634,7 @@ def build_edges(
                 edge_id = f"e__{in_type}__{fn}__{cid}"
                 if edge_id in hidden_edge_ids:
                     hidden_var_to_fn += 1
+                    hidden_hits.append(edge_id)
                     continue
                 edges.append(
                     {
@@ -1575,6 +1667,7 @@ def build_edges(
             edge_id = f"e__{fn}__{cid}__{out_type}"
             if edge_id in hidden_edge_ids:
                 hidden_fn_to_var += 1
+                hidden_hits.append(edge_id)
                 continue
             param = class_to_param.get(out_type)
             source_handle = out_handle(param) if param else out_handle(out_type)
@@ -1617,6 +1710,7 @@ def build_edges(
                 edge_id = f"e__{arg}__{fn}__{cid}"
                 if edge_id in hidden_edge_ids:
                     hidden_const_to_fn += 1
+                    hidden_hits.append(edge_id)
                     continue
                 if arg != const_name:
                     renamed_edges.append(f"{const_name}->{fn}.{arg}")
@@ -1658,6 +1752,7 @@ def build_edges(
                 edge_id = f"e__{pi_name}__{param_name}__{fn}__{cid}"
                 if edge_id in hidden_edge_ids:
                     hidden_path_to_fn += 1
+                    hidden_hits.append(edge_id)
                     continue
                 edges.append(
                     {
@@ -1706,6 +1801,7 @@ def build_edges(
         )
         if dedup_key in seen_edges:
             superseded += 1
+            superseded_ids.append(me["id"])
             logger.debug(
                 "[graph_builder] manual edge %s superseded by the DB-derived "
                 "edge for the same connection (%s -> %s)",
@@ -1740,7 +1836,30 @@ def build_edges(
         total_hidden,
         superseded,
     )
+    if db_edge_count or hidden_hits or superseded_ids:
+        logger.info(
+            "[graph_builder] build_edges detail: DB-derived (regenerated from "
+            "history every build; hide one to remove it) %s; hidden %s; "
+            "manual superseded by DB-derived %s",
+            _edge_list_summary(
+                [f"{e['source']}->{e['target']}" for e in edges[:db_edge_count]]
+            ),
+            _edge_list_summary(hidden_hits),
+            _edge_list_summary(superseded_ids),
+        )
     return edges
+
+
+#: Most edges one ``build_edges detail`` list spells out before "... +N more".
+_EDGE_LOG_CAP = 20
+
+
+def _edge_list_summary(items: list[str]) -> str:
+    """``[a, b, ... +N more]`` — a bounded, greppable edge list for INFO logs."""
+    if len(items) <= _EDGE_LOG_CAP:
+        return "[" + ", ".join(items) + "]"
+    shown = ", ".join(items[:_EDGE_LOG_CAP])
+    return f"[{shown}, ... +{len(items) - _EDGE_LOG_CAP} more]"
 
 
 # ---------------------------------------------------------------------------

@@ -1084,7 +1084,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
             scifor.set_schema(["subject"]);
 
             tbl = table([1;2], [10;20], 'VariableNames', {'subject','value'});
-            pi = scifor.PathInput("{subject}/data.mat", root_folder="/data");
+            pi = scifor.PathInput("{subject}/data.mat", root_folder="/data", name="{subject}/data.mat");
 
             % fn receives (data_scalar, resolved_path_string)
             result = scifor.for_each( ...
@@ -1104,7 +1104,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
 
             tbl = table([1;1;1], [0.5;1.5;2.5], [10;20;30], ...
                 'VariableNames', {'subject','speed','value'});
-            pi = scifor.PathInput("{subject}/out.csv", root_folder="/results");
+            pi = scifor.PathInput("{subject}/out.csv", root_folder="/results", name="{subject}/out.csv");
 
             % where filters table rows; PathInput resolved to string
             result = scifor.for_each( ...
@@ -1123,7 +1123,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
         %   PathInput as constant + distribute splits function output.
             scifor.set_schema(["subject", "trial"]);
 
-            pi = scifor.PathInput("{subject}/data.mat", root_folder="/data");
+            pi = scifor.PathInput("{subject}/data.mat", root_folder="/data", name="{subject}/data.mat");
 
             % fn receives PathInput, returns a vector -> distributed
             result = scifor.for_each( ...
@@ -1140,7 +1140,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
         %   PathInput + custom output_names.
             scifor.set_schema(["subject"]);
 
-            pi = scifor.PathInput("{subject}/data.mat", root_folder="/data");
+            pi = scifor.PathInput("{subject}/data.mat", root_folder="/data", name="{subject}/data.mat");
 
             result = scifor.for_each( ...
                 @(fp) strlength(fp), ...
@@ -1157,7 +1157,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
 
             tbl1 = table([1;2], [10;20], 'VariableNames', {'subject','force'});
             tbl2 = table([1;2], [0.1;0.2], 'VariableNames', {'subject','emg'});
-            pi = scifor.PathInput("{subject}/raw.mat", root_folder="/data");
+            pi = scifor.PathInput("{subject}/raw.mat", root_folder="/data", name="{subject}/raw.mat");
 
             % fn receives (force_scalar, emg_scalar, resolved_path, constant)
             result = scifor.for_each( ...
@@ -1178,7 +1178,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
                 'VariableNames', {'subject','speed','force'});
             tbl2 = table([1;1;1], [0.5;1.5;2.5], [0.1;0.2;0.3], ...
                 'VariableNames', {'subject','speed','emg'});
-            pi = scifor.PathInput("{subject}/log.txt", root_folder="/logs");
+            pi = scifor.PathInput("{subject}/log.txt", root_folder="/logs", name="{subject}/log.txt");
 
             result = scifor.for_each( ...
                 @(combined, fp) sum(combined.force) + double(isstring(fp)), ...
@@ -1201,7 +1201,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
         %   each iteration using the current metadata values.
             scifor.set_schema(["pass"]);
 
-            pi = scifor.PathInput("/data/EMG/{pass}.mat");
+            pi = scifor.PathInput("/data/EMG/{pass}.mat", 'name', "/data/EMG/{pass}.mat");
 
             result = scifor.for_each( ...
                 @(fp) fp, ...

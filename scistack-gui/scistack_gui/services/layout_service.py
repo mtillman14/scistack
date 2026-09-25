@@ -59,6 +59,26 @@ def put_layout(
     )
     if node_type and label:
         logger.info("[layout_service] Creating/updating manual node")
+        if node_type == "pathInputNode":
+            existing = _placed_path_input(label, pipeline_id)
+            if existing is not None and existing != node_id:
+                logger.info(
+                    "[layout_service] Refusing to place PathInput %r in scope %r: "
+                    "already on this canvas as %r",
+                    label,
+                    pipeline_id,
+                    existing,
+                )
+                return {
+                    "ok": False,
+                    "error": (
+                        f"PathInput '{label}' is already on this canvas. A "
+                        f"PathInput's name is its identity — wire the existing "
+                        f"node, or declare a new PathInput with its own name."
+                    ),
+                    "reason": "duplicate_path_input",
+                    "existing_node_id": existing,
+                }
         if node_type == "functionNode":
             from scistack_gui import matlab_registry
 
@@ -109,6 +129,28 @@ def put_layout(
         layout_store.write_node_position(node_id, x, y, pipeline_id=pipeline_id)
         logger.info("[layout_service] Node position updated successfully")
     return {"ok": True}
+
+
+def _placed_path_input(label: str, pipeline_id: str) -> "str | None":
+    """The id of the node already showing PathInput *label* on scope
+    *pipeline_id*'s canvas, or ``None``.
+
+    Answered from the scope's BUILT graph (``get_pipeline_graph``, without
+    run states) rather than from positions/manual rows, because what a canvas
+    shows is decided there — history-derived nodes default to root, declared-
+    only ones do not, hidden ones are gone (``domain.scope_filter``). One
+    canvas is one scope: the same PathInput on two hypothesis tabs is fine.
+    """
+    from scistack_gui.db import get_db
+    from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+    graph = get_pipeline_graph(get_db(), pipeline_id, run_states=False)
+    for node in graph.get("nodes", []):
+        if node.get("type") == "pathInputNode" and (
+            (node.get("data") or {}).get("label") == label
+        ):
+            return node["id"]
+    return None
 
 
 def delete_layout(node_id: str) -> dict:
@@ -410,6 +452,87 @@ def update_path_input(
     if result.get("ok"):
         _notify_dag_updated()
     return result
+
+
+#: The note key a PathInput's sidebar note lives under — mirrors the
+#: frontend's ``noteKey`` (``${kind}:${name}``, kind ``pathInput``).
+_PATH_INPUT_NOTE_KIND = "pathInput"
+
+
+def rename_path_input(name: str, new_name: str) -> dict:
+    """Rename a PathInput: its declaration, and everything the GUI keys by
+    its name (``.claude/plan-pathinput-rename.md``).
+
+    Order matters. The entities file is written first and is the only step
+    that can refuse; if it does, nothing else has changed. After it
+    succeeds the name IS new, so every remaining step brings GUI state into
+    line with it:
+
+    1. record ``old -> new`` so runs that recorded the old declared name
+       attribute to the renamed node, not a ghost
+       (``graph_builder.resolve_renamed_path_input``);
+    2. move node-keyed DB state for every placement (``rebase_node``) and
+       relabel ungraduated manual rows;
+    3. move layout positions and the sidebar note.
+
+    The template is untouched, so runs recorded WITHOUT a name still
+    content-match. Scripts that refer to the old name are not rewritten —
+    the GUI does not own them.
+    """
+    from scistack_gui import layout as layout_store
+    from scistack_gui import pipeline_store as ps
+    from scistack_gui.db import get_db
+    from scistack_gui.services.target_file_service import rename_declaration
+
+    new_name = (new_name or "").strip()
+    logger.info("[layout_service] rename_path_input %r -> %r", name, new_name)
+    result = rename_declaration("path_input", name, new_name)
+    if not result.get("ok") or result.get("unchanged"):
+        logger.info("[layout_service] rename_path_input: declaration step -> %s", result)
+        return result
+
+    old_bare = path_input_node_id(name)
+    new_bare = path_input_node_id(new_name)
+    try:
+        db = get_db()
+        ps.record_path_input_rename(db, name, new_name)
+        counts = ps.rebase_node(db, old_bare, new_bare, new_label=new_name)
+        counts["relabelled"] = ps.relabel_manual_nodes(
+            db, "pathInputNode", name, new_name
+        )
+        counts["positions"] = layout_store.rebase_node_positions(
+            old_bare,
+            new_bare,
+            note_keys=(
+                f"{_PATH_INPUT_NOTE_KIND}:{name}",
+                f"{_PATH_INPUT_NOTE_KIND}:{new_name}",
+            ),
+        )
+    except Exception as e:
+        # The file is already renamed and cannot sensibly be un-renamed from
+        # here; say exactly what is left behind rather than pretend.
+        logger.exception(
+            "[layout_service] rename_path_input %r -> %r: declaration renamed, "
+            "but moving GUI state failed",
+            name,
+            new_name,
+        )
+        _notify_dag_updated()
+        return {
+            "ok": False,
+            "error": (
+                f"'{name}' was renamed to '{new_name}' in {result.get('file')}, "
+                f"but its canvas placements could not be moved: {e}. Re-place "
+                f"'{new_name}' on the canvas; see scidb.log."
+            ),
+            "reason": "partial",
+        }
+
+    logger.info(
+        "[layout_service] rename_path_input %r -> %r done: %s", name, new_name, counts
+    )
+    _notify_dag_updated()
+    return {**result, "moved": counts}
 
 
 def delete_path_input(name: str, pipeline_id: str = ROOT_SCOPE) -> dict:

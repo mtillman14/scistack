@@ -56,6 +56,7 @@ classdef PathInput < handle
         regex          logical  % Whether to use regex matching on the last segment
         aliases        struct   % key -> canonical -> [spellings] (see class help)
         key_regex      struct   % key -> regex pattern (see class help)
+        name           string   % REQUIRED identity of this PathInput (see class help)
         py_obj                  % Python scifor.pathinput.PathInput instance
     end
 
@@ -63,11 +64,15 @@ classdef PathInput < handle
         function obj = PathInput(path_template, options)
         %PATHINPUT  Construct a PathInput.
         %
-        %   PI = scifor.PathInput(TEMPLATE)
-        %   PI = scifor.PathInput(TEMPLATE, root_folder=FOLDER)
-        %   PI = scifor.PathInput(TEMPLATE, regex=true)
-        %   PI = scifor.PathInput(TEMPLATE, aliases=ALIASES)
-        %   PI = scifor.PathInput(TEMPLATE, key_regex=KEY_REGEX)
+        %   PI = scifor.PathInput(TEMPLATE, name=NAME)
+        %   PI = scifor.PathInput(TEMPLATE, root_folder=FOLDER, name=NAME)
+        %   PI = scifor.PathInput(TEMPLATE, regex=true, name=NAME)
+        %   PI = scifor.PathInput(TEMPLATE, aliases=ALIASES, name=NAME)
+        %   PI = scifor.PathInput(TEMPLATE, key_regex=KEY_REGEX, name=NAME)
+        %
+        %   NAME is required: it is the PathInput's identity. The template
+        %   and root folder only say where to look, so moving the data or
+        %   running on another computer changes nothing recorded.
 
             arguments
                 path_template  string
@@ -75,7 +80,17 @@ classdef PathInput < handle
                 options.regex        logical = false
                 options.aliases      struct = struct()
                 options.key_regex    struct = struct()
+                options.name         string = ""
             end
+
+            if strlength(strtrim(options.name)) == 0
+                error('scifor:PathInput:NameRequired', ...
+                    ['PathInput requires a non-empty name=, e.g. ' ...
+                     'scifor.PathInput("{subject}/data.csv", name="RawData"). ' ...
+                     'The name is the PathInput''s identity; the template is only ' ...
+                     'where to look.']);
+            end
+            obj.name = options.name;
 
             obj.path_template = path_template;
             obj.root_folder = options.root_folder;
@@ -94,7 +109,8 @@ classdef PathInput < handle
                 pyargs('root_folder', py_root, ...
                        'regex', logical(options.regex), ...
                        'aliases', scifor.PathInput.aliases_to_py(options.aliases), ...
-                       'key_regex', scifor.PathInput.key_regex_to_py(options.key_regex)));
+                       'key_regex', scifor.PathInput.key_regex_to_py(options.key_regex), ...
+                       'name', char(options.name)));
         end
 
         function filepath = load(obj, varargin)
@@ -359,7 +375,7 @@ classdef PathInput < handle
             if ~isempty(fieldnames(obj.key_regex))
                 opts = opts + sprintf(', key_regex=<%d key(s)>', numel(fieldnames(obj.key_regex)));
             end
-            fprintf('  scifor.PathInput("%s"%s)\n', obj.path_template, opts);
+            fprintf('  scifor.PathInput("%s"%s, name="%s")\n', obj.path_template, opts, obj.name);
         end
     end
 

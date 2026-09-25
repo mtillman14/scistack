@@ -209,7 +209,7 @@ class TestDiscoverAndSeedPipelines:
         from scistack_gui import registry
 
         db = populated_db
-        raw_emg = PathInput("{subject}/{trial}.mat")
+        raw_emg = PathInput("{subject}/{trial}.mat", name="{subject}/{trial}.mat")
         registry._path_inputs["RAW_EMG"] = raw_emg
         registry._path_input_sources["RAW_EMG"] = "test"
 
@@ -234,7 +234,7 @@ class TestDiscoverAndSeedPipelines:
 
         pipe = Pipeline("loader_pipe2")
         _register_step(
-            pipe, _loader, {"filepath": PathInput("{subject}.mat")}, [FilteredA]
+            pipe, _loader, {"filepath": PathInput("{subject}.mat", name="{subject}.mat")}, [FilteredA]
         )
 
         discover_and_seed_pipelines(db)

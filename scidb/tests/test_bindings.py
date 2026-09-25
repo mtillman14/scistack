@@ -314,7 +314,7 @@ class TestInputSpecUnwrap:
 
         assert type_name(20) is None
         assert type_name("hello") is None
-        assert variable_type(PathInput("{subject}/a.csv")) is None
+        assert variable_type(PathInput("{subject}/a.csv", name="{subject}/a.csv")) is None
 
     def test_find_wrapper_reaches_a_selection_under_any_wrapper(self):
         from scifor import ColumnSelection, Fixed

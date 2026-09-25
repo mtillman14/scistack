@@ -16,7 +16,7 @@ scidb.Log.set_level('DEBUG')
 
 %% Load the assessment day GAITRite data
 gaitritePathTemplate = '{subject}/Gaitrite/{session}/{subject}_{session}_GR_{speed}.xlsx';
-gaitritePath = scifor.PathInput(gaitritePathTemplate, 'root_folder',root_load);
+gaitritePath = scifor.PathInput(gaitritePathTemplate, 'root_folder',root_load, 'name', 'gaitritePath');
 subjects = ["SS03", "SS09", "SS10", "SS20", "SS21", "SS25", "SS27", "SS28", "SS32", "SS33"];
 sessions = ["BL", "MID24", "POST24", "MO1FU", "MO3FU"];
 speeds = ["FV", "SSV"];
@@ -29,7 +29,7 @@ scidb.for_each(@loadGaitRiteOneFile, ...
 
 %% Load the training day GAITRite data
 gaitritePathTemplate = '{subject}/Gaitrite/TX/{session}/{subject}_{session}_GR_{speed}.xlsx';
-gaitritePath = scifor.PathInput(gaitritePathTemplate, 'root_folder', root_load);
+gaitritePath = scifor.PathInput(gaitritePathTemplate, 'root_folder', root_load, 'name', 'gaitritePath');
 % subjects = ["SS09", "SS10", "SS20", "SS21", "SS25", "SS28", "SS32"];
 
 % speeds = ["SSV"];
@@ -45,7 +45,7 @@ scidb.for_each(@loadGaitRiteOneFile, ...
 
 %% Load Delsys
 delsysPathTemplate = '{subject}/EMG/{session}/{subject}_EMG_{session}_{speed}{trial}.mat';
-delsysPath = scifor.PathInput(delsysPathTemplate, 'root_folder', root_load);
+delsysPath = scifor.PathInput(delsysPathTemplate, 'root_folder', root_load, 'name', 'delsysPath');
 scidb.for_each(@loadDelsysEMGOneFile, ...
     struct('mat_file_path', delsysPath), ...
     {DelsysLoaded()}, ...
@@ -61,7 +61,7 @@ scidb.for_each(@filterDelsys, ...
 
 %% Load XSENS
 xensPathTemplate = '{subject}/XSENS/{session}/{subject}_XSENS_{session}_{speed}-00{trial}.xlsx';
-xsensPath = scifor.PathInput(xensPathTemplate, 'root_folder', root_load);
+xsensPath = scifor.PathInput(xensPathTemplate, 'root_folder', root_load, 'name', 'xsensPath');
 scidb.for_each(@loadXSENSOneFile, ...
     struct('xlsx_file_path', xsensPath, 'configNamesStruct', config.XSENS.COLUMN_NAMES), ...
     {XSENSLoaded()}, ...
@@ -92,7 +92,7 @@ scidb.for_each(@getHardwareIndicesFromSeconds, ...
 %% Load Delsys MVC data
 % filenamesRegex = '(Left|Right)_(Ankle|Knee|Hip)_(Flexors|Extensors)\.mat';
 mvcFolderTemplate = '{subject}/MVCs/{session}/{subject}_MVCs_{session}_';
-mvcFolderPath = scifor.PathInput(mvcFolderTemplate, 'root_folder', root_load);
+mvcFolderPath = scifor.PathInput(mvcFolderTemplate, 'root_folder', root_load, 'name', 'mvcFolderPath');
 scidb.for_each(@loadMVCOneSession, ...
     struct('mvcPath', mvcFolderPath, 'mvcConfig', config.DELSYS_EMG.MVC_MUSCLE_MAPPING), ...
     {MVCLoaded()}, ...

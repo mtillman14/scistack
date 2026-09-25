@@ -83,7 +83,7 @@ classdef TestSciforForEachSchemaKeys < matlab.unittest.TestCase
         %   schema key with no other source is silently dropped instead of
         %   erroring -- the caller gets a single run against the literal
         %   path, as if that key had never been requested.
-            pi = scifor.PathInput("/data/GAITRite/6MWT_GR.xlsx");
+            pi = scifor.PathInput("/data/GAITRite/6MWT_GR.xlsx", 'name', "/data/GAITRite/6MWT_GR.xlsx");
 
             result = scifor.for_each(@(fp) fp, ...
                 struct('filePath', pi), ...
@@ -99,7 +99,7 @@ classdef TestSciforForEachSchemaKeys < matlab.unittest.TestCase
         %   source, so a requested key it can't supply (and no table
         %   supplies either) must still error -- dropping is only safe when
         %   the PathInput is fully static.
-            pi = scifor.PathInput("/data/{subject}/6MWT_GR.xlsx");
+            pi = scifor.PathInput("/data/{subject}/6MWT_GR.xlsx", 'name', "/data/{subject}/6MWT_GR.xlsx");
 
             tc.verifyError(@() scifor.for_each(@(fp) fp, ...
                 struct('filePath', pi), ...

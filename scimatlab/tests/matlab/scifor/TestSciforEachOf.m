@@ -71,8 +71,8 @@ classdef TestSciforEachOf < matlab.unittest.TestCase
                 {'1', 'T1', 'train-1T1'; '2', 'T1', 'train-2T1'});
 
             template = "{subject}/{session}/data.txt";
-            pi_assessment = scifor.PathInput(template, 'root_folder', assessment_root);
-            pi_training = scifor.PathInput(template, 'root_folder', training_root);
+            pi_assessment = scifor.PathInput(template, 'root_folder', assessment_root, 'name', char(template));
+            pi_training = scifor.PathInput(template, 'root_folder', training_root, 'name', char(template));
 
             fn = @(filepath) string(fileread(filepath));
             result = scifor.for_each(fn, ...
@@ -89,7 +89,7 @@ classdef TestSciforEachOf < matlab.unittest.TestCase
             % EachOf with one alternative behaves like passing it directly.
             root = testCase.makeLocationTree(testCase.tmp_dir, 'solo', ...
                 {'1', 'A', 'solo-1A'});
-            pi = scifor.PathInput("{subject}/{session}/data.txt", 'root_folder', root);
+            pi = scifor.PathInput("{subject}/{session}/data.txt", 'root_folder', root, 'name', "{subject}/{session}/data.txt");
 
             fn = @(filepath) string(fileread(filepath));
             direct = scifor.for_each(fn, struct('filepath', pi));
@@ -113,8 +113,8 @@ classdef TestSciforEachOf < matlab.unittest.TestCase
             fprintf(fid, 'b-1D1');
             fclose(fid);
 
-            pi_a = scifor.PathInput("{subject}/{session}/data.txt", 'root_folder', root_a);
-            pi_b = scifor.PathInput("{subject}/{day}/other.txt", 'root_folder', root_b_base);
+            pi_a = scifor.PathInput("{subject}/{session}/data.txt", 'root_folder', root_a, 'name', "{subject}/{session}/data.txt");
+            pi_b = scifor.PathInput("{subject}/{day}/other.txt", 'root_folder', root_b_base, 'name', "{subject}/{day}/other.txt");
 
             fn = @(filepath) string(fileread(filepath));
             testCase.verifyError(@() scifor.for_each(fn, ...

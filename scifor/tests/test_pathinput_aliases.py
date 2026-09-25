@@ -42,7 +42,7 @@ SESSION_ALIASES = {"session": {"BL": ["Baseline", "1. Baseline"]}}
 class TestConstructionValidation:
     def test_unknown_placeholder_key_rejected(self):
         with pytest.raises(ValueError, match="not a placeholder"):
-            PathInput("{subject}/data.mat", aliases={"session": {"BL": ["Baseline"]}})
+            PathInput("{subject}/data.mat", aliases={"session": {"BL": ["Baseline"]}}, name="{subject}/data.mat")
 
     def test_ambiguous_spelling_rejected(self):
         with pytest.raises(ValueError, match="ambiguous"):
@@ -53,14 +53,14 @@ class TestConstructionValidation:
                         "BL": ["Shared"],
                         "FU": ["Shared"],
                     }
-                },
+                }, name="{subject}/{session}/data.mat",
             )
 
     def test_canonical_reused_as_own_spelling_is_fine(self):
         # "BL" is implicitly valid; listing it again under itself is a no-op.
         pi = PathInput(
             "{subject}/{session}/data.mat",
-            aliases={"session": {"BL": ["BL", "Baseline"]}},
+            aliases={"session": {"BL": ["BL", "Baseline"]}}, name="{subject}/{session}/data.mat",
         )
         assert pi.aliases["session"]["BL"] == ["BL", "Baseline"]
 
@@ -70,7 +70,7 @@ class TestLoadResolvesAlias:
         pi = PathInput(
             "{subject}/{session}/data.mat",
             root_folder=str(session_tree),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="{subject}/{session}/data.mat",
         )
         path, resolutions = pi.load_with_captures({"subject": "sub2", "session": "BL"})
         assert path == (session_tree / "sub2" / "BL" / "data.mat").resolve()
@@ -80,7 +80,7 @@ class TestLoadResolvesAlias:
         pi = PathInput(
             "{subject}/{session}/data.mat",
             root_folder=str(session_tree),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="{subject}/{session}/data.mat",
         )
         path, resolutions = pi.load_with_captures({"subject": "sub1", "session": "BL"})
         assert path == (session_tree / "sub1" / "Baseline" / "data.mat").resolve()
@@ -90,7 +90,7 @@ class TestLoadResolvesAlias:
         pi = PathInput(
             "{subject}/{session}/data.mat",
             root_folder=str(session_tree),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="{subject}/{session}/data.mat",
         )
         assert (
             pi.load(subject="sub1", session="BL")
@@ -103,7 +103,7 @@ class TestLoadResolvesAlias:
         pi = PathInput(
             "{subject}/{session}/data.mat",
             root_folder=str(session_tree),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="{subject}/{session}/data.mat",
         )
         path, resolutions = pi.load_with_captures(
             {"subject": "sub3", "session": "Unlabeled"}
@@ -119,7 +119,7 @@ class TestLoadAmbiguousAlias:
         pi = PathInput(
             "{subject}/{session}/data.mat",
             root_folder=str(session_tree),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="{subject}/{session}/data.mat",
         )
         with pytest.raises(RuntimeError, match="matched 2 files"):
             pi.load(subject="sub1", session="BL")
@@ -130,7 +130,7 @@ class TestDiscoverCanonicalizes:
         pi = PathInput(
             "{subject}/{session}/data.mat",
             root_folder=str(session_tree),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="{subject}/{session}/data.mat",
         )
         combos = pi.discover()
         sessions_by_subject = {c["subject"]: c["session"] for c in combos}
@@ -141,7 +141,7 @@ class TestDiscoverCanonicalizes:
         pi = PathInput(
             "{subject}/{session}/data.mat",
             root_folder=str(session_tree),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="{subject}/{session}/data.mat",
         )
         with caplog.at_level(logging.DEBUG, logger="scifor"):
             combos = pi.discover()
@@ -157,7 +157,7 @@ class TestDiscoverCanonicalizes:
     def test_no_aliases_declared_is_unaffected(self, session_tree):
         # Regression guard: discover() behaves exactly as before when no
         # aliases are declared at all.
-        pi = PathInput("{subject}/{session}/data.mat", root_folder=str(session_tree))
+        pi = PathInput("{subject}/{session}/data.mat", root_folder=str(session_tree), name="{subject}/{session}/data.mat")
         combos = pi.discover()
         sessions_by_subject = {c["subject"]: c["session"] for c in combos}
         assert sessions_by_subject["sub1"] == "Baseline"
@@ -171,7 +171,7 @@ class TestCombinedNumericAndAlias:
         pi = PathInput(
             "sub-{subject}/{session}/6MWT-{trial}.mat",
             root_folder=str(tmp_path),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="sub-{subject}/{session}/6MWT-{trial}.mat",
         )
         path, resolutions = pi.load_with_captures(
             {"subject": 2, "session": "BL", "trial": 1}
@@ -191,7 +191,7 @@ class TestCombinedNumericAndAlias:
         pi = PathInput(
             "sub-{subject}/{session}/6MWT-{trial}.mat",
             root_folder=str(tmp_path),
-            aliases=SESSION_ALIASES,
+            aliases=SESSION_ALIASES, name="sub-{subject}/{session}/6MWT-{trial}.mat",
         )
         combos = pi.discover()
         assert combos == [{"subject": "002", "session": "BL", "trial": "001"}]

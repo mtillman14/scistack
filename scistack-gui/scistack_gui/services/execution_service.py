@@ -181,6 +181,7 @@ def _db_path_input_params(db, function_name: str) -> dict[str, dict[str, str]]:
         registry.get_path_inputs_registry(),
         pipeline_store.path_input_history_index(db),
         registry.get_project_root(),
+        path_input_renames=pipeline_store.path_input_rename_index(db),
     )
     by_call: dict[str, dict[str, str]] = {}
     for pi_name, pi in path_inputs.items():
@@ -784,10 +785,16 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         # comparison that failed, since a node visibly green on the canvas
         # reaching here means the two sides hashed the SAME call site
         # differently (see wiring_id's note on the PathInput term).
-        logger.warning(
+        #
+        # Only a GRADUATED node (resolved is None) is stuck here. A manual
+        # node falls through to running its own edges — a first run of a
+        # new wiring, which is normal and must not read as a failure
+        # (scidb.log 2026-09-25: this WARN preceded a successful run).
+        stuck = resolved is None
+        logger.log(
+            logging.WARNING if stuck else logging.INFO,
             "[execution] node %s ('%s'): wiring %s matches none of the %d "
-            "candidate variant(s) — computed %s. This node cannot run even "
-            "though history exists for its function.",
+            "candidate variant(s) — computed %s. %s",
             node_id,
             function_name,
             node_wiring,
@@ -802,6 +809,9 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
                 }
                 for v, wid in candidate_wirings
             ],
+            "This node cannot run even though history exists for its function."
+            if stuck
+            else "First run of this wiring: the node runs from its own edges.",
         )
     hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
     if matching and (hidden_edge_ids or all_edges):

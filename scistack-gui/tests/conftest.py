@@ -130,6 +130,9 @@ def clear_db_state():
     _registry._parameter_sources.clear()
     _registry._path_inputs.clear()
     _registry._path_input_sources.clear()
+    # Load errors are process-wide too; one test's rejected declaration must
+    # not show up as another's.
+    _registry._load_errors.clear()
     # Every sibling *_sources dict above is cleared; this one was not, so a
     # variable attributed in one test stayed attributed in the next and could
     # make an unrelated registration look like a second declaration of the
@@ -165,6 +168,9 @@ def clear_db_state():
     _registry._parameter_sources.clear()
     _registry._path_inputs.clear()
     _registry._path_input_sources.clear()
+    # Load errors are process-wide too; one test's rejected declaration must
+    # not show up as another's.
+    _registry._load_errors.clear()
     # Every sibling *_sources dict above is cleared; this one was not, so a
     # variable attributed in one test stayed attributed in the next and could
     # make an unrelated registration look like a second declaration of the

@@ -1102,7 +1102,7 @@ class TestBinding:
                 "signal": PathInput(
                     "raw/{session}_{trial}.mat",
                     root_folder="/data",
-                    aliases={"session": {"BL": ["Baseline"]}},
+                    aliases={"session": {"BL": ["Baseline"]}}, name="raw/{session}_{trial}.mat",
                 )
             },
             [Filtered],

@@ -589,68 +589,66 @@ class TestScopedGraph:
 
 
 class TestPathInputDeepCopy:
-    def test_copy_shares_template_by_default(self, client_with_variable_file):
-        """Placing the SAME named PathInput twice — via two separate manual
-        nodes — is the default 'shared' behavior: no deep copy involved."""
-        client = client_with_variable_file
-        client.post("/api/path-inputs", json={"name": "gait_data", "template": "{subject}.csv"})
-        client.put("/api/layout/pi_a", json={
-            "x": 0, "y": 0, "node_type": "pathInputNode", "label": "gait_data",
-        })
-        client.put("/api/layout/pi_b", json={
-            "x": 10, "y": 0, "node_type": "pathInputNode", "label": "gait_data",
-        })
+    """One node per PathInput per canvas (2026-09-25,
+    test_path_input_uniqueness.py), so "the same PathInput placed twice" is
+    one node on each of TWO canvases here — the root and a second pipeline.
+    Node ids are looked up after placing: showing the canvas turns a dropped
+    manual node into the canonical ``pathInput__<name>`` placement."""
 
-        db = get_db()
-        assert ps.get_manual_nodes(db)["pi_a"]["label"] == "gait_data"
-        assert ps.get_manual_nodes(db)["pi_b"]["label"] == "gait_data"
+    @staticmethod
+    def _place_on_two_canvases(client, template):
+        from scistack_gui.ids import ROOT_SCOPE
+        from scistack_gui.services.layout_service import _placed_path_input
+
+        client.post("/api/path-inputs", json={"name": "gait_data", "template": template})
+        other = client.post("/api/pipelines", json={"name": "other"}).json()["pipeline_id"]
+        for node_id, scope in (("pi_a", ROOT_SCOPE), ("pi_b", other)):
+            assert client.put(f"/api/layout/{node_id}", json={
+                "x": 0, "y": 0, "node_type": "pathInputNode", "label": "gait_data",
+                "pipeline_id": scope,
+            }).json()["ok"]
+        root_id = _placed_path_input("gait_data", ROOT_SCOPE)
+        other_id = _placed_path_input("gait_data", other)
+        assert root_id and other_id
+        return ROOT_SCOPE, other, root_id, other_id
+
+    def test_copy_shares_template_by_default(self, client_with_variable_file):
+        """The SAME named PathInput on two canvases is the default 'shared'
+        behavior: one declaration, no deep copy involved."""
+        client = client_with_variable_file
+        self._place_on_two_canvases(client, "{subject}.csv")
         names = {p["name"] for p in client.get("/api/path-inputs").json()}
         assert names == {"gait_data"}  # one shared definition, not two
 
     def test_deep_copy_forks_only_the_targeted_node(self, client_with_variable_file):
-        client = client_with_variable_file
-        client.post("/api/path-inputs", json={"name": "gait_data", "template": "{subject}.csv"})
-        client.put("/api/layout/pi_a", json={
-            "x": 0, "y": 0, "node_type": "pathInputNode", "label": "gait_data",
-        })
-        client.put("/api/layout/pi_b", json={
-            "x": 10, "y": 0, "node_type": "pathInputNode", "label": "gait_data",
-        })
+        from scistack_gui.services.layout_service import _placed_path_input
 
-        r = client.post("/api/path-inputs/pi_a/deep-copy")
-        assert r.status_code == 200
+        client = client_with_variable_file
+        root, other, root_id, _ = self._place_on_two_canvases(client, "{subject}.csv")
+
+        r = client.post(f"/api/path-inputs/{root_id}/deep-copy")
+        assert r.status_code == 200, r.json()
         new_name = r.json()["name"]
         assert new_name != "gait_data"
 
-        db = get_db()
-        # Only pi_a was repointed; pi_b still references the original name.
-        assert ps.get_manual_nodes(db)["pi_a"]["label"] == new_name
-        assert ps.get_manual_nodes(db)["pi_b"]["label"] == "gait_data"
-        # pi_a kept its position (deep-copy is not a move).
-        layout = client.get("/api/layout").json()
-        assert layout["positions"]["pi_a"] == {"x": 0.0, "y": 0.0}
+        # Only the root canvas's node was repointed; the other canvas still
+        # shows the original.
+        assert _placed_path_input(new_name, root) is not None
+        assert _placed_path_input("gait_data", other) is not None
 
         # The new definition cloned the original's template independently
-        # (a fresh top-level source declaration, not a layout.json row —
-        # see docs/claude/code-discovery-categories.md). There is no
-        # "editing the original afterward" to test anymore: PathInput is
-        # source-scanned and create-only from the GUI (no update endpoint).
+        # (a fresh top-level source declaration — see
+        # docs/claude/code-discovery-categories.md).
         by_name = {p["name"]: p for p in client.get("/api/path-inputs").json()}
         assert by_name[new_name]["template"] == "{subject}.csv"
         assert by_name["gait_data"]["template"] == "{subject}.csv"
 
     def test_deep_copy_disambiguates_repeated_names(self, client_with_variable_file):
         client = client_with_variable_file
-        client.post("/api/path-inputs", json={"name": "gait_data", "template": "t"})
-        client.put("/api/layout/pi_a", json={
-            "x": 0, "y": 0, "node_type": "pathInputNode", "label": "gait_data",
-        })
-        client.put("/api/layout/pi_c", json={
-            "x": 0, "y": 0, "node_type": "pathInputNode", "label": "gait_data",
-        })
+        _, _, root_id, other_id = self._place_on_two_canvases(client, "t")
 
-        name1 = client.post("/api/path-inputs/pi_a/deep-copy").json()["name"]
-        name2 = client.post("/api/path-inputs/pi_c/deep-copy").json()["name"]
+        name1 = client.post(f"/api/path-inputs/{root_id}/deep-copy").json()["name"]
+        name2 = client.post(f"/api/path-inputs/{other_id}/deep-copy").json()["name"]
         assert name1 != name2
 
     def test_deep_copy_rejects_non_path_input_node(self, client):
@@ -2928,8 +2926,8 @@ class TestPathInputExecutionResolution:
         target = registry._module_path
         with open(target, "a") as f:
             f.write(
-                '\nfilepath = EachOf(PathInput("primary.csv"), '
-                'PathInput("alt.csv", root_folder="/alt"))\n'
+                '\nfilepath = EachOf(PathInput("primary.csv", name="filepath"), '
+                'PathInput("alt.csv", root_folder="/alt", name="filepath"))\n'
             )
         registry.refresh_module()
 

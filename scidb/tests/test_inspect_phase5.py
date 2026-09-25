@@ -249,7 +249,7 @@ class TestCli:
             import5,
             {
                 "filepath": PathInput(
-                    "sub{subject}/ses{session}.txt", root_folder=str(data)
+                    "sub{subject}/ses{session}.txt", root_folder=str(data), name="sub{subject}/ses{session}.txt"
                 )
             },
             [P5Loaded],

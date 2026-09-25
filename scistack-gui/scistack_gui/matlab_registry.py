@@ -683,7 +683,8 @@ def _register_matlab_path_input_object(
     from scistack_gui import registry
 
     _matlab_path_inputs[name] = path
-    pi = PathInput(template, root_folder=root_folder)
+    # The binding IS the declared name; `name=` is the PathInput's identity.
+    pi = PathInput(template, root_folder=root_folder, name=name)
     registry._register_path_input(name, pi, source=str(path))
     logger.info(
         "[matlab_registry] Registered MATLAB PathInput: %s (%s) "

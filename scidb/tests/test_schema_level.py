@@ -107,16 +107,16 @@ class TestResolve:
 
 class TestPathInputLevel:
     def test_template_placeholders_in_dataset_order(self):
-        assert path_input_level(PathInput("{trial}/{subject}.csv"), KEYS) == [
+        assert path_input_level(PathInput("{trial}/{subject}.csv", name="{trial}/{subject}.csv"), KEYS) == [
             "subject",
             "trial",
         ]
 
     def test_no_placeholder_is_an_empty_level(self):
-        assert path_input_level(PathInput("demographics.xlsx"), KEYS) == []
+        assert path_input_level(PathInput("demographics.xlsx", name="demographics.xlsx"), KEYS) == []
 
     def test_alternate_templates_contribute_their_union(self, caplog):
-        pi = EachOf(PathInput("{subject}/a.csv"), PathInput("{subject}/{trial}/b.csv"))
+        pi = EachOf(PathInput("{subject}/a.csv", name="{subject}/a.csv"), PathInput("{subject}/{trial}/b.csv", name="{subject}/a.csv"))
         assert path_input_level(pi, KEYS) == ["subject", "trial"]
 
     def test_anything_else_has_no_level(self):
@@ -165,7 +165,7 @@ def _seed(db):
 def test_input_levels_read_variable_records(db):
     _seed(db)
     levels = input_levels(
-        db._duck, {"Raw"}, [PathInput("{subject}.csv")], ["subject", "session"]
+        db._duck, {"Raw"}, [PathInput("{subject}.csv", name="{subject}.csv")], ["subject", "session"]
     )
     assert sorted(map(tuple, levels)) == [("subject",), ("subject", "session")]
 

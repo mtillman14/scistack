@@ -138,7 +138,7 @@ def loader_db(tmp_path):
         (d / f"{trial}.txt").write_text(str(value))
 
     db = configure_database(tmp_path / "loc_loader.duckdb", SCHEMA_KEYS)
-    path_input = PathInput("sub{subject}/{trial}.txt", root_folder=str(root))
+    path_input = PathInput("sub{subject}/{trial}.txt", root_folder=str(root), name="sub{subject}/{trial}.txt")
     for_each(
         loc_import,
         {"filepath": path_input},
@@ -662,7 +662,7 @@ class TestDiscoveryGate:
 
         db = configure_database(tmp_path / "full.duckdb", SCHEMA_KEYS)
         try:
-            path_input = PathInput("sub{subject}/{trial}.txt", root_folder=str(root))
+            path_input = PathInput("sub{subject}/{trial}.txt", root_folder=str(root), name="sub{subject}/{trial}.txt")
             for_each(
                 loc_import,
                 {"filepath": path_input},
@@ -738,7 +738,7 @@ class TestDiscoveryCredibilityGuard:
         db = configure_database(tmp_path / "neverrun.duckdb", SCHEMA_KEYS)
         try:
             LocRaw.save(np.array([1.0]), subject="S01", trial="t1")
-            path_input = PathInput("nothing/{subject}.txt", root_folder=str(tmp_path))
+            path_input = PathInput("nothing/{subject}.txt", root_folder=str(tmp_path), name="nothing/{subject}.txt")
             node = check_node_state(
                 loc_import, [LocLoaded], {"filepath": path_input}, db=db
             )
@@ -994,7 +994,7 @@ class TestKeylessPathInput:
         root = tmp_path / "data"
         root.mkdir(parents=True, exist_ok=True)
         (root / "demographics.txt").write_text("42.0")
-        return PathInput("demographics.txt", root_folder=str(root))
+        return PathInput("demographics.txt", root_folder=str(root), name="demographics.txt")
 
     @pytest.fixture
     def fixed_db(self, tmp_path, fixed_file):
@@ -1053,7 +1053,7 @@ class TestKeylessPathInput:
         db, path_input = fixed_db
         for_each(loc_import_fixed, {"filepath": path_input}, [LocFixed])
 
-        gone = PathInput("demographics.txt", root_folder=str(tmp_path / "nowhere"))
+        gone = PathInput("demographics.txt", root_folder=str(tmp_path / "nowhere"), name="demographics.txt")
         with caplog.at_level(logging.WARNING):
             res = check_pathinput_node_state(
                 loc_import_fixed, [LocFixed], {"filepath": gone}, db=db

@@ -889,6 +889,74 @@ def rename_edge_endpoints(db, old_id: str, new_id: str) -> int:
 
 
 
+def _rebase(node_id: str, old_bare: str, new_bare: str) -> "str | None":
+    """*node_id* with its bare part swapped, keeping any ``::scope``
+    placement suffix — or ``None`` when it is not a placement of
+    *old_bare*."""
+    from scistack_gui.ids import PLACEMENT_SEP, strip_placement
+
+    if not node_id or strip_placement(node_id) != old_bare:
+        return None
+    _bare, sep, scope = node_id.rpartition(PLACEMENT_SEP)
+    return f"{new_bare}{sep}{scope}" if sep else new_bare
+
+
+def rebase_edge_endpoints(db, old_bare: str, new_bare: str) -> int:
+    """Re-point manual edges at EVERY placement of *old_bare* (bare and
+    ``::scope``-qualified alike) onto the same placement of *new_bare* — a
+    canonical id changing (a rename), where :func:`rename_edge_endpoints`
+    moves one exact id (graduation)."""
+    from dataclasses import replace
+
+    n = 0
+    for s in load_statements(db, aspect=ASPECT_WIRING, subject_kind=SUBJECT_EDGE):
+        v = dict(s.value or {})
+        changed = False
+        for side in ("source", "target"):
+            rebased = _rebase(v.get(side, ""), old_bare, new_bare)
+            if rebased is not None:
+                v[side] = rebased
+                changed = True
+        if changed:
+            put_statements(db, [replace(s, value=v)])
+            n += 1
+    return n
+
+
+def rebase_hidden_edges(db, old_bare: str, new_bare: str, edge_id_for) -> int:
+    """Carry hidden DB-derived edges touching *old_bare* over to *new_bare*.
+
+    A DB-derived edge id embeds its endpoints' names
+    (``e__{pi_name}__{param}__{fn}__{wid}``), so the id changes with them:
+    *edge_id_for(source, target, target_handle)* is the one function that
+    mints it (``graph_builder.candidate_edge_id``). The old statement is
+    deleted and a new one written — keeping the old id would hide nothing,
+    since the renamed node's edges will never carry it again. When no id
+    can be derived the edge keeps its id and only its endpoints move.
+    """
+    n = 0
+    for s in load_statements(db, aspect=ASPECT_HIDDEN, key=HIDDEN_EDGE_KEY):
+        v = dict(s.value or {})
+        changed = False
+        for side in ("source", "target"):
+            rebased = _rebase(v.get(side, ""), old_bare, new_bare)
+            if rebased is not None:
+                v[side] = rebased
+                changed = True
+        if not changed:
+            continue
+        new_edge_id = edge_id_for(v["source"], v["target"], v.get("target_handle")) or s.subject_ref
+        delete_statements(
+            db, aspect=ASPECT_HIDDEN, subject_ref=s.subject_ref, scope=s.scope, key=HIDDEN_EDGE_KEY
+        )
+        put_statements(db, [_hidden_statement(SUBJECT_EDGE, new_edge_id, HIDDEN_EDGE_KEY, v, s.scope)])
+        logger.info(
+            "[intent_store] hidden edge %s -> %s (scope %s)", s.subject_ref, new_edge_id, s.scope
+        )
+        n += 1
+    return n
+
+
 def delete_edges_touching(db, node_id: str) -> int:
     """Delete manual edges with *node_id* as either endpoint — the REAL
     delete a hard-rollback of a never-valid pipeline needs (never the

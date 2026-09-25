@@ -61,7 +61,7 @@ def _listdir_calls(monkeypatch) -> list[str]:
 
 class TestWalkUsesTheListingCache:
     def test_second_discover_reads_no_directory_twice(self, tree, monkeypatch):
-        pi = PathInput(TEMPLATE, root_folder=str(tree))
+        pi = PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE))
         calls = _listdir_calls(monkeypatch)
 
         first = pi.discover()
@@ -77,7 +77,7 @@ class TestWalkUsesTheListingCache:
 
     def test_a_changed_directory_is_re_read(self, tree, monkeypatch):
         """mtime validation still works through the walk: a new entry shows up."""
-        pi = PathInput(TEMPLATE, root_folder=str(tree))
+        pi = PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE))
         assert len(pi.discover()) == 4
 
         d = tree / "s3" / "A"
@@ -99,10 +99,10 @@ class TestWalkUsesTheListingCache:
         reads per refresh, ~3 s of a 5.7-21 s ``get_pipeline``. The reuse is
         between objects, so the cache has to be too.
         """
-        first = PathInput(TEMPLATE, root_folder=str(tree)).discover()
+        first = PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE)).discover()
         calls = _listdir_calls(monkeypatch)
 
-        second = PathInput(TEMPLATE, root_folder=str(tree)).discover()
+        second = PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE)).discover()
 
         assert second == first
         assert calls == [], (
@@ -112,7 +112,7 @@ class TestWalkUsesTheListingCache:
 
     def test_a_changed_directory_is_re_read_across_instances(self, tree):
         """Sharing is only safe because every entry is mtime-validated."""
-        assert len(PathInput(TEMPLATE, root_folder=str(tree)).discover()) == 4
+        assert len(PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE)).discover()) == 4
 
         d = tree / "s3" / "A"
         d.mkdir(parents=True)
@@ -121,7 +121,7 @@ class TestWalkUsesTheListingCache:
 
         found = {
             (c["subject"], c["session"])
-            for c in PathInput(TEMPLATE, root_folder=str(tree)).discover()
+            for c in PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE)).discover()
         }
         assert ("s3", "A") in found, "a shared cache served a stale listing"
 
@@ -138,7 +138,7 @@ class TestDiscoverReportsItself:
         (Found on macOS, where tmp_path is under /private/var and the mismatch
         was not hidden by coincidence the way it was on Linux.)
         """
-        pi = PathInput(TEMPLATE, root_folder=str(tree))
+        pi = PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE))
         with caplog.at_level(logging.INFO, logger="scifor"):
             pi.discover()
         text = "\n".join(r.getMessage() for r in caplog.records)
@@ -148,7 +148,7 @@ class TestDiscoverReportsItself:
 
     def test_absolute_template_names_the_filesystem_root(self, tree, caplog):
         """The contrast: an absolute template really is anchored at "/"."""
-        pi = PathInput(str(tree / "{subject}" / "{session}" / "data.txt"))
+        pi = PathInput(str(tree / "{subject}" / "{session}" / "data.txt"), name=str(str(tree / "{subject}" / "{session}" / "data.txt")))
         with caplog.at_level(logging.INFO, logger="scifor"):
             pi.discover()
         timing = next(
@@ -163,7 +163,7 @@ class TestDiscoverReportsItself:
         This pair is what a slow-share diagnosis reads: a re-open that still
         shows `read from disk` is a walk the cache did not absorb.
         """
-        pi = PathInput(TEMPLATE, root_folder=str(tree))
+        pi = PathInput(TEMPLATE, root_folder=str(tree), name=str(TEMPLATE))
 
         def counts(text: str) -> tuple[int, int]:
             import re

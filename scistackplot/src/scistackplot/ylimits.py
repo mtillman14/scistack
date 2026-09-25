@@ -277,9 +277,22 @@ def finish_extents(
         f" from {panels} panel(s)" if panels is not None else "",
         layer=LAYER,
     )
-    for key, (low, high) in limits.items():
+    # Capped: one line per group was 95,585 calls (~7 s) for an 80-field
+    # fan-out of 1,195 figures (2026-09-25). The first few say what the rule
+    # did; the INFO line above already has the count.
+    for key, (low, high) in list(limits.items())[:_DEBUG_GROUPS_SHOWN]:
         Log.debug("  y limits %s: %.6g to %.6g", key or "(global)", low, high, layer=LAYER)
+    if len(limits) > _DEBUG_GROUPS_SHOWN:
+        Log.debug(
+            "  y limits: … %d more group(s) not listed",
+            len(limits) - _DEBUG_GROUPS_SHOWN,
+            layer=LAYER,
+        )
     return limits
+
+
+#: How many per-group limits the DEBUG log lists before summarising the rest.
+_DEBUG_GROUPS_SHOWN = 20
 
 
 def limits_for(
@@ -440,12 +453,25 @@ def _raw_extents(
     if not scope:
         return {GLOBAL_KEY: (float(lows[usable].min()), float(highs[usable].max()))}
 
-    keys = _scope_keys(frame, scope)
-    extents: dict[tuple, tuple[float, float]] = {}
-    for key, low, high, ok in zip(keys, lows, highs, usable, strict=True):
-        if ok:
-            merge_extent(extents, key, float(low), float(high))
-    return extents
+    # One groupby, not a Python loop over rows: 928,720 melted rows took
+    # ~11.5 s row by row (2026-09-25, SymmetryTable, 80 fields). `observed`
+    # keeps an unused category from becoming an all-NaN group; `dropna=False`
+    # keeps a missing level as one group, which `_as_key` maps to None exactly
+    # as `hashable` does for `limits_for`.
+    work = pd.DataFrame({name: frame[name].to_numpy() for name in scope})
+    work["__low"] = lows
+    work["__high"] = highs
+    folded = (
+        work[usable]
+        .groupby(scope, dropna=False, sort=False, observed=True)
+        .agg(low=("__low", "min"), high=("__high", "max"))
+    )
+    return {
+        _as_key(key): (float(low), float(high))
+        for key, low, high in zip(
+            folded.index, folded["low"].to_numpy(), folded["high"].to_numpy(), strict=True
+        )
+    }
 
 
 def _cell_extents(values: pd.Series, mode: ExtentMode) -> tuple[np.ndarray, np.ndarray]:
@@ -689,12 +715,6 @@ def _summary_bounds(values: pd.Series, spec: PlotSpec):
 # ---------------------------------------------------------------------------
 # Keys and padding
 # ---------------------------------------------------------------------------
-
-
-def _scope_keys(frame: pd.DataFrame, scope: list[str]) -> list[tuple]:
-    """One key tuple per row, matching what a panel's ``key`` will produce."""
-    columns = [frame[name].to_numpy() for name in scope]
-    return [tuple(hashable(v) for v in key) for key in zip(*columns, strict=True)]
 
 
 def _ordered(low: float, high: float) -> tuple[float, float]:

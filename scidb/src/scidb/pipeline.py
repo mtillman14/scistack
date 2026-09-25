@@ -279,6 +279,7 @@ def _rewrite_input(val: Any, key_map: dict):
             root_folder=val.root_folder,
             regex=val.regex,
             aliases=_rename_keys(val.aliases, key_map),
+            name=val.name,
         )
     if isinstance(val, Fixed):
         return Fixed(

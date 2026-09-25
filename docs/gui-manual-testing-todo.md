@@ -11,6 +11,117 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zu. One function reading several files keeps its wiring; wide variables open on one field — added 2026-09-25
+
+**What changed:** a PathInput is identified by its NAME, which is now a
+required `name=` argument (Python `scidb.PathInput(tmpl, name="X")`, MATLAB
+`scidb.PathInput(tmpl, 'name', 'X')`). The name is part of the invocation id,
+so `pandas.read_csv` run on two differently named PathInputs makes two
+invocations and two canvas nodes. Before, the two runs merged and the edges
+were rewritten after the second run. The template and root folder are NOT
+identity: moving the data or opening the project on another machine re-runs
+nothing. A second node for a PathInput already on the canvas is refused.
+Separately, Plot Studio opens a variable with more than 24 fields on its first
+field only, and y limits are computed with one groupby.
+
+**Backend steps:** restart the GUI (Python changed). Delete and recreate the
+database: ids written under the old recipe will not match. Any `.py`/`.m`
+file that declares a PathInput needs `name=` equal to its binding
+(`GaitSpeed = scidb.PathInput(..., name="GaitSpeed")`); TOML entries need
+nothing (the key is the name). The frontend was rebuilt (both bundles).
+Commit and push, then pull in the GUI runtime clone.
+
+**Frontend steps:**
+1. Add PathInputs Symmetry, Unmatched and GaitSpeed. Add three
+   `pandas.read_csv` nodes, one per PathInput, each wired to its own output
+   variable.
+2. Run them one at a time, in order.
+3. Drag GaitSpeed from the sidebar onto the canvas a second time.
+4. Move the Aim1 CSV folder, point the three PathInputs at the new folder in
+   the sidebar, and run the three nodes again.
+5. Open SymmetryTable in Plot Studio.
+
+**Expect:**
+- Step 3: an alert "PathInput 'GaitSpeed' is already on this canvas" and no
+  second node; scidb.log has `Refusing to place PathInput 'GaitSpeed'`.
+- Step 4: every node stays green and nothing new is saved (`0 new rows`);
+  scidb.log has `PathInput 'GaitSpeed': location changed … nothing re-runs
+  because of it`.
+- After each run, every node keeps exactly its own PathInput edge and its own
+  output edge. No node feeds two tables, and there is no "graduation
+  collision" WARN in scidb.log.
+- scidb.log shows `pipeline_variants: 3 invocation(s) -> 3 variant(s)` after
+  the third run.
+- The plot opens within a few seconds, showing ONE field (the first). The
+  field filter shows only that field ticked. The log has `default_spec(...):
+  80 field(s) in 'ColName' — opening on the first`.
+- Ticking every field still works, and `build_plan ... y_limits=` is well
+  under the old 18.7 s.
+
+---
+
+## 0zt. No canvas rebuild mid-save during a Python run; edge/state logging — added 2026-09-25
+
+**What changed:** the extension's `.duckdb` file watcher no longer refreshes the
+canvas while this session's own Python run is writing (it still waits for
+MATLAB as before). The run's own `dag_updated` after `run_done` does the one
+refresh. `scidb.log` now names DB-derived / hidden / superseded edges, call
+sites that record several output types, and why each manual function node is
+red or green. A first run of a new wiring logs INFO, not a "cannot run" WARN.
+
+**Backend steps:** reload the VS Code window (the extension bundle
+`dist/extension.js` was rebuilt). Use a large run, e.g. the
+`pandas.read_csv` → UnmatchedTable node (15k records).
+
+**Frontend steps:** run the node; watch the canvas during the save.
+
+**You should see:**
+- During the save: the Output channel says `DuckDB file changed during this
+  session's own Python run — skipping the watcher refresh`, and `scidb.log`
+  has **no** `Starting graph build orchestration` between `run_start` and
+  `run_done`.
+- After `run_done`: exactly one graph build, and the UnmatchedTable node shows
+  its records.
+- In `scidb.log`: a `build_edges detail:` line listing edges as
+  `source->target`; a `call site pandas.read_csv/... records 2 output types`
+  line; a `manual fn node ... state=` line per manual function node.
+
+## 0zs. Rename a PathInput from its panel; the hint names the entities file — added 2026-09-25
+
+**What changed:** the PathInput panel's name at the top is now an editable
+field. A rename rewrites the key in the entities file and moves every canvas
+placement, edge, hidden edge and note to the new name. Runs recorded under the
+old name stay attached to the renamed node. The hint under Path Template now
+names the file it writes (e.g. `scistack_entities.toml (not scistack.toml)`)
+where it used to say `scidb.PathInput(...)`. Plan:
+`.claude/plan-pathinput-rename.md`.
+
+**Backend**
+1. Reload the GUI (both bundles were rebuilt).
+2. After the rename, `src/scistack_entities.toml` should show the new key with
+   the same value and comment. `scidb.log` should have lines for
+   `rename_declaration`, `recorded PathInput rename`, `rebase_node ... {counts}`
+   and `rename_path_input ... done`.
+
+**Frontend**
+1. Select a PathInput that has already been run and is wired into a function.
+   The hint should name `scistack_entities.toml`.
+2. Click the name, type a new one, and press Enter. The panel should close, and
+   the node should reappear in the same position under the new name, with its
+   edges still attached.
+3. Check that no second node with the old name appears. Open the downstream
+   function. Its PathInput input should show the new name, and it should
+   still be green.
+4. If the PathInput was placed in two hypothesis tabs, check both.
+5. Try renaming to an existing Parameter's name. You should get a red "already
+   declared" error, and nothing should change.
+6. Try a PathInput declared in a `.py`/`.m` file. The name field should be
+   greyed out.
+7. Type a new name and press Escape. The old name should come back and nothing
+   should be written.
+
+---
+
 ## 0zr. Startup names each file it imports; analysis scripts are refused — added 2026-09-25
 
 **What changed:** during startup discovery, the server sends a progress line

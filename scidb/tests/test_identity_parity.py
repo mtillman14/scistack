@@ -318,7 +318,7 @@ class TestCallIdForwardEqualsBackward:
             with open(path) as handle:
                 return float(len(handle.read()))
 
-        template = PathInput("{subject}/note.txt", root_folder=str(root))
+        template = PathInput("{subject}/note.txt", root_folder=str(root), name="{subject}/note.txt")
         self._check(db, read_note, {"path": template}, dict(subject=[]))
 
     def test_fixed_full_iteration(self, db):
@@ -732,31 +732,39 @@ class TestSelectionUnderAnyWrapper:
                 assert got == plain, spec
 
 
-class TestPathInputIsItsTemplate:
+class TestPathInputIsItsName:
     """A PathInput has a real ``.load()`` AND a ``__name__``, so "the
     variable type this binds" must exclude it explicitly — otherwise its
-    call-site identity becomes the display string ``PathInput('{s}/a.csv')``
-    instead of ``to_key()``, and two templates differing only by
-    ``root_folder`` collapse into ONE call site. The exclusion
-    ``is_loadable`` has always had; both now live in ``input_spec``."""
+    call-site identity becomes the display string instead of ``to_key()``.
+    The exclusion ``is_loadable`` has always had; both now live in
+    ``input_spec``. Since 2026-09-25 ``to_key()`` is the NAME alone: where
+    the files are (template, root_folder) is not part of the call site."""
 
     @staticmethod
     def _fn(path):
         return 1.0
 
-    def test_two_root_folders_are_two_call_sites(self, tmp_path):
-        a = PathInput("{subject}/a.csv", root_folder=str(tmp_path / "one"))
-        b = PathInput("{subject}/a.csv", root_folder=str(tmp_path / "two"))
+    def test_two_root_folders_of_one_name_are_one_call_site(self, tmp_path):
+        a = PathInput("{subject}/a.csv", root_folder=str(tmp_path / "one"), name="Raw")
+        b = PathInput("{subject}/a.csv", root_folder=str(tmp_path / "two"), name="Raw")
+        assert (
+            ForEachConfig(self._fn, {"path": a}).to_call_id()
+            == ForEachConfig(self._fn, {"path": b}).to_call_id()
+        )
+
+    def test_two_names_are_two_call_sites(self, tmp_path):
+        a = PathInput("{subject}/a.csv", root_folder=str(tmp_path), name="Raw")
+        b = PathInput("{subject}/a.csv", root_folder=str(tmp_path), name="Other")
         assert (
             ForEachConfig(self._fn, {"path": a}).to_call_id()
             != ForEachConfig(self._fn, {"path": b}).to_call_id()
         )
 
     def test_the_call_site_carries_the_to_key_not_the_display_name(self, tmp_path):
-        pi = PathInput("{subject}/a.csv", root_folder=str(tmp_path))
+        pi = PathInput("{subject}/a.csv", root_folder=str(tmp_path), name="Raw")
         site = ForEachConfig(self._fn, {"path": pi}).call_site_inputs()
         assert site["path"] == pi.to_key()
-        assert "root_folder" in site["path"]
+        assert "root_folder" not in site["path"] and "Raw" in site["path"]
 
 
 class TestAFixedInputArrivesLikeAnyOther:

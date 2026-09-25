@@ -571,6 +571,12 @@ var MatlabRunTracker = class {
      * MATLAB — see `noteSharedEngine`.
      */
     this.sharedEngine = /* @__PURE__ */ new Set();
+    /**
+     * Python runs in flight on this session's own server — see
+     * `beginPythonRun`. Kept apart from `inFlight`: a Python run never holds
+     * the lock between requests, so nothing MATLAB-specific may read it.
+     */
+    this.pythonInFlight = /* @__PURE__ */ new Set();
     this.refreshPending = false;
     this.finishedCallbacks = [];
   }
@@ -617,6 +623,7 @@ var MatlabRunTracker = class {
   end(runId) {
     if (!runId)
       return false;
+    this.pythonInFlight.delete(runId);
     this.sharedEngine.delete(runId);
     const wasTracked = this.inFlight.delete(runId);
     if (wasTracked && this.inFlight.size === 0) {
@@ -629,15 +636,44 @@ var MatlabRunTracker = class {
     return this.inFlight.size > 0;
   }
   /**
+   * Mark a run on this session's own Python server as writing the database,
+   * from its `run_start` until its `run_done` (cleared by {@link end}).
+   *
+   * Why: the DB file-watcher cannot tell the server's own save from an
+   * external write. A 15k-record save kept firing it, and the canvas rebuilt
+   * mid-save, contending with the writer (26.5s vs 1.9s; scidb.log
+   * 2026-09-25) and drawing the pre-save graph. Safe to call once per target
+   * of a multi-target run: the id is a set member.
+   */
+  beginPythonRun(runId) {
+    this.pythonInFlight.add(runId);
+  }
+  /** Whether this session's Python server is mid-run. */
+  get pythonRunActive() {
+    return this.pythonInFlight.size > 0;
+  }
+  /**
+   * Forget every Python run. For when the server process is replaced: a
+   * dead server sends no `run_done`, and a stuck mark would silence the
+   * watcher for the rest of the session.
+   */
+  clearPythonRuns() {
+    this.pythonInFlight.clear();
+  }
+  /**
    * Called by the DB file-watcher. Returns true when the caller should
    * refresh the DAG now; false when MATLAB owns the database, in which case
-   * the change is remembered for {@link takeDeferredRefresh}.
+   * the change is remembered for {@link takeDeferredRefresh}; false too
+   * while a Python run is in flight, but NOT remembered — that run's own
+   * `dag_updated` (pushed after `run_done`) re-reads everything.
    */
   noteDbChange() {
     if (this.isActive) {
       this.refreshPending = true;
       return false;
     }
+    if (this.pythonRunActive)
+      return false;
     return true;
   }
   /**
@@ -2052,6 +2088,9 @@ var Session = class _Session {
     if (!this.dagPanel)
       return;
     this.dagPanel.postMessage({ method, params });
+    if (method === "run_start" && typeof params.run_id === "string") {
+      this.dagPanel.matlabRuns.beginPythonRun(params.run_id);
+    }
     if (method === "run_done") {
       this.dagPanel.stopDebugSession();
       this.dagPanel.matlabRuns.end(params.run_id);
@@ -2082,6 +2121,12 @@ var Session = class _Session {
       if (!this.dagPanel)
         return;
       if (!this.dagPanel.matlabRuns.noteDbChange()) {
+        if (!this.dagPanel.matlabRuns.isActive) {
+          this.log.appendLine(
+            "DuckDB file changed during this session's own Python run \u2014 skipping the watcher refresh; the run's dag_updated follows run_done"
+          );
+          return;
+        }
         this.log.appendLine(
           "DuckDB file changed while MATLAB owns the database \u2014 deferring DAG refresh until the run finishes"
         );
@@ -2117,6 +2162,7 @@ var Session = class _Session {
    */
   adoptProcess(python) {
     this.python = python;
+    this.dagPanel?.matlabRuns.clearPythonRuns();
     this.log.appendLine("server replaced \u2014 panels now talk to the new process");
   }
   /**

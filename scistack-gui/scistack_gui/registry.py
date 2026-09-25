@@ -964,6 +964,7 @@ def _scan_module_path_inputs(module, *, source: str) -> None:
     """
     logger.debug("[registry] Scanning module for path inputs: %s", source)
     discovered = []
+    unbound: dict[str, str] = {}  # binding -> PathInput name it does not match
     for name, obj in vars(module).items():
         if name.startswith("_"):
             continue
@@ -974,8 +975,30 @@ def _scan_module_path_inputs(module, *, source: str) -> None:
             # would register as both.
             continue
         if is_path_input(obj):
-            _register_path_input(name, obj, source=source)
-            discovered.append(name)
+            # The declared name is the object's own `name=` (its identity);
+            # scidb owns the rule (parameter.path_input_declaration).
+            from scidb.parameter import path_input_declaration
+
+            declared, problem = path_input_declaration(obj, name)
+            if problem:
+                _record_load_error(source, problem)
+            elif declared == name:
+                _register_path_input(name, obj, source=source)
+                discovered.append(name)
+            else:
+                unbound[name] = declared
+    for binding, declared in unbound.items():
+        if declared in discovered:
+            logger.debug(
+                "[registry] %s re-exports PathInput %r (%s)", binding, declared, source
+            )
+        else:
+            _record_load_error(
+                source,
+                f"{binding} is a PathInput named {declared!r}, but nothing binds it "
+                f"as {declared}. Declare it as {declared} = PathInput(..., "
+                f"name={declared!r}) so the name and the declaration agree.",
+            )
     if discovered:
         logger.debug(
             "[registry] Discovered %d path input(s) from %s: %s",
@@ -986,15 +1009,28 @@ def _scan_module_path_inputs(module, *, source: str) -> None:
 
 
 def _register_path_input(name: str, pi: "PathInput | EachOf", *, source: str) -> None:
-    """Register a single discovered PathInput, warning on name collisions."""
+    """Register a single discovered PathInput.
+
+    A name is a PathInput's identity, so a second declaration of it in a
+    DIFFERENT file is refused (a load error the user sees), not allowed to
+    shadow the first — the first keeps the name. Re-registering from the same
+    source (a refresh) is fine.
+    """
     existing_source = _path_input_sources.get(name)
     if existing_source is not None and existing_source != source:
         logger.warning(
-            "[registry] PathInput '%s' from %s shadows previous definition from %s",
+            "[registry] PathInput %r declared again in %s — already declared in %s; "
+            "keeping the first",
             name,
             source,
             existing_source,
         )
+        _record_load_error(
+            source,
+            f"PathInput {name!r} is already declared in {existing_source}. A "
+            f"PathInput name must be unique — rename one of them.",
+        )
+        return
     _path_inputs[name] = pi
     _path_input_sources[name] = source
     logger.debug("[registry] Registered path input: %s from %s", name, source)

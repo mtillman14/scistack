@@ -173,7 +173,7 @@ def declared_path_input(monkeypatch, tmp_path):
     """Put one live PathInput in the registry, as source declaration would."""
     from scistack_gui import registry
 
-    pi = _scifor.PathInput("{subject}/{subject}_data.csv", root_folder=str(tmp_path))
+    pi = _scifor.PathInput("{subject}/{subject}_data.csv", root_folder=str(tmp_path), name="{subject}/{subject}_data.csv")
     monkeypatch.setattr(registry, "get_path_inputs_registry", lambda: {"test_pi": pi})
     return pi
 
@@ -211,8 +211,8 @@ class TestComputeCallIdIncludesPathInputs:
     def test_different_templates_get_different_ids(self, monkeypatch, tmp_path):
         from scistack_gui import registry
 
-        pi_a = _scifor.PathInput("{subject}/a.csv", root_folder=str(tmp_path))
-        pi_b = _scifor.PathInput("{subject}/b.csv", root_folder=str(tmp_path))
+        pi_a = _scifor.PathInput("{subject}/a.csv", root_folder=str(tmp_path), name="{subject}/a.csv")
+        pi_b = _scifor.PathInput("{subject}/b.csv", root_folder=str(tmp_path), name="{subject}/b.csv")
         monkeypatch.setattr(
             registry, "get_path_inputs_registry", lambda: {"a": pi_a, "b": pi_b}
         )

@@ -1678,9 +1678,17 @@ def _format_path_input(pi: dict) -> str:
     else:
         matlab_template = f'"{template}"'
 
+    # Required — the name is the PathInput's identity (+scifor/PathInput.m).
+    name = pi.get("name")
+    if not name:
+        raise ValueError(f"PathInput with template {template!r} has no name")
+    name_arg = f'name="{_escape_matlab_string(name)}"'
     if root_folder:
-        return f'scifor.PathInput({matlab_template}, root_folder="{root_folder}")'
-    return f"scifor.PathInput({matlab_template})"
+        return (
+            f'scifor.PathInput({matlab_template}, root_folder="{root_folder}", '
+            f"{name_arg})"
+        )
+    return f"scifor.PathInput({matlab_template}, {name_arg})"
 
 
 def _format_sweep(values: list, param_name: str = "") -> str:

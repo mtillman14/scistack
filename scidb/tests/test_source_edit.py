@@ -72,8 +72,8 @@ def test_multiline_call_span():
         ")\n"
         "AFTER = 1\n"
     )
-    out = _spliced(text, "RAW", render_path_input("{subject}/x.csv"))
-    assert out == "RAW = scidb.PathInput('{subject}/x.csv')\nAFTER = 1\n"
+    out = _spliced(text, "RAW", render_path_input("{subject}/x.csv", name="RAW"))
+    assert out == "RAW = scidb.PathInput('{subject}/x.csv', name='RAW')\nAFTER = 1\n"
 
 
 def test_annassign_supported():
@@ -125,8 +125,8 @@ def test_non_ascii_column_offsets():
     span = find_binding_span(text, "RAW")
     assert span is not None
     assert span.extract(text) == "scidb.PathInput('{sujet}/données.csv')"
-    out = splice(text, span, render_path_input("x.csv"))
-    assert out == "RAW = scidb.PathInput('x.csv')\nAFTER = 1\n"
+    out = splice(text, span, render_path_input("x.csv", name="RAW"))
+    assert out == "RAW = scidb.PathInput('x.csv', name='RAW')\nAFTER = 1\n"
 
 
 def test_non_ascii_on_an_earlier_line():
@@ -173,27 +173,37 @@ def test_render_parameter_many_values():
 
 
 def test_render_path_input_omits_falsy_root_folder():
-    assert render_path_input("{s}/x.csv") == "scidb.PathInput('{s}/x.csv')"
-    assert render_path_input("{s}/x.csv", "") == "scidb.PathInput('{s}/x.csv')"
     assert (
-        render_path_input("{s}/x.csv", "/data")
-        == "scidb.PathInput('{s}/x.csv', root_folder='/data')"
+        render_path_input("{s}/x.csv", name="RAW")
+        == "scidb.PathInput('{s}/x.csv', name='RAW')"
+    )
+    assert (
+        render_path_input("{s}/x.csv", "", name="RAW")
+        == "scidb.PathInput('{s}/x.csv', name='RAW')"
+    )
+    assert (
+        render_path_input("{s}/x.csv", "/data", name="RAW")
+        == "scidb.PathInput('{s}/x.csv', root_folder='/data', name='RAW')"
     )
 
 
 def test_render_path_input_with_alternates_wraps_in_eachof():
     out = render_path_input(
-        "a.csv", None, [{"template": "b.csv", "root_folder": "/d"}]
+        "a.csv", None, [{"template": "b.csv", "root_folder": "/d"}], name="RAW"
     )
+    # Every alternative carries the ONE name: they are one PathInput.
     assert out == (
-        "scidb.EachOf(scidb.PathInput('a.csv'), "
-        "scidb.PathInput('b.csv', root_folder='/d'))"
+        "scidb.EachOf(scidb.PathInput('a.csv', name='RAW'), "
+        "scidb.PathInput('b.csv', root_folder='/d', name='RAW'))"
     )
 
 
 def test_qualifier_can_be_dropped_for_direct_import_contexts():
     assert render_parameter([1], qualifier="") == "Parameter(1, description='')"
-    assert render_path_input("a.csv", qualifier="") == "PathInput('a.csv')"
+    assert (
+        render_path_input("a.csv", qualifier="", name="RAW")
+        == "PathInput('a.csv', name='RAW')"
+    )
 
 
 @pytest.mark.parametrize(
@@ -201,8 +211,8 @@ def test_qualifier_can_be_dropped_for_direct_import_contexts():
     [
         render_parameter([30], "secs"),
         render_parameter([1, 2.5, "x"]),
-        render_path_input("{s}/x.csv", "/data"),
-        render_path_input("a.csv", None, [{"template": "b.csv"}]),
+        render_path_input("{s}/x.csv", "/data", name="NAME"),
+        render_path_input("a.csv", None, [{"template": "b.csv"}], name="NAME"),
     ],
 )
 def test_rendered_expressions_are_parseable_and_relocatable(expr):

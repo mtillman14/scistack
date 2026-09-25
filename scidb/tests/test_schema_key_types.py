@@ -132,7 +132,7 @@ class TestForEachNumericDeclared:
             read_name,
             {
                 "filepath": _scifor.PathInput(
-                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree)
+                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree), name="{subject}/6MWT-{trial}.mat"
                 )
             },
             [PathName],
@@ -150,7 +150,7 @@ class TestForEachNumericDeclared:
             read_name,
             {
                 "filepath": _scifor.PathInput(
-                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree)
+                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree), name="{subject}/6MWT-{trial}.mat"
                 )
             },
             [PathName],
@@ -163,7 +163,7 @@ class TestForEachNumericDeclared:
 
     def test_discovery_and_explicit_runs_share_identity(self, db_numeric, padded_tree):
         pi = _scifor.PathInput(
-            "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree)
+            "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree), name="{subject}/6MWT-{trial}.mat"
         )
         for_each(read_name, {"filepath": pi}, [PathName], subject=[], trial=[])
         n_after_first = len(
@@ -188,7 +188,7 @@ class TestForEachUndeclared:
                 read_name,
                 {
                     "filepath": _scifor.PathInput(
-                        "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree)
+                        "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree), name="{subject}/6MWT-{trial}.mat"
                     )
                 },
                 [PathName],
@@ -203,7 +203,7 @@ class TestForEachUndeclared:
             read_name,
             {
                 "filepath": _scifor.PathInput(
-                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree)
+                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree), name="{subject}/6MWT-{trial}.mat"
                 )
             },
             [PathName],
@@ -219,7 +219,7 @@ class TestForEachStringDeclared:
             read_name,
             {
                 "filepath": _scifor.PathInput(
-                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree)
+                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree), name="{subject}/6MWT-{trial}.mat"
                 )
             },
             [PathName],
@@ -236,7 +236,7 @@ class TestForEachStringDeclared:
             read_name,
             {
                 "filepath": _scifor.PathInput(
-                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree)
+                    "{subject}/6MWT-{trial}.mat", root_folder=str(padded_tree), name="{subject}/6MWT-{trial}.mat"
                 )
             },
             [PathName],

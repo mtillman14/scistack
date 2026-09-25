@@ -327,7 +327,7 @@ class TestGetAggregatedVariants:
     def test_path_input_parsing(self, db):
         """PathInput parameters are parsed correctly."""
         # Create a PathInput configuration
-        path_input = PathInput("{subject}/data.csv")
+        path_input = PathInput("{subject}/data.csv", name="{subject}/data.csv")
 
         # Run function with PathInput
         for_each(

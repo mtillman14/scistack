@@ -111,7 +111,7 @@ def build_p3_db(db_path, data_root, red: bool = False):
         import3,
         {
             "filepath": PathInput(
-                "sub{subject}/ses{session}.txt", root_folder=str(data_root)
+                "sub{subject}/ses{session}.txt", root_folder=str(data_root), name="sub{subject}/ses{session}.txt"
             )
         },
         [P3Loaded],

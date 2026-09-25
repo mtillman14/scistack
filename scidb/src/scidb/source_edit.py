@@ -187,9 +187,10 @@ def render_path_input(
     root_folder: "str | None" = None,
     alternates: "list[dict] | None" = None,
     *,
+    name: str,
     qualifier: str = DEFAULT_QUALIFIER,
 ) -> str:
-    """``scidb.PathInput('{subject}/x.csv')``, or, with *alternates*,
+    """``scidb.PathInput('{subject}/x.csv', name='RawData')``, or, with *alternates*,
     ``scidb.EachOf(scidb.PathInput(...), scidb.PathInput(...))``.
 
     The ``EachOf``-of-``PathInput``\\ s form is how alternate templates are
@@ -201,9 +202,9 @@ def render_path_input(
     ``root_folder=None``, so the common single-argument declaration stays
     readable.
     """
-    calls = [_path_input_call(template, root_folder, qualifier)]
+    calls = [_path_input_call(template, root_folder, name, qualifier)]
     calls.extend(
-        _path_input_call(alt.get("template", ""), alt.get("root_folder"), qualifier)
+        _path_input_call(alt.get("template", ""), alt.get("root_folder"), name, qualifier)
         for alt in (alternates or [])
     )
     if len(calls) == 1:
@@ -211,8 +212,14 @@ def render_path_input(
     return f"{qualifier}EachOf({', '.join(calls)})"
 
 
-def _path_input_call(template: str, root_folder: "str | None", qualifier: str) -> str:
+def _path_input_call(
+    template: str, root_folder: "str | None", name: str, qualifier: str
+) -> str:
     args = [repr(template)]
     if root_folder:
         args.append(f"root_folder={root_folder!r}")
+    # Required: the name is the PathInput's identity, and it must equal the
+    # binding the declaration is written under (scidb.parameter.
+    # path_input_declaration).
+    args.append(f"name={name!r}")
     return f"{qualifier}PathInput({', '.join(args)})"

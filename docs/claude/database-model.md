@@ -85,27 +85,30 @@ is a first-class node rather than a flat edge table.
 
 ```
 constant record_id  = sha16("__constant__" | "content:" canonical_hash(value))
-pathinput record_id = sha16("__pathinput__" | "spec:" PathInput.to_key())
+pathinput record_id = sha16("__pathinput__" | "spec:" PathInput.to_key())   # to_key() = the NAME only
 invocation_id       = sha16(fn_hash | as_table(sorted) | distribute | sorted(bindings)
                              [| across_variants(sorted), folded only when non-empty])
                       binding = (param_name, input_record_id, selector|"")
-                      — PathInput-spec edges are EXCLUDED from this hash
+                      — PathInput-spec edges are bindings like constants (since 2026-09-25)
 save_invocation_id  = sha16("__save__" | output_record_id)   # synthetic direct-save anchor
 output record_id    = generate_record_id(class | schema_version | content_hash | nested_metadata)
                       (scicanonicalhash; computed from in-memory metadata at save time)
 run_id              = uuid (fresh per execution; NOT content-addressed)
 ```
 
-Two deliberate exclusions from `invocation_id`:
+One deliberate exclusion from `invocation_id`:
 
 - **`where=` is NOT in the identity.** Its only effect on the computation is
   *which inputs survive*, and that surviving set already **is** the bindings.
   `where` lives on `_run.where_clause` for audit/display only.
-- **PathInput specs are NOT in the identity.** They are recorded as input edges
-  (for queryability) but excluded from the hash, so a template change does **not**
-  fork a variant (decided WON'T-DO 2026-06-21 — including it would force the
-  predict and skip/staleness sides to re-add the spec in lockstep, widening the
-  save-vs-predict drift surface).
+
+**A PathInput IS in the identity, by its NAME** (since 2026-09-25, reversing
+§11 item 6). `name=` is required; `to_key()` is the name alone and the edge
+`(param, pathinput_rid)` — one record per name — is a binding exactly like a
+constant edge on the save, predict and skip sides. The template and root_folder
+(`to_spec()`) are stored on the record for display and re-discovery but never
+hashed, so moved data keeps every id. See
+`docs/claude/identity-layers-pathinput.md`.
 
 Note the output `record_id` still comes from `generate_record_id` over in-memory
 metadata, **not** rederived from `invocation_id` — variant uniqueness already
@@ -128,7 +131,7 @@ Inputs are classified per realized combo and turned into graph edges.
 | **`ColumnSelection(X, [cols])`** | Selecting different columns of the *same* record is a different computation, so the chosen columns go in the edge's **`selector`** (JSON `{"columns":[...]}`) and are folded into `invocation_id`. `compute_input_selectors` derives it (also through `Fixed(ColumnSelection(...))`). |
 | **`Merge(A, B, …)`** | Each constituent resolves to records; all contribute input edges. `where=`/SchemaKey restrictions on a constituent apply via resolved-id selection. |
 | **`ColName`** | A column-name marker resolved to a string (no variable/constant edge beyond its resolved use). `for_columns` (iterate-mode ColumnSelection) fans out per column. |
-| **`PathInput(template, root_folder)`** | The per-combo resolved filepath is deliberately **not** in the graph (per-combo addressing). The **spec** (identical across combos) is a `__pathinput__` input record + edge, **excluded from `invocation_id`**, surfaced as `derived_branch_params` `fn.<param>` and via `invocation_path_inputs`. Loaded per-combo via `PerComboLoader`. |
+| **`PathInput(template, root_folder)`** | The per-combo resolved filepath is deliberately **not** in the graph (per-combo addressing). The **spec** (identical across combos) is a `__pathinput__` input record + edge, **folded into `invocation_id` by its NAME like a constant edge (since 2026-09-25; the spec is stored, never hashed)**, surfaced as `derived_branch_params` `fn.<param>` and via `invocation_path_inputs`. Loaded per-combo via `PerComboLoader`. |
 | **`PathOutput`** | Resolution-only marker (where to write a file); excluded from constants/identity. |
 | **direct-save non-schema kwarg** (`Var.save(d, subject=1, run="x")`) | Anchored on a synthetic **`__save__` invocation** (`function_name="__save__"`, keyed by record_id): each kwarg → a constant record + input edge. Surfaces as `derived_branch_params` `__save__.run`. This is the variant role the old `version_keys` column held. |
 | **`as_table=[params]`** (aggregation) | Resolved aggregated param names folded into `invocation_id` (`normalize_as_table`, order-insensitive). The aggregating call consumes *all* contributing upstream records → those ids are its bindings, so the input set captures the aggregation exactly. |
@@ -394,6 +397,18 @@ verified green on `dev-hist`.
    it is simply not part of identity. Reopen only with a concrete need for template
    variants.
 
+   **REOPENED AND DONE 2026-09-25.** The concrete need: a function whose ONLY
+   input is a PathInput (a library loader, `pandas.read_csv`) got one invocation
+   for every file it read. Two canvas nodes reading two files merged into one
+   call site in `pipeline_variants` ("1 invocation(s) -> 2 variant(s)"), its
+   wiring matched neither node's dispatch claim, both graduated onto a new
+   node and their edges were rewritten — the wiring "changed between runs".
+   Now the spec edge is a binding (`provenance_save._pathinput_bindings`) on
+   save, predict and skip alike. The binding is the PathInput's required
+   `name=` (`to_key()`), never its template or root_folder, which is what
+   answers the June concern: moved data and other machines keep every id.
+   Tests: `scidb/tests/test_pathinput_invocation_identity.py`.
+
 ### Remaining — cross-layer migrations (#7)
 Do these last, against the now-stable Python API, so each is migrated once against
 final shapes. Each needs its own runtime to verify.
@@ -491,7 +506,7 @@ lineage (record level — old data preserved); the node colors red because the
 recipe). Both hold simultaneously.
 
 ### Future enhancements (not required)
-- **PathInput template in identity — WON'T DO** (see §11 item 6).
+- ~~PathInput template in identity — WON'T DO~~ — DONE 2026-09-25 (see §11 item 6).
 - `_record_save` **cannot be removed entirely** — it is the only source of
   per-save recency (`_record` is `ON CONFLICT DO NOTHING`, so its `created_at` is
   frozen at first save; the "latest" collapse orders by `_record_save.timestamp`).

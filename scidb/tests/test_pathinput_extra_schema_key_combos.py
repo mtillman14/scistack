@@ -60,7 +60,7 @@ class TestExtraSchemaKeyDoesNotInventCombos:
     def test_iterates_disk_combos_not_cartesian_product(
         self, empty_db, sparse_tree
     ):
-        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"))
+        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"), name=str(str(sparse_tree / "{subject}" / "{session}.txt")))
 
         result = for_each(
             read_content,
@@ -83,7 +83,7 @@ class TestExtraSchemaKeyDoesNotInventCombos:
         self, empty_db, sparse_tree
     ):
         """The key with no source is dropped, exactly as before the fix."""
-        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"))
+        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"), name=str(str(sparse_tree / "{subject}" / "{session}.txt")))
 
         result = for_each(
             read_content,
@@ -108,7 +108,7 @@ class TestExtraSchemaKeyDoesNotInventCombos:
         db = configure_database(tmp_path / "ctl.duckdb", ["subject", "session"])
         try:
             pi = _scifor.PathInput(
-                str(sparse_tree / "{subject}" / "{session}.txt")
+                str(sparse_tree / "{subject}" / "{session}.txt"), name=str(str(sparse_tree / "{subject}" / "{session}.txt"))
             )
             result = for_each(
                 read_content,
@@ -136,7 +136,7 @@ class TestExtraSchemaKeyDoesNotInventCombos:
         ``scifor.expand_schema_keys`` refuses both in one call, being sugar for
         exactly these ``key: []`` entries -- so ``cycle=[]`` is spelled out.
         """
-        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"))
+        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"), name=str(str(sparse_tree / "{subject}" / "{session}.txt")))
 
         with caplog.at_level(logging.INFO, logger="scidb"):
             for_each(
@@ -159,7 +159,7 @@ class TestExtraSchemaKeyDoesNotInventCombos:
         Nothing explicit -> discovery's own combos drive iteration, so the
         fileless combo is never visited at all.
         """
-        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"))
+        pi = _scifor.PathInput(str(sparse_tree / "{subject}" / "{session}.txt"), name=str(str(sparse_tree / "{subject}" / "{session}.txt")))
 
         with caplog.at_level(logging.INFO, logger="scidb"):
             for_each(

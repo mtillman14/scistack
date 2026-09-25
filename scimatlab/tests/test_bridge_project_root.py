@@ -80,7 +80,7 @@ class TestLoadEntitiesPins:
 
         load_entities(str(project))
 
-        assert PathInput("data/{subject}.mat").load(subject="s01") == (
+        assert PathInput("data/{subject}.mat", name="data/{subject}.mat").load(subject="s01") == (
             project / "data" / "s01.mat"
         ).resolve()
 

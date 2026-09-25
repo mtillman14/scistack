@@ -124,21 +124,21 @@ class JointCoupling(BaseVariable):
 #: ``for_each`` can discover all five from what is on disk.
 SYMMETRY_FILE = scidb.PathInput(
     "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_c{cycle}.csv",
-    root_folder=str(DATA_ROOT),
+    root_folder=str(DATA_ROOT), name="SYMMETRY_FILE",
 )
 
 #: The coarser files. Each template names only the keys its level is
 #: recorded at, which is what makes the records subject-, session- and
 #: trial-level rather than cycle-level.
 DEMOGRAPHICS_FILE = scidb.PathInput(
-    "{subject}/{subject}_demographics.csv", root_folder=str(DATA_ROOT)
+    "{subject}/{subject}_demographics.csv", root_folder=str(DATA_ROOT), name="DEMOGRAPHICS_FILE"
 )
 SESSION_FILE = scidb.PathInput(
-    "{subject}/{session}/{subject}_{session}_session.csv", root_folder=str(DATA_ROOT)
+    "{subject}/{session}/{subject}_{session}_session.csv", root_folder=str(DATA_ROOT), name="SESSION_FILE"
 )
 TRIAL_FILE = scidb.PathInput(
     "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_trial.csv",
-    root_folder=str(DATA_ROOT),
+    root_folder=str(DATA_ROOT), name="TRIAL_FILE",
 )
 
 #: The waveforms live in their own subfolder, so these files cannot also
@@ -147,7 +147,7 @@ TRIAL_FILE = scidb.PathInput(
 WAVEFORM_FILE = scidb.PathInput(
     "{subject}/{session}/t{trial}/waveforms/"
     "{subject}_{session}_{speed}_t{trial}_c{cycle}.csv",
-    root_folder=str(DATA_ROOT),
+    root_folder=str(DATA_ROOT), name="WAVEFORM_FILE",
 )
 
 #: One 3 x 3 matrix per trial (subject x session x speed x trial). Named
@@ -157,7 +157,7 @@ WAVEFORM_FILE = scidb.PathInput(
 #: suite, 2026-09-19). Two templates over one folder must not share a tail.
 COUPLING_FILE = scidb.PathInput(
     "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_matrix.csv",
-    root_folder=str(DATA_ROOT),
+    root_folder=str(DATA_ROOT), name="COUPLING_FILE",
 )
 
 #: Two values, so the step runs twice and the results are two variants of one

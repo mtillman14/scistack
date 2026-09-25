@@ -123,7 +123,7 @@ interface HiddenEdge {
 export default function PipelineDAG() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<Edge>([])
-  const { screenToFlowPosition, fitView } = useReactFlow()
+  const { screenToFlowPosition, fitView, getNodes } = useReactFlow()
   const { selectedNode, setSelectedNode } = useSelectedNode()
   const { setSelectedItem: setSidebarSelectedItem } = useSidebarSelection()
   const { currentScope, breadcrumb, descend, graphVersion, bumpGraph, getDirtyPatch } = useScope()
@@ -603,6 +603,17 @@ export default function PipelineDAG() {
     if (!raw) return
     const { nodeType, label } = JSON.parse(raw) as { nodeType: string; label: string }
 
+    // A PathInput's name is its identity: one node per PathInput per canvas.
+    // The backend refuses too (layout_service.put_layout); this only saves
+    // the flash of a node that is about to be taken away.
+    if (
+      nodeType === 'pathInputNode' &&
+      getNodes().some(n => n.type === 'pathInputNode' && (n.data as { label?: string })?.label === label)
+    ) {
+      window.alert(`PathInput '${label}' is already on this canvas. Wire the existing node, or declare a new PathInput with its own name.`)
+      return
+    }
+
     const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
     const prefix = nodeType === 'functionNode' ? 'fn' : nodeType === 'parameterNode' ? 'param' : nodeType === 'pathInputNode' ? 'pathInput' : 'var'
     const nodeId = `${prefix}__${label}__${Math.random().toString(36).slice(2, 8)}`
@@ -658,8 +669,19 @@ export default function PipelineDAG() {
     // A node that is never measured never gets its re-center, so nothing
     // would attach a rejection handler to this promise.
     create.catch(() => {})
+    // The backend is the authority on "already on this canvas" (a node the
+    // local list did not show yet): take the optimistic node back and say why.
+    create
+      .then(res => {
+        const r = res as { ok?: boolean; error?: string } | undefined
+        if (r && r.ok === false) {
+          setNodes(prev => prev.filter(n => n.id !== nodeId))
+          window.alert(r.error ?? `Could not place '${label}'.`)
+        }
+      })
+      .catch(() => {})
     pendingCreateRef.current.set(nodeId, create)
-  }, [screenToFlowPosition, setNodes, currentScope, bumpGraph])
+  }, [screenToFlowPosition, getNodes, setNodes, currentScope, bumpGraph])
 
   const onNodeDragStop = useCallback((_: unknown, node: Node) => {
     callBackend('put_layout', { node_id: node.id, x: node.position.x, y: node.position.y, pipeline_id: currentScope })

@@ -39,6 +39,7 @@ __all__ = [
     "CONSTANT_TYPE",
     "compute_wiring_id",
     "parse_path_input_spec",
+    "path_input_key_of",
     "strip_path_input_specs",
     "GLUE_INPUT_PARAM",
     "GLUE_TYPE",
@@ -70,8 +71,9 @@ CONSTANT_TYPE = "__constant__"
 # per-combo filepath (deliberately NOT in the graph), but its SPEC (template +
 # root_folder) is config-level and recorded as a distinctly-typed input edge so
 # the GUI/variant queries can surface it. Treated like a constant everywhere edges
-# are bucketed into variables/constants, and EXCLUDED from ``invocation_id`` (so it
-# does not perturb computation identity).
+# are bucketed into variables/constants, and — like a constant — PART of
+# ``invocation_id`` since 2026-09-25 (``provenance_save._pathinput_bindings``):
+# one function reading two files is two invocations.
 PATHINPUT_TYPE = "__pathinput__"
 
 # The ``value_type`` a PathInput spec row carries in ``_constant`` — the
@@ -208,11 +210,20 @@ def compute_invocation_id(
     return inv_id
 
 
-def compute_pathinput_record_id(spec: str) -> str:
-    """Content-addressed id for a PathInput-spec input record (see
-    :data:`PATHINPUT_TYPE`). Keyed on the spec string (``PathInput.to_key()``),
-    so the same template+root_folder maps to one record."""
-    return _sha16(PATHINPUT_TYPE, f"spec:{spec}")
+def compute_pathinput_record_id(value: str) -> str:
+    """Id of the PathInput input record (see :data:`PATHINPUT_TYPE`) — ONE per
+    PathInput NAME.
+
+    *value* may be the identity key (``PathInput.to_key()``) or a full stored
+    spec (``PathInput.to_spec()``): both reduce to the name's key
+    (:func:`path_input_key_of`), so the save side (which holds keys), the
+    predict side (which reads stored specs) and the skip side agree by
+    construction, and a PathInput whose files moved keeps its id.
+    """
+    key = path_input_key_of(value)
+    if key is None:
+        raise ValueError(f"not a named PathInput key or spec: {value!r}")
+    return _sha16(PATHINPUT_TYPE, f"spec:{key}")
 
 
 def compute_glue_record_id(
@@ -618,40 +629,46 @@ def ensure_provenance_tables(duck) -> None:
 
 
 def parse_path_input_spec(value) -> "dict | None":
-    """``{"template", "root_folder"}`` when *value* (an ``__inputs`` /
-    ``input_types`` entry) is a PathInput SPEC, else ``None``.
+    """``{"name", "template", "root_folder"}`` when *value* (an ``__inputs`` /
+    ``input_types`` entry, or a stored ``__pathinput__`` value) is a PathInput,
+    else ``None``.
 
-    Two formats: ``PathInput.to_key()``'s JSON (``{"__type": "PathInput",
-    ...}``) and the legacy ``PathInput('...', root_folder=PosixPath('...'))``
-    repr. The ONE parser — `scidb.inspect.graph`, `scidb.database` and the
-    GUI's `graph_builder` each carried a copy before 2026-09-20.
+    The JSON of ``PathInput.to_spec()`` (everything) or ``PathInput.to_key()``
+    (the name alone — ``template`` and ``root_folder`` come back ``None``).
+    The ONE parser — `scidb.inspect.graph`, `scidb.database` and the GUI's
+    `graph_builder` each carried a copy before 2026-09-20.
     """
     import json as _json
-    import re as _re
 
-    if not isinstance(value, str):
+    if not isinstance(value, str) or not value.startswith("{"):
         return None
-    if value.startswith("{"):
-        try:
-            parsed = _json.loads(value)
-            if isinstance(parsed, dict) and parsed.get("__type") == "PathInput":
-                return {
-                    "template": parsed["template"],
-                    "root_folder": parsed.get("root_folder"),
-                }
-        except (_json.JSONDecodeError, KeyError, TypeError):
-            pass
-    if value.startswith("PathInput("):
-        m = _re.match(r"PathInput\('([^']*)'", value)
-        if m:
-            root_match = _re.search(
-                r"root_folder=(?:Posix|Windows|Pure\w*)?Path\('([^']*)'\)", value
-            )
-            return {
-                "template": m.group(1),
-                "root_folder": root_match.group(1) if root_match else None,
-            }
-    return None
+    try:
+        parsed = _json.loads(value)
+    except (_json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict) or parsed.get("__type") != "PathInput":
+        return None
+    return {
+        "name": parsed.get("name"),
+        "template": parsed.get("template"),
+        "root_folder": parsed.get("root_folder"),
+    }
+
+
+def path_input_key_of(value) -> "str | None":
+    """The identity key (``PathInput.to_key()``) of a stored PathInput spec or
+    key, or ``None`` when *value* is not a NAMED PathInput.
+
+    Every reader that turns a recorded PathInput back into identity — a call
+    id, a predicted invocation, a skip comparison — goes through this, so the
+    name is the only thing any of them can see.
+    """
+    from scifor.pathinput import path_input_key
+
+    parsed = parse_path_input_spec(value)
+    if parsed is None or not parsed.get("name"):
+        return None
+    return path_input_key(parsed["name"])
 
 
 def strip_path_input_specs(input_types: dict) -> dict:

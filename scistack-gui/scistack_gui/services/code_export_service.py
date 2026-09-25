@@ -401,9 +401,10 @@ def _matlab_literal(value) -> str:
     if type(value).__name__ == "PathInput":
         template = getattr(value, "path_template", "")
         root_folder = getattr(value, "root_folder", None)
+        name_arg = f"'name', {_matlab_str(value.name)}"
         if root_folder is not None:
-            return f"scifor.PathInput({_matlab_str(template)}, 'root_folder', {_matlab_str(root_folder)})"
-        return f"scifor.PathInput({_matlab_str(template)})"
+            return f"scifor.PathInput({_matlab_str(template)}, 'root_folder', {_matlab_str(root_folder)}, {name_arg})"
+        return f"scifor.PathInput({_matlab_str(template)}, {name_arg})"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):

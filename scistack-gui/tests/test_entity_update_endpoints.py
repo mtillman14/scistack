@@ -55,20 +55,20 @@ class TestRestEndpoints:
 
     def test_put_path_input_rewrites_source(self, client, tmp_path):
         entities = _project(
-            tmp_path, "import scidb\n\nRAW = scidb.PathInput('a.csv')\n"
+            tmp_path, "import scidb\n\nRAW = scidb.PathInput('a.csv', name='RAW')\n"
         )
 
         resp = client.put("/api/path-inputs/RAW", json={"template": "b.csv"})
 
         assert resp.status_code == 200
         assert resp.json()["ok"], resp.json()
-        assert "scidb.PathInput('b.csv')" in entities.read_text()
+        assert "scidb.PathInput('b.csv', name='RAW')" in entities.read_text()
 
     def test_put_path_input_alternates_become_an_each_of(self, client, tmp_path):
         """Multiple templates under one name IS an EachOf of PathInputs —
         not a separate concept, and not a new node."""
         entities = _project(
-            tmp_path, "import scidb\n\nRAW = scidb.PathInput('a.csv')\n"
+            tmp_path, "import scidb\n\nRAW = scidb.PathInput('a.csv', name='RAW')\n"
         )
 
         resp = client.put(
@@ -81,7 +81,8 @@ class TestRestEndpoints:
 
         assert resp.json()["ok"], resp.json()
         assert (
-            "scidb.EachOf(scidb.PathInput('a.csv'), scidb.PathInput('b.csv'))"
+            "scidb.EachOf(scidb.PathInput('a.csv', name='RAW'), "
+            "scidb.PathInput('b.csv', name='RAW'))"
             in entities.read_text()
         )
 
@@ -209,7 +210,7 @@ class TestTransportParity:
             "import scidb\n\n"
             "WINDOW = scidb.Parameter(30, description='')\n"
             "W = scidb.Parameter(1, 2)\n"
-            "RAW = scidb.PathInput('a.csv')\n",
+            "RAW = scidb.PathInput('a.csv', name='RAW')\n",
         )
 
         assert METHODS["update_parameter"](
@@ -223,7 +224,7 @@ class TestTransportParity:
         text = entities.read_text()
         assert "scidb.Parameter(45" in text
         assert "scidb.Parameter(3, 4, description='')" in text
-        assert "scidb.PathInput('b.csv')" in text
+        assert "scidb.PathInput('b.csv', name='RAW')" in text
 
     def test_optional_params_really_are_optional_over_rpc(
         self, tmp_path, populated_db
@@ -237,7 +238,7 @@ class TestTransportParity:
             tmp_path,
             "import scidb\n\n"
             "WINDOW = scidb.Parameter(30, description='')\n"
-            "RAW = scidb.PathInput('a.csv')\n",
+            "RAW = scidb.PathInput('a.csv', name='RAW')\n",
         )
 
         assert METHODS["update_parameter"]({"name": "WINDOW", "values": [45]})["ok"]
@@ -253,7 +254,7 @@ class TestTransportParity:
         from scistack_gui.server import METHODS
 
         other = tmp_path / "params.py"
-        other.write_text("import scidb\n\nRAW = scidb.PathInput('{subject}/a.csv')\n")
+        other.write_text("import scidb\n\nRAW = scidb.PathInput('{subject}/a.csv', name='RAW')\n")
         entities = tmp_path / "entities.py"
         entities.write_text("import scidb\n\nW = scidb.Parameter(1)\n")
         config_mod.set_entities_file(get_db_path(), entities)

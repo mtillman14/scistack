@@ -22,7 +22,7 @@ from scidb.database import aggregate_pipeline_variants, call_site_wiring_ids
 from scidb.parameter import (
     Parameter,
     declared_input_names,
-    stamp_path_input_name,
+    path_input_declaration,
 )
 
 SUBJECTS = ["S01", "S02"]
@@ -54,11 +54,8 @@ def db(tmp_path):
     database.close()
 
 
-def _pi(tmp_path, folder: str, name: "str | None") -> PathInput:
-    pi = PathInput("{subject}/value.txt", root_folder=str(tmp_path / folder))
-    if name:
-        stamp_path_input_name(pi, name)
-    return pi
+def _pi(tmp_path, folder: str, name: str) -> PathInput:
+    return PathInput("{subject}/value.txt", root_folder=str(tmp_path / folder), name=name)
 
 
 def _run(pi, k, output=StepLoaded):
@@ -79,12 +76,16 @@ def _steps(db) -> dict:
 
 
 class TestTheNameIsDeclaredOnce:
-    def test_first_binding_wins_and_every_alternative_is_named(self, tmp_path):
-        a, b = _pi(tmp_path, "a", None), _pi(tmp_path, "b", None)
-        both = EachOf(a, b)
-        stamp_path_input_name(both, "gait_files")
-        stamp_path_input_name(both, "alias")  # `alias = gait_files`
-        assert a.name == b.name == "gait_files"
+    def test_alternatives_share_one_name(self, tmp_path):
+        both = EachOf(_pi(tmp_path, "a", "gait_files"), _pi(tmp_path, "b", "gait_files"))
+        assert path_input_declaration(both, "gait_files") == ("gait_files", None)
+        # `alias = gait_files`: the object keeps ITS name; the binding differs.
+        assert path_input_declaration(both, "alias") == ("gait_files", None)
+
+    def test_alternatives_with_different_names_are_refused(self, tmp_path):
+        mixed = EachOf(_pi(tmp_path, "a", "one"), _pi(tmp_path, "b", "two"))
+        name, problem = path_input_declaration(mixed, "gait_files")
+        assert name is None and "share one name" in problem
 
     def test_owner_reads_parameters_and_path_inputs(self, tmp_path):
         p = Parameter(3)
@@ -98,8 +99,10 @@ class TestTheNameIsDeclaredOnce:
             {"filepath": pi}, {"filepath": "stated"}
         ) == {"filepath": "stated"}, "the caller's statement wins"
 
-    def test_the_name_is_not_identity(self, tmp_path):
-        assert _pi(tmp_path, "a", "x").to_key() == _pi(tmp_path, "a", None).to_key()
+    def test_the_name_is_the_identity(self, tmp_path):
+        """2026-09-25: the name, not the location, is what a PathInput IS."""
+        assert _pi(tmp_path, "a", "x").to_key() == _pi(tmp_path, "b", "x").to_key()
+        assert _pi(tmp_path, "a", "x").to_key() != _pi(tmp_path, "a", "y").to_key()
 
 
 class TestRecorded:
@@ -133,12 +136,11 @@ class TestOneStepRule:
         _run(_pi(tmp_path, "a", "gait_files"), 5.0, output=StepLoadedOther)
         assert sorted(_steps(db).values()) == [[1.0], [5.0]]
 
-    def test_an_unnamed_run_is_grouped_by_its_spec(self, db, tmp_path):
-        """Template AND root folder: one template under two roots is two sets
-        of files."""
-        _run(_pi(tmp_path, "c", None), 4.0)
-        _run(_pi(tmp_path, "c", None), 6.0)
-        _run(_pi(tmp_path, "b", None), 7.0)
+    def test_the_same_files_under_two_names_are_two_steps(self, db, tmp_path):
+        """The location says nothing about identity, in either direction."""
+        _run(_pi(tmp_path, "c", "first"), 4.0)
+        _run(_pi(tmp_path, "c", "first"), 6.0)
+        _run(_pi(tmp_path, "c", "second"), 7.0)
         assert sorted(_steps(db).values()) == [[4.0, 6.0], [7.0]]
 
 

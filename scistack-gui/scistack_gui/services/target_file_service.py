@@ -575,6 +575,149 @@ def update_declaration(
     }
 
 
+def rename_declaration(kind: str, old: str, new: str) -> dict:
+    """Rename an existing declaration's key in the entities file.
+
+    The rename counterpart of :func:`update_declaration`, with the same
+    guards: only the configured entities file is written, never over a
+    concurrent change, and a write that does not re-scan as expected is
+    rolled back. Verification is stricter than an edit's -- ``new`` must
+    resolve AND ``old`` must be gone, since a key that failed to move would
+    otherwise pass as success.
+
+    TOML only. The legacy ``.py``/``.m`` surfaces are read-only by policy
+    (docs/claude/entity-declaration-surfaces.md); renaming there is refused
+    with a message rather than attempted.
+
+    This owns the FILE only. Everything keyed by the name on the GUI side
+    (node ids, edges, run attribution) is the caller's --
+    ``layout_service.rename_path_input``.
+    """
+    from scidb.entities import rename_entry
+
+    new = (new or "").strip()
+    err = validate_entity_name(new)
+    if err:
+        return {"ok": False, "error": err, "reason": "invalid_name"}
+    if new == old:
+        return {"ok": True, "name": old, "unchanged": True}
+    if _resolves_as_any_kind(new):
+        logger.info(
+            "[target_file_service] Refusing to rename %s '%s' -> '%s': the new "
+            "name is already registered (source %s)",
+            kind,
+            old,
+            new,
+            [declaration_source(k, new) for k in _SOURCE_KIND_REGISTRIES],
+        )
+        return {
+            "ok": False,
+            "error": f"'{new}' is already declared — pick another name.",
+            "reason": "name_taken",
+        }
+
+    editability = entity_editability(kind, old)
+    if editability["reason"] == "unknown":
+        return {"ok": False, "error": f"No {kind} named '{old}' is registered."}
+    if not editability["editable"]:
+        logger.info(
+            "[target_file_service] Refusing to rename %s '%s': declared in %s, "
+            "outside the configured entities file",
+            kind,
+            old,
+            editability["file"],
+        )
+        return {
+            "ok": False,
+            "error": editability["message"],
+            "reason": "read_only",
+            "file": editability["file"],
+            "line": editability["line"],
+        }
+
+    path = Path(editability["file"])
+    section = TOML_SECTIONS.get(kind)
+    if path.suffix != ".toml" or section is None:
+        return {
+            "ok": False,
+            "error": (
+                f"Renaming is only supported in a TOML entities file; '{old}' "
+                f"is declared in {path.name}. Rename it there and hit "
+                f"🔄 Refresh Code."
+            ),
+            "reason": "unsupported_format",
+        }
+
+    try:
+        original = path.read_text()
+    except OSError as e:
+        return {"ok": False, "error": f"Cannot read {path}: {e}"}
+
+    known_hash = _source_hashes.get(str(path))
+    if known_hash is not None and known_hash != _hash_text(original):
+        logger.info(
+            "[target_file_service] Refusing to rename %s '%s': %s changed on "
+            "disk since the last scan",
+            kind,
+            old,
+            path,
+        )
+        return {
+            "ok": False,
+            "error": (
+                f"{path.name} has changed on disk since it was last read. "
+                f"Hit 🔄 Refresh Code, then try again."
+            ),
+            "reason": "stale",
+        }
+
+    try:
+        updated = rename_entry(original, section, old, new)
+    except ValueError as e:
+        return {"ok": False, "error": str(e), "reason": "unlocatable"}
+
+    logger.info(
+        "[target_file_service] rename_declaration: %s '%s' -> '%s' in %s",
+        kind,
+        old,
+        new,
+        path,
+    )
+    try:
+        _atomic_write(path, updated)
+    except OSError as e:
+        return {"ok": False, "error": f"Failed to write {path}: {e}"}
+
+    refresh_error = _reload_after_write(path)
+    if refresh_error is None and not _resolves_as_any_kind(new):
+        refresh_error = _verify_failure_reason(new)
+    if refresh_error is None and _resolves_as_any_kind(old):
+        refresh_error = (
+            f"'{old}' is still registered after the rename (source "
+            f"{declaration_source(kind, old)}) — is it declared twice?"
+        )
+
+    if refresh_error is not None:
+        logger.warning(
+            "[target_file_service] Rolling back rename in %s: %s", path, refresh_error
+        )
+        try:
+            _atomic_write(path, original)
+        except OSError as e:
+            return {
+                "ok": False,
+                "error": (
+                    f"{refresh_error} — AND restoring {path} failed: {e}. "
+                    f"The file may be left in a bad state."
+                ),
+            }
+        _reload_after_write(path)
+        return {"ok": False, "error": refresh_error, "reason": "verify_failed"}
+
+    record_source_hash(path)
+    return {"ok": True, "name": new, "old_name": old, "file": str(path)}
+
+
 def _record_current_path_input_value(name: str) -> None:
     """Remember the template *name* currently holds, immediately before a
     write-back overwrites it (D7).

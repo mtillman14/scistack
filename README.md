@@ -37,7 +37,7 @@ def load_data(file_path: str) -> pd.DataFrame:
     """Example logic to load the data"""
     return pd.read_csv(file_path)
 
-path_template = scifor.PathInput("path/to/data/{subject}/{session}/{trial}.csv")
+path_template = scifor.PathInput("path/to/data/{subject}/{session}/{trial}.csv", name="trial_data")
 loaded_df = scifor.for_each(load_data,
     file_path=path_template,
     subject=[], session=[], trial=[],

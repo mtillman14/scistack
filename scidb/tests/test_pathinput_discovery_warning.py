@@ -65,7 +65,7 @@ class TestDiscoveryFillsBeforeWarning:
         self, empty_db, data_tree, caplog
     ):
         pi = _scifor.PathInput(
-            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(data_tree)
+            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(data_tree), name="{subject}/{subject}_{session}_CPET.csv"
         )
 
         with caplog.at_level(logging.DEBUG, logger="scidb"):
@@ -83,7 +83,7 @@ class TestDiscoveryFillsBeforeWarning:
         """The replacement for the false warning: say where the values came
         from, so an empty database is visibly not the end of the story."""
         pi = _scifor.PathInput(
-            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(data_tree)
+            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(data_tree), name="{subject}/{subject}_{session}_CPET.csv"
         )
 
         with caplog.at_level(logging.INFO, logger="scidb"):
@@ -120,7 +120,7 @@ class TestWarningStillFiresWhenNothingCanFill:
         empty_root = tmp_path / "nothing"
         empty_root.mkdir()
         pi = _scifor.PathInput(
-            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(empty_root)
+            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(empty_root), name="{subject}/{subject}_{session}_CPET.csv"
         )
 
         with caplog.at_level(logging.DEBUG, logger="scidb"):
@@ -140,7 +140,7 @@ class TestIterationBannerReportsPruning:
         banner must say the other 2 were filtered out rather than leaving the
         reader to spot an apparent arithmetic error."""
         pi = _scifor.PathInput(
-            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(data_tree)
+            "{subject}/{subject}_{session}_CPET.csv", root_folder=str(data_tree), name="{subject}/{subject}_{session}_CPET.csv"
         )
 
         with caplog.at_level(logging.INFO, logger="scifor"):

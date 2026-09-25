@@ -98,7 +98,7 @@ def create_path_input(
 
         line = (
             f"\n{name} = "
-            f"{render_path_input(template, root_folder, alternate_templates)}\n"
+            f"{render_path_input(template, root_folder, alternate_templates, name=name)}\n"
         )
         err = _append_and_refresh(line, target_file)
 
@@ -152,9 +152,11 @@ def update_path_input(
     return update_declaration(
         "path_input",
         name,
-        python_expr=render_path_input(template, root_folder, alternate_templates),
+        python_expr=render_path_input(
+            template, root_folder, alternate_templates, name=name
+        ),
         matlab_expr=render_matlab_path_input(
-            template, root_folder, alternate_templates
+            template, root_folder, alternate_templates, name=name
         ),
         toml_expr=render_path_input_value(
             template, root_folder, alternate_templates

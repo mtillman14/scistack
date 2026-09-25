@@ -41,7 +41,7 @@ from .bindings import (
 from .exceptions import AmbiguousParamError, DatabaseNotConfiguredError
 from .database import database_or_none, dataset_schema_keys_of
 from .input_spec import find_pathinput, is_loadable, spec_name, type_name, variable_type
-from .parameter import declared_input_names
+from .parameter import check_path_input_names, declared_input_names, path_input_specs_of
 from .roles import endpoint_kind as _roles_endpoint_kind
 from .schema_values import canonical_numeric_value, schema_str
 from .variant import match_bare_name
@@ -227,6 +227,10 @@ class _ForEachState:
     # declared_input_names), carried to record_run so each constant edge
     # names the Parameter the canvas shows. Descriptive, never identity.
     parameter_names: Any = None  # dict[str, str] | None
+    # {argument: PathInput.to_spec()} (scidb.parameter.path_input_specs_of),
+    # carried to record_run so each PathInput record stores WHERE the files
+    # were. Descriptive, never identity (identity is the name, `to_key`).
+    path_input_specs: Any = None  # dict[str, str] | None
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +508,9 @@ def for_each(
     #     replaces each Parameter with a bare alternative and so drops its
     #     .name. The recursion below receives the resolved dict. ---
     parameter_names = declared_input_names(inputs, parameter_names)
+    # One name, one PathInput: two arguments naming different files alike
+    # would be recorded as one input (the name is its identity).
+    check_path_input_names(inputs)
     if parameter_names:
         Log.debug(f"parameter_names (argument -> declared): {parameter_names}")
 
@@ -1414,10 +1421,17 @@ def _build_skip_hook(
         from scifor import PathOutput as _PathOutput
     except ImportError:
         _PathOutput = None
+    # PathInput spec record ids, as the save path binds them
+    # (provenance_save._pathinput_bindings) — part of identity, so a record
+    # produced from a different file is stale.
+    path_input_rids: dict = {}
     for name, value in inputs.items():
         if is_loadable(value):
             continue
         if _PathInput is not None and isinstance(value, _PathInput):
+            from .provenance import compute_pathinput_record_id
+
+            path_input_rids[name] = compute_pathinput_record_id(value.to_key())
             continue
         if _PathOutput is not None and isinstance(value, _PathOutput):
             continue
@@ -1560,6 +1574,15 @@ def _build_skip_hook(
                     return _recompute(combo_str, f"new constant {name}")
             elif stored_hash != cur_hash:
                 return _recompute(combo_str, f"constant {name} changed")
+
+        # PathInputs: the spec that fed the stored record vs the one now.
+        stored_pi = sig.get("path_inputs") or {}
+        for name, cur_rid in path_input_rids.items():
+            if stored_pi.get(name) != cur_rid:
+                return _recompute(
+                    combo_str,
+                    f"PathInput {name} changed ({stored_pi.get(name)} -> {cur_rid})",
+                )
 
         Log.debug(f"[skip] {combo_str}")
         return True
@@ -3414,6 +3437,7 @@ def _for_each_prepare(
         glue_virtual=glue_fusion.virtual or None,
         bindings=run_bindings,
         parameter_names=parameter_names or None,
+        path_input_specs=path_input_specs_of(inputs) or None,
     )
 
 
@@ -5860,6 +5884,7 @@ def _save_results(
                 glue_virtual=glue_virtual,
                 glue_chains=glue_chains,
                 parameter_names=state.parameter_names,
+                path_input_specs=state.path_input_specs,
             )
             Log.info(
                 f"[provenance] recorded run_id={run_id} for {len(graph_records)} "
