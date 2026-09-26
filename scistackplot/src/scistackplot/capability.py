@@ -622,11 +622,20 @@ def factor_summary(spec: PlotSpec, derived: LongTable) -> list[dict]:
     ``group_reason`` report separately whether this factor may join the
     grouping, which is the Grouping section's question.
     """
+    from .groups import combine_alternatives
     from .reduce import apply_filters
 
     factors = derived.describe()["factors"]
+    slots = combine_alternatives(spec)
     for entry in factors:
         name = entry["name"]
+        # The combine dropdown: the slot a factor stands in (its source, or
+        # itself) and every choice for it. A factor with no combines has one
+        # choice and renders as plain text. A replaced source keeps its entry
+        # (`combined_into` set) for Statistics; the lists hide it.
+        slot = entry.get("combined_from") or name
+        entry["slot"] = slot
+        entry["alternatives"] = slots.get(slot, [slot])
         entry["roles"] = factors_menu(spec, derived, name)
         as_group = role_options(spec, derived, name, roles=(Role.GROUP,))[0]
         entry["group_available"] = as_group["available"]

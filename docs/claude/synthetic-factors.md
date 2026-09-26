@@ -209,6 +209,16 @@ The one thing it adds to this note's model: a derived table may now change what
 tables at once** — the kind list is computed from the raw shape and everything
 else from the derived one. See `docs/claude/measure-shape-and-collapse.md`.
 
+## Combines: a synthetic factor that replaces a real one (2026-09-26)
+
+`groups.apply_level_groups` builds a factor from another factor's levels and,
+unlike every other synthetic factor here, **stands in for** that factor: the
+combine holds the source's slot and the source is collapsed away
+(`roles.complete_assignment`). It is also the one synthetic factor with a
+depth — source − 0.5 — because it is a coarsening of a place in the
+hierarchy, not a new axis. Rule, owners and traps:
+`docs/claude/grouping-and-collapse.md` § "Combines replace their source".
+
 ## See also
 
 - `docs/claude/measure-shape-and-collapse.md` — shape as the second axis of the

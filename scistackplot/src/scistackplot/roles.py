@@ -204,6 +204,32 @@ def complete_assignment(spec: PlotSpec, table: LongTable) -> Assignment:
     consumers that must draw something, e.g. the capability report).
     """
     roles = {name: role for name, role in spec.roles.items() if table.has_factor(name)}
+
+    # Combines (`groups.apply_level_groups`). THE owner of "a replaced source
+    # is collapsed": every reader of roles comes through here, so the source
+    # can never group, facet or fan out while its combine holds the slot —
+    # each combined level is the average of the source levels in it. A combine
+    # the spec gives no role takes its source's, which is the slot move the
+    # panel makes explicitly (`combine.ts switchSlot`) for a spec written some
+    # other way (an endpoint, a hand-edited saved plot).
+    for factor in table.factors:
+        source = factor.combined_from
+        if source and factor.name not in roles and source in spec.roles:
+            roles[factor.name] = spec.roles[source]
+            Log.debug(
+                "combine %r takes %r's role %s", factor.name, source, spec.roles[source],
+                layer=LAYER,
+            )
+    for factor in table.factors:
+        if factor.combined_into and roles.get(factor.name) is not Role.COLLAPSE:
+            if factor.name in roles:
+                Log.debug(
+                    "%r is replaced by combine %r — collapsed (spec said %s)",
+                    factor.name, factor.combined_into, roles[factor.name],
+                    layer=LAYER,
+                )
+            roles[factor.name] = Role.COLLAPSE
+
     defaulted_variant: str | None = None
     for factor in table.factors:
         if factor.name in roles:
@@ -275,8 +301,9 @@ def collapse_order(roles: dict[str, Role], table: LongTable) -> list[str]:
     counts once however many trials it has. Field factors (``ColName``) sit
     inside a record and go first of all; a joined factor variable carries the
     depth of the key it hangs off (``FactorInfo.depth``) and collapses with
-    it; a factor with no depth (a derived bucket) is not in the hierarchy and
-    goes last.
+    it; a combine sits just above its source (``groups.apply_level_groups``),
+    so a replaced source averages away before its combine; a factor with no
+    depth is not in the hierarchy and goes last.
 
     The LAST entry is the sample (:func:`sample_key`). One owner, read by
     ``reduce``, ``reducer``, ``ylimits`` and ``codegen``: a chain computed two
@@ -343,8 +370,8 @@ def line_recurrence(
     * the span has no depth but is synthetic — ``ColName`` (the fields of
       one record) or a variant / code axis (the same record, processed
       again): every record has every level: **True**;
-    * anything else without a depth (a derived bucket, a key with no
-      place, no tick layer at all): **None** — cannot be told, and the
+    * anything else without a depth (a key with no place, a combine of a
+      depthless factor, no tick layer at all): **None** — cannot be told, and the
       caller draws points.
     """
     depths = table.factor_depths
@@ -901,6 +928,34 @@ def kind_requirement(
     return None
 
 
+def _validate_combines(spec: PlotSpec, table: LongTable) -> None:
+    """Refuse combines that cannot be applied as written.
+
+    ``table`` is the derived table (``groups.apply_level_groups`` already
+    ran), which skips these with a WARN so a panel still draws; a figure the
+    user resolves or exports is refused instead, naming the fix.
+    """
+    active: dict[str, str] = {}
+    for group in spec.level_groups:
+        if not (group.name and group.source and group.active):
+            continue
+        if group.source in active:
+            raise RoleError(
+                f"Two combines replace {group.source!r} at once: "
+                f"{active[group.source]!r} and {group.name!r}. Choose one in "
+                f"{group.source!r}'s dropdown."
+            )
+        active[group.source] = group.name
+        if (
+            table.has_factor(group.name)
+            and table.factor(group.name).combined_from != group.source
+        ):
+            raise RoleError(
+                f"The combine {group.name!r} has the name of an existing factor. "
+                f"Rename the combine."
+            )
+
+
 def validate(spec: PlotSpec, table: LongTable) -> None:
     """Raise :class:`RoleError` if the spec cannot be resolved against the table."""
     # --- measures exist -------------------------------------------------
@@ -935,11 +990,24 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
             f"Table factors: {table.factor_names}"
         )
 
+    _validate_combines(spec, table)
+
     shape = table.shape_of(spec.y_measure)
     assignment = complete_assignment(spec, table)
     roles = assignment.roles
 
     # --- colour names a grouping layer -----------------------------------
+    replaced = (
+        table.factor(spec.color).combined_into
+        if spec.color is not None and table.has_factor(spec.color)
+        else None
+    )
+    if replaced:
+        raise RoleError(
+            f"color={spec.color!r} names a factor the combine {replaced!r} "
+            f"replaces, so it no longer groups the marks. Colour {replaced!r} "
+            f"instead, or switch the slot back to {spec.color!r}."
+        )
     if spec.color is not None and spec.color not in assignment.groups:
         raise RoleError(
             f"color={spec.color!r} is not a grouping layer (groups: "

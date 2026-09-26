@@ -51,6 +51,7 @@ from .base import (
     panel_y_title,
     shares_y_axis,
     shows_legend,
+    ruled_bracket_depths,
     shows_x_labels,
     shows_y_labels,
     sample_dropped_reason,
@@ -912,8 +913,19 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
         ax = item.ax
         below = _tick_label_depth_pt(fig, ax, renderer)
         blended = blended_transform_factory(ax.transData, ax.transAxes)
+        texts_by_depth = {depth: next(fitted) for depth in depths}
+        shown = {depth for depth, texts in texts_by_depth.items() if any(texts)}
+        if any(item.labels):
+            shown.add(plan.depth)
+        ruled = ruled_bracket_depths(plan.depth, shown)
         for depth in depths:
-            texts = next(fitted)
+            texts = texts_by_depth[depth]
+            if depth in shown and depth not in ruled:
+                Log.debug(
+                    "x bracket row %r: nothing shown above it, rules omitted",
+                    resolved.x_layers[depth] if depth < len(resolved.x_layers) else depth,
+                    layer=LAYER,
+                )
             # Deeper layers sit closer to the axis; depth 0 is furthest below.
             top = below + X_GROUP_GAP_PT + (plan.depth - depth - 1) * step
             rule = offset_copy(blended, fig=fig, y=-top, units="points")
@@ -931,18 +943,19 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
             for group, text in zip(by_depth[depth], texts):
                 if not text:
                     continue
-                # add_artist, not plot(): a plotted line would join the data
-                # limits and could move the ticks the labels were fitted to.
-                ax.add_artist(
-                    Line2D(
-                        [group.start - X_GROUP_OVERHANG, group.end + X_GROUP_OVERHANG],
-                        [0.0, 0.0],
-                        transform=rule,
-                        color="#888888",
-                        linewidth=0.8,
-                        clip_on=False,
+                if depth in ruled:
+                    # add_artist, not plot(): a plotted line would join the data
+                    # limits and could move the ticks the labels were fitted to.
+                    ax.add_artist(
+                        Line2D(
+                            [group.start - X_GROUP_OVERHANG, group.end + X_GROUP_OVERHANG],
+                            [0.0, 0.0],
+                            transform=rule,
+                            color="#888888",
+                            linewidth=0.8,
+                            clip_on=False,
+                        )
                     )
-                )
                 ax.text(
                     group.centre,
                     0.0,

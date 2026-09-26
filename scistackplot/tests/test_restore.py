@@ -125,7 +125,9 @@ def full_spec() -> PlotSpec:
             FactorVariable("Demographics", "Sex", {"CodeIsLatest": True})
         ],
         level_groups=[
-            LevelGroup("Phase", "session", {"pre": "base", "post": "after"}, "other")
+            LevelGroup(
+                "Phase", "session", {"pre": "base", "post": "after"}, "other", active=False
+            )
         ],
         variant_sets=[
             VariantSet(

@@ -24,7 +24,7 @@ from scistacklog import Log
 
 from .aliases import DisplayText, check_distinct, display_text
 from .cell import cell_collapses, effective_shape
-from .groups import apply_level_groups
+from .groups import active_level_groups, apply_level_groups, effective_mapping
 from .reduce import plan_layout, planned_y_limits, x_axis_title
 from .resolved import DASH_CYCLE
 from .roles import (
@@ -555,10 +555,11 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     # `groups.apply_level_groups`; the endpoint receives the raw table, so the
     # same mapping has to be emitted here or the exported figure is not the one
     # that was previewed.
-    for group in spec.level_groups:
-        if not group.name or not group.source:
-            continue
-        mapping = {str(key): value for key, value in group.mapping.items()}
+    # Only the combines in effect, and each one's effective mapping — the same
+    # two functions the preview reads (`groups.py`). The replaced source's
+    # collapse needs nothing here: it is a COLLAPSE role like any other.
+    for group in active_level_groups(spec):
+        mapping = effective_mapping(group)
         lines.append(f"# {group.source} -> {group.name}")
         lines.append(f"_groups = {mapping!r}")
         lines.append(

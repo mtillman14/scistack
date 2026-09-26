@@ -38,19 +38,18 @@ export interface RestoreNote {
 /** The panel settings a saved plot carries besides its spec. */
 export interface PlotView {
   previewMode: PreviewMode
-  /** The figure-size dropdown's own choice; null = "say what the size is". */
-  aspectChoice: string | null
   /** Which figure of a Separate-figures fan-out was on screen. */
   figureIndex: number
 }
 
-export const DEFAULT_VIEW: PlotView = { previewMode: 'export', aspectChoice: null, figureIndex: 0 }
+// Fit pane by default (user, 2026-09-26): the boxes then show the pane's size.
+export const DEFAULT_VIEW: PlotView = { previewMode: 'pane', figureIndex: 0 }
 
 const PREVIEW_MODES: readonly PreviewMode[] = ['export', 'pane']
 
 /** What Save stores as `view`. */
-export function viewState(previewMode: PreviewMode, aspectChoice: string | null, figureIndex: number): PlotView {
-  return { previewMode, aspectChoice, figureIndex }
+export function viewState(previewMode: PreviewMode, figureIndex: number): PlotView {
+  return { previewMode, figureIndex }
 }
 
 /**
@@ -65,10 +64,9 @@ export function readView(raw: unknown): PlotView {
   const previewMode = PREVIEW_MODES.includes(stored.previewMode as PreviewMode)
     ? (stored.previewMode as PreviewMode)
     : DEFAULT_VIEW.previewMode
-  const aspectChoice = typeof stored.aspectChoice === 'string' ? stored.aspectChoice : null
   const index = stored.figureIndex
   const figureIndex = typeof index === 'number' && Number.isInteger(index) && index >= 0 ? index : 0
-  return { previewMode, aspectChoice, figureIndex }
+  return { previewMode, figureIndex }
 }
 
 /** JSON with object keys sorted, so two equal settings compare equal
@@ -96,7 +94,7 @@ function sortKeys(value: unknown): unknown {
  * through a fan-out is browsing, not an edit.
  */
 export function modifiedKey(spec: unknown, view: PlotView): string {
-  return stableStringify({ spec, previewMode: view.previewMode, aspectChoice: view.aspectChoice })
+  return stableStringify({ spec, previewMode: view.previewMode })
 }
 
 /**

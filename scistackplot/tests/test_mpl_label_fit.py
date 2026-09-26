@@ -418,3 +418,20 @@ def test_a_label_is_measured_at_full_line_height():
         assert measure("BL", 14.0)[0] < measure("BLBL", 14.0)[0]
     finally:
         plt.close(figure)
+
+
+def test_hidden_ticks_leave_the_innermost_brackets_unruled(gait_table):
+    """graph1 + hide_legend_ticks: the rule over each bracket label spans the
+    ticks above it — with those ticks hidden it bracketed nothing
+    (spec/images/bars_wrong_horz_lines.png). The labels stay; the rules go."""
+    _, figure = _draw(_graph1(hide_legend_ticks=True), gait_table)
+    try:
+        # Not _labelled_axes: that keys on tick labels, which are all hidden here.
+        axes = [ax for ax in figure.axes if ax.get_visible() and _bracket_labels(ax)]
+        assert axes
+        for ax in axes:
+            assert not _tick_labels(ax)
+            assert {t.get_text() for t in _bracket_labels(ax)} == set(GROUPS)
+            assert not _bracket_rules(ax)
+    finally:
+        plt.close(figure)

@@ -53,6 +53,7 @@ from .base import (
     panel_y_title,
     shares_y_axis,
     shows_legend,
+    ruled_bracket_depths,
     shows_x_labels,
     shows_y_labels,
     sample_hover,
@@ -252,14 +253,25 @@ def render(
 #: Vertical room, in paper fraction, for one row of nested group labels.
 X_GROUP_ROW = 0.045
 
+#: Gap left at each end of a bracket rule, in category slots, so adjacent
+#: brackets read as separate spans rather than one continuous rule.
+X_GROUP_INSET = 0.05
+
 
 def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
     """Label and bracket each higher x layer beneath the tick labels.
 
-    Drawn in PAPER coordinates from the cell's own domain, so the brackets sit
-    under the panel they describe in a facet grid — a data-coordinate
-    annotation would be clipped by the axis range and would move when the user
-    zooms.
+    Horizontally in the panel's OWN x-axis coordinates — category serial
+    numbers, which are exactly the indices of ``plan.order`` (the axis states
+    that order as ``categoryarray``, and a positional axis puts its levels at
+    the same integers). So a bracket moves with the ticks it names when the
+    user zooms or pans: plotly clips the rule to the axis range and hides a
+    label whose anchor leaves it, just as it drops the ticks. In paper
+    coordinates they stayed put, and a zoom onto one pair of bars still showed
+    every group's label under it.
+
+    Vertically in PAPER coordinates from the cell's own domain, so the brackets
+    hang below the axis (outside any data range) under the panel they describe.
 
     Only under panels that show tick labels: repeating "stim | sham" under every
     row of a grid is the same noise ``shows_x_labels`` already suppresses for
@@ -269,15 +281,19 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
     if not plan or not plan.groups or not shows_x_labels(resolved, row, col):
         return
 
-    x0, y0, cell_width, _cell_height = _cell(
+    _x0, y0, _cell_width, _cell_height = _cell(
         row, col, n_rows, n_cols, _x_depth(resolved)
     )
-    positions = max(1, len(plan.order))
+    x_ref = "x" if slot == 1 else f"x{slot}"
+    Log.debug(
+        "x groups: %d bracket(s) on %s in axis coordinates over %d slot(s)",
+        len(plan.groups), x_ref, len(plan.order), layer=LAYER,
+    )
 
     for group in plan.groups:
-        # Leaf index -> paper x. Centre of a leaf cell is (i + 0.5) / n.
-        left = x0 + cell_width * (group.start / positions)
-        right = x0 + cell_width * ((group.end + 1) / positions)
+        # A leaf at index i spans [i - 0.5, i + 0.5] on the axis.
+        left = group.start - 0.5
+        right = group.end + 0.5
         # Deeper layers sit closer to the axis; depth 0 is furthest below.
         rows_below = plan.depth - group.depth
         y = y0 - X_GROUP_ROW * rows_below - 0.03
@@ -290,7 +306,7 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
                 "text": group.label,
                 "x": (left + right) / 2.0,
                 "y": y,
-                "xref": "paper",
+                "xref": x_ref,
                 "yref": "paper",
                 "showarrow": False,
                 # The one owner's bracket size (textsize), which the matplotlib
@@ -310,12 +326,10 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
                 # rule when the export blanks that label (hide_legend_ticks).
                 "name": f"{X_GROUP_TAG}:{group.depth}:{group.start}",
                 "type": "line",
-                "xref": "paper",
+                "xref": x_ref,
                 "yref": "paper",
-                # Inset slightly so adjacent brackets read as separate spans
-                # rather than one continuous rule.
-                "x0": left + cell_width * 0.004,
-                "x1": right - cell_width * 0.004,
+                "x0": left + X_GROUP_INSET,
+                "x1": right - X_GROUP_INSET,
                 "y0": y + 0.008,
                 "y1": y + 0.008,
                 "line": {"color": "#888888", "width": 1},
@@ -1081,13 +1095,26 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
             if name in fitted:
                 note["text"] = _html(fitted[name])
                 note["font"] = {**note.get("font", {}), "size": brackets.font_pt}
-        # A bracket whose label the export blanked loses its rule too, as it
-        # does in the export (mpl._draw_x_groups).
-        blank = {name for name, text in fitted.items() if not text}
+        # A bracket whose label the export blanked loses its rule too, as does
+        # a row with nothing shown above it to bracket — the export's rule
+        # (base.ruled_bracket_depths, drawn by mpl._draw_x_groups).
+        shown = {
+            depth
+            for depth, row in zip(depths, brackets.rows)
+            if any(text for text in row)
+        }
+        if ticks is None or not ticks.rows or any(ticks.rows[0]):
+            shown.add(plan.depth)
+        ruled = ruled_bracket_depths(plan.depth, shown)
+        blank = {
+            name
+            for name, text in fitted.items()
+            if not text or int(name.split(":")[1]) not in ruled
+        }
         if blank and layout.get("shapes"):
             kept = [s for s in layout["shapes"] if s.get("name") not in blank]
             Log.debug(
-                "preview: %d bracket rule(s) dropped with their blank labels",
+                "preview: %d bracket rule(s) dropped (blank label or nothing shown above)",
                 len(layout["shapes"]) - len(kept),
                 layer=LAYER,
             )

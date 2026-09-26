@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { MIN_PANE_PX, paneExportSize, previewKey, previewRequest } from './preview.js'
+import { MIN_PANE_PX, figureOutputSize, paneExportSize, previewKey, previewRequest } from './preview.js'
 
 test('export mode sends no size: the figure decides at its own', () => {
   assert.deepEqual(previewRequest('export', 913, 604), { mode: 'export' })
@@ -29,4 +29,13 @@ test('the pane readout is the size the view was decided at, only in pane mode', 
   })
   assert.equal(paneExportSize({ mode: 'export', width_in: 8, height_in: 6 }), null)
   assert.equal(paneExportSize(undefined), null)
+})
+
+test('the written size: the spec in export mode, the pane in pane mode', () => {
+  const spec = { width: 8, height: 6 }
+  const pane = { mode: 'pane' as const, width_in: 9.4444, height_in: 5.1111 }
+  assert.deepEqual(figureOutputSize('export', pane, spec), spec)
+  assert.deepEqual(figureOutputSize('pane', pane, spec), { width: 9.44, height: 5.11 })
+  // Before the first pane render: nothing to read yet, the spec stands in.
+  assert.deepEqual(figureOutputSize('pane', undefined, spec), spec)
 })

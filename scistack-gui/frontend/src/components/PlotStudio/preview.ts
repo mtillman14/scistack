@@ -56,3 +56,21 @@ export function paneExportSize(meta: PreviewMeta | undefined): { width: number; 
   if (!meta || meta.mode !== 'pane') return null
   return { width: Math.round(meta.width_in * 100) / 100, height: Math.round(meta.height_in * 100) / 100 }
 }
+
+/**
+ * The size, in inches, the figure is written at: what the Width and Height
+ * boxes show, and what Save, Export code and Add to pipeline use.
+ *
+ * `export`: the spec's own Width x Height. `pane`: the size the pane view was
+ * decided at (`layout.meta.preview`), so the file is the view on screen
+ * (user, 2026-09-26: in Fit pane the boxes ARE the saved size). Before the
+ * first pane render there is no meta yet, and the spec's size stands in.
+ */
+export function figureOutputSize(
+  mode: PreviewMode,
+  meta: PreviewMeta | undefined,
+  specSize: { width: number; height: number },
+): { width: number; height: number } {
+  if (mode !== 'pane') return specSize
+  return paneExportSize(meta) ?? specSize
+}

@@ -2211,6 +2211,26 @@ def plan_layout(labels: list[str], facet) -> GridPlan:
     """
     if not labels:
         return GridPlan(cells=[], n_rows=1, n_cols=1, row_labels=[], col_labels=[], notes=[])
+    # One panel is always a 1 x 1 grid: nothing separates panels, or the
+    # factors that do have one level between them. A pinned N rows/cols or
+    # written slots would otherwise lay the one plot out in a grid of empty
+    # cells (user, 2026-09-26). The pins stay in the spec, so a second panel
+    # brings the layout back.
+    if len(labels) == 1:
+        if facet.n_rows or facet.n_cols or facet.rows or facet.cols:
+            Log.debug(
+                "facet grid 1x1 for a single panel %r: ignoring n_rows=%s n_cols=%s, "
+                "%d row slot(s), %d column slot(s)",
+                labels[0],
+                facet.n_rows,
+                facet.n_cols,
+                len(facet.rows),
+                len(facet.cols),
+                layer=LAYER,
+            )
+        return GridPlan(
+            cells=[(0, 0)], n_rows=1, n_cols=1, row_labels=[], col_labels=[], notes=[]
+        )
 
     # Slot POSITION is meaningful, so the blanks stay in the list: rules[1] is
     # row 2 whether or not row 1 was filled in. Blank matchers never match (see

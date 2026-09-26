@@ -64,3 +64,42 @@ export function aspectName(width: number, height: number, presets: AspectPreset[
 export function pixelReadout(width: number, height: number, dpi: number): string {
   return `${Math.round(width * dpi)} × ${Math.round(height * dpi)} px`
 }
+
+/**
+ * The figure size after the user types a width OR a height. The one owner of
+ * the "Lock aspect" rule (the toolbar checkbox):
+ *
+ * - unlocked: only the edited side moves; the ratio becomes whatever that
+ *   makes (the dropdown then reads it, often Custom);
+ * - locked: the other side follows the CURRENT ratio. At a preset the
+ *   preset's exact ratio is used, so repeated edits cannot drift off it
+ *   through two-decimal rounding; at a custom size, the current w / h.
+ *
+ * Picking a preset in the dropdown is not an edit here: it always keeps the
+ * width and moves the height (`heightFor`), locked or not.
+ */
+export function resizeFigure(
+  current: { width: number; height: number },
+  edit: { width: number } | { height: number },
+  locked: boolean,
+  presets: AspectPreset[]
+): { width: number; height: number } {
+  const next = { ...current, ...edit }
+  const valid = current.width > 0 && current.height > 0
+  if (!locked || !valid) return next
+  const preset = presets.find(p => p.name === aspectName(current.width, current.height, presets))
+  const ratio = preset?.ratio ?? current.width / current.height
+  const round2 = (x: number) => Math.round(x * 100) / 100
+  return 'width' in edit
+    ? { width: edit.width, height: round2(edit.width / ratio) }
+    : { width: round2(edit.height * ratio), height: edit.height }
+}
+
+/** Per viewer, in localStorage: locking is an editing mode, not part of the plot. */
+export const ASPECT_LOCK_STORAGE_KEY = 'scistack.plotStudio.aspectLocked'
+
+/** A remembered lock, locked for anything unreadable (the old default behaviour
+ *  at a preset: the height followed the width). */
+export function parseAspectLocked(raw: string | null | undefined): boolean {
+  return raw !== 'false'
+}

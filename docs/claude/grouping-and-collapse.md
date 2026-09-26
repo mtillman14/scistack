@@ -76,9 +76,10 @@ Rules that follow:
 
 `roles.collapse_order(roles, table)` — deepest first by `factor_depths`;
 field factors (`ColName`, inside a record) first of all; a joined factor
-variable carries the depth of the key it hangs off; a factor with no depth
-(a derived bucket) last. `roles.collapse_steps(spec, roles, table)` splits
-that into:
+variable carries the depth of the key it hangs off; a combine sits just
+above its source (source depth − 0.5), so a replaced source averages away
+before its combine; a factor with no depth last. `roles.collapse_steps(spec,
+roles, table)` splits that into:
 
 * `pre` — averaged away first, each grouping on every other factor still
   present (`reduce._collapse_levels`, one groupby-mean per key);
@@ -139,6 +140,35 @@ statement of what each kind needs, shared by `validate` and
 **Variants are never replicates.** An unassigned variant factor separates
 figures like any unmentioned factor; `validate` refuses `COLLAPSE` on a
 multi-level variant factor and on `Variable`.
+
+## Combines replace their source (2026-09-26)
+
+A combine (`LevelGroup`, Structure > Combine) maps a factor's levels into
+fewer — `stim1..3 → STIM, sham → SHAM` — and, while `active`, **replaces**
+its source. Plan: `.claude/plot-studio-combine-section.md`.
+
+* **One slot, one holder.** The combine takes the source's role, grouping
+  position and colour; the source is never in Grouping or Factors (the
+  panel filters `combined_into`). The panel's switch is
+  `combine.ts switchSlot`; the dropdown's choices are the capability
+  report's `alternatives`.
+* **The replaced source is collapsed** — `roles.complete_assignment` is the
+  one owner and overrides whatever the spec says. So STIM is the nested mean:
+  each subject's mean over its STIM conditions, then across subjects (or
+  every row, with Weight by N). The source can be the sample, and shows in
+  Statistics > Summary / Show sample — its only trace.
+* **Depth = source − 0.5** (`groups.apply_level_groups`), so the combine
+  nests where the source would, collapses after it, and `line_recurrence`
+  answers "a subject does not recur across its cohort". Before this a bucket
+  had no depth, and both `ordered_groups` and `placeGroupLayer` put it
+  INSIDE its own source — one bucket tick per source bracket.
+* **Which combines apply** is `groups.active_level_groups` (first active per
+  source), and each one's mapping is `groups.effective_mapping` (empty label
+  = no bucket). `codegen` reads both, so the export combines like the preview.
+* `validate` refuses: two active combines of one source; a combine named
+  like an existing factor; colour on a replaced source.
+* Keeping the source *alongside* a coarser label is deliberately not a mode:
+  that is "Group by…" on a recorded variable.
 
 ## Defaults (granular and fast)
 

@@ -357,8 +357,9 @@ def _columns(
     present: list[str], averaged: list[str], spec: PlotSpec, table: LongTable
 ) -> list[str]:
     """The header, in order: factors outermost-first (by hierarchy depth, then
-    the table's own order; factors with no depth — a variant axis, a field, a
-    derived bucket — after the schema), then the measure(s)."""
+    the table's own order; a combine sits just above its source; factors
+    with no depth — a variant axis, a field — after the schema), then the
+    measure(s)."""
     depths = table.factor_depths
     factors = [
         name

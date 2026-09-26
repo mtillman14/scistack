@@ -380,15 +380,18 @@ class LocationFilter:
 
 @dataclass(frozen=True)
 class LevelGroup:
-    """A factor derived by bucketing another factor's levels.
+    """A **combine**: a factor derived by combining another factor's levels.
 
-    For a ``session`` key whose values are ``pre, post1, post2, post3``, this is
-    how "baseline vs post" becomes a factor you can colour or facet by without
-    editing any data. A key whose levels *already are* the groups needs none of
-    this — it is a factor with a role today.
+    ``stim1..stim4 -> STIM, sham -> SHAM``. When :attr:`active`, the combined
+    factor **replaces** its source everywhere a role is chosen: it holds the
+    source's slot (role, grouping position, colour) and the source is
+    collapsed away, so each combined level is the average of the source levels
+    in it (user decision 2026-09-26, ``.claude/plot-studio-combine-section.md``).
+    Keeping the source ALONGSIDE a coarser label is deliberately not a mode —
+    that is "Group by…" on a recorded variable.
 
     Kept as a spec field rather than a column somewhere so it travels with the
-    figure: the same bucketing is part of what the plot means, and a reader
+    figure: the same combining is part of what the plot means, and a reader
     re-opening the spec sees the definition rather than an unexplained column.
     """
 
@@ -403,6 +406,10 @@ class LevelGroup:
     #: the bucket they land in. There is no third option where they stay
     #: unlabelled: a NaN group silently becomes its own series.
     unmatched: str | None = None
+    #: Whether this combine currently replaces its source. At most one combine
+    #: per source is active (``roles.validate``); an inactive one is kept so
+    #: switching back to it from the source's dropdown restores its buckets.
+    active: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -410,6 +417,7 @@ class LevelGroup:
             "source": self.source,
             "mapping": dict(self.mapping),
             "unmatched": self.unmatched,
+            "active": self.active,
         }
 
     @classmethod
@@ -419,6 +427,7 @@ class LevelGroup:
             source=raw["source"],
             mapping=dict(raw.get("mapping") or {}),
             unmatched=raw.get("unmatched"),
+            active=bool(raw.get("active", True)),
         )
 
 
@@ -991,7 +1000,8 @@ class PlotSpec:
     #: refused as measures; as factors they take a role like any other and give
     #: you the grouping the data already records.
     factor_variables: list[FactorVariable] = field(default_factory=list)
-    #: Factors derived by bucketing another factor's levels.
+    #: Combines: factors derived by combining another factor's levels, each
+    #: replacing its source while active (:class:`LevelGroup`).
     level_groups: list[LevelGroup] = field(default_factory=list)
     #: Named variants to plot — one entry per row of the GUI's Variants section.
     #:
@@ -1057,8 +1067,10 @@ class PlotSpec:
         never ordered by the data's own nesting: **deeper keys inside
         shallower**, which in an innermost-first list means deeper first — a
         subject-level ``InterventionGroup`` wraps the sessions rather than the
-        other way round. A factor with no depth (a variant axis, a derived
-        bucket) is not in the hierarchy at all; it goes innermost, which keeps
+        other way round. A combine carries a depth just above its source's
+        (``groups.apply_level_groups``), so it lands where the source would.
+        A factor with no depth (a variant axis) is not in the hierarchy at
+        all; it goes innermost, which keeps
         the derived thing inside the recorded ones — the readable arrangement
         for "v1 against v2 inside each session".
 

@@ -113,8 +113,10 @@ class FactorInfo:
     #: A schema key is pinned by itself and everything above it, so ``subject``
     #: is 1 and ``session`` is 2. A variable joined in as a factor is pinned by
     #: the keys it is recorded at, so a subject-level ``Demographics`` column is
-    #: also 1. A variant axis or a derived bucket has no depth: neither is a
-    #: place in the hierarchy.
+    #: also 1. A variant axis has no depth: it is not a place in the hierarchy.
+    #: A combined factor (``groups.apply_level_groups``) sits just above its
+    #: source — ``source depth - 0.5`` — because every source level belongs to
+    #: exactly one combined level; hence ``float``.
     #:
     #: One use, and it is the reason the two cases had to end up on the same
     #: scale: it orders the grouping layers (:meth:`PlotSpec.ordered_groups`)
@@ -123,7 +125,15 @@ class FactorInfo:
     #: the data's own nesting read outward-in, and deriving it beats making the
     #: user press ↑ every time — which is what the plain append did, always
     #: putting the newest layer innermost.
-    depth: int | None = None
+    depth: int | float | None = None
+    #: On a combined factor: the factor whose levels it combines (and whose
+    #: slot it holds). Set only by ``groups.apply_level_groups``.
+    combined_from: str | None = None
+    #: On a source replaced by an active combine: that combine's name. The
+    #: source stays in the table so its rows can be averaged within each
+    #: combined level (``roles.complete_assignment`` collapses it), but the
+    #: panel lists it only through the combine's dropdown.
+    combined_into: str | None = None
 
     @property
     def display(self) -> str:
@@ -257,7 +267,7 @@ class LongTable:
         return self.measure(measure).shape
 
     @property
-    def factor_depths(self) -> dict[str, int]:
+    def factor_depths(self) -> dict[str, int | float]:
         """``{factor: depth}`` for every factor that has one — the sort key a
         nested x axis nests by (:attr:`FactorInfo.depth`)."""
         return {f.name: f.depth for f in self.factors if f.depth is not None}
@@ -408,6 +418,11 @@ class LongTable:
                     # newly added layer by the SAME number the figure does,
                     # rather than deciding for itself what "outer" means.
                     "depth": f.depth,
+                    # The combine slot links (`groups.apply_level_groups`):
+                    # the panel lists a replaced source only through its
+                    # combine's dropdown.
+                    "combined_from": f.combined_from,
+                    "combined_into": f.combined_into,
                 }
                 for f in self.factors
             ],

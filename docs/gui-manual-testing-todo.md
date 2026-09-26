@@ -11,6 +11,243 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zze. Structure > Combine: a combined factor replaces its source — added 2026-09-26
+
+**What changed:** "+ Group levels of…" left Structure > Grouping and became
+its own section, **Structure > Combine**, above Grouping. A combine
+(stim1–3 → STIM, sham → SHAM) now **replaces** its source everywhere a role
+is chosen: in Grouping and Factors the row's name is a dropdown
+(`condition` / `Stim (combined)`), and switching it moves the role, the
+grouping position and the colour. The replaced source is always collapsed
+(each combined level is the average of its source levels) and is visible
+only in Statistics (Summary note, Show sample). Combine rows are one line
+when collapsed and only one opens at a time. The editor is bucket-first:
+pick a bucket, click levels, shift-click for a range. This also fixes the odd
+x ticks (a bucket nested INSIDE its own source). Plan:
+`.claude/plot-studio-combine-section.md`.
+
+**Backend steps:** none. `scidb.log` shows `combine 'X' replaces 'Y' (depth
+1 -> 0.5): N level(s) -> [...]` when a combine applies. The webview console
+(Developer Tools) shows `[combine] add / slot / editor mount|unmount` lines.
+
+**Frontend steps:**
+1. Open a scalar variable with a condition-like key. Structure > Combine >
+   **+ Combine levels of…** > the key. A row opens expanded, one bucket per
+   level; the figure is unchanged.
+2. **+ Add bucket**, rename it STIM (Enter), then click two levels: they move
+   into STIM and their own one-level buckets disappear. Shift-click a third
+   level after the first: the whole range joins STIM.
+3. Clear a level (click it while STIM is the target): it turns dashed and the
+   note says it is dropped. Tick **Keep the rest as** `other`: it reappears.
+4. Click the row's header: it collapses to `▸ name ← source · N → M`. Edit
+   something elsewhere (kind, a role): it stays collapsed. Open another combine:
+   the first closes.
+5. Grouping: the combined factor sits where the source was, its name a
+   dropdown. The x ticks show only the combined levels — never the source's
+   levels inside brackets. Tag it as the colour.
+6. Switch the dropdown back to the source: the source returns with the same
+   role, grouping position and colour, and every level (dropped ones too).
+   The Combine row shows **use**; click it to switch back.
+7. Add a second combine of the same source: the dropdown offers all three;
+   only one is ever in use.
+8. ✕ on the in-use combine: the source comes back in its slot.
+9. Bar with subject collapsed: STIM's bar = the mean over subjects of each
+   subject's mean over the STIM conditions (Summary note mentions the source).
+10. Save plot data / export code: the exported figure matches the preview.
+
+---
+
+## 0zzd. Lock aspect checkbox; Custom is a readout — added 2026-09-26
+
+**What changed:** a **Lock aspect** checkbox in the figure toolbar, after W/H.
+Locked (the default, remembered per viewer): changing W moves H and changing H
+moves W, keeping the current ratio, even a custom one. Unlocked: W and H move
+independently. The Appearance > Size > Aspect dropdown now only SAYS what the
+size is; "Custom" appears greyed when the size matches no preset and can no
+longer be picked. Picking a ratio always keeps W and sets H.
+
+**Backend steps:** none (frontend only; both bundles rebuilt).
+
+**Frontend steps:**
+1. Open a plot, Preview at Export size, Aspect 4:3, Lock aspect ticked.
+   ▲ on W: H follows and Aspect stays 4:3. Type H = 3: W becomes 4.
+2. Untick Lock aspect. Type H = 5 with W = 8: W stays 8, Aspect reads
+   **Custom** (greyed).
+3. Tick Lock aspect again. ▲ on W: H follows at 8:5 (1.6); Aspect stays Custom.
+4. Untick Lock, make a custom size, then pick **16:9**: W stays the same and
+   H becomes W × 9/16.
+5. Open the Aspect dropdown: Custom cannot be selected.
+6. Reload the panel: the checkbox keeps its state.
+7. Webview devtools console: `[Plot Studio] figure_resized` on each W/H edit
+   (with `locked`), `[Plot Studio] aspect_picked` on a ratio pick.
+
+## 0zzc. Figure size in the toolbar, ▲▼ steppers, Fit pane default, 1 × 1 grid — added 2026-09-26
+
+**What changed:** Width and Height moved from Appearance > Size to the figure
+toolbar, beside **Preview at**, with a unit dropdown (in / mm / px; px = the
+saved raster at 200 dpi). Switching the unit converts the boxes and changes
+nothing in the plot. "saves as X × Y in" and "Use this size" are gone.
+**Preview at** now defaults to **Fit pane**, and the boxes then show the pane's
+size — which is also what Save / Export code / Add to pipeline write. Editing
+W or H (or Aspect) in Fit pane fixes that size and switches to Export size.
+Font, every text size, Line/Sample weight, W and H have ▲▼ arrows (also
+ArrowUp/ArrowDown in the box): 1 pt; 0.1×; 0.1 in / 1 mm / 10 px. An empty
+text-size box steps from the size it is drawn at. With one panel (no Separate
+panels factor, or only one level between them) the grid is 1 × 1 whatever
+N rows/cols say; the Layout boxes show a locked 1 and the slots are hidden.
+
+**Backend steps:** `scistackplot/src/scistackplot/reduce.py` (`plan_layout`)
+changed — restart the GUI backend. Run
+`cd /workspace/scistackplot && pytest tests/test_render.py -k "one_panel or stale_pins"`.
+
+**Frontend steps:**
+1. Open a new plot. Preview at reads **Fit pane**; W and H show the pane's
+   size. Resize the panel: the numbers follow.
+2. Save image in Fit pane. The file's size matches the numbers shown (in px
+   mode, the PNG's pixel size equals W × H exactly). The webview devtools console
+   logs `[Plot Studio] save_size` with the mode and size.
+3. Click ▲ on W in Fit pane. Preview at switches to **Export size**, W goes up
+   by one step, H follows when Lock aspect is ticked (see 0zzd).
+4. Switch the unit to mm, then px, then in: the boxes convert (8 in = 203.2 mm
+   = 1600 px) and the figure does not re-render.
+5. Appearance > Text: ▲ on an empty "auto · 11.7" box gives 12, not 1.
+   ▲▼ on Font moves every empty size. ArrowUp in a focused box also steps.
+6. Appearance > Marks: ▲▼ on Sample weight steps 0.1; landing on 1 clears it.
+7. Appearance > Size shows only Aspect.
+8. Structure: give one factor Separate panels, pin N rows = 2, N columns = 3.
+   Then filter to one level of it: the boxes show a greyed, locked 1 × 1 and
+   the figure is ONE plot (no empty cells). Remove the filter: 2 × 3 is back.
+9. Set every factor off Separate panels with those pins still in the spec:
+   one plot, no empty cells.
+
+## 0zzb. Copy the figure to the clipboard as a PNG — added 2026-09-26
+
+**What changed:** a **Copy PNG** button next to Save image in the Plot Studio
+figure toolbar. It copies the PREVIEW (Plotly, in the webview, instant) in
+light colours even in dark mode, at 300 dpi at the figure's export size
+(1 pt = 1 px x 300/72), capped at 8192 px a side / 40 MP. A pane-filling
+preview (no export size) is copied at its on-screen size x 300/72. The rule
+lives in `PlotStudio/copyImage.ts`; the Plotly/clipboard call is in
+`clipboardPng.ts`.
+
+**Backend**
+1. Nothing to run. A failed copy goes to `scidb.log` as a client error with
+   `where = Plot Studio copy_png` and the figure index and size.
+
+**Frontend**
+1. Open any plot, click **Copy PNG**. The notice should say e.g.
+   `Copied 2400 × 1800 px PNG (300 dpi)` for an 8 x 6 in figure.
+2. Paste into Keynote/PowerPoint/Word/Preview (⌘V, or File > New from
+   Clipboard in Preview). It should be sharp when zoomed in. Expect it to paste
+   LARGE (Chromium drops the dpi tag, so apps read 72/96 dpi); scale it down.
+3. In dark mode, the pasted figure should still have a white background with
+   dark text, the same as the saved file.
+4. On a figure with the "Showing a reduced view" note, the notice should end
+   with `— reduced view, as previewed`.
+5. If the notice says `Could not copy: ...`, send the message: the webview may
+   refuse clipboard image writes, which the automated tests can't check.
+6. Webview devtools console: `[Plot Studio] copy_png {…, ms, bytes}` shows the
+   timing and size.
+
+---
+
+## 0zza. No bracket rule over hidden tick labels — added 2026-09-26
+
+**What changed:** each nested-x bracket rule sits above its label and spans the
+labels above it. When "hide ticks the legend gives" blanks the tick row (e.g.
+Side A/U, coloured and in the legend), the innermost rules (above PRE/POST)
+bracketed nothing, so they are no longer drawn. Rules for outer rows (above
+SHAM, RMT30, …) stay, because PRE/POST sit above them. One owner:
+`scistackplot.render.base.ruled_bracket_depths`, used by the export and the
+preview. See `spec/images/bars_wrong_horz_lines.png`.
+
+**Backend**
+1. With `scidb.log` at DEBUG, look for `x bracket row ...: nothing shown above
+   it, rules omitted` (export) and `preview: N bracket rule(s) dropped (blank
+   label or nothing shown above)`.
+
+**Frontend**
+1. Open a bar plot with x = Side inside session inside group, coloured by Side,
+   with the legend on and the legend-duplicate tick labels hidden.
+2. There should be no grey line above PRE/POST. There should still be a line
+   above each group name (SHAM, RMT30, …), spanning its PRE and POST.
+3. Turn the tick hiding off. A/U should come back, and the PRE/POST lines with them.
+4. Save the figure. The file should match the preview.
+
+---
+
+## 0zz. Nested x group labels follow zoom — added 2026-09-26
+
+**What changed:** the group labels and bracket rules under a nested x axis
+(e.g. `stim | sham` over `pre post`) are placed on the panel's own x axis
+instead of fixed to the panel. Zooming or panning moves and clips them with
+the tick labels, for every plot kind. Before, zooming onto one pair of bars
+still showed every group's label below the plot.
+
+**Backend steps:** none beyond the usual: commit and push, then pull in the
+GUI runtime clone and restart it (the fix is in `scistackplot`, so no bundle
+rebuild). With DEBUG logging, `scidb.log` shows
+`x groups: N bracket(s) on x… in axis coordinates` once per bottom panel.
+
+**Frontend steps:**
+1. Open Plot Studio on a bar plot with two Grouping factors on x (about 12
+   groups of 2 bars).
+2. Box-zoom onto one pair of bars.
+3. Double-click to reset, then pan sideways with the axis drag.
+4. Repeat step 2 with a facet grid (Layout > 2 columns), and with Box and
+   Violin kinds.
+
+**Expected:** after step 2 you see only the 2 tick labels and the ONE group
+label (with its rule) of that pair. Rules are cut off at the plot edge. A
+label is hidden once its centre leaves the visible range, even if part of its
+rule is still showing (plotly does this). After step 3 every label is back
+under its own bars. Saved PNG/SVG files are unchanged.
+
+---
+
+## 0zy. Plot Studio controls regrouped; figure toolbar — added 2026-09-26
+
+**What changed:** the left rail is now five collapsible groups: **Data**
+(Variants, Schema keys, Filters), **Chart** (Plot type as a 2-column grid,
+Per-record value), **Structure** (Grouping, Factors, Layout), **Statistics**
+(Summary, Show sample), and **Appearance** (Size, Y axis, X tick labels,
+Marks, Text, Labels). Appearance starts closed. A collapsed group's header
+shows a one-line summary. Fixed explanations are hidden behind an ⓘ next to
+each section title. Font moved from Figure size to Appearance > Text. Line
+weight and the sample Weight both moved to Appearance > Marks. **Preview at**,
+"Use this size", Format and every save/export button moved to a toolbar over
+the figure. The rail is 280 px (was 260). Map:
+`docs/claude/plot-studio-controls.md`.
+
+**Backend steps:** none (frontend only; both bundles rebuilt). Commit and
+push, then pull in the GUI runtime clone.
+
+**Frontend steps:**
+1. Open Plot Studio on a scalar variable. Check the order: DATA, CHART,
+   STRUCTURE, STATISTICS (for a bar plot), APPEARANCE (closed, with a summary
+   like `8×6 in · 14 pt · y auto`).
+2. Collapse Data and Structure. Each header shows a summary. Close and
+   reopen the plot tab: the same groups are still collapsed.
+3. Click ⓘ next to "Filters". The explanation appears; click again to hide it.
+4. Open Appearance > Text. The text sizes are ONE column of label + box, and
+   nothing is cut off at the right edge. Font sits beside Reset.
+5. Type a Width value, collapse Appearance mid-edit, and reopen it. The
+   typed text is still there.
+6. Pick a spaghetti plot with Show sample ticked. Appearance > Marks shows
+   both Line weight and Sample weight.
+7. Toolbar: switch Preview at to Fit pane. "saves as W × H in [Use this
+   size]" appears. Click Save data (CSV): the depth chooser drops down over
+   the figure without making the figure jump. Hide the controls (❮): the
+   toolbar stays.
+8. Save an image: the progress text appears in the toolbar between the
+   preview controls and the buttons (hover it for the full text).
+
+**What you should see:** no horizontal scroll in the rail; nothing
+overlapping; the figure does not change size when the chooser opens or a
+save notice appears.
+
+---
+
 ## 0zx. Mark colours and fill opacity match the exported figure — added 2026-09-26
 
 **What changed:** one owner for the marks' palette

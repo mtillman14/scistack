@@ -869,3 +869,42 @@ def test_matplotlib_ticklabels_and_title_follow_the_same_rule(
         assert ax.get_xlabel() == ""
     assert figure.get_supxlabel() == resolved.labels.x
     matplotlib.pyplot.close(figure)
+
+
+# --- one panel is a 1 x 1 grid ------------------------------------------------
+
+
+def test_one_panel_ignores_pinned_rows_cols_and_slots():
+    """Nothing separates panels (or one level between them): whatever N rows,
+    N columns or slots the spec still carries, the grid is 1 x 1 — never one
+    plot in a grid of empty cells (user, 2026-09-26)."""
+    from scistackplot import FacetOptions
+    from scistackplot.reduce import plan_layout
+    from scistackplot.spec import MatchOp, Matcher
+
+    facet = FacetOptions(
+        n_rows=2,
+        n_cols=3,
+        rows=[Matcher(op=MatchOp("contains"), value="R"), Matcher(op=MatchOp("contains"), value="L")],
+        cols=[],
+    )
+    plan = plan_layout(["RHAM"], facet)
+    assert (plan.n_rows, plan.n_cols) == (1, 1)
+    assert plan.cells == [(0, 0)]
+    assert plan.notes == []
+    # The pins are kept, not rewritten: a second panel lays out by them again.
+    assert plan_layout(["RHAM", "LHAM"], facet).n_rows == 2
+
+
+def test_unfaceted_figure_with_stale_pins_is_one_cell(scalar_table, box_spec):
+    """No factor has the Separate panels role, but the spec kept N rows/cols
+    from when one did: the rendered figure is still one plot."""
+    import dataclasses
+
+    from scistackplot import FacetOptions
+
+    spec = dataclasses.replace(box_spec, facet=FacetOptions(n_rows=2, n_cols=2))
+    resolved = resolve(spec, scalar_table)[0]
+    assert (resolved.grid_rows, resolved.grid_cols) == (1, 1)
+    meta = render_plotly(resolved)["layout"]["meta"]
+    assert (meta["rows"], meta["cols"], meta["panels"]) == (1, 1, 1)

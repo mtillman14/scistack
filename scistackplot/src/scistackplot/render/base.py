@@ -61,6 +61,28 @@ def shows_x_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
     return (row + 1, col) not in occupied_cells(resolved)
 
 
+def ruled_bracket_depths(plan_depth: int, shown: set[int]) -> set[int]:
+    """The bracket rows (``x_plan`` depths) that draw their rules.
+
+    A rule sits ABOVE its own label and spans the labels above it — the deeper
+    bracket rows and, nearest the axis, the tick row (depth ``plan_depth``).
+    So a row is ruled only when its own labels show AND some row nearer the
+    axis shows labels for the rule to bracket. With the tick labels hidden
+    (``hide_legend_ticks``: the legend names them), the innermost rules
+    bracketed nothing (spec/images/bars_wrong_horz_lines.png).
+
+    ``shown`` holds every depth, tick row included, with at least one label
+    drawn. ONE owner for both backends: the export draws by it and the preview
+    drops the same rules.
+    """
+    return {
+        depth
+        for depth in range(plan_depth)
+        if depth in shown
+        and any(nearer in shown for nearer in range(depth + 1, plan_depth + 1))
+    }
+
+
 def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
     """Same idea on the other axis: nothing directly to the left.
 

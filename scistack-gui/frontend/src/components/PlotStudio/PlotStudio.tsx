@@ -35,6 +35,7 @@ import SavedPlotsRail, { type SaveResult } from './SavedPlotsRail'
 import {
   isModified,
   iterateSignature as iterateSignatureOf,
+  DEFAULT_VIEW,
   modifiedKey,
   readView,
   viewState,
@@ -57,13 +58,25 @@ import {
 import {
   type AspectPreset,
   CUSTOM_ASPECT,
+  ASPECT_LOCK_STORAGE_KEY,
   FALLBACK_PRESETS,
   aspectName,
   heightFor,
-  pixelReadout,
+  parseAspectLocked,
+  resizeFigure,
 } from './figureSize'
 import {
-  paneExportSize,
+  SIZE_UNITS,
+  SIZE_UNIT_STORAGE_KEY,
+  type SizeUnit,
+  fromInches,
+  parseSizeUnit,
+  toInches,
+  unitInfo,
+} from './figureUnits'
+import { roundTo, stepValue } from './stepper'
+import {
+  figureOutputSize,
   previewKey,
   previewRequest,
   type PreviewMeta,
@@ -82,8 +95,37 @@ import {
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
 import { type Labelable, type SpecAliases } from './aliasEdit'
 import { type MarkWeightsMeta, type WeightKey, weightTitle, withWeight } from './markWeights'
+import { copyFigurePng } from './clipboardPng'
+import {
+  addCombine,
+  assignLevels,
+  combineSummary,
+  levelRange,
+  readBuckets,
+  removeCombine,
+  renameBucket,
+  renameCombine,
+  switchSlot,
+  unusedLevels,
+  writeBuckets,
+  type LevelGroup,
+} from './combine'
 import { otherPlotTheme, plotThemeVars, screenFigure } from './plotTheme'
 import { setPlotTheme, usePlotTheme } from './usePlotTheme'
+import {
+  OPEN_GROUPS_STORAGE_KEY,
+  appearanceSummary,
+  chartSummary,
+  dataSummary,
+  parseOpenGroups,
+  railWidthClass,
+  serializeOpenGroups,
+  statisticsSummary,
+  structureSummary,
+  textSizeColumns,
+  type GroupId,
+  type RailWidth,
+} from './sidebarGroups'
 
 /** The dpi `plot_save` renders a raster at when the request names none
  *  (`api/plot.py` SaveRequest). Only the readout uses it; the save itself
@@ -160,23 +202,19 @@ interface FactorInfo {
   group_available?: boolean
   group_reason?: string | null
   /** How many schema keys pin one of this factor's values — 1 for `subject`
-   *  and for a subject-level grouping column, 2 for `session`. Null for a
-   *  variant axis or a derived bucket, which are not places in the hierarchy.
-   *  The sort key for the grouping list; see `groups.ts`. */
+   *  and for a subject-level grouping column, 2 for `session`. A combine sits
+   *  just above its source (e.g. 1.5). Null for a variant axis, which is not a
+   *  place in the hierarchy. The sort key for the grouping list; see `groups.ts`. */
   depth?: number | null
-}
-
-/** A factor derived by bucketing another factor's levels. */
-interface LevelGroup {
-  /** The new factor's name, e.g. "Phase". */
-  name: string
-  /** The factor being bucketed, e.g. "session". */
-  source: string
-  /** `{level: group label}`. */
-  mapping: Record<string, string>
-  /** null DROPS rows the mapping does not name; a string buckets them. There is
-   *  no "leave them unlabelled" — a NaN group becomes its own silent series. */
-  unmatched: string | null
+  /** On a combine: the factor it combines (and whose slot it holds). */
+  combined_from?: string | null
+  /** On a source replaced by an active combine: that combine. Such a factor
+   *  is collapsed by the backend and listed only through the dropdown. */
+  combined_into?: string | null
+  /** The slot this factor stands in (its source, or itself) and every choice
+   *  for it — the Grouping / Factors dropdown. One choice: plain text. */
+  slot?: string
+  alternatives?: string[]
 }
 
 /** A variable joined in as a factor, or one column of it.
@@ -776,19 +814,54 @@ export default function PlotStudio({
   const [addingVariant, setAddingVariant] = useState(false)
   // The schema location picker — the whole of the "Schema keys" section.
   const [locationPickerOpen, setLocationPickerOpen] = useState(false)
-  // The figure-size dropdown's own choice, held as state rather than derived
-  // from the size alone: derived-only, picking "Custom" over an 8 x 6 figure
-  // would snap straight back to 4:3. Null means "say what the size is".
-  const [aspectChoice, setAspectChoice] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [canvasHeight, setCanvasHeight] = useState(0)
   const [canvasWidth, setCanvasWidth] = useState(0)
   // Preview at the EXPORT size (the label and legend decisions Save will make,
   // drawn at width x height) or fitted to the PANE (decided at the pane's size;
-  // the Figure size section then says what export size reproduces it). A
+  // the figure toolbar then says what export size reproduces it). A
   // view setting, not part of the spec.
-  const [previewMode, setPreviewMode] = useState<PreviewMode>('export')
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(DEFAULT_VIEW.previewMode)
   const observerRef = useRef<ResizeObserver | null>(null)
+
+  // The controls rail's groups (sidebarGroups.ts): which are open, per viewer.
+  // Browser storage may be missing or throw (private window, preview), so
+  // every read and write is guarded and the defaults always render.
+  const [openGroups, setOpenGroups] = useState<Record<GroupId, boolean>>(() => {
+    try {
+      return parseOpenGroups(window.localStorage.getItem(OPEN_GROUPS_STORAGE_KEY))
+    } catch {
+      return parseOpenGroups(null)
+    }
+  })
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(OPEN_GROUPS_STORAGE_KEY, serializeOpenGroups(openGroups))
+    } catch {
+      // Not remembered; the rail still works.
+    }
+  }, [openGroups])
+  const toggleGroup = useCallback(
+    (id: GroupId) => setOpenGroups(prev => ({ ...prev, [id]: !prev[id] })),
+    []
+  )
+  // The rail's width class. Measured, never assumed: the rail is 280 px today
+  // and may become user-resizable, and rows such as the text sizes lay out by
+  // it. A callback ref for the same reason as canvasRef below.
+  const [railWidth, setRailWidth] = useState<RailWidth>('narrow')
+  const railObserverRef = useRef<ResizeObserver | null>(null)
+  const controlsRef = useCallback((node: HTMLDivElement | null) => {
+    railObserverRef.current?.disconnect()
+    if (!node || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0].contentRect.width
+      // 0 is the collapsed rail; keep the last real class.
+      if (width > 0) setRailWidth(railWidthClass(width))
+    })
+    observer.observe(node)
+    railObserverRef.current = observer
+  }, [])
+  useEffect(() => () => railObserverRef.current?.disconnect(), [])
 
   // Saved plots (.claude/plan-saved-plots.md). The backend owns storage,
   // names and restoring; `savedPlots.ts` owns the view settings and the
@@ -843,7 +916,6 @@ export default function PlotStudio({
     setDescribe(null)
     setSpec(null)
     setFigures([])
-    setAspectChoice(null)
     setLoadError('')
     setLoadedPlot(null)
     setRestoreNotes([])
@@ -1404,24 +1476,27 @@ export default function PlotStudio({
     []
   )
 
+  // --- combines (Structure > Combine; the edits live in `combine.ts`) ------
+  //
+  // Which combine row is expanded. ONE at a time, held here rather than in
+  // each row: a row's own state was lost whenever it remounted, which is how
+  // an edited combine kept springing back open. A new combine opens; every
+  // other row shows its one-line summary.
+  const [openCombine, setOpenCombine] = useState<number | null>(null)
+
   const addLevelGroup = useCallback((source: string, levels: (string | number)[]) => {
     setSpec(prev => {
       if (!prev) return prev
-      // Every level starts in its own bucket, named after itself: the figure is
-      // unchanged until the user actually merges two of them, so adding a group
-      // can never silently redraw the plot.
-      const mapping: Record<string, string> = {}
-      levels.forEach(level => { mapping[String(level)] = String(level) })
-      const group: LevelGroup = {
-        name: `${source} group`,
-        source,
-        mapping,
-        unmatched: null,
-      }
-      return { ...prev, level_groups: [...(prev.level_groups ?? []), group] }
+      const taken = factors.map(f => f.name)
+      const next = addCombine(prev, source, levels, taken)
+      setOpenCombine((next.level_groups ?? []).length - 1)
+      console.debug('[combine] add', source, '->', (next.level_groups ?? [])[(next.level_groups ?? []).length - 1]?.name)
+      return next
     })
-  }, [])
+  }, [factors])
 
+  /** Mapping / catch-all edits. The name has its own edit, `renameLevelGroup`,
+   *  because the slot (role, grouping position, colour) is keyed by it. */
   const editLevelGroup = useCallback((index: number, patch: Partial<LevelGroup>) => {
     setSpec(prev => {
       if (!prev) return prev
@@ -1432,15 +1507,19 @@ export default function PlotStudio({
     })
   }, [])
 
+  const renameLevelGroup = useCallback((index: number, name: string) => {
+    setSpec(prev => (prev ? renameCombine(prev, index, name) : prev))
+  }, [])
+
+  /** The slot dropdown in Grouping / Factors: hand `source`'s slot to `choice`. */
+  const switchCombineSlot = useCallback((source: string, choice: string) => {
+    console.debug('[combine] slot', source, '->', choice)
+    setSpec(prev => (prev ? switchSlot(prev, source, choice) : prev))
+  }, [])
+
   const removeLevelGroup = useCallback((index: number) => {
-    setSpec(prev =>
-      prev
-        ? {
-            ...prev,
-            level_groups: (prev.level_groups ?? []).filter((_, i) => i !== index),
-          }
-        : prev
-    )
+    setOpenCombine(open => (open === index ? null : open !== null && open > index ? open - 1 : open))
+    setSpec(prev => (prev ? removeCombine(prev, index) : prev))
   }, [])
 
   /** Commit the row the "+ Add variant" picker built.
@@ -1563,11 +1642,14 @@ export default function PlotStudio({
   // this one only has to agree with it, and `ordered_groups` is the shared
   // definition both are written from.
   const groupLayers = useMemo(() => {
+    // A source its combine replaced never groups — the backend collapses it
+    // whatever the spec says — so it never shows as a layer either.
+    const replaced = new Set(factors.filter(f => f.combined_into).map(f => f.name))
     const holders = Object.entries(spec?.roles ?? {})
-      .filter(([, role]) => role === 'group')
+      .filter(([name, role]) => role === 'group' && !replaced.has(name))
       .map(([name]) => name)
     return orderGroups(spec?.groups ?? [], holders, factorDepths)
-  }, [spec?.roles, spec?.groups, factorDepths])
+  }, [spec?.roles, spec?.groups, factorDepths, factors])
 
   const groupableVariables = describe?.groupable_variables ?? []
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
@@ -1614,8 +1696,24 @@ export default function PlotStudio({
     [spec?.level_groups]
   )
   const bucketable = useMemo(
-    () => factors.filter(f => !f.is_variant && !derivedNames.has(f.name)),
+    () =>
+      factors.filter(
+        f => !f.is_variant && !f.combined_from && !derivedNames.has(f.name)
+      ),
     [factors, derivedNames]
+  )
+  // What the Grouping and Factors lists show: every factor but a source a
+  // combine has replaced — that one is reached through the combine's name
+  // dropdown, and the backend keeps it collapsed (`roles.complete_assignment`).
+  const listedFactors = useMemo(
+    () => factors.filter(f => !f.combined_into),
+    [factors]
+  )
+  // Source levels per combine source, for the Combine section's editor and
+  // summaries. A replaced source is still in `factors` with every level.
+  const sourceLevels = useCallback(
+    (source: string) => factors.find(f => f.name === source)?.levels ?? [],
+    [factors]
   )
 
   // Rows come from the SPEC, annotations from the backend. The spec is the
@@ -1705,6 +1803,10 @@ export default function PlotStudio({
     ?.mark_weights
   const effRows = Math.max(1, gridMeta.rows ?? 1)
   const effCols = Math.max(1, gridMeta.cols ?? 1)
+  // One panel (nothing separates panels, or one level between the factors
+  // that do): the backend lays out 1 x 1 whatever is pinned
+  // (reduce.plan_layout), and the boxes say so instead of showing stale pins.
+  const singlePanel = gridMeta.panels !== undefined && gridMeta.panels <= 1
   const layoutNotes = gridMeta.layout_notes ?? []
 
   // Only factors that separate PANELS can separate y limits — a colour or
@@ -1733,14 +1835,106 @@ export default function PlotStudio({
       ? [10 ** plotlyYRange.range[0], 10 ** plotlyYRange.range[1]]
       : plotlyYRange?.range
 
+  // --- figure size ----------------------------------------------------------
+  // The spec's own size, in inches (StyleOptions.width/height).
+  const presets = describe?.figure_presets ?? FALLBACK_PRESETS
+  const specWidth = typeof spec?.style?.width === 'number' ? spec.style.width : 8
+  const specHeight = typeof spec?.style?.height === 'number' ? spec.style.height : 6
+  // The size the file is WRITTEN at, and what the toolbar's Width and Height
+  // show: the spec's in Export size, the pane's in Fit pane
+  // (preview.figureOutputSize owns the rule).
+  const previewMeta = (figures[0]?.figure?.layout?.meta as { preview?: PreviewMeta } | undefined)
+    ?.preview
+  const { width: figWidth, height: figHeight } = figureOutputSize(previewMode, previewMeta, {
+    width: specWidth,
+    height: specHeight,
+  })
+  // Save, Export code and Add to pipeline take this spec, so in Fit pane the
+  // file is the view on screen. Saved plots keep `spec`: their view records
+  // Fit pane, and reopening fits the pane again.
+  const outputSpec = useMemo(() => {
+    if (!spec || (figWidth === specWidth && figHeight === specHeight)) return spec
+    return { ...spec, style: { ...(spec.style ?? {}), width: figWidth, height: figHeight } }
+  }, [spec, figWidth, figHeight, specWidth, specHeight])
+  // Points in the export, px in the preview — one number, so a change is
+  // visible before anything is saved. 14 is `TextSizes.base`.
+  const fontSize = typeof spec?.style?.text?.base === 'number' ? spec.style.text.base : 14
+  // What the size IS: the dropdown only reads it. Custom is a readout (it
+  // cannot be picked); whether W and H move together is the Lock checkbox.
+  const aspect = aspectName(figWidth, figHeight, presets)
+  // Per viewer, like the unit: an editing mode, not part of the plot.
+  const [aspectLocked, setAspectLocked] = useState<boolean>(() => {
+    try {
+      return parseAspectLocked(window.localStorage.getItem(ASPECT_LOCK_STORAGE_KEY))
+    } catch {
+      return parseAspectLocked(null)
+    }
+  })
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ASPECT_LOCK_STORAGE_KEY, String(aspectLocked))
+    } catch {
+      // Not remembered; the checkbox still works.
+    }
+  }, [aspectLocked])
+  // Editing the size in Fit pane fixes it: the pane size shown becomes the
+  // spec's, then the edit applies, and the preview follows at Export size.
+  const commitSize = useCallback(
+    (patch: { width?: number; height?: number }, why: string) => {
+      if (previewMode === 'pane') {
+        console.info('[Plot Studio] size_fixed_from_pane', { why, pane: { width: figWidth, height: figHeight }, patch })
+        setPreviewMode('export')
+      }
+      setStyle({ width: figWidth, height: figHeight, ...patch })
+    },
+    [previewMode, figWidth, figHeight, setStyle]
+  )
+  const onAspect = useCallback(
+    (name: string) => {
+      // A ratio keeps the width and moves the height, locked or not.
+      if (presets.find(p => p.name === name)?.ratio == null) return
+      const height = heightFor(figWidth, name, presets, figHeight)
+      console.info('[Plot Studio] aspect_picked', { name, from: aspect, width: figWidth, height })
+      commitSize({ height }, 'aspect')
+    },
+    [presets, aspect, figWidth, figHeight, commitSize]
+  )
+  // The Lock rule has one owner: figureSize.resizeFigure.
+  const onResize = useCallback(
+    (edit: { width: number } | { height: number }, why: 'width' | 'height') => {
+      const size = resizeFigure({ width: figWidth, height: figHeight }, edit, aspectLocked, presets)
+      console.info('[Plot Studio] figure_resized', { why, locked: aspectLocked, from: { width: figWidth, height: figHeight }, to: size })
+      commitSize(size, why)
+    },
+    [figWidth, figHeight, aspectLocked, presets, commitSize]
+  )
+  const onWidth = useCallback((width: number) => onResize({ width }, 'width'), [onResize])
+  const onHeight = useCallback((height: number) => onResize({ height }, 'height'), [onResize])
+  // The unit the Width and Height boxes are shown in (figureUnits.ts); the
+  // spec stays in inches. Per viewer; storage may be missing or throw.
+  const [sizeUnit, setSizeUnit] = useState<SizeUnit>(() => {
+    try {
+      return parseSizeUnit(window.localStorage.getItem(SIZE_UNIT_STORAGE_KEY))
+    } catch {
+      return parseSizeUnit(null)
+    }
+  })
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIZE_UNIT_STORAGE_KEY, sizeUnit)
+    } catch {
+      // Not remembered; the boxes still work.
+    }
+  }, [sizeUnit])
+
   // --- export -------------------------------------------------------------
   const handleExport = useCallback(() => {
     if (!spec) return
     setNotice('')
-    callBackend('plot_export', { spec, ...sourceParams })
+    callBackend('plot_export', { spec: outputSpec, ...sourceParams })
       .then(raw => setCode((raw as { source: string }).source))
       .catch(err => setNotice(`Export failed: ${(err as Error).message}`))
-  }, [spec, sourceParams])
+  }, [spec, outputSpec, sourceParams])
 
   // The background save's job id. A ref, not state: the first figure can
   // report progress before the render that set it has committed, and the
@@ -1767,39 +1961,41 @@ export default function PlotStudio({
     ...allFormats.filter(f => !['png', 'svg', 'pdf', 'eps'].includes(f)),
   ]
 
-  // --- figure size ----------------------------------------------------------
-  // The size the SAVE draws at, in inches. The preview keeps filling its pane;
-  // this is deliberately about the file, which is where the ratio matters.
-  const presets = describe?.figure_presets ?? FALLBACK_PRESETS
-  const figWidth = typeof spec?.style?.width === 'number' ? spec.style.width : 8
-  const figHeight = typeof spec?.style?.height === 'number' ? spec.style.height : 6
-  // Points in the export, px in the preview — one number, so a change is
-  // visible before anything is saved. 14 is `TextSizes.base`.
-  const fontSize = typeof spec?.style?.text?.base === 'number' ? spec.style.text.base : 14
-  const aspect = aspectChoice ?? aspectName(figWidth, figHeight, presets)
-  const onAspect = useCallback(
-    (name: string) => {
-      setAspectChoice(name)
-      // A ratio keeps the width and moves the height; custom moves nothing.
-      if (presets.find(p => p.name === name)?.ratio != null) {
-        setStyle({ height: heightFor(figWidth, name, presets, figHeight) })
-      }
-    },
-    [presets, figWidth, figHeight, setStyle]
-  )
-  const onWidth = useCallback(
-    (width: number) => setStyle({ width, height: heightFor(width, aspect, presets, figHeight) }),
-    [aspect, presets, figHeight, setStyle]
-  )
-  const onHeight = useCallback(
-    (height: number) => {
-      setStyle({ height })
-      // Back to "say what it is": a typed height that lands on 16:9 reads
-      // as 16:9, and anything else reads as custom.
-      setAspectChoice(null)
-    },
-    [setStyle]
-  )
+
+  /** Copy the figure on screen to the clipboard as a high-dpi PNG
+   *  (`copyImage.ts`). The PREVIEW, in light colours whatever the theme, at
+   *  its export size when it has one, else at the size it is drawn in the
+   *  pane. Instant, unlike a save — and so reduced when the preview is. */
+  const copyFigure = useCallback(async () => {
+    const shown = figures.find(f => f.index === figureIndex) ?? figures[0]
+    if (!shown) return
+    const fixed = (shown.figure.layout?.meta as { fixed_size?: [number, number] } | undefined)
+      ?.fixed_size
+    const drawn = document.querySelector(
+      `[data-ps-figure="${shown.index}"] .js-plotly-plot`
+    ) as HTMLElement | null
+    const width = fixed?.[0] ?? drawn?.clientWidth ?? 800
+    const height = fixed?.[1] ?? drawn?.clientHeight ?? 600
+    setNotice('Copying…')
+    try {
+      const result = await copyFigurePng(shown.figure, width, height)
+      console.info('[Plot Studio] copy_png', { index: shown.index, width, height, ...result })
+      setNotice(
+        `Copied ${result.widthPx} × ${result.heightPx} px PNG (${result.dpi} dpi)` +
+          (shown.downsampled_from ? ' — reduced view, as previewed' : '')
+      )
+    } catch (err) {
+      const message = (err as Error).message
+      setNotice(`Could not copy: ${message}`)
+      // To scidb.log: a clipboard refusal sends no RPC otherwise.
+      callBackend('report_client_error', {
+        where: 'Plot Studio copy_png',
+        message,
+        stack: (err as Error).stack ?? '',
+        component_stack: `figure ${shown.index}, ${width} x ${height} px`,
+      }).catch(() => undefined)
+    }
+  }, [figures, figureIndex])
 
   /** Save one figure, or the whole fan-out.
    *
@@ -1855,6 +2051,8 @@ export default function PlotStudio({
         const job = `ps-${Math.random().toString(36).slice(2, 10)}`
         saveJob.current = job
         saveKind.current = 'image'
+        // Which size the file is written at, and why (Fit pane = the pane's).
+        console.info('[Plot Studio] save_size', { previewMode, width: figWidth, height: figHeight })
         setSaving(true)
         setNotice(
           savingAll
@@ -1862,7 +2060,7 @@ export default function PlotStudio({
             : 'Saving this figure at full resolution…'
         )
         await callBackend('plot_save_start', {
-          spec,
+          spec: outputSpec,
           path,
           job_id: job,
           image_format: imageFormat,
@@ -1881,7 +2079,7 @@ export default function PlotStudio({
         setNotice(`Could not save: ${(err as Error).message}`)
       }
     },
-    [spec, sourceParams, title, figureIndex, figureCount, imageFormat]
+    [spec, outputSpec, previewMode, figWidth, figHeight, sourceParams, title, figureIndex, figureCount, imageFormat]
   )
 
   /** Save the plot's long table as CSV — the rows the figure is drawn from
@@ -2003,14 +2201,14 @@ export default function PlotStudio({
   const handleAddToPipeline = useCallback(() => {
     if (!spec) return
     setNotice('Writing endpoint…')
-    callBackend('plot_add_to_pipeline', { spec })
+    callBackend('plot_add_to_pipeline', { spec: outputSpec })
       .then(raw => {
         const result = raw as { ok?: boolean; error?: string; function_name?: string; file?: string }
         if (result.error) setNotice(`Could not add: ${result.error}`)
         else setNotice(`Added ${result.function_name} to ${result.file}. Wire it up on the canvas.`)
       })
       .catch(err => setNotice(`Could not add: ${(err as Error).message}`))
-  }, [spec])
+  }, [spec, outputSpec])
 
   // --- saved plots ----------------------------------------------------------
   // Keyed by the variable `describe` resolved (the prop may be empty, meaning
@@ -2030,8 +2228,8 @@ export default function PlotStudio({
   }, [savedVariable])
 
   const currentKey = useMemo(
-    () => modifiedKey(spec, viewState(previewMode, aspectChoice, figureIndex)),
-    [spec, previewMode, aspectChoice, figureIndex]
+    () => modifiedKey(spec, viewState(previewMode, figureIndex)),
+    [spec, previewMode, figureIndex]
   )
   // `baseline` is a dependency so that a save of UNCHANGED settings (the
   // key does not move) still captures: the save resets it to null, and that
@@ -2053,7 +2251,7 @@ export default function PlotStudio({
           variable: savedVariable,
           name,
           spec,
-          view: viewState(previewMode, aspectChoice, figureIndex),
+          view: viewState(previewMode, figureIndex),
           overwrite,
           current_plot_id: loadedPlot?.plot_id ?? null,
         })) as { ok: boolean; plot?: SavedPlotInfo; plots?: SavedPlotInfo[]; exists?: SavedPlotInfo }
@@ -2071,7 +2269,7 @@ export default function PlotStudio({
         setSavedBusy(false)
       }
     },
-    [spec, savedVariable, previewMode, aspectChoice, figureIndex, loadedPlot]
+    [spec, savedVariable, previewMode, figureIndex, loadedPlot]
   )
 
   const openSaved = useCallback((plotId: string) => {
@@ -2094,7 +2292,6 @@ export default function PlotStudio({
         restoredSignature.current = iterateSignatureOf(restored.roles)
         setSpec(restored)
         setPreviewMode(shown.previewMode)
-        setAspectChoice(shown.aspectChoice)
         setFigureIndex(shown.figureIndex)
         if (result.capabilities) {
           setCapabilities(result.capabilities)
@@ -2218,894 +2415,1053 @@ export default function PlotStudio({
       rightRail={savedRail}
       sidebar={
         <div
+          ref={controlsRef}
           style={{
             ...styles.controls,
             ...(controlsHidden ? styles.controlsHidden : null),
           }}
         >
-          {hasVariants && (
-            <Section title="Variants">
-              <div style={styles.hint}>
-                Each row is one variant: a variable, narrowed to one version of
-                the pipeline that produced it. Two or more become a factor you
-                can colour or facet by.
-              </div>
-              <VariantRows
-                rows={variantRows}
-                primary={spec?.measures?.[0] ?? title}
-                stackable={stackable}
-                onRename={(index, name) => editVariantSet(index, { name })}
-                onSetVariable={(index, variable) =>
-                  editVariantSet(index, { variable })
-                }
-                onEdit={index => setVariantEditor(index)}
-                onRemove={removeVariantSet}
-                onAdd={() => setAddingVariant(true)}
-              />
-              <VariantReadout summary={capabilities?.variants} />
-            </Section>
-          )}
-
-          {schemaKeys.length > 0 && (
-            <Section title="Schema keys">
-              {/* One button, and nothing else. The flat per-key LevelPickers
-                  that used to live here are gone, not hidden: they could only
-                  express a Cartesian product, they said nothing about whether
-                  the data at a location was any good, and keeping them beside
-                  the picker would be two controls answering one question — the
-                  way the Variants/Factors duplication went wrong. */}
-              <div style={styles.hint}>
-                Which records to plot, and whether each location's data is
-                sound. Omit a level everywhere (by key), or pick locations one
-                by one. Everything is included until you say otherwise.
-              </div>
-              <button
-                type="button"
-                style={styles.locationButton}
-                onClick={() => setLocationPickerOpen(true)}
+          {/* Five groups, in the order a figure is built
+              (docs/claude/plot-studio-controls.md). A collapsed group says
+              what it holds in one line, so the whole rail fits on a screen.
+              Hidden with display:none, not unmounted: an input mid-edit
+              keeps its text across a collapse. */}
+          <Group
+            title="Data"
+            open={openGroups.data}
+            onToggle={() => toggleGroup('data')}
+            summary={dataSummary({
+              variantCount: variantRows.length,
+              locations: schemaKeys.length > 0 ? locationSummary : null,
+              filterCount: (spec?.filters ?? []).length,
+            })}
+          >
+            {hasVariants && (
+              <Section
+                title="Variants"
+                hint="Each row is one variant: a variable, narrowed to one version of the pipeline that produced it. Two or more become a factor you can colour or facet by."
               >
-                {locationSummary}
-              </button>
-            </Section>
-          )}
-
-          <Section title="Filters">
-            <div style={styles.hint}>
-              Narrow what is drawn without changing what anything means.
-            </div>
-            {otherFilterable.map(factor => (
-              <LevelPicker
-                key={factor.name}
-                factor={factor}
-                onChange={levels => setLevelFilter(factor.name, levels)}
-              />
-            ))}
-            {spec && capabilities?.shape === 'scalar' && (
-              <RangeFilter
-                measure={spec.measures[0]}
-                filter={(spec.filters ?? []).find(f => f.column === spec.measures[0])}
-                onChange={(minimum, maximum) =>
-                  setRangeFilter(spec.measures[0], minimum, maximum)
-                }
-              />
+                <VariantRows
+                  rows={variantRows}
+                  primary={spec?.measures?.[0] ?? title}
+                  stackable={stackable}
+                  onRename={(index, name) => editVariantSet(index, { name })}
+                  onSetVariable={(index, variable) =>
+                    editVariantSet(index, { variable })
+                  }
+                  onEdit={index => setVariantEditor(index)}
+                  onRemove={removeVariantSet}
+                  onAdd={() => setAddingVariant(true)}
+                />
+                <VariantReadout summary={capabilities?.variants} />
+              </Section>
             )}
-          </Section>
 
-          {/* Grouping: what groups EXIST, then which of them group the x axis.
-              These were two sections with near-identical names ("Groups" and
-              an "X grouping" list that only appeared once two factors already
-              held X, making it unreachable until the user found the role
-              dropdown). One question, one place, read top to bottom. */}
-          <Section title="Grouping">
-            {/* Refusals count towards showing this: if every column of a sheet
-                was rejected, the reasons are the only thing that explains an
-                otherwise empty section. */}
-            {(groupableVariables.length > 0 ||
-              Object.keys(describe?.groupable_refused ?? {}).length > 0 ||
-              (spec?.level_groups ?? []).length > 0) && (
-              <>
-                <div style={styles.hint}>
-                  Grouping the data already records, and buckets you define.
-                  Both become factors you can colour, facet, or group the x
-                  axis by.
-                </div>
-                {/* One button, and the groupings it produced. The flat list of
-                    every column of every wide variable that used to live here
-                    did not scale — a demographics sheet is 18 checkboxes and
-                    ~100 queries on every panel open — and it could not express
-                    WHICH version of the sheet supplies the labels. Both are the
-                    picker's job now, on the canvas the user already knows. */}
+            {schemaKeys.length > 0 && (
+              <Section
+                title="Schema keys"
+                hint="Which records to plot, and whether each location's data is sound. Omit a level everywhere (by key), or pick locations one by one. Everything is included until you say otherwise."
+              >
+                {/* One button, and nothing else. The flat per-key LevelPickers
+                    that used to live here are gone, not hidden: they could only
+                    express a Cartesian product, they said nothing about whether
+                    the data at a location was any good, and keeping them beside
+                    the picker would be two controls answering one question — the
+                    way the Variants/Factors duplication went wrong. */}
                 <button
                   type="button"
                   style={styles.locationButton}
-                  onClick={() => setGroupPickerOpen(true)}
-                  disabled={groupableVariables.length === 0}
-                  title={
-                    groupableVariables.length === 0
-                      ? 'No variable is recorded at or above this data’s level.'
-                      : 'Choose what stratifies this figure'
-                  }
+                  onClick={() => setLocationPickerOpen(true)}
                 >
-                  {(spec?.factor_variables ?? []).length === 0
-                    ? 'Group by…'
-                    : `Group by: ${(spec?.factor_variables ?? [])
-                        .map(f => f.column ?? f.variable)
-                        .join(', ')}`}
+                  {locationSummary}
                 </button>
-                {(spec?.factor_variables ?? []).map(group => {
-                  const name = group.column ?? group.variable
-                  return (
-                    <div key={name} style={styles.kindRow}>
-                      <span style={styles.factorName}>{name}</span>
-                      <span style={styles.groupRole}>
-                        {groupingPlacement(spec, groupLayers, factors, name)}
-                      </span>
-                    </div>
-                  )
-                })}
-                {/* Variables refused in place, for the reason the variant
-                    picker shows them: one a user expected to group by, absent
-                    with no explanation, is indistinguishable from a bug. */}
-                {Object.entries(describe?.groupable_refused ?? {}).map(
-                  ([label, reason]) => (
-                    <div key={label} style={styles.refusedRow} title={reason}>
-                      {label} — {reason}
-                    </div>
-                  )
-                )}
+              </Section>
+            )}
+
+            <Section title="Filters" hint="Narrow what is drawn without changing what anything means.">
+              {otherFilterable.map(factor => (
+                <LevelPicker
+                  key={factor.name}
+                  factor={factor}
+                  onChange={levels => setLevelFilter(factor.name, levels)}
+                />
+              ))}
+              {spec && capabilities?.shape === 'scalar' && (
+                <RangeFilter
+                  measure={spec.measures[0]}
+                  filter={(spec.filters ?? []).find(f => f.column === spec.measures[0])}
+                  onChange={(minimum, maximum) =>
+                    setRangeFilter(spec.measures[0], minimum, maximum)
+                  }
+                />
+              )}
+            </Section>
+          </Group>
+
+          {/* Plot type is the first real decision: it decides what Grouping,
+              Statistics and the mark weights offer, so it heads the rail's
+              questions about the figure rather than sitting sixth. */}
+          <Group
+            title="Chart"
+            open={openGroups.chart}
+            onToggle={() => toggleGroup('chart')}
+            summary={chartSummary({
+              kindLabel: spec?.kind ? KIND_LABELS[spec.kind] ?? spec.kind : null,
+              perRecord: capabilities?.cell_collapse?.active ? spec?.cell_statistic ?? 'mean' : null,
+            })}
+          >
+            <Section title="Plot type">
+              <div style={styles.kindGrid}>
+                {(capabilities?.kinds ?? []).map(info => (
+                  <label
+                    key={info.kind}
+                    style={{ ...styles.kindRow, opacity: info.available ? 1 : 0.45 }}
+                    title={info.reason ?? ''}
+                  >
+                    <input
+                      type="radio"
+                      name="plot-kind"
+                      checked={spec?.kind === info.kind}
+                      disabled={!info.available}
+                      onChange={() => setKind(info.kind)}
+                      style={{ marginRight: 6 }}
+                    />
+                    {KIND_LABELS[info.kind] ?? info.kind}
+                  </label>
+                ))}
+              </div>
+              {/* Shown only for a 1-D measure, because only there is there
+                  anything to reduce. No on/off switch beside it: the KIND says
+                  whether the vectors are drawn or summarized, so "collapse on,
+                  kind = line" is a state that cannot be expressed rather than one
+                  the panel has to adjudicate. */}
+              {capabilities?.cell_collapse?.applies && (
+                <>
+                  <label style={styles.factorRow}>
+                    <span style={styles.factorName}>Per-record value</span>
+                    <select
+                      value={spec?.cell_statistic ?? 'mean'}
+                      onChange={e => setCellStatistic(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="mean">Mean</option>
+                      <option value="median">Median</option>
+                    </select>
+                  </label>
+                  <div style={styles.hint}>
+                    {capabilities.cell_collapse.active
+                      ? `Each vector is reduced to its ${
+                          spec?.cell_statistic ?? 'mean'
+                        } — one value per record — and plotted like any scalar.`
+                      : 'Applies to scatter, strip, spaghetti, box, violin and bar: each vector becomes one value per record.'}
+                  </div>
+                </>
+              )}
+            </Section>
+          </Group>
+
+          {/* Every role in one group: what groups the marks, what separates
+              panels and figures, what collapses — and the facet grid right
+              under the Subplot role that creates it. */}
+          <Group
+            title="Structure"
+            open={openGroups.structure}
+            onToggle={() => toggleGroup('structure')}
+            summary={structureSummary({
+              grouped: groupLayers,
+              color: spec?.color ?? null,
+              roles: (spec?.roles ?? {}) as Record<string, string>,
+            })}
+          >
+            {/* Grouping: what groups EXIST, then which of them group the x axis.
+                These were two sections with near-identical names ("Groups" and
+                an "X grouping" list that only appeared once two factors already
+                held X, making it unreachable until the user found the role
+                dropdown). One question, one place, read top to bottom. */}
+            {/* Combine: make a factor with fewer levels, which REPLACES its
+                source everywhere a role is chosen. Above Grouping because
+                Grouping and Factors list its result — and switch back to the
+                source from the result's name there. */}
+            {(bucketable.length > 0 || (spec?.level_groups ?? []).length > 0) && (
+              <Section
+                title="Combine"
+                hint="Combine a factor's levels into fewer, averaging each combined group — e.g. four stim conditions into one STIM. The result replaces the factor everywhere; switch back from its name in Grouping or Factors. To keep the original levels and group them by a label, record the label as a variable and use Group by…."
+              >
                 {(spec?.level_groups ?? []).map((group, index) => (
-                  <LevelGroupEditor
+                  <CombineEditor
                     key={index}
                     group={group}
+                    levels={sourceLevels(group.source)}
+                    open={openCombine === index}
+                    onToggle={() => setOpenCombine(open => (open === index ? null : index))}
                     onEdit={patch => editLevelGroup(index, patch)}
+                    onRename={name => renameLevelGroup(index, name)}
+                    onUse={() => switchCombineSlot(group.source, group.name)}
                     onRemove={() => removeLevelGroup(index)}
                   />
                 ))}
                 <BucketAdder factors={bucketable} onAdd={addLevelGroup} />
-              </>
+              </Section>
             )}
 
-            {/* The grouping list: one mark per level combination, innermost
-                first, one layer optionally coloured. What a "mark" is — a
-                bar, a line, a spaghetti line — is the kind's reading, and the
-                backend says it in `hint`. A 2-D measure refuses with a reason. */}
-            {grouping?.available ? (
-              <GroupingList
-                factors={factors}
-                layers={groupLayers}
-                color={spec?.color ?? null}
-                hint={grouping.hint}
-                labelled={grouping.labelled_layers ?? groupLayers.length}
-                maxLabelled={grouping.max_labelled_layers}
-                onToggle={(name, on) => setRole(name, on ? 'group' : 'iterate')}
-                onMove={moveGroupLayer}
-                onColor={setColor}
-              />
-            ) : (
-              grouping?.reason && (
-                <div style={styles.hint}>
-                  <strong>Grouping:</strong> {grouping.reason}
+            <Section
+              title="Grouping"
+              hint="Grouping the data already records (Group by…) and the factors that group the marks. A combined factor's name is a dropdown: switch back to the factor it replaced."
+            >
+              {/* Refusals count towards showing this: if every column of a sheet
+                  was rejected, the reasons are the only thing that explains an
+                  otherwise empty section. */}
+              {(groupableVariables.length > 0 ||
+                Object.keys(describe?.groupable_refused ?? {}).length > 0) && (
+                <>
+                  {/* One button, and the groupings it produced. The flat list of
+                      every column of every wide variable that used to live here
+                      did not scale — a demographics sheet is 18 checkboxes and
+                      ~100 queries on every panel open — and it could not express
+                      WHICH version of the sheet supplies the labels. Both are the
+                      picker's job now, on the canvas the user already knows. */}
+                  <button
+                    type="button"
+                    style={styles.locationButton}
+                    onClick={() => setGroupPickerOpen(true)}
+                    disabled={groupableVariables.length === 0}
+                    title={
+                      groupableVariables.length === 0
+                        ? 'No variable is recorded at or above this data’s level.'
+                        : 'Choose what stratifies this figure'
+                    }
+                  >
+                    {(spec?.factor_variables ?? []).length === 0
+                      ? 'Group by…'
+                      : `Group by: ${(spec?.factor_variables ?? [])
+                          .map(f => f.column ?? f.variable)
+                          .join(', ')}`}
+                  </button>
+                  {(spec?.factor_variables ?? []).map(group => {
+                    const name = group.column ?? group.variable
+                    return (
+                      <div key={name} style={styles.kindRow}>
+                        <span style={styles.factorName}>{name}</span>
+                        <span style={styles.groupRole}>
+                          {groupingPlacement(spec, groupLayers, factors, name)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  {/* Variables refused in place, for the reason the variant
+                      picker shows them: one a user expected to group by, absent
+                      with no explanation, is indistinguishable from a bug. */}
+                  {Object.entries(describe?.groupable_refused ?? {}).map(
+                    ([label, reason]) => (
+                      <div key={label} style={styles.refusedRow} title={reason}>
+                        {label} — {reason}
+                      </div>
+                    )
+                  )}
+                </>
+              )}
+
+              {/* The grouping list: one mark per level combination, innermost
+                  first, one layer optionally coloured. What a "mark" is — a
+                  bar, a line, a spaghetti line — is the kind's reading, and the
+                  backend says it in `hint`. A 2-D measure refuses with a reason. */}
+              {grouping?.available ? (
+                <GroupingList
+                  factors={listedFactors}
+                  layers={groupLayers}
+                  onSwitchSlot={switchCombineSlot}
+                  color={spec?.color ?? null}
+                  hint={grouping.hint}
+                  labelled={grouping.labelled_layers ?? groupLayers.length}
+                  maxLabelled={grouping.max_labelled_layers}
+                  onToggle={(name, on) => setRole(name, on ? 'group' : 'iterate')}
+                  onMove={moveGroupLayer}
+                  onColor={setColor}
+                />
+              ) : (
+                grouping?.reason && (
+                  <div style={styles.hint}>
+                    <strong>Grouping:</strong> {grouping.reason}
+                  </div>
+                )
+              )}
+            </Section>
+
+            <Section
+              title="Factors"
+              hint="Everything not grouped: separate figures, separate panels, or collapsed (averaged). The last collapsed key is the sample the error bars are drawn over."
+            >
+              {listedFactors.filter(factor => spec?.roles?.[factor.name] !== 'group').map(factor => (
+                <label key={factor.name} style={styles.factorRow}>
+                  <span style={styles.factorName}>
+                    <SlotName factor={factor} factors={factors} onSwitch={switchCombineSlot} />
+                    {factor.is_variant && <span style={styles.variantTag} title="A pipeline variant, not a replicate">variant</span>}
+                    {factor.is_field && <span style={styles.fieldTag} title="The fields of this struct/dict variable — one subplot each by default">fields</span>}
+                    <span style={styles.levelCount}>{factor.level_count}</span>
+                  </span>
+                  <select
+                    value={spec?.roles?.[factor.name] ?? 'iterate'}
+                    onChange={e => setRole(factor.name, e.target.value as Role)}
+                    style={styles.select}
+                  >
+                    {/* `factors` falls back to describe's raw table, which
+                        carries no role report — an empty <select> would be a
+                        dead control, so show at least what it is set to. */}
+                    {(factor.roles ?? fallbackRoles(spec?.roles?.[factor.name])).map(option => (
+                      <option
+                        key={option.role}
+                        value={option.role}
+                        // Disabled rather than hidden: a role that is unavailable
+                        // BECAUSE of another choice ("something else already has
+                        // Color") has to stay visible, or the control silently
+                        // shrinks and the user cannot see what to undo.
+                        disabled={!option.available}
+                        title={option.reason ?? option.hint}
+                      >
+                        {option.label}
+                        {option.available ? '' : ' —'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </Section>
+
+            {faceted && (
+              <Section
+                title="Layout"
+                hint="Set rows or columns — the other follows from the number of subplots. Then name what belongs in each one; blank takes whatever is left, in order."
+              >
+                <div style={styles.gridSizeRow}>
+                  <GridSizeInput
+                    label="N rows"
+                    value={spec?.facet?.n_rows ?? null}
+                    effective={effRows}
+                    locked={singlePanel}
+                    onChange={n => setFacet({ n_rows: n })}
+                  />
+                  <GridSizeInput
+                    label="N columns"
+                    value={spec?.facet?.n_cols ?? null}
+                    effective={effCols}
+                    locked={singlePanel}
+                    onChange={n => setFacet({ n_cols: n })}
+                  />
                 </div>
-              )
-            )}
-          </Section>
 
-          <Section title="Factors">
-            <div style={styles.hint}>
-              Everything not grouped: separate figures, separate panels, or
-              collapsed (averaged). The last collapsed key is the sample the
-              error bars are drawn over.
-            </div>
-            {factors.filter(factor => spec?.roles?.[factor.name] !== 'group').map(factor => (
-              <label key={factor.name} style={styles.factorRow}>
-                <span style={styles.factorName}>
-                  {factor.display}
-                  {factor.is_variant && <span style={styles.variantTag} title="A pipeline variant, not a replicate">variant</span>}
-                  {factor.is_field && <span style={styles.fieldTag} title="The fields of this struct/dict variable — one subplot each by default">fields</span>}
-                  <span style={styles.levelCount}>{factor.level_count}</span>
-                </span>
+                {singlePanel ? (
+                  <div style={styles.hint}>
+                    One panel, so the grid is 1 × 1. Rows, columns and slots you
+                    set apply again once there is more than one panel.
+                  </div>
+                ) : (
+                  <>
+                    <RuleSlots
+                      title="Rows"
+                      count={effRows}
+                      rules={spec?.facet?.rows ?? []}
+                      onEdit={(i, patch) => setRuleAt('rows', i, patch)}
+                    />
+                    <RuleSlots
+                      title="Columns"
+                      count={effCols}
+                      rules={spec?.facet?.cols ?? []}
+                      onEdit={(i, patch) => setRuleAt('cols', i, patch)}
+                    />
+                  </>
+                )}
+
+                {/* Never let the layout quietly disobey a rule: if a subplot had
+                    to move, or the grid had to grow, say which and why. */}
+                {layoutNotes.map((note, index) => (
+                  <div key={index} style={styles.layoutNote}>{note}</div>
+                ))}
+              </Section>
+            )}
+          </Group>
+
+          {/* "What is averaged, and how the average is shown": the centre and
+              spread, and the collapsed keys' own data drawn over them. The
+              collapse ROLE itself stays with the other roles in Structure. */}
+          {(summarizing || capabilities?.sample_overlay) && (
+            <Group
+              title="Statistics"
+              open={openGroups.statistics}
+              onToggle={() => toggleGroup('statistics')}
+              summary={statisticsSummary({
+                summarizing,
+                centre: spec?.aggregate?.statistic ?? 'mean',
+                spread: spec?.aggregate?.error ?? 'sd',
+                pooled: spec?.aggregate?.pooled ?? false,
+                shown: capabilities?.sample_overlay?.shown ?? [],
+              })}
+            >
+              {summarizing && (
+                <Section title="Summary">
+                  <label style={styles.factorRow}>
+                    <span style={styles.factorName}>Centre</span>
+                    <select
+                      value={spec?.aggregate?.statistic ?? 'mean'}
+                      onChange={e => setAggregate({ statistic: e.target.value })}
+                      style={styles.select}
+                    >
+                      <option value="mean">Mean</option>
+                      <option value="median">Median</option>
+                    </select>
+                  </label>
+                  <label style={styles.factorRow}>
+                    <span style={styles.factorName}>Spread</span>
+                    <select
+                      value={spec?.aggregate?.error ?? 'sd'}
+                      onChange={e => setAggregate({ error: e.target.value })}
+                      style={styles.select}
+                    >
+                      <option value="sd">SD</option>
+                      <option value="sem">SEM</option>
+                      <option value="ci95">95% CI</option>
+                      <option value="iqr">IQR</option>
+                      <option value="none">None</option>
+                    </select>
+                  </label>
+                  {/* The chain, as the figure runs it: nested and unweighted by
+                      default, each subject counting once however many trials it
+                      has; pooled is the deliberate alternative (weight by N). */}
+                  <label style={styles.factorRow} title="Drop every collapsed factor in one step, so a subject with more trials weighs more">
+                    <span style={styles.factorName}>Weight by N</span>
+                    <input
+                      type="checkbox"
+                      checked={spec?.aggregate?.pooled ?? false}
+                      onChange={e => setAggregate({ pooled: e.target.checked })}
+                    />
+                  </label>
+                  <div style={styles.hint}>{sampleNote(capabilities, spec)}</div>
+                </Section>
+              )}
+
+              {capabilities?.sample_overlay && (
+                <Section
+                  title="Show sample"
+                  hint={
+                    capabilities.sample_overlay.available
+                      ? "Overlay the collapsed keys' data as points: tick a key to see one point per level of it. Deeper keys imply the shallower ones."
+                      : undefined
+                  }
+                >
+                  {/* The collapsed keys' data drawn on top of the marks — for the
+                      distribution behind a bar, and for the raw data behind it.
+                      Python decides what a tick means (a deeper key implies the
+                      shallower ones: a trial is a trial OF a subject), whether the
+                      points are joined and why; this section displays the answer.
+                      Its Weight lives with the other mark weights, in Appearance. */}
+                  {!capabilities.sample_overlay.available ? (
+                    <div style={styles.hint}>{capabilities.sample_overlay.reason}</div>
+                  ) : (
+                    <>
+                      {capabilities.sample_overlay.factors.map(factor => (
+                        <label
+                          key={factor.name}
+                          style={styles.factorRow}
+                          title={isLocked(factor) ? `Implied by a deeper key — part of every point's identity` : undefined}
+                        >
+                          <span style={styles.factorName}>{factor.name}</span>
+                          <input
+                            type="checkbox"
+                            checked={isTicked(factor)}
+                            disabled={isLocked(factor)}
+                            onChange={e => setShowSample(factor.name, e.target.checked)}
+                          />
+                        </label>
+                      ))}
+                      {capabilities.sample_overlay.shown.length > 0 && (
+                        <>
+                          <label
+                            style={styles.factorRow}
+                            title={joinTooltip(capabilities.sample_overlay.join)}
+                          >
+                            <span style={styles.factorName}>Join points</span>
+                            <select
+                              value={joinChoice(spec?.join_sample)}
+                              onChange={e => setJoinSample(e.target.value as JoinChoice)}
+                              style={styles.select}
+                            >
+                              <option value="auto">
+                                Auto ({capabilities.sample_overlay.join.automatic
+                                  ? capabilities.sample_overlay.join.join ? 'lines' : 'points'
+                                  : '…'})
+                              </option>
+                              <option value="lines">Lines</option>
+                              <option value="points">Points</option>
+                            </select>
+                          </label>
+                          {/* The overlay's own colour — one per level of a shown
+                              key, independent of the Grouping colour (a shown key
+                              is collapsed, a coloured layer groups; no factor is
+                              both). With it, a joined line runs across the marks'
+                              colours: pre → post inside one group. */}
+                          <label
+                            style={styles.factorRow}
+                            title="Colour the points (and their lines) by one of the shown keys, separately from the marks' colour. Lines then join a subject across the coloured bars."
+                          >
+                            <span style={styles.factorName}>Colour points by</span>
+                            <select
+                              value={sampleColorChoice(spec?.sample_color)}
+                              onChange={e => setSampleColor(e.target.value)}
+                              style={styles.select}
+                            >
+                              <option value={MARK_COLOR}>Mark's colour</option>
+                              {capabilities.sample_overlay.color.options.map(name => (
+                                <option key={name} value={name}>{name}</option>
+                              ))}
+                              {spec?.sample_color &&
+                                !capabilities.sample_overlay.color.options.includes(spec.sample_color) && (
+                                  <option value={spec.sample_color}>{spec.sample_color} (not shown)</option>
+                                )}
+                            </select>
+                          </label>
+                          {/* Listing the overlay's levels can take half the
+                              figure's width (14 subjects); unticked, the legend
+                              reads as though nothing were shown. Only an
+                              overlay with its OWN colour is ever listed. */}
+                          <label
+                            style={styles.factorRow}
+                            title={
+                              capabilities.sample_overlay.color.active
+                                ? "List the points' colours in the legend. Unticked, the legend reads as though nothing were shown here; the points keep their colours."
+                                : "The points take their mark's colour, so the legend has nothing to list for them. Colour them by a shown key to use this."
+                            }
+                          >
+                            <span style={styles.factorName}>Show in legend</span>
+                            <input
+                              type="checkbox"
+                              checked={spec?.sample_in_legend !== false}
+                              disabled={!capabilities.sample_overlay.color.active}
+                              onChange={e => setSampleInLegend(e.target.checked)}
+                            />
+                          </label>
+                          <div style={styles.hint}>{capabilities.sample_overlay.granularity}</div>
+                        </>
+                      )}
+                      {capabilities.sample_overlay.ignored.length > 0 && (
+                        <div style={styles.hint}>
+                          Not collapsed right now, so not shown: {capabilities.sample_overlay.ignored.join(', ')}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </Section>
+              )}
+            </Group>
+          )}
+
+          {/* How the figure LOOKS, and nothing about what it shows. Size,
+              axes, marks, text and labels — the old "Figure size" section held
+              typography and tick behaviour too, and Preview at is a view
+              setting, so it went to the toolbar over the figure. */}
+          <Group
+            title="Appearance"
+            open={openGroups.appearance}
+            onToggle={() => toggleGroup('appearance')}
+            summary={appearanceSummary({
+              width: figWidth,
+              height: figHeight,
+              font: fontSize,
+              yMin: spec?.y_axis?.minimum ?? null,
+              yMax: spec?.y_axis?.maximum ?? null,
+            })}
+          >
+            <Section
+              title="Size"
+              hint="Applies to saved images, exported code and the pipeline step. Pick a ratio here and set the width in the toolbar over the figure (journal columns: 3.5 in single, 7.2 in double); the height follows."
+            >
+              <label style={styles.factorRow}>
+                <span style={styles.factorName}>Aspect</span>
                 <select
-                  value={spec?.roles?.[factor.name] ?? 'iterate'}
-                  onChange={e => setRole(factor.name, e.target.value as Role)}
+                  value={aspect}
+                  onChange={e => onAspect(e.target.value)}
                   style={styles.select}
                 >
-                  {/* `factors` falls back to describe's raw table, which
-                      carries no role report — an empty <select> would be a
-                      dead control, so show at least what it is set to. */}
-                  {(factor.roles ?? fallbackRoles(spec?.roles?.[factor.name])).map(option => (
+                  {presets.map(preset => (
                     <option
-                      key={option.role}
-                      value={option.role}
-                      // Disabled rather than hidden: a role that is unavailable
-                      // BECAUSE of another choice ("something else already has
-                      // Color") has to stay visible, or the control silently
-                      // shrinks and the user cannot see what to undo.
-                      disabled={!option.available}
-                      title={option.reason ?? option.hint}
+                      key={preset.name}
+                      value={preset.name}
+                      title={preset.ratio == null ? 'The size matches no ratio. Pick a ratio to set the height from the width.' : preset.hint}
+                      disabled={preset.ratio == null}
                     >
-                      {option.label}
-                      {option.available ? '' : ' —'}
+                      {preset.label}
                     </option>
                   ))}
                 </select>
               </label>
-            ))}
-          </Section>
-
-          <Section title="Plot type">
-            {(capabilities?.kinds ?? []).map(info => (
-              <label
-                key={info.kind}
-                style={{ ...styles.kindRow, opacity: info.available ? 1 : 0.45 }}
-                title={info.reason ?? ''}
-              >
-                <input
-                  type="radio"
-                  name="plot-kind"
-                  checked={spec?.kind === info.kind}
-                  disabled={!info.available}
-                  onChange={() => setKind(info.kind)}
-                  style={{ marginRight: 6 }}
-                />
-                {KIND_LABELS[info.kind] ?? info.kind}
-              </label>
-            ))}
-            {/* A spaghetti's own points + lines (StyleOptions.line_weight).
-                Python says when it applies (layout.meta.mark_weights). */}
-            {markWeights?.lines?.applies && (
-              <WeightInput
-                label="Line weight"
-                value={typeof spec?.style?.line_weight === 'number' ? spec.style.line_weight : null}
-                title={weightTitle(markWeights.lines, 'lines')}
-                onChange={value => setWeight('line_weight', value)}
-              />
-            )}
-            {/* Shown only for a 1-D measure, because only there is there
-                anything to reduce. No on/off switch beside it: the KIND says
-                whether the vectors are drawn or summarized, so "collapse on,
-                kind = line" is a state that cannot be expressed rather than one
-                the panel has to adjudicate. */}
-            {capabilities?.cell_collapse?.applies && (
-              <>
-                <label style={styles.factorRow}>
-                  <span style={styles.factorName}>Per-record value</span>
-                  <select
-                    value={spec?.cell_statistic ?? 'mean'}
-                    onChange={e => setCellStatistic(e.target.value)}
-                    style={styles.select}
-                  >
-                    <option value="mean">Mean</option>
-                    <option value="median">Median</option>
-                  </select>
-                </label>
-                <div style={styles.hint}>
-                  {capabilities.cell_collapse.active
-                    ? `Each vector is reduced to its ${
-                        spec?.cell_statistic ?? 'mean'
-                      } — one value per record — and plotted like any scalar.`
-                    : 'Applies to scatter, strip, spaghetti, box, violin and bar: each vector becomes one value per record.'}
-                </div>
-              </>
-            )}
-          </Section>
-
-          {faceted && (
-            <Section title="Layout">
-              <div style={styles.hint}>
-                Set rows or columns — the other follows from the number of
-                subplots. Then name what belongs in each one; blank takes
-                whatever is left, in order.
-              </div>
-              <div style={styles.gridSizeRow}>
-                <GridSizeInput
-                  label="N rows"
-                  value={spec?.facet?.n_rows ?? null}
-                  effective={effRows}
-                  onChange={n => setFacet({ n_rows: n })}
-                />
-                <GridSizeInput
-                  label="N columns"
-                  value={spec?.facet?.n_cols ?? null}
-                  effective={effCols}
-                  onChange={n => setFacet({ n_cols: n })}
-                />
-              </div>
-
-              <RuleSlots
-                title="Rows"
-                count={effRows}
-                rules={spec?.facet?.rows ?? []}
-                onEdit={(i, patch) => setRuleAt('rows', i, patch)}
-              />
-              <RuleSlots
-                title="Columns"
-                count={effCols}
-                rules={spec?.facet?.cols ?? []}
-                onEdit={(i, patch) => setRuleAt('cols', i, patch)}
-              />
-
-              {/* Never let the layout quietly disobey a rule: if a subplot had
-                  to move, or the grid had to grow, say which and why. */}
-              {layoutNotes.map((note, index) => (
-                <div key={index} style={styles.layoutNote}>{note}</div>
-              ))}
             </Section>
-          )}
 
-          <Section title="Y axis">
-            <div style={styles.hint}>
-              Which plots share one y scale. Nothing ticked means every plot in
-              the dataset gets the same limits; ticking everything autoscales
-              each subplot to its own data.
-            </div>
-            {yScopeFactors.length === 0 ? (
-              <div style={styles.hint}>
-                One plot, so there is nothing to separate — give a factor the
-                <em> separate figures</em> or <em>subplot</em> role to scale
-                them apart.
-              </div>
-            ) : (
-              yScopeFactors.map(name => (
-                <label key={name} style={styles.factorRow}>
-                  <input
-                    type="checkbox"
-                    checked={yScope.includes(name)}
-                    onChange={e => toggleYScope(name, e.target.checked)}
-                  />
-                  <span style={styles.factorName}>{name}</span>
-                </label>
-              ))
-            )}
-            <div style={styles.gridSizeRow}>
-              <LimitInput
-                label="Min"
-                value={spec?.y_axis?.minimum ?? null}
-                onChange={v => setYAxis({ minimum: v })}
-              />
-              <LimitInput
-                label="Max"
-                value={spec?.y_axis?.maximum ?? null}
-                onChange={v => setYAxis({ maximum: v })}
-              />
-            </div>
-            {/* The rule AND the numbers it produced: "why is this 0.61?" has to
-                have an answer the user can read off the panel. */}
-            <div style={styles.layoutNote}>
-              {yScope.length === 0
-                ? 'Same limits everywhere'
-                : `Separate limits per ${yScope.join(', ')}`}
-              {appliedYLimits
-                ? ` — ${appliedYLimits[0].toPrecision(3)} to ${appliedYLimits[1].toPrecision(3)}`
-                : ''}
-            </div>
-          </Section>
-
-          {summarizing && (
-            <Section title="Summary">
-              <label style={styles.factorRow}>
-                <span style={styles.factorName}>Centre</span>
-                <select
-                  value={spec?.aggregate?.statistic ?? 'mean'}
-                  onChange={e => setAggregate({ statistic: e.target.value })}
-                  style={styles.select}
-                >
-                  <option value="mean">Mean</option>
-                  <option value="median">Median</option>
-                </select>
-              </label>
-              <label style={styles.factorRow}>
-                <span style={styles.factorName}>Spread</span>
-                <select
-                  value={spec?.aggregate?.error ?? 'sd'}
-                  onChange={e => setAggregate({ error: e.target.value })}
-                  style={styles.select}
-                >
-                  <option value="sd">SD</option>
-                  <option value="sem">SEM</option>
-                  <option value="ci95">95% CI</option>
-                  <option value="iqr">IQR</option>
-                  <option value="none">None</option>
-                </select>
-              </label>
-              {/* The chain, as the figure runs it: nested and unweighted by
-                  default, each subject counting once however many trials it
-                  has; pooled is the deliberate alternative (weight by N). */}
-              <label style={styles.factorRow} title="Drop every collapsed factor in one step, so a subject with more trials weighs more">
-                <span style={styles.factorName}>Weight by N</span>
-                <input
-                  type="checkbox"
-                  checked={spec?.aggregate?.pooled ?? false}
-                  onChange={e => setAggregate({ pooled: e.target.checked })}
-                />
-              </label>
-              <div style={styles.hint}>{sampleNote(capabilities, spec)}</div>
-            </Section>
-          )}
-
-          {capabilities?.sample_overlay && (
-            <Section title="Show sample">
-              {/* The collapsed keys' data drawn on top of the marks — for the
-                  distribution behind a bar, and for the raw data behind it.
-                  Python decides what a tick means (a deeper key implies the
-                  shallower ones: a trial is a trial OF a subject), whether the
-                  points are joined and why; this section displays the answer. */}
-              {!capabilities.sample_overlay.available ? (
-                <div style={styles.hint}>{capabilities.sample_overlay.reason}</div>
-              ) : (
-                <>
-                  <div style={styles.hint}>
-                    Overlay the collapsed keys' data as points: tick a key to see one
-                    point per level of it. Deeper keys imply the shallower ones.
-                  </div>
-                  {capabilities.sample_overlay.factors.map(factor => (
-                    <label
-                      key={factor.name}
-                      style={styles.factorRow}
-                      title={isLocked(factor) ? `Implied by a deeper key — part of every point's identity` : undefined}
-                    >
-                      <span style={styles.factorName}>{factor.name}</span>
-                      <input
-                        type="checkbox"
-                        checked={isTicked(factor)}
-                        disabled={isLocked(factor)}
-                        onChange={e => setShowSample(factor.name, e.target.checked)}
-                      />
-                    </label>
-                  ))}
-                  {capabilities.sample_overlay.shown.length > 0 && (
-                    <>
-                      <label
-                        style={styles.factorRow}
-                        title={joinTooltip(capabilities.sample_overlay.join)}
-                      >
-                        <span style={styles.factorName}>Join points</span>
-                        <select
-                          value={joinChoice(spec?.join_sample)}
-                          onChange={e => setJoinSample(e.target.value as JoinChoice)}
-                          style={styles.select}
-                        >
-                          <option value="auto">
-                            Auto ({capabilities.sample_overlay.join.automatic
-                              ? capabilities.sample_overlay.join.join ? 'lines' : 'points'
-                              : '…'})
-                          </option>
-                          <option value="lines">Lines</option>
-                          <option value="points">Points</option>
-                        </select>
-                      </label>
-                      {/* The overlay's own colour — one per level of a shown
-                          key, independent of the Grouping colour (a shown key
-                          is collapsed, a coloured layer groups; no factor is
-                          both). With it, a joined line runs across the marks'
-                          colours: pre → post inside one group. */}
-                      <label
-                        style={styles.factorRow}
-                        title="Colour the points (and their lines) by one of the shown keys, separately from the marks' colour. Lines then join a subject across the coloured bars."
-                      >
-                        <span style={styles.factorName}>Colour points by</span>
-                        <select
-                          value={sampleColorChoice(spec?.sample_color)}
-                          onChange={e => setSampleColor(e.target.value)}
-                          style={styles.select}
-                        >
-                          <option value={MARK_COLOR}>Mark's colour</option>
-                          {capabilities.sample_overlay.color.options.map(name => (
-                            <option key={name} value={name}>{name}</option>
-                          ))}
-                          {spec?.sample_color &&
-                            !capabilities.sample_overlay.color.options.includes(spec.sample_color) && (
-                              <option value={spec.sample_color}>{spec.sample_color} (not shown)</option>
-                            )}
-                        </select>
-                      </label>
-                      {/* Listing the overlay's levels can take half the
-                          figure's width (14 subjects); unticked, the legend
-                          reads as though nothing were shown. Only an
-                          overlay with its OWN colour is ever listed. */}
-                      <label
-                        style={styles.factorRow}
-                        title={
-                          capabilities.sample_overlay.color.active
-                            ? "List the points' colours in the legend. Unticked, the legend reads as though nothing were shown here; the points keep their colours."
-                            : "The points take their mark's colour, so the legend has nothing to list for them. Colour them by a shown key to use this."
-                        }
-                      >
-                        <span style={styles.factorName}>Show in legend</span>
-                        <input
-                          type="checkbox"
-                          checked={spec?.sample_in_legend !== false}
-                          disabled={!capabilities.sample_overlay.color.active}
-                          onChange={e => setSampleInLegend(e.target.checked)}
-                        />
-                      </label>
-                      {/* Point size and line thickness together, one
-                          multiplier (StyleOptions.sample_weight). */}
-                      <WeightInput
-                        label="Weight"
-                        value={typeof spec?.style?.sample_weight === 'number' ? spec.style.sample_weight : null}
-                        title={weightTitle(markWeights?.sample, 'sample points')}
-                        onChange={value => setWeight('sample_weight', value)}
-                      />
-                      <div style={styles.hint}>{capabilities.sample_overlay.granularity}</div>
-                    </>
-                  )}
-                  {capabilities.sample_overlay.ignored.length > 0 && (
-                    <div style={styles.hint}>
-                      Not collapsed right now, so not shown: {capabilities.sample_overlay.ignored.join(', ')}
-                    </div>
-                  )}
-                </>
-              )}
-            </Section>
-          )}
-
-          <Section title="Figure size">
-            <div style={styles.hint}>
-              Applies to saved images, exported code and the pipeline step. The
-              preview fills the pane regardless. Pick a ratio and set the width
-              (journal columns: 3.5 in single, 7.2 in double); the height follows.
-            </div>
-            <label style={styles.factorRow}>
-              <span style={styles.factorName}>Aspect</span>
-              <select
-                value={aspect}
-                onChange={e => onAspect(e.target.value)}
-                style={styles.select}
-              >
-                {presets.map(preset => (
-                  <option key={preset.name} value={preset.name} title={preset.hint}>
-                    {preset.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div style={styles.gridSizeRow}>
-              <PositiveNumberInput label="Width (in)" value={figWidth} onChange={onWidth} />
-              <PositiveNumberInput
-                label="Height (in)"
-                value={figHeight}
-                onChange={onHeight}
-                title={
-                  aspect === CUSTOM_ASPECT
-                    ? 'Custom: width and height are independent'
-                    : 'Typing a height here switches the ratio to whatever it makes'
-                }
-              />
-              <PositiveNumberInput
-                label="Font (pt)"
-                value={fontSize}
-                onChange={base => setTextSize('base', base)}
-                title="matplotlib font.size: every text size below that is empty scales with it"
-              />
-            </div>
-            <div style={styles.layoutNote}>
-              {pixelReadout(figWidth, figHeight, SAVE_DPI)} at {SAVE_DPI} dpi for a
-              raster — exactly; labels and legend are fitted inside it.
-            </div>
-            {/* One box per text element (StyleOptions.text). Empty = derived
-                from Font; the placeholder is the size Python resolved
-                (layout.meta.text_sizes), never computed here. A typed size is
-                fixed: the label and legend fits never shrink it. */}
-            <div style={styles.textSizesHeader}>
-              <span style={styles.gridSizeLabel}>Text sizes (pt)</span>
-              {hasFixedSizes(spec?.style?.text) && (
-                <button
-                  type="button"
-                  style={styles.inlineButton}
-                  title="Clear every size below so they all follow Font again"
-                  onClick={resetText}
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-            <div style={styles.textSizesGrid}>
-              {textSizeRows(
-                (figures[0]?.figure?.layout?.meta as
-                  | { text_sizes?: ResolvedTextSizes }
-                  | undefined)?.text_sizes,
-                spec?.style?.text,
-              ).map(row => (
-                <SizeInput
-                  key={row.key}
-                  label={row.label}
-                  title={row.title}
-                  value={spec?.style?.text?.[row.key] ?? null}
-                  placeholder={placeholderFor(row)}
-                  onChange={value => setTextSize(row.key, value)}
-                />
-              ))}
-            </div>
-            {/* Which size the preview's labels and legend are decided at: the
-                file's (and drawn at it), or the pane's. A view setting. */}
-            <label
-              style={styles.factorRow}
-              title="Export size: the preview is drawn at Width x Height, with exactly the label and legend decisions Save makes. Fit pane: fills the pane, decided at the pane's size."
+            <Section
+              title="Y axis"
+              hint="Which plots share one y scale. Nothing ticked means every plot in the dataset gets the same limits; ticking everything autoscales each subplot to its own data."
             >
-              <span style={styles.factorName}>Preview at</span>
-              <select
-                value={previewMode}
-                onChange={e => setPreviewMode(e.target.value as PreviewMode)}
-                style={styles.select}
-              >
-                <option value="export">Export size</option>
-                <option value="pane">Fit pane</option>
-              </select>
-            </label>
+              {yScopeFactors.length === 0 ? (
+                <div style={styles.hint}>
+                  One plot, so there is nothing to separate — give a factor the
+                  <em> separate figures</em> or <em>subplot</em> role to scale
+                  them apart.
+                </div>
+              ) : (
+                yScopeFactors.map(name => (
+                  <label key={name} style={styles.factorRow}>
+                    <input
+                      type="checkbox"
+                      checked={yScope.includes(name)}
+                      onChange={e => toggleYScope(name, e.target.checked)}
+                    />
+                    <span style={styles.factorName}>{name}</span>
+                  </label>
+                ))
+              )}
+              <div style={styles.gridSizeRow}>
+                <LimitInput
+                  label="Min"
+                  value={spec?.y_axis?.minimum ?? null}
+                  onChange={v => setYAxis({ minimum: v })}
+                />
+                <LimitInput
+                  label="Max"
+                  value={spec?.y_axis?.maximum ?? null}
+                  onChange={v => setYAxis({ maximum: v })}
+                />
+              </div>
+              {/* The rule AND the numbers it produced: "why is this 0.61?" has to
+                  have an answer the user can read off the panel. */}
+              <div style={styles.layoutNote}>
+                {yScope.length === 0
+                  ? 'Same limits everywhere'
+                  : `Separate limits per ${yScope.join(', ')}`}
+                {appliedYLimits
+                  ? ` — ${appliedYLimits[0].toPrecision(3)} to ${appliedYLimits[1].toPrecision(3)}`
+                  : ''}
+              </div>
+            </Section>
+
             {/* x tick labels: fitted by default (strip a shared ID prefix,
                 wrap, shrink, rotate, every k-th). Any of these may be fixed;
                 a fixed value is kept even where it overlaps, and the notice
                 below says so. */}
-            <label
-              style={styles.factorRow}
-              title="Auto rotates only when the labels would overlap upright"
-            >
-              <span style={styles.factorName}>Tick rotation</span>
-              <select
-                value={spec?.style?.tick_rotation == null ? 'auto' : String(spec.style.tick_rotation)}
-                onChange={e =>
-                  setStyle({ tick_rotation: e.target.value === 'auto' ? null : Number(e.target.value) })
-                }
-                style={styles.select}
+            <Section title="X tick labels">
+              <label
+                style={styles.factorRow}
+                title="Auto rotates only when the labels would overlap upright"
               >
-                <option value="auto">Auto</option>
-                <option value="0">0°</option>
-                <option value="45">45°</option>
-                <option value="90">90°</option>
-              </select>
-            </label>
-            <label
-              style={styles.factorRow}
-              title="Auto shows every label when they fit; numbered labels (01, SS02…) are thinned when they cannot"
-            >
-              <span style={styles.factorName}>Show tick labels</span>
-              <select
-                value={spec?.style?.tick_every == null ? 'auto' : String(spec.style.tick_every)}
-                onChange={e =>
-                  setStyle({ tick_every: e.target.value === 'auto' ? null : Number(e.target.value) })
-                }
-                style={styles.select}
+                <span style={styles.factorName}>Rotation</span>
+                <select
+                  value={spec?.style?.tick_rotation == null ? 'auto' : String(spec.style.tick_rotation)}
+                  onChange={e =>
+                    setStyle({ tick_rotation: e.target.value === 'auto' ? null : Number(e.target.value) })
+                  }
+                  style={styles.select}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="0">0°</option>
+                  <option value="45">45°</option>
+                  <option value="90">90°</option>
+                </select>
+              </label>
+              <label
+                style={styles.factorRow}
+                title="Auto shows every label when they fit; numbered labels (01, SS02…) are thinned when they cannot"
               >
-                <option value="auto">Auto</option>
-                <option value="1">Every label</option>
-                {[2, 3, 4, 5, 10].map(k => (
-                  <option key={k} value={String(k)}>Every {k}{k === 2 ? 'nd' : k === 3 ? 'rd' : 'th'}</option>
-                ))}
-              </select>
-            </label>
-            <label
-              style={styles.factorRow}
-              title="Blank the labels of a layer that is also the colour, while the legend lists the same levels in the same colours. The ticks stay; a bracket row whose labels are hidden loses its lines too."
-            >
-              <span style={styles.factorName}>Hide labels the legend repeats</span>
-              <input
-                type="checkbox"
-                checked={spec?.style?.hide_legend_ticks === true}
-                onChange={e => setStyle({ hide_legend_ticks: e.target.checked })}
-              />
-            </label>
-            {(() => {
-              // The fit's own verdict, from the figure on screen.
-              const fit = (figures[0]?.figure?.layout?.meta as
-                | { label_fit?: { fits?: boolean; ticks?: string | null } }
-                | undefined)?.label_fit
-              if (!fit || fit.fits !== false) return null
-              return (
-                <div style={styles.layoutNote}>
-                  The x labels still overlap at this size ({fit.ticks}). Widen the
-                  figure, lower the font, or show fewer labels.
-                  {fixedTickNote(spec?.style?.text) && ` ${fixedTickNote(spec?.style?.text)}`}
-                </div>
-              )
-            })()}
-            {(() => {
-              const paneSize = paneExportSize(
-                (figures[0]?.figure?.layout?.meta as { preview?: PreviewMeta } | undefined)?.preview
-              )
-              if (!paneSize) return null
-              return (
-                <div style={styles.layoutNote}>
-                  This view would save as {paneSize.width} × {paneSize.height} in.{' '}
-                  <button
-                    type="button"
-                    style={styles.button}
-                    title="Set Width and Height to this view's size and preview at it"
-                    onClick={() => {
-                      setAspectChoice(null)
-                      setStyle({ width: paneSize.width, height: paneSize.height })
-                      setPreviewMode('export')
-                    }}
-                  >
-                    Use this size
-                  </button>
-                </div>
-              )
-            })()}
-          </Section>
-
-          {/* Titles and display aliases. A CSV plot has no project, so it gets
-              the plot's own aliases without the project buttons. */}
-          <Section title="Labels">
-            <LabelsSection
-              labelable={
-                (figures[0]?.figure?.layout?.meta as { labelable?: Labelable[] } | undefined)
-                  ?.labelable ?? []
-              }
-              aliases={spec?.aliases}
-              titles={{
-                title: (spec?.style?.title as string | null | undefined) ?? null,
-                x_label: (spec?.style?.x_label as string | null | undefined) ?? null,
-                y_label: (spec?.style?.y_label as string | null | undefined) ?? null,
-              }}
-              onTitle={setTitleText}
-              onAliases={setAliases}
-              onProject={writeProjectAlias}
-              projectEnabled={!csvPath}
-            />
-          </Section>
-
-          <div style={{ ...styles.actions, flexWrap: 'wrap' }}>
-            {/* Beside the save buttons, not in a menu: the format is part of
-                the save, and the two buttons share it. The list comes from the
-                backend (what this matplotlib can write), so a build without a
-                PDF writer cannot be asked for one. */}
-            <label style={styles.gridSizeField}>
-              <span style={styles.gridSizeLabel}>Format</span>
-              <select
-                value={imageFormat}
-                onChange={e => setImageFormat(e.target.value)}
-                disabled={saving}
-                style={{ ...styles.select, width: 80 }}
+                <span style={styles.factorName}>Show</span>
+                <select
+                  value={spec?.style?.tick_every == null ? 'auto' : String(spec.style.tick_every)}
+                  onChange={e =>
+                    setStyle({ tick_every: e.target.value === 'auto' ? null : Number(e.target.value) })
+                  }
+                  style={styles.select}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="1">Every label</option>
+                  {[2, 3, 4, 5, 10].map(k => (
+                    <option key={k} value={String(k)}>Every {k}{k === 2 ? 'nd' : k === 3 ? 'rd' : 'th'}</option>
+                  ))}
+                </select>
+              </label>
+              {/* Checkbox first: the label is long and has to wrap. */}
+              <label
+                style={styles.checkRow}
+                title="Blank the labels of a layer that is also the colour, while the legend lists the same levels in the same colours. The ticks stay; a bracket row whose labels are hidden loses its lines too."
               >
-                {formatChoices.map(fmt => (
-                  <option key={fmt} value={fmt}>{fmt.toUpperCase()}</option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              style={styles.button}
-              onClick={() => saveFigures('current')}
-              // Same one-job-at-a-time rule as the button beside it: both are
-              // background jobs now, and the progress readout follows one id.
-              disabled={saving}
-              title={
-                saving
-                  ? 'A save is already running'
-                  : 'Render with matplotlib at full resolution — the same figure ' +
-                    'the pipeline would produce. Runs in the background.'
-              }
-            >
-              {saving
-                ? 'Saving…'
-                : figureCount > 1
-                  ? 'Save current figure'
-                  : 'Save image'}
-            </button>
-            {/* Only worth offering when there is more than one figure — and
-                worth keeping separate, because it costs figureCount times as
-                much as the button beside it. */}
-            {figureCount > 1 && (
-              <button
-                type="button"
-                style={styles.button}
-                onClick={() => saveFigures('all')}
-                // One job at a time. A second would write to the same files
-                // from a second thread, and the progress readout can only
-                // follow one id.
-                disabled={saving}
-                title={
-                  saving
-                    ? 'A save is already running'
-                    : `Render all ${figureCount} figures at full resolution, ` +
-                      `one file each — runs in the background`
-                }
-              >
-                {saving ? 'Saving…' : `Save all ${figureCount} figures`}
-              </button>
-            )}
-            {/* The rows the figure is drawn from, for statistics that must
-                match the plot. Disabled with the backend's reason for a raw
-                1-D / 2-D measure (scalar plots only). */}
-            <button
-              type="button"
-              style={styles.button}
-              onClick={openDataSave}
-              disabled={saving || !capabilities?.data_export?.available}
-              title={
-                saving
-                  ? 'A save is already running'
-                  : capabilities?.data_export?.available
-                    ? 'Save the long table this plot is drawn from as CSV — every ' +
-                      'figure in one file, the figure keys as columns'
-                    : capabilities?.data_export?.reason ?? 'Not available for this plot'
-              }
-            >
-              Save data (CSV)
-            </button>
-            <button type="button" style={styles.button} onClick={handleExport}>
-              Export code
-            </button>
-            {/* A CSV tab has no project to write an endpoint into — and on
-                the database-less plot-only server the call is refused
-                outright, so offering the button would only produce an
-                error. "Export code" stays: plot_export is db_optional and
-                works from a CSV. */}
-            {!csvPath && (
-              <button type="button" style={styles.primaryButton} onClick={handleAddToPipeline}>
-                Add to pipeline
-              </button>
-            )}
-          </div>
-          {dataChooser && capabilities?.data_export?.available && (
-            <div style={styles.dataChooser}>
-              {capabilities.data_export.depths.length > 1 && (
-                <div style={styles.hint}>
-                  Which rows? The default is exactly what the plot is drawn from;
-                  deeper choices keep the lower levels instead of averaging them.
-                </div>
-              )}
-              {capabilities.data_export.depths.length > 1 &&
-                capabilities.data_export.depths.map(depth => (
-                <label key={depth.key ?? '__plotted'} style={styles.dataDepthOption}>
-                  <input
-                    type="radio"
-                    name="data-depth"
-                    checked={dataDepth === depth.key}
-                    onChange={() => setDataDepth(depth.key)}
-                  />
-                  <span>
-                    {depth.label}
-                    {depth.key === capabilities.data_export?.default ? ' (default)' : ''}
-                    <span style={styles.dataColumns}>
-                      {(dataWide && depth.wide_columns
-                        ? depth.wide_columns
-                        : depth.columns
-                      ).join(', ')}
-                    </span>
-                  </span>
-                </label>
-              ))}
+                <input
+                  type="checkbox"
+                  checked={spec?.style?.hide_legend_ticks === true}
+                  onChange={e => setStyle({ hide_legend_ticks: e.target.checked })}
+                />
+                <span style={styles.checkLabel}>Hide labels the legend repeats</span>
+              </label>
               {(() => {
-                // The checkbox only means something at a depth that keeps the
-                // struct's fields; elsewhere it is hidden, not greyed out.
-                const chosen = capabilities.data_export.depths.find(d => d.key === dataDepth)
-                if (!capabilities.data_export.field_factor || !chosen?.wide_columns) return null
+                // The fit's own verdict, from the figure on screen.
+                const fit = (figures[0]?.figure?.layout?.meta as
+                  | { label_fit?: { fits?: boolean; ticks?: string | null } }
+                  | undefined)?.label_fit
+                if (!fit || fit.fits !== false) return null
                 return (
-                  <label style={styles.dataDepthOption}>
-                    <input
-                      type="checkbox"
-                      checked={dataWide}
-                      onChange={e => setDataWide(e.target.checked)}
-                    />
-                    <span>
-                      One column per field ({capabilities.data_export.field_factor})
-                      <span style={styles.dataColumns}>
-                        {(dataWide ? chosen.wide_columns : chosen.columns).join(', ')}
-                      </span>
-                    </span>
-                  </label>
+                  <div style={styles.layoutNote}>
+                    The x labels still overlap at this size ({fit.ticks}). Widen the
+                    figure, lower the font, or show fewer labels.
+                    {fixedTickNote(spec?.style?.text) && ` ${fixedTickNote(spec?.style?.text)}`}
+                  </div>
                 )
               })()}
-              <div style={styles.actions}>
-                <button
-                  type="button"
-                  style={styles.primaryButton}
-                  onClick={() => void saveData(dataDepth, dataWide)}
-                  disabled={saving}
-                >
-                  Save CSV…
-                </button>
-                <button type="button" style={styles.button} onClick={() => setDataChooser(false)}>
-                  Cancel
-                </button>
+            </Section>
+
+            {/* Both mark weights in one place: a spaghetti's own points + lines
+                (StyleOptions.line_weight) and the sample overlay's
+                (StyleOptions.sample_weight). Python says when each applies
+                (layout.meta.mark_weights, capabilities.sample_overlay). */}
+            {(markWeights?.lines?.applies ||
+              (capabilities?.sample_overlay?.available &&
+                capabilities.sample_overlay.shown.length > 0)) && (
+              <Section title="Marks">
+                {markWeights?.lines?.applies && (
+                  <WeightInput
+                    label="Line weight"
+                    value={typeof spec?.style?.line_weight === 'number' ? spec.style.line_weight : null}
+                    title={weightTitle(markWeights.lines, 'lines')}
+                    onChange={value => setWeight('line_weight', value)}
+                  />
+                )}
+                {capabilities?.sample_overlay?.available &&
+                  capabilities.sample_overlay.shown.length > 0 && (
+                    <WeightInput
+                      label="Sample weight"
+                      value={typeof spec?.style?.sample_weight === 'number' ? spec.style.sample_weight : null}
+                      title={weightTitle(markWeights?.sample, 'sample points')}
+                      onChange={value => setWeight('sample_weight', value)}
+                    />
+                  )}
+              </Section>
+            )}
+
+            {/* One box per text element (StyleOptions.text). Empty = derived
+                from Font; the placeholder is the size Python resolved
+                (layout.meta.text_sizes), never computed here. A typed size is
+                fixed: the label and legend fits never shrink it. */}
+            <Section title="Text">
+              <div style={styles.textSizesHeader}>
+                <PositiveNumberInput
+                  label="Font (pt)"
+                  value={fontSize}
+                  onChange={base => setTextSize('base', base)}
+                  title="matplotlib font.size: every text size below that is empty scales with it"
+                />
+                {hasFixedSizes(spec?.style?.text) && (
+                  <button
+                    type="button"
+                    style={styles.inlineButton}
+                    title="Clear every size below so they all follow Font again"
+                    onClick={resetText}
+                  >
+                    Reset
+                  </button>
+                )}
               </div>
-            </div>
-          )}
-          {notice && <div style={styles.notice}>{notice}</div>}
+              <div
+                style={{
+                  ...styles.textSizesGrid,
+                  gridTemplateColumns: `repeat(${textSizeColumns(railWidth)}, 1fr)`,
+                }}
+              >
+                {textSizeRows(
+                  (figures[0]?.figure?.layout?.meta as
+                    | { text_sizes?: ResolvedTextSizes }
+                    | undefined)?.text_sizes,
+                  spec?.style?.text,
+                ).map(row => (
+                  <SizeInput
+                    key={row.key}
+                    label={row.label}
+                    title={row.title}
+                    value={spec?.style?.text?.[row.key] ?? null}
+                    placeholder={placeholderFor(row)}
+                    resolved={row.resolved ?? fontSize}
+                    onChange={value => setTextSize(row.key, value)}
+                  />
+                ))}
+              </div>
+            </Section>
+
+            {/* Titles and display aliases. A CSV plot has no project, so it gets
+                the plot's own aliases without the project buttons. */}
+            <Section title="Labels">
+              <LabelsSection
+                labelable={
+                  (figures[0]?.figure?.layout?.meta as { labelable?: Labelable[] } | undefined)
+                    ?.labelable ?? []
+                }
+                aliases={spec?.aliases}
+                titles={{
+                  title: (spec?.style?.title as string | null | undefined) ?? null,
+                  x_label: (spec?.style?.x_label as string | null | undefined) ?? null,
+                  y_label: (spec?.style?.y_label as string | null | undefined) ?? null,
+                }}
+                onTitle={setTitleText}
+                onAliases={setAliases}
+                onProject={writeProjectAlias}
+                projectEnabled={!csvPath}
+              />
+            </Section>
+          </Group>
         </div>
       }
     >
+      <div style={styles.figureColumn}>
+      {/* The figure toolbar: how the preview is drawn, and everything that
+          takes the figure out of the panel. Out of the rail so it is never a
+          scroll away, and still there with the controls hidden. */}
+      <div style={styles.toolbar}>
+        {/* Which size the preview's labels and legend are decided at: the
+            file's (and drawn at it), or the pane's. A view setting. */}
+        <label
+          style={styles.gridSizeField}
+          title="Export size: the preview is drawn at Width x Height, with exactly the label and legend decisions Save makes. Fit pane: fills the pane, decided at the pane's size."
+        >
+          <span style={styles.gridSizeLabel}>Preview at</span>
+          <select
+            value={previewMode}
+            onChange={e => setPreviewMode(e.target.value as PreviewMode)}
+            style={styles.select}
+          >
+            <option value="export">Export size</option>
+            <option value="pane">Fit pane</option>
+          </select>
+        </label>
+        {/* The size the file is written at (preview.figureOutputSize): the
+            spec's in Export size, the pane's in Fit pane. Editing it in Fit
+            pane fixes that size and switches to Export size (commitSize). */}
+        {(() => {
+          const unit = unitInfo(sizeUnit)
+          const paneNote = previewMode === 'pane'
+            ? ' Fit pane: the size of the view on screen, which is what Save writes. Change it to fix the size (switches to Export size).'
+            : ''
+          return (
+            <>
+              <FigureSizeInput
+                label="W"
+                inches={figWidth}
+                unit={sizeUnit}
+                onChange={onWidth}
+                title={`Figure width.${aspectLocked ? ' Locked: the height follows at the current ratio.' : ''}${paneNote}`}
+              />
+              <FigureSizeInput
+                label="H"
+                inches={figHeight}
+                unit={sizeUnit}
+                onChange={onHeight}
+                title={
+                  (aspectLocked
+                    ? 'Figure height. Locked: the width follows at the current ratio.'
+                    : 'Figure height. Unlocked: the ratio becomes whatever W and H make.') + paneNote
+                }
+              />
+              <label
+                style={styles.gridSizeField}
+                title={
+                  'Lock aspect: typing or stepping W moves H (and H moves W) so the ratio stays ' +
+                  (aspect === CUSTOM_ASPECT ? 'what it is now.' : `${aspect}.`) +
+                  ' Off: W and H are independent. Picking a ratio in Appearance > Size always keeps W and sets H.'
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={aspectLocked}
+                  onChange={e => setAspectLocked(e.target.checked)}
+                />
+                <span style={styles.gridSizeLabel}>Lock aspect</span>
+              </label>
+              <select
+                value={sizeUnit}
+                onChange={e => setSizeUnit(e.target.value as SizeUnit)}
+                style={{ ...styles.select, width: 52 }}
+                title={`Units for Width and Height; px are the saved raster's pixels at ${SAVE_DPI} dpi. ▲▼ step ${unit.step} ${unit.label}.`}
+              >
+                {SIZE_UNITS.map(u => (
+                  <option key={u.unit} value={u.unit}>{u.label}</option>
+                ))}
+              </select>
+            </>
+          )
+        })()}
+        <span style={styles.toolbarNotice} title={notice}>{notice}</span>
+        {/* Beside the save buttons, not in a menu: the format is part of
+            the save, and the two buttons share it. The list comes from the
+            backend (what this matplotlib can write), so a build without a
+            PDF writer cannot be asked for one. */}
+        <label style={styles.gridSizeField}>
+          <span style={styles.gridSizeLabel}>Format</span>
+          <select
+            value={imageFormat}
+            onChange={e => setImageFormat(e.target.value)}
+            disabled={saving}
+            style={{ ...styles.select, width: 70 }}
+          >
+            {formatChoices.map(fmt => (
+              <option key={fmt} value={fmt}>{fmt.toUpperCase()}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          style={styles.toolButton}
+          onClick={() => saveFigures('current')}
+          // Same one-job-at-a-time rule as the button beside it: both are
+          // background jobs now, and the progress readout follows one id.
+          disabled={saving}
+          title={
+            saving
+              ? 'A save is already running'
+              : 'Render with matplotlib at full resolution — the same figure ' +
+                'the pipeline would produce. Runs in the background.'
+          }
+        >
+          {saving
+            ? 'Saving…'
+            : figureCount > 1
+              ? 'Save current figure'
+              : 'Save image'}
+        </button>
+        {/* The preview, not the export: instant, and ignores the Format
+            dropdown (a clipboard takes PNG). */}
+        <button
+          type="button"
+          style={styles.toolButton}
+          onClick={copyFigure}
+          disabled={figures.length === 0}
+          title={
+            'Copy the figure on screen to the clipboard as a 300 dpi PNG ' +
+            '(light colours). Uses the preview, so a reduced view is copied ' +
+            'reduced — use Save image for every point.'
+          }
+        >
+          Copy PNG
+        </button>
+        {/* Only worth offering when there is more than one figure — and
+            worth keeping separate, because it costs figureCount times as
+            much as the button beside it. */}
+        {figureCount > 1 && (
+          <button
+            type="button"
+            style={styles.toolButton}
+            onClick={() => saveFigures('all')}
+            // One job at a time. A second would write to the same files
+            // from a second thread, and the progress readout can only
+            // follow one id.
+            disabled={saving}
+            title={
+              saving
+                ? 'A save is already running'
+                : `Render all ${figureCount} figures at full resolution, ` +
+                  `one file each — runs in the background`
+            }
+          >
+            {saving ? 'Saving…' : `Save all ${figureCount}`}
+          </button>
+        )}
+        {/* The rows the figure is drawn from, for statistics that must
+            match the plot. Disabled with the backend's reason for a raw
+            1-D / 2-D measure (scalar plots only). */}
+        <button
+          type="button"
+          style={styles.toolButton}
+          onClick={openDataSave}
+          disabled={saving || !capabilities?.data_export?.available}
+          title={
+            saving
+              ? 'A save is already running'
+              : capabilities?.data_export?.available
+                ? 'Save the long table this plot is drawn from as CSV — every ' +
+                  'figure in one file, the figure keys as columns'
+                : capabilities?.data_export?.reason ?? 'Not available for this plot'
+          }
+        >
+          Save data (CSV)
+        </button>
+        <button type="button" style={styles.toolButton} onClick={handleExport}>
+          Export code
+        </button>
+        {/* A CSV tab has no project to write an endpoint into — and on
+            the database-less plot-only server the call is refused
+            outright, so offering the button would only produce an
+            error. "Export code" stays: plot_export is db_optional and
+            works from a CSV. */}
+        {!csvPath && (
+          <button type="button" style={styles.toolPrimaryButton} onClick={handleAddToPipeline}>
+            Add to pipeline
+          </button>
+        )}
+        {/* Floats over the figure rather than pushing it down: a taller
+            toolbar would shrink the canvas and re-request a pane preview. */}
+        {dataChooser && capabilities?.data_export?.available && (
+          <div style={styles.dataChooser}>
+            {capabilities.data_export.depths.length > 1 && (
+              <div style={styles.hint}>
+                Which rows? The default is exactly what the plot is drawn from;
+                deeper choices keep the lower levels instead of averaging them.
+              </div>
+            )}
+            {capabilities.data_export.depths.length > 1 &&
+              capabilities.data_export.depths.map(depth => (
+              <label key={depth.key ?? '__plotted'} style={styles.dataDepthOption}>
+                <input
+                  type="radio"
+                  name="data-depth"
+                  checked={dataDepth === depth.key}
+                  onChange={() => setDataDepth(depth.key)}
+                />
+                <span>
+                  {depth.label}
+                  {depth.key === capabilities.data_export?.default ? ' (default)' : ''}
+                  <span style={styles.dataColumns}>
+                    {(dataWide && depth.wide_columns
+                      ? depth.wide_columns
+                      : depth.columns
+                    ).join(', ')}
+                  </span>
+                </span>
+              </label>
+            ))}
+            {(() => {
+              // The checkbox only means something at a depth that keeps the
+              // struct's fields; elsewhere it is hidden, not greyed out.
+              const chosen = capabilities.data_export.depths.find(d => d.key === dataDepth)
+              if (!capabilities.data_export.field_factor || !chosen?.wide_columns) return null
+              return (
+                <label style={styles.dataDepthOption}>
+                  <input
+                    type="checkbox"
+                    checked={dataWide}
+                    onChange={e => setDataWide(e.target.checked)}
+                  />
+                  <span>
+                    One column per field ({capabilities.data_export.field_factor})
+                    <span style={styles.dataColumns}>
+                      {(dataWide ? chosen.wide_columns : chosen.columns).join(', ')}
+                    </span>
+                  </span>
+                </label>
+              )
+            })()}
+            <div style={styles.actions}>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={() => void saveData(dataDepth, dataWide)}
+                disabled={saving}
+              >
+                Save CSV…
+              </button>
+              <button type="button" style={styles.button} onClick={() => setDataChooser(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
       <div style={styles.canvas} ref={canvasRef}>
         {specError && <div style={styles.specError}>{specError}</div>}
         {/* Say what the fan-out did that the spec did not literally ask for —
@@ -3202,6 +3558,8 @@ export default function PlotStudio({
         {figures.map((figure, index) => (
           <div
             key={figure.label || index}
+            // Found by `copyFigure`, for the drawn size of a pane-filling figure.
+            data-ps-figure={figure.index}
             style={{
               ...styles.figureBlock,
               ...(figures.length === 1 ? { height: '100%' } : null),
@@ -3270,6 +3628,7 @@ export default function PlotStudio({
             )}
           </div>
         ))}
+      </div>
       </div>
 
       {code !== null && (
@@ -3466,6 +3825,8 @@ interface GridSizeInputProps {
   value: number | null
   /** What the backend laid out — shown as a placeholder while unpinned. */
   effective: number
+  /** One panel: the grid is 1 x 1 whatever is pinned, so show 1, read-only. */
+  locked?: boolean
   onChange: (value: number | null) => void
 }
 
@@ -3476,7 +3837,22 @@ interface GridSizeInputProps {
  * other dimension and the subplot count, and the result shows through as the
  * placeholder. That is what makes "I set 2 columns" answer "so, 3 rows".
  */
-function GridSizeInput({ label, value, effective, onChange }: GridSizeInputProps) {
+function GridSizeInput({ label, value, effective, locked = false, onChange }: GridSizeInputProps) {
+  if (locked) {
+    return (
+      <label style={styles.gridSizeField}>
+        <span style={styles.gridSizeLabel}>{label}</span>
+        <input
+          type="number"
+          value={1}
+          disabled
+          readOnly
+          title="One panel, so the grid is 1 x 1. A number pinned here applies again once there is more than one panel."
+          style={{ ...styles.select, width: 56, ...styles.gridSizeAuto }}
+        />
+      </label>
+    )
+  }
   return (
     <label style={styles.gridSizeField}>
       <span style={styles.gridSizeLabel}>{label}</span>
@@ -3540,67 +3916,61 @@ function LimitInput({ label, value, onChange }: LimitInputProps) {
   )
 }
 
-interface PositiveNumberInputProps {
-  label: string
-  value: number
-  onChange: (value: number) => void
-  title?: string
-}
-
-/**
- * One dimension of the saved figure (inches) or its font size (points).
- *
- * Same typing discipline as `LimitInput`: the text is held while it is being
- * typed and only a positive, finite number is committed — `Number('')` is 0,
- * and a 0-inch figure (or 0 pt font) is a matplotlib error, not a size. Unlike
- * the limit, blank means nothing here: the field falls back to the value it had.
- */
-function PositiveNumberInput({ label, value, onChange, title }: PositiveNumberInputProps) {
-  const [text, setText] = useState<string | null>(null)
-  return (
-    <label style={styles.gridSizeField}>
-      <span style={styles.gridSizeLabel}>{label}</span>
-      <input
-        type="text"
-        inputMode="decimal"
-        value={text ?? String(value)}
-        onChange={e => {
-          const next = e.target.value
-          setText(next)
-          const parsed = Number(next)
-          if (next.trim() !== '' && Number.isFinite(parsed) && parsed > 0) onChange(parsed)
-        }}
-        onBlur={() => setText(null)}
-        title={title}
-        style={{ ...styles.select, width: 64 }}
-      />
-    </label>
-  )
-}
-
-interface SizeInputProps {
-  label: string
+interface StepperInputProps {
+  /** The committed value, or null for an empty box. */
   value: number | null
-  placeholder: string
+  /** What an empty box steps from: the value it is drawn at. */
+  fallback: number | null
+  /** One ▲▼ click (stepper.stepValue: to the next multiple of it). */
+  step: number
+  min: number
   onChange: (value: number | null) => void
+  /** Blank commits null ("auto"); otherwise blank falls back to `value`. */
+  allowBlank: boolean
+  /** Decimals the box shows a committed value to. */
+  decimals?: number
+  placeholder?: string
   title?: string
+  width?: number
+  /** Show the value as derived rather than typed. */
+  auto?: boolean
 }
 
 /**
- * One text element's size in points. Blank = derived from Font (the
- * placeholder says what that comes to); a positive number fixes it.
+ * A numeric box with ▲▼ arrows beside it, for the values that are tuned a
+ * step at a time (font sizes, mark weights, the figure size). ArrowUp and
+ * ArrowDown in the box step too.
  *
- * `LimitInput`'s typing discipline plus `PositiveNumberInput`'s rule: the text
- * is held while typed, blank commits null, and only a positive finite number
- * commits a size (0 pt is a matplotlib error). "0" or "-" while typing is
- * held without committing anything.
+ * Not `type="number"`: the native spinner steps an empty box from 0, and an
+ * empty text size means "auto · 11.7", so its first click has to go to 12.
+ *
+ * Typing discipline as before (`LimitInput`): the text is held while it is
+ * typed, and only a positive finite number commits — `Number('')` is 0, and a
+ * 0 pt font or a 0-inch figure is a matplotlib error, not a size.
  */
-function SizeInput({ label, value, placeholder, onChange, title }: SizeInputProps) {
+function StepperInput({
+  value,
+  fallback,
+  step,
+  min,
+  onChange,
+  allowBlank,
+  decimals,
+  placeholder,
+  title,
+  width = 48,
+  auto = false,
+}: StepperInputProps) {
   const [text, setText] = useState<string | null>(null)
-  const shown = text ?? (value === null || value === undefined ? '' : String(value))
+  const shown =
+    text ?? (value === null ? '' : String(decimals === undefined ? value : roundTo(value, decimals)))
+  const stepBy = (direction: 1 | -1) => {
+    setText(null)
+    const next = stepValue(value, fallback, direction, step, min)
+    if (next !== null) onChange(next)
+  }
   return (
-    <label style={styles.gridSizeField} title={title}>
-      <span style={styles.textSizeLabel}>{label}</span>
+    <span style={styles.stepper} title={title}>
       <input
         type="text"
         inputMode="decimal"
@@ -3610,11 +3980,140 @@ function SizeInput({ label, value, placeholder, onChange, title }: SizeInputProp
           const next = e.target.value
           setText(next)
           const parsed = Number(next)
-          if (next.trim() === '') onChange(null)
-          else if (Number.isFinite(parsed) && parsed > 0) onChange(parsed)
+          if (next.trim() === '') {
+            if (allowBlank) onChange(null)
+          } else if (Number.isFinite(parsed) && parsed > 0) {
+            onChange(parsed)
+          }
+        }}
+        onKeyDown={e => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault()
+            stepBy(e.key === 'ArrowUp' ? 1 : -1)
+          }
         }}
         onBlur={() => setText(null)}
-        style={{ ...styles.select, width: 64 }}
+        style={{ ...styles.stepperInput, width, ...(auto ? styles.gridSizeAuto : null) }}
+      />
+      <span style={styles.stepperArrows}>
+        {/* Out of the tab order: the box itself takes ArrowUp/ArrowDown. */}
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label="Increase"
+          style={styles.stepperArrow}
+          onClick={() => stepBy(1)}
+        >
+          ▲
+        </button>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label="Decrease"
+          style={styles.stepperArrow}
+          onClick={() => stepBy(-1)}
+        >
+          ▼
+        </button>
+      </span>
+    </span>
+  )
+}
+
+interface PositiveNumberInputProps {
+  label: string
+  value: number
+  onChange: (value: number) => void
+  title?: string
+}
+
+/** The base font size (points). Blank means nothing: the box falls back to
+ *  the value it had. ▲▼ step 1 pt. */
+function PositiveNumberInput({ label, value, onChange, title }: PositiveNumberInputProps) {
+  return (
+    <label style={styles.gridSizeField}>
+      <span style={styles.gridSizeLabel}>{label}</span>
+      <StepperInput
+        value={value}
+        fallback={value}
+        step={1}
+        min={1}
+        allowBlank={false}
+        onChange={next => {
+          if (next !== null) onChange(next)
+        }}
+        title={title}
+      />
+    </label>
+  )
+}
+
+interface FigureSizeInputProps {
+  label: string
+  /** The size in inches (what the spec stores). */
+  inches: number
+  unit: SizeUnit
+  onChange: (inches: number) => void
+  title?: string
+}
+
+/**
+ * One dimension of the written figure, shown in `unit` (figureUnits.ts) and
+ * stored in inches. ▲▼ step 0.1 in / 1 mm / 10 px.
+ */
+function FigureSizeInput({ label, inches, unit, onChange, title }: FigureSizeInputProps) {
+  const info = unitInfo(unit)
+  const shown = fromInches(inches, unit, SAVE_DPI)
+  return (
+    <label style={styles.gridSizeField}>
+      <span style={styles.gridSizeLabel}>{label}</span>
+      <StepperInput
+        // Re-keyed per unit so a half-typed value in one unit is not carried
+        // into the other.
+        key={unit}
+        value={shown}
+        fallback={shown}
+        step={info.step}
+        min={info.step}
+        decimals={info.decimals}
+        allowBlank={false}
+        onChange={next => {
+          if (next !== null) onChange(toInches(next, unit, SAVE_DPI))
+        }}
+        title={title}
+        width={unit === 'px' ? 44 : 40}
+      />
+    </label>
+  )
+}
+
+interface SizeInputProps {
+  label: string
+  value: number | null
+  placeholder: string
+  /** The size it is drawn at while empty (Python's), for the first ▲▼. */
+  resolved: number | null
+  onChange: (value: number | null) => void
+  title?: string
+}
+
+/**
+ * One text element's size in points. Blank = derived from Font (the
+ * placeholder says what that comes to); a positive number fixes it.
+ * ▲▼ step 1 pt, from the resolved size when the box is empty.
+ */
+function SizeInput({ label, value, placeholder, resolved, onChange, title }: SizeInputProps) {
+  return (
+    <label style={styles.gridSizeField} title={title}>
+      <span style={styles.textSizeLabel}>{label}</span>
+      <StepperInput
+        value={value ?? null}
+        fallback={resolved}
+        step={1}
+        min={1}
+        allowBlank
+        placeholder={placeholder}
+        onChange={onChange}
       />
     </label>
   )
@@ -3629,29 +4128,21 @@ interface WeightInputProps {
 }
 
 /**
- * A mark-weight multiplier box. Same typing rule as `SizeInput` (a half-typed
- * value is kept locally, only a positive number is sent) on a factor row.
+ * A mark-weight multiplier box on a factor row. Blank = 1×; ▲▼ step 0.1
+ * (stepping onto exactly 1 clears it again, markWeights.withWeight).
  */
 function WeightInput({ label, value, title, onChange }: WeightInputProps) {
-  const [text, setText] = useState<string | null>(null)
-  const shown = text ?? (value === null ? '' : String(value))
   return (
     <label style={styles.factorRow} title={title}>
       <span style={styles.factorName}>{label}</span>
-      <input
-        type="text"
-        inputMode="decimal"
-        value={shown}
-        placeholder={'1\u00d7'}
-        onChange={e => {
-          const next = e.target.value
-          setText(next)
-          const parsed = Number(next)
-          if (next.trim() === '') onChange(null)
-          else if (Number.isFinite(parsed) && parsed > 0) onChange(parsed)
-        }}
-        onBlur={() => setText(null)}
-        style={{ ...styles.select, width: 64 }}
+      <StepperInput
+        value={value}
+        fallback={1}
+        step={0.1}
+        min={0.1}
+        allowBlank
+        placeholder={'1×'}
+        onChange={onChange}
       />
     </label>
   )
@@ -4023,62 +4514,221 @@ function LevelPicker({
 }
 
 /**
- * Sort one factor's levels into named buckets.
+ * One combine in Structure > Combine.
  *
- * A text box per level, prefilled with the level's own name: typing the same
- * word into two of them merges those levels. That is the whole interaction —
- * "pre and post1 are both baseline" is exactly what the user says, and nothing
- * happens to the figure until they say it.
+ * Collapsed (the default): one line — `▸ Stim ← condition · 4 → 2`. Expanded:
+ * the combine's name, its buckets, and ONE grid of the source's levels.
+ * Bucket-first: pick a bucket (the target), then click levels to put them in
+ * it or take them out; shift-click takes a range. A level belongs to one
+ * bucket, so clicking it for the target moves it out of any other. Scales to
+ * 40 subjects, where a text box per level (the old editor) did not.
+ *
+ * Every edit goes through the bucket model in `combine.ts` and is written back
+ * as `mapping`; nothing here decides what a combine means.
  */
-function LevelGroupEditor({
+function CombineEditor({
   group,
+  levels,
+  open,
+  onToggle,
   onEdit,
+  onRename,
+  onUse,
   onRemove,
 }: {
   group: LevelGroup
+  levels: (string | number)[]
+  open: boolean
+  onToggle: () => void
   onEdit: (patch: Partial<LevelGroup>) => void
+  onRename: (name: string) => void
+  onUse: () => void
   onRemove: () => void
 }) {
-  const [open, setOpen] = useState(true)
-  const buckets = Object.entries(group.mapping)
+  const active = group.active !== false
+  const buckets = readBuckets(group, levels)
+  const unused = unusedLevels(buckets, levels)
+
+  // Buckets named but still empty: a mapping only holds levels, so these live
+  // here until the first level lands in one.
+  const [pending, setPending] = useState<string[]>([])
+  const labels = [...buckets.map(b => b.label), ...pending.filter(p => !buckets.some(b => b.label === p))]
+  const [target, setTarget] = useState<string | null>(null)
+  const current = target !== null && labels.includes(target) ? target : labels[0] ?? null
+  const [anchor, setAnchor] = useState<string | null>(null)
+  const [nameDraft, setNameDraft] = useState(group.name)
+  useEffect(() => setNameDraft(group.name), [group.name])
+
+  // Diagnostic for the "keeps springing open" report: a row that remounts
+  // loses local state. Open/closed now lives in the parent; this confirms it.
+  useEffect(() => {
+    console.debug('[combine] editor mount', group.source, group.name)
+    return () => console.debug('[combine] editor unmount', group.source, group.name)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const write = (next: ReturnType<typeof readBuckets>) => onEdit({ mapping: writeBuckets(next) })
+  const bucketOf = (level: string) => buckets.find(b => b.levels.includes(level))?.label ?? null
+
+  const clickLevel = (level: string, shift: boolean) => {
+    if (current === null) return
+    if (shift) {
+      write(assignLevels(buckets, levelRange(levels, anchor, level), current, levels))
+    } else {
+      const inTarget = bucketOf(level) === current
+      write(assignLevels(buckets, [level], inTarget ? null : current, levels))
+    }
+    setAnchor(level)
+  }
+
+  const addBucket = () => {
+    let n = labels.length + 1
+    while (labels.includes(`group ${n}`)) n++
+    const label = `group ${n}`
+    setPending(p => [...p, label])
+    setTarget(label)
+  }
+
+  const commitName = () => {
+    const name = nameDraft.trim()
+    if (name && name !== group.name) onRename(name)
+    else setNameDraft(group.name)
+  }
+
   return (
     <div style={styles.levelPicker}>
       <div style={styles.variantSetRow}>
-        <input
-          value={group.name}
-          onChange={e => onEdit({ name: e.target.value })}
-          style={styles.variantNameInput}
-          title="The name this derived factor carries in the figure"
-        />
         <button
           type="button"
-          style={styles.variantSelectButton}
-          onClick={() => setOpen(v => !v)}
-          title={`Buckets of ${group.source}`}
+          style={styles.combineHead}
+          onClick={onToggle}
+          aria-expanded={open}
+          title={open ? 'Collapse' : 'Edit this combine'}
         >
-          {open ? '▾' : '▸'} {group.source}
+          <span style={styles.levelChevron}>{open ? '▾' : '▸'}</span>
+          <span style={styles.factorName}>{group.name}</span>
+          <span style={styles.combineFrom}>← {group.source}</span>
+          <span style={styles.levelCount}>{combineSummary(group, levels)}</span>
         </button>
-        <button type="button" style={styles.variantRemove} onClick={onRemove} title="Remove">
+        {!active && (
+          <button
+            type="button"
+            style={styles.combineUse}
+            onClick={onUse}
+            title={`Not in use: ${group.source} is shown as itself. Use this combine in its place.`}
+          >
+            use
+          </button>
+        )}
+        <button type="button" style={styles.variantRemove} onClick={onRemove} title="Remove this combine">
           ✕
         </button>
       </div>
       {open && (
         <div style={styles.levelList}>
-          {buckets.map(([level, label]) => (
-            <div key={level} style={styles.bucketRow}>
-              <span style={styles.bucketLevel}>{level}</span>
-              <span style={styles.bucketArrow}>→</span>
-              <input
-                value={label}
-                onChange={e =>
-                  onEdit({ mapping: { ...group.mapping, [level]: e.target.value } })
-                }
-                style={styles.bucketInput}
-                placeholder="(drop)"
-              />
+          <label style={styles.combineLine}>
+            <span style={styles.combineLabel}>Name</span>
+            <input
+              value={nameDraft}
+              onChange={e => setNameDraft(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+              style={styles.bucketInput}
+              title="The name this combined factor carries in the figure"
+            />
+          </label>
+
+          <div style={styles.combineLabel}>Buckets — pick one, then click levels</div>
+          {labels.map(label => {
+            const count = buckets.find(b => b.label === label)?.levels.length ?? 0
+            return (
+              <div key={label} style={{ ...styles.bucketRow, ...(label === current ? styles.bucketTarget : null) }}>
+                <input
+                  type="radio"
+                  name={`combine-target-${group.source}-${group.name}`}
+                  checked={label === current}
+                  onChange={() => setTarget(label)}
+                  title="Clicking a level puts it in this bucket"
+                />
+                <BucketLabel
+                  label={label}
+                  onRename={to => {
+                    if (count === 0) {
+                      setPending(p => p.map(x => (x === label ? to : x)))
+                    } else {
+                      write(renameBucket(buckets, label, to))
+                    }
+                    if (current === label) setTarget(to)
+                  }}
+                />
+                <span style={styles.levelCount}>{count}</span>
+                <button
+                  type="button"
+                  style={styles.variantRemove}
+                  onClick={() => {
+                    setPending(p => p.filter(x => x !== label))
+                    const members = buckets.find(b => b.label === label)?.levels ?? []
+                    if (members.length) write(assignLevels(buckets, members, null, levels))
+                  }}
+                  title="Remove this bucket (its levels become unused)"
+                >
+                  ✕
+                </button>
+              </div>
+            )
+          })}
+          <div style={styles.levelBulkRow}>
+            <button type="button" style={styles.levelReset} onClick={addBucket}>
+              + Add bucket
+            </button>
+            <button
+              type="button"
+              style={styles.levelReset}
+              onClick={() => { setPending([]); onEdit({ mapping: {} }) }}
+              title="Take every level out of every bucket, to start from scratch"
+            >
+              Clear all
+            </button>
+          </div>
+
+          <div style={styles.combineLabel}>Levels — shift-click for a range</div>
+          <div style={styles.chipGrid}>
+            {levels.map(raw => {
+              const level = String(raw)
+              const owner = bucketOf(level)
+              const style =
+                owner === null
+                  ? styles.chipUnused
+                  : owner === current
+                    ? styles.chipOn
+                    : styles.chipOther
+              return (
+                <button
+                  key={level}
+                  type="button"
+                  style={{ ...styles.chip, ...style }}
+                  onClick={e => clickLevel(level, e.shiftKey)}
+                  disabled={current === null}
+                  title={
+                    owner === null
+                      ? `${level}: in no bucket${group.unmatched === null ? ' (dropped)' : ` (→ ${group.unmatched})`}`
+                      : `${level} → ${owner}`
+                  }
+                >
+                  {level}
+                  {owner !== null && owner !== current && <span style={styles.chipOwner}>{owner}</span>}
+                </button>
+              )
+            })}
+          </div>
+
+          {unused.length > 0 && (
+            <div style={styles.hint}>
+              {unused.length} level{unused.length === 1 ? '' : 's'} in no bucket
+              {group.unmatched === null ? ' — dropped from the figure' : ` — shown as ${group.unmatched}`}.
             </div>
-          ))}
-          <label style={styles.levelRow} title="Levels with an empty bucket are dropped from the figure unless you name a catch-all">
+          )}
+          <label style={styles.levelRow} title="Levels in no bucket are dropped from the figure unless you name a catch-all">
             <input
               type="checkbox"
               checked={group.unmatched !== null}
@@ -4099,7 +4749,63 @@ function LevelGroupEditor({
   )
 }
 
-/** "+ Add group" — pick which factor's levels to bucket. */
+/** A bucket's name, committed on blur / Enter so a half-typed name never
+ *  becomes a bucket (or merges into one) mid-keystroke. */
+function BucketLabel({ label, onRename }: { label: string; onRename: (to: string) => void }) {
+  const [draft, setDraft] = useState(label)
+  useEffect(() => setDraft(label), [label])
+  return (
+    <input
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => {
+        const to = draft.trim()
+        if (to && to !== label) onRename(to)
+        else setDraft(label)
+      }}
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+      style={styles.bucketInput}
+      title="Renaming onto another bucket's name merges the two"
+    />
+  )
+}
+
+/** Which factor a row stands for — plain text, or, when the factor has
+ *  combines, a dropdown of the slot's choices: the source and each combine.
+ *  Choosing one hands it the slot (`combine.ts switchSlot`). The choices come
+ *  from the backend (`alternatives`); nothing here works them out. */
+function SlotName({
+  factor,
+  factors,
+  onSwitch,
+}: {
+  factor: FactorInfo
+  factors: FactorInfo[]
+  onSwitch: (source: string, choice: string) => void
+}) {
+  const choices = factor.alternatives ?? [factor.name]
+  if (choices.length < 2) return <>{factor.display}</>
+  const slot = factor.slot ?? factor.name
+  const display = (name: string) => factors.find(f => f.name === name)?.display ?? name
+  return (
+    <select
+      value={factor.name}
+      onChange={e => onSwitch(slot, e.target.value)}
+      onClick={e => e.stopPropagation()}
+      style={styles.select}
+      title={`${slot} or a combine of it — the choice replaces ${slot} everywhere`}
+    >
+      {choices.map(name => (
+        <option key={name} value={name}>
+          {name === slot ? display(name) : `${display(name)} (combined)`}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+/** "+ Combine levels of…" — pick which factor to combine. A replaced source
+ *  is offered too: a second combine of it is another choice in its dropdown. */
 function BucketAdder({
   factors,
   onAdd,
@@ -4117,7 +4823,7 @@ function BucketAdder({
         if (factor) onAdd(factor.name, factor.levels)
       }}
     >
-      <option value="">+ Group levels of…</option>
+      <option value="">+ Combine levels of…</option>
       {factors.map(factor => (
         <option key={factor.name} value={factor.name}>
           {factor.display}
@@ -4229,6 +4935,7 @@ function GroupingList({
   onToggle,
   onMove,
   onColor,
+  onSwitchSlot,
 }: {
   factors: FactorInfo[]
   layers: string[]
@@ -4239,6 +4946,8 @@ function GroupingList({
   onToggle: (factor: string, on: boolean) => void
   onMove: (factor: string, delta: number) => void
   onColor: (factor: string | null) => void
+  /** The combine dropdown on a row name (`SlotName`). */
+  onSwitchSlot: (source: string, choice: string) => void
 }) {
   const groupable = factors.filter(f => f.group_available || layers.includes(f.name))
   const full = labelled >= maxLabelled
@@ -4261,7 +4970,14 @@ function GroupingList({
             title="Stop grouping by this factor (it separates figures instead)"
             style={{ marginRight: 6 }}
           />
-          <span style={styles.factorName}>{display(name)}</span>
+          <span style={styles.factorName}>
+            {(() => {
+              const factor = factors.find(f => f.name === name)
+              return factor
+                ? <SlotName factor={factor} factors={factors} onSwitch={onSwitchSlot} />
+                : display(name)
+            })()}
+          </span>
           <label style={styles.colorTag} title="Paint the marks by this layer's level (legend added; nothing moves)">
             <input
               type="radio"
@@ -4318,7 +5034,7 @@ function GroupingList({
               onChange={e => onToggle(factor.name, e.target.checked)}
               style={{ marginRight: 6 }}
             />
-            {factor.display}
+            <SlotName factor={factor} factors={factors} onSwitch={onSwitchSlot} />
           </label>
         ))}
       {layers.length === 0 && groupable.length === 0 && (
@@ -4328,11 +5044,68 @@ function GroupingList({
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * One sub-heading inside a Group. A static explanation goes in `hint` and
+ * sits behind ⓘ — it is read once and was a large share of the rail's
+ * height. Notes that describe the CURRENT figure (refusals, layout notes,
+ * limits read back) are children, and stay visible.
+ */
+function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  const [explain, setExplain] = useState(false)
   return (
     <div style={styles.section}>
-      <div style={styles.sectionTitle}>{title}</div>
+      <div style={styles.sectionTitleRow}>
+        <div style={styles.sectionTitle}>{title}</div>
+        {hint && (
+          <button
+            type="button"
+            style={{ ...styles.hintToggle, ...(explain ? styles.hintToggleOn : null) }}
+            onClick={() => setExplain(v => !v)}
+            aria-pressed={explain}
+            title={explain ? 'Hide the explanation' : 'What is this?'}
+          >
+            ⓘ
+          </button>
+        )}
+      </div>
+      {hint && explain && <div style={styles.hint}>{hint}</div>}
       {children}
+    </div>
+  )
+}
+
+/**
+ * A collapsible group of Sections (sidebarGroups.ts). Collapsed, the header
+ * carries the group's one-line summary. The body is hidden, not unmounted, so
+ * an input mid-edit keeps its text.
+ */
+function Group({
+  title,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string
+  summary: string
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div style={styles.group}>
+      <button
+        type="button"
+        style={styles.groupHeader}
+        onClick={onToggle}
+        aria-expanded={open}
+        title={summary}
+      >
+        <span style={styles.groupChevron}>{open ? '▾' : '▸'}</span>
+        <span style={styles.groupTitle}>{title}</span>
+        {!open && <span style={styles.groupSummary}>{summary}</span>}
+      </button>
+      <div style={{ ...styles.groupBody, display: open ? 'block' : 'none' }}>{children}</div>
     </div>
   )
 }
@@ -4355,8 +5128,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   // The title bar and the controls share one column, so the figure column
   // starts at the very top of the panel.
+  // 280 px today; nothing inside may assume it (railWidthClass reads the
+  // measured width), so it can become user-resizable.
   rail: {
-    width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column',
+    width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column',
     minHeight: 0, borderRight: '1px solid var(--ps-border)',
   },
   // Collapsed: only as wide as the toggle that brings it back.
@@ -4425,12 +5200,70 @@ const styles: Record<string, React.CSSProperties> = {
   },
   // minWidth 0: a flex item defaults to its content's width, and a wide plotly
   // figure would then push the rail off the panel instead of scrolling.
-  canvas: { flex: 1, minWidth: 0, padding: 12, overflowY: 'auto' },
-  section: { marginBottom: 16 },
+  // The figure side: toolbar over the canvas. The canvas alone is measured
+  // (canvasRef), so the toolbar's height is already out of the figure's.
+  figureColumn: {
+    flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column',
+  },
+  toolbar: {
+    position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center',
+    gap: 6, padding: '6px 12px', borderBottom: '1px solid var(--ps-border)',
+    background: 'var(--ps-surface)', flexShrink: 0,
+  },
+  toolbarNote: { fontSize: 10, color: 'var(--ps-text-secondary)', whiteSpace: 'nowrap' },
+  // Save progress and results. Takes the slack between the view controls and
+  // the buttons; the full text is its tooltip.
+  toolbarNotice: {
+    flex: '1 1 80px', minWidth: 0, fontSize: 10, color: 'var(--ps-cyan)',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  toolButton: {
+    padding: '4px 8px', background: 'var(--ps-control)', color: 'var(--ps-text-control)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 4, cursor: 'pointer', fontSize: 11,
+    whiteSpace: 'nowrap',
+  },
+  toolPrimaryButton: {
+    padding: '4px 8px', background: 'var(--ps-accent)', color: 'var(--ps-accent-fg)',
+    border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600,
+    whiteSpace: 'nowrap',
+  },
+  canvas: { flex: 1, minWidth: 0, minHeight: 0, padding: 12, overflowY: 'auto' },
+  group: { borderBottom: '1px solid var(--ps-border)', marginBottom: 4 },
+  groupHeader: {
+    display: 'flex', alignItems: 'baseline', gap: 6, width: '100%', minWidth: 0,
+    padding: '6px 0', background: 'none', border: 'none', cursor: 'pointer',
+    textAlign: 'left', color: 'var(--ps-text-control)',
+  },
+  groupChevron: { fontSize: 10, color: 'var(--ps-text-muted)', flexShrink: 0, width: 10 },
+  groupTitle: {
+    fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 700,
+    color: 'var(--ps-text-control)', flexShrink: 0,
+  },
+  groupSummary: {
+    fontSize: 10, color: 'var(--ps-text-muted)', minWidth: 0,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  groupBody: { padding: '4px 0 4px 16px' },
+  section: { marginBottom: 14 },
+  sectionTitleRow: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+    marginBottom: 6,
+  },
   sectionTitle: {
     fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.6,
-    color: 'var(--ps-accent)', marginBottom: 6, fontWeight: 700,
+    color: 'var(--ps-accent)', fontWeight: 700,
   },
+  hintToggle: {
+    background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11,
+    lineHeight: 1, color: 'var(--ps-text-muted)',
+  },
+  hintToggleOn: { color: 'var(--ps-accent)' },
+  kindGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 8px', marginBottom: 4 },
+  // A boolean with a long label: box first, label wraps beside it.
+  checkRow: {
+    display: 'flex', alignItems: 'flex-start', gap: 6, marginBottom: 5, cursor: 'pointer',
+  },
+  checkLabel: { fontSize: 11, color: 'var(--ps-text-control)', lineHeight: 1.3 },
   hint: { fontSize: 10, color: 'var(--ps-text-faint)', marginBottom: 6, fontStyle: 'italic' },
   refusedRow: {
     fontSize: 10, color: 'var(--ps-text-faint-slate)', marginBottom: 4, paddingLeft: 18,
@@ -4540,6 +5373,23 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--ps-control)', color: 'var(--ps-text-body)', border: '1px solid var(--ps-border-strong)',
     borderRadius: 4, fontSize: 11, padding: '2px 4px', maxWidth: 130,
   },
+  // A box with ▲▼ beside it (StepperInput): one bordered control, the
+  // arrows stacked at its right edge.
+  stepper: {
+    display: 'inline-flex', alignItems: 'stretch', flexShrink: 0,
+    background: 'var(--ps-control)', border: '1px solid var(--ps-border-strong)', borderRadius: 4,
+  },
+  stepperInput: {
+    background: 'transparent', color: 'var(--ps-text-body)', border: 'none', outline: 'none',
+    fontSize: 11, padding: '2px 4px', minWidth: 0,
+  },
+  stepperArrows: {
+    display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--ps-border-strong)',
+  },
+  stepperArrow: {
+    flex: 1, padding: '0 3px', background: 'none', border: 'none', cursor: 'pointer',
+    color: 'var(--ps-text-secondary)', fontSize: 7, lineHeight: 1,
+  },
   kindRow: {
     display: 'flex', alignItems: 'center', fontSize: 11,
     color: 'var(--ps-text-control)', marginBottom: 3, cursor: 'pointer',
@@ -4554,11 +5404,13 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 600,
   },
   notice: { fontSize: 10, color: 'var(--ps-cyan)', marginTop: 6 },
+  // Drops down from the toolbar, over the figure.
   dataChooser: {
-    marginTop: 8,
-    padding: 8,
+    position: 'absolute', top: '100%', right: 12, zIndex: 20, width: 340,
+    maxWidth: 'calc(100% - 24px)', maxHeight: '60vh', overflowY: 'auto',
+    padding: 8, background: 'var(--ps-surface)',
     border: '1px solid var(--ps-border-neutral-strong)',
-    borderRadius: 4,
+    borderRadius: 4, boxShadow: '0 4px 12px var(--ps-shadow)',
   },
   dataDepthOption: {
     display: 'flex',
@@ -4635,6 +5487,45 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, minWidth: 40, background: 'var(--ps-surface)', color: 'var(--ps-text-body)',
     border: '1px solid var(--ps-border-strong)', borderRadius: 3, fontSize: 10, padding: '1px 4px',
   },
+  // Structure > Combine. The collapsed row reads as one line of text; the
+  // expanded editor is buckets, then one grid of the source's levels.
+  combineHead: {
+    flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6,
+    background: 'transparent', border: 'none', cursor: 'pointer', padding: '3px 0',
+    textAlign: 'left', color: 'var(--ps-text-body)',
+  },
+  combineFrom: {
+    fontSize: 10, color: 'var(--ps-text-muted-violet)', fontFamily: 'monospace',
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+  },
+  combineUse: {
+    flex: '0 0 auto', padding: '1px 6px', background: 'transparent', color: 'var(--ps-accent-text)',
+    border: '1px solid var(--ps-accent-border)', borderRadius: 4, cursor: 'pointer', fontSize: 10,
+  },
+  combineLine: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 },
+  combineLabel: { fontSize: 10, color: 'var(--ps-text-faint)', margin: '4px 0 2px' },
+  bucketTarget: { background: 'var(--ps-control)', borderRadius: 3 },
+  chipGrid: { display: 'flex', flexWrap: 'wrap', gap: 3, margin: '2px 0 4px' },
+  chip: {
+    display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontFamily: 'monospace',
+    borderRadius: 3, padding: '1px 5px', cursor: 'pointer', userSelect: 'none' as const,
+  },
+  // In the target bucket.
+  chipOn: {
+    background: 'var(--ps-accent-bg-strong)', color: 'var(--ps-accent-text)',
+    border: '1px solid var(--ps-accent-border)',
+  },
+  // In another bucket: clicking moves it to the target.
+  chipOther: {
+    background: 'transparent', color: 'var(--ps-text-secondary)',
+    border: '1px solid var(--ps-border-strong)',
+  },
+  // In no bucket: dropped (or the catch-all).
+  chipUnused: {
+    background: 'transparent', color: 'var(--ps-text-faint)',
+    border: '1px dashed var(--ps-border-strong)',
+  },
+  chipOwner: { fontSize: 8, color: 'var(--ps-text-faint-indigo)' },
   rangeRow: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 },
   rangeInput: {
     width: 62, background: 'var(--ps-surface)', color: 'var(--ps-text-body)',

@@ -71,20 +71,26 @@ parity rule is enforced the same way as `xLayers.ts` ↔ `ordered_x_layers`:
 3.5 / 7.2 / 8 / 13.333 in). If one side changes the rounding or the tolerance,
 the other side's test is the one that tells you.
 
-## The dropdown is state, not a derived value — on purpose
+## The dropdown reads the size; the Lock checkbox decides how W and H move
 
-`aspectChoice` in `PlotStudio.tsx` is `useState<string | null>`. Derived-only
-(`aspectName(width, height)`), choosing "Custom" over an 8 x 6 figure would
-snap straight back to 4:3 on the next render. So:
+Changed 2026-09-26 (user). Before, the dropdown was view state (`aspectChoice`)
+and "Custom" was a MODE: W and H independent. Now:
 
-- picking a ratio sets the choice and moves the **height** (width is kept —
-  the width is the constrained number);
-- editing the width keeps the current ratio and moves the height (for
-  custom, `heightFor` returns the fallback, i.e. the height stays);
-- editing the height resets the choice to `null` — "say what it is" — so a
-  typed height that lands on 16:9 reads as 16:9 and anything else as custom;
-- opening another variable resets it (the open effect calls
-  `setAspectChoice(null)` next to `setSpec(null)`).
+- The Aspect dropdown is derived: `aspectName(width, height)`. "Custom" is a
+  disabled option: it shows when the size matches no preset and cannot be
+  picked. There is no `aspectChoice` any more (not in the saved view either).
+- **Picking a ratio** always keeps the width and sets the height
+  (`heightFor`), whether locked or not, including from a custom size.
+- **Lock aspect** is a checkbox in the figure toolbar after W/H. Locked: typing or
+  stepping W moves H, and typing H moves W, at the CURRENT ratio (a preset's
+  exact ratio when the size is one, so steps cannot drift off it through
+  two-decimal rounding; otherwise the current w / h). Unlocked: only the
+  edited side moves, and the dropdown then reads whatever results.
+- One owner of that rule: `figureSize.resizeFigure`. The lock is per viewer
+  (localStorage `scistack.plotStudio.aspectLocked`, default locked), like the
+  size unit: it is a way of editing, not a property of the figure.
+- Logs: `[Plot Studio] figure_resized` (why, locked, from, to) and
+  `[Plot Studio] aspect_picked` in the webview console.
 
 `InchInput` follows `LimitInput`'s discipline (text held while typing, commit
 only a finite positive number) with one difference: blank means nothing.

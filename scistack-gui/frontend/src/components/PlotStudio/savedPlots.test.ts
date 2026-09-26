@@ -14,14 +14,14 @@ import {
 } from './savedPlots.js'
 
 test('a saved view reads back unchanged', () => {
-  const view = viewState('pane', '16:9', 3)
+  const view = viewState('pane', 3)
   assert.deepEqual(readView(JSON.parse(JSON.stringify(view))), view)
 })
 
 test('a drifted view keeps what still makes sense and defaults the rest', () => {
   assert.deepEqual(
     readView({ previewMode: 'zoomed', aspectChoice: 4, figureIndex: 2, legacyZoom: 1.5 }),
-    { previewMode: 'export', aspectChoice: null, figureIndex: 2 },
+    { previewMode: DEFAULT_VIEW.previewMode, figureIndex: 2 },
   )
   assert.deepEqual(readView({ figureIndex: -1 }).figureIndex, 0)
   assert.deepEqual(readView({ figureIndex: 1.5 }).figureIndex, 0)
@@ -40,11 +40,13 @@ test('key order does not make two equal specs differ', () => {
 
 test('stepping through figures is not a modification; changing the look is', () => {
   const spec = { measures: ['X'], kind: 'box' }
-  const base = modifiedKey(spec, viewState('export', null, 0))
-  assert.equal(modifiedKey(spec, viewState('export', null, 5)), base)
-  assert.notEqual(modifiedKey(spec, viewState('pane', null, 0)), base)
-  assert.notEqual(modifiedKey(spec, viewState('export', '16:9', 0)), base)
-  assert.notEqual(modifiedKey({ ...spec, kind: 'bar' }, viewState('export', null, 0)), base)
+  const base = modifiedKey(spec, viewState('export', 0))
+  assert.equal(modifiedKey(spec, viewState('export', 5)), base)
+  assert.notEqual(modifiedKey(spec, viewState('pane', 0)), base)
+  assert.notEqual(modifiedKey({ ...spec, kind: 'bar' }, viewState('export', 0)), base)
+  // The ratio lives in the spec's width/height; the view no longer holds one.
+  const wider = { ...spec, style: { width: 8, height: 4.5 } }
+  assert.notEqual(modifiedKey(wider, viewState('export', 0)), base)
 })
 
 test('a plot restored with notes stays modified until it is saved', () => {
@@ -79,4 +81,8 @@ test('the notes summary separates format drift from missing data', () => {
 test('an unparseable timestamp is shown as stored', () => {
   assert.equal(savedAtLabel('not a date'), 'not a date')
   assert.match(savedAtLabel('2026-09-24T15:04:05+00:00'), /^2026-09-2\d \d\d:\d\d$/)
+})
+
+test('a new plot previews fitted to the pane', () => {
+  assert.equal(DEFAULT_VIEW.previewMode, 'pane')
 })

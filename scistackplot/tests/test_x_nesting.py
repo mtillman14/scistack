@@ -268,8 +268,8 @@ def test_group_brackets_stay_out_of_the_row_below():
 
     layout = render_plotly(resolve(spec, table)[0])["layout"]
     # slots: 1=(0,0) 2=(0,1) 3=(1,0). Only (0,1) and (1,0) draw brackets — and
-    # the top row's are the ones in the right-hand column.
-    top_row_brackets = [a["y"] for a in layout["annotations"] if a["x"] > 0.5]
+    # the top row's are the ones on the right-hand column's axis.
+    top_row_brackets = [a["y"] for a in layout["annotations"] if a["xref"] == "x2"]
     assert top_row_brackets
     lowest_in_top_row = min(top_row_brackets)
     row_below_top = layout["yaxis3"]["domain"][1]
@@ -480,21 +480,61 @@ def test_a_numeric_axis_is_left_alone(series_table):
 
 
 def test_brackets_span_the_leaves_they_name(grouped_table):
-    """`_add_x_groups` divides by `len(plan.order)`, which is only true once the
-    spacers occupy slots. Before they did, every bracket sat left of its bars."""
+    """Brackets are placed at leaf INDICES in `plan.order`, which is only right
+    because the spacers occupy slots. Before they did, every bracket sat left
+    of its bars."""
     from scistackplot import render_plotly
 
     figure = resolve(_nested_spec(), grouped_table)[0]
     payload = render_plotly(figure)
-    positions = len(figure.x_plan.order)
-    domain = payload["layout"]["xaxis"]["domain"]
-    width = domain[1] - domain[0]
 
     by_label = {a["text"]: a["x"] for a in payload["layout"]["annotations"]}
     for group in figure.x_plan.groups:
-        left = domain[0] + width * (group.start / positions)
-        right = domain[0] + width * ((group.end + 1) / positions)
-        assert left <= by_label[group.label] <= right
+        assert group.start - 0.5 <= by_label[group.label] <= group.end + 0.5
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"kind": PlotKind.BAR},
+        {"kind": PlotKind.BOX},
+        {"kind": PlotKind.VIOLIN},
+        {
+            "kind": PlotKind.STRIP,
+            "roles": {"group": Role.GROUP, "session": Role.GROUP, "subject": Role.FACET},
+        },
+    ],
+    ids=lambda kw: str(kw["kind"]),
+)
+def test_brackets_follow_the_axis_when_zoomed(grouped_table, kwargs):
+    """Zooming onto one pair of bars left every group's label under the plot:
+    the brackets were in PAPER coordinates, pinned to the panel, while the
+    ticks followed the axis range. They are in the panel's own x-axis
+    coordinates (category serial numbers = indices in `plan.order`), so plotly
+    clips and hides them with the ticks — for every kind, from one owner."""
+    from scistackplot import render_plotly
+    from scistackplot.render.plotly_ import X_GROUP_TAG
+
+    figure = resolve(_nested_spec(**kwargs), grouped_table)[0]
+    layout = render_plotly(figure)["layout"]
+    axis_ids = {
+        ("x" if key == "xaxis" else "x" + key[len("xaxis"):])
+        for key in layout
+        if key.startswith("xaxis")
+    }
+
+    marks = [
+        m
+        for m in layout["annotations"] + layout.get("shapes", [])
+        if str(m.get("name", "")).startswith(X_GROUP_TAG)
+    ]
+    assert marks
+    for mark in marks:
+        assert mark["xref"] in axis_ids, mark
+        assert mark["yref"] == "paper", mark
+    for shape in (m for m in marks if m.get("type") == "line"):
+        # Inside the slots of the leaves it names, never past the axis ends.
+        assert -0.5 <= shape["x0"] < shape["x1"] <= len(figure.x_plan.order) - 0.5
 
 
 def test_the_two_backends_order_the_axis_the_same_way(grouped_table):
@@ -873,3 +913,26 @@ def test_a_nested_bar_axis_reaches_plotly_in_order(grouped_table):
 
     assert payload["layout"]["xaxis"]["categoryarray"] == list(figure.x_plan.order)
     assert [a["text"] for a in payload["layout"]["annotations"]] == ["stim", "sham"]
+
+
+@pytest.mark.parametrize(
+    "shown, expected",
+    [
+        # Everything shown: every bracket row is ruled.
+        ({0, 1, 2}, {0, 1}),
+        # Tick row hidden: the innermost row has nothing above to bracket.
+        ({0, 1}, {0}),
+        # Middle row hidden: the outer rule still brackets the ticks.
+        ({0, 2}, {0}),
+        # A hidden row draws no rule of its own.
+        ({1, 2}, {1}),
+        # Only the outermost row shows: nothing to bracket.
+        ({0}, set()),
+    ],
+)
+def test_a_bracket_row_is_ruled_only_under_shown_labels(shown, expected):
+    """A rule sits ABOVE its label and spans the labels above it — so it needs
+    its own label AND some shown row nearer the axis (tick row = plan depth)."""
+    from scistackplot.render.base import ruled_bracket_depths
+
+    assert ruled_bracket_depths(2, shown) == expected

@@ -141,3 +141,16 @@ def test_without_decisions_the_preview_is_unchanged(gait_table):
     assert all(axis["tickangle"] == 0 for axis in _x_axes(payload).values())
     assert "width" not in payload["layout"]
     assert "label_fit" not in payload["layout"]["meta"]
+
+
+def test_hidden_ticks_leave_the_innermost_brackets_unruled_in_the_preview(gait_table):
+    """graph1 + hide_legend_ticks: the tick row is blank, so the rules that
+    would bracket it are dropped — the labels under them stay."""
+    resolved = _one(_graph1(hide_legend_ticks=True), gait_table)
+    payload = render_plotly(resolved, decisions=layout_decisions(resolved))
+    assert not _bracket_rules(payload)
+    labels = [
+        a for a in payload["layout"]["annotations"]
+        if str(a.get("name", "")).startswith(X_GROUP_TAG)
+    ]
+    assert labels and all(a["text"] for a in labels)
