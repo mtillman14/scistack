@@ -46,6 +46,7 @@ from .base import (
     palette_for,
     panel_position,
     drawable_limits,
+    fill_alpha,
     panel_y_limits,
     panel_y_title,
     shares_y_axis,
@@ -53,13 +54,12 @@ from .base import (
     shows_x_labels,
     shows_y_labels,
     sample_dropped_reason,
-    sample_groups,
+    SAMPLE_LINE_POINTS_GID,
     sample_hover,
     sample_legend_levels,
-    sample_paint,
     sample_palette_for,
     sample_positions,
-    sample_series,
+    sample_runs,
     series_runs,
     x_positions,
 )
@@ -384,7 +384,7 @@ def _draw_bars(ax, frame, resolved) -> None:
             ecolor=PAPER.error_bar_color,
             error_kw={"elinewidth": PAPER.error_bar_width, "capthick": PAPER.error_cap_width},
             color=palette_for(resolved, level, index),
-            alpha=resolved.spec.style.alpha,
+            alpha=fill_alpha(PlotKind.BAR, resolved.spec.style),
             label=resolved.text.color_level(level) if level is not None else None,
         )
         if ticks is not None:
@@ -435,7 +435,7 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
             )
             for body in parts["bodies"]:
                 body.set_facecolor(color)
-                body.set_alpha(0.55)
+                body.set_alpha(fill_alpha(PlotKind.VIOLIN, resolved.spec.style))
         else:
             drawn = ax.boxplot(
                 datasets,
@@ -446,7 +446,7 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
             )
             for box in drawn["boxes"]:
                 box.set_facecolor(color)
-                box.set_alpha(0.6)
+                box.set_alpha(fill_alpha(PlotKind.BOX, resolved.spec.style))
         if level is not None:
             # Boxes carry no legend handle of their own; a proxy patch does.
             ax.plot([], [], color=color, linewidth=6, label=resolved.text.color_level(level))
@@ -463,45 +463,58 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     Placement is ``base.sample_positions`` — the row's own mark's position
     (its tick; on a spaghetti its line's shift) plus the identity's offset —
     so the points sit in the bar, box or line they were averaged into.
-    Colour is ``base.sample_groups`` / ``sample_paint``: the mark's, or the
-    overlay's own key's (``ResolvedPlot.sample_color``), in which case a
-    line runs across the mark colours and the legend lists the levels
-    (``_sample_legend_handles``). Drawn after the marks, on top.
+    Runs and colours are ``base.sample_runs``: the overlay's own key's
+    (``ResolvedPlot.sample_color``, the legend lists the levels —
+    ``_sample_legend_handles``), or each point its mark's, with a line that
+    crosses mark colours drawn neutral under points painted one by one.
+    Drawn after the marks, on top.
     """
     sample = getattr(panel, "sample", None)
     if sample is None or sample.empty or sample_dropped_reason(panel, resolved):
         return
     weight = sample_weight(resolved.spec.style)
-    for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
-        color = sample_paint(resolved, level, index)
-        for identity, rows in sample_series(subset, resolved):
-            positions = sample_positions(rows, resolved, identity)
-            order = np.argsort(positions, kind="stable")
-            values = rows[resolved.encoding.y].to_numpy(dtype=float)[order]
-            if resolved.sample_join and len(rows) > 1:
-                ax.plot(
-                    positions[order],
-                    values,
-                    color=color,
-                    alpha=SAMPLE_ALPHA,
-                    linewidth=weight.line_pt,
-                    marker="o",
-                    markersize=weight.marker_pt,
-                    markeredgecolor=SAMPLE_EDGE_COLOR,
-                    markeredgewidth=0.5,
-                    zorder=3,
-                )
-            else:
-                ax.scatter(
-                    positions[order],
-                    values,
-                    s=weight.marker_area,
-                    color=color,
-                    alpha=SAMPLE_ALPHA,
-                    edgecolors=SAMPLE_EDGE_COLOR,
-                    linewidths=0.5,
-                    zorder=3,
-                )
+    for run in sample_runs(sample, resolved):
+        positions = sample_positions(run.rows, resolved, run.identity)
+        order = np.argsort(positions, kind="stable")
+        values = run.rows[resolved.encoding.y].to_numpy(dtype=float)[order]
+        joined = resolved.sample_join and len(run.rows) > 1
+        if joined and run.uniform:
+            ax.plot(
+                positions[order],
+                values,
+                color=run.line_color,
+                alpha=SAMPLE_ALPHA,
+                linewidth=weight.line_pt,
+                marker="o",
+                markersize=weight.marker_pt,
+                markeredgecolor=SAMPLE_EDGE_COLOR,
+                markeredgewidth=0.5,
+                zorder=3,
+            )
+            continue
+        if joined:
+            # The points sit on marks of different colours: the line (the
+            # run, zorder 3) in the neutral colour, the points on top of it
+            # each in its own mark's colour (gid: part of the line's run).
+            ax.plot(
+                positions[order],
+                values,
+                color=run.line_color,
+                alpha=SAMPLE_ALPHA,
+                linewidth=weight.line_pt,
+                zorder=3,
+            )
+        ax.scatter(
+            positions[order],
+            values,
+            s=weight.marker_area,
+            color=[run.point_colors[i] for i in order],
+            alpha=SAMPLE_ALPHA,
+            edgecolors=SAMPLE_EDGE_COLOR,
+            linewidths=0.5,
+            zorder=3.1 if joined else 3,
+            gid=SAMPLE_LINE_POINTS_GID if joined else None,
+        )
     _sample_legend_handles(ax, resolved)
 
 

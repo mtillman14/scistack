@@ -9,7 +9,9 @@ what stops the interactive view and the exported figure from disagreeing.
 
 from __future__ import annotations
 
+import functools
 import math
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import numpy as np
@@ -338,6 +340,46 @@ def palette_color(index: int, palette: tuple[str, ...] = DEFAULT_PALETTE) -> str
     return palette[index % len(palette)]
 
 
+@functools.lru_cache(maxsize=64)
+def mark_palette(name: str | None, n: int) -> tuple[str, ...]:
+    """The marks' colours for ``StyleOptions.palette`` over ``n`` colour
+    levels — ONE owner for the preview (:func:`palette_for`) and the export
+    (``codegen._mark_palette`` hands seaborn the same name, and seaborn
+    resolves it the same way: ``sns.color_palette(name, n)``).
+
+    ``None`` is :data:`DEFAULT_PALETTE`. A name is resolved by seaborn, so a
+    colormap (``"viridis"``) is sampled over exactly the ``n`` levels the
+    export's ``hue_order`` has. Until 2026-09-26 the preview ignored the
+    name and always drew the default, while the export honoured it.
+    A name seaborn refuses, or no seaborn at all, falls back to the default
+    and says so (once per name, via the cache).
+    """
+    if not name:
+        return DEFAULT_PALETTE
+    try:
+        import seaborn as sns
+    except ImportError:
+        Log.warn(
+            "palette %r needs seaborn to resolve; drawing the default palette "
+            "(the export, which uses seaborn, will differ)",
+            name,
+            layer=LAYER,
+        )
+        return DEFAULT_PALETTE
+    try:
+        colors = tuple(sns.color_palette(name, max(n, 1)).as_hex())
+    except (ValueError, KeyError) as exc:
+        Log.warn(
+            "palette %r is not a seaborn/matplotlib palette (%s); drawing the default palette",
+            name,
+            exc,
+            layer=LAYER,
+        )
+        return DEFAULT_PALETTE
+    Log.debug("palette %r over %d level(s): %s", name, n, list(colors), layer=LAYER)
+    return colors
+
+
 def palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
     """The colour a level carries — the same one in every panel.
 
@@ -352,10 +394,13 @@ def palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
     "never drop data" case ``color_groups`` ends with.
     """
     order = resolved.color_order or []
+    # Over the declared levels: a colormap is sampled per level, as the
+    # export's `hue_order` samples it (mark_palette).
+    palette = mark_palette(resolved.spec.style.palette, len(order))
     for position, candidate in enumerate(order):
         if str(candidate) == str(level):
-            return palette_color(position)
-    return palette_color(fallback)
+            return palette_color(position, palette)
+    return palette_color(fallback, palette)
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +427,31 @@ def mark_width() -> float:
     A function rather than the constant so the two renderers, the overlay
     and the tests read one name for "how wide is a bar"."""
     return MARK_SPAN
+
+#: The fill opacity of a box and a violin body — lighter than a bar, whose
+#: fill is ``StyleOptions.alpha``, because the median / quartile lines
+#: inside them must read through.
+BOX_FILL_ALPHA = 0.6
+VIOLIN_FILL_ALPHA = 0.55
+
+
+def fill_alpha(kind: PlotKind, style) -> float | None:
+    """The opacity of a mark's FILL — ONE owner for matplotlib, plotly and
+    the export (``codegen``), or ``None`` for a kind with no fill.
+
+    Until 2026-09-26 each side had its own: matplotlib drew bars at
+    ``style.alpha`` and boxes / violins at literals, plotly drew opaque bars
+    and its own half-transparent box fill, and the export drew every fill
+    opaque.
+    """
+    if kind is PlotKind.BAR:
+        return style.alpha
+    if kind is PlotKind.BOX:
+        return BOX_FILL_ALPHA
+    if kind is PlotKind.VIOLIN:
+        return VIOLIN_FILL_ALPHA
+    return None
+
 
 #: How the overlay's points draw against the marks they sit on: the mark's
 #: colour with a dark edge so they read on top of a bar of the same hue, a
@@ -507,35 +577,123 @@ def sample_series(subset: pd.DataFrame, resolved: ResolvedPlot) -> list[tuple[An
 def sample_groups(
     sample: pd.DataFrame, resolved: ResolvedPlot
 ) -> list[tuple[Any, pd.DataFrame]]:
-    """How a panel's overlay rows split into runs that share one colour and
-    are joined into one line: ``(colour level, rows)``.
+    """The overlay's OWN colour levels, in ``sample_color_order``:
+    ``(level, rows)``. Only meaningful with ``ResolvedPlot.sample_color``;
+    :func:`sample_runs` is the seam renderers read."""
+    order = [str(v) for v in resolved.sample_color_order]
+    groups = list(sample.groupby(SAMPLE_COLOR, sort=False))
+    return sorted(
+        groups,
+        key=lambda item: order.index(str(item[0])) if str(item[0]) in order else len(order),
+    )
 
-    ONE rule, both renderers and the generated code: with the overlay
-    coloured by its own key (``ResolvedPlot.sample_color``) the rows are NOT
-    split by the marks' colour first — an identity's line runs across the
-    colour levels, from the ``pre`` tick to the ``post`` tick, and its own
-    colour is what makes that unambiguous. Without it a line crossing two
-    mark colours would have no colour to be, so the rows split per mark
-    level as they always did and the points take the mark's colour. Either
-    way the colour level returned is the one to PAINT with; the position is
-    always the row's own mark's (:func:`sample_positions`).
+
+#: The line joining overlay points that sit on marks of DIFFERENT colours
+#: (the coloured layer is the one the line spans, e.g. ``pre`` → ``post``
+#: with ``session`` coloured) when the overlay takes its marks' colour: the
+#: points keep their mark's colour, the line between them has none to be,
+#: so it is drawn in this neutral grey.
+SAMPLE_CROSS_LINE_COLOR = "#808080"
+
+#: matplotlib gid of the points drawn over a neutral crossing line — they
+#: belong to that line's run (read back by ``tests/plot_geometry.py``).
+SAMPLE_LINE_POINTS_GID = "sample-line-points"
+
+
+@dataclass(frozen=True)
+class SampleRun:
+    """One overlay run — a polyline when joined — as every renderer draws it.
+
+    ``level`` is the run's paint level (the overlay's own level, or the mark
+    level every point shares; ``None`` when the run crosses mark colours),
+    ``line_color`` the colour of the line joining the points, and
+    ``point_colors`` one colour per row of ``rows``, in ``rows`` order.
     """
+
+    identity: Any
+    rows: pd.DataFrame
+    level: Any
+    line_color: str
+    point_colors: tuple[str, ...]
+
+    @property
+    def uniform(self) -> bool:
+        """Every point, and the line, in one colour."""
+        return all(color == self.line_color for color in self.point_colors)
+
+
+def sample_runs(sample: pd.DataFrame, resolved: ResolvedPlot) -> list[SampleRun]:
+    """How a panel's overlay rows split into runs and what colour each point
+    and line is painted — ONE rule, both renderers (the generated code
+    restates it in ``codegen._sample_draw_lines``).
+
+    A run is :func:`sample_series`: one identity inside one bracket. It is
+    never split by the marks' colour when joined, so a line spans the innermost tick
+    whichever layer is coloured:
+
+    * with the overlay's own colour (``ResolvedPlot.sample_color``) the runs
+      split by that key's level and point and line take its colour;
+    * points only (``sample_join`` off): split per mark colour, each run in
+      its mark's colour and level (so plotly's legend group still hides a
+      level's points);
+    * otherwise each POINT takes its own mark's colour, and the line takes
+      that colour too when every point shares it (the coloured layer is a
+      bracket, or depth-less) — else, when the coloured layer is the one the
+      line spans, it is drawn in :data:`SAMPLE_CROSS_LINE_COLOR`. Splitting
+      per mark colour here (the rule until 2026-09-26) left every run one
+      point long, so Lines / Auto (lines) drew no line at all.
+
+    The position is always the row's own mark's (:func:`sample_positions`).
+    """
+    runs: list[SampleRun] = []
     if resolved.sample_color and SAMPLE_COLOR in sample.columns:
-        order = [str(v) for v in resolved.sample_color_order]
-        groups = list(sample.groupby(SAMPLE_COLOR, sort=False))
-        return sorted(
-            groups,
-            key=lambda item: order.index(str(item[0])) if str(item[0]) in order else len(order),
+        for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
+            color = sample_palette_for(resolved, level, index)
+            for identity, rows in sample_series(subset, resolved):
+                runs.append(SampleRun(identity, rows, level, color, (color,) * len(rows)))
+        return runs
+    color_column = resolved.encoding.color
+    if not color_column or color_column not in sample.columns:
+        color = palette_for(resolved, None, 0)
+        return [
+            SampleRun(identity, rows, None, color, (color,) * len(rows))
+            for identity, rows in sample_series(sample, resolved)
+        ]
+    if not resolved.sample_join:
+        # Points only: no line to cross anything, so the runs split per mark
+        # colour and each keeps its level — plotly's `legendgroup` then ties
+        # the points to their mark's legend entry (hide 01, hide its points).
+        for index, (level, subset) in enumerate(color_groups(sample, resolved)):
+            color = palette_for(resolved, level, index)
+            for identity, rows in sample_series(subset, resolved):
+                runs.append(SampleRun(identity, rows, level, color, (color,) * len(rows)))
+        return runs
+    # A level's colour exactly as the per-level split painted it (the
+    # fallback index is its position among the panel's levels).
+    paint = {
+        str(level): palette_for(resolved, level, index)
+        for index, (level, _) in enumerate(color_groups(sample, resolved))
+    }
+    crossing = 0
+    for identity, rows in sample_series(sample, resolved):
+        levels = rows[color_column].tolist()
+        colors = tuple(paint.get(str(level), palette_for(resolved, level, 0)) for level in levels)
+        if len({str(level) for level in levels}) == 1:
+            runs.append(SampleRun(identity, rows, levels[0], colors[0], colors))
+        else:
+            crossing += 1
+            runs.append(SampleRun(identity, rows, None, SAMPLE_CROSS_LINE_COLOR, colors))
+    if crossing:
+        Log.debug(
+            "sample overlay: %d of %d run(s) cross the marks' colour %r — "
+            "points in their mark's colour, line in %s",
+            crossing,
+            len(runs),
+            color_column,
+            SAMPLE_CROSS_LINE_COLOR,
+            layer=LAYER,
         )
-    return color_groups(sample, resolved)
-
-
-def sample_paint(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
-    """The colour a :func:`sample_groups` run is painted: the overlay's own
-    palette when it has one, else its mark's."""
-    if resolved.sample_color:
-        return sample_palette_for(resolved, level, fallback)
-    return palette_for(resolved, level, fallback)
+    return runs
 
 
 def sample_positions(

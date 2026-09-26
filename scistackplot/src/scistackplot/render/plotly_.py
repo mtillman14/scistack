@@ -48,19 +48,18 @@ from .base import (
     palette_for,
     panel_position,
     axis_range,
+    fill_alpha,
     panel_y_limits,
     panel_y_title,
     shares_y_axis,
     shows_legend,
     shows_x_labels,
     shows_y_labels,
-    sample_groups,
     sample_hover,
     sample_legend_levels,
-    sample_paint,
     sample_dropped_reason,
     sample_positions,
-    sample_series,
+    sample_runs,
     series_runs,
     x_positions,
 )
@@ -438,7 +437,9 @@ def _panel_traces(
                     "offsetgroup": MARK_OFFSET_GROUP,
                     "x": x_values,
                     "y": _values(subset[encoding.y]),
-                    "marker": {"color": color},
+                    # The fill opacity every side shares (base.fill_alpha); on
+                    # the marker, so the error bars stay opaque as in matplotlib.
+                    "marker": {"color": color, "opacity": fill_alpha(kind, resolved.spec.style)},
                     **({"error_y": error} if error else {}),
                     **hover,
                 }
@@ -454,6 +455,8 @@ def _panel_traces(
                     "y": _values(subset[encoding.y]),
                     "marker": {"color": color},
                     "line": {"color": color},
+                    # Stated: plotly's own default fill is half-transparent.
+                    "fillcolor": _rgba(color, fill_alpha(kind, resolved.spec.style)),
                     "boxpoints": "outliers" if kind is PlotKind.BOX else None,
                     # A violin spans exactly its data, as matplotlib's does.
                     # plotly's default ("soft") runs the KDE two bandwidths
@@ -528,9 +531,11 @@ def _sample_traces(
     joined, placed by ``base.sample_positions`` on the marks they belong to
     (the same arithmetic ``mpl._draw_sample`` uses).
 
-    Painted by ``base.sample_groups`` / ``sample_paint``. In the mark's
-    colour the points are never in the legend, and ``legendgroup`` ties each
-    point set to its colour level so hiding a level hides its points too.
+    Runs and paint are ``base.sample_runs``. In the mark's colour the points
+    are never in the legend, and ``legendgroup`` ties a run to its colour
+    level so hiding a level hides its points too; a run that crosses the
+    marks' colours (neutral line, each marker its own mark's colour) has no
+    one level and joins the y label's group.
     With the overlay's own colour (``ResolvedPlot.sample_color``) each level
     gets ONE legend entry (the first trace that draws it, figure-wide via
     ``seen_legend``) and its own ``sample:`` legend group, so clicking a
@@ -545,55 +550,59 @@ def _sample_traces(
     listed = overlay_in_legend(resolved.spec, resolved.sample_color)
     weight = sample_weight(resolved.spec.style)
     traces: list[dict] = []
-    for index, (level, subset) in enumerate(sample_groups(sample, resolved)):
-        color = sample_paint(resolved, level, index)
-        # The overlay's own colour key when it has one, else the mark's colour.
+    for run in sample_runs(sample, resolved):
+        level, rows, identity = run.level, run.rows, run.identity
+        # The overlay's own colour key when it has one, else the mark's
+        # colour — none when the run crosses the marks' colours.
         label = (
             (resolved.text.sample_level(level) if own_color else resolved.text.color_level(level))
             if level is not None
             else resolved.labels.y
         )
         legend_group = f"sample:{label}" if own_color else label
-        for identity, rows in sample_series(subset, resolved):
-            positions = sample_positions(rows, resolved, identity)
-            order = np.argsort(positions, kind="stable")
-            hover = sample_hover(rows, resolved)
-            levels = [
-                str(v).replace(LEAF_SEPARATOR, " · ") for v in rows[resolved.encoding.x].to_numpy()
-            ]
-            show_legend = listed and legend_on and legend_group not in seen
-            if show_legend:
-                seen.add(legend_group)
-            traces.append(
-                {
-                    "type": "scatter",
-                    "mode": "lines+markers" if resolved.sample_join and len(rows) > 1 else "markers",
-                    "name": label if own_color else (str(identity) if identity is not None else label),
-                    "legendgroup": legend_group,
-                    "showlegend": show_legend,
-                    # After every mark entry whatever panel first drew it.
-                    "legendrank": 2000,
-                    "xaxis": x_axis,
-                    "yaxis": y_axis,
-                    "x": [None if np.isnan(v) else float(v) for v in positions[order]],
-                    "y": _values(rows[resolved.encoding.y].iloc[order]),
-                    "marker": {
-                        "color": color,
-                        "size": weight.marker_px,
-                        "line": {"color": SAMPLE_EDGE_COLOR, "width": 0.5},
-                    },
-                    "line": {"color": color, "width": weight.line_pt},
-                    "opacity": SAMPLE_ALPHA,
-                    # Hover-only (see `_level_hover` on why not `text`).
-                    "customdata": [
-                        f"{levels[i]}<br>{hover[i]}" if hover[i] else levels[i] for i in order
-                    ],
-                    "hovertemplate": "%{customdata}<br>%{y}<extra>" + label + "</extra>",
-                }
-            )
+        positions = sample_positions(rows, resolved, identity)
+        order = np.argsort(positions, kind="stable")
+        hover = sample_hover(rows, resolved)
+        levels = [
+            str(v).replace(LEAF_SEPARATOR, " · ") for v in rows[resolved.encoding.x].to_numpy()
+        ]
+        show_legend = listed and legend_on and legend_group not in seen
+        if show_legend:
+            seen.add(legend_group)
+        traces.append(
+            {
+                "type": "scatter",
+                "mode": "lines+markers" if resolved.sample_join and len(rows) > 1 else "markers",
+                "name": label if own_color else (str(identity) if identity is not None else label),
+                "legendgroup": legend_group,
+                "showlegend": show_legend,
+                # After every mark entry whatever panel first drew it.
+                "legendrank": 2000,
+                "xaxis": x_axis,
+                "yaxis": y_axis,
+                "x": [None if np.isnan(v) else float(v) for v in positions[order]],
+                "y": _values(rows[resolved.encoding.y].iloc[order]),
+                "marker": {
+                    # One colour, or each point its own mark's when the
+                    # run crosses the marks' colours (base.sample_runs).
+                    "color": run.line_color
+                    if run.uniform
+                    else [run.point_colors[i] for i in order],
+                    "size": weight.marker_px,
+                    "line": {"color": SAMPLE_EDGE_COLOR, "width": 0.5},
+                },
+                "line": {"color": run.line_color, "width": weight.line_pt},
+                "opacity": SAMPLE_ALPHA,
+                # Hover-only (see `_level_hover` on why not `text`).
+                "customdata": [
+                    f"{levels[i]}<br>{hover[i]}" if hover[i] else levels[i] for i in order
+                ],
+                "hovertemplate": "%{customdata}<br>%{y}<extra>" + label + "</extra>",
+            }
+        )
     # The one line that tells "no lines" apart: joined runs vs one-point runs
-    # (a run is one identity inside one paint group — split per mark colour
-    # unless the overlay has its own colour), and what decided the join.
+    # (a run is one identity inside one bracket — base.sample_runs — never
+    # split by the marks' colour), and what decided the join.
     joined = sum(1 for t in traces if t["mode"] == "lines+markers")
     Log.debug(
         "sample overlay panel %s: %d run(s), %d joined, %d single-point; "

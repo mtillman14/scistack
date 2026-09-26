@@ -29,8 +29,10 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
+from scistackplot.render.base import SAMPLE_CROSS_LINE_COLOR, palette_for
 from scistackplot.resolved import SERIES, X
 from scistackplot.xaxis import LEAF_SEPARATOR
+from plot_geometry import mpl_sample_colors
 
 
 @pytest.fixture
@@ -265,11 +267,18 @@ def test_the_coloured_only_grouping_is_the_tick_axis(unbalanced):
 def test_plotly_draws_the_overlay_when_the_colour_is_the_only_grouping(unbalanced):
     payload = render_plotly(_figure(_colour_only(["subject"]), unbalanced))
     traces = _overlay_traces(payload)
-    # In the marks' colour a run never crosses colour levels (base.sample_groups):
-    # one single-point run per subject per session, never joined.
-    assert len(traces) == 4
-    assert {t["mode"] for t in traces} == {"markers"}
+    # Regression (2026-09-26): in the marks' colour the runs used to split per
+    # colour level, so each subject was two one-point runs and Auto (lines)
+    # drew no line. A run is one subject (base.sample_runs): joined pre → post,
+    # the line neutral, each marker its own session's colour.
+    figure = _figure(_colour_only(["subject"]), unbalanced)
+    assert len(traces) == 2
+    assert {t["mode"] for t in traces} == {"lines+markers"}
     assert sum(len(t["x"]) for t in traces) == 4
+    session_colours = [palette_for(figure, level, i) for i, level in enumerate(["pre", "post"])]
+    for trace in traces:
+        assert trace["line"]["color"] == SAMPLE_CROSS_LINE_COLOR
+        assert trace["marker"]["color"] == session_colours, "sorted by x: pre, then post"
     # Every point sits inside its own session's tick (0 = pre, 1 = post).
     for trace in traces:
         for x in trace["x"]:
@@ -290,9 +299,16 @@ def test_plotly_draws_the_overlay_with_its_own_colour_on_a_coloured_only_groupin
 
 
 def test_mpl_draws_the_overlay_when_the_colour_is_the_only_grouping(unbalanced):
-    drawn = render_matplotlib(_figure(_colour_only(["subject"]), unbalanced))
-    # Points only, split per mark colour (see the plotly twin above).
-    assert _overlay_lines(drawn) == []
+    figure = _figure(_colour_only(["subject"]), unbalanced)
+    drawn = render_matplotlib(figure)
+    # One neutral line per subject, its points in their marks' colours (see
+    # the plotly twin above).
+    from matplotlib.colors import to_hex
+
+    session_colours = [
+        to_hex(palette_for(figure, level, i)) for i, level in enumerate(["pre", "post"])
+    ]
+    assert mpl_sample_colors(drawn) == [(SAMPLE_CROSS_LINE_COLOR, session_colours)] * 2
     xs = [float(x) for c in _overlay_points(drawn) for x, _ in c.get_offsets()]
     assert len(xs) == 4
     for x in xs:

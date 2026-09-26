@@ -871,6 +871,29 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
     return lines
 
 
+def _mark_palette(style) -> str:
+    """The palette the export hands seaborn for a HUE, as source: the
+    style's named palette when it sets one (seaborn resolves it over
+    ``hue_order`` exactly as ``render.base.mark_palette`` does for the
+    preview), else the preview's own ``render.base.DEFAULT_PALETTE``. Left
+    to seaborn's default the exported marks were painted in different
+    colours from the preview (found 2026-09-26). ONE owner for the
+    catplot/relplot ``palette=`` and the overlay's ``_palette``."""
+    from .render.base import DEFAULT_PALETTE
+
+    return repr(style.palette) if style.palette else repr(list(DEFAULT_PALETTE))
+
+
+def _mark_color(style) -> str:
+    """The ONE colour of an uncoloured figure's marks, as a literal — what
+    ``render.base.palette_for(resolved, None, 0)`` paints in the preview.
+    Stated as ``color=``: seaborn >= 0.13 reads ``palette=`` without a
+    ``hue`` as "colour each x level", which the preview never does."""
+    from .render.base import mark_palette
+
+    return repr(mark_palette(style.palette, 0)[0])
+
+
 def _sample_draw_lines(
     spec, table: LongTable, roles, shape, text: "DisplayText | None" = None
 ) -> list[str]:
@@ -890,9 +913,10 @@ def _sample_draw_lines(
     offsets scaled to the number of lines, as ``reduce._overlay_offsets``
     scales them.
 
-    Painted the way ``render.base.sample_groups`` paints: in the mark's hue
-    (one run per identity AND hue, so a line never crosses two mark colours),
-    or — with the overlay's own colour key (``roles.overlay_color``) — from a
+    Painted the way ``render.base.sample_runs`` paints: each point in its
+    mark's hue, one run per identity, the line in that hue when every point
+    shares it and ``SAMPLE_CROSS_LINE_COLOR`` when it crosses hues, or —
+    with the overlay's own colour key (``roles.overlay_color``) — from a
     ``_sample_palette`` over that key's levels, one run per identity across
     the hues, and the key's levels appended to the grid's legend.
 
@@ -902,7 +926,9 @@ def _sample_draw_lines(
     """
     from .render.base import (
         SAMPLE_ALPHA,
+        SAMPLE_CROSS_LINE_COLOR,
         SAMPLE_EDGE_COLOR,
+        SAMPLE_LINE_POINTS_GID,
         SAMPLE_PALETTE,
     )
     from .spaghetti import SPAGHETTI_SPREAD
@@ -919,7 +945,7 @@ def _sample_draw_lines(
     # seaborn keys `axes_dict` by (row, col) when both are set, else by the one.
     facet_names = [facets[1], facets[0]] if len(facets) > 1 else facets[:1]
     nested = _nested_x_order(spec, table, roles, shape)
-    palette = spec.style.palette
+    palette = _mark_palette(spec.style)
     weight = sample_weight(spec.style)
     linestyle = "-" if join.join else "none"
 
@@ -943,14 +969,14 @@ def _sample_draw_lines(
             [
                 # hue_order was stated on the call, so the palette follows it.
                 "_hue_levels = [str(v) for v in _hue_order]",
-                f"_palette = dict(zip(_hue_levels, sns.color_palette({palette!r}, len(_hue_levels))))",
+                f"_palette = dict(zip(_hue_levels, sns.color_palette({palette}, len(_hue_levels))))",
             ]
         )
     else:
         lines.extend(
             [
                 "_hue_levels = [None]",
-                f"_color = sns.color_palette({palette!r})[0]",
+                f"_color = {_mark_color(spec.style)}",
             ]
         )
     if sample_color:
@@ -969,20 +995,22 @@ def _sample_draw_lines(
                 "for i, lvl in enumerate(_sample_levels)}",
             ]
         )
-    # Group by hue too only when a line must not cross the mark colours —
-    # with its own colour, an identity's run spans them. Hue stays at index
-    # 1: `paint` reads `_id[1]`.
-    run_keys = [_SERIES_COLUMN, *([hue] if hue and not sample_color else [])]
+    # A run is one identity, never split by the marks' hue: with the
+    # overlay's own colour it spans the key's levels, and in the marks'
+    # colour each point is painted by its own mark while a line crossing
+    # two hues is drawn neutral (`render.base.sample_runs`).
+    run_keys = [_SERIES_COLUMN]
     # A run never leaves its bracket (the tick layers above the innermost)
     # nor, on a spaghetti, its line — `reduce._run_key` / `SAMPLE_RUN`; the
     # `_sample` frame still carries the factor columns, so group by name.
     tick_layers = _nested_x_layers(spec, table, roles, shape)  # outermost first
     brackets = [name for name in tick_layers[:-1] if name not in run_keys]
     run_keys = [*run_keys, *brackets, *([_SAMPLE_LINE] if line_layers else [])]
+    per_point = bool(hue) and not sample_color
     if sample_color:
         paint = f"_sample_palette[str(_part[{sample_color!r}].iloc[0])]"
     elif hue:
-        paint = "_palette[str(_id[1])]"
+        paint = "_line_color"
     else:
         paint = "_color"
     lines.extend(
@@ -1024,6 +1052,39 @@ def _sample_draw_lines(
             "        _rows = _rows[_rows[_name].astype(str) == str(_value)]",
             f"    for _id, _part in _rows.groupby({run_keys!r}):",
             f"        _part = _part.sort_values({_X_POSITION!r})",
+            *(
+                [
+                    # Each point its own mark's hue; the line in that hue
+                    # when every point shares it, else neutral.
+                    f"        _point_colors = [_palette[str(v)] for v in _part[{hue!r}]]",
+                    f"        _crosses = _part[{hue!r}].astype(str).nunique() > 1",
+                    f"        _line_color = {SAMPLE_CROSS_LINE_COLOR!r} if _crosses else _point_colors[0]",
+                    "        if _crosses:",
+                    *(
+                        [
+                            "            if len(_part) > 1:",
+                            f"                _ax.plot(_part[{_X_POSITION!r}], _part[{y!r}], "
+                            f"color=_line_color, alpha={SAMPLE_ALPHA}, "
+                            f"linewidth={weight.line_pt:.3f}, zorder=3)",
+                        ]
+                        if join.join
+                        else []
+                    ),
+                    f"            _ax.scatter(_part[{_X_POSITION!r}], _part[{y!r}], "
+                    f"s={weight.marker_area:.3f}, color=_point_colors, alpha={SAMPLE_ALPHA}, "
+                    f"edgecolors={SAMPLE_EDGE_COLOR!r}, linewidths=0.5, "
+                    + (
+                        # Over the line, and marked as part of its run
+                        # (render.base.SAMPLE_LINE_POINTS_GID), as the preview.
+                        f"zorder=3.1, gid={SAMPLE_LINE_POINTS_GID!r})"
+                        if join.join
+                        else "zorder=3)"
+                    ),
+                    "            continue",
+                ]
+                if per_point
+                else []
+            ),
             "        _ax.plot(",
             f"            _part[{_X_POSITION!r}], _part[{y!r}],",
             f"            linestyle={linestyle!r}, marker='o', markersize={weight.marker_pt:.3f},",
@@ -1493,8 +1554,26 @@ def _plot_call(spec, table, roles, shape, y_plan: _YLimitPlan) -> list[str]:
     args.extend(order_args)
 
     style = spec.style
-    if style.palette:
-        args.append(f"palette={style.palette!r}")
+    # The preview's colours, not seaborn's default: a palette over the hue,
+    # or the one colour of an uncoloured figure (`_mark_palette`/`_mark_color`).
+    if color:
+        args.append(f"palette={_mark_palette(style)}")
+    else:
+        args.append(f"color={_mark_color(style)}")
+    # The fills (render.base.fill_alpha: bar, box, violin) as the preview
+    # draws them: seaborn fades them to 75% saturation by default, so
+    # `saturation=1`; and the preview's opacity — on the box patch for a box
+    # (its face and edge, as the preview's `box.set_alpha`; seaborn's
+    # boxplot has no `alpha`), straight to `ax.bar` / the violin body's
+    # `fill_between` otherwise.
+    from .render.base import fill_alpha
+
+    alpha = fill_alpha(kind, style)
+    if alpha is not None:
+        args.append("saturation=1")
+        args.append(
+            f'boxprops={{"alpha": {alpha}}}' if kind is PlotKind.BOX else f"alpha={alpha}"
+        )
 
     # seaborn shares y across facets by DEFAULT, so per-panel autoscale has to
     # be asked for explicitly or the export quietly draws a different figure

@@ -93,14 +93,23 @@ bracket. `codegen._sample_draw_lines` groups by `[_series, hue?,
 `tests/plot_geometry.py` reads the drawn runs back from both backends
 (`mpl_sample_runs` / `plotly_sample_runs` → `Run`, `run_brackets`).
 
-A line joins the points sharing every shown key's value (plus the colour
-level) across the span's positions of one bracket. A point with no partner
+A line joins the points sharing every shown key's value across the
+span's positions of one bracket. A point with no partner
 has no line. Forced on below the span's depth, the same run rule applies
 (trial 1 of subject 01 in pre and post get joined — inside the bracket).
 
-**Known, unchanged:** a coloured INNERMOST layer splits the runs per mark
-colour (a line crossing two mark colours has no colour to be), so each run
-is one point unless "Colour points by" is set.
+**A coloured INNERMOST layer (fixed 2026-09-26).** Joined runs are never split by
+the marks' colour. In the marks' colour each POINT takes its own mark's
+colour; a line that stays inside one colour (the coloured layer is a
+bracket, or depth-less) takes that colour, and a line that crosses colours
+(the coloured layer is the span, e.g. ticks `[session, timepoint]`,
+colour = `timepoint`) is drawn in `render.base.SAMPLE_CROSS_LINE_COLOR`
+(neutral grey). Until then the runs split per mark colour, every run was
+one point, and Lines / Auto (lines) drew nothing unless "Colour points by"
+was set. `reduce` logs the rule at INFO (`sample overlay in the marks'
+colour ...`), `sample_runs` counts crossing runs at DEBUG. Points only
+(join off) still split per mark colour so plotly's legend group hides a
+level's points.
 
 ## The overlay's own colour (`PlotSpec.sample_color`, since 2026-09-21)
 
@@ -124,14 +133,16 @@ now is **inert** (kept, reported under `sample_overlay.color`) —
   colour in every panel (`sample_palette_for`, never a panel's own
   enumeration — the same rule as `palette_for`). Past twenty the colours
   repeat and `reduce` WARNs.
-* **Lines cross the marks' colours.** `render.base.sample_groups` is the
-  one rule: with an own colour the rows split by `__sample_color` and an
-  identity's line runs across the colour levels — from the `pre` tick to
+* **Lines cross the marks' colours.** `render.base.sample_runs` is the
+  one rule (both renderers; `codegen._sample_draw_lines` restates it): a
+  run is `sample_series` — one identity inside one bracket — whatever is
+  coloured. With an own colour the rows split by `__sample_color` and an
+  identity's line runs across the mark colours — from the `pre` tick to
   the `post` tick — each point placed on ITS OWN row's mark
-  (`sample_positions` is per-row). Without it the rows split per mark
-  colour as they always did, because a line crossing two mark colours has
-  no colour to be. This is why Lines / Auto (lines) drew nothing with
-  `session` as the coloured layer: every run was one row long.
+  (`sample_positions` is per-row). Without it, see "A coloured INNERMOST
+  layer" above: points in their mark's colour, a crossing line neutral
+  (mpl: a marker-less Line2D plus a scatter with gid
+  `SAMPLE_LINE_POINTS_GID`; plotly: `marker.color` a per-point list).
 * **Legend:** the levels become a second block in the one legend, the way
   the dash styles are (`mpl._sample_legend_handles`, plotly `sample:<level>`
   legend groups with `legendrank` 2000, title `session / subject`);
@@ -217,7 +228,7 @@ when a weight applies.
 | report | `capability.sample_overlay_summary` → `sample_overlay {available, reason, factors[{name, checked, shown}], ignored, shown, averaged, join, granularity}` |
 | GUI | `PlotStudio.tsx` "Show sample" section; `showSample.ts` (toggle, join choice, ticked/locked) |
 | point size + line width (`style.sample_weight`; a spaghetti's own lines: `style.line_weight`) | `scistackplot.weights` (`sample_weight` / `spaghetti_weight` → `ResolvedWeight`), read by `mpl._draw_sample` / `_draw_spaghetti`, `plotly_._sample_traces` / `_spaghetti_traces`, `codegen._sample_draw_lines` + the spaghetti `relplot` args; GUI box shown from `layout.meta.mark_weights` (`markWeights.ts`). See "Mark weights" below |
-| the overlay's own colour | `roles.overlay_color` (active?), `resolved.SAMPLE_COLOR`, `reduce._overlay_frame` (column) + `sample_color_order`, `render.base.sample_groups` / `sample_paint` / `sample_palette_for` / `sample_legend_levels`, `codegen._sample_color_of` / `_sample_legend_lines`, `capability … color {setting, active, options}` |
+| the overlay's own colour | `roles.overlay_color` (active?), `resolved.SAMPLE_COLOR`, `reduce._overlay_frame` (column) + `sample_color_order`, `render.base.sample_runs` (`SampleRun`, `SAMPLE_CROSS_LINE_COLOR`) / `sample_palette_for` / `sample_legend_levels`, `codegen._sample_color_of` / `_sample_legend_lines`, `capability … color {setting, active, options}` |
 
 ## Traps
 

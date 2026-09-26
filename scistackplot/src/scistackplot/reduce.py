@@ -1456,6 +1456,19 @@ def _build_figure(
                     len(SAMPLE_PALETTE),
                     layer=LAYER,
                 )
+        elif color and join is not None and join.join:
+            from .render.base import SAMPLE_CROSS_LINE_COLOR
+
+            # Why the lines are grey: in the marks' colour a line that spans
+            # the coloured layer has no one colour (render.base.sample_runs).
+            Log.info(
+                "sample overlay in the marks' colour (%r): each point its mark's colour; "
+                "a line crossing %r levels is drawn in %s",
+                color,
+                color,
+                SAMPLE_CROSS_LINE_COLOR,
+                layer=LAYER,
+            )
 
         return ResolvedPlot(
             kind=spec.kind,

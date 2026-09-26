@@ -11,6 +11,66 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zx. Mark colours and fill opacity match the exported figure — added 2026-09-26
+
+**What changed:** one owner for the marks' palette
+(`render.base.mark_palette`) and fill opacity (`render.base.fill_alpha`).
+The preview now honours a spec's named `palette` (it always drew the
+default before). Plotly bars are now drawn at the style's alpha (0.85)
+instead of opaque, and boxes/violins at 0.6/0.55 instead of plotly's own
+half-transparent fill. The exported code now uses the preview's palette,
+does not fade fills (`saturation=1`), and states the same opacity.
+
+**Backend steps:** restart the GUI (Python changed; no frontend change).
+Commit and push, then pull in the GUI runtime clone. With a bad palette
+name in a spec, `scidb.log` shows `palette '<name>' is not a
+seaborn/matplotlib palette … drawing the default palette`.
+
+**Frontend steps:**
+1. Plot Studio, a bar plot coloured by a grouping layer; then a box plot
+   and a violin plot of the same variable.
+2. Save / export each and open the saved figure next to the preview.
+
+**What you should see:** bars slightly see-through (the gridless paper
+background shows through a little); the exported figure's bars, boxes
+and violins are the same colours and the same opacity as the preview —
+not paler, not seaborn's blue/orange.
+
+---
+
+## 0zw. Show sample lines when the points take the marks' colour — added 2026-09-26
+
+**What changed:** with "Colour points by" = *Mark's colour* and Join points
+= *Auto (lines)* or *Lines*, the lines were missing whenever the coloured
+grouping layer was the innermost tick (e.g. ticks `[session, timepoint]`,
+colour = `timepoint`): the overlay was split per mark colour, so every run
+was one point. Now each subject's line joins its points across the
+coloured ticks; the line is neutral grey (`#808080`) and each point keeps
+its own mark's colour. When the coloured layer is a bracket instead (the
+line stays inside one colour), line and points are in that colour as before.
+The exported figure draws the same.
+
+**Backend steps:** restart the GUI (Python changed; no frontend change).
+Commit and push, then pull in the GUI runtime clone. In `scidb.log`, look
+for `sample overlay in the marks' colour ('timepoint'): each point its mark's
+colour; a line crossing 'timepoint' levels is drawn in #808080` (INFO), and
+at DEBUG `sample overlay: N of M run(s) cross the marks' colour`.
+
+**Frontend steps:**
+1. Plot Studio, bar plot grouped by `session` then `timepoint`, colour =
+   `timepoint`, Show sample = `subject`.
+2. Colour points by = *Mark's colour*, Join points = *Auto (lines)*; then
+   *Lines*.
+3. Switch Colour points by to `subject` and back.
+4. Export / save the figure and open the generated code's output.
+
+**What you should see:** in 2, one grey line per subject per session, from
+its first timepoint to the last, each point in its bar's colour. In 3, the
+lines take the subject colours; back on *Mark's colour* they are grey
+again. In 4, the export matches the preview.
+
+---
+
 ## 0zv. Group a figure by a column of the variable being plotted — added 2026-09-26
 
 **What changed:** the Grouping picker's DAG canvas now lets you click the

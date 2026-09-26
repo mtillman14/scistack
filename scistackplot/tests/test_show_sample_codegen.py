@@ -84,27 +84,25 @@ def _run(source: str, frame, function_name: str = "plot_m"):
 
 
 def _marker_xs(figure) -> list[float]:
-    return sorted(
-        round(float(x), 6)
-        for line in figure.axes[0].get_lines()
-        if line.get_marker() == "o"
-        for x in line.get_xdata()
-    )
+    """Every overlay point's x: marker lines (a run in one colour) and the
+    zorder >= 3 scatters (points only, or each point painted by its own mark
+    over a neutral crossing line — `render.base.sample_runs`)."""
+    ax = figure.axes[0]
+    xs = [float(x) for line in ax.get_lines() if line.get_marker() == "o" for x in line.get_xdata()]
+    xs += [
+        float(x)
+        for c in ax.collections
+        if isinstance(c, PathCollection) and c.get_zorder() >= 3
+        for x, _ in c.get_offsets()
+    ]
+    return sorted(round(x, 6) for x in xs)
 
 
 def _preview_xs(resolved) -> list[float]:
     """The preview's overlay x positions, spacer slots removed (a nested
     preview axis has them, the export does not — `plot_geometry.despaced`)."""
     drawn = render_matplotlib(resolved)
-    if resolved.sample_join:
-        xs = _marker_xs(drawn)
-    else:
-        xs = [
-            float(x)
-            for c in drawn.axes[0].collections
-            if isinstance(c, PathCollection)
-            for x, _ in c.get_offsets()
-        ]
+    xs = _marker_xs(drawn)
     plt.close(drawn)
     return sorted(despaced(xs, resolved))
 

@@ -68,6 +68,34 @@ plot tab; `frontend/.../PlotStudio/plotTheme.ts`, `usePlotTheme.ts`,
 The studio's chrome colours are separate: `var(--ps-*)` tokens, all owned by
 `plotTheme.ts` and source-guarded by `plotTheme.test.ts`.
 
+## Mark colours: one owner `render.base.mark_palette` (2026-09-26)
+
+`mark_palette(style.palette, n)` is the marks' palette for BOTH sides:
+`None` = `DEFAULT_PALETTE` (Okabe-Ito); a name is resolved by seaborn over
+the `n` declared colour levels (`sns.color_palette(name, n)`, so a colormap
+like `viridis` is sampled per level exactly as the export's `hue_order`
+samples it). `palette_for` reads it; an unknown name (or no seaborn) WARNs
+and draws the default. The export (`codegen._mark_palette` /
+`_mark_color`) hands seaborn the same thing:
+
+- with a hue: `palette=<name>` or the `DEFAULT_PALETTE` list — never
+  seaborn's own default (the export used to draw seaborn's colours with no
+  palette set, and the preview used to ignore a set one);
+- without a hue: `color=<the preview's one colour>` — seaborn >= 0.13 reads
+  `palette=` without `hue` as "colour each x level";
+- the fills — `render.base.fill_alpha(kind, style)` is the ONE owner of
+  which kinds have one and how opaque it is: bar `style.alpha` (0.85), box
+  `BOX_FILL_ALPHA` (0.6), violin `VIOLIN_FILL_ALPHA` (0.55). matplotlib
+  sets it on the bar / box patch / violin body; plotly on the bar's
+  `marker.opacity` (error bars stay opaque) and the box / violin
+  `fillcolor` (plotly's own default fill is half-transparent); the export
+  states `saturation=1` (seaborn fades fills to 75% by default) plus
+  `alpha=` (bar, violin) or `boxprops={"alpha": …}` (box — the patch's
+  face and edge, as the preview's `set_alpha`). Until then each side had
+  its own: opaque plotly bars, opaque exported fills.
+
+Tests: `scistackplot/tests/test_mark_palette.py`.
+
 ## Known remaining differences
 
 - plotly has one `thickness` for an error bar and its caps, so the preview's

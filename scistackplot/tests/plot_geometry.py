@@ -324,8 +324,12 @@ def _run_points(resolved, xs, ys) -> tuple[tuple[str, float, float], ...]:
 def mpl_sample_runs(figure, resolved: ResolvedPlot) -> list[Run]:
     """The overlay runs a matplotlib figure draws (``mpl._draw_sample``:
     ``ax.plot`` with markers when joined, ``ax.scatter`` otherwise — both at
-    zorder 3, above the marks). Legend proxies carry no data and are skipped."""
+    zorder 3, above the marks). Legend proxies carry no data and are skipped,
+    and so are the points painted over a neutral crossing line (gid
+    ``SAMPLE_LINE_POINTS_GID``) — they belong to that line's run."""
     from matplotlib.collections import PathCollection
+
+    from scistackplot.render.base import SAMPLE_LINE_POINTS_GID
 
     runs: list[Run] = []
     for panel, ax in enumerate(ax for ax in figure.axes if ax.get_visible()):
@@ -339,6 +343,36 @@ def mpl_sample_runs(figure, resolved: ResolvedPlot) -> list[Run]:
             offsets = collection.get_offsets()
             runs.append(Run(panel, False, _run_points(resolved, offsets[:, 0], offsets[:, 1])))
     return sorted(runs)
+
+
+def mpl_sample_colors(figure) -> list[tuple[str | None, list[str]]]:
+    """``(line colour, point colours)`` per overlay run a matplotlib figure
+    draws, as hex: a joined uniform run is one Line2D (points = the line's
+    colour), a crossing run a neutral Line2D followed by its points
+    (``SAMPLE_LINE_POINTS_GID``), a points-only run a scatter (no line)."""
+    from matplotlib.collections import PathCollection
+    from matplotlib.colors import to_hex
+
+    from scistackplot.render.base import SAMPLE_LINE_POINTS_GID
+
+    runs: list[tuple[str | None, list[str]]] = []
+    for ax in (ax for ax in figure.axes if ax.get_visible()):
+        crossing = [line for line in ax.lines if line.get_zorder() == 3 and line.get_marker() in ("None", "none", None, "")]
+        uniform = [line for line in ax.lines if line.get_zorder() == 3 and line not in crossing and len(line.get_xdata())]
+        covers = [
+            c for c in ax.collections
+            if isinstance(c, PathCollection) and c.get_gid() == SAMPLE_LINE_POINTS_GID
+        ]
+        for line, points in zip(crossing, covers, strict=True):
+            runs.append((to_hex(line.get_color()), [to_hex(c) for c in points.get_facecolors()]))
+        for line in uniform:
+            color = to_hex(line.get_color())
+            runs.append((color, [color] * len(line.get_xdata())))
+        for collection in ax.collections:
+            if isinstance(collection, PathCollection) and collection.get_zorder() == 3:
+                faces = [to_hex(c) for c in collection.get_facecolors()]
+                runs.append((None, faces * (len(collection.get_offsets()) // max(len(faces), 1))))
+    return runs
 
 
 def plotly_sample_runs(payload: dict, resolved: ResolvedPlot) -> list[Run]:

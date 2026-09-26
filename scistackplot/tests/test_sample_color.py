@@ -36,13 +36,14 @@ from scistackplot import (
     validate,
 )
 from scistackplot.render.base import (
+    SAMPLE_CROSS_LINE_COLOR,
     SAMPLE_PALETTE,
     palette_for,
     sample_palette_for,
 )
 from scistackplot.resolved import COLOR, SAMPLE_COLOR, SERIES
 from scistackplot.roles import complete_roles
-from plot_geometry import despaced
+from plot_geometry import despaced, mpl_sample_colors
 
 # subject x session x trial, plus `group` — a subject property with no
 # schema depth (the user's Demographics.InterventionGroup).
@@ -291,11 +292,29 @@ def test_mpl_without_the_setting_points_take_the_marks_colour(table):
     drawn = render_matplotlib(figure)
     labels = [t.get_text() for legend in drawn.legends for t in legend.get_texts()]
     assert labels == ["s1", "s2"], "no legend entry per subject"
-    # Split per mark colour, as before: each subject has a one-row run per
-    # session, so no line is drawn — points only.
-    assert _overlay_lines(drawn) == []
+    # Regression (2026-09-26): the runs used to split per mark colour, so
+    # with session as the coloured (innermost) layer every run was one point
+    # and Lines / Auto (lines) drew nothing. Now each subject is one run
+    # s1 → s2: a neutral line, each point its own session's colour.
+    session_colours = [
+        matplotlib.colors.to_hex(palette_for(figure, level, i)) for i, level in enumerate(["s1", "s2"])
+    ]
+    assert mpl_sample_colors(drawn) == [(SAMPLE_CROSS_LINE_COLOR, session_colours)] * 4
     points = sum(len(c.get_offsets()) for c in drawn.axes[0].collections if isinstance(c, PathCollection))
     assert points == 8
+    plt.close(drawn)
+
+
+def test_a_line_inside_one_mark_colour_keeps_that_colour(table):
+    """Colour on the BRACKET layer (group) while the line spans session: every
+    run stays inside one mark colour, so line and points share it — nothing
+    turns neutral."""
+    figure = _figure(_spec("group", groups=["session", "group"]), table)
+    drawn = render_matplotlib(figure)
+    runs = mpl_sample_colors(drawn)
+    assert len(runs) == 4
+    for line, points in runs:
+        assert line != SAMPLE_CROSS_LINE_COLOR and set(points) == {line}
     plt.close(drawn)
 
 
@@ -325,7 +344,13 @@ def test_plotly_without_the_setting_is_unchanged(table):
     payload = render_plotly(_figure(_spec("session"), table))
     overlay = [t for t in payload["data"] if t["type"] == "scatter"]
     assert overlay and not any(t["showlegend"] for t in overlay)
-    assert {t["legendgroup"] for t in overlay} == {"s1", "s2"}
+    # One run per subject crossing s1 → s2 (2026-09-26): joined, the line
+    # neutral, each marker its session's colour.
+    figure = _figure(_spec("session"), table)
+    session_colours = [palette_for(figure, level, i) for i, level in enumerate(["s1", "s2"])]
+    assert len(overlay) == 4 and {t["mode"] for t in overlay} == {"lines+markers"}
+    assert {t["line"]["color"] for t in overlay} == {SAMPLE_CROSS_LINE_COLOR}
+    assert all(t["marker"]["color"] == session_colours for t in overlay)
     assert payload["layout"]["legend"]["title"]["text"] == "session"
 
 
@@ -377,14 +402,29 @@ def test_generated_legend_lists_the_hue_then_the_subjects(table, frame):
     plt.close(generated)
 
 
+def test_generated_code_paints_with_the_previews_palette(table):
+    """Regression (2026-09-26): the export left the mark palette to seaborn's
+    default while the preview paints with render.base.DEFAULT_PALETTE, so
+    exported marks and overlay points were other colours
+    (`codegen._mark_palette` is the one owner)."""
+    from scistackplot.render.base import DEFAULT_PALETTE
+
+    source = generate_plot_function(_spec("session"), table)
+    assert f"palette={list(DEFAULT_PALETTE)!r}" in source
+    assert f"sns.color_palette({list(DEFAULT_PALETTE)!r}, len(_hue_levels))" in source
+
+
 def test_generated_code_without_the_setting_is_unchanged(table, frame):
     source = generate_plot_function(_spec("session"), table)
     assert "_sample_palette" not in source and "Line2D" not in source
     generated = _run(source, frame)
-    # Split per hue: every run is one row long, so no line spans two points
-    # (the export draws a one-point `plot`, the preview a `scatter`).
-    runs = _overlay_lines(generated)
-    assert runs and all(len(line.get_xdata()) == 1 for line in runs), "split per hue"
+    # The export draws what the preview draws (2026-09-26): one neutral line
+    # per subject across the hues, each point its own mark's hue.
+    drawn = render_matplotlib(_figure(_spec("session"), table))
+    preview = mpl_sample_colors(drawn)
+    assert preview and mpl_sample_colors(generated) == preview
+    assert {line for line, _ in preview} == {SAMPLE_CROSS_LINE_COLOR}
+    plt.close(drawn)
     plt.close(generated)
 
 
