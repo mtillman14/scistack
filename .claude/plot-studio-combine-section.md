@@ -1,6 +1,6 @@
 # Plot Studio: Structure > Combine, where a combined factor replaces its source
 
-Status: implemented 2026-09-26 (all 5 stages), uncommitted; pytest unrun; GUI §0zze unchecked. Replace-only (no "Keep
+Status: implemented 2026-09-26 (all 5 stages), committed 4036eaf1; pytest passes (user, 2026-09-26); GUI §0zze unchecked. Replace-only (no "Keep
 alongside" mode; see Goal).
 
 ## Stages
