@@ -211,6 +211,8 @@ interface GroupableVariableInfo {
   label: string
   column_count: number
   offer?: GroupableInfo
+  /** A column of the plotted variable itself — see `GroupingCandidate.own`. */
+  own?: boolean
 }
 
 /** One offer in the Grouping section: a FactorVariable plus what it looks like. */

@@ -1026,3 +1026,194 @@ def test_an_unpinned_grouping_exports_no_variant_wrapper(seeded):
 
     # A wrapped one would read `"group_condition": Variant(Condition, ...)`.
     assert '"group_condition": Condition,' in code.foreach_source
+
+
+# ---------------------------------------------------------------------------
+# A column of the PLOTTED variable itself (`Gait.Side` grouping `Gait`)
+# ---------------------------------------------------------------------------
+#
+# `Side` is not a schema key: it is recorded on each row beside the numbers it
+# describes, and it changes within a subject. Every other grouping is JOINED on
+# schema keys; this one is CARRIED on the row (`FactorVariable.is_own_column`),
+# which is why it needs no variant pin and arrives as no separate input.
+
+SIDE = [FactorVariable("Gait", "Side")]
+
+
+def test_the_measure_offers_its_own_columns_as_a_node(with_gait):
+    offered = {
+        o["variable"]: o
+        for o in ScidbSource(with_gait).groupable_variables("Gait")["offered"]
+    }
+
+    assert offered["Gait"]["kind"] == "columns"
+    assert offered["Gait"]["own"] is True, "the picker skips the variant step on it"
+
+
+def test_a_single_column_measure_offers_no_own_node(with_gait):
+    """Its one column IS the value being plotted — nothing left to group by."""
+    offered = ScidbSource(with_gait).groupable_variables("StepLength")["offered"]
+
+    assert "StepLength" not in [o["variable"] for o in offered]
+
+
+def test_the_own_label_column_is_offered_and_the_fields_are_explained(with_gait):
+    report = ScidbSource(with_gait).groupable_columns("Gait", "Gait")
+
+    assert [o["label"] for o in report["offered"]] == ["Gait.Side"]
+    assert report["offered"][0]["levels"] == ["L", "R"]
+    # A plotted field, not "a numeric sheet column" — the reason has to say
+    # what the column IS in this figure.
+    assert "measured field" in report["rejected"]["Gait.StepLength"]
+
+
+def test_other_variables_columns_keep_their_numeric_reason(with_demographics):
+    """The own-column wording must not leak onto another variable's columns."""
+    report = ScidbSource(with_demographics).groupable_columns(
+        "StepLength", "Demographics"
+    )
+
+    assert "not offered yet" in report["rejected"]["Demographics.Age"]
+
+
+def test_own_column_rides_on_each_row(with_gait):
+    table = ScidbSource(with_gait).get_table(["Gait"], factor_variables=SIDE)
+
+    assert table.has_factor("Side")
+    # 12 records x 2 measured fields. Side is a grouping, not a third field.
+    assert len(table.frame) == 24
+    assert set(table.frame["ColName"]) == {"StepLength", "StepWidth"}
+    # The label is the row's own, so it follows the TRIAL — which no join on a
+    # shallower level could have supplied.
+    by_trial = table.frame.groupby("trial")["Side"].unique().to_dict()
+    assert {k: list(v) for k, v in by_trial.items()} == {"1": ["L"], "2": ["R"]}
+
+
+def test_without_the_grouping_the_label_column_is_not_a_field(with_gait):
+    """Unchanged behaviour: a text column is not plottable, so it is dropped
+    from the melt rather than becoming a field with no numbers."""
+    table = ScidbSource(with_gait).get_table(["Gait"])
+
+    assert "Side" not in table.frame.columns
+    assert set(table.frame["ColName"]) == {"StepLength", "StepWidth"}
+
+
+def test_own_column_takes_a_role(with_gait):
+    table = ScidbSource(with_gait).get_table(["Gait"], factor_variables=SIDE)
+    spec = PlotSpec(
+        measures=["Gait"],
+        factor_variables=SIDE,
+        kind=PlotKind.BAR,
+        roles={
+            "Side": Role.GROUP,
+            "ColName": Role.FACET,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
+        },
+    )
+
+    figures = resolve(spec, table)
+
+    assert [str(v) for v in figures[0].x_order] == ["L", "R"]
+
+
+def test_own_column_depth_is_the_row_s(with_gait):
+    """Every schema key pins a row-level label."""
+    table = ScidbSource(with_gait).get_table(["Gait"], factor_variables=SIDE)
+
+    assert table.factor_depths["Side"] == 3
+
+
+def test_own_column_ignores_a_variant_pin_and_says_so(with_gait, caplog):
+    import logging
+
+    source = ScidbSource(with_gait)
+    with caplog.at_level(logging.WARNING, logger="scistackplotdb"):
+        table = source.get_table(
+            ["Gait"],
+            factor_variables=[FactorVariable("Gait", "Side", {"anything": "x"})],
+        )
+
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "is ignored" in text
+    assert set(table.frame["Side"]) == {"L", "R"}, "the pin must not filter rows"
+
+
+def test_an_unknown_own_column_says_what_the_variable_holds(with_gait):
+    with pytest.raises(ValueError, match="no column 'Sidee'"):
+        ScidbSource(with_gait).get_table(
+            ["Gait"], factor_variables=[FactorVariable("Gait", "Sidee")]
+        )
+
+
+def test_own_column_is_not_a_joined_input():
+    spec = PlotSpec(
+        measures=["Gait"],
+        factor_variables=[*SIDE, FactorVariable("Condition")],
+    )
+
+    assert spec.joined_factor_variables == [FactorVariable("Condition")]
+    # Another variable's column of the same name is still joined.
+    assert not FactorVariable("Demographics", "Side").is_own_column("Gait")
+
+
+def test_the_endpoint_passes_no_input_for_an_own_column(with_gait):
+    from scistackplotdb import generate_endpoint
+
+    spec = PlotSpec(
+        measures=["Gait"],
+        factor_variables=SIDE,
+        kind=PlotKind.BAR,
+        roles={
+            "Side": Role.GROUP,
+            "ColName": Role.FACET,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
+        },
+    )
+    table = ScidbSource(with_gait).get_table(["Gait"], factor_variables=SIDE)
+    code = generate_endpoint(spec, table, input_variable="Gait")
+
+    assert "group_gait_side" not in code.source
+    compile(code.source, "<generated>", "exec")
+
+
+def test_generated_code_reproduces_the_own_column_grouping(with_gait):
+    """The exported figure must be the previewed one: `df` arrives as the wide
+    record (keys + every field), and the melt keeps Side as an id column."""
+    import matplotlib.pyplot as plt
+
+    from scistackplot import generate_plot_function
+
+    source = ScidbSource(with_gait)
+    table = source.get_table(["Gait"], factor_variables=SIDE)
+    spec = PlotSpec(
+        measures=["Gait"],
+        factor_variables=SIDE,
+        kind=PlotKind.BAR,
+        roles={
+            "Side": Role.GROUP,
+            "ColName": Role.FACET,
+            "subject": Role.COLLAPSE,
+            "session": Role.COLLAPSE,
+            "trial": Role.COLLAPSE,
+        },
+    )
+    generated = generate_plot_function(spec, table)
+
+    namespace: dict = {}
+    exec(compile(generated, "<generated>", "exec"), namespace)  # noqa: S102
+
+    loaded = source._variable_frame("Gait")
+    keys = ["subject", "session", "trial"]
+    df = loaded.frame[[*keys, *loaded.data_columns]]
+
+    figure = namespace["plot_gait"](df, "figure.png")
+
+    for axis in figure.axes:
+        ticks = {label.get_text() for label in axis.get_xticklabels()}
+        if ticks - {""}:
+            assert ticks - {""} == {"L", "R"}
+    plt.close(figure)

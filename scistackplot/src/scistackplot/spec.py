@@ -486,6 +486,22 @@ class FactorVariable:
         say which variable it came from once two sheets are in play."""
         return f"{self.variable}.{self.column}" if self.column else self.variable
 
+    def is_own_column(self, measure: str) -> bool:
+        """Whether this grouping is a column of the PLOTTED variable itself.
+
+        ``Gait.Side`` grouping a ``Gait`` figure: the label is already on every
+        row it describes, so it is carried with the row rather than JOINED on
+        schema keys — a join would have to guess which record of a location a
+        label belongs to, and the grouping's own variant pin would be a second,
+        possibly different, answer to "which record" than the measure's.
+
+        The ONE definition of this rule. The interactive table
+        (``ScidbSource.get_table``), the generated function and the generated
+        endpoint all ask here, so the preview and the export cannot disagree
+        about which groupings arrive as their own input.
+        """
+        return self.column is not None and self.variable == measure
+
     def to_dict(self) -> dict:
         return {
             "variable": self.variable,
@@ -996,6 +1012,17 @@ class PlotSpec:
     @property
     def y_measure(self) -> str:
         return self.measures[0]
+
+    @property
+    def joined_factor_variables(self) -> list[FactorVariable]:
+        """Groupings that arrive as their OWN input and are merged on schema
+        keys — every one except a column of the plotted variable itself, which
+        rides on the measure's rows (:meth:`FactorVariable.is_own_column`)."""
+        return [
+            group
+            for group in self.factor_variables
+            if not group.is_own_column(self.y_measure)
+        ]
 
     def variant_variables(self) -> list[str]:
         """Every variable this spec plots, primary first, in row order.

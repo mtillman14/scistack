@@ -11,6 +11,38 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zv. Group a figure by a column of the variable being plotted — added 2026-09-26
+
+**What changed:** the Grouping picker's DAG canvas now lets you click the
+PLOTTED variable itself, when it has more than one data column, and tick one
+of its own non-schema columns (e.g. `Side` on a wide gait record). The label
+comes from each row, so it is not joined on schema keys and there is no
+variant step: the picker skips the variant graph for it. The exported
+`plot_` endpoint takes no extra input for it, because the column is already
+in `df`.
+
+**Backend steps:** restart the GUI (Python changed). The frontend was rebuilt
+(both bundles). Commit and push, then pull in the GUI runtime clone. In
+`scidb.log`, look for `grouping <Var> by its own column(s) [...] — carried on
+each row, not joined` and `carried 'Var.Side' as factor 'Side' on the
+measure's own rows (N level(s))`.
+
+**Frontend steps:**
+1. Open Plot Studio on a wide variable that has a text column (e.g. `Side`).
+2. Grouping → Group by… The plotted variable's node should say "N column(s)
+   of the plotted data — click to choose". Click it.
+3. The sidebar should list `Side` with its level count. The numeric fields
+   should be listed as refused with the reason "a measured field of the
+   plotted variable, not a label". The subtitle should say there is no version
+   to choose.
+4. Tick `Side` and Apply.
+
+**What you should see:** `Side` appears as a grouping with its levels (L/R),
+and the bars/boxes split by side within each field panel. Export the plot and
+check that the exported figure matches the preview.
+
+---
+
 ## 0zu. One function reading several files keeps its wiring; wide variables open on one field — added 2026-09-25
 
 **What changed:** a PathInput is identified by its NAME, which is now a

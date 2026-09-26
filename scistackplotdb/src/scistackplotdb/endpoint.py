@@ -236,11 +236,13 @@ def _foreach_call(
     if x_variable:
         inputs.append(f'        "df_x": {x_variable},')
         table_inputs.append("df_x")
-    for group in spec.factor_variables:
+    for group in spec.joined_factor_variables:
         # A grouping variable arrives as its own input and is merged onto the
         # data inside the function: `as_table` hands a function schema keys and
         # data columns only, so a subject-level Condition cannot ride along on
-        # the measure's frame.
+        # the measure's frame. A column of the MEASURE itself (`Gait.Side`)
+        # does ride along — it is already in `df` — so it is not an input
+        # (`FactorVariable.is_own_column`).
         # One column of a wide table arrives as a ColumnSelection, which
         # `as_table` honours by keeping the schema keys alongside that column
         # (`scifor.foreach._prepare_input`) — so the merge in the generated body

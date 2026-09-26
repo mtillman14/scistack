@@ -279,7 +279,7 @@ def function_params(spec: PlotSpec) -> list[str]:
     """The generated function's signature, in for_each input order."""
     variants = variant_params(spec)
     data = [variant.param for variant in variants] if variants else ["df"]
-    groups = [group_param(group) for group in spec.factor_variables]
+    groups = [group_param(group) for group in spec.joined_factor_variables]
     return [*data, *groups, "filename"]
 
 
@@ -440,6 +440,21 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     for group in spec.factor_variables:
         param = group_param(group)
         factor = group.factor_name
+        if group.is_own_column(spec.y_measure):
+            # A column of the plotted variable itself (`Gait.Side`) is already
+            # on every row of `df` — scidb delivers a wide variable as one
+            # column per field, and the melt below keeps it as an id column —
+            # so there is nothing to merge. Only the labelling is mirrored
+            # (ScidbSource._attach_groupings).
+            lines.extend(
+                [
+                    f"# {group.label}: a column of the plotted variable, "
+                    f"already on every row",
+                    f"df[{factor!r}] = df[{factor!r}].fillna({MISSING_LEVEL!r}).astype(str)",
+                    "",
+                ]
+            )
+            continue
         # The input arrives as schema keys plus its data column(s): a
         # single-column variable's column is renamed to the variable by scidb's
         # loader, and a ColumnSelection keeps the column's own name

@@ -563,11 +563,14 @@ class ScidbSource(BaseSource):
             return self._stacked_table(measures, factor_variables)
 
         primary = self._variable_frame(measures[0])
+        own = self._own_column_groups(primary, factor_variables)
         field_columns: list[str] = []
 
         if x_measure is None:
             if len(primary.data_columns) > 1:
-                frame, field_factor = self._melt_fields(primary, measures[0])
+                frame, field_factor = self._melt_fields(
+                    primary, measures[0], carry=[group.column for group in own]
+                )
                 field_columns = [field_factor]
             else:
                 frame = self._named_frame(primary, measures[0])
@@ -623,8 +626,8 @@ class ScidbSource(BaseSource):
             latest_column = LATEST_COLUMN if LATEST_COLUMN in frame.columns else None
             default_pin = {latest_column: True} if latest_column else None
 
-        frame, group_depths = self._attach_factor_variables(
-            frame, levels, factor_variables
+        frame, group_depths = self._attach_groupings(
+            frame, levels, factor_variables, own
         )
 
         # Variant columns first, and code versions lead within them (see
@@ -671,6 +674,104 @@ class ScidbSource(BaseSource):
         )
         table.reducer = self._reducer()
         return table
+
+    def _own_column_groups(
+        self, primary, factor_variables: list[FactorVariable]
+    ) -> list[FactorVariable]:
+        """The groupings that are columns of the plotted variable itself.
+
+        ``Gait.Side`` grouping a ``Gait`` figure (``FactorVariable.
+        is_own_column`` owns the rule). Validated HERE, before the melt, because
+        the melt is what keeps the column: named wrongly, it would otherwise
+        vanish without a word.
+        """
+        own = [
+            group
+            for group in factor_variables
+            if group.is_own_column(primary.name)
+        ]
+        columns = list(primary.data_columns)
+        for group in own:
+            if group.column not in columns:
+                raise ValueError(
+                    f"{group.variable!r} has no column {group.column!r}. "
+                    f"It has: {columns}."
+                )
+            if len(columns) < 2:
+                raise ValueError(
+                    f"{group.label!r} is the value this figure plots, so it "
+                    f"cannot also group it."
+                )
+            if group.selection:
+                # The label is on the very row it describes, so the MEASURE's
+                # variant selection already decided which record it came from.
+                # A second pin could only disagree with the first.
+                Log.warn(
+                    "%r is a column of the plotted variable; its own variant "
+                    "pin %s is ignored — each row's label comes from that row",
+                    group.label,
+                    group.selection,
+                    layer=LAYER,
+                )
+        if own:
+            Log.info(
+                "grouping %s by its own column(s) %s — carried on each row, "
+                "not joined",
+                primary.name,
+                [group.column for group in own],
+                layer=LAYER,
+            )
+        return own
+
+    def _attach_groupings(
+        self,
+        frame,
+        levels: list[str],
+        factor_variables: list[FactorVariable],
+        own: list[FactorVariable],
+    ):
+        """Every grouping as a factor column: own columns labelled in place,
+        the rest joined. Returns ``(frame, {factor name: depth})`` in the order
+        the spec lists them."""
+        depths: dict[str, int] = {}
+        for group in own:
+            factor = group.factor_name
+            if factor in depths:
+                raise ValueError(
+                    f"Grouping by {group.label!r} twice would add a column "
+                    f"named {factor!r}, which this table already has."
+                )
+            # Same labelling as a joined grouping, and as the generated code
+            # (`codegen._preamble`): a row with no value is `MISSING_LEVEL`,
+            # never dropped.
+            missing = int(frame[factor].isna().sum())
+            if missing:
+                Log.warn(
+                    "%r has no value for %d of %d row(s) — those rows are "
+                    "grouped as %r rather than dropped",
+                    group.label,
+                    missing,
+                    len(frame),
+                    MISSING_LEVEL,
+                    layer=LAYER,
+                )
+            frame[factor] = _as_levels(frame[factor])
+            # A label recorded on the row sits at the row's own depth: every
+            # schema key pins it.
+            depths[factor] = len(levels)
+            Log.info(
+                "carried %r as factor %r on the measure's own rows "
+                "(%d level(s))",
+                group.label,
+                factor,
+                frame[factor].nunique(dropna=True),
+                layer=LAYER,
+            )
+        joined = [group for group in factor_variables if group not in own]
+        frame, joined_depths = self._attach_factor_variables(frame, levels, joined)
+        depths.update(joined_depths)
+        order = [group.factor_name for group in factor_variables]
+        return frame, {name: depths[name] for name in order if name in depths}
 
     def _attach_factor_variables(
         self, frame, levels: list[str], factor_variables: list[FactorVariable]
@@ -979,13 +1080,20 @@ class ScidbSource(BaseSource):
             )
 
         primary = measures[0]
+        own = self._own_column_groups(frames[0], list(factor_variables or []))
         stacked = []
         for frame in frames:
             if multi:
                 # Melt to the SHARED fields only, and into the primary's value
                 # column, so every variable contributes the same two columns.
+                # A grouping column of the primary is carried from every
+                # variable that has it; a row from one that does not is
+                # `MISSING_LEVEL`, like any grouping that says nothing.
                 named, field_factor = self._melt_fields(
-                    frame, primary, fields=sorted(shared)
+                    frame,
+                    primary,
+                    fields=sorted(shared),
+                    carry=[group.column for group in own],
                 )
                 if field_factor not in field_columns:
                     field_columns.append(field_factor)
@@ -994,8 +1102,8 @@ class ScidbSource(BaseSource):
             named[VARIABLE_COLUMN] = frame.name
             stacked.append(named)
         combined = pd.concat(stacked, ignore_index=True, sort=False)
-        combined, group_depths = self._attach_factor_variables(
-            combined, levels, list(factor_variables or [])
+        combined, group_depths = self._attach_groupings(
+            combined, levels, list(factor_variables or []), own
         )
 
         variant_columns = list(
@@ -1126,7 +1234,12 @@ class ScidbSource(BaseSource):
         return variant_graph(self._db, self._variant_frame(variable), functions)
 
     def _melt_fields(
-        self, variable_frame, measure: str, *, fields: list[str] | None = None
+        self,
+        variable_frame,
+        measure: str,
+        *,
+        fields: list[str] | None = None,
+        carry: list[str] | None = None,
     ):
         """
         Turn a dict/struct variable's columns into ONE measure plus a field
@@ -1140,10 +1253,18 @@ class ScidbSource(BaseSource):
         subplot per level by default (``default_roles``), and the user can move
         it to colour or separate figures like any other factor — which beats
         hardcoding subplots into the renderer.
+
+        ``carry`` names data columns that are GROUPINGS, not fields (``Side``
+        of a ``Gait`` record — ``FactorVariable.is_own_column``): they stay on
+        every melted row as id columns instead of becoming a field level or
+        being dropped as unplottable.
         """
         frame = variable_frame.frame
+        carried = [c for c in (carry or []) if c in frame.columns]
         usable, skipped = [], []
         for column in variable_frame.data_columns:
+            if column in carried:
+                continue
             if is_plottable(classify_column(frame[column])):
                 usable.append(column)
             else:
@@ -1167,7 +1288,11 @@ class ScidbSource(BaseSource):
             # share, so every variable contributes the same ColName levels.
             usable = [column for column in usable if column in set(fields)]
 
-        id_vars = [c for c in frame.columns if c not in variable_frame.data_columns]
+        id_vars = [
+            c
+            for c in frame.columns
+            if c not in variable_frame.data_columns or c in carried
+        ]
         field_factor = FIELD_FACTOR
         while field_factor in id_vars:  # never shadow a schema key
             field_factor += "_"
@@ -1396,6 +1521,13 @@ class ScidbSource(BaseSource):
 
         for candidate in registered_variables(self._db):
             if candidate == measure:
+                # The measure's OWN columns (`Gait.Side`) may group it: they are
+                # carried on each row rather than joined, so the level rule
+                # below is moot. Only a wide measure has any — a single data
+                # column is the value being plotted.
+                entry = self._own_columns_offer(measure)
+                if entry:
+                    offered.append(entry)
                 continue
             levels = self._levels_of(candidate)
             if len(levels) > len(own) or own[: len(levels)] != levels:
@@ -1439,6 +1571,29 @@ class ScidbSource(BaseSource):
             layer=LAYER,
         )
         return {"offered": offered, "rejected": rejected}
+
+    def _own_columns_offer(self, measure: str) -> dict | None:
+        """The plotted variable as a clickable node of its own columns, or None.
+
+        From the schema alone, like every other node here: WHICH columns hold
+        labels is :meth:`groupable_columns`' question. ``own`` tells the picker
+        there is no variant to choose — each row's label comes from that row
+        (``FactorVariable.is_own_column``).
+        """
+        types = data_column_types_for(self._db, measure)
+        if len(types) < 2:
+            return None
+        labelled = [c for c, t in types.items() if not is_container_type(t)]
+        if not labelled:
+            # A struct of signals (EMG): nothing on it could be a label.
+            return None
+        return {
+            "variable": measure,
+            "kind": "columns",
+            "label": measure,
+            "column_count": len(labelled),
+            "own": True,
+        }
 
     def _whole_variable_offer(
         self, candidate: str, columns: list[str]
@@ -1505,16 +1660,33 @@ class ScidbSource(BaseSource):
 
         ``measure`` is taken so the signature matches the question being asked
         ("group THIS figure by a column of THAT variable") and so the level
-        check can move here later; today the columns of a variable do not depend
-        on it.
+        check can move here later. Today it changes only one refusal's wording:
+        when ``variable`` IS the measure (its own ``Side`` column grouping it),
+        a numeric column is a plotted field, not a numeric sheet column.
         """
         rejected: dict[str, str] = {}
         types = data_column_types_for(self._db, variable)
-        offered = self._groupable_columns(variable, types, rejected, self._offer)
+        # The plotted variable's own numeric columns are its FIELDS — what the
+        # figure draws — which is a different reason than "a numeric sheet
+        # column", and the user should read the right one.
+        numeric_reason = (
+            "a measured field of the plotted variable, not a label"
+            if variable == measure
+            else "numeric column — grouping by ranges of it is not offered yet"
+        )
+        offered = self._groupable_columns(
+            variable, types, rejected, self._offer, numeric_reason=numeric_reason
+        )
         return {"offered": offered, "rejected": rejected}
 
     def _groupable_columns(
-        self, variable: str, types: dict[str, str], rejected: dict, offer
+        self,
+        variable: str,
+        types: dict[str, str],
+        rejected: dict,
+        offer,
+        *,
+        numeric_reason: str,
     ) -> list[dict]:
         """The columns of one wide table that may group a figure.
 
@@ -1554,10 +1726,7 @@ class ScidbSource(BaseSource):
                     # refusals that ARE near misses under a dozen that are not.
                     continue
                 if shape is not Shape.CATEGORICAL:
-                    rejected[label] = (
-                        "numeric column — grouping by ranges of it is not "
-                        "offered yet"
-                    )
+                    rejected[label] = numeric_reason
                     continue
                 levels = column_levels(
                     self._db, variable, column, limit=MAX_GROUP_LEVELS + 1

@@ -171,6 +171,7 @@ multi-level variant factor and on `Variable`.
 | capability report | `kinds[].assignment` (roles + groups + colour), `cell_collapse`, `collapse {order, sample, pooled}`, `has_sample`, `grouping {layers, color, ticks, series, units, labelled_layers, max_labelled_layers, hint}`, `data_export` |
 | the collapsed keys drawn as points ("Show sample") | `roles.overlay_steps` / `overlay_join` — see `show-sample-overlay.md` |
 | cutting the chain at a key (overlay + CSV depth) | `roles.chain_cut` |
+| grouping by a column of the PLOTTED variable (`Gait.Side`) | rule: `FactorVariable.is_own_column` / `PlotSpec.joined_factor_variables`; carried on the row by `ScidbSource._own_column_groups` + `_melt_fields(carry=)` + `_attach_groupings`; offered by `_own_columns_offer` (`own: true`, picker skips the variant step); codegen emits only the `MISSING_LEVEL` line and no endpoint input |
 
 ## Traps
 

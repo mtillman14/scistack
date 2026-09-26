@@ -112,6 +112,18 @@ class Summarized(BaseVariable):
     schema_version = 1
 
 
+class Gait(BaseVariable):
+    """Trial-level WIDE record: two measured fields plus a ``Side`` label.
+
+    The "group a figure by a column of the variable being plotted" case —
+    ``Side`` is not a schema key, it is recorded on each row beside the
+    numbers it describes, and it changes WITHIN a subject (trial 1 left,
+    trial 2 right), so a join on a shallower level could not supply it.
+    """
+
+    schema_version = 1
+
+
 class StepLengthFigure(BaseVariable):
     """Endpoint output: the figure's path."""
 
@@ -204,6 +216,26 @@ def with_demographics(seeded):
         Demographics.save(row, subject=subject)
     return seeded
 
+
+@pytest.fixture
+def with_gait(seeded):
+    """``seeded`` plus ``Gait``: StepLength / StepWidth numbers and a Side label
+    per trial (trial "1" is "L", trial "2" is "R")."""
+    rng = np.random.default_rng(1)
+    for subject in SUBJECTS:
+        for session in SESSIONS:
+            for trial in TRIALS:
+                Gait.save(
+                    {
+                        "StepLength": float(rng.normal(1.2, 0.1)),
+                        "StepWidth": float(rng.normal(0.2, 0.02)),
+                        "Side": "L" if trial == "1" else "R",
+                    },
+                    subject=subject,
+                    session=session,
+                    trial=trial,
+                )
+    return seeded
 
 def _label(mass, scheme):
     """Two labelling schemes that disagree about every subject.
