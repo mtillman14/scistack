@@ -57,6 +57,8 @@
     "src/components/PlotStudio/sidebarGroups.test.ts",
     "src/components/PlotStudio/panelOverrides.ts",
     "src/components/PlotStudio/panelOverrides.test.ts",
+    "src/components/PlotStudio/compare.ts",
+    "src/components/PlotStudio/compare.test.ts",
     "src/components/PlotStudio/differenceBars.ts",
     "src/components/PlotStudio/differenceBars.test.ts",
     "src/components/Variants/topologies.ts",

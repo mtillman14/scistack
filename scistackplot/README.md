@@ -98,6 +98,27 @@ the x axis's key in the schema, so each subject has a value at every session
 The marks never change, the y axis grows to hold the points, and the exported
 code draws the same overlay.
 
+## Compare to a reference level
+
+Draw each level of a grouping layer relative to one of them, as a difference
+or a % change. The reference sits at 0:
+
+```python
+from scistackplot import Comparison, CompareMode
+
+spec = replace(spec, comparison=Comparison(layer="session", level="1", mode=CompareMode.PERCENT))
+```
+
+It is **paired** when each unit has its own reference value (a subject is
+measured at every session), which is the rule "Show sample" uses to join
+points. Otherwise each value is compared with the reference mark's centre.
+Units with no reference, a % change from a reference <= 0, or a 1-D series
+whose length differs from its reference are dropped and named in the log.
+A comparison that cannot apply (a log axis, an x-y plot, a layer that no
+longer groups) is inert: the raw values are drawn and the reason is
+reported. The exported code and "Save data" compare the same way. See
+`docs/claude/compare-to-reference.md`.
+
 ## Save the data behind a figure
 
 The rows a plot is drawn from are available as a long table, so the

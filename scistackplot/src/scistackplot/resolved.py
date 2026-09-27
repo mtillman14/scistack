@@ -263,6 +263,11 @@ class ResolvedPlot:
     #: enumeration).
     sample_color: str | None = None
     sample_color_order: list[Any] = field(default_factory=list)
+    #: Compare to reference as applied to this figure
+    #: (``compare.comparison_meta``: plan in words, paired or not and why, the
+    #: units dropped), or None when no comparison applies. Shipped as
+    #: ``layout.meta.comparison``; the panel never derives it.
+    comparison: dict | None = None
     #: How every level and name READS in this figure (``aliases.DisplayText``:
     #: the plot's aliases over the project's). Renderers draw text through
     #: this and never stringify a level themselves; every identity above

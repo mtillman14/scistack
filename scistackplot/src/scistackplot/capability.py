@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from .compare import comparison_summary
 from .roles import (
     layer_cap_reason,
     collapse_order,
@@ -451,6 +452,10 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # and why not (`diffbars.unavailable`). Whether the FIGURE has two
         # ticks to join is in `layout.meta`, from the drawn figure.
         "difference_bars": _difference_bars_summary(spec, shape),
+        # Compare to reference: whether the figure can carry one and why not,
+        # the layers + levels it may name, the default, and the current one's
+        # state (`compare.comparison_summary`, the one owner).
+        "comparison": comparison_summary(spec, roles, collapsed, assignment.groups, shape),
         # "Save data": whether the plot's long table can be written, why not,
         # and the depth picker's choices with the header each would write —
         # the same answer `export.plot_data` validates against.

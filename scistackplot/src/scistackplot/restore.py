@@ -251,6 +251,20 @@ def reconcile(spec: PlotSpec, table: LongTable) -> Restored:
         )
         sample_color = None
 
+    # A comparison naming a factor today's data lacks is reported and kept:
+    # it is inert (`compare.unavailable`), and comes back if the factor does.
+    comparison = spec.comparison
+    if comparison is not None and not is_factor(comparison.layer):
+        notes.append(
+            RestoreNote(
+                "comparison.layer",
+                NoteKind.NOT_IN_DATA,
+                f"no factor named {comparison.layer!r} in today's data; the "
+                f"comparison does not apply",
+                comparison.layer,
+            )
+        )
+
     notes.extend(_stale_aliases(spec, table, derived))
 
     if shown != spec.show_sample or sample_color != spec.sample_color:

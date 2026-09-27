@@ -25,6 +25,7 @@ from scistacklog import Log
 
 from .aliases import DisplayText, check_distinct, display_text
 from .cell import cell_collapses, effective_shape
+from .compare import comparison_title, plan_comparison
 from .groups import active_level_groups, apply_level_groups, effective_mapping
 from .panels import Y_TITLES_FIRST_COLUMN, overrides_by_key, panel_key_text
 from .reduce import plan_layout, planned_y_limits, x_axis_title
@@ -422,6 +423,9 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict, y_plan: _YLimitPla
         else:
             what = "each mark is the mean over the whole chain"
         note += f"\n\n    Collapsed {chain}, deepest first, each within the rest; {what}."
+    comparison = plan_comparison(spec, roles, table)
+    if comparison is not None:
+        note += f"\n\n    Values are the {comparison.describe()} ({comparison.reason})"
     if shape_of_y is not Shape.MATRIX_2D:
         note += y_plan.note
     return (
@@ -631,9 +635,19 @@ def _preamble(spec, table, roles, shape) -> list[str]:
         for name, role in roles.items()
         if role is not Role.ITERATE and table.has_factor(name)
     ]
+    # Compare to reference (`compare`): emitted on the SAMPLE rows, after the
+    # pre-collapse and before `final`, where the preview compares them.
+    comparison = plan_comparison(spec, roles, table)
+    overlay_drawn = _overlay_of(spec, table, roles, shape) is not None
+    compared = False
     # `final` is non-empty only for a spaghetti whose sample cannot be joined
     # across x (roles.spaghetti_sample_repeats): each line is its mean.
     for key in [*steps.pre, *steps.final]:
+        if comparison is not None and not compared and key in steps.final:
+            lines.extend(
+                _compare_lines(comparison, spec, kept, shape, index_column, overlay_drawn)
+            )
+            compared = True
         if key not in kept:
             continue
         kept = [name for name in kept if name != key]
@@ -658,6 +672,8 @@ def _preamble(spec, table, roles, shape) -> list[str]:
                 "",
             ]
         )
+    if comparison is not None and not compared:
+        lines.extend(_compare_lines(comparison, spec, kept, shape, index_column, overlay_drawn))
     if steps.sample and spec.kind in (PlotKind.BAR, PlotKind.BAND):
         lines.append(
             f"# the sample: {' x '.join(steps.sample)} — seaborn's estimator and "
@@ -870,6 +886,89 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
         f"{_SAMPLE_FRAME}[{_SERIES_COLUMN!r}] = "
         + (_composed(shown, _SAMPLE_FRAME) if shown else '""')
     )
+    lines.append("")
+    return lines
+
+
+def _compare_lines(
+    comparison, spec, kept: list[str], shape, index_column: str, overlay: bool
+) -> list[str]:
+    """Compare to reference, restated in plain pandas: ``compare.baseline`` +
+    ``compare.apply`` on ``df`` (the sample rows) and, when "Show sample" is
+    drawn, on ``_sample`` against the same baseline. ``kept``: the factor
+    columns left after the pre-collapse, the columns the preview's baseline
+    is keyed by (plan D2; ITERATE factors are constant within one figure)."""
+    from .compare import CompareMode
+
+    y = spec.y_measure
+    one_d = shape is Shape.SERIES_1D
+    keys = [
+        name
+        for name in kept
+        if name != comparison.layer and (comparison.paired or name not in comparison.sample)
+    ]
+    if one_d:
+        keys.append(index_column)
+    unit = [name for name in keys if name != index_column]
+    centre = "median" if (not comparison.paired and comparison.statistic == "median") else "mean"
+    lines = [
+        f"# compare to reference: {comparison.describe()}",
+        f"# ({comparison.reason})",
+        f"_is_ref = df[{comparison.layer!r}].map("
+        f"lambda v: 'nan' if pd.isna(v) else str(v)) == {comparison.level!r}",
+    ]
+    if keys:
+        lines.append(f"_compare_keys = {keys!r}")
+        lines.append(
+            f"_base = df[_is_ref].groupby(_compare_keys, dropna=False)[{y!r}]"
+            f".{centre}().rename('_ref').reset_index()"
+        )
+    else:
+        lines.append(f"_base = pd.DataFrame({{'_ref': [df.loc[_is_ref, {y!r}].{centre}()]}})")
+    if comparison.mode is CompareMode.PERCENT:
+        lines.append("_base = _base[_base['_ref'] > 0]  # % change is undefined for a reference <= 0")
+
+    def compared(frame: str, series: list[str]) -> list[str]:
+        out = (
+            [f"{frame} = {frame}.merge(_base, on=_compare_keys, how='left')"]
+            if keys
+            else [f"{frame}['_ref'] = _base['_ref'].iloc[0] if len(_base) else float('nan')"]
+        )
+        if one_d:
+            # A series keeps exactly its baseline's positions, or is dropped
+            # whole (never resampled).
+            series_ids = (
+                f"{frame}.groupby({series!r}, dropna=False).ngroup()" if series else "0"
+            )
+            out += [
+                f"_series_id = pd.Series({series_ids}, index={frame}.index)",
+                "_rows = _series_id.map(_series_id.value_counts())",
+                f"_with_ref = {frame}['_ref'].notna().groupby(_series_id).transform('sum')",
+                (
+                    f"_base_n = {frame}[{unit!r}].merge(_base.groupby({unit!r}, dropna=False)"
+                    f".size().rename('_n').reset_index(), on={unit!r}, how='left')['_n']"
+                    f".fillna(0).to_numpy()"
+                    if unit
+                    else "_base_n = len(_base)"
+                ),
+                f"{frame} = {frame}[(_with_ref > 0) & (_with_ref == _rows) & (_rows == _base_n)]",
+            ]
+        else:
+            out.append(f"{frame} = {frame}[{frame}['_ref'].notna()]")
+        if comparison.mode is CompareMode.PERCENT:
+            out.append(
+                f"{frame}[{y!r}] = 100 * ({frame}[{y!r}] - {frame}['_ref']) / {frame}['_ref']"
+            )
+        else:
+            out.append(f"{frame}[{y!r}] = {frame}[{y!r}] - {frame}['_ref']")
+        out.append(f"{frame} = {frame}.drop(columns='_ref').reset_index(drop=True)")
+        return out
+
+    series = [name for name in kept if name != index_column]
+    lines += compared("df", series)
+    if overlay:
+        lines.append("# the sample points, against the same reference")
+        lines += compared(_SAMPLE_FRAME, [])
     lines.append("")
     return lines
 
@@ -1628,8 +1727,14 @@ def _plot_call(
         x if shape is Shape.SERIES_1D else None,
     )
     # The y title the preview draws (`reduce._labels_for`): the style's, else
-    # the measure's name alias, else its name.
-    y_label = style.y_label or aliases.text.name(spec.y_measure, spec.y_measure)
+    # the measure's name alias, else its name — said as what was computed
+    # when compared (`compare.comparison_title`, the preview's call too).
+    y_label = style.y_label or comparison_title(
+        plan_comparison(spec, roles, table),
+        aliases.text.name(spec.y_measure, spec.y_measure),
+        aliases.text,
+        table,
+    )
     lines.append(f"g.set_axis_labels({x_label!r}, {y_label!r})")
     if facets:
         # Same rule as the preview (render.base.panel_y_title): the facet values

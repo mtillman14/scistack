@@ -1062,6 +1062,19 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
             f"Table factors: {table.factor_names}"
         )
 
+    # --- compare to reference -------------------------------------------
+    #
+    # Never refused: a comparison that cannot apply (its layer left the
+    # grouping, a log axis, an x-y plot) is INERT and the figure draws the raw
+    # values, the same policy as show_sample. `compare.unavailable` is the one
+    # statement of why; the capability report shows it.
+    if spec.comparison is not None and spec.comparison.active:
+        from .compare import unavailable as comparison_unavailable
+
+        reason = comparison_unavailable(spec, table, roles, assignment.groups)
+        if reason is not None:
+            Log.info("comparison inert: %s", reason, layer=LAYER)
+
     # --- variants are never replicates -----------------------------------
     #
     # Two pipelines' results averaged into one number is not a figure anyone

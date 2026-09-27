@@ -83,6 +83,14 @@ from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
 from .spaghetti import overlay_offsets, series_offsets
 from .reducer import reducer_for
 from .diffbars import figure_has_bars, log_figure as log_difference_bars
+from .compare import (
+    ComparisonPlan,
+    apply as apply_comparison,
+    compare_sample,
+    comparison_meta,
+    comparison_title,
+    plan_comparison,
+)
 from .panels import override_for, panel_key_text, unmatched
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
@@ -132,6 +140,11 @@ MAX_TRANSPORT_POINTS = 20_000
 #:
 #: ``difference_bars`` is here for the same reason: a bar is placed over the
 #: panels already built (``diffbars``), so adding one only redraws.
+#:
+#: ``comparison`` is here too (plan D5): the transform runs per figure on the
+#: sample rows (``compare``), never on the planned frames, so a toggle or a new
+#: reference level reuses the loaded, filtered, fanned-out frames. The y
+#: limits it changes are memoised per ``ExtentMode``, which carries it.
 _PLAN_IRRELEVANT_FIELDS = (
     "kind",
     "facet",
@@ -139,6 +152,7 @@ _PLAN_IRRELEVANT_FIELDS = (
     "aliases",
     "panel_overrides",
     "difference_bars",
+    "comparison",
 )
 
 #: How many plans are kept. Two: the pattern being served is narrow — the panel
@@ -1241,6 +1255,11 @@ def _build_figure(
         #   stride itself so only the kept rows' labels are ever gathered.
         reducer = reducer_for(table)
         steps = collapse_steps(spec, roles, table)
+        # Compare to reference (`compare`, plan D1): applied to the SAMPLE rows
+        # below, on whichever route builds them, and to the overlay against the
+        # same baseline. None when no comparison applies (off or inert).
+        comparison = plan_comparison(spec, roles, table)
+        comparison_outcome = None
         if steps.final:
             # The one exception to schema-level parity — said at INFO, because
             # the figure then draws means where every other kind draws rows.
@@ -1255,7 +1274,22 @@ def _build_figure(
         # chain consumes them, and drawn as points on top of the marks.
         overlay = _plan_overlay(spec, roles, table, shape, explode)
         overlay_frame: pd.DataFrame | None = None
-        summarize_nested = explode and spec.kind in (PlotKind.BAND, PlotKind.BAR)
+        summarize_nested = (
+            explode
+            and spec.kind in (PlotKind.BAND, PlotKind.BAR)
+            # A compared 1-D band/bar takes the exploded route: the baseline
+            # is `compare`'s, over long rows, never restated over cells. The
+            # transport stride then runs after the summary is built from the
+            # compared rows (`downsample`), not inside the explode.
+            and comparison is None
+        )
+        if comparison is not None and explode and spec.kind in (PlotKind.BAND, PlotKind.BAR):
+            Log.info(
+                "compare: 1-D %s summarised from exploded rows (the nested-cell "
+                "summary does not compare)",
+                spec.kind,
+                layer=LAYER,
+            )
         pre_strided_from: int | None = None
         if explode and not summarize_nested:
             if steps.pre or steps.final:
@@ -1266,10 +1300,18 @@ def _build_figure(
             else:
                 with timing.phase("explode", extra=f"{len(frame)} row(s)"):
                     frame, index_column, total = reducer.explode_series(
-                        frame, spec.y_measure, index_column, table, max_points=max_points
+                        frame, spec.y_measure, index_column, table,
+                        # Compared: every position is kept until the baseline
+                        # is joined, so a stride cannot drop a reference position.
+                        max_points=None if comparison is not None else max_points,
                     )
                     if len(frame) < total:
                         pre_strided_from = total  # the reducer logged the stride
+            if comparison is not None:
+                with timing.phase("compare", extra=comparison.describe()):
+                    frame, _base, comparison_outcome = compare_sample(
+                        frame, comparison, spec.y_measure, index_column
+                    )
         elif not explode and shape is not Shape.MATRIX_2D:
             # (A 2-D measure's panel is the elementwise mean of its matrices —
             # `matrix_mean` — which pools; the chain has nothing to add there.)
@@ -1293,6 +1335,23 @@ def _build_figure(
                 # The sample rows — the SAME call "Save data" makes
                 # (`export.plot_data`), so the CSV is what the marks see.
                 frame = _sample_frame(frame, steps, spec, table, index_column)
+                if comparison is not None:
+                    # Between the pre-collapse and `final`: the sample rows are
+                    # what is compared (plan D3). A "Show sample" row joins the
+                    # same baseline on the keys it has, so a trial is measured
+                    # against its own subject's reference.
+                    frame, base, comparison_outcome = compare_sample(
+                        frame, comparison, spec.y_measure, index_column
+                    )
+                    if overlay_frame is not None:
+                        overlay_frame, _overlay_outcome = apply_comparison(
+                            overlay_frame,
+                            comparison,
+                            base,
+                            spec.y_measure,
+                            index_column,
+                            what="overlay",
+                        )
                 # Only a spaghetti whose sample cannot be joined across x
                 # (roles.spaghetti_sample_repeats); empty for every other kind.
                 frame = _collapse_levels(frame, steps.final, spec, table, index_column)
@@ -1478,6 +1537,7 @@ def _build_figure(
                 dash_layers=dash_layers if dash_styles else [],
                 sample_color=sample_color,
                 text=figure_text,
+                comparison=comparison,
             )
 
             # A nested axis is composed once, here, from labels only — so both
@@ -1614,6 +1674,11 @@ def _build_figure(
             ),
             sample_color=sample_color,
             sample_color_order=list(sample_color_order or []),
+            comparison=(
+                comparison_meta(comparison, comparison_outcome)
+                if comparison is not None
+                else None
+            ),
         )
         # Which difference bars land on which panel, once per figure, so a bar
         # that draws nowhere is explained in scidb.log (diffbars D3).
@@ -2574,6 +2639,7 @@ def _labels_for(
     dash_layers: list[str] = (),
     sample_color: str | None = None,
     text: DisplayText | None = None,
+    comparison: "ComparisonPlan | None" = None,
 ) -> Labels:
     """Every title the figure draws, with name and level aliases applied
     (``text``: the figure's :class:`aliases.DisplayText`)."""
@@ -2581,7 +2647,11 @@ def _labels_for(
     text = text if text is not None else display_text(spec, table)
     x_label = x_axis_title(spec, table, x_layers, index_column, text)
 
-    y_label = style.y_label or text.name(spec.y_measure, table.measure(spec.y_measure).display)
+    # A typed title wins; otherwise the measure's name, said as what was
+    # computed when compared (`compare.y_title`, the export's title too).
+    y_label = style.y_label or comparison_title(
+        comparison, text.name(spec.y_measure, table.measure(spec.y_measure).display), text, table
+    )
 
     title = style.title
     if title is None and figure_key:

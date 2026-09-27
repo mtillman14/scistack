@@ -22,6 +22,8 @@ import pytest
 from scistackplot import (
     Aggregation,
     Alias,
+    CompareMode,
+    Comparison,
     DifferenceBar,
     ErrorBand,
     FacetOptions,
@@ -128,6 +130,12 @@ def full_spec() -> PlotSpec:
                 label="**",
             )
         ],
+        comparison=Comparison(
+            layer="session",
+            level="pre",
+            mode=CompareMode.PERCENT,
+            active=False,
+        ),
         filters=[
             Filter(
                 column="subject",

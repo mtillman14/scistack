@@ -211,6 +211,19 @@ lineage and `scidb report` apply unchanged.
 - Build on the Hypothesis tabs + `finalized`: declare the analysis plan first,
   tag each result confirmatory or exploratory, and filter the report on it
 
+### S9. Compared figures do not feed difference bars — **DEFERRED** (2026-09-27)
+
+Plot Studio can now draw a measure relative to a reference level
+(`PlotSpec.comparison`, `scistackplot.compare`,
+[compare-to-reference.md](compare-to-reference.md)). A test on change scores
+is a different test from a repeated-measures test on the raw values. Until
+that is designed, **the S8 overlay conversion (results → `DifferenceBar`)
+must not run while `spec.comparison` is active.** The check is
+`capabilities.comparison.state` (`set` and `active` with no `inert`). Manual
+difference bars (clicking two ticks) stay allowed on a compared figure. The
+user decided this on 2026-09-27. No code enforces it yet because no feed
+exists. The first stats → overlay code adds the guard and a test for it.
+
 ## Open questions
 
 All resolved (2026-09-27). O1, O3, O6 and O7 became S5, S7 and S6; O2 and O5

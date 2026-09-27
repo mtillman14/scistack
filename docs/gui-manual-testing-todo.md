@@ -11,6 +11,55 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzj. Structure > Compare: difference / % change from a reference level — added 2026-09-27
+
+**What changed:** a new **Compare** section under Structure, after
+Grouping. Mode (Off / Difference / % change), Layer (a grouping layer), and
+Reference (one of its levels). The reference level sits at 0. It is paired
+(each subject against its own reference) when the sample recurs across the
+layer, which is the same rule Show sample uses to join points. Otherwise each
+value is compared with the reference's centre. The y title changes, and
+dropped units are listed. Plan `.claude/plan-compare-to-reference.md`, doc
+`docs/claude/compare-to-reference.md`.
+
+**Backend**
+1. Python and frontend both changed. Both vite targets were rebuilt in the
+   session. Pull in the GUI clone and restart the GUI.
+2. Run the pytest commands from the plan first:
+   `pytest scistackplot/tests/test_compare.py scistackplot/tests/test_compare_export.py -q`.
+
+**Frontend**
+1. Open a bar plot: session grouped, subject collapsed (trial collapsed if you
+   have trials). Structure > **Compare** shows Mode = Off.
+2. Choose **Difference**. Layer = session and Reference = the first session
+   appear. The first session's bar is at 0 with no error bar. The note says
+   *Paired — each unit against its own reference. Each subject has a value
+   at every session.* The y title reads *Δ <measure> (from session <level>)*.
+   The Structure group's closed summary ends with *vs session <level> (Δ)*.
+3. Choose **% change**. The bars become percentages and the y title reads
+   *<measure>, % change from session <level>*.
+4. Change Reference to another session. That session drops to 0 and the
+   others are relative to it.
+5. Turn on Statistics > Show sample (subject). Each subject's line starts at 0
+   on the reference tick. With trials shown, the trials sit around their
+   subject's point.
+6. Add a difference bar that ends on the reference tick. It is placed like
+   any other bar.
+7. Mode = Off: the raw values come back. Mode = Difference again: the same
+   layer and reference are restored.
+8. Move subject from Collapse to Separate panels (trial now the sample). The
+   note changes to *Per summary…*, and the reference bar has an error bar
+   around 0.
+9. Filter out one subject's reference session (Data > Schema keys). A line
+   *Dropped 1 (no reference value): subject=…* appears, and scidb.log has
+   a WARN `compare (sample): dropped 1 unit(s)…`.
+10. Turn on Appearance > Y axis log (if offered). The section says *Not
+    applied: A log y axis cannot show…*, and the raw values are drawn.
+11. Save data (CSV): the values are the compared ones. Export code: the
+    exported figure has the same bars and the same y title.
+12. A 1-D line plot with session as colour: each session's curve is its
+    pointwise difference from the reference session.
+
 ## 0zzi. Statistics > Difference bars: mark two groups as different — added 2026-09-27
 
 **What changed:** a new **Difference bars** section under Statistics (bar,

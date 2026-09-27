@@ -269,6 +269,9 @@ def render(
             if carries_difference_bars(resolved)
             else None
         )
+        # What Plot Studio's Compare section says about the figure as drawn
+        # (compare.comparison_meta); None when no comparison applies.
+        layout["meta"]["comparison"] = resolved.comparison
 
         if legend_on and len(dash_levels(resolved)) > 1:
             traces.extend(_dash_legend_traces(resolved))

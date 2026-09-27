@@ -94,6 +94,11 @@ class ExtentMode:
     #: bar of subject means), so the limits must include them. The checked
     #: names, when the kind can carry an overlay at all; ``()`` otherwise.
     overlay: tuple[str, ...] = ()
+    #: Compare to reference (``PlotSpec.comparison``, when active): the drawn
+    #: values are differences or % changes, so the extent is computed after
+    #: ``compare`` rewrites the sample. Part of the key, so toggling the
+    #: comparison recomputes the limits without rebuilding the plan.
+    compare: Any = None
 
     @classmethod
     def for_spec(cls, spec: PlotSpec, roles: dict[str, Role]) -> "ExtentMode":
@@ -120,12 +125,17 @@ class ExtentMode:
                 and overlay_unavailable(spec, roles, Shape.SCALAR) is None
                 else ()
             ),
+            compare=(
+                spec.comparison
+                if spec.comparison is not None and spec.comparison.active
+                else None
+            ),
         )
 
     @property
     def reduces(self) -> bool:
         """Whether the drawn extent differs from the raw extent at all."""
-        return self.summary or self.collapse
+        return self.summary or self.collapse or self.compare is not None
 
     def describe(self) -> str:
         parts = ["summary" if self.summary else "raw"]
@@ -137,6 +147,8 @@ class ExtentMode:
             parts.append("log")
         if self.overlay:
             parts.append("sample overlay " + ", ".join(self.overlay))
+        if self.compare is not None:
+            parts.append(f"compare {self.compare.mode} {self.compare.layer}={self.compare.level}")
         return ", ".join(parts)
 
 
@@ -570,6 +582,7 @@ def _reduced_extents(
     sorting, and one pass for the whole fan-out rather than one per figure.
     """
     # Imported here: `reduce` imports this module.
+    from .compare import apply, compare_sample, plan_comparison
     from .reduce import _collapse_levels
     from .roles import collapse_steps, overlay_steps
 
@@ -588,6 +601,8 @@ def _reduced_extents(
     # same cut `reduce._build_figure` draws — folded by scope like any raw
     # extent and unioned into whatever the marks' own extent comes to below.
     overlay_extents: dict[tuple, tuple[float, float]] = {}
+    shown: pd.DataFrame | None = None
+    overlay = None
     if mode.overlay and table.shape_of(measure) is Shape.SCALAR:
         overlay = overlay_steps(spec, roles, table)
         if overlay is not None:
@@ -595,14 +610,28 @@ def _reduced_extents(
                 working, overlay.averaged, spec, table, index_column,
                 pooled=spec.aggregate.pooled,
             )
-            overlay_extents = _raw_extents(shown, measure, scope, mode)
-            Log.debug(
-                "y limits: sample overlay (%s) over %d row(s) -> %s",
-                " x ".join(overlay.shown), len(shown), overlay_extents, layer=LAYER,
-            )
+    steps = collapse_steps(spec, roles, table)
     if mode.collapse:
-        steps = collapse_steps(spec, roles, table)
         working = _collapse_levels(working, steps.pre, spec, table, index_column)
+    # Compare to reference on the SAMPLE rows, between the pre-collapse and
+    # `final`, exactly where `reduce._build_figure` does it; the overlay is
+    # compared against the same baseline. Quiet: the figure warns about drops.
+    comparison = plan_comparison(spec, roles, table) if mode.compare is not None else None
+    if comparison is not None:
+        working, base, _outcome = compare_sample(
+            working, comparison, measure, index_column, what="y limits", quiet=True
+        )
+        if shown is not None:
+            shown, _outcome = apply(
+                shown, comparison, base, measure, index_column, what="y limits overlay", quiet=True
+            )
+    if shown is not None and overlay is not None:
+        overlay_extents = _raw_extents(shown, measure, scope, mode)
+        Log.debug(
+            "y limits: sample overlay (%s) over %d row(s) -> %s",
+            " x ".join(overlay.shown), len(shown), overlay_extents, layer=LAYER,
+        )
+    if mode.collapse:
         working = _collapse_levels(working, steps.final, spec, table, index_column)
 
     panels = panel_factors(roles, working)

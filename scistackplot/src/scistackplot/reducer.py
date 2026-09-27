@@ -255,7 +255,15 @@ class NumpyReducer(PandasReducer):
 
         measure = spec.y_measure
         mode = ExtentMode.for_spec(spec, roles)
-        if not _nested_series(frame, table, measure) or not mode.reduces:
+        if (
+            not _nested_series(frame, table, measure)
+            or not mode.reduces
+            # Compare to reference: the pandas reference owns the baseline
+            # (`compare`), so a compared figure is never restated over cells.
+            or mode.compare is not None
+        ):
+            if mode.compare is not None:
+                Log.debug("y_extents(numpy): compared figure -> pandas reference", layer=LAYER)
             return super().y_extents(frame, spec, table, scope, roles)
 
         # Computed at the granularity it is DRAWN at — per panel (every

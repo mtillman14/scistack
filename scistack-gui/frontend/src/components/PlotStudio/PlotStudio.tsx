@@ -95,6 +95,8 @@ import {
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
 import PanelsSection from './PanelsSection'
 import DifferenceBarsSection from './DifferenceBarsSection'
+import CompareSection from './CompareSection'
+import { compareSummary, type CompareCapability, type CompareMeta, type Comparison } from './compare'
 import {
   IDLE,
   addBar,
@@ -463,6 +465,9 @@ interface Capabilities {
   /** Whether this plot type can carry difference bars, and why not
    *  (`scistackplot.diffbars.unavailable`). */
   difference_bars?: { available: boolean; reason: string | null }
+  /** Compare to reference: the layers + levels it may name, the default,
+   *  and the current comparison's state (`scistackplot.compare`). */
+  comparison?: CompareCapability
   /** Whether any factor is collapsed, i.e. whether there is a sample. */
   has_sample: boolean
   /** "Save data (CSV)": availability and the depth picker's choices. */
@@ -661,6 +666,9 @@ interface Spec {
   /** Bars joining two marks of a panel (`PlotSpec.difference_bars`). Edited by
    *  Statistics > Difference bars through differenceBars.ts. */
   difference_bars?: DifferenceBar[]
+  /** Compare to reference (`PlotSpec.comparison`). Edited by Structure >
+   *  Compare through compare.ts; null or absent = raw values. */
+  comparison?: Comparison | null
 }
 
 /**
@@ -1337,6 +1345,12 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, panel_overrides: next } : prev))
   }, [])
 
+  /** Replace `spec.comparison` (built by compare.ts). */
+  const setComparison = useCallback((next: Comparison | null | undefined) => {
+    console.info('[Plot Studio] comparison_set', { comparison: next })
+    setSpec(prev => (prev ? { ...prev, comparison: next ?? null } : prev))
+  }, [])
+
   /** Replace `spec.difference_bars` (built by differenceBars.ts). */
   const setDifferenceBars = useCallback((next: DifferenceBar[]) => {
     console.info('[Plot Studio] difference_bars_set', { count: next.length, bars: next })
@@ -1943,6 +1957,11 @@ export default function PlotStudio({
   const diffMeta =
     (figures[0]?.figure?.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
       ?.difference_bars ?? null
+  // What Structure > Compare says about the drawn figure: paired or not, and
+  // what was dropped (scistackplot.compare.comparison_meta).
+  const compareMeta =
+    (figures[0]?.figure?.layout?.meta as { comparison?: CompareMeta | null } | undefined)
+      ?.comparison ?? null
   const figureDiffMeta = (figure: FigurePayload) =>
     (figure.figure.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
       ?.difference_bars ?? null
@@ -2723,6 +2742,7 @@ export default function PlotStudio({
               grouped: groupLayers,
               color: spec?.color ?? null,
               roles: (spec?.roles ?? {}) as Record<string, string>,
+              compare: compareSummary(spec?.comparison),
             })}
           >
             {/* Grouping: what groups EXIST, then which of them group the x axis.
@@ -2838,6 +2858,23 @@ export default function PlotStudio({
                 )
               )}
             </Section>
+
+            {/* Compare: a grouping layer's levels relative to one of them, as a
+                difference or a % change. Right under Grouping because the
+                reference is a level of a grouping layer. */}
+            {capabilities?.comparison && (
+              <Section
+                title="Compare"
+                hint="Show each level of a grouping layer relative to a reference level: the difference, or the % change. The reference sits at 0. Paired when each unit (a subject) has its own reference value, the rule Show sample uses to join points; otherwise each value is compared with the reference's centre. Every other control still applies."
+              >
+                <CompareSection
+                  comparison={spec?.comparison}
+                  capability={capabilities.comparison}
+                  meta={compareMeta}
+                  onChange={setComparison}
+                />
+              </Section>
+            )}
 
             <Section
               title="Factors"

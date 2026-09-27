@@ -41,6 +41,7 @@ The design history is in `.claude/plot-studio-sidebar-redesign.md`.
 | **Structure** | Combine | combine rows (one line collapsed, one open at a time; bucket-first editor), + Combine levels of… | `level_groups` (`mapping`, `unmatched`, `active`) |
 | | Grouping | Group by… picker | `factor_variables` |
 | | | grouping list: include, order, colour; name = slot dropdown when combines exist | `roles[f]='group'`, `groups`, `color`; dropdown → `combine.ts switchSlot` |
+| | Compare (when `capabilities.comparison`; after Grouping) | Mode (Off / Difference / % change), Layer, Reference level; paired/per-summary note; dropped units from `layout.meta.comparison` | `comparison` via `compare.ts` (docs/claude/compare-to-reference.md) |
 | | Factors | role per non-grouped factor; name = slot dropdown | `roles` (facet / iterate / collapse) |
 | | Layout (only when a factor has the subplot role) | N rows/cols, row/col slots (one panel: locked 1 × 1, slots hidden) | `facet` |
 | **Statistics** (only when summarising or a sample overlay exists) | Summary | Centre, Spread, Weight by N | `aggregate.{statistic,error,pooled}` |

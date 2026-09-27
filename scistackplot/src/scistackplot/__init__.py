@@ -95,6 +95,7 @@ from .roles import (
     with_requirements_for,
 )
 from .restore import NoteKind, RestoreError, RestoreNote, Restored, reconcile, restore_spec
+from .compare import CompareMode, Comparison
 from .diffbars import DifferenceBar, bars_for_panel, slot_endpoints
 from .panels import PanelOverride, override_for
 from .shape import Shape, classify_column, classify_value, is_plottable
@@ -197,6 +198,8 @@ __all__ = [
     "PanelOverride",
     "override_for",
     # difference bars (.claude/plan-difference-bars.md)
+    "CompareMode",
+    "Comparison",
     "DifferenceBar",
     "bars_for_panel",
     "slot_endpoints",

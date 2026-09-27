@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from typing import Any
 
+from .compare import Comparison
 from .diffbars import DifferenceBar
 from .panels import Y_TITLES_EVERY_PANEL, PanelOverride
 
@@ -1012,6 +1013,11 @@ class PlotSpec:
     #: panel. One that resolves nowhere is kept and does nothing.
     #: ``diffbars`` is the one owner (.claude/plan-difference-bars.md).
     difference_bars: list[DifferenceBar] = field(default_factory=list)
+    #: Compare to reference: the measure re-expressed relative to one level of
+    #: a grouping layer, as a difference or a % change. None = raw values.
+    #: Inert (drawn raw, reason reported) when it cannot apply; `compare` is
+    #: the one owner (.claude/plan-compare-to-reference.md).
+    comparison: Comparison | None = None
     filters: list[Filter] = field(default_factory=list)
     #: Which schema locations to draw. Written by the schema location picker,
     #: which REPLACED the flat per-key pickers — see :class:`LocationFilter` for
@@ -1175,6 +1181,7 @@ class PlotSpec:
         raw["aliases"] = {thing: alias.to_dict() for thing, alias in self.aliases.items()}
         raw["panel_overrides"] = [o.to_dict() for o in self.panel_overrides]
         raw["difference_bars"] = [b.to_dict() for b in self.difference_bars]
+        raw["comparison"] = self.comparison.to_dict() if self.comparison else None
         # TOML has no null; drop empty optionals so a round trip is stable.
         return _drop_nulls(raw)
 
@@ -1213,6 +1220,9 @@ class PlotSpec:
             difference_bars=[
                 DifferenceBar.from_dict(b) for b in (raw.get("difference_bars") or [])
             ],
+            comparison=(
+                Comparison.from_dict(raw["comparison"]) if raw.get("comparison") else None
+            ),
             filters=[Filter(**f) for f in (raw.get("filters") or [])],
             location_filter=LocationFilter.from_dict(raw.get("location_filter") or {}),
             factor_variables=[

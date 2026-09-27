@@ -263,6 +263,7 @@ def plot_data(
     (``reduce._panel_frame``), and the count is logged: a CSV row the plot
     never drew would break the parity this function exists for.
     """
+    from .compare import apply as apply_comparison, compare_sample, plan_comparison
     from .reduce import _collapse_levels, _plan, _sample_frame
     from .roles import CollapseSteps
 
@@ -277,10 +278,17 @@ def plot_data(
 
         pieces: list[pd.DataFrame] = []
         with timing.phase("collapse", extra=f"{len(plan.groups)} figure(s)"):
+            # Compare to reference: the CSV holds the plotted (compared) values,
+            # from the same `compare` calls the figure makes (plan D7).
+            comparison = plan_comparison(plan.spec, plan.roles, plan.table)
             for figure_key, group in plan.groups:
-                if list(chosen.averaged) == list(steps.pre):
-                    # The default: the very call the figure makes.
-                    rows = _sample_frame(group, steps, plan.spec, plan.table, None)
+                as_plotted = list(chosen.averaged) == list(steps.pre)
+                if as_plotted or comparison is not None:
+                    # The default: the very call the figure makes. (Also the
+                    # baseline of a deeper cut when compared.)
+                    sample_rows = _sample_frame(group, steps, plan.spec, plan.table, None)
+                if as_plotted:
+                    rows = sample_rows
                 else:
                     rows = _sample_frame(
                         group,
@@ -288,6 +296,18 @@ def plot_data(
                         plan.spec,
                         plan.table,
                         None,
+                    )
+                if comparison is not None:
+                    compared, base, _outcome = compare_sample(
+                        sample_rows, comparison, plan.spec.y_measure, None, what="save data"
+                    )
+                    rows = (
+                        compared
+                        if as_plotted
+                        else apply_comparison(
+                            rows, comparison, base, plan.spec.y_measure, None,
+                            what=f"save data, down to {chosen.key}",
+                        )[0]
                     )
                 Log.debug(
                     "[plot-data] figure %s: %d row(s)",
@@ -338,11 +358,12 @@ def plot_data(
                 )
 
     Log.info(
-        "[plot-data] %s: %d figure(s), chain %s, depth=%s%s -> %d row(s) x %d "
+        "[plot-data] %s: %d figure(s), chain %s, values %s, depth=%s%s -> %d row(s) x %d "
         "column(s) %s",
         plan.spec.y_measure,
         len(plan.groups),
         _describe_chain(options),
+        comparison.describe() if comparison is not None else "raw",
         chosen.key or "as plotted",
         ", one column per field" if fields_as_columns and chosen.wide_columns else "",
         len(frame),

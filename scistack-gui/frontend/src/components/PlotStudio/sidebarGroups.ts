@@ -117,10 +117,13 @@ export function structureSummary(args: {
   grouped: string[]
   color: string | null
   roles: Record<string, string>
+  /** Compare to reference (compare.compareSummary), '' when none. */
+  compare?: string
 }): string {
   const parts: string[] = []
   if (args.grouped.length) parts.push(`group ${args.grouped.join(' › ')}`)
   if (args.color) parts.push(`colour ${args.color}`)
+  if (args.compare) parts.push(args.compare)
   for (const [role, word] of ROLE_WORDS) {
     const names = Object.entries(args.roles)
       .filter(([, r]) => r === role)

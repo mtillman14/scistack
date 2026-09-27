@@ -138,3 +138,15 @@ test('the Statistics summary counts the difference bars', () => {
     /^1 difference bar$/,
   )
 })
+
+test('structure summary names the comparison after the grouping', () => {
+  assert.equal(
+    structureSummary({
+      grouped: ['session'],
+      color: null,
+      roles: { session: 'group' },
+      compare: 'vs session s1 (%)',
+    }),
+    'group session · vs session s1 (%)'
+  )
+})
