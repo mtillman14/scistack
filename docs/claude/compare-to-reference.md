@@ -97,6 +97,16 @@ y limits DO change, so `ylimits.ExtentMode` carries the comparison and the
 per-mode memo recomputes them. `test_toggling_reuses_the_plan_but_recomputes_the_limits`
 pins both. The `compare` timing phase in `build_figure` measures the cost.
 
+## Save data names the column after what it holds
+
+A compared CSV cannot pass for raw data: its value column is named
+`compare.value_column(plan, measure)`, the y title's wording with RAW names
+(`Δ M (from session s1)`, `M, % change from session s1`); wide exports name
+each field column the same way. `DataDepth.header` / `wide_header` hold the
+written names (the picker shows them, `compare.ts writtenHeader`); `columns`
+stay the frame's own names, which `plot_data` selects by and renames last
+(`DataDepth.renames`). Off, or inert, the measure keeps its name.
+
 ## Statistics (deferred)
 
 Manual difference bars work on a compared figure. A mark stays on the

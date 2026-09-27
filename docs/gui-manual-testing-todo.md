@@ -55,7 +55,7 @@ dropped units are listed. Plan `.claude/plan-compare-to-reference.md`, doc
    a WARN `compare (sample): dropped 1 unit(s)…`.
 10. Turn on Appearance > Y axis log (if offered). The section says *Not
     applied: A log y axis cannot show…*, and the raw values are drawn.
-11. Save data (CSV): the values are the compared ones. Export code: the
+11. Save data (CSV): the depth picker's header and the file's value column read *Δ <measure> (from session <level>)* (or *<measure>, % change from …*), and the values are the compared ones. Mode = Off: the column is the plain measure name again. Export code: the
     exported figure has the same bars and the same y title.
 12. A 1-D line plot with session as colour: each session's curve is its
     pointwise difference from the reference session.

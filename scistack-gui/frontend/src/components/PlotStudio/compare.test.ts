@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   compareSummary,
+  writtenHeader,
   droppedLines,
   layerChoices,
   modeChoice,
@@ -89,4 +90,16 @@ test('the summary names the reference', () => {
   assert.equal(compareSummary(SET), 'vs session s2 (Δ)')
   assert.equal(compareSummary({ ...SET, mode: 'percent' }), 'vs session s2 (%)')
   assert.equal(compareSummary({ ...SET, active: false }), '')
+})
+
+test('the Save data header is the one the file writes', () => {
+  const depth = {
+    columns: ['subject', 'session', 'M'],
+    wide_columns: ['subject', 'Left', 'Right'],
+    header: ['subject', 'session', 'Δ M (from session s1)'],
+    wide_header: ['subject', 'Δ Left (from session s1)', 'Δ Right (from session s1)'],
+  }
+  assert.deepEqual(writtenHeader(depth, false), depth.header)
+  assert.deepEqual(writtenHeader(depth, true), depth.wide_header)
+  assert.deepEqual(writtenHeader({ columns: ['a'], wide_columns: null }, true), ['a'])
 })

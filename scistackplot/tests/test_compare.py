@@ -47,6 +47,9 @@ from scistackplot.reduce import _plan, clear_plan_cache, planned_y_limits
 from scistackplot.resolved import COLOR, X, Y, Y_HIGH, Y_LOW
 from scistackplot.roles import complete_assignment
 
+#: "Save data"'s header for a compared M (`compare.value_column`).
+DIFF_COLUMN = "\u0394 M (from session s1)"
+
 ROWS = [
     ("01", "s1", "1", 1.0),
     ("01", "s1", "2", 3.0),
@@ -287,17 +290,35 @@ def test_toggling_reuses_the_plan_but_recomputes_the_limits(table):
 def test_saved_data_holds_the_compared_sample(table):
     spec = _spec(kind=PlotKind.BOX)
     data = plot_data(spec, table)
-    s3 = data[data["session"] == "s3"].set_index("subject")["M"]
+    s3 = data[data["session"] == "s3"].set_index("subject")[DIFF_COLUMN]
     assert s3.to_dict() == pytest.approx({"01": 4.0, "02": 20.0})
     (figure,) = resolve(spec, table)
     drawn = sorted(figure.panels[0].frame[Y])
-    assert sorted(data["M"]) == pytest.approx(drawn)
+    assert sorted(data[DIFF_COLUMN]) == pytest.approx(drawn)
 
 
 def test_saved_data_down_to_trial_uses_the_subject_baseline(table):
     data = plot_data(_spec(kind=PlotKind.BOX), table, depth="trial")
     rows = data[(data["subject"] == "01") & (data["session"] == "s2")]
-    assert sorted(rows["M"]) == pytest.approx([1.0, 3.0])
+    assert sorted(rows[DIFF_COLUMN]) == pytest.approx([1.0, 3.0])
+    # Every depth names the value column after what it holds.
+    assert list(data.columns) == ["subject", "session", "trial", DIFF_COLUMN]
+
+
+def test_the_saved_value_column_is_named_after_what_it_holds(table):
+    spec = _spec(CompareMode.PERCENT, kind=PlotKind.BOX)
+    data = plot_data(spec, table)
+    assert list(data.columns) == ["subject", "session", "M, % change from session s1"]
+    # The picker shows the header the file writes; the frame's own names stay.
+    (depth, *_rest) = capabilities(spec, table)["data_export"]["depths"]
+    assert depth["header"] == list(data.columns)
+    assert depth["columns"] == ["subject", "session", "M"]
+
+
+def test_a_raw_export_keeps_the_measure_name(table):
+    for comparison in (None, Comparison(layer="session", level="s1", active=False)):
+        data = plot_data(_spec(kind=PlotKind.BOX, comparison=comparison), table)
+        assert list(data.columns) == ["subject", "session", "M"]
 
 
 # --- the capability report --------------------------------------------------------

@@ -96,7 +96,7 @@ import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsS
 import PanelsSection from './PanelsSection'
 import DifferenceBarsSection from './DifferenceBarsSection'
 import CompareSection from './CompareSection'
-import { compareSummary, type CompareCapability, type CompareMeta, type Comparison } from './compare'
+import { compareSummary, writtenHeader, type CompareCapability, type CompareMeta, type Comparison } from './compare'
 import {
   IDLE,
   addBar,
@@ -428,6 +428,10 @@ interface DataDepth {
   /** The header with one column per struct field, or null when this depth
    *  has no field factor to spread. */
   wide_columns: string[] | null
+  /** What the file's header READS (compared value columns named after what
+   *  they hold); shown instead of `columns` / `wide_columns`. */
+  header?: string[]
+  wide_header?: string[] | null
 }
 
 /** "Save data": the plot's long table as CSV — whether it can be written
@@ -3660,10 +3664,7 @@ export default function PlotStudio({
                   {depth.label}
                   {depth.key === capabilities.data_export?.default ? ' (default)' : ''}
                   <span style={styles.dataColumns}>
-                    {(dataWide && depth.wide_columns
-                      ? depth.wide_columns
-                      : depth.columns
-                    ).join(', ')}
+                    {writtenHeader(depth, dataWide).join(', ')}
                   </span>
                 </span>
               </label>
@@ -3683,7 +3684,7 @@ export default function PlotStudio({
                   <span>
                     One column per field ({capabilities.data_export.field_factor})
                     <span style={styles.dataColumns}>
-                      {(dataWide ? chosen.wide_columns : chosen.columns).join(', ')}
+                      {writtenHeader(chosen, dataWide).join(', ')}
                     </span>
                   </span>
                 </label>

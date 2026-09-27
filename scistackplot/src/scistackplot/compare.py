@@ -633,3 +633,13 @@ def comparison_meta(plan: ComparisonPlan, outcome: Outcome | None) -> dict:
         "description": plan.describe(),
         "outcome": outcome.to_dict() if outcome is not None else None,
     }
+
+
+def value_column(plan: ComparisonPlan | None, name: str) -> str:
+    """The header of a compared value column in "Save data": the y title's
+    wording with the RAW names (a data file, not a display), e.g.
+    ``M, % change from session s1``. ``name`` itself when nothing is compared,
+    so a raw export keeps its measure's name. The one owner of the name, read
+    by ``export.data_export_options`` (the header the picker shows) and
+    ``export.plot_data`` (the header it writes)."""
+    return y_title(plan, name)

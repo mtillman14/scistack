@@ -116,7 +116,7 @@ Units with no reference, a % change from a reference <= 0, or a 1-D series
 whose length differs from its reference are dropped and named in the log.
 A comparison that cannot apply (a log axis, an x-y plot, a layer that no
 longer groups) is inert: the raw values are drawn and the reason is
-reported. The exported code and "Save data" compare the same way. See
+reported. The exported code and "Save data" compare the same way, and the saved value column is named after what it holds (`M, % change from session 1`). See
 `docs/claude/compare-to-reference.md`.
 
 ## Save the data behind a figure

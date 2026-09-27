@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from .compare import plan_comparison, value_column
 from .roles import chain_cut, collapse_order, collapse_steps
 from .shape import Shape
 from .spec import LocationFilter, PlotSpec
@@ -70,6 +71,13 @@ class DataDepth:
     #: when this depth has no field factor to spread (none in the table, or
     #: collapsed away at this depth).
     wide_columns: list[str] | None = None
+    #: What the file's header READS: ``columns`` / ``wide_columns`` with each
+    #: compared value column named after what it holds
+    #: (``compare.value_column``: ``M, % change from session s1``). Equal to
+    #: them when nothing is compared. ``columns`` stay the frame's own names,
+    #: which ``plot_data`` selects by before it renames.
+    header: list[str] = field(default_factory=list)
+    wide_header: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,7 +86,18 @@ class DataDepth:
             "averaged": list(self.averaged),
             "columns": list(self.columns),
             "wide_columns": list(self.wide_columns) if self.wide_columns is not None else None,
+            "header": list(self.header or self.columns),
+            "wide_header": (
+                list(self.wide_header) if self.wide_header is not None else None
+            ),
         }
+
+    def renames(self) -> dict[str, str]:
+        """``{frame column: written name}`` for the columns that change."""
+        pairs = list(zip(self.columns, self.header or self.columns))
+        if self.wide_columns is not None and self.wide_header is not None:
+            pairs += list(zip(self.wide_columns, self.wide_header))
+        return {old: new for old, new in pairs if old != new}
 
 
 @dataclass(frozen=True)
@@ -179,16 +198,27 @@ def data_export_options(
     field_name = _field_factor(table)
     field_levels = _field_levels(spec, table, field_name) if field_name else []
 
+    # Compare to reference: the value columns are NAMED after what they hold
+    # (`compare.value_column`), so a saved file cannot pass for raw data.
+    comparison = plan_comparison(spec, roles, table)
+
     def depth(key: str | None, averaged: list[str], label: str) -> DataDepth:
         columns = _columns(present, averaged, spec, table)
+        wide = (
+            _wide_header(columns, field_name, field_levels, spec)
+            if field_name in columns
+            else None
+        )
         return DataDepth(
             key=key,
             label=label,
             averaged=averaged,
             columns=columns,
-            wide_columns=(
-                _wide_header(columns, field_name, field_levels, spec)
-                if field_name in columns
+            wide_columns=wide,
+            header=_written(columns, [spec.y_measure], comparison),
+            wide_header=(
+                _written(wide, _wide_values(wide, columns, field_name, spec), comparison)
+                if wide is not None
                 else None
             ),
         )
@@ -356,6 +386,13 @@ def plot_data(
                     [c for c in frame.columns if c not in chosen.columns],
                     layer=LAYER,
                 )
+            # Last: every step above reads the frame's own names. A compared
+            # value column is written under what it holds (`DataDepth.header`,
+            # the header the picker showed).
+            renames = chosen.renames()
+            if renames:
+                frame = frame.rename(columns=renames)
+                Log.info("[plot-data] compared value column(s) named %s", renames, layer=LAYER)
 
     Log.info(
         "[plot-data] %s: %d figure(s), chain %s, values %s, depth=%s%s -> %d row(s) x %d "
@@ -436,6 +473,26 @@ def _wide_header(
     measures = _measure_columns(columns, spec)
     index = [c for c in columns if c != field_name and c not in measures]
     return [*index, *_wide_names(levels, measures, index)]
+
+
+def _written(columns: list[str], values: list[str], comparison) -> list[str]:
+    """``columns`` as the file writes them: each of ``values`` (the columns
+    holding the compared measure) named by ``compare.value_column``."""
+    return [value_column(comparison, name) if name in values else name for name in columns]
+
+
+def _wide_values(
+    wide: list[str], columns: list[str], field_name: str | None, spec: PlotSpec
+) -> list[str]:
+    """The wide header's value columns (one per field): everything that is
+    not an index column. Only the y measure is compared, so an x measure's
+    field columns are left out."""
+    measures = _measure_columns(columns, spec)
+    index = [c for c in columns if c != field_name and c not in measures]
+    values = [c for c in wide if c not in index]
+    if spec.x_measure:
+        values = [c for c in values if not c.startswith(f"{spec.x_measure}.")]
+    return values
 
 
 def _measure_columns(columns: list[str], spec: PlotSpec) -> list[str]:

@@ -127,3 +127,20 @@ export function compareSummary(comparison: Comparison | null | undefined): strin
   if (!comparison || comparison.active === false) return ''
   return `vs ${comparison.layer} ${comparison.level}${comparison.mode === 'percent' ? ' (%)' : ' (Δ)'}`
 }
+
+/** The header a "Save data" depth writes, as the picker shows it: the
+ *  backend's `header` / `wide_header` (compared value columns named after
+ *  what they hold, `scistackplot.compare.value_column`), falling back to the
+ *  frame's own column names. */
+export function writtenHeader(
+  depth: {
+    columns: string[]
+    wide_columns: string[] | null
+    header?: string[]
+    wide_header?: string[] | null
+  },
+  wide: boolean,
+): string[] {
+  if (wide && depth.wide_columns) return depth.wide_header ?? depth.wide_columns
+  return depth.header ?? depth.columns
+}
