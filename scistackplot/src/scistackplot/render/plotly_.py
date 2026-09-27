@@ -14,6 +14,8 @@ JSON-RPC boundary only to serialize it anyway.
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -31,6 +33,15 @@ from ..paper import (
 from ..resolved import ResolvedPlot
 from ..roles import overlay_in_legend
 from ..spec import PlotKind
+from ..diffbars import (
+    LINE_PT,
+    PanelFrame,
+    carries_difference_bars,
+    difference_meta,
+    figure_sizes,
+    place_figure,
+    sibling_floors,
+)
 from ..textsize import resolve_sizes
 from ..weights import mark_weights_meta, sample_weight, spaghetti_weight
 from ..xaxis import LEAF_SEPARATOR
@@ -51,8 +62,11 @@ from .base import (
     fill_alpha,
     panel_y_limits,
     panel_y_title,
+    panel_override_meta,
     shares_y_axis,
     shows_legend,
+    BracketGeometry,
+    GridReach,
     ruled_bracket_depths,
     shows_x_labels,
     shows_y_labels,
@@ -89,6 +103,11 @@ def render(
         sizes = resolve_sizes(style)
         traces: list[dict] = []
         legend_on = shows_legend(resolved)
+        geometry = _bracket_geometry(resolved, decisions)
+        frame = _frame(resolved, decisions, fixed_size_px, geometry, legend_on)
+        # The export's placement when decided; the preview's estimate otherwise.
+        difference, estimated = _difference_placement(resolved, decisions, fixed_size_px, frame)
+        panel_axes: dict[int, tuple[str, str]] = {}
         # The same phrase render_matplotlib logs, so preview and export compare.
         Log.debug("preview %s", describe_paper(), layer=LAYER)
         if not legend_on and resolved.encoding.color:
@@ -116,14 +135,9 @@ def render(
                 "y": 0.5,
                 "yanchor": "middle",
             },
-            "margin": {
-                "l": 60,
-                "r": _right_margin(resolved) if legend_on else BARE_RIGHT_MARGIN,
-                "t": 40,
-                # Each nested group layer needs a label row below the ticks, or
-                # the brackets are drawn off the bottom of the figure.
-                "b": 50 + 28 * (resolved.x_plan.depth if resolved.x_plan else 0),
-            },
+            # One owner (`_frame`): the legend's room, the bracket rows and
+            # the export's measured text reach.
+            "margin": dict(frame.margin),
             "hovermode": "closest",
             "annotations": [],
             # The same number as the export's font.size, read as px here. The
@@ -165,6 +179,10 @@ def render(
                 # What the Labels section offers (aliases.labelable): the
                 # measure and every factor this figure draws as text.
                 "labelable": list(resolved.labelable),
+                # Every faceted panel's facet text, drawn title and range, and
+                # its matched override (base.panel_override_meta): the Panels
+                # section lists these and never computes them.
+                "panel_overrides": panel_override_meta(resolved),
             },
         }
         if resolved.labels.title:
@@ -228,12 +246,29 @@ def render(
                 n_cols,
                 bottom=shows_x_labels(resolved, row, col),
                 leftmost=shows_y_labels(resolved, row, col),
-                y_limits=panel_y_limits(resolved, panel),
+                y_limits=(
+                    difference.limits[index]
+                    if difference is not None and index in difference.limits
+                    else panel_y_limits(resolved, panel)
+                ),
                 panel=panel,
+                gaps=frame.gaps,
             )
             # No panel-title annotation: a facet is named by its y-axis title
             # (base.panel_y_title), which costs the grid no vertical room.
-            _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot)
+            _add_x_groups(
+                layout, resolved, row, col, n_rows, n_cols, slot, geometry, frame.gaps
+            )
+            panel_axes[index] = (x_axis, y_axis)
+            _add_difference_bars(layout, resolved, difference, index, x_axis, y_axis)
+
+        # What Plot Studio's Difference bars section shows and picks from
+        # (diffbars.difference_meta); None where the figure cannot carry bars.
+        layout["meta"]["difference_bars"] = (
+            difference_meta(resolved, difference, panel_axes, estimated=estimated)
+            if carries_difference_bars(resolved)
+            else None
+        )
 
         if legend_on and len(dash_levels(resolved)) > 1:
             traces.extend(_dash_legend_traces(resolved))
@@ -250,7 +285,9 @@ def render(
         return {"data": traces, "layout": layout}
 
 
-#: Vertical room, in paper fraction, for one row of nested group labels.
+#: Vertical room, in paper fraction, for one row of nested group labels in the
+#: gap between two grid rows (`_gaps`). The brackets themselves are placed in
+#: pixels (`base.BracketGeometry`).
 X_GROUP_ROW = 0.045
 
 #: Gap left at each end of a bracket rule, in category slots, so adjacent
@@ -258,7 +295,61 @@ X_GROUP_ROW = 0.045
 X_GROUP_INSET = 0.05
 
 
-def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
+#: Bottom margin with no bracket rows: tick labels and the axis title.
+BASE_BOTTOM_MARGIN = 50
+
+#: Clear space kept under the outermost bracket row, in px.
+BRACKET_MARGIN_PAD = 8
+
+#: One line of upright text, in multiples of its font size (undecided preview).
+UPRIGHT_LINE_HEIGHT = 1.2
+
+
+def _bracket_geometry(resolved: ResolvedPlot, decisions: dict | None) -> BracketGeometry | None:
+    """Where the bracket rows hang (``base.BracketGeometry``), or None when the
+    x axis is not nested.
+
+    The export's MEASUREMENT when decisions are given — tick labels rotated to
+    45 or 90 degrees reach far deeper than their font size, and only the
+    export knows by how much. Undecided (library callers), the ticks are upright
+    (``tickangle`` 0), so one line of the tick font below the tick mark is an
+    honest estimate.
+    """
+    plan = resolved.x_plan
+    if not plan or not plan.groups:
+        return None
+    measured = (decisions or {}).get("bracket_geometry")
+    if measured is not None:
+        Log.debug("preview x brackets from the export: %s", measured.describe(), layer=LAYER)
+        return measured
+    sizes = resolve_sizes(resolved.spec.style)
+    estimated = BracketGeometry(
+        tick_depth_pt=PAPER.tick_length + 3.0 + UPRIGHT_LINE_HEIGHT * sizes.x_ticks,
+        row_height_pt=UPRIGHT_LINE_HEIGHT * sizes.groups,
+    )
+    Log.debug("preview x brackets estimated (undecided): %s", estimated.describe(), layer=LAYER)
+    return estimated
+
+
+def _bottom_margin(resolved: ResolvedPlot, geometry: BracketGeometry | None) -> int:
+    """The bottom margin, deep enough for every bracket row under the ticks."""
+    if geometry is None:
+        return BASE_BOTTOM_MARGIN
+    needed = geometry.bottom_pt(resolved.x_plan.depth) + BRACKET_MARGIN_PAD
+    return max(BASE_BOTTOM_MARGIN, math.ceil(needed))
+
+
+def _add_x_groups(
+    layout,
+    resolved,
+    row,
+    col,
+    n_rows,
+    n_cols,
+    slot,
+    geometry: BracketGeometry | None,
+    gaps: tuple[float, float] | None = None,
+) -> None:
     """Label and bracket each higher x layer beneath the tick labels.
 
     Horizontally in the panel's OWN x-axis coordinates — category serial
@@ -270,33 +361,35 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
     coordinates they stayed put, and a zoom onto one pair of bars still showed
     every group's label under it.
 
-    Vertically in PAPER coordinates from the cell's own domain, so the brackets
-    hang below the axis (outside any data range) under the panel they describe.
+    Vertically in PIXELS below the cell's own domain (``geometry``: the export's
+    measured tick-label depth, so a rotated tick label pushes them down), so the
+    brackets hang below the axis (outside any data range) under the panel they
+    describe. A fixed fraction of the figure used to put them on top of 45 and
+    90 degree tick labels. 1 pt = 1 px (``PX_PER_IN``).
 
     Only under panels that show tick labels: repeating "stim | sham" under every
     row of a grid is the same noise ``shows_x_labels`` already suppresses for
     the ticks themselves.
     """
     plan = resolved.x_plan
-    if not plan or not plan.groups or not shows_x_labels(resolved, row, col):
+    if not plan or not plan.groups or geometry is None or not shows_x_labels(resolved, row, col):
         return
 
-    _x0, y0, _cell_width, _cell_height = _cell(
-        row, col, n_rows, n_cols, _x_depth(resolved)
-    )
+    _x0, y0, _cell_width, _cell_height = _cell(row, col, n_rows, n_cols, gaps)
     x_ref = "x" if slot == 1 else f"x{slot}"
     Log.debug(
         "x groups: %d bracket(s) on %s in axis coordinates over %d slot(s)",
         len(plan.groups), x_ref, len(plan.order), layer=LAYER,
     )
+    x_axis = layout.get("xaxis" if slot == 1 else f"xaxis{slot}")
+    if isinstance(x_axis, dict) and isinstance(x_axis.get("title"), dict):
+        # The export's labelpad: the title, when there is one, clears every row.
+        x_axis["title"]["standoff"] = geometry.title_pad_pt(plan.depth)
 
     for group in plan.groups:
         # A leaf at index i spans [i - 0.5, i + 0.5] on the axis.
         left = group.start - 0.5
         right = group.end + 0.5
-        # Deeper layers sit closer to the axis; depth 0 is furthest below.
-        rows_below = plan.depth - group.depth
-        y = y0 - X_GROUP_ROW * rows_below - 0.03
 
         layout["annotations"].append(
             {
@@ -305,7 +398,8 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
                 "name": f"{X_GROUP_TAG}:{group.depth}:{group.start}",
                 "text": group.label,
                 "x": (left + right) / 2.0,
-                "y": y,
+                "y": y0,
+                "yshift": -geometry.label_pt(group.depth, plan.depth),
                 "xref": x_ref,
                 "yref": "paper",
                 "showarrow": False,
@@ -328,10 +422,13 @@ def _add_x_groups(layout, resolved, row, col, n_rows, n_cols, slot) -> None:
                 "type": "line",
                 "xref": x_ref,
                 "yref": "paper",
+                # Pixels from the domain's bottom edge, as the label's yshift.
+                "ysizemode": "pixel",
+                "yanchor": y0,
                 "x0": left + X_GROUP_INSET,
                 "x1": right - X_GROUP_INSET,
-                "y0": y + 0.008,
-                "y1": y + 0.008,
+                "y0": -geometry.rule_pt(group.depth, plan.depth),
+                "y1": -geometry.rule_pt(group.depth, plan.depth),
                 "line": {"color": "#888888", "width": 1},
             }
         )
@@ -816,15 +913,14 @@ def _add_axes(
     leftmost: bool = True,
     y_limits: tuple[float, float] | None = None,
     panel=None,
+    gaps: tuple[float, float] | None = None,
 ) -> None:
     x_key = "xaxis" if slot == 1 else f"xaxis{slot}"
     y_key = "yaxis" if slot == 1 else f"yaxis{slot}"
     x_anchor = "y" if slot == 1 else f"y{slot}"
     y_anchor = "x" if slot == 1 else f"x{slot}"
 
-    x0, y0, cell_width, cell_height = _cell(
-        row, col, n_rows, n_cols, _x_depth(resolved)
-    )
+    x0, y0, cell_width, cell_height = _cell(row, col, n_rows, n_cols, gaps)
     sizes = resolve_sizes(resolved.spec.style)
 
     layout[x_key] = {
@@ -910,8 +1006,8 @@ def _add_axes(
         "tickfont": {"size": sizes.y_ticks},
         "type": "log" if resolved.spec.style.log_y else "-",
         # No automargin here, deliberately, even though the x axes use it: an
-        # inner column's title is rotated text drawn into X_GAP (which is sized
-        # for it), and plotly's automargin answers a crowded subplot axis by
+        # inner column's title is rotated text drawn into the column gap (which
+        # `_frame` sizes for it), and plotly's automargin answers a crowded subplot axis by
         # growing the FIGURE's left margin — it would take back across the whole
         # width the room this change just gave the panels.
     }
@@ -969,11 +1065,133 @@ def _x_depth(resolved: ResolvedPlot) -> int:
     return resolved.x_plan.depth if resolved.x_plan else 0
 
 
+#: Default margins (px) where nothing measured asks for more.
+BASE_LEFT_MARGIN = 60
+BASE_TOP_MARGIN = 40
+
+#: Clear space added to a measured text reach, in px: plotly's tick values and
+#: title offsets are not exactly matplotlib's, so a gap sized to the point
+#: would be a gap that sometimes touches.
+REACH_PAD_PX = 6
+
+#: Smallest gap between two cells, in px, even when nothing is drawn into it.
+MIN_CELL_GAP_PX = 8
+
+
+@dataclass(frozen=True)
+class _Frame:
+    """The figure's margins (px) and the gaps between its cells (paper
+    fraction). ONE owner — :func:`_frame` — so the axes, the brackets and the
+    legend all read the same layout."""
+
+    margin: dict
+    gaps: tuple[float, float]
+
+
+def _figure_px(
+    resolved: ResolvedPlot, decisions: dict | None, fixed_size_px
+) -> tuple[float, float] | None:
+    """The preview's size in px, when it is known: the fixed size it is drawn
+    at, else the size the decisions were made at (the pane fills that exactly,
+    1 pt = 1 px). None for an undecided, pane-filling preview."""
+    if fixed_size_px is not None:
+        return float(fixed_size_px[0]), float(fixed_size_px[1])
+    if decisions and decisions.get("width_in") and decisions.get("height_in"):
+        return float(decisions["width_in"]) * PX_PER_IN, float(decisions["height_in"]) * PX_PER_IN
+    return None
+
+
+def _frame(
+    resolved: ResolvedPlot,
+    decisions: dict | None,
+    fixed_size_px,
+    geometry: BracketGeometry | None,
+    legend_on: bool,
+) -> _Frame:
+    """Margins and cell gaps, from the export's MEASURED text reach
+    (``base.GridReach``) when there is one.
+
+    The gaps used to be fixed fractions of the figure (``X_GAP``, ``Y_GAP``),
+    but what is drawn into them has a size in points: the right panel's y tick
+    labels and title, an inner row's (possibly rotated) x tick labels and
+    bracket rows. On a narrow figure, or once the right panel kept its own
+    numbers (per-panel y scales), a fraction of the width was too little and
+    the y title ran into the panel on its left. Undecided (no measurement or
+    no known size), the old fractions stand.
+    """
+    n_rows, n_cols = grid_shape(resolved)
+    decisions = decisions or {}
+    reach: GridReach | None = decisions.get("grid_reach")
+    legend = decisions.get("legend") if legend_on else None
+    size = _figure_px(resolved, decisions, fixed_size_px)
+    style = resolved.spec.style
+    decided_px = (
+        float(decisions.get("width_in") or style.width) * PX_PER_IN,
+        float(decisions.get("height_in") or style.height) * PX_PER_IN,
+    )
+
+    left = BASE_LEFT_MARGIN
+    bottom = _bottom_margin(resolved, geometry)
+    if reach is not None:
+        left = max(left, math.ceil(reach.left_outer_pt + REACH_PAD_PX))
+        bottom = max(bottom, math.ceil(reach.below_outer_pt + REACH_PAD_PX))
+    right = _right_margin(resolved) if legend_on else BARE_RIGHT_MARGIN
+    if legend is not None:
+        if legend["below"]:
+            right = BARE_RIGHT_MARGIN
+            bottom += round(legend["height_frac"] * decided_px[1])
+        else:
+            right = max(BARE_RIGHT_MARGIN, round(legend["width_frac"] * decided_px[0]))
+    margin = {"l": left, "r": right, "t": BASE_TOP_MARGIN, "b": bottom}
+
+    if reach is None or size is None:
+        gaps = _gaps(n_rows, n_cols, _x_depth(resolved))
+        Log.debug(
+            "preview frame (undecided): margins %s, cell gaps %.3f x %.3f of the plot",
+            margin, gaps[0], gaps[1], layer=LAYER,
+        )
+        return _Frame(margin, gaps)
+
+    plot_w = max(1.0, size[0] - left - right)
+    plot_h = max(1.0, size[1] - BASE_TOP_MARGIN - bottom)
+    need_x = max(MIN_CELL_GAP_PX, reach.left_inner_pt + REACH_PAD_PX)
+    need_y = max(MIN_CELL_GAP_PX, reach.below_inner_pt + REACH_PAD_PX)
+    gaps = (
+        _capped_gap(need_x, plot_w, n_cols, "column"),
+        _capped_gap(need_y, plot_h, n_rows, "row"),
+    )
+    Log.debug(
+        "preview frame from the export's text reach (%s): margins %s, plot %.0f x %.0f px, "
+        "cell gaps %.0f x %.0f px",
+        reach.describe(), margin, plot_w, plot_h, gaps[0] * plot_w, gaps[1] * plot_h,
+        layer=LAYER,
+    )
+    return _Frame(margin, gaps)
+
+
+def _capped_gap(need_px: float, plot_px: float, n: int, what: str) -> float:
+    """``need_px`` as a fraction of the plot, never more than half of it in
+    total across the ``n - 1`` gaps (see :func:`_cell`)."""
+    if n <= 1:
+        return 0.0
+    cap = 0.5 / (n - 1)
+    gap = need_px / plot_px
+    if gap > cap:
+        Log.warn(
+            "preview: the %s gap needs %.0fpx but only %.0fpx fits — labels between "
+            "%ss may touch; widen/heighten the figure or use fewer %ss",
+            what, need_px, cap * plot_px, what, what, layer=LAYER,
+        )
+        return cap
+    return gap
+
+
 def _gaps(n_rows: int, n_cols: int, x_depth: int = 0) -> tuple[float, float]:
     """
-    Gap between cells, never more than half the figure in total.
+    The UNDECIDED gap between cells (no export measurement: see `_frame`),
+    never more than half the figure in total.
 
-    One function so every consumer of the layout agrees about how much room
+    One function (read only through `_frame`) so every consumer agrees how much room
     there is between two cells — the y-axis titles of the inner columns are
     drawn into the horizontal gap, and the x tick labels into the vertical one.
 
@@ -990,7 +1208,7 @@ def _gaps(n_rows: int, n_cols: int, x_depth: int = 0) -> tuple[float, float]:
 
 
 def _cell(
-    row, col, n_rows, n_cols, x_depth: int = 0
+    row, col, n_rows, n_cols, gaps: tuple[float, float] | None = None
 ) -> tuple[float, float, float, float]:
     """
     (x0, y0, width, height) of one grid cell, in paper coordinates.
@@ -1002,8 +1220,11 @@ def _cell(
     figure keeps every cell at least ``0.5 / n`` tall, and the extra rows are
     absorbed by the figure's pixel height instead (the GUI sizes it from
     ``layout.meta.rows``).
+
+    ``gaps`` is ``_Frame.gaps`` (the one owner); omitted, the undecided
+    fractions of :func:`_gaps`.
     """
-    x_gap, y_gap = _gaps(n_rows, n_cols, x_depth)
+    x_gap, y_gap = gaps if gaps is not None else _gaps(n_rows, n_cols)
     cell_width = (1.0 - x_gap * (n_cols - 1)) / n_cols
     cell_height = (1.0 - y_gap * (n_rows - 1)) / n_rows
     # Plotly's y domain runs bottom-up; our rows run top-down.
@@ -1023,6 +1244,124 @@ def _rgba(hex_color: str, alpha: float) -> str:
     hex_color = hex_color.lstrip("#")
     r, g, b = (int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r},{g},{b},{alpha})"
+
+
+# ---------------------------------------------------------------------------
+# Difference bars (diffbars; .claude/plan-difference-bars.md)
+
+#: ``name`` prefixes of a bar's shape and its label's annotation.
+DIFF_BAR_TAG = "difference-bar"
+DIFF_LABEL_TAG = "difference-label"
+
+
+def _difference_placement(
+    resolved: ResolvedPlot, decisions: dict | None, fixed_size_px, frame: "_Frame"
+) -> tuple[Any, bool]:
+    """``(FigurePlacement | None, estimated)``: the export's placement when
+    the decisions carry one (measured panels and labels), else the same
+    placement on panel sizes this renderer's own frame gives and estimated
+    label boxes — the undecided fallback library callers get."""
+    if not resolved.spec.difference_bars or not carries_difference_bars(resolved):
+        return None, False
+    if decisions is not None and "difference_bars" in decisions:
+        placed = decisions["difference_bars"]
+        Log.debug(
+            "preview difference bars from the export: %d bar(s)",
+            placed.count if placed is not None else 0,
+            layer=LAYER,
+        )
+        return placed, False
+    frames = _estimated_panel_frames(resolved, decisions, fixed_size_px, frame)
+    sizes = figure_sizes(resolved)
+    placement = place_figure(
+        resolved, frames, sizes, top_floors=sibling_floors(resolved, frames, sizes)
+    )
+    Log.debug(
+        "difference bars (undecided): %d bar(s) placed on estimated panel heights %s pt "
+        "and estimated label boxes",
+        placement.count,
+        sorted({round(f.height_pt) for f in frames.values()}),
+        layer=LAYER,
+    )
+    return placement, True
+
+
+def _estimated_panel_frames(
+    resolved: ResolvedPlot, decisions: dict | None, fixed_size_px, frame: "_Frame"
+) -> dict:
+    """Each panel's box from this renderer's own geometry (``_frame`` margins
+    and gaps, ``_cell`` fractions), at the known preview size or the spec's
+    size, 1 pt = 1 px."""
+    style = resolved.spec.style
+    size = _figure_px(resolved, decisions, fixed_size_px) or (
+        style.width * PX_PER_IN,
+        style.height * PX_PER_IN,
+    )
+    margin = frame.margin
+    plot_w = max(1.0, size[0] - margin["l"] - margin["r"])
+    plot_h = max(1.0, size[1] - margin["t"] - margin["b"])
+    n_rows, n_cols = grid_shape(resolved)
+    x_range = (-0.5, max(len(resolved.x_order or []), 1) - 0.5)
+    frames = {}
+    for index in range(len(resolved.panels)):
+        row, col = panel_position(resolved, index)
+        _, _, width, height = _cell(row, col, n_rows, n_cols, frame.gaps)
+        frames[index] = PanelFrame(
+            height_pt=height * plot_h, width_pt=width * plot_w, x_range=x_range
+        )
+    return frames
+
+
+def _add_difference_bars(
+    layout: dict, resolved: ResolvedPlot, placement, index: int, x_axis: str, y_axis: str
+) -> None:
+    """One path shape per bar (left leg, line, right leg) and one annotation
+    per label, in the panel's own axes. On a log axis plotly places shapes
+    and annotations in log10 units, so the data values are converted."""
+    bars = placement.bars.get(index) if placement is not None else None
+    if not bars:
+        return
+    log = bool(resolved.spec.style.log_y)
+
+    def at(value: float) -> float:
+        return math.log10(value) if log else value
+
+    font_pt = resolve_sizes(resolved.spec.style).differences
+    for number, bar in enumerate(bars):
+        layout.setdefault("shapes", []).append(
+            {
+                "type": "path",
+                "path": (
+                    f"M {bar.left},{at(bar.left_foot)} L {bar.left},{at(bar.y)} "
+                    f"L {bar.right},{at(bar.y)} L {bar.right},{at(bar.right_foot)}"
+                ),
+                "xref": x_axis,
+                "yref": y_axis,
+                "line": {"color": PAPER.text, "width": LINE_PT},
+                "layer": "above",
+                "name": f"{DIFF_BAR_TAG}:{index}:{number}",
+            }
+        )
+        layout["annotations"].append(
+            {
+                "x": bar.middle,
+                "y": at(bar.label_y),
+                "xref": x_axis,
+                "yref": y_axis,
+                "text": _plain(bar.bar.label),
+                "showarrow": False,
+                "xanchor": "center",
+                "yanchor": "bottom",
+                "borderpad": 0,
+                "font": {"size": font_pt, "color": PAPER.text},
+                "name": f"{DIFF_LABEL_TAG}:{index}:{number}",
+            }
+        )
+
+
+def _plain(text: str) -> str:
+    """A user's label as plotly text, never markup ("p < 0.05" must not open a tag)."""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 # ---------------------------------------------------------------------------
@@ -1053,8 +1392,6 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
     (right, or below the panels) with the margin it needs. Anything the
     decisions do not cover is left as the renderer drew it.
     """
-    width_px = float(decisions.get("width_in") or resolved.spec.style.width) * PX_PER_IN
-    height_px = float(decisions.get("height_in") or resolved.spec.style.height) * PX_PER_IN
     ticks = decisions.get("ticks")
     if ticks is not None and ticks.rows:
         texts = [_html(t) for t in ticks.rows[0]]
@@ -1130,16 +1467,12 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
                 part for part in str(title.get("text", "")).split(" / ")
             )
         title["font"] = {"size": legend.get("title_font_pt", legend["font_pt"])}
-        margin = layout.setdefault("margin", {})
+        # The room it needs is in the margins already (`_frame`).
         if legend["below"]:
             spec_legend.update(
                 orientation="h", x=0.5, xanchor="center", y=0.0, yanchor="bottom",
                 yref="container",
             )
-            margin["r"] = BARE_RIGHT_MARGIN
-            margin["b"] = margin.get("b", 50) + round(legend["height_frac"] * height_px)
-        else:
-            margin["r"] = max(BARE_RIGHT_MARGIN, round(legend["width_frac"] * width_px))
 
     layout["meta"]["label_fit"] = {
         "decided_at_in": [decisions.get("width_in"), decisions.get("height_in")],

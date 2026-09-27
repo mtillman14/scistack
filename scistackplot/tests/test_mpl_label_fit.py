@@ -435,3 +435,28 @@ def test_hidden_ticks_leave_the_innermost_brackets_unruled(gait_table):
             assert not _bracket_rules(ax)
     finally:
         plt.close(figure)
+
+
+# --- rotated tick labels push the rows beneath them down -----------------------
+
+
+@pytest.mark.parametrize("rotation", [45, 90])
+def test_rotated_ticks_push_the_brackets_down(gait_table, rotation):
+    """A rotated tick label is as deep as it is LONG, not as its font is tall.
+    The brackets and the title hang from the measured bottom of the labels,
+    so they clear them at any angle, and sit deeper than under upright ones."""
+    _, upright = _draw(_graph1(tick_rotation=0, x_label="Session by group"), gait_table)
+    _, rotated = _draw(_graph1(tick_rotation=rotation, x_label="Session by group"), gait_table)
+    try:
+        flat = getattr(upright, LABEL_FIT_ATTR)["bracket_geometry"]
+        deep = getattr(rotated, LABEL_FIT_ATTR)["bracket_geometry"]
+        assert deep.tick_depth_pt > flat.tick_depth_pt
+        renderer = rotated.canvas.get_renderer()
+        for ax in _labelled_axes(rotated):
+            assert round(_tick_labels(ax)[0].get_rotation()) == rotation
+            _assert_brackets_are_clear(rotated, ax)
+            lowest = min(t.get_window_extent(renderer).y0 for t in _bracket_labels(ax))
+            assert ax.xaxis.label.get_window_extent(renderer).y1 <= lowest + 1
+    finally:
+        plt.close(upright)
+        plt.close(rotated)

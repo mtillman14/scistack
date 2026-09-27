@@ -15,6 +15,7 @@ of a file the user has since hand-edited.
 from __future__ import annotations
 
 import json
+import math
 import keyword
 import re
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from scistacklog import Log
 from .aliases import DisplayText, check_distinct, display_text
 from .cell import cell_collapses, effective_shape
 from .groups import active_level_groups, apply_level_groups, effective_mapping
+from .panels import Y_TITLES_FIRST_COLUMN, overrides_by_key, panel_key_text
 from .reduce import plan_layout, planned_y_limits, x_axis_title
 from .resolved import DASH_CYCLE
 from .roles import (
@@ -49,10 +51,10 @@ from .spec import (
     value_spellings,
 )
 from .table import MISSING_LEVEL, LongTable
-from .paper import figure_rc_params, paper_axes_code, seaborn_err_kws
+from .paper import PAPER, figure_rc_params, paper_axes_code, seaborn_err_kws
 from .textsize import resolve_sizes
 from .weights import sample_weight, spaghetti_weight
-from .ylimits import GLOBAL_KEY
+from .ylimits import GLOBAL_KEY, pinned_ends
 from .variants import (
     LATEST,
     VARIANT_FACTOR,
@@ -144,7 +146,7 @@ def generate_plot_function(
     body.extend(_variant_preamble(spec, table))
     body.extend(_preamble(spec, table, roles, shape))
     y_plan = _y_limit_plan(spec, base, table, roles)
-    body.extend(_plot_call(spec, table, roles, shape, y_plan))
+    body.extend(_plot_call(spec, table, roles, shape, y_plan, base))
 
     lines = [
         f"def {name}({', '.join(function_params(spec))}):",
@@ -1429,7 +1431,9 @@ def _alias_relabel_lines(aliases: _ExportAliases, x_categorical: bool) -> list[s
     return lines
 
 
-def _plot_call(spec, table, roles, shape, y_plan: _YLimitPlan) -> list[str]:
+def _plot_call(
+    spec, table, roles, shape, y_plan: _YLimitPlan, base: LongTable | None = None
+) -> list[str]:
     if shape is Shape.MATRIX_2D:
         return _heatmap_call(spec, table)
 
@@ -1581,6 +1585,11 @@ def _plot_call(spec, table, roles, shape, y_plan: _YLimitPlan) -> list[str]:
     # from the preview. This is the same class of bug the facet `col_order`
     # replay exists to prevent.
     share_y, ylim = y_plan.share_y, y_plan.ylim
+    overrides = _panel_override_export(spec, table, facets)
+    if overrides.limits:
+        # A panel with its own range cannot share an axis: set_ylim on a
+        # shared axis would move every panel (render.base.shares_y_axis).
+        share_y = False
     if not share_y:
         # catplot has its own `sharey` and forwards it to FacetGrid, so
         # `facet_kws={"sharey": ...}` there is "got multiple values for keyword
@@ -1636,14 +1645,17 @@ def _plot_call(spec, table, roles, shape, y_plan: _YLimitPlan) -> list[str]:
             if aliases.aliased(*facets)
             else "str(v) for v in reversed(_values)"
         )
-        lines.extend(
-            [
-                'g.set_titles("")',
-                "for _key, _ax in g.axes_dict.items():",
-                "    _values = _key if isinstance(_key, tuple) else (_key,)",
-                f'    _ax.set_ylabel(" · ".join({shown}))',
-            ]
-        )
+        if overrides.titles or overrides.first_column:
+            lines.extend(['g.set_titles("")', *_panel_title_lines(overrides, shown)])
+        else:
+            lines.extend(
+                [
+                    'g.set_titles("")',
+                    "for _key, _ax in g.axes_dict.items():",
+                    "    _values = _key if isinstance(_key, tuple) else (_key,)",
+                    f'    _ax.set_ylabel(" · ".join({shown}))',
+                ]
+            )
     sizes = resolve_sizes(style)
     if sizes.y_label != sizes.x_label:
         # rc has one key for both axis titles (axes.labelsize = the x title),
@@ -1662,6 +1674,15 @@ def _plot_call(spec, table, roles, shape, y_plan: _YLimitPlan) -> list[str]:
         lines.append('g.set(yscale="log")')
     if y_plan.autoscaled and kind is PlotKind.BAR and not style.log_y:
         lines.extend(_bar_autoscale_lines())
+    # Last of the y-range lines, so nothing after it rescales a pinned panel.
+    lines.extend(_panel_override_ylim_lines(overrides, facets))
+    # Difference bars set the final range of every panel they sit in (and
+    # of every panel sharing that range), so they come after the pins.
+    lines.extend(
+        _difference_bar_lines(
+            _difference_bar_export(spec, base or table, table, roles, shape, facets), style
+        )
+    )
     if style.title:
         lines.append(f"g.figure.suptitle({style.title!r})")
     lines.extend(_alias_relabel_lines(aliases, _x_is_categorical(spec, table, roles, shape)))
@@ -1923,6 +1944,281 @@ class _YLimitPlan(NamedTuple):
         return self.ylim is None and self.by_panel is None
 
 
+class _PanelOverrideExport(NamedTuple):
+    """The per-panel overrides the exported code replays (plan Stage 4).
+
+    Keyed by the facet values as text, in ``facets`` order
+    (``panels.overrides_by_key``). Only panels the data holds are kept, so an
+    override for a panel the preview does not draw cannot un-share the export's
+    axis while the preview's stays shared.
+    """
+
+    #: ``{key: (low | None, high | None)}``: ``ylimits.pinned_ends`` — the
+    #: panel's end over the figure's; None keeps what the axis already has.
+    limits: dict[tuple[str, ...], tuple[float | None, float | None]]
+    #: ``{key: (text | None, hidden | None)}``: None text = the facet text,
+    #: None hidden = follow ``style.y_titles``.
+    titles: dict[tuple[str, ...], tuple[str | None, bool | None]]
+    #: ``style.y_titles == "first_column"``.
+    first_column: bool
+
+
+def _panel_override_export(
+    spec: PlotSpec, table: LongTable, facets: list[str]
+) -> _PanelOverrideExport:
+    first_column = bool(facets) and spec.style.y_titles == Y_TITLES_FIRST_COLUMN
+    found = overrides_by_key(spec, facets)
+    if found:
+        frame = table.frame
+        present = (
+            set(frame[facets].astype(str).drop_duplicates().itertuples(index=False, name=None))
+            if all(name in frame.columns for name in facets)
+            else set()
+        )
+        found = {key: override for key, override in found.items() if key in present}
+    limits = {
+        key: pinned_ends(spec.y_axis, override)
+        for key, override in found.items()
+        if override.y_minimum is not None or override.y_maximum is not None
+    }
+    titles = {
+        key: (override.y_label, override.y_label_hidden)
+        for key, override in found.items()
+        if override.y_label is not None or override.y_label_hidden is not None
+    }
+    if spec.panel_overrides or first_column:
+        Log.info(
+            "export panel overrides: %d limit(s), %d title(s) baked in, y titles %s "
+            "(%d override(s) match no panel in the data)",
+            len(limits),
+            len(titles),
+            spec.style.y_titles,
+            len([o for o in spec.panel_overrides if not o.is_empty]) - len(found),
+            layer=LAYER,
+        )
+    return _PanelOverrideExport(limits, titles, first_column)
+
+
+def _panel_override_ylim_lines(
+    overrides: _PanelOverrideExport, facets: list[str]
+) -> list[str]:
+    """Each overridden panel's own range, after every other y-range line.
+
+    ``set_ylim(bottom=None, top=…)`` keeps the end it is not given, which is
+    the preview's "one end typed, the other computed"."""
+    if not overrides.limits:
+        return []
+    return [
+        "# Panels with their own y range (per-panel overrides).",
+        f"_panel_ylims = {overrides.limits!r}",
+        "for _key, _ax in g.axes_dict.items():",
+        "    _values = _key if isinstance(_key, tuple) else (_key,)",
+        "    _pin = _panel_ylims.get(tuple(str(_v) for _v in reversed(_values)))",
+        "    if _pin is not None:",
+        "        _ax.set_ylim(bottom=_pin[0], top=_pin[1])",
+    ]
+
+
+def _panel_title_lines(overrides: _PanelOverrideExport, shown: str) -> list[str]:
+    """Each panel's y title with its override and the ``y_titles`` toggle.
+
+    The text and the hide flag belong to the panel's facet values, so they are
+    baked in. "First column" depends on where the panel lands in THIS figure's
+    grid, which only the drawn grid knows: a seaborn grid fills row-major with
+    no hole on the left, so "nothing to the left" (``render.base.is_leftmost``)
+    is column 0 of the axes' subplotspec.
+    """
+    unset_hidden = (
+        "_ax.get_subplotspec().colspan.start != 0" if overrides.first_column else "False"
+    )
+    return [
+        f"_ytitles = {overrides.titles!r}",
+        "for _key, _ax in g.axes_dict.items():",
+        "    _values = _key if isinstance(_key, tuple) else (_key,)",
+        "    _text, _hidden = _ytitles.get(",
+        "        tuple(str(_v) for _v in reversed(_values)), (None, None)",
+        "    )",
+        "    if _hidden is None:",
+        f"        _hidden = {unset_hidden}",
+        "    if _text is None:",
+        f'        _text = " · ".join({shown})',
+        '    _ax.set_ylabel("" if _hidden else _text)',
+    ]
+
+
+class _DifferenceExport(NamedTuple):
+    """Difference bars baked into the export (plan D8): the positions the
+    export's own renderer placed at the saved size, as literals."""
+
+    #: ITERATE factors, then FACET factors: the order of every key below.
+    iterate: list[str]
+    facets: list[str]
+    #: The y scope, for the shared-top lookup.
+    scope: list[str]
+    #: ``{panel key: [(left tick, right tick, left x, right x, y, left foot,
+    #: right foot, label y, label), ...]}``. Ticks are the export's category
+    #: text, looked up at run time; the x positions are the preview's, the
+    #: fallback.
+    bars: dict
+    #: ``{panel key: (low, high)}`` for every panel the bars were placed on.
+    limits: dict
+    #: ``{scope values: top}``: the top a range needs because some figure's
+    #: bars raised it — applied to every figure drawing that range (D7).
+    tops: dict
+    #: The expression naming the drawn x order at run time, or None.
+    order_expr: str | None
+
+
+def _difference_bar_export(
+    spec: PlotSpec, base: LongTable, table: LongTable, roles, shape, facets: list[str]
+) -> _DifferenceExport | None:
+    """Place the bars of every figure that carries them, at the saved size,
+    through the export renderer itself (``render_matplotlib`` with the
+    figure's siblings, as the preview is), and keep the result as literals.
+
+    The generated function sees one iteration's rows, which is too little to
+    place a bar that must clear a sibling figure's range, and a data change
+    would move every bar anyway: the code says the positions are fitted to
+    this data.
+    """
+    if not spec.difference_bars or shape is not Shape.SCALAR:
+        return None
+    import matplotlib.pyplot as plt
+
+    from .diffbars import carries_difference_bars, panel_values, slot_endpoints
+    from .reduce import difference_bar_figures, resolve_one
+    from .render.mpl import DIFF_BARS_ATTR
+    from .render.mpl import render as render_mpl
+
+    iterate = fanout_keys(spec, table)
+    nested = _nested_x_layers(spec, table, roles, shape)
+    bars: dict = {}
+    limits: dict = {}
+    tops: dict = {}
+    scope: list[str] = []
+    placed_figures = 0
+    for index in difference_bar_figures(spec, base):
+        figure, _, _ = resolve_one(spec, base, index)
+        if not carries_difference_bars(figure):
+            continue
+        scope = list(figure.y_scope)
+        fig = render_mpl(figure)
+        try:
+            placement = getattr(fig, DIFF_BARS_ATTR, None)
+        finally:
+            plt.close(fig)
+        if placement is None:
+            continue
+        placed_figures += 1
+        at_position = {end.position: end for end in slot_endpoints(figure)}
+
+        def tick(position: float) -> str:
+            end = at_position.get(position)
+            if end is None:
+                return ""
+            values = [end.values[name] for name in figure.x_layers]
+            return _NESTED_JOIN.join(values) if nested else values[-1]
+
+        for panel_index, drawn in placement.limits.items():
+            panel = figure.panels[panel_index]
+            values = panel_values(figure, panel)
+            # The same spelling the generated code builds at run time: a
+            # figure column the frame lacks reads as "".
+            key = tuple(
+                panel_key_text(values[name]) if name in values else ""
+                for name in [*iterate, *facets]
+            )
+            limits[key] = (float(drawn[0]), float(drawn[1]))
+            scoped = tuple(panel_key_text(values.get(name)) for name in scope)
+            tops[scoped] = max(tops.get(scoped, -math.inf), float(drawn[1]))
+            for bar in placement.bars.get(panel_index, []):
+                bars.setdefault(key, []).append(
+                    (
+                        tick(bar.left),
+                        tick(bar.right),
+                        # Plain floats: positions come off numpy arrays, and a
+                        # numpy scalar's repr (`np.float64(1.0)` under numpy 2)
+                        # names a module the generated code never imports.
+                        *(
+                            float(value)
+                            for value in (
+                                bar.left,
+                                bar.right,
+                                bar.y,
+                                bar.left_foot,
+                                bar.right_foot,
+                                bar.label_y,
+                            )
+                        ),
+                        str(bar.bar.label),
+                    )
+                )
+    if spec.kind is PlotKind.SPAGHETTI:
+        order_expr: str | None = "_order"
+    elif nested:
+        order_expr = repr(_nested_x_order(spec, table, roles, shape))
+    elif _emits_x_order(spec, table, roles, shape, _seaborn_call(spec, table, roles, shape)):
+        order_expr = "_x_order"
+    else:
+        order_expr = None
+    Log.info(
+        "export difference bars: %d bar(s) on %d panel(s) of %d figure(s) baked in at "
+        "%.2f x %.2f in; %d shared top(s) over %s; x by %s",
+        sum(len(v) for v in bars.values()),
+        len(limits),
+        placed_figures,
+        spec.style.width,
+        spec.style.height,
+        len(tops),
+        scope or "the whole dataset",
+        "the drawn order" if order_expr else "the preview's positions",
+        layer=LAYER,
+    )
+    return _DifferenceExport(iterate, facets, scope, bars, limits, tops, order_expr)
+
+
+def _difference_bar_lines(export: _DifferenceExport | None, style) -> list[str]:
+    """The bars, drawn last among the y-range lines: every range a bar sits
+    in is set here, so nothing after rescales it."""
+    if export is None or not export.bars:
+        # No bar drew anywhere: the generated code stays exactly as it was.
+        return []
+    from .diffbars import LINE_PT
+
+    font_pt = resolve_sizes(style).differences
+    order = (
+        f"_diff_x = {{str(_v): _i for _i, _v in enumerate({export.order_expr})}}"
+        if export.order_expr
+        else "_diff_x = {}"
+    )
+    return [
+        "# Difference bars, placed on THIS data at the saved size (scistackplot",
+        "# diffbars). Their positions are literals: regenerate after the data changes.",
+        f"_diff_fig = tuple(str(df[_f].iloc[0]) if _f in df.columns and len(df) else '' "
+        f"for _f in {export.iterate!r})",
+        f"_diff_bars = {export.bars!r}",
+        f"_diff_ylims = {export.limits!r}",
+        f"_diff_tops = {export.tops!r}",
+        order,
+        "for _key, _ax in (list(g.axes_dict.items()) or [((), g.ax)]):",
+        "    _values = _key if isinstance(_key, tuple) else (_key,)",
+        "    _panel = _diff_fig + tuple(str(_v) for _v in reversed(_values))",
+        f"    _named = dict(zip({[*export.iterate, *export.facets]!r}, _panel))",
+        f"    _top = _diff_tops.get(tuple(_named.get(_f, '') for _f in {export.scope!r}))",
+        "    if _panel in _diff_ylims:",
+        "        _ax.set_ylim(*_diff_ylims[_panel])",
+        "    elif _top is not None and _ax.get_ylim()[1] < _top:",
+        "        _ax.set_ylim(top=_top)",
+        "    for _lt, _rt, _lx, _rx, _y, _lf, _rf, _ly, _text in _diff_bars.get(_panel, []):",
+        "        _l, _r = _diff_x.get(_lt, _lx), _diff_x.get(_rt, _rx)",
+        "        _ax.plot([_l, _l, _r, _r], [_lf, _y, _y, _rf], "
+        f"color={PAPER.text!r}, linewidth={LINE_PT}, solid_capstyle='butt', "
+        "solid_joinstyle='miter', zorder=4, gid='difference-bar')",
+        "        _ax.text((_l + _r) / 2, _ly, _text, ha='center', va='bottom', "
+        f"fontsize={font_pt}, color={PAPER.text!r}, zorder=4, gid='difference-label')",
+    ]
+
+
 def _panel_ylim_lines(y_plan: _YLimitPlan, facets: list[str]) -> list[str]:
     """Set each panel's y limits from the preview's per-facet table.
 
@@ -1949,16 +2245,6 @@ def _panel_ylim_lines(y_plan: _YLimitPlan, facets: list[str]) -> list[str]:
         f"{fallback!r})",
         "    )",
     ]
-
-
-def _panel_key_text(value) -> str:
-    """One facet value as the generated code spells it: ``str`` of the level.
-
-    ``axes_dict`` keys are the frame's own values, and the generated lookup
-    passes each through ``str`` — so a NaN level (``ylimits.hashable`` keys it
-    as None) has to be written as ``str(nan)``.
-    """
-    return "nan" if value is None else str(value)
 
 
 def _y_limit_plan(
@@ -2066,7 +2352,7 @@ def _y_limit_plan(
     if all(name in facets for name in scope):
         # Separated by facet values only — each panel can find its own group.
         by_panel = {
-            tuple(_panel_key_text(value) for value in key): value
+            tuple(panel_key_text(value) for value in key): value
             for key, value in groups.items()
         }
         Log.info(

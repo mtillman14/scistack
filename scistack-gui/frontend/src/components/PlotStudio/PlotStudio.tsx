@@ -93,6 +93,28 @@ import {
   type TextSizesValue,
 } from './textSizes'
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
+import PanelsSection from './PanelsSection'
+import DifferenceBarsSection from './DifferenceBarsSection'
+import {
+  IDLE,
+  addBar,
+  barCount,
+  highlightShapes,
+  panelForAxis,
+  pickStep,
+  targetAt,
+  type DifferenceBar,
+  type DifferenceMeta,
+  type Picking,
+  type TickRef,
+} from './differenceBars'
+import {
+  offersPanels,
+  overrideCount,
+  type PanelOverride,
+  type PanelOverrideMeta,
+  type YTitles,
+} from './panelOverrides'
 import { type Labelable, type SpecAliases } from './aliasEdit'
 import { type MarkWeightsMeta, type WeightKey, weightTitle, withWeight } from './markWeights'
 import { copyFigurePng } from './clipboardPng'
@@ -110,7 +132,7 @@ import {
   writeBuckets,
   type LevelGroup,
 } from './combine'
-import { otherPlotTheme, plotThemeVars, screenFigure } from './plotTheme'
+import { PLOT_THEMES, otherPlotTheme, plotThemeVars, screenFigure } from './plotTheme'
 import { setPlotTheme, usePlotTheme } from './usePlotTheme'
 import {
   OPEN_GROUPS_STORAGE_KEY,
@@ -438,6 +460,9 @@ interface Capabilities {
   /** "Show sample": the collapsed keys as checkboxes, what one point is, and
    *  the join decision — all decided by `roles`, displayed here. */
   sample_overlay?: SampleOverlay
+  /** Whether this plot type can carry difference bars, and why not
+   *  (`scistackplot.diffbars.unavailable`). */
+  difference_bars?: { available: boolean; reason: string | null }
   /** Whether any factor is collapsed, i.e. whether there is a sample. */
   has_sample: boolean
   /** "Save data (CSV)": availability and the depth picker's choices. */
@@ -566,6 +591,8 @@ interface StylePatch {
   tick_rotation?: number | null
   tick_every?: number | null
   hide_legend_ticks?: boolean
+  /** Which panels draw their y title (StyleOptions.y_titles). */
+  y_titles?: YTitles
 }
 
 interface Spec {
@@ -628,6 +655,12 @@ interface Spec {
   /** What this plot's factors, levels and measure read as (`PlotSpec.aliases`):
    *  over the project's `[aliases]`. Edited by the Labels section. */
   aliases?: SpecAliases
+  /** One faceted panel's own y limits / y title (`PlotSpec.panel_overrides`).
+   *  Edited by Appearance > Panels through panelOverrides.ts. */
+  panel_overrides?: PanelOverride[]
+  /** Bars joining two marks of a panel (`PlotSpec.difference_bars`). Edited by
+   *  Statistics > Difference bars through differenceBars.ts. */
+  difference_bars?: DifferenceBar[]
 }
 
 /**
@@ -1298,6 +1331,97 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, style: { ...(prev.style ?? {}), ...patch } } : prev))
   }, [])
 
+  /** Replace `spec.panel_overrides` (built by panelOverrides.ts). */
+  const setPanelOverrides = useCallback((next: PanelOverride[]) => {
+    console.info('[Plot Studio] panel_overrides_set', { count: next.length, overrides: next })
+    setSpec(prev => (prev ? { ...prev, panel_overrides: next } : prev))
+  }, [])
+
+  /** Replace `spec.difference_bars` (built by differenceBars.ts). */
+  const setDifferenceBars = useCallback((next: DifferenceBar[]) => {
+    console.info('[Plot Studio] difference_bars_set', { count: next.length, bars: next })
+    setSpec(prev => (prev ? { ...prev, difference_bars: next } : prev))
+  }, [])
+
+  // "+ Add difference bar": two clicks on the preview. `picking` is the step,
+  // `hoverTick` the tick under the pointer (figure index + panel + slot) for
+  // the highlight band, `diffPanel` the panel the section lists.
+  const [picking, setPicking] = useState<Picking>(IDLE)
+  const [hoverTick, setHoverTick] = useState<(TickRef & { figure: number }) | null>(null)
+  const [diffPanel, setDiffPanel] = useState(0)
+  const [pickedFigure, setPickedFigure] = useState<number | null>(null)
+  const pickingRef = useRef<Picking>(IDLE)
+  pickingRef.current = picking
+
+  const cancelPicking = useCallback(() => {
+    console.info('[Plot Studio] difference_bar_picking_cancelled')
+    setPicking(IDLE)
+    setHoverTick(null)
+  }, [])
+
+  useEffect(() => {
+    if (picking.phase === 'idle') return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancelPicking()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [picking.phase, cancelPicking])
+
+  /** The tick a plotly click/hover event points at, in that figure's meta. */
+  const tickFromEvent = useCallback(
+    (meta: DifferenceMeta | null | undefined, event: unknown) => {
+      const point = (event as { points?: { x?: unknown; xaxis?: { _id?: string } }[] })?.points?.[0]
+      if (!point) return null
+      const panel = panelForAxis(meta, point.xaxis?._id)
+      const target = targetAt(panel, point.x as number | string | undefined)
+      return panel && target ? { panel, target } : null
+    },
+    [],
+  )
+
+  const onFigureClick = useCallback(
+    (figureIndex: number, meta: DifferenceMeta | null | undefined, event: unknown) => {
+      if (pickingRef.current.phase === 'idle') return
+      const hit = tickFromEvent(meta, event)
+      const step = pickStep(pickingRef.current, hit?.panel, hit?.target)
+      console.info('[Plot Studio] difference_bar_pick', {
+        phase: pickingRef.current.phase,
+        panel: hit?.panel.index ?? null,
+        tick: hit?.target.label ?? null,
+        completed: Boolean(step.add),
+      })
+      if (hit) {
+        setDiffPanel(hit.panel.index)
+        setPickedFigure(figureIndex)
+      }
+      if (step.add) {
+        const add = step.add
+        setSpec(prev =>
+          prev ? { ...prev, difference_bars: addBar(prev.difference_bars, add.match, add.a, add.b) } : prev,
+        )
+        console.info('[Plot Studio] difference_bar_added', add)
+        setHoverTick(null)
+      }
+      setPicking(step.state)
+    },
+    [tickFromEvent],
+  )
+
+  const onFigureHover = useCallback(
+    (figureIndex: number, meta: DifferenceMeta | null | undefined, event: unknown) => {
+      if (pickingRef.current.phase === 'idle') return
+      const hit = tickFromEvent(meta, event)
+      setHoverTick(prev => {
+        const next = hit ? { figure: figureIndex, panelIndex: hit.panel.index, slot: hit.target.slot } : null
+        return prev && next && prev.figure === next.figure && prev.panelIndex === next.panelIndex && prev.slot === next.slot
+          ? prev
+          : next
+      })
+    },
+    [tickFromEvent],
+  )
+
   /** Set a mark weight (`style.sample_weight` / `line_weight`); 1 or
    *  cleared deletes the key (markWeights.withWeight). */
   const setWeight = useCallback((key: WeightKey, value: number | null) => {
@@ -1808,6 +1932,34 @@ export default function PlotStudio({
   // (reduce.plan_layout), and the boxes say so instead of showing stale pins.
   const singlePanel = gridMeta.panels !== undefined && gridMeta.panels <= 1
   const layoutNotes = gridMeta.layout_notes ?? []
+  // Every faceted panel, its drawn title and range, and its matched override
+  // (render.base.panel_override_meta) — the Panels section lists these.
+  const panelMeta = (figures[0]?.figure?.layout?.meta as
+    | { panel_overrides?: PanelOverrideMeta }
+    | undefined)?.panel_overrides
+  const panelOverrideCount = overrideCount(spec?.panel_overrides)
+  // What Statistics > Difference bars lists and what a click on the preview
+  // picks from (scistackplot.diffbars.difference_meta).
+  const diffMeta =
+    (figures[0]?.figure?.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
+      ?.difference_bars ?? null
+  const figureDiffMeta = (figure: FigurePayload) =>
+    (figure.figure.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
+      ?.difference_bars ?? null
+  /** A figure's displayed layout, with the picking highlight added while
+   *  "+ Add difference bar" is active: view-only, never in the figure. */
+  const withPickingBands = (figure: FigurePayload, layout: Record<string, unknown>) => {
+    if (picking.phase === 'idle') return layout
+    const hover = hoverTick && hoverTick.figure === figure.index ? hoverTick : null
+    const picked =
+      picking.phase === 'second' && pickedFigure === figure.index
+        ? { panelIndex: picking.panelIndex, slot: picking.first.slot }
+        : null
+    const bands = highlightShapes(figureDiffMeta(figure), hover, picked, PLOT_THEMES[theme].accent)
+    return bands.length
+      ? { ...layout, shapes: [...((layout.shapes as unknown[] | undefined) ?? []), ...bands] }
+      : layout
+  }
 
   // Only factors that separate PANELS can separate y limits — a colour or
   // replicate factor lives inside one panel, so splitting on it would ask one
@@ -2783,7 +2935,7 @@ export default function PlotStudio({
           {/* "What is averaged, and how the average is shown": the centre and
               spread, and the collapsed keys' own data drawn over them. The
               collapse ROLE itself stays with the other roles in Structure. */}
-          {(summarizing || capabilities?.sample_overlay) && (
+          {(summarizing || capabilities?.sample_overlay || capabilities?.difference_bars?.available) && (
             <Group
               title="Statistics"
               open={openGroups.statistics}
@@ -2794,6 +2946,7 @@ export default function PlotStudio({
                 spread: spec?.aggregate?.error ?? 'sd',
                 pooled: spec?.aggregate?.pooled ?? false,
                 shown: capabilities?.sample_overlay?.shown ?? [],
+                differenceBars: barCount(spec?.difference_bars),
               })}
             >
               {summarizing && (
@@ -2950,6 +3103,30 @@ export default function PlotStudio({
                   )}
                 </Section>
               )}
+              {/* Bars joining two marks of a panel, labelled ("*"): a test's
+                  result. Picked by clicking marks in the preview; placed by
+                  Python (scistackplot.diffbars), listed from layout.meta. */}
+              {capabilities?.difference_bars && (
+                <Section
+                  title="Difference bars"
+                  hint="Mark two groups as different: + Add difference bar, then click a mark in each (a bar, a box or any of its sample points). Bars are placed above everything drawn, and the y axis grows to hold them. A bar belongs to this figure's panel only."
+                >
+                  <DifferenceBarsSection
+                    meta={diffMeta}
+                    bars={spec?.difference_bars}
+                    capability={capabilities.difference_bars}
+                    picking={picking}
+                    panelIndex={diffPanel}
+                    onPanel={setDiffPanel}
+                    onStartPicking={() => {
+                      console.info('[Plot Studio] difference_bar_picking_started')
+                      setPicking({ phase: 'first' })
+                    }}
+                    onCancelPicking={cancelPicking}
+                    onBars={setDifferenceBars}
+                  />
+                </Section>
+              )}
             </Group>
           )}
 
@@ -2967,6 +3144,7 @@ export default function PlotStudio({
               font: fontSize,
               yMin: spec?.y_axis?.minimum ?? null,
               yMax: spec?.y_axis?.maximum ?? null,
+              panelOverrides: panelOverrideCount,
             })}
           >
             <Section
@@ -3037,8 +3215,36 @@ export default function PlotStudio({
                 {appliedYLimits
                   ? ` — ${appliedYLimits[0].toPrecision(3)} to ${appliedYLimits[1].toPrecision(3)}`
                   : ''}
+                {panelOverrideCount > 0
+                  ? ` (${panelOverrideCount} panel${panelOverrideCount === 1 ? '' : 's'} set in Panels)`
+                  : ''}
               </div>
             </Section>
+
+            {/* One faceted panel's own y limits and y title, and which panels
+                draw a y title at all. Only for a grid of faceted panels. */}
+            {offersPanels(panelMeta) && panelMeta && (
+              <Section
+                title="Panels"
+                hint="Settings for one subplot, over the figure's. A panel is named by its facet values, so a setting applies to that panel in every separate figure. Hiding y titles gives their room back to the panels."
+              >
+                <PanelsSection
+                  meta={panelMeta}
+                  overrides={spec?.panel_overrides}
+                  yTitles={(spec?.style?.y_titles as YTitles | undefined) ?? 'every_panel'}
+                  onOverrides={setPanelOverrides}
+                  onYTitles={value => setStyle({ y_titles: value })}
+                  renderLimit={(label, value, placeholder, onChange) => (
+                    <LimitInput
+                      label={label}
+                      value={value}
+                      placeholder={placeholder}
+                      onChange={onChange}
+                    />
+                  )}
+                />
+              </Section>
+            )}
 
             {/* x tick labels: fitted by default (strip a shared ID prefix,
                 wrap, shrink, rotate, every k-th). Any of these may be fixed;
@@ -3589,12 +3795,15 @@ export default function PlotStudio({
                 <div style={{ overflow: 'auto', maxWidth: '100%' }}>
                   <Plot
                     data={shown.data}
-                    layout={{
+                    layout={withPickingBands(figure, {
                       ...shown.layout,
                       autosize: false,
                       width: fixed[0],
                       height: fixed[1],
-                    }}
+                    })}
+                    onClick={event => onFigureClick(figure.index, figureDiffMeta(figure), event)}
+                    onHover={event => onFigureHover(figure.index, figureDiffMeta(figure), event)}
+                    onUnhover={() => setHoverTick(null)}
                     config={{
                       displaylogo: false,
                       responsive: false,
@@ -3608,14 +3817,17 @@ export default function PlotStudio({
             {!(figure.figure.layout?.meta as { fixed_size?: unknown } | undefined)?.fixed_size && (
             <Plot
               data={screenFigure(figure.figure, theme).data}
-              layout={{
+              layout={withPickingBands(figure, {
                 // As above: untouched in light mode, screen colours in dark.
                 // Sizes are always the renderer's (`layout.font.size` =
                 // `TextSizes.base`), so a text setting shows before a save.
                 ...screenFigure(figure.figure, theme).layout,
                 autosize: true,
                 height: figureHeight,
-              }}
+              })}
+              onClick={event => onFigureClick(figure.index, figureDiffMeta(figure), event)}
+              onHover={event => onFigureHover(figure.index, figureDiffMeta(figure), event)}
+              onUnhover={() => setHoverTick(null)}
               config={{
                 displaylogo: false,
                 responsive: true,
@@ -3877,6 +4089,8 @@ interface LimitInputProps {
   label: string
   value: number | null
   onChange: (value: number | null) => void
+  /** What an empty box shows; the value in effect when known (default "auto"). */
+  placeholder?: string
 }
 
 /**
@@ -3887,7 +4101,7 @@ interface LimitInputProps {
  * at zero — the opposite of what clearing means. A half-typed "-" or "1e" is
  * held as-is too, rather than snapping the axis around while it is being typed.
  */
-function LimitInput({ label, value, onChange }: LimitInputProps) {
+function LimitInput({ label, value, onChange, placeholder = 'auto' }: LimitInputProps) {
   const [text, setText] = useState<string | null>(null)
   const shown = text ?? (value === null || value === undefined ? '' : String(value))
   return (
@@ -3897,7 +4111,7 @@ function LimitInput({ label, value, onChange }: LimitInputProps) {
         type="text"
         inputMode="decimal"
         value={shown}
-        placeholder="auto"
+        placeholder={placeholder}
         onChange={e => {
           const next = e.target.value
           setText(next)

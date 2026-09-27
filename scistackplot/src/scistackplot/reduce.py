@@ -82,6 +82,8 @@ from .table import LongTable, natural_sort_key
 from .xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
 from .spaghetti import overlay_offsets, series_offsets
 from .reducer import reducer_for
+from .diffbars import figure_has_bars, log_figure as log_difference_bars
+from .panels import override_for, panel_key_text, unmatched
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
 from .cell import apply_cell_collapse, cell_collapse_note, cell_collapses
@@ -122,7 +124,22 @@ MAX_TRANSPORT_POINTS = 20_000
 #: y limits (``_Plan.y_limits``), so a changed scope has to build a new one. It
 #: is a checkbox and two boxes rather than a dragged slider, so the re-plan is
 #: per click, not per frame.
-_PLAN_IRRELEVANT_FIELDS = ("kind", "facet", "style", "aliases")
+#:
+#: ``panel_overrides`` IS here, although it sets limits: an override is applied
+#: per panel in ``_build_figure`` (``ylimits.limits_for``) on top of the plan's
+#: computed ranges, and never changes those ranges — so a typed per-panel Max
+#: re-renders and never re-plans.
+#:
+#: ``difference_bars`` is here for the same reason: a bar is placed over the
+#: panels already built (``diffbars``), so adding one only redraws.
+_PLAN_IRRELEVANT_FIELDS = (
+    "kind",
+    "facet",
+    "style",
+    "aliases",
+    "panel_overrides",
+    "difference_bars",
+)
 
 #: How many plans are kept. Two: the pattern being served is narrow — the panel
 #: re-resolves the SAME data repeatedly while the user changes how it is drawn.
@@ -337,6 +354,10 @@ def resolve(
             )
         for figure in figures:
             figure.fanout_notes = plan.notes
+        for position, figure in enumerate(figures):
+            figure.difference_siblings = [
+                figures[other] for other in _difference_sibling_indices(plan, position)
+            ]
 
         Log.info(
             "resolved %s of %r: %d figure(s) over %s, %d panel(s), %d row(s)",
@@ -763,6 +784,33 @@ def resolve_one(
             text=text,
         )
         figure.fanout_notes = plan.notes
+        siblings = _difference_sibling_indices(plan, position)
+        if siblings:
+            with timing.phase("difference_siblings", extra=f"{len(siblings)} figure(s)"):
+                figure.difference_siblings = [
+                    _build_figure(
+                        plan.groups[other][1],
+                        plan.spec,
+                        plan.table,
+                        plan.roles,
+                        plan.shape,
+                        plan.index_column,
+                        figure_key=plan.groups[other][0],
+                        max_points=max_points,
+                        explode=plan.explode,
+                        y_scope=plan.y_scope,
+                        y_limits=plan.y_limits,
+                        text=text,
+                    )
+                    for other in siblings
+                ]
+            Log.info(
+                "difference bars: built %d sibling figure(s) that may share this "
+                "figure's y range (%s)",
+                len(siblings),
+                "; ".join(_figure_label(plan.groups[i][0]) for i in siblings),
+                layer=LAYER,
+            )
         Log.info(
             "resolved %s of %r: figure %d of %d over %s, %d panel(s), %d row(s) "
             "(%d figure(s) not built)",
@@ -773,10 +821,45 @@ def resolve_one(
             plan.iterate or "no fan-out",
             len(figure.panels),
             figure.row_count,
-            len(plan.groups) - 1,
+            len(plan.groups) - 1 - len(siblings),
             layer=LAYER,
         )
         return figure, plan.labels, position
+
+
+def difference_bar_figures(spec: PlotSpec, table: LongTable) -> list[int]:
+    """The fan-out positions (for :func:`resolve_one`) of the figures some
+    difference bar names — what the export places and bakes in, without
+    building the figures no bar names. Off the cached plan."""
+    if not spec.difference_bars:
+        return []
+    plan = _plan(spec, table)
+    return [
+        index
+        for index, (key, _) in enumerate(plan.groups)
+        if figure_has_bars(plan.spec, key)
+    ]
+
+
+def _difference_sibling_indices(plan: "_Plan", position: int) -> list[int]:
+    """The other figures of the fan-out that carry difference bars and may
+    draw a y range figure *position* shares (plan D7): the same values for
+    every ITERATE factor in the y scope, and named by some bar
+    (``diffbars.figure_has_bars``). A figure no bar names cannot raise
+    anything, so it is never built for this."""
+    if not plan.spec.difference_bars or len(plan.groups) < 2:
+        return []
+    key = plan.groups[position][0]
+    scoped = [name for name in plan.y_scope if name in key]
+    return [
+        index
+        for index, (other, _) in enumerate(plan.groups)
+        if index != position
+        and all(
+            panel_key_text(other.get(name)) == panel_key_text(key[name]) for name in scoped
+        )
+        and figure_has_bars(plan.spec, other)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1308,15 +1391,20 @@ def _build_figure(
                         key=key,
                         # The panel's OWN limits, from the figure's key plus its
                         # own facet values: the scope decides which of those two
-                        # actually separate anything.
+                        # actually separate anything. A per-panel override
+                        # (matched on the facet values alone) beats both.
                         y_limits=limits_for(
                             y_limits or {},
                             {**figure_key, **key},
                             y_scope or [],
                             spec.y_axis,
+                            override_for(spec, key),
                         ),
                     )
                 )
+
+        if spec.panel_overrides:
+            _log_panel_overrides(spec, panels, figure_key)
 
         sample_color = overlay_color(spec, overlay) if overlay_frame is not None else None
         if overlay_frame is not None:
@@ -1470,7 +1558,7 @@ def _build_figure(
                 layer=LAYER,
             )
 
-        return ResolvedPlot(
+        resolved = ResolvedPlot(
             kind=spec.kind,
             panels=panels,
             encoding=encoding,
@@ -1527,6 +1615,10 @@ def _build_figure(
             sample_color=sample_color,
             sample_color_order=list(sample_color_order or []),
         )
+        # Which difference bars land on which panel, once per figure, so a bar
+        # that draws nowhere is explained in scidb.log (diffbars D3).
+        log_difference_bars(resolved)
+        return resolved
 
 
 def _dash_styles(panels: list[Panel]) -> dict[str, str]:
@@ -2506,6 +2598,35 @@ def _labels_for(
         dash=(" / ".join(named(name) for name in reversed(list(dash_layers))) or None),
         sample=named(sample_color) if sample_color else None,
         title=title,
+    )
+
+
+def _log_panel_overrides(
+    spec: PlotSpec, panels: list[Panel], figure_key: dict[str, Any]
+) -> None:
+    """One INFO per figure: which per-panel overrides applied, with the limits
+    each panel ended up with, and how many matched no panel here (kept in the
+    spec, inert — they may still match in another ITERATE figure)."""
+    applied = []
+    for panel in panels:
+        override = override_for(spec, panel.key)
+        if override is None:
+            continue
+        limits = (
+            f"y {panel.y_limits[0]:.6g} to {panel.y_limits[1]:.6g}"
+            if panel.y_limits
+            else "y autoscaled"
+        )
+        applied.append(f"{override.describe()} {limits}")
+    inert = unmatched(spec, [panel.key for panel in panels])
+    Log.info(
+        "panel overrides%s: %d applied (%s), %d not in this figure%s",
+        f" [{_figure_label(figure_key)}]" if figure_key else "",
+        len(applied),
+        "; ".join(applied) or "none",
+        len(inert),
+        f" ({'; '.join(o.describe() for o in inert)})" if inert else "",
+        layer=LAYER,
     )
 
 

@@ -22,6 +22,7 @@ import pytest
 from scistackplot import (
     Aggregation,
     Alias,
+    DifferenceBar,
     ErrorBand,
     FacetOptions,
     FactorVariable,
@@ -32,6 +33,7 @@ from scistackplot import (
     Matcher,
     MatchOp,
     NoteKind,
+    PanelOverride,
     PlotKind,
     PlotSpec,
     RestoreError,
@@ -92,6 +94,7 @@ def full_spec() -> PlotSpec:
                 groups=7.5,
                 legend=9.5,
                 legend_title=10.5,
+                differences=13.0,
             ),
             log_x=True,
             log_y=True,
@@ -105,8 +108,26 @@ def full_spec() -> PlotSpec:
             hide_legend_ticks=True,
             tick_rotation=45,
             tick_every=2,
+            y_titles="first_column",
         ),
         aliases={"session": Alias(name="Visit", levels={"01": "One"})},
+        panel_overrides=[
+            PanelOverride(
+                match={"trial": "01"},
+                y_minimum=-1.0,
+                y_maximum=3.0,
+                y_label="Trial 1 (m)",
+                y_label_hidden=True,
+            )
+        ],
+        difference_bars=[
+            DifferenceBar(
+                match={"trial": "01"},
+                a={"session": "pre"},
+                b={"session": "post"},
+                label="**",
+            )
+        ],
         filters=[
             Filter(
                 column="subject",

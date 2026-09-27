@@ -101,6 +101,13 @@ test('statistics summary', () => {
   )
 })
 
+test('appearance summary counts per-panel overrides', () => {
+  const base = { width: 8, height: 6, font: 14, yMin: null, yMax: null }
+  assert.equal(appearanceSummary({ ...base, panelOverrides: 0 }), '8×6 in · 14 pt · y auto')
+  assert.equal(appearanceSummary({ ...base, panelOverrides: 1 }), '8×6 in · 14 pt · y auto · 1 panel set')
+  assert.equal(appearanceSummary({ ...base, panelOverrides: 3 }), '8×6 in · 14 pt · y auto · 3 panels set')
+})
+
 test('appearance summary', () => {
   assert.equal(
     appearanceSummary({ width: 7.2, height: 4.45, font: 9, yMin: null, yMax: null }),
@@ -113,5 +120,21 @@ test('appearance summary', () => {
   assert.equal(
     appearanceSummary({ width: 3.5, height: 2.1633, font: 8, yMin: -1.23456, yMax: 2 }),
     '3.5×2.163 in · 8 pt · y -1.235–2'
+  )
+})
+
+test('the Statistics summary counts the difference bars', () => {
+  assert.equal(
+    statisticsSummary({
+      summarizing: true, centre: 'mean', spread: 'sd', pooled: false, shown: [], differenceBars: 2,
+    }),
+    statisticsSummary({ summarizing: true, centre: 'mean', spread: 'sd', pooled: false, shown: [] }) +
+      ' · 2 difference bars',
+  )
+  assert.match(
+    statisticsSummary({
+      summarizing: false, centre: 'mean', spread: 'sd', pooled: false, shown: [], differenceBars: 1,
+    }),
+    /^1 difference bar$/,
   )
 })

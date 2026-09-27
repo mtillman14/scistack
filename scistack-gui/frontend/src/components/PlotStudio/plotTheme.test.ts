@@ -146,3 +146,30 @@ test('parsePlotThemeMode accepts only the two modes', () => {
   assert.equal(otherPlotTheme('dark'), 'light')
   assert.equal(otherPlotTheme('light'), 'dark')
 })
+
+test('dark mode inks the difference bars and their labels, and nothing else of the kind', () => {
+  const figure = {
+    data: [],
+    layout: {
+      shapes: [
+        { name: 'difference-bar:1:0', type: 'path', line: { color: '#000000', width: 1 } },
+        { name: 'x-group:0:0', type: 'line', line: { color: '#888888', width: 1 } },
+      ],
+      annotations: [
+        { name: 'difference-label:1:0', text: '*', font: { size: 14, color: '#000000' } },
+        { name: 'x-group:0:0', text: 'sham', font: { size: 11 } },
+      ],
+    },
+  }
+  const ink = PLOT_THEMES.dark.plotText
+  const dark = screenFigure(figure, 'dark').layout as {
+    shapes: { line: { color: string } }[]
+    annotations: { font: { color?: string; size: number } }[]
+  }
+  assert.equal(dark.shapes[0].line.color, ink)
+  assert.equal(dark.shapes[1].line.color, '#888888')
+  assert.deepEqual(dark.annotations[0].font, { size: 14, color: ink })
+  assert.equal(dark.annotations[1].font.color, undefined)
+  // Light is the saved figure, untouched.
+  assert.equal(screenFigure(figure, 'light'), figure)
+})

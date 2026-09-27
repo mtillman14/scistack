@@ -51,7 +51,7 @@ test('an element Python adds later still gets a box, labelled by its key', () =>
 
 test('before the first render the known boxes still show', () => {
   const rows = textSizeRows(undefined, undefined)
-  assert.equal(rows.length, 8)
+  assert.equal(rows.length, 9) // incl. `differences` (difference-bar labels)
   assert.ok(rows.every(r => r.resolved === null))
   assert.equal(placeholderFor(rows[0]), 'auto')
 })

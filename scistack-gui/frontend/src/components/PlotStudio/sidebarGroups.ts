@@ -137,6 +137,8 @@ export function statisticsSummary(args: {
   pooled: boolean
   /** Keys the sample overlay shows. */
   shown: string[]
+  /** Difference bars in the spec (differenceBars.barCount). */
+  differenceBars?: number
 }): string {
   const parts: string[] = []
   if (args.summarizing) {
@@ -145,6 +147,9 @@ export function statisticsSummary(args: {
     if (args.pooled) parts.push('weighted by N')
   }
   if (args.shown.length) parts.push(`sample ${args.shown.join(', ')}`)
+  if (args.differenceBars) {
+    parts.push(`${args.differenceBars} difference bar${args.differenceBars === 1 ? '' : 's'}`)
+  }
   return parts.join(SEP) || 'Raw values'
 }
 
@@ -158,10 +163,15 @@ export function appearanceSummary(args: {
   font: number
   yMin: number | null
   yMax: number | null
+  /** Non-empty per-panel overrides (panelOverrides.overrideCount). */
+  panelOverrides?: number
 }): string {
   const y =
     args.yMin === null && args.yMax === null
       ? 'y auto'
       : `y ${args.yMin === null ? 'auto' : num(args.yMin)}–${args.yMax === null ? 'auto' : num(args.yMax)}`
-  return [`${num(args.width)}×${num(args.height)} in`, `${num(args.font)} pt`, y].join(SEP)
+  const parts = [`${num(args.width)}×${num(args.height)} in`, `${num(args.font)} pt`, y]
+  const panels = args.panelOverrides ?? 0
+  if (panels > 0) parts.push(`${panels} panel${panels === 1 ? '' : 's'} set`)
+  return parts.join(SEP)
 }

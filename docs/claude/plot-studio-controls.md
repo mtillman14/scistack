@@ -45,8 +45,10 @@ The design history is in `.claude/plot-studio-sidebar-redesign.md`.
 | | Layout (only when a factor has the subplot role) | N rows/cols, row/col slots (one panel: locked 1 × 1, slots hidden) | `facet` |
 | **Statistics** (only when summarising or a sample overlay exists) | Summary | Centre, Spread, Weight by N | `aggregate.{statistic,error,pooled}` |
 | | Show sample | key ticks, Join, Colour points by, Show in legend | `show_sample`, `join_sample`, `sample_color`, `sample_in_legend` |
+| | Difference bars (group also shown when only this is available; `capabilities.difference_bars`) | Panel dropdown, per bar: label box + ✕; + Add difference bar → click two marks in the preview (hover band, Esc cancels); "In other figures" | `difference_bars` via `differenceBars.ts`; picking state and plot `onClick`/`onHover` in PlotStudio (docs/claude/difference-bars.md) |
 | **Appearance** (starts closed) | Size | Aspect | `style.{width,height}` via `commitSize` (aspect is DERIVED from the size; Custom is a disabled readout; the toolbar's Lock aspect checkbox → `figureSize.resizeFigure`) |
 | | Y axis | scope ticks, Min/Max | `y_axis.{scope,minimum,maximum}` |
+| | Panels (only with 2+ faceted panels, from `layout.meta.panel_overrides`) | Y titles (every panel / first column only); Panel dropdown (+ "Not in this figure"); Min/Max, Y title, Show (follow/show/hide), Clear | `style.y_titles`; `panel_overrides` via `panelOverrides.ts` (docs/claude/per-panel-overrides.md) |
 | | X tick labels | Rotation, Show, Hide labels the legend repeats | `style.{tick_rotation,tick_every,hide_legend_ticks}` |
 | | Marks | Line weight, Sample weight | `style.{line_weight,sample_weight}` |
 | | Text | Font, per-element sizes, Reset | `style.text` (`base` = Font) |

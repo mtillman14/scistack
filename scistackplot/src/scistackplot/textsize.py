@@ -48,6 +48,8 @@ class ResolvedSizes:
     #: end up, including after the legend fit shrank them — a number fixed
     #: here would leave a big title over shrunken entries.
     legend_title: float | None
+    #: A difference bar's label (``diffbars``).
+    differences: float
     #: The elements set explicitly. Fitting never shrinks these.
     pinned: frozenset[str] = frozenset()
 
@@ -109,6 +111,7 @@ def resolve_sizes(style: StyleOptions | TextSizes) -> ResolvedSizes:
         groups=pick(text.groups, x_ticks * SMALL),
         legend=legend,
         legend_title=float(text.legend_title) if text.legend_title is not None else None,
+        differences=pick(text.differences, base * MEDIUM),
         pinned=pinned,
     )
 

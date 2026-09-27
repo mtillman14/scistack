@@ -273,6 +273,14 @@ class ResolvedPlot:
     #: name and levels as ``{raw, text, origin}``. Shipped as
     #: ``layout.meta.labelable``; the panel never derives the list.
     labelable: list[dict] = field(default_factory=list)
+    #: Other figures of the fan-out that carry difference bars and may draw a
+    #: y range this figure shares, attached by ``reduce`` so the renderer can
+    #: raise this figure to the top THEIR bars need (``diffbars.sibling_floors``,
+    #: plan D7). Only figures a bar names are built; a sibling's own list is
+    #: empty, so nothing recurses. Not serialised.
+    difference_siblings: list["ResolvedPlot"] = field(
+        default_factory=list, repr=False, compare=False
+    )
 
     @property
     def figure_label(self) -> str:
@@ -287,6 +295,11 @@ class ResolvedPlot:
 
     def to_dict(self) -> dict:
         """JSON-serializable form — used by the GUI transport and by tests."""
+        # Lazily: render.base imports this module. The panel's drawn y title
+        # comes from the renderers' own rule, so the GUI shows what is drawn.
+        from .panels import override_for, unmatched
+        from .render.base import panel_y_title, shows_y_labels
+
         return {
             "kind": str(self.kind),
             "figure_key": {k: _jsonable(v) for k, v in self.figure_key.items()},
@@ -330,6 +343,12 @@ class ResolvedPlot:
             "y_limits": list(self.y_limits) if self.y_limits else None,
             "y_scope": list(self.y_scope),
             "panel_factors": list(self.panel_factors),
+            # Per-panel overrides that match no panel of THIS figure: kept in
+            # the spec, inert (the GUI lists them as "not in this figure").
+            "unmatched_overrides": [
+                override.to_dict()
+                for override in unmatched(self.spec, [panel.key for panel in self.panels])
+            ],
             "downsampled_from": self.downsampled_from,
             "fanout_notes": list(self.fanout_notes),
             "series_offsets": dict(self.series_offsets),
@@ -349,6 +368,16 @@ class ResolvedPlot:
                     # The TEXT the renderers draw; `title` above is the identity
                     # (facet layout rules and logs match it raw).
                     "display_title": self.text.panel_title(panel.key),
+                    # The title actually drawn: the facet text, an override's
+                    # text, or "" when hidden (StyleOptions.y_titles /
+                    # PanelOverride.y_label_hidden).
+                    "y_title": panel_y_title(
+                        self,
+                        panel,
+                        leftmost=shows_y_labels(self, panel.grid_row, panel.grid_col),
+                    ),
+                    # The matched per-panel override, or None.
+                    "override": _override_dict(override_for(self.spec, panel.key)),
                     "grid_row": panel.grid_row,
                     "grid_col": panel.grid_col,
                     # Per panel, because the figure-level value is absent
@@ -363,6 +392,10 @@ class ResolvedPlot:
                 for panel in self.panels
             ],
         }
+
+
+def _override_dict(override) -> dict | None:
+    return override.to_dict() if override is not None else None
 
 
 def _frame_records(frame: pd.DataFrame) -> list[dict]:

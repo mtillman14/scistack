@@ -327,6 +327,23 @@ export function screenFigure(
       layout[key] = { ...(axis as Json), linecolor: ink, tickcolor: ink }
     }
   }
+  // Difference bars and their labels are drawn in the paper's ink
+  // (scistackplot plotly_ `difference-bar:` / `difference-label:`), like the
+  // frame: on a dark screen they take the screen's ink too.
+  if (Array.isArray(figure.layout.shapes)) {
+    layout.shapes = (figure.layout.shapes as Json[]).map(shape =>
+      isDifferenceItem(shape)
+        ? { ...shape, line: { ...(shape.line as Json | undefined), color: ink } }
+        : shape,
+    )
+  }
+  if (Array.isArray(figure.layout.annotations)) {
+    layout.annotations = (figure.layout.annotations as Json[]).map(note =>
+      isDifferenceItem(note)
+        ? { ...note, font: { ...(note.font as Json | undefined), color: ink } }
+        : note,
+    )
+  }
   const data = figure.data.map(item => {
     const trace = item as Json
     return trace?.error_y && typeof trace.error_y === 'object'
@@ -334,4 +351,9 @@ export function screenFigure(
       : item
   })
   return { data, layout }
+}
+
+/** A difference bar's shape or its label's annotation (by `name`). */
+function isDifferenceItem(item: Json): boolean {
+  return typeof item?.name === 'string' && item.name.startsWith('difference-')
 }

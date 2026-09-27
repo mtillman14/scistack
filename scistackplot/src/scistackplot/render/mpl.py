@@ -51,6 +51,9 @@ from .base import (
     panel_y_title,
     shares_y_axis,
     shows_legend,
+    BracketGeometry,
+    GridReach,
+    X_GROUP_GAP_PT,
     ruled_bracket_depths,
     shows_x_labels,
     shows_y_labels,
@@ -125,6 +128,8 @@ def render(resolved: ResolvedPlot):
             # panel's limits. It walks the grid rather than the panel list (blank
             # cells need hiding too), and the two orders are not the same.
             at_cell: dict[tuple[int, int], Any] = {}
+            # panel index -> its axes, for the difference bars (placed per panel).
+            panel_axes: dict[int, Any] = {}
             for index, panel in enumerate(resolved.panels):
                 row, col = panel_position(resolved, index)
                 if (row, col) in used or not (0 <= row < n_rows and 0 <= col < n_cols):
@@ -147,6 +152,7 @@ def render(resolved: ResolvedPlot):
                 ax = axes[row][col]
                 used.add((row, col))
                 at_cell[(row, col)] = panel
+                panel_axes[index] = ax
                 _draw_panel(ax, panel.frame, resolved)
                 _draw_sample(ax, panel, resolved)
                 # No subplot caption: a faceted panel is named by its y-axis title
@@ -189,6 +195,22 @@ def render(resolved: ResolvedPlot):
             # After a layout pass: the room each label has is the laid-out
             # panel width (spec/images/graph1.png, graph2.png).
             _fit_x_labels(fig, [ax for _, _, ax in labelled], resolved, rect)
+            # Difference bars need the laid-out panel heights (their sizes are
+            # points), so they come after every other layout pass, and before
+            # the reach is measured (a raised top can widen the tick numbers).
+            _draw_difference_bars(fig, panel_axes, resolved, rect)
+            # Last, on the final layout: what the preview sizes its margins
+            # and cell gaps from. Hidden y titles are named next to it, so a
+            # gap that did not shrink can be explained from scidb.log (the
+            # widest title left in a gap still sets it).
+            hidden = [
+                f"{p.title} ({p.grid_row},{p.grid_col})"
+                for p in resolved.panels
+                if p.key and panel_y_title(resolved, p, leftmost=True) == ""
+            ]
+            if hidden:
+                Log.debug("y titles hidden: %s", "; ".join(hidden), layer=LAYER)
+            setattr(fig, GRID_REACH_ATTR, _grid_reach(fig, axes, n_rows, n_cols))
             return fig
 
 
@@ -621,20 +643,12 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
 # applies. Runs after a first layout pass, because the room a label has is the
 # laid-out axes width, which nothing knows before then.
 
-#: Clear space below the tick labels before the first bracket row, and between
-#: bracket rows, in points. Points, not a fraction of the axes: a fraction of
-#: a short panel is smaller than the tick labels, which is how brackets came to
-#: sit on top of them (spec/images/graph2.png).
-X_GROUP_GAP_PT = 4.0
-
-#: Between a bracket's rule and its label, in points.
-X_GROUP_RULE_GAP_PT = 2.0
-
 #: Brackets overhang their outer leaves by this much, in leaf widths.
 X_GROUP_OVERHANG = 0.35
 
 #: Attribute on a rendered Figure holding ``{"ticks": LabelFit, "brackets":
-#: LabelFit | None}`` — what the x-label fit decided for it.
+#: LabelFit | None, "bracket_geometry": BracketGeometry | None}`` — what the
+#: x-label fit decided for it, and where the bracket rows were hung.
 LABEL_FIT_ATTR = "scistackplot_label_fit"
 
 
@@ -860,14 +874,18 @@ def _tick_label_depth_pt(fig, ax, renderer) -> float:
     return max(0.0, _pt(fig, ax.get_window_extent(renderer).y0 - min(bottoms)))
 
 
-def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFit | None:
+def _draw_x_groups(
+    fig, ticks: list[_XTicks], resolved: ResolvedPlot
+) -> tuple[LabelFit, BracketGeometry] | None:
     """Label and bracket each higher x layer beneath the tick labels.
 
     x in DATA space (leaf positions are data positions on a categorical axis);
     y a fixed number of POINTS below the measured bottom of the tick labels,
-    one row per layer. The labels are fitted like the ticks
+    one row per layer (``base.BracketGeometry``, which the preview draws from
+    too). The labels are fitted like the ticks
     (``ticklabels.BRACKET_POLICY``: shrink and wrap, never rotate or thin). The
-    axis title, when there is one, is pushed below the last row.
+    axis title, when there is one, is pushed below the last row. Returns the
+    fit and the deepest panel's geometry.
     """
     from matplotlib.lines import Line2D
     from matplotlib.transforms import blended_transform_factory, offset_copy
@@ -906,12 +924,13 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
         ),
         default=0.0,
     )
-    step = row_height + X_GROUP_RULE_GAP_PT + X_GROUP_GAP_PT
-
     fitted = iter(fit.rows)
+    deepest: BracketGeometry | None = None
     for item in ticks:
         ax = item.ax
-        below = _tick_label_depth_pt(fig, ax, renderer)
+        geometry = BracketGeometry(_tick_label_depth_pt(fig, ax, renderer), row_height)
+        if deepest is None or geometry.tick_depth_pt > deepest.tick_depth_pt:
+            deepest = geometry
         blended = blended_transform_factory(ax.transData, ax.transAxes)
         texts_by_depth = {depth: next(fitted) for depth in depths}
         shown = {depth for depth, texts in texts_by_depth.items() if any(texts)}
@@ -926,11 +945,11 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
                     resolved.x_layers[depth] if depth < len(resolved.x_layers) else depth,
                     layer=LAYER,
                 )
-            # Deeper layers sit closer to the axis; depth 0 is furthest below.
-            top = below + X_GROUP_GAP_PT + (plan.depth - depth - 1) * step
-            rule = offset_copy(blended, fig=fig, y=-top, units="points")
+            rule = offset_copy(
+                blended, fig=fig, y=-geometry.rule_pt(depth, plan.depth), units="points"
+            )
             under = offset_copy(
-                blended, fig=fig, y=-(top + X_GROUP_RULE_GAP_PT), units="points"
+                blended, fig=fig, y=-geometry.label_pt(depth, plan.depth), units="points"
             )
             if not any(texts):
                 # A row with no label shown (hide_legend_ticks: the legend
@@ -967,8 +986,9 @@ def _draw_x_groups(fig, ticks: list[_XTicks], resolved: ResolvedPlot) -> LabelFi
                     fontsize=fit.font_pt,
                     clip_on=False,
                 )
-        ax.xaxis.labelpad = X_GROUP_GAP_PT + plan.depth * step
-    return fit
+        ax.xaxis.labelpad = geometry.title_pad_pt(plan.depth)
+    Log.debug("x bracket rows: %s", deepest.describe(), layer=LAYER)
+    return fit, deepest
 
 
 def _shared_x_title(
@@ -1019,15 +1039,68 @@ def _fit_x_labels(fig, labelled: list[Any], resolved: ResolvedPlot, rect) -> Non
         fig.tight_layout(rect=rect)
         fit = refit
     _log_fit("x tick labels", fit, rows, _text_measure(fig))
-    brackets = _draw_x_groups(fig, ticks, resolved)
-    if brackets is not None:
+    drawn = _draw_x_groups(fig, ticks, resolved)
+    brackets, geometry = drawn if drawn is not None else (None, None)
+    if drawn is not None:
         fig.tight_layout(rect=rect)
     # The decisions travel with the Figure, so a caller (a test today, the
     # GUI's "labels still overlap" notice later) can read what was decided
     # instead of re-deriving it from the drawing.
-    setattr(fig, LABEL_FIT_ATTR, {"ticks": fit, "brackets": brackets})
+    setattr(
+        fig,
+        LABEL_FIT_ATTR,
+        {"ticks": fit, "brackets": brackets, "bracket_geometry": geometry},
+    )
     if fit.fits:
         _verify_x_ticks(fig, ticks, fit)
+
+
+#: Attribute on a rendered Figure holding its measured ``base.GridReach``.
+GRID_REACH_ATTR = "scistackplot_grid_reach"
+
+
+def _grid_reach(fig, axes, n_rows: int, n_cols: int) -> GridReach:
+    """How far each visible panel's text reaches outside its axes, measured on
+    the final layout (see ``base.GridReach``). Also WARNs when a panel's text
+    already runs into its neighbour here, in the export itself."""
+    fig.draw_without_rendering()
+    renderer = fig.canvas.get_renderer()
+    left = {"outer": 0.0, "inner": 0.0}
+    below = {"outer": 0.0, "inner": 0.0}
+    boxes = {}
+    for row in range(n_rows):
+        for col in range(n_cols):
+            ax = axes[row][col]
+            if not ax.get_visible():
+                continue
+            box = ax.get_window_extent(renderer)
+            tight = ax.get_tightbbox(renderer)
+            boxes[(row, col)] = (box, tight)
+            side = "outer" if col == 0 else "inner"
+            left[side] = max(left[side], _pt(fig, box.x0 - tight.x0))
+            side = "outer" if row == n_rows - 1 else "inner"
+            below[side] = max(below[side], _pt(fig, box.y0 - tight.y0))
+    for (row, col), (box, tight) in boxes.items():
+        neighbour = boxes.get((row, col - 1))
+        if neighbour is not None and tight.x0 < neighbour[0].x1:
+            Log.warn(
+                "panel (%d,%d): its y labels run %.1fpt into the panel on its left",
+                row, col, _pt(fig, neighbour[0].x1 - tight.x0), layer=LAYER,
+            )
+        neighbour = boxes.get((row + 1, col))
+        if neighbour is not None and tight.y0 < neighbour[0].y1:
+            Log.warn(
+                "panel (%d,%d): its x labels run %.1fpt into the panel below",
+                row, col, _pt(fig, neighbour[0].y1 - tight.y0), layer=LAYER,
+            )
+    reach = GridReach(
+        left_outer_pt=left["outer"],
+        left_inner_pt=left["inner"],
+        below_outer_pt=below["outer"],
+        below_inner_pt=below["inner"],
+    )
+    Log.debug("panel text reach: %s", reach.describe(), layer=LAYER)
+    return reach
 
 
 def _verify_x_ticks(fig, ticks: list[_XTicks], fit: LabelFit) -> None:
@@ -1474,6 +1547,167 @@ def _x_labels_crowded(fig, labelled, resolved: ResolvedPlot) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# Difference bars (diffbars; .claude/plan-difference-bars.md)
+
+#: Attribute on a rendered Figure holding its ``diffbars.FigurePlacement``
+#: (None when the figure has no bars), for ``layout_decisions`` and tests.
+DIFF_BARS_ATTR = "scistackplot_difference_bars"
+#: matplotlib gids of a bar's line (with its legs) and its label.
+DIFF_BAR_GID = "difference-bar"
+DIFF_LABEL_GID = "difference-label"
+#: A panel whose height moved less than this between layout passes is
+#: considered settled.
+DIFF_SETTLED_PT = 0.5
+
+
+def _draw_difference_bars(fig, panel_axes: dict[int, Any], resolved: ResolvedPlot, rect) -> None:
+    """Place and draw the difference bars on the laid-out figure.
+
+    Placement needs each panel's height in points and each label's size,
+    so both are MEASURED here (the preview reads the result through
+    ``layout_decisions``). Raising a top can widen the y tick numbers, so
+    the figure is laid out again; if that moved a panel's height, the bars
+    are placed once more on the new height.
+    """
+    from ..diffbars import carries_difference_bars, figure_sizes, place_figure, sibling_floors
+
+    setattr(fig, DIFF_BARS_ATTR, None)
+    if not resolved.spec.difference_bars:
+        return
+    if not carries_difference_bars(resolved):
+        Log.debug(
+            "difference bars: a %s figure does not draw them (%d in the spec, kept)",
+            resolved.kind,
+            len(resolved.spec.difference_bars),
+            layer=LAYER,
+        )
+        return
+    sizes = figure_sizes(resolved, _measure_difference_labels(fig, resolved))
+    # A sibling laid out for real (its grid differs) is laid out once per
+    # draw, not once per layout pass.
+    sibling_layouts: dict[int, Any] = {}
+
+    def laid_out(sibling: ResolvedPlot):
+        if id(sibling) not in sibling_layouts:
+            sibling_layouts[id(sibling)] = _sibling_placement(sibling, resolved)
+        return sibling_layouts[id(sibling)]
+
+    placement = None
+    frames: dict[int, Any] = {}
+    for attempt in (1, 2):
+        frames = {index: _panel_frame(fig, ax) for index, ax in panel_axes.items()}
+        # Other figures sharing a range: what their bars need, estimated on
+        # these frames (D7). Laid out for real only when a grid differs.
+        floors = sibling_floors(resolved, frames, sizes, lay_out=laid_out)
+        placement = place_figure(resolved, frames, sizes, top_floors=floors)
+        _apply_difference_bars(panel_axes, placement, resolved, sizes)
+        fig.tight_layout(rect=rect)
+        after = {index: _panel_frame(fig, ax) for index, ax in panel_axes.items()}
+        moved = max(
+            (abs(after[i].height_pt - frames[i].height_pt) for i in frames), default=0.0
+        )
+        Log.debug(
+            "difference bars: layout pass %d, panel heights moved %.2f pt",
+            attempt,
+            moved,
+            layer=LAYER,
+        )
+        if moved < DIFF_SETTLED_PT:
+            break
+    for note in placement.notes if placement else []:
+        Log.info("difference bars placed: %s", note, layer=LAYER)
+    setattr(fig, DIFF_BARS_ATTR, placement)
+
+
+def _sibling_placement(sibling: ResolvedPlot, resolved: ResolvedPlot):
+    """Lay *sibling* out at *resolved*'s size and return its placement —
+    the fallback of ``diffbars.sibling_floors`` for a sibling whose grid
+    differs. The sibling has no siblings of its own, so this never recurses."""
+    import matplotlib.pyplot as plt
+
+    style = resolved.spec.style
+    target = replace(
+        sibling,
+        spec=replace(
+            sibling.spec,
+            style=replace(sibling.spec.style, width=style.width, height=style.height),
+        ),
+        difference_siblings=[],
+    )
+    with Log.timer("difference_sibling_layout", layer=LAYER, extra=sibling.figure_label):
+        fig = render(target)
+        try:
+            return getattr(fig, DIFF_BARS_ATTR, None)
+        finally:
+            plt.close(fig)
+
+
+def _measure_difference_labels(fig, resolved: ResolvedPlot) -> dict[str, tuple[float, float]]:
+    """Each label's box ``(width, height)`` in points, as drawn (``va``
+    bottom, so the height includes the descent)."""
+    size = resolve_sizes(resolved.spec.style).differences
+    renderer = fig.canvas.get_renderer()
+    per_px = 72.0 / fig.dpi
+    found: dict[str, tuple[float, float]] = {}
+    for label in dict.fromkeys(bar.label for bar in resolved.spec.difference_bars):
+        text = fig.text(0.0, 0.0, label, fontsize=size, va="bottom", ha="left")
+        box = text.get_window_extent(renderer)
+        text.remove()
+        found[label] = (box.width * per_px, box.height * per_px)
+    return found
+
+
+def _panel_frame(fig, ax):
+    """A panel's drawing box as laid out (``diffbars.PanelFrame``)."""
+    from ..diffbars import PanelFrame
+
+    box = ax.get_window_extent(fig.canvas.get_renderer())
+    per_px = 72.0 / fig.dpi
+    low, high = ax.get_xlim()
+    return PanelFrame(height_pt=box.height * per_px, width_pt=box.width * per_px, x_range=(low, high))
+
+
+def _apply_difference_bars(panel_axes, placement, resolved: ResolvedPlot, sizes) -> None:
+    """Draw *placement* (replacing any bars a previous pass drew) and set
+    each panel's range to the one placement decided."""
+    for ax in panel_axes.values():
+        for artist in [*ax.lines, *ax.texts]:
+            if artist.get_gid() in (DIFF_BAR_GID, DIFF_LABEL_GID):
+                artist.remove()
+    log = bool(resolved.spec.style.log_y)
+    for index, limits in placement.limits.items():
+        drawable = drawable_limits(limits, log=log)
+        if drawable and index in panel_axes:
+            panel_axes[index].set_ylim(*drawable)
+    for index, bars in placement.bars.items():
+        ax = panel_axes.get(index)
+        if ax is None:
+            continue
+        for bar in bars:
+            ax.plot(
+                [bar.left, bar.left, bar.right, bar.right],
+                [bar.left_foot, bar.y, bar.y, bar.right_foot],
+                color=PAPER.text,
+                linewidth=sizes.line_pt,
+                solid_capstyle="butt",
+                solid_joinstyle="miter",
+                gid=DIFF_BAR_GID,
+                zorder=4,
+            )
+            ax.text(
+                bar.middle,
+                bar.label_y,
+                bar.bar.label,
+                ha="center",
+                va="bottom",
+                fontsize=sizes.label_font_pt,
+                color=PAPER.text,
+                gid=DIFF_LABEL_GID,
+                zorder=4,
+            )
+
+
+# ---------------------------------------------------------------------------
 # The decisions, for a renderer that cannot measure text (the plotly preview)
 
 
@@ -1488,7 +1722,9 @@ def layout_decisions(
     Lays the figure out exactly as the export does, at ``width_in x
     height_in`` (the spec's own size when omitted), and reads back what
     was decided: ``{"ticks": LabelFit | None, "brackets": LabelFit | None,
-    "legend": dict | None, "width_in", "height_in"}``. The plotly preview
+    "bracket_geometry": BracketGeometry | None, "grid_reach": GridReach | None,
+    "legend": dict | None, "difference_bars": FigurePlacement | None,
+    "width_in", "height_in"}``. The plotly preview
     applies these rather than estimating text of its own, so what the preview
     shows and what the file gets cannot come from two different rules.
     """
@@ -1510,7 +1746,12 @@ def layout_decisions(
             return {
                 "ticks": fits.get("ticks"),
                 "brackets": fits.get("brackets"),
+                "bracket_geometry": fits.get("bracket_geometry"),
+                "grid_reach": getattr(fig, GRID_REACH_ATTR, None),
                 "legend": getattr(fig, LEGEND_ATTR, None),
+                # diffbars.FigurePlacement, or None: the preview draws these
+                # bars and ranges rather than placing its own.
+                "difference_bars": getattr(fig, DIFF_BARS_ATTR, None),
                 "width_in": width,
                 "height_in": height,
             }

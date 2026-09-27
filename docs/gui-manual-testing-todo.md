@@ -11,6 +11,177 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzi. Statistics > Difference bars: mark two groups as different — added 2026-09-27
+
+**What changed:** a new **Difference bars** section under Statistics (bar,
+box, violin, strip, scatter and spaghetti plots). **+ Add difference bar**,
+then click two marks in the preview: a bar, a box, or any of its "Show sample"
+points picks that tick. A bar with a label ("*") is drawn over the pair,
+above everything in between, and the y axis grows to hold it. Each bar in
+the list has an editable label and ✕. Text size: Appearance > Text >
+**Differences**. Plan `.claude/plan-difference-bars.md`, doc
+`docs/claude/difference-bars.md`.
+
+**Backend**
+1. Python and frontend both changed. Rebuild both vite targets (done in the
+   session), pull in the GUI clone, restart the GUI.
+
+**Frontend**
+1. Open Plot Studio on a bar plot with a Group factor of 3+ levels (e.g.
+   session), one collapsed key (e.g. subject), and a Facet factor. Open
+   Statistics: **Difference bars** is the last section, with a Panel dropdown.
+2. Click **+ Add difference bar**. The prompt says *Click a mark: the first
+   end…*. Hover over a bar: a light band covers that tick's whole column in
+   that panel only. Turn on Show sample and hover a sample point: the same
+   band (the point's tick).
+3. Click the first bar: its band stays, stronger; the prompt names it. Click
+   another tick's bar in the same panel: a bar with "*" appears over the two,
+   clear of both marks AND any taller mark between them; the list shows
+   *pre ↔ post* (the ticks' names). The band disappears.
+4. Add two more bars that share a tick (pre–post, post–follow) and one that
+   spans both (pre–follow). They stack on separate levels; the wide one arches
+   over the short ones; no line, leg or "*" touches another or a mark; the
+   top of the axis rose just enough (look at the Y axis readout).
+5. Type "**" and "n.s." into labels: the preview redraws with them. Set
+   Appearance > Text > Differences to 20: the labels grow and the bars
+   re-stack to fit them.
+6. Press Esc (or Cancel) during picking: picking stops, no bar added. Click a
+   tick then a tick in a DIFFERENT panel: picking restarts from that panel.
+7. Type Y axis Max below the top bar: that bar disappears and the list says
+   *Does not fit under the Max you set*. Clear Max: it comes back.
+8. Separate figures (◀ ▶) with "Same limits everywhere": add bars in one
+   figure; step to a figure without bars — its axis top matches the first
+   figure's (the ranges stay in sync). In the list's panel dropdown the other
+   figure's bars are under *In other figures (N)*.
+9. Switch the kind to box, violin and strip: the bars stay clear of whiskers,
+   outlier points and jittered points. Log y: still clear.
+10. Dark mode: bars and labels are drawn in the screen's text colour; a saved
+   image (light) draws them black.
+11. **Export code**, run it: the file has the same bars at the same places
+   (the code says the positions were fitted to this data).
+12. `scidb.log`: `difference bars [..]: N resolved`, `difference bars placed:`
+   with the top before → after, and the `[Plot Studio] difference_bar_pick` /
+   `difference_bar_added` console lines.
+
+---
+
+## 0zzh. Appearance > Panels: one panel's own y range and y title — added 2026-09-27
+
+**What changed:** a new **Panels** section under Appearance, shown only when
+the figure has two or more faceted panels. It has:
+- **Y titles:** *every panel* / *first column only*. On a faceted figure the
+  y title is the panel's name (its facet values).
+- **Panel** dropdown. A dot marks panels that have their own settings.
+  Settings for panels not in this figure are listed under *Not in this figure*.
+- **Min / Max:** that panel's own range. An empty box shows the value drawn,
+  greyed.
+- **Y title:** replaces the facet text. An empty box means the facet text.
+- **Show:** *follow Y titles* / *show* / *hide*. Text you typed is kept while
+  the title is hidden.
+- **Clear this panel.**
+
+A setting names its panel by facet values, so it applies to that panel in
+every separate figure (the ◀ ▶ fan-out). Hiding titles gives their room back to
+the panels. Code export draws the same panels as the preview.
+
+**Backend**
+1. Python and frontend both changed. Rebuild both vite targets (done in the
+   session), pull in the GUI clone, restart the GUI.
+
+**Frontend**
+1. Open Plot Studio on a figure with one Facet factor of 3+ levels (e.g. EMG
+   muscles) and a separate-figures factor (e.g. subject). Open Appearance: the
+   **Panels** section sits under **Y axis**.
+2. Pick one panel and type Max = a value well above its data. Only that panel
+   rescales. Every panel now shows its own tick numbers, and the note *Panels
+   now have different scales…* appears. Step ◀ ▶ through the figures: the same
+   panel keeps that Max in each.
+3. Type only Min on another panel. Its top stays computed. The empty Max box
+   shows the drawn value, greyed.
+4. Type a Y title, e.g. `Soleus (µV)`. Only that panel's title changes. Set
+   Show = hide: the title disappears. Set Show = follow: your text comes back.
+5. Set **Y titles: first column only** in a 1-row grid (fixed shared range, no
+   Min/Max). The inner titles disappear and the **gaps between columns
+   shrink**. Switch back to *every panel*: the gaps return to exactly their
+   old width. Set one inner panel's Show = show: its title returns even with
+   the toggle on.
+6. Hiding one inner title while another inner title still shows does NOT
+   shrink the gap. This is expected: titles are rotated, so each one needs the
+   same width.
+7. Filter a panel's level out (Filters). Its setting moves to *Not in this
+   figure*. Clear removes it; filtering the level back in restores it if not
+   cleared.
+8. Export code and run it: panel ranges and titles match the preview.
+9. Save the plot, reopen it: the settings are restored.
+10. `scidb.log`: INFO `panel overrides [subject=01]: N applied (…), N not in
+    this figure` per figure. On export, INFO `export panel overrides: N
+    limit(s), N title(s) baked in`. DEBUG `y titles hidden: …` next to
+    `panel text reach`. Webview console: `[Plot Studio] panel_overrides_set`.
+
+---
+
+## 0zzg. Side-by-side panels: the right panel's y title clears the left panel — added 2026-09-27
+
+**What changed:** the preview spaced its panels by fixed fractions of the
+figure (6% of the width between columns, 9% of the height between rows). Text
+has a fixed size in pixels, so on a narrow figure the right panel's y title and
+tick numbers ran into the left panel. The overlap was worst when the panels have
+different y scales, because then the right panel keeps its own numbers. The
+saved file now measures how far every panel's text reaches outside its axes,
+and the preview sizes its margins and gaps from that measurement. The saved file
+also logs a WARN if one panel's text runs into its neighbour.
+
+**Backend**
+1. Python only. Restart the GUI.
+
+**Frontend**
+1. Open Plot Studio on a figure with two panels side by side (one Facet factor
+   with two levels) whose y scales differ (y-limit scope includes the facet
+   factor, so each panel has its own numbers).
+2. Shrink the export width to about 4 in. The right panel's y title and
+   numbers should sit in the gap between the panels, never over the left panel.
+3. Try **Preview at: Fit pane** and drag the pane narrower. The result should
+   be the same.
+4. Wrapped grid (3 facet levels, 2 columns) with a nested x axis and ticks at
+   90°: the top-right panel's labels and brackets should stay above the
+   bottom-left panel.
+5. `scidb.log` (DEBUG) should show `preview frame from the export's text reach
+   (left …pt (margin) / …pt (between columns) …)`. A WARN `the column gap needs
+   …px but only …px fits` means the figure is too small for its labels.
+
+---
+
+## 0zzf. Rotated x tick labels push the bracket rows down — added 2026-09-27
+
+**What changed:** on a nested x axis (two or more Grouping layers), the preview
+placed the bracket rows (the group labels and their grey rules under the ticks)
+at a fixed fraction of the figure. When the tick labels were rotated to 45 or
+90 degrees they got much taller, and the brackets were drawn on top of them.
+The preview now hangs the brackets in pixels below the tick labels' measured
+bottom, using the same measurement as the saved file. The bottom margin grows
+to fit them. The saved file already measured this, so it should look unchanged.
+
+**Backend**
+1. Rebuild nothing (Python only). Restart the GUI so it picks up the
+   `scistackplot` change.
+
+**Frontend**
+1. Open Plot Studio on a variable with two Grouping layers (e.g. session and
+   group), so the x axis shows tick labels plus one bracket row.
+2. Set the tick rotation to 0°, then 45°, then 90°. At each angle, the bracket
+   labels and rules should sit just below the lowest point of the tick labels,
+   never overlapping them, and nothing should be cut off at the bottom.
+3. Repeat with **Preview at: Fit pane** and resize the pane.
+4. Give the axis a stated x title. It should sit below the bracket rows at
+   every angle.
+5. Save the figure. The PNG's brackets should sit where the preview put them.
+6. `scidb.log` (DEBUG) should show `preview x brackets from the export:
+   tick labels reach …pt below the axes`, with a larger number at 90° than at 0°.
+
+**Update:** the gap between panel rows is now sized from the measured labels too (see 0zzg).
+
+---
+
 ## 0zze. Structure > Combine: a combined factor replaces its source — added 2026-09-26
 
 **What changed:** "+ Group levels of…" left Structure > Grouping and became

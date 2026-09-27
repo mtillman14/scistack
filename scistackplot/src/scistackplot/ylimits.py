@@ -44,6 +44,7 @@ import pandas as pd
 from scistacklog import Log
 
 from .numeric import coerce_numeric
+from .panels import PanelOverride
 from .shape import Shape
 from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic
 from .table import LongTable
@@ -300,6 +301,7 @@ def limits_for(
     key: dict[str, Any],
     scope: list[str],
     y_axis,
+    panel: PanelOverride | None = None,
 ) -> tuple[float, float] | None:
     """The limits one panel draws: its group's range, with overrides applied.
 
@@ -310,14 +312,18 @@ def limits_for(
     no limits at all silently autoscales and would be the one panel on the page
     that cannot be compared with the others.
 
-    An override end always wins; both ends override means the data is never
-    consulted, which is what lets a manual range be set on an empty figure.
+    An override end always wins, end by end: the panel's own
+    (``panel``, from ``panels.override_for``) over the figure's
+    (``y_axis.minimum``/``maximum``) over the computed range. Both ends
+    overridden means the data is never consulted, which is what lets a manual
+    range be set on an empty panel.
     """
-    if y_axis.is_manual:
+    minimum, maximum = pinned_ends(y_axis, panel)
+    if minimum is not None and maximum is not None:
         # _ordered here too: BOTH ends typed by hand is exactly the case where a
         # swapped pair reaches an axis untouched, because this path never
         # consults the data and so never passed through the ordering below.
-        return _ordered(float(y_axis.minimum), float(y_axis.maximum))
+        return _ordered(minimum, maximum)
 
     group = scope_key({name: key.get(name) for name in scope}, scope)
     found = limits.get(group)
@@ -330,11 +336,28 @@ def limits_for(
         return None
 
     low, high = found
-    if y_axis.minimum is not None:
-        low = float(y_axis.minimum)
-    if y_axis.maximum is not None:
-        high = float(y_axis.maximum)
+    if minimum is not None:
+        low = minimum
+    if maximum is not None:
+        high = maximum
     return _ordered(low, high)
+
+
+def pinned_ends(
+    y_axis, panel: PanelOverride | None = None
+) -> tuple[float | None, float | None]:
+    """The ends typed by hand for one panel, each ``None`` when computed:
+    the panel's own end over the figure's (plan D2). The one place that
+    precedence is written; ``limits_for`` and codegen read it."""
+    minimum, maximum = y_axis.minimum, y_axis.maximum
+    if panel is not None and panel.y_minimum is not None:
+        minimum = panel.y_minimum
+    if panel is not None and panel.y_maximum is not None:
+        maximum = panel.y_maximum
+    return (
+        None if minimum is None else float(minimum),
+        None if maximum is None else float(maximum),
+    )
 
 
 def describe(scope: list[str], y_axis) -> str:

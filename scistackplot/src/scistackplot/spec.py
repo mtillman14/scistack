@@ -19,6 +19,9 @@ from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from typing import Any
 
+from .diffbars import DifferenceBar
+from .panels import Y_TITLES_EVERY_PANEL, PanelOverride
+
 
 class Role(str, Enum):
     """
@@ -844,6 +847,9 @@ class TextSizes:
     legend: float | None = None
     #: The legend title; unset, it follows the entries (including a shrink).
     legend_title: float | None = None
+    #: A difference bar's label ("*"). Own size (user, 2026-09-27); unset,
+    #: it is ``base`` times ``medium``, like the tick labels.
+    differences: float | None = None
 
 
 @dataclass(frozen=True)
@@ -879,6 +885,11 @@ class StyleOptions:
     #: FONT pin is ``text.x_ticks``.
     tick_rotation: int | None = None
     tick_every: int | None = None
+    #: Which panels of a faceted grid draw their y title (the facet values):
+    #: ``"every_panel"`` or ``"first_column"`` (nothing directly to the left,
+    #: the tick numbers' rule). A panel's own ``PanelOverride.y_label_hidden``
+    #: beats it. ``panels.Y_TITLES`` lists the values.
+    y_titles: str = Y_TITLES_EVERY_PANEL
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "StyleOptions":
@@ -989,6 +1000,18 @@ class PlotSpec:
     #: raw text). Display only, and plan-irrelevant: an edit re-renders and
     #: never re-reduces. ``aliases.display_text`` is the one reader.
     aliases: dict[str, Alias] = field(default_factory=dict)
+    #: One faceted panel's own y limits and y title, over the figure's. Named
+    #: by the panel's facet values as text, so an override applies to that
+    #: panel in every ITERATE figure. One that matches no drawn panel is kept
+    #: and does nothing. ``panels.override_for`` is the one matcher
+    #: (docs/claude/per-panel-overrides.md).
+    panel_overrides: list[PanelOverride] = field(default_factory=list)
+    #: Bars joining two ticks of one panel, labelled ("*"): a statistical
+    #: test's result. Named by the panel's ITERATE + FACET values and the two
+    #: ticks' x-layer values, all as text, so a bar belongs to one figure's
+    #: panel. One that resolves nowhere is kept and does nothing.
+    #: ``diffbars`` is the one owner (.claude/plan-difference-bars.md).
+    difference_bars: list[DifferenceBar] = field(default_factory=list)
     filters: list[Filter] = field(default_factory=list)
     #: Which schema locations to draw. Written by the schema location picker,
     #: which REPLACED the flat per-key pickers — see :class:`LocationFilter` for
@@ -1150,6 +1173,8 @@ class PlotSpec:
         raw["groups"] = list(self.groups)
         raw["show_sample"] = list(self.show_sample)
         raw["aliases"] = {thing: alias.to_dict() for thing, alias in self.aliases.items()}
+        raw["panel_overrides"] = [o.to_dict() for o in self.panel_overrides]
+        raw["difference_bars"] = [b.to_dict() for b in self.difference_bars]
         # TOML has no null; drop empty optionals so a round trip is stable.
         return _drop_nulls(raw)
 
@@ -1182,6 +1207,12 @@ class PlotSpec:
                 str(thing): Alias.from_dict(entry)
                 for thing, entry in (raw.get("aliases") or {}).items()
             },
+            panel_overrides=[
+                PanelOverride.from_dict(o) for o in (raw.get("panel_overrides") or [])
+            ],
+            difference_bars=[
+                DifferenceBar.from_dict(b) for b in (raw.get("difference_bars") or [])
+            ],
             filters=[Filter(**f) for f in (raw.get("filters") or [])],
             location_filter=LocationFilter.from_dict(raw.get("location_filter") or {}),
             factor_variables=[

@@ -66,6 +66,12 @@ class XPlan:
     groups: list[XGroup] = field(default_factory=list)
     #: How many factors share the axis.
     n_layers: int = 1
+    #: Per entry of :attr:`order`, the leaf's layer values as text, outermost
+    #: first; ``None`` for a spacer. Recorded here, where the combination is
+    #: known, so nothing ever has to split a leaf key to learn which levels
+    #: it joins (a difference bar names its ends by these —
+    #: ``diffbars.slot_endpoints``).
+    leaf_values: list[tuple[str, ...] | None] = field(default_factory=list)
 
     @property
     def depth(self) -> int:
@@ -136,6 +142,7 @@ def plan_x_axis(
 
     order: list[str] = []
     tick_labels: list[str] = []
+    leaf_values: list[tuple[str, ...] | None] = []
     # Where each group currently being accumulated started, keyed by depth.
     open_groups: dict[int, tuple[str, int]] = {}
     groups: list[XGroup] = []
@@ -164,6 +171,7 @@ def plan_x_axis(
                 for _ in range(len(prefix) - shallowest):
                     order.append(f"{SPACER_PREFIX}{spacer_count}")
                     tick_labels.append("")
+                    leaf_values.append(None)
                     spacer_count += 1
 
         for depth, value in enumerate(prefix):
@@ -172,6 +180,7 @@ def plan_x_axis(
 
         order.append(leaf_key(combo))
         tick_labels.append(str(combo[-1]))
+        leaf_values.append(tuple(str(value) for value in combo))
         previous = combo
 
     for depth, (label, start) in open_groups.items():
@@ -179,5 +188,9 @@ def plan_x_axis(
 
     groups.sort(key=lambda group: (group.depth, group.start))
     return XPlan(
-        order=order, tick_labels=tick_labels, groups=groups, n_layers=n_layers
+        order=order,
+        tick_labels=tick_labels,
+        groups=groups,
+        n_layers=n_layers,
+        leaf_values=leaf_values,
     )

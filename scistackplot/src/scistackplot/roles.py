@@ -25,6 +25,7 @@ from dataclasses import dataclass, field, replace
 
 from scistacklog import Log
 
+from .panels import y_titles_problem
 from .shape import Shape
 from .spec import MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
 from .table import LongTable
@@ -981,6 +982,9 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
         problem = weight_problem(getattr(spec.style, name))
         if problem is not None:
             raise RoleError(f"style.{name} {problem}.")
+    problem = y_titles_problem(spec.style.y_titles)
+    if problem is not None:
+        raise RoleError(f"style.y_titles {problem}.")
 
     # --- roles name real factors ----------------------------------------
     unknown =[name for name in spec.roles if not table.has_factor(name)]

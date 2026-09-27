@@ -95,6 +95,8 @@ from .roles import (
     with_requirements_for,
 )
 from .restore import NoteKind, RestoreError, RestoreNote, Restored, reconcile, restore_spec
+from .diffbars import DifferenceBar, bars_for_panel, slot_endpoints
+from .panels import PanelOverride, override_for
 from .shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
 from .spec import (
@@ -191,6 +193,13 @@ __all__ = [
     "NoteKind",
     "FacetOptions",
     "YAxis",
+    # per-panel overrides (docs/claude/per-panel-overrides.md)
+    "PanelOverride",
+    "override_for",
+    # difference bars (.claude/plan-difference-bars.md)
+    "DifferenceBar",
+    "bars_for_panel",
+    "slot_endpoints",
     "eligible_scope",
     "limits_by_scope",
     "describe_y_limits",

@@ -238,7 +238,7 @@ def test_group_brackets_stay_out_of_the_row_below():
     brackets into the gap that separates the two rows.
     """
     from scistackplot import FacetOptions, render_plotly
-    from scistackplot.render.plotly_ import X_GROUP_ROW
+    from scistackplot.render.plotly_ import UPRIGHT_LINE_HEIGHT
 
     rows = [
         {"group": g, "session": s, "site": site, "subject": p, "StepLength": 1.0}
@@ -266,16 +266,24 @@ def test_group_brackets_stay_out_of_the_row_below():
         facet=FacetOptions(n_cols=2),
     )
 
-    layout = render_plotly(resolve(spec, table)[0])["layout"]
+    # The brackets hang in PIXELS below their domain (base.BracketGeometry)
+    # while the gap is a fraction of the figure, so check at a known size.
+    size = 600
+    layout = render_plotly(resolve(spec, table)[0], fixed_size_px=(size, size))["layout"]
+    plot_px = size - layout["margin"]["t"] - layout["margin"]["b"]
     # slots: 1=(0,0) 2=(0,1) 3=(1,0). Only (0,1) and (1,0) draw brackets — and
     # the top row's are the ones on the right-hand column's axis.
-    top_row_brackets = [a["y"] for a in layout["annotations"] if a["xref"] == "x2"]
+    top_row_brackets = [a for a in layout["annotations"] if a["xref"] == "x2"]
     assert top_row_brackets
-    lowest_in_top_row = min(top_row_brackets)
-    row_below_top = layout["yaxis3"]["domain"][1]
+    # Top-anchored: a label's bottom is its anchor, shifted, less its height.
+    lowest_in_top_row = min(
+        a["y"] * plot_px + a["yshift"] - UPRIGHT_LINE_HEIGHT * a["font"]["size"]
+        for a in top_row_brackets
+    )
+    row_below_top = layout["yaxis3"]["domain"][1] * plot_px
 
     # Clearance for the label's own height, not merely a non-overlap.
-    assert lowest_in_top_row - row_below_top >= X_GROUP_ROW
+    assert lowest_in_top_row >= row_below_top
 
 
 # --- refusals --------------------------------------------------------------

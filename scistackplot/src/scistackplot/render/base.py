@@ -18,6 +18,13 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from ..panels import (
+    Y_TITLES_FIRST_COLUMN,
+    PanelOverride,
+    override_for,
+    panel_key_text,
+    unmatched,
+)
 from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, RUN, SERIES, ResolvedPlot
 from ..roles import overlay_in_legend
 from ..spec import PlotKind
@@ -83,6 +90,90 @@ def ruled_bracket_depths(plan_depth: int, shown: set[int]) -> set[int]:
     }
 
 
+#: Clear space below the tick labels before the first bracket row, and between
+#: bracket rows, in points. Points, not a fraction of the axes: a fraction of
+#: a short panel is smaller than the tick labels, which is how brackets came to
+#: sit on top of them (spec/images/graph2.png).
+X_GROUP_GAP_PT = 4.0
+
+#: Between a bracket's rule and its label, in points.
+X_GROUP_RULE_GAP_PT = 2.0
+
+
+@dataclass(frozen=True)
+class BracketGeometry:
+    """Where the bracket rows hang below an axes, in points from its bottom edge.
+
+    ONE owner for both backends. The export MEASURES ``tick_depth_pt`` (how far
+    the drawn tick labels reach below the axes) and ``row_height_pt`` (the
+    tallest fitted bracket label), so a label rotated to 45 or 90 degrees —
+    whose depth is its length, not its font size — pushes every row beneath it
+    down. The preview draws from the same numbers (1 pt = 1 px) instead of
+    placing brackets at a fixed fraction of the figure, which left them on top
+    of rotated tick labels.
+    """
+
+    tick_depth_pt: float
+    row_height_pt: float
+
+    @property
+    def step_pt(self) -> float:
+        """One bracket row, label and the gaps around its rule."""
+        return self.row_height_pt + X_GROUP_RULE_GAP_PT + X_GROUP_GAP_PT
+
+    def rule_pt(self, depth: int, plan_depth: int) -> float:
+        """Below the axes, the rule of the row at ``depth`` (depth 0 is the
+        outermost layer, furthest below; deeper layers sit nearer the axis)."""
+        return self.tick_depth_pt + X_GROUP_GAP_PT + (plan_depth - depth - 1) * self.step_pt
+
+    def label_pt(self, depth: int, plan_depth: int) -> float:
+        """Below the axes, the TOP of the labels of the row at ``depth``."""
+        return self.rule_pt(depth, plan_depth) + X_GROUP_RULE_GAP_PT
+
+    def title_pad_pt(self, plan_depth: int) -> float:
+        """From the bottom of the tick labels to the axis title: clear of every row."""
+        return X_GROUP_GAP_PT + plan_depth * self.step_pt
+
+    def bottom_pt(self, plan_depth: int) -> float:
+        """Below the axes, the bottom of the outermost row's labels."""
+        return self.tick_depth_pt + plan_depth * self.step_pt
+
+    def describe(self) -> str:
+        return (
+            f"tick labels reach {self.tick_depth_pt:.1f}pt below the axes, "
+            f"bracket rows {self.step_pt:.1f}pt apart"
+        )
+
+
+@dataclass(frozen=True)
+class GridReach:
+    """How far the panels' text reaches OUTSIDE their axes, in points.
+
+    Measured by the export (``mpl._grid_reach``: axes box vs its tight box, so
+    tick labels at any rotation, bracket rows and axis titles all count), and
+    read by the preview to size its margins and the gaps between cells (1 pt
+    = 1 px). A gap sized as a fraction of the figure was the wrong unit: text
+    has a size in points whatever the figure's width, so the right panel's y
+    title ran into the left panel on a narrow figure, and 90 degree tick
+    labels on an inner row reached the row below.
+
+    ``outer`` is text in the figure margin (column 0's left side, the bottom
+    row's underside); ``inner`` is text drawn into a gap between two cells.
+    """
+
+    left_outer_pt: float
+    left_inner_pt: float
+    below_outer_pt: float
+    below_inner_pt: float
+
+    def describe(self) -> str:
+        return (
+            f"left {self.left_outer_pt:.1f}pt (margin) / {self.left_inner_pt:.1f}pt "
+            f"(between columns), below {self.below_outer_pt:.1f}pt (margin) / "
+            f"{self.below_inner_pt:.1f}pt (between rows)"
+        )
+
+
 def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
     """Same idea on the other axis: nothing directly to the left.
 
@@ -94,6 +185,14 @@ def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
     """
     if not shares_y_axis(resolved):
         return True
+    return is_leftmost(resolved, row, col)
+
+
+def is_leftmost(resolved: ResolvedPlot, row: int, col: int) -> bool:
+    """Whether nothing sits directly to the left of this cell: the first
+    column, including a panel in a partial wrapped row whose left cell is
+    empty. The one "first column" rule, for the tick numbers
+    (:func:`shows_y_labels`) and ``StyleOptions.y_titles`` (:func:`shows_panel_y_title`)."""
     return (row, col - 1) not in occupied_cells(resolved)
 
 
@@ -112,13 +211,79 @@ def panel_y_title(resolved: ResolvedPlot, panel, *, leftmost: bool) -> str:
 
     It follows that a faceted panel labels its axis wherever it sits: the text
     identifies THIS panel, so the "leftmost only" rule (which exists to stop a
-    shared label being repeated) does not apply to it.
+    shared label being repeated) does not apply to it — unless the user asks
+    for it (``StyleOptions.y_titles``) or hides/replaces this panel's title
+    (``PanelOverride``; :func:`shows_panel_y_title`). A hidden title is ``""``,
+    which measures to nothing, so the column gap it took is given back
+    (``mpl._grid_reach`` -> ``GridReach`` -> plotly ``_frame``).
     """
     if panel is not None and panel.key:
+        override = override_for(resolved.spec, panel.key)
+        if not shows_panel_y_title(resolved, panel, override):
+            return ""
+        if override is not None and override.y_label is not None:
+            # Exactly as typed: no aliases.
+            return override.y_label
         # The TEXT of the facet values (aliased); `panel.title` stays the raw
         # identity the layout rules match.
         return resolved.text.panel_title(panel.key)
     return resolved.labels.y if leftmost else ""
+
+
+def shows_panel_y_title(
+    resolved: ResolvedPlot, panel, override: PanelOverride | None = None
+) -> bool:
+    """Whether a FACETED panel draws its y title (plan D5/D6).
+
+    The panel's own ``y_label_hidden`` wins when set (``False`` forces the
+    title on against the grid toggle); otherwise ``StyleOptions.y_titles``
+    decides: ``every_panel``, or ``first_column`` = :func:`is_leftmost`.
+    """
+    if override is not None and override.y_label_hidden is not None:
+        return not override.y_label_hidden
+    if resolved.spec.style.y_titles == Y_TITLES_FIRST_COLUMN:
+        return is_leftmost(resolved, panel.grid_row, panel.grid_col)
+    return True
+
+
+def panel_override_meta(resolved: ResolvedPlot) -> dict:
+    """What the GUI's Panels section shows, decided here (``layout.meta``).
+
+    ``match`` is each panel's facet values as TEXT (``panels.panel_key_text``),
+    ready to be written back as ``PanelOverride.match`` — the GUI never turns a
+    value into text itself. ``y_title`` is the title drawn ("" when hidden),
+    ``y_limits`` the range drawn, ``override`` the matched entry or None.
+    ``unmatched`` lists overrides for panels not in this figure (inert).
+    """
+    at_left = {
+        id(panel): shows_y_labels(resolved, panel.grid_row, panel.grid_col)
+        for panel in resolved.panels
+    }
+    panels = []
+    for panel in resolved.panels:
+        if not panel.key:
+            continue
+        override = override_for(resolved.spec, panel.key)
+        panels.append(
+            {
+                "match": {name: panel_key_text(value) for name, value in panel.key.items()},
+                "display_title": resolved.text.panel_title(panel.key),
+                "y_title": panel_y_title(resolved, panel, leftmost=at_left[id(panel)]),
+                "grid_row": panel.grid_row,
+                "grid_col": panel.grid_col,
+                "y_limits": list(panel.y_limits) if panel.y_limits else None,
+                "override": override.to_dict() if override is not None else None,
+            }
+        )
+    return {
+        "panels": panels,
+        "unmatched": [
+            override.to_dict()
+            for override in unmatched(resolved.spec, [panel.key for panel in resolved.panels])
+        ],
+        "y_titles": resolved.spec.style.y_titles,
+        "shares_y": shares_y_axis(resolved),
+    }
 
 
 def is_categorical_x(resolved: ResolvedPlot) -> bool:

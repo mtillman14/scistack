@@ -447,6 +447,10 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # decision with its reason — all decided in `roles`, so the panel
         # displays and never re-derives.
         "sample_overlay": sample_overlay_summary(spec, roles, collapsed, shape),
+        # Difference bars: whether this kind and shape can carry them at all,
+        # and why not (`diffbars.unavailable`). Whether the FIGURE has two
+        # ticks to join is in `layout.meta`, from the drawn figure.
+        "difference_bars": _difference_bars_summary(spec, shape),
         # "Save data": whether the plot's long table can be written, why not,
         # and the depth picker's choices with the header each would write —
         # the same answer `export.plot_data` validates against.
@@ -464,6 +468,13 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         "grouping": grouping_summary(spec, collapsed),
         "variants": variant_summary(spec, table),
     }
+
+
+def _difference_bars_summary(spec: PlotSpec, shape: Shape) -> dict:
+    from .diffbars import unavailable
+
+    reason = unavailable(spec, shape)
+    return {"available": reason is None, "reason": reason}
 
 
 def sample_overlay_summary(

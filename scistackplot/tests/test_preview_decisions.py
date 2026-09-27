@@ -154,3 +154,33 @@ def test_hidden_ticks_leave_the_innermost_brackets_unruled_in_the_preview(gait_t
         if str(a.get("name", "")).startswith(X_GROUP_TAG)
     ]
     assert labels and all(a["text"] for a in labels)
+
+
+@pytest.mark.parametrize("rotation", [45, 90])
+def test_rotated_ticks_push_the_preview_brackets_down(gait_table, rotation):
+    """The preview hangs its brackets from the EXPORT's measured tick-label
+    depth, in pixels (1 pt = 1 px). At a fixed fraction of the figure they sat
+    on top of 45 and 90 degree tick labels."""
+    upright = _one(_graph1(tick_rotation=0), gait_table)
+    rotated = _one(_graph1(tick_rotation=rotation), gait_table)
+    shifts = {}
+    for name, resolved in (("upright", upright), ("rotated", rotated)):
+        decisions = layout_decisions(resolved)
+        geometry = decisions["bracket_geometry"]
+        depth = resolved.x_plan.depth
+        layout = render_plotly(resolved, decisions=decisions)["layout"]
+        labels = [
+            a for a in layout["annotations"] if str(a.get("name", "")).startswith(X_GROUP_TAG)
+        ]
+        assert labels
+        for note in labels:
+            group_depth = int(note["name"].split(":")[1])
+            assert note["yshift"] == pytest.approx(-geometry.label_pt(group_depth, depth))
+        for rule in _bracket_rules({"layout": layout}):
+            assert rule["ysizemode"] == "pixel"
+            group_depth = int(rule["name"].split(":")[1])
+            assert rule["y0"] == pytest.approx(-geometry.rule_pt(group_depth, depth))
+        # Every row fits in the bottom margin.
+        assert layout["margin"]["b"] >= geometry.bottom_pt(depth)
+        shifts[name] = min(a["yshift"] for a in labels)
+    assert shifts["rotated"] < shifts["upright"]

@@ -50,6 +50,10 @@ const KNOWN: Record<string, { label: string; title: string }> = {
     title: 'Legend entries. Fixed, the legend may move below the plot but is never shrunk',
   },
   legend_title: { label: 'Legend title', title: 'Empty, it follows the legend entries' },
+  differences: {
+    label: 'Differences',
+    title: 'The label over each difference bar ("*"). Empty, it is the font size',
+  },
 }
 
 /** Before the first render there is no meta; the boxes still show. */
