@@ -233,6 +233,38 @@ class LongTable:
             )
             return {}
 
+    #: Where the PROJECT's mark colours come from: a zero-argument callable
+    #: returning the plain form ``scidb.colors`` produces (``"default"`` ->
+    #: colour text, ``thing`` -> ``{level: colour text}``), or None. A reader,
+    #: not a snapshot, for the reasons :attr:`aliases_source` gives. Read
+    #: through :meth:`project_colors`.
+    colors_source: Any = None
+
+    def project_colors(self) -> tuple[str | None, dict[str, dict[str, str]]]:
+        """The project layer of mark colours, read now: ``(default, {thing:
+        {level: colour text}})``. Colour TEXT — ``colors.merge`` parses it.
+        Empty when the source has none or the read fails (a figure never fails
+        over a colour). A string value is the setting, a table a thing — the
+        type rule of ``scidb.colors``."""
+        if self.colors_source is None:
+            return None, {}
+        try:
+            raw = self.colors_source() or {}
+            default = raw.get("default")
+            levels = {
+                str(thing): {str(level): colour for level, colour in entry.items()}
+                for thing, entry in raw.items()
+                if isinstance(entry, dict)
+            }
+            return (default if isinstance(default, str) else None), levels
+        except Exception as exc:
+            Log.warn(
+                "project colours unavailable (%s) — figures use the palette",
+                exc,
+                layer="scistackplot",
+            )
+            return None, {}
+
     # ---- lookups ---------------------------------------------------------
 
     @property

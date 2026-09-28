@@ -93,6 +93,7 @@ import {
   type TextSizesValue,
 } from './textSizes'
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
+import ColorsSection, { type ProjectColorEdit } from './ColorsSection'
 import PanelsSection from './PanelsSection'
 import DifferenceBarsSection from './DifferenceBarsSection'
 import CompareSection from './CompareSection'
@@ -118,6 +119,7 @@ import {
   type YTitles,
 } from './panelOverrides'
 import { type Labelable, type SpecAliases } from './aliasEdit'
+import { plotMarkColor, type Colorable, type SpecColors } from './colorEdit'
 import { type MarkWeightsMeta, type WeightKey, weightTitle, withWeight } from './markWeights'
 import { copyFigurePng } from './clipboardPng'
 import {
@@ -664,6 +666,9 @@ interface Spec {
   /** What this plot's factors, levels and measure read as (`PlotSpec.aliases`):
    *  over the project's `[aliases]`. Edited by the Labels section. */
   aliases?: SpecAliases
+  /** What colour this plot paints each level in (`PlotSpec.colors`): over
+   *  the project's `[colors]`. Edited by the Colours section. */
+  colors?: SpecColors
   /** One faceted panel's own y limits / y title (`PlotSpec.panel_overrides`).
    *  Edited by Appearance > Panels through panelOverrides.ts. */
   panel_overrides?: PanelOverride[]
@@ -1480,6 +1485,22 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, aliases: next } : prev))
   }, [])
 
+  const setColors = useCallback((next: SpecColors) => {
+    setSpec(prev => (prev ? { ...prev, colors: next } : prev))
+  }, [])
+
+  /** The plot's one mark colour (`style.mark_color`); null deletes the key,
+   *  so a reopened saved plot does not read as modified. */
+  const setMarkColor = useCallback((value: string | null) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const style: Record<string, unknown> = { ...(prev.style ?? {}) }
+      if (value === null) delete style.mark_color
+      else style.mark_color = value
+      return { ...prev, style: style as Spec['style'] }
+    })
+  }, [])
+
   /** Resolve the SAME spec again: after a project alias is written the spec
    *  has not changed, so nothing else would redraw the figure. Queues behind
    *  a running resolve like any other. */
@@ -1498,6 +1519,18 @@ export default function PlotStudio({
       callBackend('plot_project_alias_set', { ...edit }).then(reply => {
         const result = reply as { ok: boolean; error?: string }
         if (!result.ok) return result.error ?? 'The project alias was not written.'
+        refreshResolve()
+        return null
+      }),
+    [refreshResolve]
+  )
+
+  /** One edit to the project's [colors]; resolves to an error or null. */
+  const writeProjectColor = useCallback(
+    (edit: ProjectColorEdit): Promise<string | null> =>
+      callBackend('plot_project_color_set', { ...edit }).then(reply => {
+        const result = reply as { ok: boolean; error?: string }
+        if (!result.ok) return result.error ?? 'The project colour was not written.'
         refreshResolve()
         return null
       }),
@@ -3450,6 +3483,23 @@ export default function PlotStudio({
                 onTitle={setTitleText}
                 onAliases={setAliases}
                 onProject={writeProjectAlias}
+                projectEnabled={!csvPath}
+              />
+            </Section>
+
+            {/* Mark colours per painted level, and the single mark colour.
+                A CSV plot has no project: the plot's own colours only. */}
+            <Section title="Colours">
+              <ColorsSection
+                colorable={
+                  (figures[0]?.figure?.layout?.meta as { colorable?: Colorable[] } | undefined)
+                    ?.colorable ?? []
+                }
+                colors={spec?.colors}
+                markColor={plotMarkColor(spec?.style)}
+                onColors={setColors}
+                onMarkColor={setMarkColor}
+                onProject={writeProjectColor}
                 projectEnabled={!csvPath}
               />
             </Section>

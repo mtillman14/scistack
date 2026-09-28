@@ -244,7 +244,7 @@ class BaseSource:
                     table = self._build_table(
                         measures, x_measure=x_measure, factor_variables=factor_variables
                     )
-                    table = self._attach_aliases_source(table)
+                    table = self._attach_project_sources(table)
                 # Size the result in cells and SAMPLES, not just rows: a row count
                 # cannot tell 4190 short arrays from 4190 quarter-million-sample
                 # ones, and that distinction is the whole question for a plot that
@@ -298,13 +298,25 @@ class BaseSource:
         """
         return None
 
-    def _attach_aliases_source(self, table: LongTable) -> LongTable:
-        """``table`` carrying :meth:`_aliases_source`, set once at build time
-        (a copy, before it is published to the memo — nothing is mutated)."""
-        source = self._aliases_source()
-        if source is None or table.aliases_source is not None:
-            return table
-        return replace(table, aliases_source=source)
+    def _colors_source(self) -> "Callable[[], dict] | None":
+        """The live reader of this source's PROJECT mark colours, or None —
+        :meth:`_aliases_source`'s twin for ``[colors]`` (``scidb.colors``).
+        Not part of :meth:`_cache_generation` either: colours are display
+        only."""
+        return None
+
+    def _attach_project_sources(self, table: LongTable) -> LongTable:
+        """``table`` carrying :meth:`_aliases_source` and
+        :meth:`_colors_source`, set once at build time (a copy, before it is
+        published to the memo — nothing is mutated)."""
+        changes = {}
+        aliases = self._aliases_source()
+        if aliases is not None and table.aliases_source is None:
+            changes["aliases_source"] = aliases
+        colors = self._colors_source()
+        if colors is not None and table.colors_source is None:
+            changes["colors_source"] = colors
+        return replace(table, **changes) if changes else table
 
     def _current_table_cache(self) -> dict:
         """The memo, emptied first if :meth:`_cache_generation` has moved.

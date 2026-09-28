@@ -238,6 +238,34 @@ def set_project_alias(
     return {"ok": True, "aliases": table}
 
 
+def set_project_color(
+    thing: "str | None",
+    *,
+    level: "str | None" = None,
+    color: "str | None" = None,
+) -> dict:
+    """Write one PROJECT mark colour (``[colors]`` in scistack.toml).
+
+    ``thing=None`` is the single mark colour (``[colors] default``). The
+    write is ``scistack_gui.config.set_project_color`` (which canonicalises
+    the colour through ``scistackplot.colors.parse_color``). As with
+    :func:`set_project_alias`, no table is dropped — a built table reads the
+    project's colours live (``LongTable.colors_source``) — and a refusal
+    (packaged project, no config, text that is not a colour) is
+    ``{ok: False, error}``.
+    """
+    from scistack_gui.config import set_project_color as write_color
+    from scistack_gui.db import get_db_path
+
+    try:
+        table = write_color(get_db_path(), thing, level=level, color=color)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        logger.warning("[plot] project colour not written: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    _last_resolved.clear()
+    return {"ok": True, "colors": table}
+
+
 # ---------------------------------------------------------------------------
 # Describe
 # ---------------------------------------------------------------------------

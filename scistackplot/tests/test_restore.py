@@ -107,12 +107,14 @@ def full_spec() -> PlotSpec:
             sample_weight=2.5,
             line_weight=0.5,
             alpha=0.5,
+            mark_color="#123456",
             hide_legend_ticks=True,
             tick_rotation=45,
             tick_every=2,
             y_titles="first_column",
         ),
         aliases={"session": Alias(name="Visit", levels={"01": "One"})},
+        colors={"session": {"01": "#ff0000"}},
         panel_overrides=[
             PanelOverride(
                 match={"trial": "01"},

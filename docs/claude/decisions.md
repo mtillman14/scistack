@@ -8,6 +8,42 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-09-27-1 — Mark colours: plot over project over palette, paint only
+
+**Context.** The user wanted to choose the colours of summary marks (bars,
+violins, boxes, lines), per plot or per project, with a colour picker in
+the GUI.
+
+**Decision.**
+- **Layers.** The plot (`PlotSpec.colors`, plus `style.mark_color` for a
+  figure with no colour layer) wins over the project (`[colors]` in the
+  project config), which wins over the palette. The palette colour is taken
+  at the level's DECLARED position, so pinning one level moves no other.
+- **Grammar.** `[colors]` is a SEPARATE table from `[aliases]`: an alias is
+  what a thing reads as, a colour is how it is painted.
+  - `[colors.<thing>]` maps level text to a colour.
+  - `[colors] default` is the single mark colour.
+  - A string under `[colors]` is a setting and a table is a thing.
+  
+  The TOML grammar is owned by `scidb.colors`. The colour text grammar is
+  owned by `scistackplot.colors.parse_color` alone, canonicalised to
+  `#rrggbb`.
+- **Drawing.** `render.base.palette_for` / `sample_palette_for` stay the ONE
+  owner of a mark's colour and read `ResolvedPlot.colors` first. A pin on
+  the Show sample colour key paints the overlay too.
+- **Rebuilding.** Colours are plan-irrelevant. The project layer is a live
+  reader on the table (`LongTable.colors_source`), as for aliases.
+- **Export.** The merged pins are baked into the exported code as literals.
+  With no pins, the export is byte-identical to before.
+- **Scope.** Heatmap colormaps are out of scope.
+
+**Consequences.** A project colour edit needs a re-export of the `plot_`
+step. Every whole-file scistack.toml writer must carry `colors=`.
+
+**Full doc.** `docs/claude/plot-colors.md`.
+
+---
+
 ## D-2026-09-24-2 — Display aliases: project over raw, plot over project, text only
 
 **Context.** Figures show raw levels and names (`BL`, `F`, `StepLength`).

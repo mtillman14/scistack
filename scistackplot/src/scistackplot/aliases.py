@@ -215,7 +215,7 @@ def display_text(spec: PlotSpec, table: LongTable) -> DisplayText:
     the project config reaches the next resolve with nothing rebuilt.
     """
     names, levels = merge(table.project_aliases(), spec.aliases)
-    return DisplayText(names=names, levels=levels, keys=_lookup_keys(spec))
+    return DisplayText(names=names, levels=levels, keys=lookup_keys(spec))
 
 
 def merge(
@@ -252,9 +252,11 @@ def merge(
     return names, levels
 
 
-def _lookup_keys(spec: PlotSpec) -> dict[str, tuple[str, ...]]:
+def lookup_keys(spec: PlotSpec) -> dict[str, tuple[str, ...]]:
     """A grouping column's entries: its qualified label first, then its bare
-    factor name (``Demographics.Sex``, then ``Sex``)."""
+    factor name (``Demographics.Sex``, then ``Sex``). ONE owner of
+    the key resolution: the colour pins (``colors.mark_colors``) look up the
+    same keys."""
     keys: dict[str, tuple[str, ...]] = {}
     for grouping in spec.factor_variables:
         factor = grouping.factor_name

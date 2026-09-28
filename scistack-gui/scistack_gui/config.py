@@ -1105,6 +1105,7 @@ def _render_scistack_toml(
     matlab_entities_file=None,
     schema_keys: dict | None = None,
     aliases: dict | None = None,
+    colors: dict | None = None,
 ) -> str:
     """Render a complete scistack.toml from known [tool.scistack] fields.
 
@@ -1169,6 +1170,16 @@ def _render_scistack_toml(
         from scidb.aliases import render_aliases_table
 
         rendered = render_aliases_table(aliases)
+        if rendered:
+            lines.append("")
+            lines.append(rendered.rstrip("\n"))
+    # `[colors]` likewise: mark colours every plot reads (scidb.colors). Its
+    # `default` sits under the bare `[colors]` header, which is a table too,
+    # so it is still safe here after every top-level key.
+    if colors:
+        from scidb.colors import render_colors_table
+
+        rendered = render_colors_table(colors)
         if rendered:
             lines.append("")
             lines.append(rendered.rstrip("\n"))
@@ -1329,6 +1340,7 @@ def add_path(db_path: Path, new_path: Path) -> Path:
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
         aliases=section.get("aliases"),
+        colors=section.get("colors"),
     )
     target_path.write_text(content)
     logger.info("[config] add_path: wrote %s (added %s)", target_path, new_str)
@@ -1391,6 +1403,7 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
         aliases=section.get("aliases"),
+        colors=section.get("colors"),
     )
     toml_path.write_text(content)
     logger.info("[config] remove_path: wrote %s (removed %s)", toml_path, target)
@@ -1595,6 +1608,7 @@ def set_entities_file(
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
         aliases=section.get("aliases"),
+        colors=section.get("colors"),
     )
     target_path.write_text(content)
     logger.info(
@@ -1684,6 +1698,7 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
         aliases=section.get("aliases"),
+        colors=section.get("colors"),
     )
     target_path.write_text(content)
     logger.info(
@@ -1739,6 +1754,7 @@ def clear_entities_file(db_path: Path) -> Path:
         # whole file from the fields it knows.
         schema_keys=section.get("schema_keys"),
         aliases=section.get("aliases"),
+        colors=section.get("colors"),
     )
     toml_path.write_text(content)
     logger.info(
@@ -1816,6 +1832,7 @@ def set_project_alias(
         matlab_entities_file=matlab_section.get("entities_file"),
         schema_keys=section.get("schema_keys"),
         aliases=table,
+        colors=section.get("colors"),
     )
     toml_path.write_text(content)
     # The reader caches on mtime; two writes inside one filesystem tick would
@@ -1825,5 +1842,80 @@ def set_project_alias(
         "[config] set_project_alias: wrote %s ([aliases] now %s)",
         toml_path,
         _aliases.describe(table) or "empty",
+    )
+    return table
+
+
+def set_project_color(
+    db_path: Path,
+    thing: "str | None",
+    *,
+    level: "str | None" = None,
+    color: "str | None" = None,
+) -> dict:
+    """Set or clear one PROJECT mark colour in scistack.toml's ``[colors]``
+    and return the table as written.
+
+    ``thing=None`` is the single mark colour (``[colors] default``);
+    otherwise ``level`` names the level. ``color`` None/"" clears. A colour
+    is canonicalised through ``scistackplot.colors.parse_color`` (the one
+    owner of what a colour may be written as) BEFORE the write, so the file
+    only ever holds ``#rrggbb`` from here, and a bad one is refused
+    (``ColorError``, a ValueError) with nothing written. The edit is
+    ``scidb.colors.with_color`` and the text ``scidb.colors.render_colors_table``,
+    through the whole-file writer. The refusals of
+    :func:`set_project_alias` apply: no pyproject.toml, no new config.
+    """
+    from scidb import colors as _colors
+    from scistackplot.colors import parse_color
+
+    logger.info(
+        "[config] set_project_color: thing=%r level=%r color=%r",
+        thing,
+        level,
+        color,
+    )
+    canonical = parse_color(color) if color else None
+    project_root = resolve_project_root(None, db_path)
+    toml_path = locate_config_at(project_root)
+    if toml_path is None:
+        raise FileNotFoundError(
+            f"No scistack.toml at {project_root}. Colours can only be saved to "
+            "a project config; set this one for the plot instead."
+        )
+    if toml_path.name == "pyproject.toml":
+        where = "default" if thing is None else thing
+        raise ValueError(
+            f"Packaged project ({toml_path}): the GUI does not edit "
+            f"pyproject.toml. Add it by hand under [tool.scistack.colors] "
+            f"({where}), or set it for this plot instead."
+        )
+
+    section = _load_raw_scistack_section(toml_path)
+    table = _colors.with_color(section.get("colors"), thing, level=level, color=canonical)
+    matlab_section = dict(section.get("matlab", {}))
+    content = _render_scistack_toml(
+        modules=list(section.get("modules", [])),
+        entities_file=section.get("entities_file"),
+        glue_dir=section.get("glue_dir"),
+        variable_file=section.get("variable_file"),
+        packages=list(section.get("packages", [])),
+        auto_discover=section.get("auto_discover", True),
+        matlab_functions=list(matlab_section.get("functions", [])),
+        matlab_variables=list(matlab_section.get("variables", [])),
+        matlab_sources=list(matlab_section.get("sources", [])),
+        matlab_variable_dir=matlab_section.get("variable_dir"),
+        matlab_entities_file=matlab_section.get("entities_file"),
+        schema_keys=section.get("schema_keys"),
+        aliases=section.get("aliases"),
+        colors=table,
+    )
+    toml_path.write_text(content)
+    # Same reason as set_project_alias: forget the mtime-cached parse.
+    _colors.clear_cache()
+    logger.info(
+        "[config] set_project_color: wrote %s ([colors] now %s)",
+        toml_path,
+        _colors.describe(table) or "empty",
     )
     return table

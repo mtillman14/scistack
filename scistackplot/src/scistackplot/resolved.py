@@ -22,6 +22,7 @@ from typing import Any
 import pandas as pd
 
 from .aliases import DisplayText
+from .colors import MarkColors
 from .spec import PlotKind, PlotSpec
 
 #: Canonical column names inside a panel frame. Renderers address these, never
@@ -273,6 +274,11 @@ class ResolvedPlot:
     #: this and never stringify a level themselves; every identity above
     #: (keys, orders, offsets) stays raw. Empty reads everything raw.
     text: DisplayText = field(default_factory=DisplayText)
+    #: The colour pins of this figure (``colors.MarkColors``: the plot's over
+    #: the project's), told which factor paints the marks and which the
+    #: overlay. ``render.base.palette_for`` / ``sample_palette_for`` read it
+    #: before the palette; empty pins nothing.
+    colors: MarkColors = field(default_factory=MarkColors)
     #: What the GUI's Labels section offers for this figure (``aliases.labelable``):
     #: the measure and every factor drawn as text, each with its alias key,
     #: name and levels as ``{raw, text, origin}``. Shipped as

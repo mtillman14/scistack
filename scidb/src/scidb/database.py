@@ -2124,6 +2124,33 @@ class DatabaseManager:
                 )
         return table
 
+    @property
+    def dataset_colors(self) -> "dict[str, object]":
+        """``{"default": "#…", thing: {level: "#…"}}`` from the project's
+        ``[colors]``, LIVE — the mark colours every plot starts from.
+
+        The discipline of :attr:`dataset_aliases`: read through
+        :func:`scidb.colors.project_colors` on every access, validated when
+        the content CHANGES. Display only: nothing in scidb reads it.
+        """
+        from . import colors as _colors
+
+        table = _colors.project_colors()
+        if table is not getattr(self, "_validated_colors", None):
+            self._validated_colors = table
+            if _colors.things_of(table):
+                try:
+                    variables = [
+                        str(name) for name in self.list_variables()["variable_name"]
+                    ]
+                except Exception as exc:  # a closed or half-open database
+                    Log.debug(f"[colors] variable names unavailable for validation: {exc}")
+                    variables = []
+                _colors.validate(
+                    table, schema_keys=self.dataset_schema_keys, variables=variables
+                )
+        return table
+
     def _sort_by_schema_keys(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sort DataFrame by schema keys with numeric sorting for numeric-only columns.
 

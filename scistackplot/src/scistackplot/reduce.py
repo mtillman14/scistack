@@ -53,6 +53,8 @@ from .resolved import (
     Z,
 )
 from .aliases import DisplayText, check_distinct, display_text, labelable, log_summary
+from .colors import MarkColors, mark_colors
+from .colors import log_summary as log_colors
 from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import (
     CollapseSteps,
@@ -150,6 +152,7 @@ _PLAN_IRRELEVANT_FIELDS = (
     "facet",
     "style",
     "aliases",
+    "colors",
     "panel_overrides",
     "difference_bars",
     "comparison",
@@ -332,6 +335,9 @@ def resolve(
         # summarised once; each figure is told its roles by `_build_figure`.
         text = display_text(plan.spec, plan.table)
         log_summary(text, plan.table)
+        # The colour pins, the same way: merged once, told their roles per figure.
+        colors = mark_colors(plan.spec, plan.table)
+        log_colors(colors, plan.table)
 
         total = len(plan.groups)
         Log.info(
@@ -364,6 +370,7 @@ def resolve(
                     y_scope=plan.y_scope,
                     y_limits=plan.y_limits,
                     text=text,
+                    colors=colors,
                 )
             )
         for figure in figures:
@@ -769,6 +776,9 @@ def resolve_one(
             plan = _plan(spec, table)
         text = display_text(plan.spec, plan.table)
         log_summary(text, plan.table)
+        # The colour pins, the same way: merged once, told their roles per figure.
+        colors = mark_colors(plan.spec, plan.table)
+        log_colors(colors, plan.table)
         position = max(0, min(int(index), len(plan.groups) - 1))
         key, group = plan.groups[position]
         if narrate:
@@ -796,6 +806,7 @@ def resolve_one(
             y_scope=plan.y_scope,
             y_limits=plan.y_limits,
             text=text,
+            colors=colors,
         )
         figure.fanout_notes = plan.notes
         siblings = _difference_sibling_indices(plan, position)
@@ -815,6 +826,7 @@ def resolve_one(
                         y_scope=plan.y_scope,
                         y_limits=plan.y_limits,
                         text=text,
+                        colors=colors,
                     )
                     for other in siblings
                 ]
@@ -1223,6 +1235,7 @@ def _build_figure(
     y_scope: list[str] | None = None,
     y_limits: dict | None = None,
     text: DisplayText | None = None,
+    colors: MarkColors | None = None,
 ) -> ResolvedPlot:
     # ``narrate`` makes this function announce each phase as it starts. A
     # full-resolution figure is minutes of work (scidb.log 2026-09-11: 1543s for
@@ -1659,6 +1672,11 @@ def _build_figure(
             sample_join_reason=join.reason if join is not None else "",
             sample_offsets=sample_offsets,
             text=figure_text,
+            # The colour pins (`colors`), told which factor paints the marks
+            # and which the overlay; `render.base.palette_for` reads them.
+            colors=(colors or mark_colors(spec, table)).for_figure(
+                color=color, sample_color=sample_color
+            ),
             labelable=labelable(
                 figure_text,
                 table,

@@ -225,6 +225,17 @@ class ScidbSource(BaseSource):
 
         return read
 
+    def _colors_source(self):
+        """Reads the project's ``[colors]`` through the DatabaseManager on
+        every call (``dataset_colors``: live, cached on the file's mtime).
+        scidb owns the grammar; scistackplot parses the colour text."""
+        db = self._db
+
+        def read() -> dict:
+            return getattr(db, "dataset_colors", None) or {}
+
+        return read
+
     def _cache_generation(self):
         """The declared ``[schema_keys]`` level order, as a hashable value.
 

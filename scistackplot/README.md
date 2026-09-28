@@ -337,6 +337,36 @@ refused (`AliasError`), because the figure could not tell them apart.
 `scistackplot.aliases.DisplayText` (on `ResolvedPlot.text`) is the one owner
 of how every level and name reads. See `docs/claude/plot-text-and-labels.md`.
 
+## What colour a mark is: pinned colours
+
+The palette (`StyleOptions.palette`, Okabe-Ito by default) paints each level
+of the colour layer. You can pin a level's colour with `PlotSpec.colors`,
+and set the one colour of an uncoloured figure with `StyleOptions.mark_color`:
+
+```python
+spec = PlotSpec(
+    ...,
+    color="session",
+    colors={"session": {"BL": "#0072b2", "POST": "rgb(213, 94, 0)"}},
+)
+```
+
+Colours may be `#rrggbb`, `#rgb`, `rgb(r, g, b)` or a matplotlib colour
+name. `scistackplot.colors.parse_color` is the one reader, and it
+canonicalises every colour to `#rrggbb`.
+
+A scidb-backed table also carries the project's `[colors]` (read live
+through `scidb.colors`). The plot's pins override them level by level.
+
+A level you don't pin keeps its palette colour at its declared position, so
+pinning one level never moves another's.
+
+Pins also paint the "Show sample" overlay when it is coloured by the same
+key. The exported code writes the merged pins in as literals.
+
+`render.base.palette_for` stays the one owner of the colour a mark is drawn
+in. See `docs/claude/plot-colors.md`.
+
 ## Export: real code, not a call back into this library
 
 ```python

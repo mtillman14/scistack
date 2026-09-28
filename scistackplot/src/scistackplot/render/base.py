@@ -579,7 +579,15 @@ def palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str:
 
     ``fallback`` covers a level the declared order never mentioned — the same
     "never drop data" case ``color_groups`` ends with.
+
+    A PINNED colour (``resolved.colors``: the plot's ``colors`` over the
+    project's ``[colors]``; with no colour layer, the single mark colour) wins.
+    Every other level keeps its palette colour at its declared position, so
+    pinning one level never moves another's.
     """
+    pinned = resolved.colors.mark(level)
+    if pinned is not None:
+        return pinned
     order = resolved.color_order or []
     # Over the declared levels: a colormap is sampled per level, as the
     # export's `hue_order` samples it (mark_palette).
@@ -686,11 +694,113 @@ def sample_palette_for(resolved: ResolvedPlot, level: Any, fallback: int) -> str
     never by a panel's own enumeration, for the reason :func:`palette_for`
     gives: a subject absent from one panel must not shift every other
     subject's colour there.
+    A pinned colour (``resolved.colors.sample``) wins, as in :func:`palette_for`.
     """
+    pinned = resolved.colors.sample(level)
+    if pinned is not None:
+        return pinned
     for position, candidate in enumerate(resolved.sample_color_order):
         if str(candidate) == str(level):
             return palette_color(position, SAMPLE_PALETTE)
     return palette_color(fallback, SAMPLE_PALETTE)
+
+
+#: Levels listed per factor in the GUI's Colours section. Past this the list
+#: says it is cut: 500 subjects are pinned in the project config, not
+#: clicked one by one.
+MAX_COLORABLE_LEVELS = 200
+
+
+def colorable(resolved: ResolvedPlot) -> list[dict]:
+    """What the GUI's Colours section offers for one figure — Python's list,
+    so the panel never works out what is painted or in which colour.
+
+    One entry per painted factor: the marks' colour layer (role
+    ``"colour"``), the overlay's own key (``"sample colour"``), or — with no
+    colour layer — one ``"marks"`` entry for the single mark colour. Each
+    level is ``{raw, text, hex, origin}``: the colour DRAWN (through
+    :func:`palette_for` / :func:`sample_palette_for`, the one owner of it)
+    and where it came from, ``plot`` / ``project`` / ``palette``. ``key``
+    is the thing a pin is written under (``MarkColors.entry_key``: a
+    grouping column's ``Var.Column``); None for the single mark colour.
+
+    Also WARNs, once per call, when a pin paints two levels of one factor
+    the same (``colors.warn_duplicates``).
+    """
+    from ..colors import PALETTE, warn_duplicates
+
+    if resolved.spec.kind is PlotKind.HEATMAP:
+        return []  # a colormap, not marks: out of scope (plan decision 4)
+    pins = resolved.colors
+    text = resolved.text
+    entries: list[dict] = []
+    painted: list[tuple[str, Any, str, str]] = []
+
+    def entry(factor: str, role: str, levels: list[Any], paint, pinned) -> dict:
+        rows = []
+        for index, level in enumerate(levels[:MAX_COLORABLE_LEVELS]):
+            hex_ = paint(resolved, level, index)
+            found = pinned(factor, level)
+            origin = found[1] if found else PALETTE
+            painted.append((factor, level, hex_, origin))
+            rows.append(
+                {
+                    "raw": "" if level is None else str(level),
+                    "text": text.level(factor, level),
+                    "hex": hex_,
+                    "origin": origin,
+                }
+            )
+        return {
+            "factor": factor,
+            "key": pins.entry_key(factor),
+            "role": role,
+            "name": text.name(factor, factor),
+            "levels": rows,
+            "truncated": len(levels) > MAX_COLORABLE_LEVELS,
+        }
+
+    if pins.color is not None:
+        entries.append(
+            entry(
+                pins.color,
+                "colour",
+                list(resolved.color_order or []),
+                palette_for,
+                pins.pinned,
+            )
+        )
+    else:
+        single = pins.single
+        entries.append(
+            {
+                "factor": None,
+                "key": None,
+                "role": "marks",
+                "name": "Marks",
+                "levels": [
+                    {
+                        "raw": "",
+                        "text": "All marks",
+                        "hex": palette_for(resolved, None, 0),
+                        "origin": single[1] if single else PALETTE,
+                    }
+                ],
+                "truncated": False,
+            }
+        )
+    if pins.sample_color is not None and resolved.sample_color_order:
+        entries.append(
+            entry(
+                pins.sample_color,
+                "sample colour",
+                list(resolved.sample_color_order),
+                sample_palette_for,
+                pins.pinned,
+            )
+        )
+    warn_duplicates(painted)
+    return entries
 
 
 def sample_legend_levels(resolved: ResolvedPlot) -> list[Any]:

@@ -11,6 +11,60 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzl. Appearance > Colours: pin mark colours per level (plot or project) — added 2026-09-27
+
+**What changed:** there is a new **Colours** section under Labels, in the
+Appearance group. It has one row per level of whatever colours the marks (the
+colour layer, and the Show sample colour key when there is one). A figure with
+no colour layer gets one **Marks** row instead. Each row has:
+
+- a swatch that shows the colour actually drawn and opens the native colour
+  picker;
+- a text box for `#rrggbb`, `rgb(r, g, b)` or a colour name, applied on Enter
+  or when you leave the box;
+- **↑ project** / **✕ project** buttons, as in Labels.
+
+Project colours go to `[colors]` in scistack.toml. Plan
+`.claude/plan-custom-mark-colors.md`, doc `docs/claude/plot-colors.md`.
+
+**Backend**
+1. Python and frontend both changed. Both vite targets were rebuilt in the
+   session. Pull in the GUI clone and restart the GUI (reload the VS Code
+   window for the extension).
+2. Run the pytest commands from the plan first.
+
+**Frontend**
+1. Open a bar plot coloured by session. Appearance > **Colours** lists
+   *colour · session* with "▸ N levels". Expand it. Every swatch matches its
+   bar, and each empty box's placeholder reads `#…… (palette)`.
+2. Click the first level's swatch and drag in the picker. The swatch follows
+   the drag, and the bar recolours about ¼ s after you stop, not on every
+   step. **No other bar changes colour.**
+3. Type `rgb(0, 0, 0)` in the second level's box and press Enter. That bar
+   turns black. Type `nonsense` and press Enter. The bar keeps its previous
+   colour, and scidb.log has a WARN `colours: the plot's session … is
+   ignored`.
+4. Click **↑ project** on the first level. The box empties, the placeholder
+   reads `#…… (project)`, and scistack.toml now has
+   `[colors.session]` with that level in `#rrggbb`. Open a second plot
+   coloured by session: it has the same colour.
+5. **✕ project** removes the entry from scistack.toml, and the bar goes back
+   to its palette colour.
+6. Remove the colour layer (Colour = none). The section shows one **Marks**
+   row. Pick a colour: every bar takes it. **↑ project** writes
+   `[colors] default = "#……"`.
+7. Turn on Statistics > Show sample (subject) with "Colour points by"
+   subject. A second block, *sample colour · subject*, appears. Pinning a
+   subject recolours its points and lines.
+8. Save the plot and reopen it: the plot's own pins come back, and the plot
+   is not marked "● modified".
+9. Export to Python (plot_ step) and run it. The exported figure has the same
+   colours as the preview.
+10. Light and dark studio: the swatches show the data colour in both.
+11. A CSV plot has no project buttons.
+
+---
+
 ## 0zzk. Copy PNG works in the webview (CSP `img-src blob:`) — added 2026-09-27
 
 **What changed:** Copy PNG (§0zzb) failed in the VS Code webview with

@@ -126,6 +126,7 @@ from .spec import (
 )
 from .textsize import ResolvedSizes, rc_params, resolve_sizes
 from .aliases import AliasError, DisplayText, display_text
+from .colors import ColorError, MarkColors, mark_colors, parse_color
 from .figsize import (
     ASPECT_PRESETS,
     CUSTOM as CUSTOM_ASPECT,
@@ -213,6 +214,10 @@ __all__ = [
     "AliasError",
     "DisplayText",
     "display_text",
+    "ColorError",
+    "MarkColors",
+    "mark_colors",
+    "parse_color",
     "StyleOptions",
     "TextSizes",
     # text sizes (docs/claude/plot-text-and-labels.md)

@@ -56,6 +56,7 @@ from .base import (
     grid_shape,
     is_categorical_x,
     legend_levels,
+    colorable,
     palette_for,
     panel_position,
     axis_range,
@@ -179,6 +180,9 @@ def render(
                 # What the Labels section offers (aliases.labelable): the
                 # measure and every factor this figure draws as text.
                 "labelable": list(resolved.labelable),
+                # What the Colours section offers (base.colorable): every
+                # painted level with the colour DRAWN and where it came from.
+                "colorable": colorable(resolved),
                 # Every faceted panel's facet text, drawn title and range, and
                 # its matched override (base.panel_override_meta): the Panels
                 # section lists these and never computes them.

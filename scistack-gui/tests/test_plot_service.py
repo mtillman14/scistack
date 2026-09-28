@@ -2799,3 +2799,35 @@ def test_a_refused_project_alias_is_an_answer_not_an_error(tmp_path, monkeypatch
 
     assert reply["ok"] is False
     assert "pyproject.toml" in reply["error"]
+
+
+def test_a_project_color_write_answers_ok_and_drops_the_kept_resolve(tmp_path, monkeypatch):
+    import scistack_gui.db as gui_db
+    from scidb import colors
+
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text('modules = []\n')
+    monkeypatch.setattr(gui_db, "get_db_path", lambda: db_path)
+    plot_service._last_resolved[("db", "x")] = ("kept",)
+
+    reply = plot_service.set_project_color("session", level="BL", color="#0072B2")
+
+    assert reply == {"ok": True, "colors": {"session": {"BL": "#0072b2"}}}
+    assert colors.colors_in(toml_file) == {"session": {"BL": "#0072b2"}}
+    assert plot_service._last_resolved == {}, "a kept resolve holds colours drawn before the edit"
+
+
+def test_a_colour_that_is_not_one_is_an_answer_not_an_error(tmp_path, monkeypatch):
+    import scistack_gui.db as gui_db
+
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    (tmp_path / "scistack.toml").write_text('modules = []\n')
+    monkeypatch.setattr(gui_db, "get_db_path", lambda: db_path)
+
+    reply = plot_service.set_project_color(None, color="definitely not a colour")
+
+    assert reply["ok"] is False
+    assert "not a colour" in reply["error"]

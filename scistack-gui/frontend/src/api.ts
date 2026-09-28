@@ -254,6 +254,7 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     plot_saved_history:     { path: '/api/plot/saved/history', method: 'POST', body: true },
     // One edit to the project's [aliases] in scistack.toml (scidb.aliases).
     plot_project_alias_set: { path: '/api/plot/project-alias', method: 'POST', body: true },
+    plot_project_color_set: { path: '/api/plot/project-color', method: 'POST', body: true },
     // An error boundary's report — see components/ClientErrorBoundary.tsx.
     report_client_error:    { path: '/api/client-error', method: 'POST', body: true },
   };

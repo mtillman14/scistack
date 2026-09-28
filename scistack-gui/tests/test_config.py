@@ -21,6 +21,7 @@ from scistack_gui.config import (
     resolve_project_root,
     set_entities_file,
     set_project_alias,
+    set_project_color,
     set_project_root_hint,
     tomllib,
 )
@@ -2041,6 +2042,88 @@ def test_set_project_alias_never_creates_a_config(tmp_path):
     db_path.write_text("")
     with pytest.raises(FileNotFoundError):
         set_project_alias(db_path, "session", name="Session")
+    assert not (tmp_path / "scistack.toml").exists()
+
+
+# ---------------------------------------------------------------------------
+# Project mark colours: [colors] (scidb.colors), .claude/plan-custom-mark-colors.md
+# ---------------------------------------------------------------------------
+
+
+def _color_project(tmp_path):
+    db_path, toml_file = _alias_project(tmp_path)
+    return db_path, toml_file
+
+
+def test_set_project_color_writes_a_canonical_level_and_keeps_the_file(tmp_path):
+    """The Colours section's "↑ project": the typed colour is canonicalised
+    (scistackplot.colors.parse_color) and everything else comes back."""
+    db_path, toml_file = _color_project(tmp_path)
+
+    table = set_project_color(db_path, "session", level="BL", color="rgb(0, 114, 178)")
+
+    data = _read_raw_section(toml_file)
+    assert data["colors"] == {"session": {"BL": "#0072b2"}}
+    assert table == data["colors"]
+    assert data["aliases"] == {"session": {"name": "Session"}}
+    assert data["schema_keys"] == {"session": ["BL", "POST"]}
+    assert data["modules"] == ["existing"]
+
+
+def test_set_project_color_sets_and_clears_the_default(tmp_path):
+    db_path, toml_file = _color_project(tmp_path)
+    set_project_color(db_path, None, color="#ABC")
+    assert _read_raw_section(toml_file)["colors"] == {"default": "#aabbcc"}
+    set_project_color(db_path, "session", level="BL", color="#111111")
+    assert _read_raw_section(toml_file)["colors"] == {
+        "default": "#aabbcc",
+        "session": {"BL": "#111111"},
+    }
+    set_project_color(db_path, None, color=None)
+    set_project_color(db_path, "session", level="BL", color="")
+    assert "colors" not in _read_raw_section(toml_file)
+
+
+def test_a_bad_colour_is_refused_and_nothing_is_written(tmp_path):
+    db_path, toml_file = _color_project(tmp_path)
+    before = toml_file.read_text()
+    with pytest.raises(ValueError, match="not a colour|0-255|alpha"):
+        set_project_color(db_path, "session", level="BL", color="#12345678")
+    assert toml_file.read_text() == before
+
+
+def test_colours_survive_every_other_write(tmp_path):
+    """The writer rewrites the whole file: an alias write must carry [colors]
+    across, as it carries [schema_keys]."""
+    db_path, toml_file = _color_project(tmp_path)
+    set_project_color(db_path, "session", level="BL", color="#111111")
+    set_project_alias(db_path, "session", level="BL", alias="Baseline")
+    assert _read_raw_section(toml_file)["colors"] == {"session": {"BL": "#111111"}}
+
+
+def test_a_new_colour_is_read_back_at_once(tmp_path):
+    from scidb import colors
+
+    db_path, toml_file = _color_project(tmp_path)
+    assert colors.colors_in(toml_file) == {}
+    set_project_color(db_path, "session", level="BL", color="#222222")
+    assert colors.colors_in(toml_file) == {"session": {"BL": "#222222"}}
+
+
+def test_set_project_color_refuses_a_packaged_project(tmp_path):
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n\n[tool.scistack]\n")
+    with pytest.raises(ValueError, match=r"tool\.scistack\.colors"):
+        set_project_color(db_path, "session", level="BL", color="#111111")
+    assert "colors" not in (tmp_path / "pyproject.toml").read_text()
+
+
+def test_set_project_color_never_creates_a_config(tmp_path):
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    with pytest.raises(FileNotFoundError):
+        set_project_color(db_path, "session", level="BL", color="#111111")
     assert not (tmp_path / "scistack.toml").exists()
 
 

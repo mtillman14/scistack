@@ -104,6 +104,7 @@ from . import entities  # noqa: E402
 from . import intent  # noqa: E402
 from . import schema_order  # noqa: E402
 from . import aliases  # noqa: E402
+from . import colors  # noqa: E402
 
 __version__ = "0.1.0"
 
@@ -117,6 +118,7 @@ __all__ = [
     "intent",
     "schema_order",
     "aliases",
+    "colors",
     # Discovery
     "scan_project",
     "scan_package",

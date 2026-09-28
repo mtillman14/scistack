@@ -875,6 +875,12 @@ class StyleOptions:
     sample_weight: float = 1.0
     line_weight: float = 1.0
     alpha: float = 0.85
+    #: The ONE colour of a figure's marks when nothing colours them (no
+    #: colour layer), as colour text (``colors.parse_color``). None = the
+    #: project's ``[colors] default``, else the palette's first colour; ``""``
+    #: = the palette even over the project's. ``colors.mark_colors`` is the
+    #: one reader (docs/claude/plot-colors.md).
+    mark_color: str | None = None
     #: Hide the labels of an x layer that is also the colour layer while the
     #: legend lists the same levels in the same colours (tick labels or a
     #: bracket row). Opt-in (user, 2026-09-23): the ticks and brackets stay.
@@ -1001,6 +1007,12 @@ class PlotSpec:
     #: raw text). Display only, and plan-irrelevant: an edit re-renders and
     #: never re-reduces. ``aliases.display_text`` is the one reader.
     aliases: dict[str, Alias] = field(default_factory=dict)
+    #: What colour this plot paints a level in: ``{thing: {level text:
+    #: colour text}}``, the shape of the project config's ``[colors.<thing>]``,
+    #: which these override level by level (a ``""`` paints the palette's
+    #: colour). Display only and plan-irrelevant, like :attr:`aliases`.
+    #: ``colors.mark_colors`` is the one reader.
+    colors: dict[str, dict[str, str]] = field(default_factory=dict)
     #: One faceted panel's own y limits and y title, over the figure's. Named
     #: by the panel's facet values as text, so an override applies to that
     #: panel in every ITERATE figure. One that matches no drawn panel is kept
@@ -1213,6 +1225,10 @@ class PlotSpec:
             aliases={
                 str(thing): Alias.from_dict(entry)
                 for thing, entry in (raw.get("aliases") or {}).items()
+            },
+            colors={
+                str(thing): {str(level): str(colour) for level, colour in (entry or {}).items()}
+                for thing, entry in (raw.get("colors") or {}).items()
             },
             panel_overrides=[
                 PanelOverride.from_dict(o) for o in (raw.get("panel_overrides") or [])

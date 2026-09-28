@@ -28,6 +28,7 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/plot/saved/hide               plot_saved_hide
     POST /api/plot/saved/history            plot_saved_history
     POST /api/plot/project-alias            plot_project_alias_set
+    POST /api/plot/project-color            plot_project_color_set
     POST /api/client-error                  report_client_error
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
@@ -195,6 +196,18 @@ class ProjectAliasRequest(BaseModel):
     #: When given, ``alias`` replaces that level's alias ("" / None clears).
     level: str | None = None
     alias: str | None = None
+
+
+class ProjectColorRequest(BaseModel):
+    """One edit to the project's ``[colors]`` (scistack.toml)."""
+
+    #: The colour key (a schema key, variable, ``Variable.Column``…), or
+    #: None for the single mark colour (``[colors] default``).
+    thing: str | None = None
+    #: The level whose colour is set; required with a ``thing``.
+    level: str | None = None
+    #: Colour text (``#rrggbb``, ``rgb(r, g, b)``, a name); "" / None clears.
+    color: str | None = None
 
 
 class SavedHideRequest(BaseModel):
@@ -379,6 +392,10 @@ def _project_alias_set(req: ProjectAliasRequest) -> dict:
     )
 
 
+def _project_color_set(req: ProjectColorRequest) -> dict:
+    return plot_service.set_project_color(req.thing, level=req.level, color=req.color)
+
+
 def _client_error(req: ClientErrorRequest) -> dict:
     """The webview caught a render error; write it into the shared log."""
     return report_client_error(req.model_dump())
@@ -493,6 +510,12 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_project_alias_set", "/plot/project-alias", ProjectAliasRequest,
         _project_alias_set, holds_db_lock=False, needs_db=False,
+    ),
+    # The same for the project's mark colours (scidb.colors); the Colours
+    # section shows a refusal (packaged project, no config, not a colour).
+    Handler(
+        "plot_project_color_set", "/plot/project-color", ProjectColorRequest,
+        _project_color_set, holds_db_lock=False, needs_db=False,
     ),
     # Touches no database at all — it only writes a log line, and must still
     # work while MATLAB holds the file (that is exactly when a webview crash

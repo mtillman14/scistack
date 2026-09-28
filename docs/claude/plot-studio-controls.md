@@ -54,6 +54,7 @@ The design history is in `.claude/plot-studio-sidebar-redesign.md`.
 | | Marks | Line weight, Sample weight | `style.{line_weight,sample_weight}` |
 | | Text | Font, per-element sizes, Reset | `style.text` (`base` = Font) |
 | | Labels | titles, aliases, ↑/✕ project | `style.{title,x_label,y_label}`, `aliases`, project `[aliases]` |
+| | Colours | swatch picker + hex/rgb box per painted level, Marks row, ↑/✕ project | `colors`, `style.mark_color`, project `[colors]` |
 | **Figure toolbar** | — | Preview at (default Fit pane), W, H, unit (in/mm/px) | view state `previewMode`; W/H write `style.{width,height}` via `commitSize`; unit is per-viewer localStorage `scistack.plotStudio.sizeUnit` |
 | | — | Format, Save image / Save all, Save data (CSV) + depth chooser, Export code, Add to pipeline | actions, nothing in the spec |
 

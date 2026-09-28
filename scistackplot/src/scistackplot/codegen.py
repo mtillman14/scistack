@@ -24,6 +24,7 @@ from typing import NamedTuple
 from scistacklog import Log
 
 from .aliases import DisplayText, check_distinct, display_text
+from .colors import mark_colors
 from .cell import cell_collapses, effective_shape
 from .compare import comparison_title, plan_comparison
 from .groups import active_level_groups, apply_level_groups, effective_mapping
@@ -986,14 +987,55 @@ def _mark_palette(style) -> str:
     return repr(style.palette) if style.palette else repr(list(DEFAULT_PALETTE))
 
 
-def _mark_color(style) -> str:
+def _mark_color(spec, table: LongTable) -> str:
     """The ONE colour of an uncoloured figure's marks, as a literal — what
-    ``render.base.palette_for(resolved, None, 0)`` paints in the preview.
-    Stated as ``color=``: seaborn >= 0.13 reads ``palette=`` without a
-    ``hue`` as "colour each x level", which the preview never does."""
+    ``render.base.palette_for(resolved, None, 0)`` paints in the preview:
+    the pinned single mark colour (``colors.mark_colors``: the plot's
+    ``style.mark_color``, else the project's ``[colors] default``), else the
+    palette's first. Stated as ``color=``: seaborn >= 0.13 reads
+    ``palette=`` without a ``hue`` as "colour each x level", which the
+    preview never does."""
     from .render.base import mark_palette
 
-    return repr(mark_palette(style.palette, 0)[0])
+    single = mark_colors(spec, table).single
+    if single is not None:
+        return repr(single[0])
+    return repr(mark_palette(spec.style.palette, 0)[0])
+
+
+def _pins_for(spec, table: LongTable, factor: str | None) -> dict[str, str]:
+    """``{level text: #rrggbb}`` pinned for ``factor``'s levels in ``table``
+    (``colors.mark_colors``, the preview's own merge) — empty when nothing
+    is pinned, and then the export emits exactly what it did before pins
+    existed. Baked in as a literal, like the aliases: a project edit needs a
+    re-export."""
+    if not factor or not table.has_factor(factor):
+        return {}
+    colors = mark_colors(spec, table)
+    pins: dict[str, str] = {}
+    for value in table.factor(factor).levels:
+        found = colors.pinned(factor, value)
+        if found is not None:
+            pins[str(value)] = found[0]
+    return pins
+
+
+def _hue_palette_lines(spec, table: LongTable, hue: str | None) -> list[str]:
+    """``_hue_palette``: the palette over ``_hue_order`` with the pinned
+    levels' colours substituted — what ``render.base.palette_for`` paints
+    (a pin wins; every other level keeps its palette colour at its
+    position). ``[]`` when nothing is pinned: the call then keeps its
+    ``palette=<name or list>``."""
+    pins = _pins_for(spec, table, hue)
+    if not pins:
+        return []
+    return [
+        "# pinned mark colours (the plot's over the project's [colors]); the rest",
+        "# keep their palette colour at their position in _hue_order",
+        f"_hue_pins = {pins!r}",
+        "_hue_palette = [_hue_pins.get(str(v), c) for v, c in zip("
+        f"_hue_order, sns.color_palette({_mark_palette(spec.style)}, len(_hue_order)).as_hex())]",
+    ]
 
 
 def _sample_draw_lines(
@@ -1071,14 +1113,17 @@ def _sample_draw_lines(
             [
                 # hue_order was stated on the call, so the palette follows it.
                 "_hue_levels = [str(v) for v in _hue_order]",
-                f"_palette = dict(zip(_hue_levels, sns.color_palette({palette}, len(_hue_levels))))",
+                # The call's own palette, pins substituted (`_hue_palette_lines`).
+                "_palette = dict(zip(_hue_levels, _hue_palette))"
+                if _pins_for(spec, table, hue)
+                else f"_palette = dict(zip(_hue_levels, sns.color_palette({palette}, len(_hue_levels))))",
             ]
         )
     else:
         lines.extend(
             [
                 "_hue_levels = [None]",
-                f"_color = {_mark_color(spec.style)}",
+                f"_color = {_mark_color(spec, table)}",
             ]
         )
     if sample_color:
@@ -1097,6 +1142,10 @@ def _sample_draw_lines(
                 "for i, lvl in enumerate(_sample_levels)}",
             ]
         )
+        sample_pins = _pins_for(spec, table, sample_color)
+        if sample_pins:
+            # Pinned overlay colours win (render.base.sample_palette_for).
+            lines.append(f"_sample_palette.update({sample_pins!r})")
     # A run is one identity, never split by the marks' hue: with the
     # overlay's own colour it spans the key's levels, and in the marks'
     # colour each point is painted by its own mark while a line crossing
@@ -1658,12 +1707,14 @@ def _plot_call(
     args.extend(order_args)
 
     style = spec.style
-    # The preview's colours, not seaborn's default: a palette over the hue,
-    # or the one colour of an uncoloured figure (`_mark_palette`/`_mark_color`).
+    # The preview's colours, not seaborn's default: a palette over the hue
+    # (with any pinned levels substituted, `_hue_palette_lines`), or the one
+    # colour of an uncoloured figure (`_mark_palette`/`_mark_color`).
+    palette_lines = _hue_palette_lines(spec, table, color) if color else []
     if color:
-        args.append(f"palette={_mark_palette(style)}")
+        args.append("palette=_hue_palette" if palette_lines else f"palette={_mark_palette(style)}")
     else:
-        args.append(f"color={_mark_color(style)}")
+        args.append(f"color={_mark_color(spec, table)}")
     # The fills (render.base.fill_alpha: bar, box, violin) as the preview
     # draws them: seaborn fades them to 75% saturation by default, so
     # `saturation=1`; and the preview's opacity — on the box patch for a box
@@ -1701,6 +1752,7 @@ def _plot_call(
     aliases = _export_aliases(spec, table, roles, shape)
     lines = [
         *order_lines,
+        *palette_lines,
         *_alias_definition_lines(aliases),
         f"g = {call}(",
         *[f"    {arg}," for arg in args],

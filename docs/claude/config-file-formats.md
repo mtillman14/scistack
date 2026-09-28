@@ -244,6 +244,38 @@ levels = { "F" = "Female", "M" = "Male" }
 - **Diagnosing:** `grep "\[aliases\]" scidb.log` shows what was read
   (`session (name, 2 level(s))`) and any warnings.
 
+## `[colors]`: mark colours for figures
+
+Added 2026-09-27. The concept is in `plot-colors.md`.
+
+```toml
+# scistack.toml
+[colors]
+default = "#333333"               # the one colour of a figure with no colour layer
+
+[colors.session]                  # one table per thing: schema key, variable,
+"BL" = "#0072b2"                  # "Var.Column", ColName, Variant; keys are
+"01" = "#d55e00"                  # level TEXT (quoted)
+
+# pyproject.toml: the same under [tool.scistack.colors…]
+```
+
+- **Display only.** Plotting paints with it, and each plot may override it
+  (`PlotSpec.colors`, `style.mark_color`).
+- **The type rule.** A STRING directly under `[colors]` is a setting (only
+  `default`). A TABLE is a thing.
+- **Owner:** `scidb.colors` owns the shape. It is read live through
+  `DatabaseManager.dataset_colors`, from the same config as `[schema_keys]`
+  and `[aliases]`, and mtime-cached.
+  - Colour TEXT is kept as written. `scistackplot.colors.parse_color`
+    decides what it means (and WARNs and drops a bad value at draw time).
+  - Unknown things get a WARN.
+- **Not part of `_cache_generation`.** An edit rebuilds no table.
+- **The GUI round-trips it** through `_render_scistack_toml(colors=)`. Every
+  whole-file write passes `colors=section.get("colors")`.
+  `set_project_color` canonicalises to `#rrggbb` before writing.
+- **Diagnosing:** `grep "\[colors\]" scidb.log`.
+
 ## All fields are optional
 
 Every config field has a sensible default. An empty `scistack.toml` (or a `pyproject.toml` with an empty `[tool.scistack]` section, or even a `pyproject.toml` with no `[tool.scistack]` at all) produces a valid config:

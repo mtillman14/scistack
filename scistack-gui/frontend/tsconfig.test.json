@@ -46,6 +46,8 @@
     "src/components/PlotStudio/textSizes.test.ts",
     "src/components/PlotStudio/aliasEdit.ts",
     "src/components/PlotStudio/aliasEdit.test.ts",
+    "src/components/PlotStudio/colorEdit.ts",
+    "src/components/PlotStudio/colorEdit.test.ts",
     "src/components/PlotStudio/markWeights.ts",
     "src/components/PlotStudio/markWeights.test.ts",
     "src/components/PlotStudio/pickerCanvas.test.ts",
