@@ -869,45 +869,37 @@ def _log_multi_output_call_sites(agg: "AggregatedData") -> None:
         )
 
 
-def filter_hidden(
-    agg: AggregatedData, hidden_ids: set[str], strip_var_type_values: bool = True
-) -> AggregatedData:
+def filter_hidden(agg: AggregatedData, hidden_ids: set[str]) -> AggregatedData:
     """Remove hidden nodes from the aggregated data (mutates in place).
 
+    **Display only — call it AFTER identity and grouping, never before.**
+    Every step before grouping hashes ``wiring_id`` from this data, and a
+    hide is a view decision that must not change any node's identity. A
+    pre-identity pass (with a ``strip_var_type_values`` flag to spare hidden
+    variable types) used to exist and leaked a hidden PathInput into the
+    wiring, minting a phantom node for the same call site
+    (docs/claude/hidden-path-input-identity.md). Removed rather than
+    re-flagged: a flag per node kind is the pattern that leaked.
+
     Args:
-        agg: Aggregated data to filter.
+        agg: GROUPED aggregated data (``group_call_sites_by_wiring`` output),
+            whose function keys are ``(fn, node token)`` — what a hidden
+            function node's id parses to.
         hidden_ids: Set of node IDs the user has explicitly deleted.
-        strip_var_type_values: Whether to also scrub hidden variable TYPES out
-            of ``fn_outputs``/``fn_input_params`` VALUES for every surviving
-            call site (as opposed to only dropping dict entries for call
-            sites that are themselves hidden by fn id). Callers computing
-            ``wiring_id`` (graph_builder.wiring_id — hashes fn name +
-            input/output var types) from this agg MUST pass False: a
-            function's wiring — and therefore its canvas node id, which
-            anchors its saved scope placement/position — must stay stable
-            regardless of which of its already-produced variables the user
-            has hidden in this particular scope's view, or the node loses
-            its placement and disappears from non-root scopes the moment one
-            of its output leaves is hidden (see plan-scope-hidden-nodes-edges
-            postmortem). Pass True (the default) once identity has already
-            been fixed by grouping, to strip phantom hidden ports for
-            display.
 
     Returns:
         The same AggregatedData, mutated.
     """
     logger.info(
-        "[graph_builder] filter_hidden: filtering %d hidden node(s) "
-        "(strip_var_type_values=%s)",
+        "[graph_builder] filter_hidden: filtering %d hidden node(s)",
         len(hidden_ids),
-        strip_var_type_values,
     )
 
     hidden_var_types = {
         nid.replace(VAR_ID_PREFIX, "", 1) for nid in hidden_ids if nid.startswith(VAR_ID_PREFIX)
     }
-    # fn IDs in hidden_ids are composite ``fn__{fn_name}__{call_id}``.
-    # Parse into FnKeys; ignore IDs that don't match (legacy/manual).
+    # fn IDs in hidden_ids are ``fn__{fn_name}__{node token}`` — the grouped
+    # key. Ignore IDs that don't match (manual nodes' short suffixes).
     hidden_fkeys: set[FnKey] = set()
     for nid in hidden_ids:
         parsed = parse_fn_node_id(nid)
@@ -926,17 +918,19 @@ def filter_hidden(
 
     agg.all_var_types -= hidden_var_types
 
-    if strip_var_type_values:
-        for fkey in list(agg.fn_outputs.keys()):
-            agg.fn_outputs[fkey] -= hidden_var_types
+    for fkey in list(agg.fn_outputs.keys()):
+        agg.fn_outputs[fkey] -= hidden_var_types
 
-        for fkey in list(agg.fn_input_params.keys()):
-            agg.fn_input_params[fkey] = {
-                p: t
-                for p, t in agg.fn_input_params[fkey].items()
-                if t not in hidden_var_types
-            }
+    for fkey in list(agg.fn_input_params.keys()):
+        agg.fn_input_params[fkey] = {
+            p: t
+            for p, t in agg.fn_input_params[fkey].items()
+            if t not in hidden_var_types
+        }
 
+    # Counted BEFORE popping: a hidden fn id that matches no key means this
+    # ran on ungrouped (call_id-keyed) data — the misuse the docstring names.
+    matched_fkeys = hidden_fkeys & set(agg.fn_input_params)
     for fkey in hidden_fkeys:
         agg.fn_input_params.pop(fkey, None)
         agg.fn_outputs.pop(fkey, None)
@@ -951,9 +945,11 @@ def filter_hidden(
 
     if hidden_ids:
         logger.info(
-            "[graph_builder] filter_hidden complete: removed %d var, %d fn, %d const, %d pathInput",
+            "[graph_builder] filter_hidden complete: removed %d var, %d fn "
+            "(%d hidden fn id(s) matched a node), %d const, %d pathInput",
             len(hidden_var_types),
             len(hidden_fkeys),
+            len(matched_fkeys),
             len(hidden_const_names),
             len(hidden_path_names),
         )
@@ -2069,6 +2065,66 @@ def manual_input_overrides(
     return overrides
 
 
+def manual_path_input_overrides(
+    fn: str,
+    wid: str,
+    manual_index: dict[tuple[str, str, str], list],
+    manual_nodes: "dict[str, dict] | None" = None,
+) -> dict[str, str]:
+    """``{param: declared PathInput name}`` — the PathInput a manual edge
+    draws onto each ``in__<param>`` handle of the ``(fn, wid)`` node.
+
+    The PathInput half of :func:`manual_input_overrides` — the same rule
+    (**the edges visible on the DAG are the ground truth**, for display and
+    execution) for the one source kind that rule skipped. Kept as its own
+    function rather than a mixed-kind return because every consumer of
+    ``manual_input_overrides`` treats its values as variable types, and a
+    PathInput is never one (it resolves files, not a versioned record).
+
+    **A drawn PathInput replaces the recorded one** on that handle. Unlike two
+    variables, two PathInputs on one handle are not an EachOf on a history
+    node, so the drawn one wins; the 2026-09-28 case is exactly this — the
+    recorded ``DemographicsPath`` hidden and ``DemographicsPath2`` drawn onto
+    ``filepath_or_buffer`` (docs/claude/hidden-path-input-identity.md).
+
+    ``wid`` is the node's TOKEN, as for ``manual_input_overrides``. The source
+    is resolved by ``edge_resolver.resolve_source_binding``, the one owner of
+    "what does this source node bind", so a history node and a fresh node
+    read the same drawn edge the same way.
+    """
+    from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, resolve_source_binding
+
+    overrides: dict[str, str] = {}
+    for (ifn, iwid, handle), edges in manual_index.items():
+        if ifn != fn or iwid != wid or not handle.startswith(IN_HANDLE_PREFIX):
+            continue
+        names: list[str] = []
+        for edge in edges:
+            binding = resolve_source_binding(edge.get("source", ""), manual_nodes or {}, {})
+            if binding and binding["kind"] == BINDING_PATHINPUT and binding["ref"] not in names:
+                names.append(binding["ref"])
+        if not names:
+            continue
+        param = handle[len(IN_HANDLE_PREFIX) :]
+        if len(names) > 1:
+            logger.warning(
+                "[graph_builder] %s node %s: %d PathInputs drawn onto '%s' (%s) — "
+                "a history node binds ONE; using the last drawn, %s",
+                fn,
+                wid,
+                len(names),
+                param,
+                names,
+                names[-1],
+            )
+        overrides[param] = names[-1]
+    if overrides:
+        logger.debug(
+            "[graph_builder] manual_path_input_overrides(%s, %s): %s", fn, wid, overrides
+        )
+    return overrides
+
+
 def input_params_with_manual_edges(
     fn_input_params: dict[FnKey, dict],
     fn_outputs: dict[FnKey, set],
@@ -2262,8 +2318,14 @@ def _claim_stated_wirings(
         manual_nodes,
         hidden_edge_ids,
     )
-    if not overrides:
+    # A drawn PathInput is part of what the node states too — without it, a
+    # script run through the drawn PathInput records a wiring nothing claims,
+    # and it forks a node.
+    pi_overrides = manual_path_input_overrides(fn, token, manual_index, manual_nodes)
+    if not overrides and not pi_overrides:
         return
+    path_input_bindings = {**path_input_bindings, **pi_overrides}
+    params = {p: t for p, t in params.items() if p not in pi_overrides}
     # provenance records ONE variable type per input, so an EachOf override
     # splits into ONE WIRING PER SOURCE — and the node states every one of
     # them, not just the first. Claiming only the first is how the second

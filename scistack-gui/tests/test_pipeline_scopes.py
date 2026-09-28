@@ -1730,8 +1730,8 @@ class TestScopedNodeEdgeHiding:
         wiring_id) changed the instant its output was hidden. The node's
         saved scope placement was recorded under the OLD id, so the
         renamed node resolved to no placement in a non-root scope and
-        vanished from the view entirely — see graph_builder.filter_hidden's
-        strip_var_type_values docstring for the fix."""
+        vanished from the view entirely. Fixed by running filter_hidden only
+        after identity and grouping (see its docstring)."""
         r = client.post("/api/pipelines/main/duplicate", json={"name": "main_copy"})
         assert r.status_code == 200
         copy_pid = r.json()["pipeline_id"]

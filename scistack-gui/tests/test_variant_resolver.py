@@ -814,15 +814,36 @@ class TestReconcileManualInputsUnboundParams:
         edges = [self._edge(wid, "in__side", "var__Demographics")]
         assert reconcile_manual_inputs([target], "fn", hidden, edges, None, identity_token) == []
 
-    def test_non_variable_source_is_not_an_override(self):
-        # PathInput / Parameter sources have their own binding rules.
+    def test_parameter_source_is_not_an_override(self):
+        # Parameter sources have their own binding rules (constants).
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        target = self._target({"signal": "RawEMG"})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        edges = [self._edge(wid, "in__side", "param__hz")]
+        result = reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token)
+        assert result == [target]
+
+    def test_path_input_source_binds_the_handle(self):
+        # Changed 2026-09-28 (docs/claude/hidden-path-input-identity.md): this
+        # used to assert a drawn PathInput was IGNORED on a history node, which
+        # is how DemographicsPath2 -> filepath_or_buffer silently ran the
+        # recorded file. Visible edges are the ground truth for PathInputs too.
         from scistack_gui.domain.graph_builder import wiring_id
 
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
         edges = [self._edge(wid, "in__side", "pathInput__files")]
+
         result = reconcile_manual_inputs([target], "fn", set(), edges, None, identity_token)
-        assert result == [target]
+
+        assert len(result) == 1
+        assert result[0]["bindings"]["side"] == {"kind": "pathinput", "ref": "files"}
+        assert result[0]["bindings"]["signal"] == {"kind": "variable", "ref": ["RawEMG"]}
+        assert result[0]["input_types"] == {"signal": "RawEMG"}, (
+            "a PathInput is not a variable input"
+        )
+        assert "call_id" not in result[0], "stale call_id must be recomputed"
 
     def test_edge_on_another_wiring_does_not_leak(self):
         from scistack_gui.domain.graph_builder import wiring_id

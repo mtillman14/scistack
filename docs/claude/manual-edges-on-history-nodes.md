@@ -40,6 +40,10 @@ plus manual edges.
 | history edge from X visible, manual edge from Y | `EachOf [X, Y]` — same as on a fresh node |
 | history edge hidden, nothing manual | unbound → wiring stays *disconnected* (target dropped) |
 | history edge from X visible, nothing manual | `X` |
+| recorded PathInput P (hidden or not), manual edge from PathInput Q | `Q`, which replaces P: one PathInput per handle (`manual_path_input_overrides`, 2026-09-28) |
+| output: manual edge from the node to variable Z | the run saves into `Z` on both Run paths (`execution_service._apply_manual_output_types`) |
+
+PathInputs and outputs: see `hidden-path-input-identity.md`.
 
 History is only the source of the *default* edges; it never outranks what
 is drawn. Replacing a variable is what hiding its edge is for.

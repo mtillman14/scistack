@@ -694,17 +694,15 @@ def _build_graph(
     logger.info("[pipeline] Converting to AggregatedData format")
     agg = build_aggregate(db, scidb_agg)
 
-    logger.info("[pipeline] Filtering hidden nodes")
-    # strip_var_type_values=False: this pre-grouping pass must NOT scrub
-    # hidden variable types out of fn_outputs/fn_input_params VALUES — those
-    # feed wiring_id (fn name + input/output var types) below, and a
-    # function's wiring identity (hence its canvas node id and saved scope
-    # placement) must stay stable regardless of which of its own outputs the
-    # user has hidden, or the node loses its placement and vanishes from
-    # non-root scopes (see graph_builder.filter_hidden docstring). The
-    # post-grouping filter_hidden call further down still strips those
-    # values (default True) for display, once identity is already fixed.
-    gb.filter_hidden(agg, hidden_ids, strip_var_type_values=False)
+    # NO hidden-node filtering here. Everything from here to the grouping
+    # step — identity, disconnected wirings, run states, grouping — reads
+    # what history RECORDED, because every one of them hashes wiring_id and
+    # a hide is a view decision that must not change any node's identity.
+    # A pre-identity filter pass used to live here and leaked one kind at a
+    # time: hidden output variables first (fixed with a flag), then hidden
+    # PathInputs, which minted a phantom node for the same call site
+    # (docs/claude/hidden-path-input-identity.md). The ONE filter runs after
+    # grouping; test_hidden_path_input_identity pins that order.
 
     logger.info("[pipeline] Using record counts from scidb")
     record_counts = {
@@ -827,9 +825,10 @@ def _build_graph(
         token_for=token_for,
         is_current=identity.is_current,
     )
-    # Hidden-id filtering ran pre-grouping for LEGACY per-call-site ids;
-    # run it again now so deletions of wiring-grouped nodes (hidden id =
-    # fn__{fn}__{wiring_id}) also apply.
+    # The ONE hidden-node filter, for display — identity is fixed by now.
+    # Grouped keys are (fn, node token), which is what a hidden function
+    # node's id parses to, so hiding a function node matches here.
+    logger.info("[pipeline] Filtering hidden nodes")
     gb.filter_hidden(agg, hidden_ids)
 
     # --- Build fn_params_map and saved_configs ---

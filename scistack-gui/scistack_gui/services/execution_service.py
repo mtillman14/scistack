@@ -476,6 +476,38 @@ def _inferred_targets(resolved, inferred_constants: dict[str, list]) -> list[dic
     ]
 
 
+def _apply_manual_output_types(
+    targets: list[dict], manual_output_types: list[str], log_context: str
+) -> list[dict]:
+    """History targets with their output replaced by the drawn output edges.
+
+    The one owner of "a drawn output edge on a history node is what the run
+    saves into", for both run paths: the name-scoped ``derive_fn_targets`` and
+    the per-node ``derive_target_for_node``. The per-node path had no copy of
+    this at all, so a history node rewired to a new output kept saving into
+    the recorded one (docs/claude/hidden-path-input-identity.md). One target
+    per (constant values, drawn output) — rows that differed only in their
+    recorded output collapse.
+    """
+    if not targets or not manual_output_types:
+        return targets
+    logger.info(
+        "[execution] %s: overriding DB output types %s with manual wiring %s",
+        log_context,
+        sorted({t.get("output_type") for t in targets}),
+        manual_output_types,
+    )
+    overridden, seen_constants = [], set()
+    for v in targets:
+        key = tuple(sorted((v.get("constants") or {}).items()))
+        if key in seen_constants:
+            continue
+        seen_constants.add(key)
+        for out in manual_output_types:
+            overridden.append({**v, "output_type": out})
+    return overridden
+
+
 def derive_fn_targets(db, function_name: str) -> list[dict]:
     """The for_each target(s) a function node represents.
 
@@ -578,22 +610,9 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
                 before - len(fn_variants),
             )
 
-    if fn_variants and manual_output_types:
-        # User rewired outputs: current wiring overrides stale DB history.
-        logger.info(
-            "[execution] '%s': overriding DB output types with manual wiring %s",
-            function_name,
-            manual_output_types,
-        )
-        overridden, seen_constants = [], set()
-        for v in fn_variants:
-            key = tuple(sorted(v["constants"].items()))
-            if key in seen_constants:
-                continue
-            seen_constants.add(key)
-            for out in manual_output_types:
-                overridden.append({**v, "output_type": out})
-        fn_variants = overridden
+    fn_variants = _apply_manual_output_types(
+        fn_variants, manual_output_types, f"'{function_name}'"
+    )
 
     if fn_variants:
         return _attach_column_selections(
@@ -838,6 +857,17 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
                 before - len(matching),
             )
     if matching:
+        # Outputs drawn on THIS node replace the recorded ones — the same owner
+        # derive_fn_targets uses, scoped to the one node clicked.
+        from scistack_gui.domain.edge_resolver import infer_manual_fn_output_types
+
+        matching = _apply_manual_output_types(
+            matching,
+            infer_manual_fn_output_types(
+                {node_id}, all_edges, manual_nodes, existing_node_labels={}
+            ),
+            f"node {node_id} ('{function_name}')",
+        )
         return _attach_column_selections(
             db,
             {node_id},
@@ -848,11 +878,26 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         # An already-graduated node whose embedded wiring matches nothing
         # in current history (stale) — nothing safe to run as this node.
         # The warning above has already spelled out the failed comparison.
+        # Name the drawn edges: they exist but are NOT consulted for a node
+        # that has a recorded wiring, and the old wording ("no manual edges")
+        # sent a real 2026-09-28 diagnosis the wrong way.
+        from scistack_gui.ids import strip_placement
+
+        bare = strip_placement(node_id)
+        drawn = sorted(
+            f"{e.get('source')}->{e.get('target')}"
+            for e in all_edges
+            if bare in (strip_placement(e.get("source") or ""), strip_placement(e.get("target") or ""))
+        )
         logger.info(
-            "[execution] node %s ('%s'): no targets — graduated node with no "
-            "matching history and no manual edges to infer from",
+            "[execution] node %s ('%s'): no targets — its recorded wiring %s "
+            "matches no history, and a node with a recorded wiring does not "
+            "infer from its drawn edges (%d drawn: %s)",
             node_id,
             function_name,
+            node_wiring,
+            len(drawn),
+            drawn,
         )
         return []
 

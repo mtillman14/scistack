@@ -11,6 +11,43 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzm. Hiding a node never changes other nodes; rewiring a run node runs as drawn — added 2026-09-28
+
+**What changed:** deleting (hiding) a PathInput node used to allocate a
+phantom copy of the function node it fed. The original dropped off the canvas,
+edges drawn afterwards landed on the phantom, and Run said *"No pipeline
+history or output connections found"*. Hiding any node now leaves every other
+node alone. A PathInput edge or an output edge drawn onto a node that has
+already run is now what its Run uses. Plan
+`.claude/plan-hidden-pathinput-identity.md`, doc
+`docs/claude/hidden-path-input-identity.md`.
+
+**Backend**
+1. Python only, no frontend rebuild. Pull in the GUI clone and restart the GUI.
+2. Run `tests/test_hidden_path_input_identity.py` first.
+3. **Your Stroke-R01-Aim-2 database:** the phantom `fn__pandas.read_csv__cdb48…`
+   should disappear and `…rlw90w` should return. Redraw its edges on
+   `rlw90w`. There's no migration.
+
+**Frontend**
+1. On a function node that has run from a PathInput (e.g. `pandas.read_csv`
+   from `DemographicsPath`), delete the PathInput node. The function node
+   stays where it was, keeps its position, and no second copy appears.
+2. Create a new PathInput and drag it onto the same input handle. Draw an
+   edge from the function node to a different output variable.
+3. Press Run on the function node. It runs (it doesn't say "No pipeline
+   history"), reads the new file, and saves into the new variable. Afterwards
+   there is still ONE function node.
+4. `scidb.log` should NOT contain `[node_identity] … match nothing in history`
+   (that WARN means a hide leaked into identity again). It should contain
+   `manual edge(s) override {'filepath_or_buffer': 'PathInput …'}` and
+   `overriding DB output types … with manual wiring`.
+5. Hide a Parameter, an input variable, an output variable and another
+   function node in turn. No other node changes id or position, and nothing
+   except the hidden node leaves the canvas.
+
+---
+
 ## 0zzl. Appearance > Colours: pin mark colours per level (plot or project) — added 2026-09-27
 
 **What changed:** there is a new **Colours** section under Labels, in the

@@ -2025,9 +2025,14 @@ def test_schema_keys_no_longer_write_row_filters():
     """
     source = _frontend_source("frontend/src/components/PlotStudio/PlotStudio.tsx")
 
-    section = source.split('<Section title="Schema keys">', 1)
-    assert len(section) == 2, "the Schema keys section is gone entirely"
-    body = section[1].split("</Section>", 1)[0]
+    # The opening tag as a PATTERN, not a literal: 4036eaf1 wrapped it across
+    # lines and added a `hint`, and the literal split then reported the
+    # section "gone" while it was right there.
+    import re
+
+    opening = re.search(r'<Section\s+title="Schema keys"[^>]*>', source)
+    assert opening, "the Schema keys section is gone entirely"
+    body = source[opening.end() :].split("</Section>", 1)[0]
 
     assert "setLevelFilter" not in body, (
         "the Schema keys section still writes a per-column Filter — D5 makes it "

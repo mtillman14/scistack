@@ -550,12 +550,14 @@ def reconcile_manual_inputs(
         BINDING_PATHINPUT,
         BINDING_VARIABLE,
         bindings_of_kind,
+        pathinput_binding,
         variable_types_view,
     )
     from scistack_gui.domain.graph_builder import (
         inbound_edge_candidates_by_handle,
         manual_edge_handle_index,
         manual_input_overrides,
+        manual_path_input_overrides,
         wiring_id,
     )
 
@@ -609,7 +611,16 @@ def reconcile_manual_inputs(
             manual_nodes,
             hidden_edge_ids,
         )
-        if not overrides:
+        # The PathInput half of the same rule: a drawn PathInput replaces the
+        # recorded one on its handle (graph_builder.manual_path_input_overrides).
+        pi_overrides = {
+            p: name
+            for p, name in manual_path_input_overrides(
+                function_name, wid, manual_index, manual_nodes
+            ).items()
+            if bindings.get(p) != pathinput_binding(name)
+        }
+        if not overrides and not pi_overrides:
             kept.append(t)
             continue
 
@@ -619,6 +630,9 @@ def reconcile_manual_inputs(
             # variable_binding) — a manual edge beside a visible history edge.
             ref = list(sources) if isinstance(sources, list) else [sources]
             new_bindings[param] = {"kind": BINDING_VARIABLE, "ref": ref}
+        for param, name in pi_overrides.items():
+            new_bindings[param] = pathinput_binding(name)
+        overrides = {**overrides, **{p: f"PathInput {n}" for p, n in pi_overrides.items()}}
         new_target = {**t, "bindings": new_bindings}
         if "input_types" in t:
             # Keep the display/wire view in step with the bindings it is a

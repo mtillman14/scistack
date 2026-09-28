@@ -290,7 +290,41 @@ def resolve_identities(
             len(plan.minted),
             plan.minted,
         )
+        _warn_minted_beside_orphans(plan, taken_before=set(age), fn_of_node=fn_of_node)
     return plan
+
+
+def _warn_minted_beside_orphans(plan: IdentityPlan, *, taken_before, fn_of_node) -> None:
+    """WARN when a function gets a NEW node in the same pass that one of its
+    EXISTING nodes stops matching anything in history.
+
+    That pair is the signature of an identity leak: the same call site hashed
+    differently from last time (a view decision — a hide — reaching
+    ``wiring_id``), so its node is orphaned and a phantom is minted beside it
+    (docs/claude/hidden-path-input-identity.md). A genuinely new call site
+    mints without orphaning anything, and stays at INFO.
+    """
+    for node_id, wiring in plan.minted:
+        fn_name = next(
+            (fn for (fn, w), n in plan.node_by_wiring.items() if str(n) == node_id), None
+        )
+        if fn_name is None:
+            continue
+        prefix = fn_nodes_prefix(fn_name)
+        orphans = sorted(
+            n for n in taken_before if n.startswith(prefix) and n not in fn_of_node
+        )
+        if orphans:
+            logger.warning(
+                "[node_identity] '%s': minted %s for wiring %s while existing "
+                "node(s) %s match nothing in history this build — the same call "
+                "site probably hashed differently (a hide or filter reaching "
+                "wiring_id?). The new node is a phantom if so.",
+                fn_name,
+                node_id,
+                wiring,
+                orphans,
+            )
 
 
 def _prefer(candidates: list[str], already_ran: list[str], age: dict[str, tuple]) -> str:

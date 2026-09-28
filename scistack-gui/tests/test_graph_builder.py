@@ -381,60 +381,19 @@ class TestFilterHidden:
         filter_hidden(agg, set())
         assert agg.all_var_types == before_vars
 
-    def test_strip_var_type_values_false_preserves_fn_outputs(self):
-        """strip_var_type_values=False: hiding an output var must NOT scrub
-        it out of fn_outputs — required so wiring_id (computed from
-        fn_outputs downstream) stays stable when the caller hides one of a
-        function's own output variables."""
+    def test_removes_hidden_fn(self):
+        """A hidden function node's id parses to its grouped key and drops out."""
         agg = self._agg()
         bp_key = _fkey("bandpass", inputs={"signal": "Raw"}, constants={"hz": 20})
-        filter_hidden(agg, {"var__Filtered"}, strip_var_type_values=False)
-        assert "Filtered" in agg.fn_outputs.get(bp_key, set())
-
-    def test_strip_var_type_values_false_preserves_fn_input_params(self):
-        agg = self._agg()
-        bp_key = _fkey("bandpass", inputs={"signal": "Raw"}, constants={"hz": 20})
-        filter_hidden(agg, {"var__Raw"}, strip_var_type_values=False)
-        assert agg.fn_input_params.get(bp_key, {}).get("signal") == "Raw"
-
-    def test_strip_var_type_values_false_still_removes_all_var_types(self):
-        """all_var_types is display-only (never feeds wiring_id) — safe to
-        strip regardless of strip_var_type_values."""
-        agg = self._agg()
-        filter_hidden(agg, {"var__Raw"}, strip_var_type_values=False)
-        assert "Raw" not in agg.all_var_types
-
-    def test_strip_var_type_values_false_still_removes_hidden_fn(self):
-        """Explicitly-hidden function call sites must still drop out
-        regardless of strip_var_type_values — only the VALUE-level var-type
-        scrubbing on surviving call sites is gated."""
-        agg = self._agg()
-        bp_key = _fkey("bandpass", inputs={"signal": "Raw"}, constants={"hz": 20})
-        filter_hidden(agg, {fn_node_id(*bp_key)}, strip_var_type_values=False)
+        filter_hidden(agg, {fn_node_id(*bp_key)})
         assert bp_key not in agg.fn_input_params
         assert bp_key not in agg.fn_outputs
 
-    def test_hiding_output_var_does_not_change_wiring_id(self):
-        """Regression: hiding a function's own output variable node must not
-        change the function's wiring_id, or the canvas node loses its saved
-        scope placement and vanishes from non-root scopes (the bug this
-        param exists to fix)."""
-        agg = self._agg()
-        bp_key = _fkey("bandpass", inputs={"signal": "Raw"}, constants={"hz": 20})
-        before_wid = wiring_id(
-            "bandpass",
-            agg.fn_input_params[bp_key],
-            agg.fn_outputs[bp_key],
-            {},
-        )
-        filter_hidden(agg, {"var__Filtered"}, strip_var_type_values=False)
-        after_wid = wiring_id(
-            "bandpass",
-            agg.fn_input_params[bp_key],
-            agg.fn_outputs[bp_key],
-            {},
-        )
-        assert before_wid == after_wid
+    # The `strip_var_type_values=False` tests that lived here are gone with the
+    # flag: filter_hidden is display-only and runs after identity, so "hiding
+    # must not change wiring_id" is pinned where identity is decided —
+    # test_hidden_path_input_identity.TestHidingAnyNodeKeepsEveryOtherNodesIdentity
+    # and its call-order guard (docs/claude/hidden-path-input-identity.md).
 
 
 # ---------------------------------------------------------------------------
