@@ -16,6 +16,7 @@
     "src/sessionCore.ts",
     "src/rpcPending.ts",
     "src/plotTheme.ts",
+    "src/webviewCsp.ts",
     "src/*.test.ts"
   ]
 }

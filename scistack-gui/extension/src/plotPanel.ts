@@ -32,6 +32,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import type { Session } from './session';
 import { answerSetPlotTheme, plotThemeHost } from './plotTheme';
+import { webviewCsp } from './webviewCsp';
 
 export interface PlotTarget {
   variable?: string;
@@ -272,11 +273,7 @@ export class PlotPanel {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none';
-                 style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';
-                 img-src ${webview.cspSource} data:;
-                 font-src ${webview.cspSource};" />
+        content="${webviewCsp(webview.cspSource, nonce)}" />
   <link rel="stylesheet" href="${styleUri}" />
   <title>${this.title()}</title>
   <style>

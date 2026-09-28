@@ -158,6 +158,20 @@ async function answerSetPlotTheme(host, msg, panel, log) {
   }
 }
 
+// src/webviewCsp.ts
+function webviewCspDirectives(cspSource, nonce) {
+  return [
+    ["default-src", "'none'"],
+    ["style-src", `${cspSource} 'unsafe-inline'`],
+    ["script-src", `'nonce-${nonce}'`],
+    ["img-src", `${cspSource} data: blob:`],
+    ["font-src", cspSource]
+  ];
+}
+function webviewCsp(cspSource, nonce) {
+  return webviewCspDirectives(cspSource, nonce).map(([name, sources]) => `${name} ${sources};`).join(" ");
+}
+
 // src/plotPanel.ts
 var PlotPanel = class _PlotPanel {
   constructor(context, session, target, column) {
@@ -336,11 +350,7 @@ var PlotPanel = class _PlotPanel {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none';
-                 style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';
-                 img-src ${webview.cspSource} data:;
-                 font-src ${webview.cspSource};" />
+        content="${webviewCsp(webview.cspSource, nonce)}" />
   <link rel="stylesheet" href="${styleUri}" />
   <title>${this.title()}</title>
   <style>
@@ -1436,11 +1446,7 @@ var DagPanel = class {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none';
-                 style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';
-                 img-src ${webview.cspSource} data:;
-                 font-src ${webview.cspSource};" />
+        content="${webviewCsp(webview.cspSource, nonce)}" />
   <link rel="stylesheet" href="${styleUri}" />
   <title>SciStack \u2014 ${this.session.label}</title>
   <style>

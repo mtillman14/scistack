@@ -12,6 +12,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Session } from './session';
 import { answerSetPlotTheme, plotThemeHost } from './plotTheme';
+import { webviewCsp } from './webviewCsp';
 import { LogSink, sessionSlug } from './sessionCore';
 import { runInMatlabTerminal, isMatlabExtensionAvailable, isMatlabTerminalOpen } from './matlabTerminal';
 import { MatlabRunTracker } from './matlabRunTracker';
@@ -891,11 +892,7 @@ export class DagPanel {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none';
-                 style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';
-                 img-src ${webview.cspSource} data:;
-                 font-src ${webview.cspSource};" />
+        content="${webviewCsp(webview.cspSource, nonce)}" />
   <link rel="stylesheet" href="${styleUri}" />
   <title>SciStack — ${this.session.label}</title>
   <style>

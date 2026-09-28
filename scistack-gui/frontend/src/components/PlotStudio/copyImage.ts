@@ -59,3 +59,27 @@ export function dataUrlToBlob(url: string): Blob {
   return new Blob([bytes], { type: mime })
 }
 
+
+/** A copy failure as text, whatever was thrown. Plotly.toImage rejects with
+ *  the <img>'s bare `error` Event when the SVG will not load (the webview CSP
+ *  refused its `blob:` URL, 2026-09-27) — no message, no stack — so an
+ *  `(err as Error).message` logged "(no message)". Name the step and the kind
+ *  of thing thrown instead. */
+export function describeCopyFailure(step: string, err: unknown): string {
+  let what: string
+  if (err instanceof Error) {
+    what = `${err.name}: ${err.message || '(empty message)'}`
+  } else if (err && typeof err === 'object' && 'type' in err) {
+    // An Event (Plotly's image onerror). Its target says what failed to load.
+    const target = (err as { target?: { tagName?: string; src?: string } }).target
+    const src = target?.src ? ` src=${target.src.slice(0, 40)}` : ''
+    what =
+      `${(err as { constructor?: { name?: string } }).constructor?.name ?? 'Event'} ` +
+      `"${String((err as { type: unknown }).type)}"` +
+      (target?.tagName ? ` on <${target.tagName.toLowerCase()}>${src}` : '') +
+      ' — likely the webview CSP refused the image (img-src needs blob:)'
+  } else {
+    what = `${typeof err}: ${String(err)}`
+  }
+  return `${step} failed: ${what}`
+}

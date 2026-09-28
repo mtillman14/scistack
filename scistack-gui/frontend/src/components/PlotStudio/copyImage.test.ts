@@ -12,6 +12,7 @@ import {
   MAX_SIDE_PX,
   copyScale,
   dataUrlToBlob,
+  describeCopyFailure,
   effectiveDpi,
 } from './copyImage.js'
 
@@ -52,4 +53,21 @@ test('a base64 data URL decodes to a typed blob of the right bytes', async () =>
 
 test('a non-base64 data URL is refused rather than copied as garbage', () => {
   assert.throws(() => dataUrlToBlob('data:image/svg+xml,<svg/>'), /base64/)
+})
+
+test('a bare Event rejection (Plotly image onerror) is described, not "(no message)"', () => {
+  const event = { type: 'error', target: { tagName: 'IMG', src: 'blob:vscode-webview://x/1234' } }
+  const text = describeCopyFailure('render (Plotly.toImage)', event)
+  assert.match(text, /^render \(Plotly\.toImage\) failed: /)
+  assert.match(text, /"error" on <img> src=blob:/)
+  assert.match(text, /img-src needs blob:/)
+})
+
+test('an Error keeps its name and message; other throws say their type', () => {
+  assert.equal(
+    describeCopyFailure('clipboard write', new TypeError('denied')),
+    'clipboard write failed: TypeError: denied'
+  )
+  assert.equal(describeCopyFailure('render', 'boom'), 'render failed: string: boom')
+  assert.equal(describeCopyFailure('render', undefined), 'render failed: undefined: undefined')
 })

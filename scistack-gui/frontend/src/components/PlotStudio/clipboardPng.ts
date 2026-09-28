@@ -5,7 +5,7 @@
  */
 
 import Plotly from 'plotly.js-cartesian-dist-min'
-import { copyScale, dataUrlToBlob, effectiveDpi } from './copyImage'
+import { copyScale, dataUrlToBlob, describeCopyFailure, effectiveDpi } from './copyImage'
 
 export interface CopyResult {
   widthPx: number
@@ -30,19 +30,33 @@ export async function copyFigurePng(
   const started = performance.now()
   const scale = copyScale(width, height)
   let bytes = 0
+  // The render's own failure, kept: when the blob promise rejects, Chromium
+  // rejects clipboard.write with a generic error of its own, hiding which
+  // step broke and why.
+  let renderFailure: Error | null = null
   const blob = (async () => {
-    const url = await Plotly.toImage(
-      {
-        data: figure.data,
-        layout: { ...figure.layout, autosize: false, width, height },
-      },
-      { format: 'png', width, height, scale }
-    )
+    let url: string
+    try {
+      url = await Plotly.toImage(
+        {
+          data: figure.data,
+          layout: { ...figure.layout, autosize: false, width, height },
+        },
+        { format: 'png', width, height, scale }
+      )
+    } catch (err) {
+      renderFailure = new Error(describeCopyFailure('render (Plotly.toImage)', err))
+      throw renderFailure
+    }
     const png = dataUrlToBlob(url)
     bytes = png.size
     return png
   })()
-  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+  } catch (err) {
+    throw renderFailure ?? new Error(describeCopyFailure('clipboard write', err))
+  }
   return {
     widthPx: Math.round(width * scale),
     heightPx: Math.round(height * scale),

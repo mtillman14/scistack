@@ -11,6 +11,30 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzk. Copy PNG works in the webview (CSP `img-src blob:`) — added 2026-09-27
+
+**What changed:** Copy PNG (§0zzb) failed in the VS Code webview with
+`Could not copy: undefined` / scidb.log `render error in Plot Studio copy_png:
+(no message)`. Plotly.toImage loads the figure's SVG into an `<img>` from a
+`blob:` URL, and the webview CSP allowed only `data:` images, so the load was
+refused and Plotly rejected with a bare Event. The CSP now has ONE owner,
+`extension/src/webviewCsp.ts` (DAG and plot tabs both use it), with
+`img-src … data: blob:`. A failed copy now names the step and what was thrown,
+e.g. `render (Plotly.toImage) failed: Event "error" on <img> src=blob:…`.
+
+**Backend**
+1. Reload the VS Code window (or reinstall the extension) so the new
+   `dist/extension.js` and webview bundle load. The CSP is set when a tab is
+   created, so close and reopen any open plot tabs.
+
+**Frontend**
+1. Do the §0zzb steps, in both a plot tab and the DAG window's Plot Studio.
+   The notice should say `Copied … px PNG (300 dpi)`.
+2. If it still fails, the notice and scidb.log should now name the step
+   (`render (Plotly.toImage)` or `clipboard write`). Send that line.
+
+---
+
 ## 0zzj. Structure > Compare: difference / % change from a reference level — added 2026-09-27
 
 **What changed:** a new **Compare** section under Structure, after
