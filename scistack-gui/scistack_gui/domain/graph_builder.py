@@ -372,7 +372,9 @@ def group_call_sites_by_wiring(
             grouped.fn_variants_map[gkey].append(
                 {
                     **row,
-                    "call_id": cid,
+                    # The REAL call id: a row's call_id goes back to scidb
+                    # (run one variant), which knows no split sub-site key.
+                    "call_id": call_id_of(cid),
                     **({"state": member_state} if member_state else {}),
                 }
             )
@@ -835,6 +837,99 @@ def aggregate_from_scidb(
     return agg
 
 
+#: Separates a call id from the wiring a split sub-site carries:
+#: ``"{call_id}#{wiring_id}"``. Never in a real call id (16 hex).
+SPLIT_SEP = "#"
+
+
+def call_id_of(cid: str) -> str:
+    """The REAL call id behind an FnKey's second element — the same string for
+    an unsplit call site, the part before :data:`SPLIT_SEP` for a split one.
+    Anything that asks scidb about a call site (run state, targets) must send
+    this, never the sub-site key."""
+    return str(cid).split(SPLIT_SEP, 1)[0]
+
+
+def split_call_sites_by_claims(agg: "AggregatedData", claimed_wirings) -> "AggregatedData":
+    """Split each call site whose recorded outputs form more than one wiring
+    into one sub-site per wiring, IN PLACE; returns *agg*.
+
+    Which outputs belong together is ``scidb.provenance.split_call_site_outputs``
+    — the one owner, also asked by the run path — given the wirings Runs have
+    claimed (``_node_wiring``). A call site that does not split is untouched, so
+    single-output history (nearly all of it) keeps its FnKey exactly.
+
+    A sub-site is ``(fn, "{call_id}#{wiring}")`` with the call site's inputs,
+    constants and PathInputs, only ITS outputs, and only the variant rows for
+    those outputs. After this every FnKey has exactly one wiring, which is what
+    every per-call-site loop downstream (identity, hidden wirings, run-state
+    propagation, grouping) already assumes — before, a rewired call site hashed
+    the union of old and new outputs, a wiring no Run had claimed, and the
+    build minted a phantom node for it (scidb.log 2026-09-29, pandas.read_csv).
+    """
+    from scidb.provenance import split_call_site_outputs
+
+    pi_by_fkey = path_input_bindings_by_fkey(agg.path_inputs)
+    replaced: dict[FnKey, list[FnKey]] = {}
+    for fkey in sorted(agg.fn_input_params.keys()):
+        outputs = agg.fn_outputs.get(fkey, set())
+        if len(outputs) < 2:
+            continue
+        fn, cid = fkey
+        splits = split_call_site_outputs(
+            fn,
+            agg.fn_input_params[fkey],
+            outputs,
+            pi_by_fkey.get(fkey, {}),
+            claimed_wirings,
+        )
+        if len(splits) < 2:
+            continue
+        subs = []
+        for wid, subset in splits:
+            sub = (fn, f"{cid}{SPLIT_SEP}{wid}")
+            subs.append(sub)
+            agg.fn_input_params[sub] = dict(agg.fn_input_params[fkey])
+            agg.fn_outputs[sub] = set(subset)
+            agg.fn_constants[sub] = set(agg.fn_constants.get(fkey, set()))
+            agg.fn_parameter_names[sub] = dict(agg.fn_parameter_names.get(fkey, {}))
+            agg.fn_variants_map[sub] = [
+                row
+                for row in agg.fn_variants_map.get(fkey, [])
+                if row.get("output_type") in subset
+            ]
+        for table in (
+            agg.fn_input_params,
+            agg.fn_outputs,
+            agg.fn_constants,
+            agg.fn_parameter_names,
+            agg.fn_variants_map,
+        ):
+            table.pop(fkey, None)
+        replaced[fkey] = subs
+        logger.info(
+            "[graph_builder] call site %s/%s split into %d wiring(s) by Run "
+            "claims: %s",
+            fn,
+            cid,
+            len(subs),
+            {wid: sorted(subset) for wid, subset in splits},
+        )
+    if not replaced:
+        return agg
+    for const_name, fkeys in list(agg.const_fns.items()):
+        agg.const_fns[const_name] = {
+            sub for f in fkeys for sub in replaced.get(tuple(f), [tuple(f)])
+        }
+    for pi in agg.path_inputs.values():
+        pi["functions"] = {
+            (sub, pname)
+            for (f, pname) in pi.get("functions", ())
+            for sub in replaced.get(tuple(f), [tuple(f)])
+        }
+    return agg
+
+
 def _log_multi_output_call_sites(agg: "AggregatedData") -> None:
     """Name every call site whose history node will draw >1 output.
 
@@ -855,8 +950,9 @@ def _log_multi_output_call_sites(agg: "AggregatedData") -> None:
         fn_name, call_id = fkey
         logger.info(
             "[graph_builder] call site %s/%s records %d output types %s from ONE "
-            "set of inputs (inputs %s, path inputs %s, constants %s) — its node "
-            "draws every one. Unless %s returns several values, separate runs "
+            "set of inputs (inputs %s, path inputs %s, constants %s) — one node "
+            "draws them all unless Runs claimed them apart (a 'split into' line "
+            "follows if so). Unless %s returns several values, separate runs "
             "saved the same inputs into different variables.",
             fn_name,
             call_id,

@@ -146,3 +146,21 @@ plus the duplicate at toml line 13).
   nothing drawn still runs its recorded binding; drawn outputs aren't part of
   script-run claims; edges from a still-manual PathInput node's suffixed id
   are unverified.
+
+## Follow-up 2026-09-29: re-key a run hand-dragged node (uncommitted, pytest unrun)
+
+Found in scidb.log after Stages 1-4 shipped. `rlw90w` is a hand-dragged
+node's 6-char id. It became the history node's id through its dispatch
+record, but `ids.parse_fn_node_id` rejects it, so Run returned nothing
+without logging and its drawn edges weren't indexed.
+- `node_identity.resolve_identities`: a claimant outside the id grammar is
+  re-keyed to a minted id (`IdentityPlan.rekeys`). All its wirings go to one
+  new id, and it keeps its current shape.
+- `api/pipeline._resolve_node_identity`: applies each re-key with
+  `pipeline_store.rebase_node` and `layout.rebase_node_positions` before
+  `to_record`. `_build_graph` re-reads hidden and manual rows after a re-key.
+- `execution_service.derive_target_for_node`: every early `return []` now
+  logs its reason.
+- Tests: `TestRunManualNodeIsReKeyedPure` and `TestRunManualNodeEndToEnd`.
+  The `test_node_identity.py` placeholder ids were padded to 16 hex, with
+  their order preserved.

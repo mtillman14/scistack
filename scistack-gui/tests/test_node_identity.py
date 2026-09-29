@@ -54,10 +54,10 @@ class TestResolveIdentities:
         already recorded the association at dispatch."""
         plan = resolve_identities(
             [("f", "w2")],
-            associations=[{"node_id": "fn__f__abc", "wiring_id": "w2"}],
+            associations=[{"node_id": "fn__f__abc0000000000000", "wiring_id": "w2"}],
         )
 
-        assert plan.node_by_wiring == {("f", "w2"): "fn__f__abc"}
+        assert plan.node_by_wiring == {("f", "w2"): "fn__f__abc0000000000000"}
         assert plan.to_record == [], "a known association was re-recorded"
         assert plan.minted == []
 
@@ -70,28 +70,28 @@ class TestResolveIdentities:
         """
         plan = resolve_identities(
             [("f", "w1"), ("f", "w2")],
-            associations=[{"node_id": "fn__f__abc", "wiring_id": "w1"}],
-            stated_by={("f", "w2"): ["fn__f__abc"]},
-            current_by_node={"fn__f__abc": "w1"},
+            associations=[{"node_id": "fn__f__abc0000000000000", "wiring_id": "w1"}],
+            stated_by={("f", "w2"): ["fn__f__abc0000000000000"]},
+            current_by_node={"fn__f__abc0000000000000": "w1"},
         )
 
         assert plan.node_by_wiring == {
-            ("f", "w1"): "fn__f__abc",
-            ("f", "w2"): "fn__f__abc",
+            ("f", "w1"): "fn__f__abc0000000000000",
+            ("f", "w2"): "fn__f__abc0000000000000",
         }, "the rewired node forked instead of absorbing its new shape"
         assert plan.minted == [], "w2 minted a node of its own"
-        assert plan.to_record == [("fn__f__abc", "w2", "main")]
+        assert plan.to_record == [("fn__f__abc0000000000000", "w2", "main")]
 
     def test_an_unclaimed_new_wiring_is_a_genuinely_new_node(self):
         """Rule 4 again. Nothing states it, so it is not a rewired node — it
         is a second call site, and it gets its own id."""
         plan = resolve_identities(
             [("f", "w1"), ("f", "w2")],
-            associations=[{"node_id": "fn__f__abc", "wiring_id": "w1"}],
+            associations=[{"node_id": "fn__f__abc0000000000000", "wiring_id": "w1"}],
         )
 
-        assert plan.node_by_wiring[("f", "w1")] == "fn__f__abc"
-        assert plan.node_by_wiring[("f", "w2")] != "fn__f__abc"
+        assert plan.node_by_wiring[("f", "w1")] == "fn__f__abc0000000000000"
+        assert plan.node_by_wiring[("f", "w2")] != "fn__f__abc0000000000000"
         assert len(plan.minted) == 1
 
     def test_an_association_for_another_function_does_not_capture_a_wiring(self):
@@ -101,7 +101,7 @@ class TestResolveIdentities:
         the unfiltered list coming back."""
         plan = resolve_identities(
             [("f", "w1")],
-            associations=[{"node_id": "fn__other__abc", "wiring_id": "w1"}],
+            associations=[{"node_id": "fn__other__abc0000000000000", "wiring_id": "w1"}],
         )
 
         assert plan.node_by_wiring[("f", "w1")].startswith("fn__f__")
@@ -154,9 +154,9 @@ class TestCurrentShapeVersusHistory:
     def test_a_wiring_the_node_just_ran_as_becomes_its_current_shape(self):
         plan = resolve_identities(
             [("f", "w1"), ("f", "w2")],
-            associations=[{"node_id": "fn__f__abc", "wiring_id": "w1"}],
-            stated_by={("f", "w2"): ["fn__f__abc"]},
-            current_by_node={"fn__f__abc": "w1"},
+            associations=[{"node_id": "fn__f__abc0000000000000", "wiring_id": "w1"}],
+            stated_by={("f", "w2"): ["fn__f__abc0000000000000"]},
+            current_by_node={"fn__f__abc0000000000000": "w1"},
         )
 
         assert plan.is_current("f", "w2") is True
@@ -167,8 +167,8 @@ class TestCurrentShapeVersusHistory:
     def test_a_node_that_has_not_been_rewired_has_one_current_shape(self):
         plan = resolve_identities(
             [("f", "w1")],
-            associations=[{"node_id": "fn__f__abc", "wiring_id": "w1"}],
-            current_by_node={"fn__f__abc": "w1"},
+            associations=[{"node_id": "fn__f__abc0000000000000", "wiring_id": "w1"}],
+            current_by_node={"fn__f__abc0000000000000": "w1"},
         )
 
         assert plan.is_current("f", "w1") is True
@@ -195,14 +195,14 @@ class TestAmbiguity:
         plan = resolve_identities(
             [("f", "w2")],
             associations=[],
-            stated_by={("f", "w2"): ["fn__f__bbb", "fn__f__aaa"]},
+            stated_by={("f", "w2"): ["fn__f__bbb0000000000000", "fn__f__aaa0000000000000"]},
         )
 
         assert len(plan.ambiguities) == 1
         amb = plan.ambiguities[0]
-        assert amb.chosen == "fn__f__aaa", "the tie-break is not the stable one"
-        assert amb.others == ("fn__f__bbb",)
-        assert plan.node_by_wiring[("f", "w2")] == "fn__f__aaa"
+        assert amb.chosen == "fn__f__aaa0000000000000", "the tie-break is not the stable one"
+        assert amb.others == ("fn__f__bbb0000000000000",)
+        assert plan.node_by_wiring[("f", "w2")] == "fn__f__aaa0000000000000"
 
     def test_the_oldest_node_wins_a_tie(self):
         """Age is ``first_seen`` in ``_node_wiring`` — when the node first ran
@@ -210,13 +210,13 @@ class TestAmbiguity:
         plan = resolve_identities(
             [("f", "w2")],
             associations=[
-                {"node_id": "fn__f__zzz", "wiring_id": "w0", "first_seen": "2026-01-01"},
-                {"node_id": "fn__f__aaa", "wiring_id": "w9", "first_seen": "2026-09-01"},
+                {"node_id": "fn__f__fff0000000000000", "wiring_id": "w0", "first_seen": "2026-01-01"},
+                {"node_id": "fn__f__aaa0000000000000", "wiring_id": "w9", "first_seen": "2026-09-01"},
             ],
-            stated_by={("f", "w2"): ["fn__f__aaa", "fn__f__zzz"]},
+            stated_by={("f", "w2"): ["fn__f__aaa0000000000000", "fn__f__fff0000000000000"]},
         )
 
-        assert plan.node_by_wiring[("f", "w2")] == "fn__f__zzz"
+        assert plan.node_by_wiring[("f", "w2")] == "fn__f__fff0000000000000"
 
     def test_a_node_that_has_already_run_as_it_wins_over_age(self):
         """Resolution order: history first, then age. Rule 1 settles this one
@@ -224,19 +224,19 @@ class TestAmbiguity:
         plan = resolve_identities(
             [("f", "w2")],
             associations=[
-                {"node_id": "fn__f__zzz", "wiring_id": "w2", "first_seen": "2026-09-01"}
+                {"node_id": "fn__f__fff0000000000000", "wiring_id": "w2", "first_seen": "2026-09-01"}
             ],
-            stated_by={("f", "w2"): ["fn__f__aaa"]},
+            stated_by={("f", "w2"): ["fn__f__aaa0000000000000"]},
         )
 
-        assert plan.node_by_wiring[("f", "w2")] == "fn__f__zzz"
+        assert plan.node_by_wiring[("f", "w2")] == "fn__f__fff0000000000000"
 
     def test_attribution_is_stable_across_rebuilds(self):
         answers = {
             resolve_identities(
                 [("f", "w2")],
                 associations=[],
-                stated_by={("f", "w2"): ["fn__f__bbb", "fn__f__aaa"]},
+                stated_by={("f", "w2"): ["fn__f__bbb0000000000000", "fn__f__aaa0000000000000"]},
             ).node_by_wiring[("f", "w2")]
             for _ in range(5)
         }
@@ -245,11 +245,11 @@ class TestAmbiguity:
     def test_the_signature_is_the_same_for_the_same_pair(self):
         """So "two nodes are wired identically" can be said ONCE rather than
         on every graph build."""
-        a = Ambiguity("f", "w2", "fn__f__a", ("fn__f__b",))
-        b = Ambiguity("f", "w2", "fn__f__a", ("fn__f__b",))
+        a = Ambiguity("f", "w2", "fn__f__a000000000000000", ("fn__f__b000000000000000",))
+        b = Ambiguity("f", "w2", "fn__f__a000000000000000", ("fn__f__b000000000000000",))
         assert a.signature == b.signature
 
-        c = Ambiguity("f", "w2", "fn__f__a", ("fn__f__c",))
+        c = Ambiguity("f", "w2", "fn__f__a000000000000000", ("fn__f__c000000000000000",))
         assert a.signature != c.signature
 
     def test_the_warning_is_logged_once_rather_than_per_build(self):
@@ -258,8 +258,8 @@ class TestAmbiguity:
         the log records each pair the first time only."""
         from scistack_gui.api import pipeline as api_pipeline
 
-        amb = Ambiguity("f", "w2", "fn__f__a", ("fn__f__b",))
-        other = Ambiguity("f", "w3", "fn__f__a", ("fn__f__c",))
+        amb = Ambiguity("f", "w2", "fn__f__a000000000000000", ("fn__f__b000000000000000",))
+        other = Ambiguity("f", "w3", "fn__f__a000000000000000", ("fn__f__c000000000000000",))
         for signature in (amb.signature, other.signature):
             api_pipeline._AMBIGUITIES_LOGGED.discard(signature)
         try:
@@ -275,10 +275,10 @@ class TestAmbiguity:
                 api_pipeline._AMBIGUITIES_LOGGED.discard(signature)
 
     def test_the_message_names_both_nodes_and_says_nothing_was_merged(self):
-        message = Ambiguity("grSides", "w2", "fn__grSides__a", ("fn__grSides__b",)).message()
+        message = Ambiguity("grSides", "w2", "fn__grSides__a000000000000000", ("fn__grSides__b000000000000000",)).message()
 
         assert "grSides" in message
-        assert "fn__grSides__a" in message and "fn__grSides__b" in message
+        assert "fn__grSides__a000000000000000" in message and "fn__grSides__b000000000000000" in message
         assert "merged" in message.lower(), (
             "the user must be told that nothing was collapsed"
         )
@@ -289,10 +289,10 @@ class TestIdentityPlanLookups:
     def test_token_is_the_id_suffix(self):
         plan = resolve_identities(
             [("f", "w1")],
-            associations=[{"node_id": "fn__f__abcdef", "wiring_id": "w1"}],
+            associations=[{"node_id": "fn__f__abcdef0000000000", "wiring_id": "w1"}],
         )
 
-        assert plan.token("f", "w1") == "abcdef"
+        assert plan.token("f", "w1") == "abcdef0000000000"
 
     def test_a_wiring_no_node_claims_is_its_own_token(self):
         """Not a fallback to the old behaviour — under allocated ids it can
@@ -305,13 +305,13 @@ class TestIdentityPlanLookups:
         plan = resolve_identities(
             [("f", "w1"), ("f", "w2")],
             associations=[
-                {"node_id": "fn__f__abc", "wiring_id": "w1"},
-                {"node_id": "fn__f__abc", "wiring_id": "w2"},
+                {"node_id": "fn__f__abc0000000000000", "wiring_id": "w1"},
+                {"node_id": "fn__f__abc0000000000000", "wiring_id": "w2"},
             ],
         )
 
-        assert plan.token("f", "w1") == plan.token("f", "w2") == "abc"
-        assert plan.wirings_of("f", "abc") == {"w1", "w2"}
+        assert plan.token("f", "w1") == plan.token("f", "w2") == "abc0000000000000"
+        assert plan.wirings_of("f", "abc0000000000000") == {"w1", "w2"}
 
     def test_identity_token_has_one_owner(self):
         """graph_builder.identity_token is the one copy; node_identity used to

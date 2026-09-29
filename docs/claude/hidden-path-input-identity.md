@@ -132,6 +132,50 @@ logs the edges drawn on it, and says that they aren't consulted
   was drawn from `pathInput__DemographicsPath2::main`, so the case didn't
   arise. Check it if a drawn PathInput is ignored on a node that was just
   dragged in.
+## Follow-up 2026-09-29: a hand-dragged node that ran had an id nobody parsed
+
+After the fix above, the same node still could not run. `scidb.log`:
+`Deriving targets … node_id=fn__pandas.read_csv__rlw90w::main` followed
+straight by "No pipeline history…", with **nothing logged in between**. On
+every build, `hidden_wirings: [('pandas.read_csv', 'rlw90w')]` reported it as
+disconnected even though the user had redrawn the edge.
+
+**Cause, a logic bug and not damage to this database.** `rlw90w` is a
+hand-dragged node's id: `fn__{fn}__{6 chars}`. The user ran it. The dispatch
+record (`record_dispatch_wirings`) made that short id the association for the
+run's wiring, so identity rule 1 picked it as the history node's id, and the
+manual node "graduated into itself" (09-28 09:50:41). `ids.parse_fn_node_id`
+recognises a function node only by a 16-hex suffix, and about 40 consumers
+depend on that. For this node it returned `None`, so:
+- `derive_target_for_node` fell through a silent `return []`;
+- `manual_edge_handle_index` skipped every edge drawn into the node, so the
+  redrawn PathInput edge never covered the hidden one.
+
+Every hand-dragged function node that is run from the GUI hits this.
+
+**Fix: the id grammar stays the one owner, and identity enforces it.**
+- `resolve_identities` doesn't let a claimant whose id fails
+  `parse_fn_node_id` become a history node's id. It mints a grammar id once
+  and records `plan.rekeys[old] = new`. All of that node's wirings move to
+  the one new id, and it keeps its current shape.
+- `_resolve_node_identity` applies the re-key with the same two movers a
+  PathInput rename uses, `pipeline_store.rebase_node` and
+  `layout.rebase_node_positions`. They move rows, config, intent statements,
+  `_node_wiring`, manual edges, hidden edges and positions. `_build_graph`
+  then re-reads the node-keyed rows, so the same build draws the node
+  correctly.
+- This runs on every build, so an affected database repairs itself on the
+  next refresh. It's the live rule rather than a migration.
+- Diagnostics: every early `return []` in `derive_target_for_node` now logs
+  why. A re-key logs `[node_identity] … re-keying it to …` and
+  `[pipeline] re-keyed function node … : {counts}`.
+
+Tests: `TestRunManualNodeIsReKeyedPure` and `TestRunManualNodeEndToEnd` in
+`test_hidden_path_input_identity.py`. The pure identity tests in
+`test_node_identity.py` used short placeholder ids (`fn__f__abc`), which are
+now padded to 16 hex. The ordering between them is preserved, because the
+tie-break tests depend on it.
+
 ## Tests
 
 `scistack-gui/tests/test_hidden_path_input_identity.py`: hide a PathInput →

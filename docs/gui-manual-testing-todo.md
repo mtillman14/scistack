@@ -11,6 +11,36 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzo. A rewired output keeps its node; multi-output nodes run — added 2026-09-29
+
+**What changed:** a node's call site can hold several output types, either
+after its output was rewired or because the function returns several values.
+Before, the canvas and the Run button hashed that call site differently, so
+the next canvas build created a phantom node whose Run found no targets. Now
+one owner (`scidb.provenance.split_call_site_outputs`) splits the outputs by
+what each Run wrote together. Plan: `.claude/plan-multi-output-call-site-wiring.md`.
+
+**Backend**
+1. Stroke-R01-Aim-2 already has a phantom node,
+   `fn__pandas.read_csv__4b9cac03…`. Hide it on the canvas. It will not be
+   removed automatically.
+2. Refresh the canvas. `scidb.log` should show
+   `[graph_builder] call site pandas.read_csv/f64b61f0… split into 3 wiring(s)`
+   (the third comes from the phantom's claim). It should not show
+   `minted … for wiring`.
+
+**Frontend**
+3. The original `read_csv` node should draw `DemographicsTable` as its output.
+   `Demographics` should appear only as a history row in its variants.
+4. Click that node's Run. The log should show `claims 1 wiring(s)
+   {'7ade34e9ef0a9bdf': ['DemographicsTable']}` and then a real run. There
+   should be no `matches none of the … candidate variant(s)` line.
+5. If you have a function that returns two values: run it from its node with
+   two output edges drawn, then refresh. It should stay as one node, and its
+   Run should find both outputs.
+
+---
+
 ## 0zzn. A one-call loader re-runs as one call (recorded level narrowed) — added 2026-09-29
 
 **What changed:** a function that ran as ONE call and whose returned table was

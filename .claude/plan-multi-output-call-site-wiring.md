@@ -1,6 +1,37 @@
 # Plan: a call site with more than one output must hash to one agreed wiring
 
-Status: INVESTIGATED; proposal awaiting user approval. Date: 2026-09-29.
+Status: BUILT 2026-09-29 (option B; user approved). Tests written, NOT run
+(the user runs them). Q2 taken as "hide the phantom by hand"; Q3's multi-output
+tests were written alongside, not first.
+
+## 0. What was built
+
+- scidb `provenance.split_call_site_outputs` + `SPLIT_MAX_OUTPUTS`: the owner.
+  `database.call_site_wiring_ids` (CLI) now calls it with no claims (= union).
+- GUI `node_wiring.claimed_wirings(db)`: the claims, one query.
+- GUI `graph_builder.split_call_sites_by_claims(agg, claims)` + `SPLIT_SEP` /
+  `call_id_of`: applied ONCE in `api/pipeline.build_aggregate` (shared by the
+  build, `ensure_node_identities`, `disconnected_report_entries`). A split
+  call site becomes sub-sites `(fn, "{call_id}#{wiring}")`, one wiring each,
+  so every per-FnKey loop downstream is correct unchanged. Unsplit call sites
+  keep their FnKey exactly.
+- `_compute_run_states`: asks scidb once per REAL call id (union of the
+  sub-sites' outputs — what it asked before) and gives each sub-site that
+  state. Variant rows carry the real call id.
+- Run path: `execution_service.history_variant_wirings` (owner-backed) used by
+  `derive_target_for_node`, `disconnected_reason`, `_scope_function_node_ids`,
+  and — via the target key `variant_resolver.HISTORY_WIRING_KEY` —
+  `reconcile_manual_inputs` on the name-scoped path.
+- `record_dispatch_wirings`: ONE claim per input shape covering every output
+  the Run writes (was one per target/output); log names each claim's outputs.
+- Tests: scidb/tests/test_split_call_site_outputs.py,
+  scistack-gui/tests/test_multi_output_wiring.py (rewire end-to-end,
+  multi-output, pure split, AST guard on the run path).
+
+Known leftover: `reconcile_manual_inputs` still falls back to a per-output
+hash for targets WITHOUT a history wiring (never-run manual targets, one
+output each) — harmless there, excluded from the guard (it lives in
+variant_resolver).
 
 ## 1. The failure (scidb.log 2026-09-29)
 

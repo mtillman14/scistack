@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CONSTANT_TYPE",
     "compute_wiring_id",
+    "split_call_site_outputs",
     "parse_path_input_spec",
     "path_input_key_of",
     "strip_path_input_specs",
@@ -738,3 +739,104 @@ def compute_wiring_id(
         payload_obj["path_inputs"] = dict(sorted(path_inputs.items()))
     payload = _json.dumps(payload_obj, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+#: Above this many recorded output types a call site is not split: the subset
+#: search is 2^n, and no real step writes this many variables from one call.
+SPLIT_MAX_OUTPUTS = 6
+
+
+def split_call_site_outputs(
+    fn_name: str,
+    input_types: dict,
+    outputs,
+    path_inputs: "dict | None",
+    claimed_wirings=(),
+) -> "list[tuple[str, frozenset]]":
+    """``[(wiring_id, outputs), ...]`` — which of a call site's recorded output
+    types form ONE wiring, sorted by wiring id. THE owner of "the outputs in a
+    wiring": the canvas build and the run path both ask here.
+
+    A call site (``call_id``) is the function, its inputs, constants and run
+    options — NOT its outputs. So every run reading the same inputs is one call
+    site however many variables it saved into, and there are two reasons it can
+    hold several output types:
+
+    * one call wrote them together — a multi-output function;
+    * separate runs saved the same inputs into different variables — the node's
+      output was REWIRED (pandas.read_csv: Demographics, then DemographicsTable;
+      scidb.log 2026-09-29).
+
+    Provenance cannot tell those apart. The GUI can: every Run records, at
+    dispatch, the wiring of the outputs it writes together (``_node_wiring``,
+    GUI-side, never in provenance — node-identity.md §7a). ``claimed_wirings``
+    is that set, passed in. Every subset of the recorded outputs whose wiring
+    was claimed is its own wiring; outputs no claim covers stay together as
+    one remainder wiring — with no claims at all, that is the whole union, which
+    is what a script-only history and the CLI (``call_site_wiring_ids``) get.
+
+    Before this, the canvas hashed the union and the run path hashed one output
+    per variant; the two agreed only for a single-output call site. After an
+    output rewire the build minted a phantom node for the union wiring, whose
+    Run matched no history ("matches none of the 2 candidate variant(s)").
+
+    Overlapping claims are all kept: each is a real claim by some node, and
+    which node each wiring lands on is identity resolution's decision.
+    """
+    outs = sorted({str(o) for o in (outputs or ()) if o})
+    pis = dict(path_inputs or {})
+
+    def _wid(subset) -> str:
+        return compute_wiring_id(fn_name, input_types or {}, subset, pis)
+
+    if len(outs) <= 1:
+        return [(_wid(outs), frozenset(outs))]
+    if len(outs) > SPLIT_MAX_OUTPUTS:
+        logger.warning(
+            "split_call_site_outputs: %s has %d output types %s — more than %d, "
+            "not splitting (one wiring for all of them)",
+            fn_name,
+            len(outs),
+            outs,
+            SPLIT_MAX_OUTPUTS,
+        )
+        return [(_wid(outs), frozenset(outs))]
+
+    from itertools import combinations
+
+    claimed = set(claimed_wirings or ())
+    found: dict[str, frozenset] = {}
+    tried = 0
+    for size in range(len(outs), 0, -1):
+        for subset in combinations(outs, size):
+            tried += 1
+            wid = _wid(subset)
+            if wid in claimed:
+                found[wid] = frozenset(subset)
+    covered = frozenset().union(*found.values()) if found else frozenset()
+    remainder = [o for o in outs if o not in covered]
+    result = dict(found)
+    if remainder:
+        result[_wid(remainder)] = frozenset(remainder)
+    logger.debug(
+        "split_call_site_outputs: %s outputs %s — %d subset(s) tried, claimed %s, "
+        "remainder %s",
+        fn_name,
+        outs,
+        tried,
+        {w: sorted(s) for w, s in found.items()},
+        remainder,
+    )
+    if len(result) > 1:
+        overlapping = sum(len(s) for s in found.values()) > len(covered)
+        logger.info(
+            "split_call_site_outputs: %s splits into %d wirings %s (claimed by a "
+            "Run: %s%s)%s",
+            fn_name,
+            len(result),
+            {w: sorted(s) for w, s in sorted(result.items())},
+            sorted(found),
+            f"; unclaimed remainder {remainder}" if remainder else "",
+            " — claims OVERLAP: two nodes claim a shared output" if overlapping else "",
+        )
+    return sorted(result.items())

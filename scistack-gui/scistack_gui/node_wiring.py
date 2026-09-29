@@ -139,6 +139,13 @@ def associations(db) -> list[dict]:
     ]
 
 
+def claimed_wirings(db) -> set[str]:
+    """Every wiring some node has claimed — the input
+    ``scidb.provenance.split_call_site_outputs`` splits a multi-output call
+    site by. One query; the build and the run path both read it."""
+    return {r[0] for r in _rows(db, "SELECT DISTINCT wiring_id FROM _node_wiring")}
+
+
 def wirings_for_node(db, node_id: str) -> list[str]:
     """Every wiring *node_id* has run as, oldest first — its HISTORY.
 

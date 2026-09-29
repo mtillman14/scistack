@@ -293,16 +293,23 @@ def build_aggregate(db, scidb_agg: dict):
     ``docs/claude/code-discovery-categories.md``), and the raw DB extraction
     knows nothing about source.
     """
+    from scistack_gui import node_wiring
     from scistack_gui import pipeline_store as _store
     from scistack_gui.domain import graph_builder as gb
 
-    return gb.aggregate_from_scidb(
+    agg = gb.aggregate_from_scidb(
         scidb_agg,
         registry.get_path_inputs_registry(),
         _store.path_input_history_index(db),
         registry.get_project_root(),
         path_input_renames=_store.path_input_rename_index(db),
     )
+    # A call site holding several output types is split by what Runs claimed
+    # together (scidb.provenance.split_call_site_outputs) BEFORE anything
+    # hashes a wiring, so every FnKey below has exactly one. Without it a
+    # rewired node's call site hashed old+new outputs together and minted a
+    # phantom node (scidb.log 2026-09-29).
+    return gb.split_call_sites_by_claims(agg, node_wiring.claimed_wirings(db))
 
 
 def _resolve_node_identity(
@@ -379,6 +386,23 @@ def _resolve_node_identity(
         current_by_node=current_by_node,
         scope_of=lambda node_id: _node_scope(db, node_id),
     )
+    # Re-keys FIRST: they move the old id's `_node_wiring` rows (and every other
+    # node-keyed row) onto the new id, which `to_record` then writes under.
+    # The same two movers a PathInput rename uses — one owner for "a canonical
+    # node id changed", not a graduation-specific copy.
+    if plan.rekeys:
+        from scistack_gui import layout as layout_store
+        from scistack_gui import pipeline_store as _ps
+
+        for old, new in plan.rekeys.items():
+            counts = _ps.rebase_node(db, old, new)
+            counts["positions"] = layout_store.rebase_node_positions(old, new)
+            logger.info(
+                "[pipeline] re-keyed function node %s -> %s (id grammar): %s",
+                old,
+                new,
+                counts,
+            )
     for node_id, wiring, scope in plan.to_record:
         node_wiring.record(db, node_id, wiring, scope=scope)
 
@@ -480,16 +504,25 @@ def _compute_run_states(
         elif matlab_registry.is_matlab_function(fn_name_str):
             fn_registry[fn_name_str] = _build_matlab_fn_proxy(fn_name_str)
 
-    # Build nodes list for batched state checking
-    nodes = []
+    # Build nodes list for batched state checking. Own state is a property of
+    # the REAL call site ("has it done its recorded work"), so a call site
+    # split by Run claims (graph_builder.split_call_sites_by_claims) is asked
+    # about ONCE, over all its outputs — exactly what it was asked before the
+    # split — and every sub-site takes that answer.
+    from scistack_gui.domain.graph_builder import call_id_of
+
+    outputs_by_site: dict[tuple, set] = {}
     for fkey in fn_input_params:
         fn_name, cid = fkey
-        fn_out_types = fn_outputs.get(fkey, set())
-
+        outputs_by_site.setdefault((fn_name, call_id_of(cid)), set()).update(
+            fn_outputs.get(fkey, set())
+        )
+    nodes = []
+    for (fn_name, cid), fn_out_types in outputs_by_site.items():
         # Convert output type names to classes
         output_classes = [
             BaseVariable._all_subclasses[t]
-            for t in fn_out_types
+            for t in sorted(fn_out_types)
             if t in BaseVariable._all_subclasses
         ]
 
@@ -509,7 +542,7 @@ def _compute_run_states(
     fn_own_state: dict[tuple, str] = {}
     for fkey in fn_input_params:
         fn_name, cid = fkey
-        node_id = fn_node_id(fn_name, cid or '')
+        node_id = fn_node_id(fn_name, call_id_of(cid or ''))
         if node_id in state_results:
             fn_own_state[fkey] = state_results[node_id]["state"]
             counts = state_results[node_id].get("counts", {})
@@ -751,6 +784,14 @@ def _build_graph(
         hidden_edge_ids,
     )
     token_for = identity.token
+    if identity.rekeys:
+        # The re-key rewrote node-keyed rows this build already read; re-read
+        # them so THIS build draws the node with its edges and hides, rather
+        # than one build late.
+        hidden_ids = _ps.get_hidden_node_ids(db, pipeline_id)
+        hidden_edge_ids = _ps.get_hidden_edge_ids(db, pipeline_id)
+        manual_edges_for_fn_lookup = _ps.get_manual_edges(db)
+        manual_nodes = _ps.get_manual_nodes(db)
 
     disconnected_wirings = gb.hidden_wirings(
         agg.fn_input_params,

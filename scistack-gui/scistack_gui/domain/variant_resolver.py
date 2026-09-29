@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Target key holding the wiring a DB-history target belongs to, as
+#: ``execution_service.history_variant_wirings`` (the one owner) decided it.
+HISTORY_WIRING_KEY = "history_wiring"
+
 
 def build_inferred_variants(
     input_types: dict[str, list[str]],
@@ -578,9 +582,14 @@ def reconcile_manual_inputs(
         # DB history spells single types bare.
         input_types = variable_types_view(bindings)
         const_names = list((t.get("constants") or {}).keys())
+        # A history target carries the wiring the ONE owner gave it
+        # (execution_service.history_variant_wirings: its call site's outputs
+        # split by Run claims). Rehashing its own output alone disagrees with
+        # the canvas whenever the call site holds several outputs.
         wid = token_for(
             function_name,
-            wiring_id(
+            t.get(HISTORY_WIRING_KEY)
+            or wiring_id(
                 function_name,
                 input_types,
                 {t.get("output_type")},

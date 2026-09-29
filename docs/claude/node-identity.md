@@ -452,6 +452,15 @@ a manual node that was RUN before it graduated takes its dispatch record with
 it. Do this one on its own, after the suite is green and the canvas has been
 looked at.
 
+**Gap found 2026-09-29.** In practice a run manual node never graduated into
+a *different* id. Its dispatch record made its own short id
+(`fn__{fn}__{6 chars}`) the claimant of history, so it "graduated into
+itself" and kept an id that `ids.parse_fn_node_id` rejects. That broke its
+Run and its drawn edges. `resolve_identities` now re-keys any claimant
+outside the id grammar (`IdentityPlan.rekeys`), and `_resolve_node_identity`
+moves its state with `rebase_node` and `rebase_node_positions`. See
+`hidden-path-input-identity.md` §Follow-up.
+
 ### Tests
 
 | file | what it pins |

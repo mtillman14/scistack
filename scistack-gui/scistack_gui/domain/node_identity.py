@@ -68,7 +68,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from scistack_gui.ids import ROOT_SCOPE, BareNodeId, fn_nodes_prefix
+from scistack_gui.ids import ROOT_SCOPE, BareNodeId, fn_nodes_prefix, parse_fn_node_id
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,13 @@ class IdentityPlan:
     #: ``{(fn_name, node token): wiring}`` — the shape each node currently HAS,
     #: as against every shape it has run as. The canvas draws this one.
     current_by_token: dict[tuple[str, str], str] = field(default_factory=dict)
+    #: ``{old node id: new node id}`` — nodes history claims whose id does not
+    #: satisfy the function-node id grammar (``ids.parse_fn_node_id``): a
+    #: hand-dragged node (``fn__{fn}__{6 chars}``) that was RUN, so its dispatch
+    #: record made its short id the claimant. The caller moves every piece of
+    #: node-keyed state across (``pipeline_store.rebase_node`` +
+    #: ``layout.rebase_node_positions``) before persisting ``to_record``.
+    rekeys: dict[str, str] = field(default_factory=dict)
 
     def token(self, fn_name: str, wiring: str) -> str:
         """The node-id SUFFIX for a wiring — what the grouped graph is keyed
@@ -209,6 +216,9 @@ def resolve_identities(
 
     plan = IdentityPlan()
     taken: set[str] = set()
+    #: (new id, wiring) rows recorded only because a claimant was re-keyed —
+    #: they MOVE a recorded fact, so they must not decide the current shape.
+    rekey_records: set[tuple[str, str]] = set()
 
     by_wiring: dict[str, list[str]] = {}
     #: ``node_id -> (first_seen, node_id)`` — how old each node is, for the
@@ -244,8 +254,29 @@ def resolve_identities(
             continue
 
         chosen = _prefer(claimants, by_wiring.get(wiring) or [], age)
+        if parse_fn_node_id(chosen) is None:
+            # The claimant's id is not a function-node id every consumer can
+            # parse — a hand-dragged node that was run (its dispatch record is
+            # the claim). Left as is, `parse_fn_node_id` returns None for it in
+            # ~40 places: its drawn edges are never indexed and its Run button
+            # derives nothing (scidb.log 2026-09-29, `rlw90w`). Give it an id
+            # in the grammar, once, and have the caller move its state across.
+            old = chosen
+            chosen = plan.rekeys.get(old) or str(mint(fn_name, taken))
+            taken.add(chosen)
+            if old not in plan.rekeys:
+                plan.rekeys[old] = chosen
+                logger.info(
+                    "[node_identity] '%s': node %s claims history but its id is "
+                    "outside the function-node id grammar — re-keying it to %s",
+                    fn_name,
+                    old,
+                    chosen,
+                )
+            rekey_records.add((chosen, wiring))
+            plan.to_record.append((chosen, wiring, scope_of(old)))
         plan.node_by_wiring[key] = BareNodeId(chosen)
-        if source == "stated":
+        if source == "stated" and (chosen, wiring) not in rekey_records:
             plan.to_record.append((chosen, wiring, scope_of(chosen)))
             logger.info(
                 "[node_identity] wiring %s of '%s' attributed to %s — that node "
@@ -278,7 +309,13 @@ def resolve_identities(
         for node_id, wiring in current_by_node.items()
         if node_id in fn_of_node
     }
+    # A re-keyed node keeps the current shape it had under its old id.
+    for old, new in plan.rekeys.items():
+        if old in current_by_node and new in fn_of_node:
+            current[new] = current_by_node[old]
     for node_id, wiring, _scope in plan.to_record:
+        if (node_id, wiring) in rekey_records:
+            continue
         current[node_id] = wiring
     for node_id, wiring in current.items():
         fn_name = fn_of_node[node_id]
@@ -290,7 +327,9 @@ def resolve_identities(
             len(plan.minted),
             plan.minted,
         )
-        _warn_minted_beside_orphans(plan, taken_before=set(age), fn_of_node=fn_of_node)
+        _warn_minted_beside_orphans(
+            plan, taken_before=set(age) - set(plan.rekeys), fn_of_node=fn_of_node
+        )
     return plan
 
 

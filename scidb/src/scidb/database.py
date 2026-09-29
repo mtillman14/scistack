@@ -1035,16 +1035,18 @@ def call_site_wiring_ids(aggregate: dict, fallback=None) -> dict:
     first). Constants are not in the key: a sweep is one step with several
     variants.
     """
-    from .provenance import compute_wiring_id
+    from .provenance import split_call_site_outputs
 
+    # No `_node_wiring` claims here (they are GUI-side), so the owner answers
+    # one wiring per call site — the union of its outputs, as before.
     names = call_site_path_input_names(aggregate.get("path_inputs") or {}, fallback)
     return {
-        tuple(fkey): compute_wiring_id(
+        tuple(fkey): split_call_site_outputs(
             fkey[0],
             data.get("input_params") or {},
             data.get("outputs") or [],
             names.get(tuple(fkey), {}),
-        )
+        )[0][0]
         for fkey, data in (aggregate.get("functions") or {}).items()
     }
 

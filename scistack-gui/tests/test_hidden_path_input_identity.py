@@ -517,3 +517,140 @@ class TestMintedBesideOrphansWarns:
         plan = self._resolve({("f", "w1"), ("f", "w2")}, caplog)
         assert plan.minted
         assert "match nothing in history" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# A hand-dragged function node that RAN keeps working (scidb.log 2026-09-29)
+# ---------------------------------------------------------------------------
+
+_SHORT = "fn__f__rlw90w"  # a hand-dragged node's id: 6 chars, outside the grammar
+
+
+class TestRunManualNodeIsReKeyedPure:
+    """Its dispatch record made the short id the claimant of history, and
+    ``ids.parse_fn_node_id`` returns None for it — so its drawn edges were
+    never indexed and Run derived nothing, silently."""
+
+    def _resolve(self, history, current=None):
+        from scistack_gui.domain.node_identity import resolve_identities
+
+        minted = iter(["fn__f__" + c * 16 for c in "abcdef"])
+        return resolve_identities(
+            history,
+            associations=[
+                {"node_id": _SHORT, "wiring_id": w, "first_seen": "1"} for _f, w in sorted(history)
+            ],
+            current_by_node=current or {},
+            mint=lambda fn, taken: next(minted),
+        )
+
+    def test_claimed_history_gets_an_id_in_the_grammar(self):
+        from scistack_gui.ids import parse_fn_node_id
+
+        plan = self._resolve({("f", "w1")}, {_SHORT: "w1"})
+
+        new = plan.rekeys[_SHORT]
+        assert parse_fn_node_id(new) is not None
+        assert plan.node_by_wiring[("f", "w1")] == new
+        assert (new, "w1", "main") in plan.to_record
+        assert plan.is_current("f", "w1")
+        assert not plan.minted, "a re-key is not a new node"
+
+    def test_every_wiring_of_the_node_moves_to_ONE_new_id(self):
+        plan = self._resolve({("f", "w1"), ("f", "w2")}, {_SHORT: "w2"})
+
+        assert len(plan.rekeys) == 1
+        new = plan.rekeys[_SHORT]
+        assert plan.node_by_wiring[("f", "w1")] == plan.node_by_wiring[("f", "w2")] == new
+        assert plan.is_current("f", "w2") and not plan.is_current("f", "w1"), (
+            "the re-keyed node must keep the current shape it had"
+        )
+
+    def test_an_id_already_in_the_grammar_is_left_alone(self):
+        from scistack_gui.domain.node_identity import resolve_identities
+
+        good = "fn__f__" + "0" * 16
+        plan = resolve_identities(
+            {("f", "w1")},
+            associations=[{"node_id": good, "wiring_id": "w1", "first_seen": "1"}],
+        )
+        assert plan.rekeys == {}
+        assert plan.node_by_wiring[("f", "w1")] == good
+
+
+class TestRunManualNodeEndToEnd:
+    """The 2026-09-28/29 sequence: drag `load_table` in by hand, run it (the
+    dispatch record claims history under its short id), then draw a new output
+    edge and press Run."""
+
+    MANUAL = "fn__load_table__rlw90w"
+
+    @pytest.fixture
+    def ran_manual(self, pi_client):
+        from scistack_gui import layout as layout_store
+        from scistack_gui import pipeline_store as ps
+        from scistack_gui.api.pipeline import build_aggregate
+        from scistack_gui.domain import graph_builder as gb
+
+        db = _gui_db.get_db()
+        # The wiring history recorded for the run — computed by the one
+        # aggregate the build uses, not re-derived here.
+        agg = build_aggregate(db, db.get_aggregated_variants())
+        fkey = next(k for k in agg.fn_input_params if k[0] == "load_table")
+        recorded = gb.wiring_id(
+            "load_table",
+            agg.fn_input_params[fkey],
+            agg.fn_outputs[fkey],
+            gb.path_input_bindings_by_fkey(agg.path_inputs).get(fkey, {}),
+        )
+        node_wiring.ensure_tables(db)
+        ps.write_manual_node(db, self.MANUAL, "functionNode", "load_table", "main")
+        node_wiring.record(db, self.MANUAL, recorded, run_id="r1")  # the dispatch record
+        layout_store.write_node_position(self.MANUAL, 12.0, 34.0, "main")
+        return pi_client, db
+
+    def test_the_node_is_re_keyed_with_its_position(self, ran_manual):
+        from scistack_gui import layout as layout_store
+        from scistack_gui.ids import parse_fn_node_id
+
+        client, db = ran_manual
+        nodes = _nodes(_graph(client))
+
+        assert len(nodes) == 1, [n["id"] for n in nodes]
+        new = nodes[0]["id"]
+        assert parse_fn_node_id(new) is not None, f"still outside the grammar: {new}"
+        assert self.MANUAL not in node_wiring.known_node_ids(db)
+        positions = layout_store.read_positions_by_scope()["main"]
+        assert positions.get(new) == {"x": 12.0, "y": 34.0}
+        assert self.MANUAL not in positions
+
+    def test_a_drawn_output_edge_follows_and_runs(self, ran_manual):
+        from scistack_gui.services.execution_service import derive_target_for_node
+
+        client, db = ran_manual
+        r = client.put(
+            "/api/edges/manual__out_short",
+            json={
+                "source": self.MANUAL,
+                "target": "var__LoadedTable2",
+                "source_handle": None,
+                "target_handle": None,
+            },
+        )
+        assert r.status_code == 200, r.text
+
+        new = _nodes(_graph(client))[0]["id"]
+        edge = next(
+            e for e in pipeline_store_edges(db) if e["id"] == "manual__out_short"
+        )
+        assert edge["source"] == new, "the drawn edge was left on the old id"
+
+        targets = derive_target_for_node(db, new)
+        assert targets, "the re-keyed node has nothing to run"
+        assert {t["output_type"] for t in targets} == {"LoadedTable2"}
+
+
+def pipeline_store_edges(db):
+    from scistack_gui import pipeline_store as ps
+
+    return ps.get_manual_edges(db)

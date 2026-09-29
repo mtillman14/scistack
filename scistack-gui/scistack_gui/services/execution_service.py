@@ -21,6 +21,7 @@ Two jobs:
 from __future__ import annotations
 
 import ast
+import json
 import logging
 from itertools import product
 from pathlib import Path
@@ -190,6 +191,53 @@ def _db_path_input_params(db, function_name: str) -> dict[str, dict[str, str]]:
             if fn == function_name:
                 by_call.setdefault(call_id, {})[param_name] = pi_name
     return by_call
+
+
+def history_variant_wirings(
+    db, function_name: str, variants: list[dict], pi_by_call: "dict | None" = None
+) -> list[tuple[dict, str]]:
+    """``[(variant, wiring_id), ...]`` — the wiring each DB-history variant of
+    *function_name* belongs to, as ``scidb.provenance.split_call_site_outputs``
+    decides it from the call site's recorded outputs and the wirings Runs have
+    claimed. THE run path's answer; the canvas build asks the same owner
+    (``graph_builder.split_call_sites_by_claims``), so a node's wiring and its
+    history's wirings can no longer be hashed two ways.
+
+    A variant carries ONE output type, but its call site may hold several.
+    Hashing the variant's own output alone (what every run-path site did until
+    2026-09-29) disagreed with the canvas whenever the call site had >1 output
+    — after an output rewire the node's wiring matched none of its own history
+    ("matches none of the 2 candidate variant(s)"). A variant appears once per
+    wiring whose outputs include it (twice only where two claims overlap).
+    """
+    from scidb.provenance import split_call_site_outputs
+
+    from scistack_gui import node_wiring as _node_wiring_store
+
+    if not variants:
+        return []
+    if pi_by_call is None:
+        pi_by_call = _db_path_input_params(db, function_name)
+    claimed = _node_wiring_store.claimed_wirings(db)
+    by_call: dict[str, list[dict]] = {}
+    for i, v in enumerate(variants):
+        # A variant with no call id is its own call site, never pooled with
+        # another one's outputs.
+        by_call.setdefault(v.get("call_id") or f"\0{i}", []).append(v)
+    out: list[tuple[dict, str]] = []
+    for cid, group in by_call.items():
+        splits = split_call_site_outputs(
+            function_name,
+            group[0].get("input_types") or {},
+            {v.get("output_type") for v in group},
+            pi_by_call.get(cid, {}),
+            claimed,
+        )
+        for v in group:
+            for wid, subset in splits:
+                if v.get("output_type") in subset:
+                    out.append((v, wid))
+    return out
 
 
 def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[dict]:
@@ -551,6 +599,17 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
         function_name,
         [v for v in all_variants if v["function_name"] == function_name],
     )
+    # Each history target carries the wiring the one owner gives it, so the
+    # name-scoped reconcile below maps it to the node the canvas drew it on.
+    from scistack_gui.domain.variant_resolver import HISTORY_WIRING_KEY
+
+    _wiring_of: dict[int, str] = {}
+    for _v, _wid in history_variant_wirings(db, function_name, fn_variants):
+        _wiring_of.setdefault(id(_v), _wid)
+    fn_variants = [
+        {**v, HISTORY_WIRING_KEY: _wiring_of[id(v)]} if id(v) in _wiring_of else v
+        for v in fn_variants
+    ]
 
     all_edges = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
@@ -709,6 +768,11 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     resolved = None
     if meta is not None:
         if meta["type"] != "functionNode":
+            logger.info(
+                "[execution] node %s: no targets — it is a manual %s, not a function node",
+                node_id,
+                meta["type"],
+            )
             return []
         function_name = meta["label"]
         node_wiring = None  # resolved from this node's own edges, below
@@ -748,6 +812,16 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
                 node_wiring,
             )
     else:
+        # Neither a manual row nor an id in the function-node grammar. Since
+        # 2026-09-29 the identity pass re-keys a run hand-dragged node out of
+        # this state, so reaching here means a build has not run since — or an
+        # id nothing recognises at all.
+        logger.warning(
+            "[execution] node %s: no targets — not a manual node and not a "
+            "function-node id ids.parse_fn_node_id recognises; refresh the canvas "
+            "so the identity pass can re-key it",
+            node_id,
+        )
         return []
 
     all_variants = db.list_pipeline_variants()
@@ -769,6 +843,12 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             existing_node_labels={},
         )
         if not resolved.output_types:
+            logger.info(
+                "[execution] node %s ('%s'): no targets — a never-run node with "
+                "no output edge drawn",
+                node_id,
+                function_name,
+            )
             return []
         # The variable_types_view shape — the same one record_dispatch_wirings
         # hashes. This was `ts[0]` (first candidate only), which for a
@@ -783,19 +863,12 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
 
     # PathInputs are part of the wiring shape, so both sides of this
     # comparison must carry them or a PathInput-fed node matches nothing.
+    # Each variant's wiring comes from the ONE owner the canvas uses — the
+    # call site's outputs split by Run claims — not from its own output alone.
     pi_by_call = _db_path_input_params(db, function_name)
-    candidate_wirings = [
-        (
-            v,
-            wiring_id(
-                function_name,
-                v["input_types"],
-                {v["output_type"]},
-                pi_by_call.get(v.get("call_id"), {}),
-            ),
-        )
-        for v in fn_variants
-    ]
+    candidate_wirings = history_variant_wirings(
+        db, function_name, fn_variants, pi_by_call
+    )
     matching = [v for v, wid in candidate_wirings if wid == node_wiring]
     if not matching and candidate_wirings:
         # "This node matches no history" is indistinguishable, from the
@@ -976,15 +1049,24 @@ def record_dispatch_wirings(
         return 0
 
     scope = intent_store.scope_of_node(db, node_id)
-    wirings = {
-        wiring_id(
-            function_name,
-            variable_types_view(target.get("bindings") or {}),
-            {target.get("output_type")},
-            bindings_of_kind(target.get("bindings") or {}, BINDING_PATHINPUT),
-        )
-        for target in targets
-    }
+    # ONE claim per input shape, covering EVERY output this Run writes for it:
+    # the claim is what `scidb.provenance.split_call_site_outputs` later splits
+    # the call site's recorded outputs by, so a node run with outputs {A, B}
+    # must claim hash(A, B) — two per-output claims would split it into two
+    # nodes. Constants are not in a wiring, so constant variants of one shape
+    # share the claim (as before). For a one-output node this is the same hash
+    # as the per-target claim it replaced.
+    outputs_by_shape: dict[str, tuple[dict, dict, set]] = {}
+    for target in targets:
+        inputs = variable_types_view(target.get("bindings") or {})
+        pis = bindings_of_kind(target.get("bindings") or {}, BINDING_PATHINPUT)
+        shape = json.dumps([inputs, pis], sort_keys=True, default=str)
+        entry = outputs_by_shape.setdefault(shape, (inputs, pis, set()))
+        if target.get("output_type"):
+            entry[2].add(target.get("output_type"))
+    wirings = {}
+    for inputs, pis, outputs in outputs_by_shape.values():
+        wirings[wiring_id(function_name, inputs, outputs, pis)] = sorted(outputs)
     written = 0
     for wiring in sorted(wirings):
         if _node_wiring_store.record(db, node_id, wiring, run_id=run_id, scope=scope):
@@ -997,7 +1079,7 @@ def record_dispatch_wirings(
         node_id,
         function_name,
         len(wirings),
-        sorted(wirings),
+        {w: outs for w, outs in sorted(wirings.items())},
         written,
     )
     return written
@@ -1016,7 +1098,7 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     from "never run" and surface the right explicit error (see api/run.py).
     """
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import manual_edge_handle_index, wiring_id
+    from scistack_gui.domain.graph_builder import manual_edge_handle_index
     from scistack_gui.ids import parse_fn_node_id
 
     hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
@@ -1051,15 +1133,15 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
 
     all_variants = db.list_pipeline_variants()
     pi_by_call = _db_path_input_params(db, function_name)
-    for v in all_variants:
-        if v["function_name"] != function_name:
-            continue
-        wid = wiring_id(
-            function_name,
-            v["input_types"],
-            {v["output_type"]},
-            pi_by_call.get(v.get("call_id"), {}),
-        )
+    # The same owner derive_target_for_node matches with (the call site's
+    # outputs split by Run claims), so "why can't this run" is asked about
+    # exactly the wirings a Run would consider.
+    for v, wid in history_variant_wirings(
+        db,
+        function_name,
+        [v for v in all_variants if v["function_name"] == function_name],
+        pi_by_call,
+    ):
         if node_wiring_now is not None and wid != node_wiring_now:
             continue
         key = node_token or token_for(function_name, wid)
@@ -1929,7 +2011,6 @@ def _scope_function_node_ids(db, pipeline_id: str, identity=None) -> list[tuple[
     """
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import wiring_id
     from scistack_gui.ids import fn_node_id, parse_fn_node_id
     from scistack_gui.domain.scope_filter import node_scope
 
@@ -1978,26 +2059,22 @@ def _scope_function_node_ids(db, pipeline_id: str, identity=None) -> list[tuple[
         # window. Asking the one resolver to settle it is the alternative to
         # inventing an id here, which is the bug this change removes.
         identity = identity or ensure_node_identities(db)
-        pi_by_fn: dict[str, dict] = {}
+        variants_by_fn: dict[str, list[dict]] = {}
         for v in db.list_pipeline_variants():
-            fn = v["function_name"]
-            if fn not in pi_by_fn:
-                pi_by_fn[fn] = _db_path_input_params(db, fn)
-            wiring = wiring_id(
-                fn,
-                v["input_types"],
-                {v["output_type"]},
-                pi_by_fn[fn].get(v.get("call_id"), {}),
-            )
-            # Only the node's CURRENT shape compiles a step. A wiring it used
-            # to run as is history: compiling it would re-run something the
-            # user rewired away from, and under the same node id, so the two
-            # steps would collide.
-            if not identity.is_current(fn, wiring):
-                continue
-            wid = identity.token(fn, wiring)
-            if (fn, wid) not in placed_wirings:
-                _add(fn_node_id(fn, wid), fn)
+            variants_by_fn.setdefault(v["function_name"], []).append(v)
+        # Wirings from the one owner the canvas uses (history_variant_wirings),
+        # so a call site with several outputs compiles the step its node IS.
+        for fn, variants in variants_by_fn.items():
+            for _v, wiring in history_variant_wirings(db, fn, variants):
+                # Only the node's CURRENT shape compiles a step. A wiring it
+                # used to run as is history: compiling it would re-run
+                # something the user rewired away from, and under the same
+                # node id, so the two steps would collide.
+                if not identity.is_current(fn, wiring):
+                    continue
+                wid = identity.token(fn, wiring)
+                if (fn, wid) not in placed_wirings:
+                    _add(fn_node_id(fn, wid), fn)
     return node_ids
 
 
