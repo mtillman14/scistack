@@ -677,6 +677,7 @@ def for_each(
 
     _inputs_str = _format_inputs(inputs)
     Log.info(f"inputs: {_inputs_str}", layer="scifor")
+    _warn_repeated_static_path_inputs(fn_name, inputs, total, display_keys)
 
     for k in display_keys:
         vals = metadata_iterables[k]
@@ -1331,6 +1332,44 @@ def _expand_column_result(col: str, res: Any) -> "list[tuple[str, Any]]":
 # ---------------------------------------------------------------------------
 # Input classification
 # ---------------------------------------------------------------------------
+
+
+def _warn_repeated_static_path_inputs(
+    fn_name: str, inputs: dict, total: int, iterated_keys: list
+) -> bool:
+    """WARN when every call of this run is the same call: more than one
+    iteration, yet no input varies with the combo — each is a PathInput with
+    no template placeholder, or a constant. Each iteration then reads the
+    same file(s); the only difference between calls is the address the
+    result is saved under.
+
+    scidb.log run n1irqety (2026-09-29): ``pandas.read_csv`` on a
+    placeholder-free demographics CSV iterated per subject, read the whole
+    file 18 times, and its ``subject`` column was dropped as pinned. Returns
+    whether it warned (for tests).
+    """
+    if total <= 1:
+        return False
+    static_pis = []
+    for spec in inputs.values():
+        if isinstance(spec, PathInput):
+            if spec.placeholder_keys():
+                return False
+            static_pis.append(spec)
+        elif _is_data_input(spec) or isinstance(spec, (EachOf, PathOutput)):
+            return False
+    if not static_pis:
+        return False
+    Log.warn(
+        f"for_each({fn_name}): {total} iterations over {iterated_keys} but no "
+        f"input varies with them — PathInput(s) "
+        f"{[pi.path_template for pi in static_pis]} have no template "
+        f"placeholder, so every iteration reads the same file(s). Unless the "
+        f"function uses the combo's metadata, iterate nothing (one call) and "
+        f"return a schema-key column to file its rows separately.",
+        layer="scifor",
+    )
+    return True
 
 
 def _is_data_input(var_spec: Any) -> bool:

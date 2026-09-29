@@ -1054,6 +1054,93 @@ def _order_versions(records, versions) -> tuple[dict, list, str | None]:
     return by_hash, ordered, latest_hash
 
 
+def _supersede_same_invocation(duck, peers: dict, is_latest_of: dict, saved: dict) -> int:
+    """Among the still-latest records at one location that ONE invocation
+    produced, keep only the most recently saved; mark the rest not-latest in
+    place. Returns how many were superseded.
+
+    One invocation is one call — same code, options, inputs and constants. It
+    writing different content to the same location twice means something the
+    identity does not see changed in between, and the newer answer is the
+    current one:
+
+    * the iteration level: a placeholder-free CSV read per subject saved the
+      whole table at every subject; the one-call re-run saved one row there
+      (scidb.log run n1irqety, 2026-09-29);
+    * the file behind a PathInput was edited — its identity is the NAME only
+      (`to_key`), never the file's content;
+    * a nondeterministic function, re-run.
+
+    The chain rule above cannot tell these apart: both records share one
+    code + run-option signature, so both were latest and overplotted.
+
+    Records saved at the SAME timestamp stay latest together: that is one save
+    batch, not a later answer, and nothing here may split a run's own output.
+    Per LOCATION like the chain rule, so a location the newer run never wrote
+    (a subject since deleted from the CSV) keeps its record — hide it.
+    """
+    # Only locations holding 2+ latest records can have anything to supersede;
+    # the ordinary one-record location costs nothing.
+    crowded = {
+        loc: [rid for rid in bucket if is_latest_of.get(rid)]
+        for loc, bucket in peers.items()
+    }
+    crowded = {loc: rids for loc, rids in crowded.items() if len(rids) > 1}
+    if not crowded:
+        return 0
+    producer = producing_invocation_batch(
+        duck, [rid for rids in crowded.values() for rid in rids]
+    )
+    superseded: list = []  # (location, invocation_id, kept, dropped)
+    tied: list = []  # (location, invocation_id, n records sharing the newest save)
+    for loc, rids in crowded.items():
+        by_inv: dict = {}
+        for rid in rids:
+            if rid in producer:
+                by_inv.setdefault(producer[rid][0], []).append(rid)
+        for inv_id, group in by_inv.items():
+            if len(group) < 2:
+                continue
+            newest = max(saved.get(rid) or "" for rid in group)
+            kept = [rid for rid in group if (saved.get(rid) or "") == newest]
+            dropped = [rid for rid in group if (saved.get(rid) or "") < newest]
+            if len(kept) > 1:
+                tied.append((loc, inv_id, len(kept)))
+            for rid in dropped:
+                is_latest_of[rid] = False
+            if dropped:
+                superseded.append((loc, inv_id, kept, dropped))
+    if superseded:
+        n = sum(len(d) for *_x, d in superseded)
+        (vtype, sid), inv_id, kept, dropped = superseded[0]
+        logger.info(
+            "variant_identity: %d record(s) at %d location(s) superseded by a "
+            "newer save of the SAME invocation (same code, options, inputs — "
+            "e.g. a re-run at another level, or an edited input file) — marked "
+            "not-latest. e.g. %s schema_id=%s invocation %s: kept %s, dropped %s",
+            n,
+            len(superseded),
+            vtype,
+            sid,
+            inv_id[:12],
+            [r[:12] for r in kept],
+            [r[:12] for r in dropped],
+        )
+    if tied:
+        (vtype, sid), inv_id, count = tied[0]
+        logger.info(
+            "variant_identity: %d location(s) hold several records of one "
+            "invocation saved at the same instant — kept all as latest (one "
+            "save batch). e.g. %s schema_id=%s invocation %s: %d record(s)",
+            len(tied),
+            vtype,
+            sid,
+            inv_id[:12],
+            count,
+        )
+    return sum(len(d) for *_x, d in superseded)
+
+
 def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
     """What distinguishes each record from the others **at its own location** —
     ``{record_id: {branch_params, fn_name, fn_hash, fn_version, is_latest,
@@ -1112,6 +1199,11 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
         is not the one its function was most recently run under is NOT latest,
         even where it is the only record (:func:`current_run_options` says
         why the scope differs from code's).
+
+        Same-invocation re-saves since 2026-09-29: of the records ONE
+        invocation wrote to a location, only the newest save is latest
+        (:func:`_supersede_same_invocation` — a re-run at another level, an
+        edited input file). Same-instant saves stay latest together.
     ``code_chain``
         ``{fn_name: "vN"}`` over the record's upstream functions, restricted to
         those holding more than one version (:func:`code_version_ordinals`).
@@ -1238,7 +1330,9 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
     # so a re-run of unchanged code under different distribute/as_table is a
     # different chain here and the older one stops being "latest" — which is
     # what makes the plot default drop it and `code_version="latest"` loads skip
-    # it. Two records of identical code AND options remain both-latest.
+    # it. Two records of identical code AND options remain both-latest here —
+    # unless one invocation wrote both, which `_supersede_same_invocation`
+    # settles below.
     chain_versions = {
         rid: {
             "fn_hash": _chain_signature(chain, run_chains.get(rid)),
@@ -1281,6 +1375,9 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
                 stale_by_run,
                 current_run,
             )
+
+    # --- same call, newer answer: the newest save of one INVOCATION wins ---
+    _supersede_same_invocation(duck, peers, is_latest_of, saved)
 
     # One summary line per call, not one per type: this runs on every
     # variable-panel open. The detail that matters is which types became

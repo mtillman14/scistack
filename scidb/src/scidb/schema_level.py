@@ -36,6 +36,9 @@ KEYS = "keys"
 
 RULE_STATED = "stated on the node"
 RULE_RECORDED = "the level it last ran at"
+RULE_RECORDED_NARROWED = (
+    "the level it last ran at, narrowed to the keys its inputs carry"
+)
 RULE_INPUTS = "the finest level its inputs carry"
 RULE_NOTHING = "no history and no bound input to read a level from"
 
@@ -207,17 +210,43 @@ def resolve_schema_level(
     1. **stated** on the node (anything but unset — ``[]`` included) wins;
     2. **recorded**: the keys THIS call site iterated on its last run
        (``None`` = no history under its current wiring; ``[]`` = it ran as
-       one call);
+       one call) — never finer than the inputs' union (below);
     3. **inputs**: the union of every bound input's level; a coarser input
        broadcasts (docs/claude/coarse-level-inputs.md). An empty union is
        one call;
     4. every dataset key, only with nothing to go on.
+
+    Why the recorded level is narrowed: it is read off where the last run's
+    RECORDS landed, and a record can land finer than the call that made it —
+    one call returning a table with a ``subject`` column is spread into one
+    record per subject (and ``distribute`` saves a level down). Iterating a key
+    no input carries only repeats the identical call: a placeholder-free
+    PathInput re-ran once per subject, every call reading the whole CSV and
+    dropping its ``subject`` column (scidb.log run n1irqety, 2026-09-29). With
+    no input level to go on (constants only), nothing is narrowed; a node that
+    really wants that fan-out states its level, which wins above.
     """
     schema_keys = list(schema_keys or [])
     level = SchemaLevel.from_stated(stated, schema_keys)
     if not level.is_unset:
         return level, RULE_STATED
     if recorded is not None:
+        if levels:
+            carried = set(provenance_query.finest_schema_keys(levels, schema_keys))
+            dropped = [k for k in recorded if k not in carried]
+            if dropped:
+                kept = [k for k in recorded if k in carried]
+                narrowed = SchemaLevel.of(kept, schema_keys)
+                Log.info(
+                    f"[schema-level] recorded level {list(recorded)} narrowed to "
+                    f"{narrowed.describe()}: no bound input carries {dropped} "
+                    f"(input levels {levels}), so iterating it would repeat the "
+                    f"same call — the records sit at that level because the "
+                    f"call's rows were spread by a returned column (or "
+                    f"distribute), not because the run iterated it. State a "
+                    f"Schema Level on the node to iterate it anyway."
+                )
+                return narrowed, RULE_RECORDED_NARROWED
         return SchemaLevel.of(recorded, schema_keys), RULE_RECORDED
     if levels:
         inferred = provenance_query.finest_schema_keys(levels, schema_keys)

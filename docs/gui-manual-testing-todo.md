@@ -11,6 +11,34 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzn. A one-call loader re-runs as one call (recorded level narrowed) — added 2026-09-29
+
+**What changed:** a function that ran as ONE call and whose returned table was
+split into one record per `subject` used to re-run once per subject, with each
+run reading the whole CSV. Now the level taken from history is never finer
+than what the function's inputs carry. Plan:
+`.claude/plan-recorded-level-from-iteration.md`.
+
+**Backend**
+1. Stroke-R01-Aim-2: `pandas.read_csv` ← `DemographicsPath` → `DemographicsTable`,
+   with no Schema Level set on the node.
+2. Run it. `scidb.log` should show
+   `[schema-level] recorded level ['subject'] narrowed to nothing: one call`,
+   then `for_each(pandas.read_csv) — 1 iteration`, then
+   `discriminated by unpinned schema key(s) ['subject'] — spreading rows`.
+   There should be no `schema key column(s) ['subject'] that the combination
+   already pins` warning.
+
+**Frontend**
+3. Open the node's settings panel. The automatic level should read "one call",
+   with the rule "the level it last ran at, narrowed to the keys its inputs carry".
+4. Hide the 18 stale whole-table `DemographicsTable` records from run n1irqety.
+5. In Plot Studio, group `GAITRiteLoaded` by `DemographicsTable.Intervention Group`.
+   All three groups should appear, and the log should have no "taking the
+   first" or "holds one level" warning.
+
+---
+
 ## 0zzm. Hiding a node never changes other nodes; rewiring a run node runs as drawn — added 2026-09-28
 
 **What changed:** deleting (hiding) a PathInput node used to allocate a
@@ -45,6 +73,11 @@ already run is now what its Run uses. Plan
 5. Hide a Parameter, an input variable, an output variable and another
    function node in turn. No other node changes id or position, and nothing
    except the hidden node leaves the canvas.
+6. (Added 2026-09-29) Drag a NEW function node in by hand, wire it, and run
+   it. After the refresh, `scidb.log` shows `re-keyed function node
+   fn__…__<6 chars> -> fn__…__<16 hex>`. The node stays exactly where it was,
+   with its edges. Drawing a new output edge on it and pressing Run then runs
+   (on Stroke-R01-Aim-2, `read_csv` → `DemographicsTable`).
 
 ---
 

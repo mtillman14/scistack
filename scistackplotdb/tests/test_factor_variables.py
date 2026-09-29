@@ -851,9 +851,41 @@ def test_an_unpinned_grouping_says_it_had_to_choose(two_label_variants, caplog):
     text = "\n".join(record.getMessage() for record in caplog.records)
     assert "more than one" in text
     assert "GroupLabel" in text
+    # Names what it discarded, and — each subject holding its OWN pair of
+    # labels — points at the variant, not at a whole-table save.
+    assert "holds" in text and "Narrow the grouping's variant" in text
     # Still attached, still one label per subject: the warning explains the
     # choice, it does not refuse to make one.
     assert table.frame.groupby("subject")["GroupLabel"].nunique().max() == 1
+
+
+def test_a_whole_table_saved_at_every_location_is_named(caplog):
+    """scidb.log run n1irqety (2026-09-29): the demographics CSV read once per
+    subject, so every subject held all three groups and "the first" was
+    Digitimer for everyone. The warning must say that is what it looks like."""
+    import logging
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    groups = ["Digitimer", "Sham", "Control"]
+    right = pd.DataFrame(
+        {
+            "subject": [s for s in ("S1", "S2", "S3") for _ in groups],
+            "Intervention Group": groups * 3,
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="scistackplotdb"):
+        kept = ScidbSource._one_label_per_location(
+            None, right, ["subject"], "Intervention Group",
+            SimpleNamespace(label="DemographicsTable.Intervention Group"),
+        )
+
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "3 schema location(s)" in text
+    assert "Control" in text and "Sham" in text
+    assert "one whole table saved at every location" in text
+    assert set(kept["Intervention Group"]) == {"Digitimer"}
 
 
 def test_a_single_variant_grouping_warns_about_nothing(with_demographics, caplog):

@@ -965,13 +965,36 @@ class ScidbSource(BaseSource):
             per_location = right.groupby(on, dropna=False)[factor].nunique()
             ambiguous = int((per_location > 1).sum())
             if ambiguous:
+                # Name what was discarded. When every ambiguous location holds
+                # the SAME set of labels, the grouping variable is almost
+                # certainly one whole table saved at every location (scidb.log
+                # run n1irqety, 2026-09-29: the demographics CSV read once per
+                # subject, so every subject "was" the first row, Digitimer).
+                values = right.groupby(on, dropna=False)[factor].agg(
+                    lambda s: tuple(sorted(map(str, s.dropna().unique())))
+                )
+                values = values[values.map(len) > 1]
+                example_loc, example_vals = next(iter(values.items()))
+                same_everywhere = values.nunique() == 1
+                hint = (
+                    " Every one holds the same %d labels — the grouping "
+                    "variable looks like one whole table saved at every "
+                    "location; re-run its producer as ONE call so each row is "
+                    "filed at its own location." % len(example_vals)
+                    if same_everywhere and ambiguous > 1
+                    else " Narrow the grouping's variant to choose deliberately."
+                )
                 Log.warn(
                     "%r has more than one %s for %d schema location(s) even "
-                    "after the variant pin — taking the first. Narrow the "
-                    "grouping's variant to choose deliberately.",
+                    "after the variant pin — taking the first. e.g. %s=%r "
+                    "holds %s.%s",
                     group.label,
                     factor,
                     ambiguous,
+                    on,
+                    example_loc,
+                    list(example_vals)[:10],
+                    hint,
                     layer=LAYER,
                 )
         return right.drop_duplicates(subset=on)

@@ -18,6 +18,7 @@ from scidb.schema_level import (
     RULE_INPUTS,
     RULE_NOTHING,
     RULE_RECORDED,
+    RULE_RECORDED_NARROWED,
     RULE_STATED,
     SchemaLevel,
     input_levels,
@@ -98,6 +99,47 @@ class TestResolve:
     def test_nothing_to_go_on_is_every_key(self):
         level, rule = resolve_schema_level(KEYS, None, None, [])
         assert level.keys == tuple(KEYS) and rule == RULE_NOTHING
+
+
+class TestRecordedNarrowedToInputs:
+    """The recorded level is read off where the records LANDED, which can be
+    finer than what the call iterated (rows spread by a returned column, or
+    distribute). Never iterate a key no input carries — scidb.log run
+    n1irqety, 2026-09-29: a placeholder-free CSV re-read once per subject."""
+
+    def test_spread_one_call_stays_one_call(self):
+        level, rule = resolve_schema_level(KEYS, None, ["subject"], [[]])
+        assert level.is_one_call and rule == RULE_RECORDED_NARROWED
+
+    def test_subject_input_spread_by_trial_stays_per_subject(self):
+        level, rule = resolve_schema_level(
+            KEYS, None, ["subject", "trial"], [["subject"]]
+        )
+        assert level.keys == ("subject",) and rule == RULE_RECORDED_NARROWED
+
+    def test_coarser_recorded_level_is_kept(self):
+        """Only narrows: a trial-level step fed cycle-level inputs keeps trial
+        (the 6→66 fan-out of 2026-09-19 must not come back)."""
+        level, rule = resolve_schema_level(
+            KEYS, None, ["subject", "session"], [KEYS]
+        )
+        assert level.keys == ("subject", "session") and rule == RULE_RECORDED
+
+    def test_constants_only_is_not_narrowed(self):
+        level, rule = resolve_schema_level(KEYS, None, ["subject"], [])
+        assert level.keys == ("subject",) and rule == RULE_RECORDED
+
+    def test_stated_still_wins(self):
+        level, rule = resolve_schema_level(KEYS, ["subject"], ["subject"], [[]])
+        assert level.keys == ("subject",) and rule == RULE_STATED
+
+    def test_narrowing_is_logged(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="scidb"):
+            resolve_schema_level(KEYS, None, ["subject"], [[]])
+        assert "narrowed to nothing: one call" in caplog.text
+        assert "['subject']" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -206,3 +248,38 @@ def test_call_sites_with_no_history_have_no_recorded_level(db):
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# End to end: the scidb.log run n1irqety regression (2026-09-29)
+# ---------------------------------------------------------------------------
+
+
+class Demo(BaseVariable):
+    pass
+
+
+def read_table(path):
+    import pandas as pd
+
+    return pd.read_csv(path)
+
+
+def test_a_spread_one_call_run_reruns_as_one_call(db, tmp_path):
+    """A placeholder-free PathInput run once; the returned `subject` column
+    spreads the rows into one record per subject. The re-run must still be
+    ONE call — not one per subject, each reading the whole file."""
+    csv = tmp_path / "demographics.csv"
+    csv.write_text("subject,group\nS1,a\nS2,b\nS3,c\n")
+    pi = PathInput(str(csv), name="DemographicsPath")
+
+    for_each(read_table, {"path": pi}, [Demo])
+
+    keys = ["subject", "session"]
+    assert len(Demo.load(as_df=True, version="all")) == 3
+    recorded = provenance_query.recorded_schema_keys(db._duck, "read_table", keys)
+    assert recorded == ["subject"]  # where the records landed
+    levels = input_levels(db._duck, set(), [pi], keys)
+    assert levels == [[]]
+    level, rule = resolve_schema_level(keys, None, recorded, levels)
+    assert level.is_one_call and rule == RULE_RECORDED_NARROWED
