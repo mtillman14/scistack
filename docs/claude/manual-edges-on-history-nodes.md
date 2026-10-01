@@ -375,3 +375,13 @@ PathInput edges followed on the same day (below).
 
 scidb.log: `PathInput edge(s) come only from a node's history wiring and are
 not drawn`. Tests: `tests/test_history_path_input_edges.py`.
+
+**A Parameter drawn onto `in__X` has the same twin (same day, 14:52).** Before a
+node has run with a Parameter, the Parameter shows as an ordinary `in__X` port,
+and edges drawn then are stored on `in__X`. Once it has run, history draws the
+connection as `param__X` (`e__X__{fn}__{tok}`), and build_edges already treats
+the old drawn edges as copies of it. `history_twin_edge_id` did not, so deleting
+the visible history edge left the `in__X` copies binding the Parameter for edge
+resolution (the MATLAB route), while the disconnected check saw nothing. It
+now returns `e__X__{fn}__{tok}` for a `param__` source on an `in__X` port.
+Test: `TestOldParameterEdgeOnAnInputPort` in `tests/test_hidden_manual_twin.py`.

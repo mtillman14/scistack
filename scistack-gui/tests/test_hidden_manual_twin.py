@@ -105,6 +105,17 @@ class TestHistoryTwinEdgeId:
         }
         assert history_twin_edge_id(edge) == f"e__formula__{FN}__{WID}"
 
+    def test_parameter_on_an_input_port_has_the_same_twin(self):
+        """A Parameter drawn onto in__X before the node ran with it; history
+        later draws the same connection as param__X."""
+        edge = {
+            "id": "m",
+            "source": "param__formulaNum::main",
+            "target": NODE,
+            "targetHandle": "in__formulaNum",
+        }
+        assert history_twin_edge_id(edge) == f"e__formulaNum__{FN}__{WID}"
+
     def test_output_edge(self):
         edge = {"id": "m", "source": NODE, "target": "var__GaitRiteSymmetry"}
         assert history_twin_edge_id(edge) == f"e__{FN}__{WID}__GaitRiteSymmetry"
@@ -299,3 +310,44 @@ class TestDeriveTargetForNodeIgnoresHiddenTwin:
         after = derive_target_for_node(db, node)
         assert after
         assert {t["input_types"]["signal"] for t in after} == {"TwinNewSignal"}
+
+
+class TestOldParameterEdgeOnAnInputPort:
+    """Regression for scidb.log 2026-10-01 14:52: three formulaNum edges were
+    stored on in__formulaNum (from before the node ran with formulaNum). History
+    then drew the same connection on param__formulaNum. Deleting that visible
+    edge hid it, but the in__ copies kept binding formulaNum for edge
+    resolution (the MATLAB route) while the disconnected check saw no edge."""
+
+    OLD_COPY = {
+        "id": "manual__vdw6ip",
+        "source": "param__formulaNum::main",
+        "target": NODE,
+        "targetHandle": "in__formulaNum",
+    }
+    HISTORY_EDGE = f"e__formulaNum__{FN}__{WID}"
+
+    def test_hiding_the_history_edge_hides_the_old_copy(self):
+        assert manual_edge_is_hidden(self.OLD_COPY, {self.HISTORY_EDGE})
+        index = manual_edge_handle_index([self.OLD_COPY], hidden_edge_ids={self.HISTORY_EDGE})
+        assert (FN, WID, "in__formulaNum") not in index
+
+    def test_edge_resolution_no_longer_binds_the_deleted_parameter(self):
+        resolved = resolve_function_edges(
+            fn_node_ids={NODE},
+            manual_edges=[self.OLD_COPY],
+            manual_nodes={},
+            existing_node_labels={},
+            hidden_edge_ids={self.HISTORY_EDGE},
+        )
+        assert "formulaNum" not in resolved.parameter_params
+
+    def test_control_while_visible_it_still_binds(self):
+        resolved = resolve_function_edges(
+            fn_node_ids={NODE},
+            manual_edges=[self.OLD_COPY],
+            manual_nodes={},
+            existing_node_labels={},
+            hidden_edge_ids=frozenset(),
+        )
+        assert resolved.parameter_params == {"formulaNum": "formulaNum"}

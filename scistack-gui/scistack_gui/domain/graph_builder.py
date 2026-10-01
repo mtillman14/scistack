@@ -2214,6 +2214,14 @@ def history_twin_edge_id(
     param = handle[len(IN_HANDLE_PREFIX) :]
     if bare_source.startswith(PATH_INPUT_ID_PREFIX):
         return f"e__{bare_source[len(PATH_INPUT_ID_PREFIX):]}__{param}__{fn}__{tok}"
+    if bare_source.startswith(PARAM_ID_PREFIX):
+        # A Parameter drawn onto the ordinary ``in__X`` port: what a node shows
+        # for X before it has run with that Parameter. Once it has, history
+        # draws the same connection as ``param__X`` (``e__X__{fn}__{tok}``), and
+        # this edge is a copy of it. Without this case, hiding that history
+        # edge left the old in__ copy binding the Parameter (scidb.log
+        # 2026-10-01 14:52, formulaNum -> calculateSymmetryOneVector).
+        return f"e__{param}__{fn}__{tok}"
     var_label = node_id_to_var_label(source, {}, manual_nodes or {})
     if var_label:
         return f"e__{var_label}__{fn}__{tok}"
