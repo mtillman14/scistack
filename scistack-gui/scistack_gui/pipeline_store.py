@@ -875,14 +875,11 @@ def create_pipeline(db, name: str, pipeline_id: "str | None" = None) -> str:
     name = str(name).strip()
     if not name:
         raise ValueError("pipeline name must be non-empty")
-    # Uniqueness is checked against ALL pipelines, hidden included — two
-    # pipelines sharing a name would be confusing the moment either is
-    # unhidden, even if only one is visible right now.
-    existing = {
-        r[0] for r in _duck(db)._fetchall("SELECT name FROM _pipelines")
-    }
-    if name in existing:
-        raise ValueError(f"a pipeline named '{name}' already exists")
+    # Names are NOT unique (user decision 2026-10-01). A pipeline is keyed by
+    # its pipeline_id everywhere (edges, placements, hides, config, compiled
+    # pipelines, export file names carry a timestamp), so the name is only a
+    # label. Reserving names, hidden ones included, meant "main copy" could
+    # never be made again after it was deleted. rename_pipeline never checked.
     pipeline_id = pipeline_id or f"pipe_{uuid.uuid4().hex[:12]}"
     _duck(db)._execute(
         "INSERT INTO _pipelines (pipeline_id, name) VALUES (?, ?)",

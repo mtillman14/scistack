@@ -500,6 +500,42 @@ def _clone_nodes(
         })
         n_edges += 1
 
+    # Hides come along. The copy is drawn from the source's VISIBLE graph, so a
+    # hidden history edge is not among the edges above, and once the copied
+    # nodes graduate onto their DB nodes the copy regenerates that history
+    # edge, visibly, because hides are per scope (scidb.log 2026-10-01 23:08:
+    # formulaNum disconnected in main, connected in "main copy 4"). A hide
+    # matches by the connection of its stored endpoints, which ignores
+    # placements, so it applies to the copy's nodes as written. A whole-scope
+    # copy takes every hide; a partial selection only those between two copied
+    # nodes.
+    copied_bare = {ids.strip_placement(n["id"]) for n in selected}
+    n_hides = 0
+    for hide in ps.list_hidden_edges(db, source_pid):
+        within = (
+            ids.strip_placement(hide.get("source") or "") in copied_bare
+            and ids.strip_placement(hide.get("target") or "") in copied_bare
+        )
+        if node_id_set is not None and not within:
+            continue
+        ps.hide_edge(
+            db,
+            hide["edge_id"],
+            hide.get("source") or "",
+            hide.get("target") or "",
+            hide.get("source_handle"),
+            hide.get("target_handle"),
+            target_pid,
+        )
+        n_hides += 1
+    if n_hides:
+        logger.info(
+            "[_clone_nodes] %s -> %s: carried %d hidden edge(s) into the copy",
+            source_pid,
+            target_pid,
+            n_hides,
+        )
+
     return old_to_new, len(old_to_new), n_edges
 
 

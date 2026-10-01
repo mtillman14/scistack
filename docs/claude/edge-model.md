@@ -94,6 +94,30 @@ Whatever feeds an argument (variable, Parameter, PathInput, glue), its port is
 `in__X`. `param__X` was retired. A stored edge on it is dropped by `edge_view`
 (WARN once per edge id): redraw it.
 
+### Disconnection is per wiring
+
+A node is disconnected when ANY recorded target of its current wiring has a
+hidden input that no drawn edge covers. Then NONE of that wiring's targets run
+(`variant_resolver.reconcile_manual_inputs`), matching the red node on the
+canvas (`hidden_wirings`). Per-target exclusion let a recorded run that never
+used the hidden Parameter run anyway (scidb.log 2026-10-01 23:03).
+
+### A hand-placed node that ran is visible wherever it is placed
+
+`scope_filter._resolve_in_scope`: a node with a hand-placed row (scope `main`)
+whose allocated id is also a DB node resolves through its `{id}::{scope}`
+placement in other scopes. Before, a duplicated hypothesis dropped every such
+function node. Tests: `tests/test_scope_resolve.py`.
+
+### A copy carries the source tab's hides
+
+Hides are per scope, and `scope_service._clone_nodes` (duplicate and paste)
+draws the copy from the source's VISIBLE graph, so a hidden history edge came
+back once the copied nodes graduated onto their DB nodes. `_clone_nodes` now
+writes the source scope's hides into the target scope: all of them for a
+duplicate, and for a paste only those between two copied nodes. They match by
+connection (stored endpoints, placements ignored), so they apply as written.
+
 ## What is still kind-specific, on purpose
 
 Binding semantics, in `edge_resolver` / `manual_input_overrides` /

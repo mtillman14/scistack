@@ -224,3 +224,20 @@ def test_an_edge_hidden_in_another_tab_does_not_disconnect_main(setup):
     # ...but main still does, and must still run.
     targets, _ = _assert_parity(client, node, "main")
     assert targets
+
+
+def test_a_duplicate_carries_the_source_tabs_hides(setup):
+    """Hides are per scope, and a duplicate is drawn from the source's VISIBLE
+    graph, so a hidden history edge came back in the copy once its nodes
+    graduated (scidb.log 2026-10-01 23:08: formulaNum disconnected in main,
+    connected in "main copy 4"). _clone_nodes now carries the hides."""
+    client, node, graph = setup
+    _delete(client, _history_edge(graph, node, "param__low_hz"))
+    r = client.post("/api/hypotheses/main/duplicate", json={"pipeline_id": "main", "name": "H"})
+    assert r.status_code == 200, r.text
+    other = r.json()["pipeline_id"]
+    other_graph = _graph(client, other)
+    other_node = _fn_node(other_graph)
+    assert "low_hz" not in _canvas_inputs(other_graph, other_node)[1]
+    # The source tab is unchanged.
+    assert "low_hz" not in _canvas_inputs(_graph(client), node)[1]

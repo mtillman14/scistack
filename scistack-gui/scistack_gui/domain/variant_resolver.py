@@ -582,16 +582,12 @@ def reconcile_manual_inputs(
     # 2026-10-01 22:48: formulaNum hidden, the run still went ahead).
     excluded_by_wiring: dict[str, int] = {}
     kept_example: dict[str, dict] = {}
-    for t in targets:
+
+    def _handles(t: dict):
+        """(wid, input_types, const_names, handle_map, uncovered) for a target."""
         bindings = t.get("bindings") or {}
-        # Bare-string-when-single: wiring_id hashes the value as written, and
-        # DB history spells single types bare.
         input_types = variable_types_view(bindings)
         const_names = list((t.get("constants") or {}).keys())
-        # A history target carries the wiring the ONE owner gave it
-        # (execution_service.history_variant_wirings: its call site's outputs
-        # split by Run claims). Rehashing its own output alone disagrees with
-        # the canvas whenever the call site holds several outputs.
         wid = token_for(
             function_name,
             t.get(HISTORY_WIRING_KEY)
@@ -611,7 +607,20 @@ def reconcile_manual_inputs(
         )
         hidden_handles = {h for cid_, h in handle_map.items() if cid_ in hidden_edge_ids}
         uncovered = [h for h in hidden_handles if (function_name, wid, h) not in manual_index]
-        if uncovered:
+        return wid, input_types, const_names, handle_map, uncovered
+
+    # Disconnection is decided per WIRING, the rule the canvas uses
+    # (graph_builder.hidden_wirings): if any target of a wiring has an
+    # uncovered hidden input, the node is disconnected and NONE of that
+    # wiring's targets run. Per-target exclusion let a target that never used
+    # the hidden input run anyway while the canvas showed the node red
+    # (scidb.log 2026-10-01 23:03: formulaNum hidden, a recorded run with
+    # constants {} still dispatched).
+    analysed = [(t, *_handles(t)) for t in targets]
+    disconnected_wids = {a[1] for a in analysed if a[5]}
+    for t, wid, input_types, const_names, handle_map, uncovered in analysed:
+        bindings = t.get("bindings") or {}
+        if wid in disconnected_wids:
             logger.debug(
                 "[variant_resolver] target for '%s' (wiring %s) stays excluded — "
                 "hidden handle(s) %s not covered by a manual edge",

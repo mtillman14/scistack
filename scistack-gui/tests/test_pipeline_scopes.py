@@ -43,22 +43,28 @@ class TestPipelineScopes:
         names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
         assert names[pid] == "loading_v2"  # rename survived hide/unhide
 
-    def test_duplicate_name_rejected(self, layout_path):
+    def test_duplicate_names_are_allowed(self, layout_path):
+        """Names are labels, not keys (2026-10-01): two pipelines may share
+        one, each with its own pipeline_id."""
         db = get_db()
-        ps.create_pipeline(db, "loading")
-        with pytest.raises(ValueError, match="already exists"):
-            ps.create_pipeline(db, "loading")
+        a = ps.create_pipeline(db, "loading")
+        b = ps.create_pipeline(db, "loading")
+        assert a != b
+        names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
+        assert names[a] == names[b] == "loading"
 
-    def test_duplicate_name_rejected_even_when_hidden(self, layout_path):
-        # Name uniqueness must hold globally, not just among visible
-        # pipelines — otherwise two pipelines would collide by name the
-        # moment the hidden one is restored.
+    def test_a_hidden_pipelines_name_can_be_reused(self, layout_path):
+        """The reported case: make "main copy", delete it, make "main copy"
+        again. A hidden pipeline no longer reserves its name, and restoring it
+        leaves both under that name."""
         db = get_db()
-        pid = ps.create_pipeline(db, "loading")
-        ps.create_pipeline(db, "sibling")  # keep >1 visible so hiding is legal
+        pid = ps.create_pipeline(db, "main copy")
         ps.hide_pipeline(db, pid)
-        with pytest.raises(ValueError, match="already exists"):
-            ps.create_pipeline(db, "loading")
+        again = ps.create_pipeline(db, "main copy")
+        assert again != pid
+        ps.unhide_pipeline(db, pid)
+        names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
+        assert names[pid] == names[again] == "main copy"
 
     def test_root_can_be_renamed(self, layout_path):
         # 'main' is just the default hypothesis, not a special scratch scope.
@@ -409,10 +415,10 @@ class TestScopeApi:
         pid = r.json()["pipeline_id"]
         assert pid.startswith("pipe_")
 
-        # Duplicate name -> 400 with the store's message.
+        # A duplicate name is allowed: a second pipeline, its own id.
         r = client.post("/api/pipelines", json={"name": "loading"})
-        assert r.status_code == 400
-        assert "already exists" in r.json()["detail"]
+        assert r.status_code == 200
+        assert r.json()["pipeline_id"] != pid
 
     def test_last_remaining_pipeline_guard_is_400_but_rename_succeeds(self, client):
         # 'main' has no special protection — only the "don't hide the last
@@ -1413,10 +1419,11 @@ class TestDuplicatePipeline:
         (orig_use,) = ps.get_pipeline_uses(db, parent)
         assert orig_use["use_id"] != use["use_id"]
 
-    def test_duplicate_name_collision_is_400(self, client):
-        client.post("/api/pipelines", json={"name": "loading"})
+    def test_duplicate_with_an_existing_name_is_allowed(self, client):
+        existing = client.post("/api/pipelines", json={"name": "loading"}).json()["pipeline_id"]
         r = client.post("/api/pipelines/main/duplicate", json={"name": "loading"})
-        assert r.status_code == 400
+        assert r.status_code == 200, r.text
+        assert r.json()["pipeline_id"] != existing
 
 
 class TestPasteNodes:

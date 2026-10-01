@@ -90,7 +90,18 @@ def _resolve_in_scope(
     """
     meta = manual_nodes.get(node_id)
     if meta is not None:
-        return node_id if (meta.get("pipeline_id") or ROOT_SCOPE) == scope_id else None
+        if (meta.get("pipeline_id") or ROOT_SCOPE) == scope_id:
+            return node_id
+        # A hand-placed node that has run keeps its (allocated) id, so it is
+        # ALSO a DB node, and can be placed in another scope by placement id:
+        # duplicating a hypothesis does exactly that. Checking only the row's
+        # own scope dropped every such node from the copy (scidb.log
+        # 2026-10-01 23:03, "placed in [..., 'pipe_bf2a723782c5']" yet not in
+        # that view).
+        candidate = placement_id(node_id, scope_id)
+        if candidate in positions_by_scope.get(scope_id, {}):
+            return candidate
+        return None
 
     parsed = parse_placement_id(node_id)
     if parsed is not None:

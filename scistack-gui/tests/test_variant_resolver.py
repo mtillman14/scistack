@@ -569,6 +569,32 @@ class TestReconcileManualInputsHiddenEdges:
         hidden = {connection_id("var__RawEMG", fn_node_id("fn", wid), "in__signal")}
         assert reconcile_manual_inputs([target], "fn", hidden, (), None, identity_token) == []
 
+    def test_a_hidden_input_disconnects_every_target_of_the_wiring(self):
+        """Disconnection is per WIRING, as on the canvas (hidden_wirings). A
+        recorded run that never used the hidden Parameter must not run either
+        (scidb.log 2026-10-01 23:03: formulaNum hidden, a run with constants
+        {} still dispatched while the node showed red)."""
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        used_it = self._target({"signal": "RawEMG"}, constants={"low_hz": 20})
+        never_used_it = self._target({"signal": "RawEMG"}, constants={})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        hidden = {connection_id("param__low_hz", fn_node_id("fn", wid), "in__low_hz")}
+        assert reconcile_manual_inputs(
+            [used_it, never_used_it], "fn", hidden, (), None, identity_token
+        ) == []
+
+    def test_another_wiring_is_not_disconnected_by_it(self):
+        from scistack_gui.domain.graph_builder import wiring_id
+
+        hz_wiring = self._target({"signal": "RawEMG"}, constants={"low_hz": 20})
+        other = self._target({"signal": "OtherEMG"}, constants={})
+        wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
+        hidden = {connection_id("param__low_hz", fn_node_id("fn", wid), "in__low_hz")}
+        assert reconcile_manual_inputs(
+            [hz_wiring, other], "fn", hidden, (), None, identity_token
+        ) == [other]
+
     def test_disconnected_constant_input_dropped(self):
         from scistack_gui.domain.graph_builder import wiring_id
 
