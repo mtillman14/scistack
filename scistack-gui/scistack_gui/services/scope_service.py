@@ -607,9 +607,14 @@ def pipeline_interface(pipeline_id: str) -> dict:
     from scistack_gui.db import get_db
     from scistack_gui.domain.scope_filter import document_interface
 
+    from scistack_gui.domain.edge_view import effective_edges
+
     db = get_db()
-    manual_nodes = ps.get_manual_nodes(db)
-    edges = ps.get_manual_edges(db)
+    # The ports a scope exposes come from the edges ITS canvas draws
+    # (edge_view, the one owner). Raw rows included edges hidden there.
+    view = effective_edges(db, pipeline_id, caller=f"pipeline_interface({pipeline_id})")
+    manual_nodes = view.manual_nodes
+    edges = view.drawn_list
     uses_by_parent: dict = {}
     for use in ps.get_pipeline_uses(db):
         uses_by_parent.setdefault(use["parent_pipeline_id"], []).append(use)
@@ -634,8 +639,8 @@ def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
     if not uses_by_parent.get(scope_id):
         return []
 
-    manual_nodes = ps.get_manual_nodes(db)
-    edges = ps.get_manual_edges(db)
+    from scistack_gui.domain.edge_view import effective_edges
+
     positions_by_scope = layout_store.read_positions_by_scope()
     hidden_ports = ps.get_hidden_ports_by_scope(db)
     names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
@@ -643,8 +648,15 @@ def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
     nodes = []
     for use in uses_by_parent[scope_id]:
         child_id = use["child_pipeline_id"]
+        # The child's ports come from the edges the CHILD's canvas draws.
+        view = effective_edges(db, child_id, caller=f"build_pipeline_nodes({child_id})")
         iface = document_interface(
-            child_id, manual_nodes, edges, uses_by_parent, positions_by_scope, hidden_ports
+            child_id,
+            view.manual_nodes,
+            view.drawn_list,
+            uses_by_parent,
+            positions_by_scope,
+            hidden_ports,
         )
         nodes.append(
             {

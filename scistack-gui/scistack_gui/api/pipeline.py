@@ -266,14 +266,17 @@ def ensure_node_identities(db):
     runs the same ONE resolution `_build_graph` does. Idempotent: on the
     common path every wiring is already associated and nothing is written.
     """
-    from scistack_gui import pipeline_store as _store
+    from scistack_gui.domain.edge_view import effective_edges
 
+    # Identity is global (node ids are shared across scopes), so every scope's
+    # hides apply, as before edge_view.
+    view = effective_edges(db, None, caller="ensure_node_identities")
     plan, _warnings = _resolve_node_identity(
         db,
         build_aggregate(db, db.get_aggregated_variants()),
-        _store.get_manual_edges(db),
-        _store.get_manual_nodes(db),
-        _store.get_hidden_edge_ids(db),
+        view.drawn_list,
+        view.manual_nodes,
+        set(view.hidden_edge_ids),
     )
     return plan
 
@@ -708,12 +711,12 @@ def _build_graph(
     logger.debug(
         "[pipeline] loaded %d hidden node ID(s) for scope=%s", len(hidden_ids), pipeline_id
     )
-    hidden_edge_ids = _ps.get_hidden_edge_ids(db, pipeline_id)
-    logger.debug(
-        "[pipeline] loaded %d hidden edge ID(s) for scope=%s",
-        len(hidden_edge_ids),
-        pipeline_id,
-    )
+    # The edges this canvas draws: the ONE loader every reader shares
+    # (domain.edge_view, plan-unified-edge-model step 1).
+    from scistack_gui.domain.edge_view import effective_edges
+
+    edge_view = effective_edges(db, pipeline_id, caller=f"_build_graph({pipeline_id})")
+    hidden_edge_ids = set(edge_view.hidden_edge_ids)
 
     # --- Fetch aggregated data from scidb (replaces steps 2-5) ---
     logger.info("[pipeline] Fetching aggregated variants from scidb")
@@ -771,8 +774,8 @@ def _build_graph(
     # graph_builder.hidden_wirings' manual_edges param. manual_nodes moved up
     # beside it 2026-09-22: run-state propagation now follows manual edges, and
     # resolving one whose source is a hand-dragged node needs this map.
-    manual_edges_for_fn_lookup = _ps.get_manual_edges(db)
-    manual_nodes = _ps.get_manual_nodes(db)
+    manual_edges_for_fn_lookup = edge_view.drawn_list
+    manual_nodes = edge_view.manual_nodes
     logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
 
     # --- Node identity (D-2026-09-22-1) -----------------------------------
@@ -794,9 +797,12 @@ def _build_graph(
         # them so THIS build draws the node with its edges and hides, rather
         # than one build late.
         hidden_ids = _ps.get_hidden_node_ids(db, pipeline_id)
-        hidden_edge_ids = _ps.get_hidden_edge_ids(db, pipeline_id)
-        manual_edges_for_fn_lookup = _ps.get_manual_edges(db)
-        manual_nodes = _ps.get_manual_nodes(db)
+        edge_view = effective_edges(
+            db, pipeline_id, caller=f"_build_graph({pipeline_id}) after re-key"
+        )
+        hidden_edge_ids = set(edge_view.hidden_edge_ids)
+        manual_edges_for_fn_lookup = edge_view.drawn_list
+        manual_nodes = edge_view.manual_nodes
 
     disconnected_wirings = gb.hidden_wirings(
         agg.fn_input_params,

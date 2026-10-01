@@ -18,7 +18,6 @@ from scistack_gui.domain.graph_builder import (
     build_manual_node,
     build_path_input_nodes,
     build_variable_nodes,
-    candidate_edge_id,
     drop_superseded_manual_edges,
     edge_dedup_key,
     filter_hidden,
@@ -1794,7 +1793,7 @@ class TestEdgeDedupKey:
 
 # ---------------------------------------------------------------------------
 # Disconnected wirings — hidden_wirings, wiring_disconnected_fkeys,
-# wirings_downstream_of, candidate_edge_id, inbound_edge_candidates
+# wirings_downstream_of, inbound_edge_candidates
 # ---------------------------------------------------------------------------
 
 
@@ -2085,36 +2084,43 @@ class TestWiringsDownstreamOf:
         assert wirings_downstream_of({}, {}, set(), {}, token_for=identity_token) == set()
 
 
-class TestCandidateEdgeId:
+class TestHistoryTwinEdgeId:
+    """graph_builder.history_twin_edge_id, the one spelling of history edge
+    ids outside build_edges. It replaced candidate_edge_id (2026-10-01), which
+    keyed a Parameter by its declared name where build_edges uses the argument."""
+
     F_CID = _cid("f-call")
     F_NODE = f"fn__f__{F_CID}"
 
-    def test_var_to_fn(self):
-        assert candidate_edge_id("var__Raw", self.F_NODE) == f"e__Raw__f__{self.F_CID}"
+    @staticmethod
+    def _twin(source, target, handle=None, manual_nodes=None):
+        from scistack_gui.domain.graph_builder import history_twin_edge_id
 
-    def test_const_to_fn(self):
-        assert candidate_edge_id("param__hz", self.F_NODE) == f"e__hz__f__{self.F_CID}"
+        return history_twin_edge_id(
+            {"source": source, "target": target, "targetHandle": handle}, manual_nodes
+        )
+
+    def test_var_to_fn(self):
+        assert self._twin("var__Raw", self.F_NODE) == f"e__Raw__f__{self.F_CID}"
+
+    def test_const_to_fn_without_a_port_uses_the_declared_name(self):
+        assert self._twin("param__hz", self.F_NODE) == f"e__hz__f__{self.F_CID}"
 
     def test_path_input_to_fn(self):
         assert (
-            candidate_edge_id("pathInput__mypath", self.F_NODE, "in__filepath")
+            self._twin("pathInput__mypath", self.F_NODE, "in__filepath")
             == f"e__mypath__filepath__f__{self.F_CID}"
         )
 
     def test_path_input_to_fn_without_handle_returns_none(self):
-        # No target_handle -> can't recover the parameter name -> safe
-        # degrade (reconnect creates a fresh manual edge instead of
-        # auto-unhiding) rather than guessing.
-        assert candidate_edge_id("pathInput__mypath", self.F_NODE) is None
+        # No port, so the parameter name cannot be recovered. Safe degrade:
+        # the reconnect stores a fresh manual edge instead of unhiding.
+        assert self._twin("pathInput__mypath", self.F_NODE) is None
 
     def test_fn_to_var(self):
-        assert (
-            candidate_edge_id(self.F_NODE, "var__Out") == f"e__f__{self.F_CID}__Out"
-        )
+        assert self._twin(self.F_NODE, "var__Out") == f"e__f__{self.F_CID}__Out"
 
     def test_matches_build_edges_own_id_construction(self):
-        # candidate_edge_id must never drift from what build_edges actually
-        # produces — round-trip through a real build_edges call.
         f_key = ("f", self.F_CID)
         edges = build_edges(
             fn_input_params={f_key: {"signal": "Raw"}},
@@ -2125,7 +2131,7 @@ class TestCandidateEdgeId:
             hidden_ids=set(),
         )
         real_id = next(e["id"] for e in edges if e["source"] == "var__Raw")
-        assert candidate_edge_id("var__Raw", self.F_NODE) == real_id
+        assert self._twin("var__Raw", self.F_NODE, "in__signal") == real_id
 
     def test_path_input_matches_build_edges_own_id_construction(self):
         f_key = ("f", self.F_CID)
@@ -2144,25 +2150,46 @@ class TestCandidateEdgeId:
             hidden_ids=set(),
         )
         real_id = next(e["id"] for e in edges if e["source"] == "pathInput__mypath")
+        assert self._twin("pathInput__mypath", self.F_NODE, "in__filepath") == real_id
+
+    def test_renamed_parameter_matches_build_edges_on_either_port(self):
+        """The case candidate_edge_id got wrong: a Parameter declared
+        gaitrite_config feeding the argument gaitRiteConfig. build_edges keys
+        the edge by the ARGUMENT."""
+        f_key = ("f", self.F_CID)
+        edges = build_edges(
+            fn_input_params={f_key: {}},
+            fn_outputs={},
+            const_fns={"gaitrite_config": {f_key}},
+            path_inputs={},
+            manual_edges=[],
+            hidden_ids=set(),
+            fn_parameter_names={f_key: {"gaitRiteConfig": "gaitrite_config"}},
+        )
+        real_id = next(e["id"] for e in edges if e["source"].startswith("param__"))
+        assert real_id == f"e__gaitRiteConfig__f__{self.F_CID}"
+        for port in ("param__gaitRiteConfig", "in__gaitRiteConfig"):
+            assert self._twin("param__gaitrite_config", self.F_NODE, port) == real_id
+
+    def test_hand_placed_parameter_node_uses_its_label(self):
+        nodes = {"param__hz__bofsh3": {"type": "parameterNode", "label": "hz"}}
         assert (
-            candidate_edge_id("pathInput__mypath", self.F_NODE, "in__filepath")
-            == real_id
+            self._twin("param__hz__bofsh3", self.F_NODE, None, nodes)
+            == f"e__hz__f__{self.F_CID}"
         )
 
     def test_placement_qualified_target_stripped(self):
         placed = f"{self.F_NODE}::main"
-        assert (
-            candidate_edge_id("var__Raw", placed) == f"e__Raw__f__{self.F_CID}"
-        )
+        assert self._twin("var__Raw", placed) == f"e__Raw__f__{self.F_CID}"
 
     def test_two_opaque_ids_returns_none(self):
-        assert candidate_edge_id("uuid-a", "uuid-b") is None
+        assert self._twin("uuid-a", "uuid-b") is None
 
     def test_var_to_non_fn_target_returns_none(self):
-        assert candidate_edge_id("var__Raw", "param__hz") is None
+        assert self._twin("var__Raw", "param__hz") is None
 
     def test_two_fn_nodes_returns_none(self):
-        assert candidate_edge_id(self.F_NODE, f"fn__g__{_cid('g')}") is None
+        assert self._twin(self.F_NODE, f"fn__g__{_cid('g')}") is None
 
 
 # ---------------------------------------------------------------------------

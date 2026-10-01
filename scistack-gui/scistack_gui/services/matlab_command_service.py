@@ -546,18 +546,19 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         name: path_input_display(obj)
         for name, obj in registry.get_path_inputs_registry().items()
     }
-    from scistack_gui.domain.graph_builder import visible_manual_edges
+    from scistack_gui.domain.edge_view import effective_edges, run_scope
 
-    manual_nodes = pipeline_store.get_manual_nodes(db)
-    # Only the edges the canvas draws, filtered once by the one owner
-    # (graph_builder.manual_edge_is_hidden). A stale manual edge under a
-    # hidden history edge otherwise reaches every helper below as a live
-    # input (2026-10-01: v bound to two types, the run refused as EachOf).
-    manual_edges = visible_manual_edges(
-        pipeline_store.get_manual_edges(db),
-        pipeline_store.get_hidden_edge_ids(db),
-        manual_nodes,
+    # Only the edges the clicked node's canvas draws (edge_view, the one
+    # owner). A stale manual edge under a hidden history edge otherwise
+    # reaches every helper below as a live input (2026-10-01: v bound to two
+    # types, the run refused as EachOf).
+    view = effective_edges(
+        db,
+        run_scope(db, params.get("node_id")),
+        caller=f"generate_matlab_command({function_name})",
     )
+    manual_nodes = view.manual_nodes
+    manual_edges = view.drawn_list
     path_input_params.update(
         _collect_edge_path_inputs(function_name, saved_pis, manual_edges, manual_nodes)
     )
@@ -853,15 +854,14 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     saved_sweeps = {
         name: list(sw.alternatives) for name, sw in _reg.get_parameters_registry().items()
     }
-    from scistack_gui.domain.graph_builder import visible_manual_edges
+    from scistack_gui.domain.edge_view import effective_edges
 
-    manual_nodes = pipeline_store.get_manual_nodes(db)
-    # Only the edges the canvas draws (graph_builder.manual_edge_is_hidden).
-    manual_edges = visible_manual_edges(
-        pipeline_store.get_manual_edges(db),
-        pipeline_store.get_hidden_edge_ids(db, pipeline_id),
-        manual_nodes,
+    # Only the edges this pipeline's canvas draws (edge_view, the one owner).
+    view = effective_edges(
+        db, pipeline_id, caller=f"generate_matlab_pipeline_command({pipeline_id})"
     )
+    manual_nodes = view.manual_nodes
+    manual_edges = view.drawn_list
 
     steps: list[dict] = []
     warnings: list[str] = []

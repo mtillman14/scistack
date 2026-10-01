@@ -173,7 +173,7 @@ def put_edge(
 ) -> dict:
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import candidate_edge_id, find_cycle
+    from scistack_gui.domain.graph_builder import find_cycle, history_twin_edge_id
     from scistack_gui.domain.scope_filter import node_scope
 
     logger.info(
@@ -186,17 +186,20 @@ def put_edge(
     )
 
     # If this connection recreates a previously-hidden DB-derived edge
-    # (same source/target — the candidate id is deterministic, see
-    # graph_builder.candidate_edge_id), unhide the ORIGINAL edge instead of
+    # (same connection — graph_builder.history_twin_edge_id, the one spelling
+    # of history edge ids), unhide the ORIGINAL edge instead of
     # creating a redundant manual one. This is what makes delete+reconnect
     # idempotent: state/execution recompute fresh from the real DB history
     # under the original edge id, not a new manual-edge id. Scoped to the
     # connection's own scope (derived from its endpoints, same as
     # delete_edge below) so reconnecting in one pipeline never unhides
     # another pipeline's independent placement of the same shared wiring.
-    candidate = candidate_edge_id(source, target, target_handle)
+    manual_nodes = pipeline_store.get_manual_nodes(db)
+    candidate = history_twin_edge_id(
+        {"source": source, "target": target, "targetHandle": target_handle},
+        manual_nodes,
+    )
     if candidate is not None:
-        manual_nodes = pipeline_store.get_manual_nodes(db)
         positions_by_scope = layout_store.read_positions_by_scope()
         scope_id = node_scope(target, manual_nodes, positions_by_scope)
         if candidate in pipeline_store.get_hidden_edge_ids(db, scope_id):

@@ -2179,50 +2179,76 @@ def visible_manual_edges(
 def history_twin_edge_id(
     edge: dict, manual_nodes: "dict[str, dict] | None" = None
 ) -> "str | None":
-    """The id of the DB-derived edge that a manual *edge* into a function
-    duplicates, spelled exactly as build_edges spells it. None when the
-    edge does not feed a function input from a variable, Parameter or
-    PathInput.
+    """The id build_edges gives the DB-derived edge over the same connection as
+    *edge* (a stored manual edge, or a source/target/handle about to be
+    drawn), whether or not that edge exists. None for a connection history
+    never draws (an edge between two variables, a glue edge).
 
-    One owner of that spelling for every reader that has to ask "is this
-    manual edge's history twin hidden?" (:func:`manual_edge_is_hidden`).
-    The formats mirror build_edges: variable ``e__{type}__{fn}__{tok}``,
-    Parameter ``e__{argument}__{fn}__{tok}`` (keyed by the handle it fills),
-    PathInput ``e__{name}__{param}__{fn}__{tok}``.
+    THE one spelling of history edge ids outside build_edges. Its readers:
+    - :func:`manual_edge_is_hidden` asks whether this drawn edge's history
+      twin is hidden;
+    - `layout_service.put_edge`: drawing a connection whose history edge is
+      hidden unhides it rather than storing a copy;
+    - `pipeline_store.rebase_node`: re-minting hidden edge ids after a rename.
+
+    `candidate_edge_id` was a second spelling until 2026-10-01. It keyed a
+    Parameter by its DECLARED name where build_edges uses the ARGUMENT, so
+    redrawing a deleted `gaitrite_config -> gaitRiteConfig` edge never
+    unhid it.
+
+    Formats, mirroring build_edges:
+    - variable: `e__{type}__{fn}__{tok}`;
+    - Parameter: `e__{argument}__{fn}__{tok}`;
+    - PathInput: `e__{name}__{param}__{fn}__{tok}`;
+    - output: `e__{fn}__{tok}__{type}`.
+
+    The target port is needed only where the id encodes it. A Parameter
+    without one falls back to its declared name, which is right whenever
+    name and argument coincide; a PathInput without one returns None.
     """
     from scistack_gui.domain.edge_resolver import node_id_to_var_label
 
-    out_parsed = parse_fn_node_id(edge.get("source") or "")
+    manual_nodes = manual_nodes or {}
+    source = edge.get("source") or ""
+    target = edge.get("target") or ""
+    out_parsed = parse_fn_node_id(source)
     if out_parsed is not None:
-        # An output edge: function -> variable, ``e__{fn}__{tok}__{type}``.
-        out_label = node_id_to_var_label(edge.get("target") or "", {}, manual_nodes or {})
+        # An output edge: function -> variable.
+        out_label = node_id_to_var_label(target, {}, manual_nodes)
         if out_label:
             return f"e__{out_parsed[0]}__{out_parsed[1]}__{out_label}"
         return None
-    handle = edge.get("targetHandle") or edge.get("target_handle") or ""
-    parsed = parse_fn_node_id(edge.get("target") or "")
-    if parsed is None or not handle:
+    parsed = parse_fn_node_id(target)
+    if parsed is None:
         return None
     fn, tok = parsed
-    source = edge.get("source") or ""
-    bare_source = strip_placement(source)
+    handle = edge.get("targetHandle") or edge.get("target_handle") or ""
     if handle.startswith(PARAM_ID_PREFIX):
-        # A Parameter edge targets ``param__{argument}``.
-        return f"e__{handle[len(PARAM_ID_PREFIX):]}__{fn}__{tok}"
-    if not handle.startswith(IN_HANDLE_PREFIX):
-        return None
-    param = handle[len(IN_HANDLE_PREFIX) :]
-    if bare_source.startswith(PATH_INPUT_ID_PREFIX):
-        return f"e__{bare_source[len(PATH_INPUT_ID_PREFIX):]}__{param}__{fn}__{tok}"
-    if bare_source.startswith(PARAM_ID_PREFIX):
-        # A Parameter drawn onto the ordinary ``in__X`` port: what a node shows
-        # for X before it has run with that Parameter. Once it has, history
-        # draws the same connection as ``param__X`` (``e__X__{fn}__{tok}``), and
-        # this edge is a copy of it. Without this case, hiding that history
-        # edge left the old in__ copy binding the Parameter (scidb.log
-        # 2026-10-01 14:52, formulaNum -> calculateSymmetryOneVector).
-        return f"e__{param}__{fn}__{tok}"
-    var_label = node_id_to_var_label(source, {}, manual_nodes or {})
+        argument = handle[len(PARAM_ID_PREFIX):]
+    elif handle.startswith(IN_HANDLE_PREFIX):
+        argument = handle[len(IN_HANDLE_PREFIX):]
+    else:
+        argument = None
+    bare_source = strip_placement(source)
+    meta = manual_nodes.get(source) or manual_nodes.get(bare_source) or {}
+    if bare_source.startswith(PATH_INPUT_ID_PREFIX) or meta.get("type") == "pathInputNode":
+        if argument is None:
+            return None
+        name = meta.get("label") or bare_source[len(PATH_INPUT_ID_PREFIX):]
+        return f"e__{name}__{argument}__{fn}__{tok}"
+    if (
+        bare_source.startswith(PARAM_ID_PREFIX)
+        or meta.get("type") == "parameterNode"
+        or handle.startswith(PARAM_ID_PREFIX)
+    ):
+        # Keyed by the ARGUMENT (the port it fills), on param__X or in__X
+        # alike: an edge drawn onto in__X before the node ran with the
+        # Parameter is a copy of history's param__X edge (scidb.log
+        # 2026-10-01 14:52, formulaNum). With no port, use the declared name.
+        if argument is None:
+            argument = meta.get("label") or bare_source[len(PARAM_ID_PREFIX):]
+        return f"e__{argument}__{fn}__{tok}"
+    var_label = node_id_to_var_label(source, {}, manual_nodes)
     if var_label:
         return f"e__{var_label}__{fn}__{tok}"
     return None
@@ -3014,54 +3040,6 @@ def wirings_downstream_of(
                 next_frontier.add(w)
         frontier = next_frontier
     return affected - seed_wirings
-
-
-def candidate_edge_id(
-    source_id: str, target_id: str, target_handle: "str | None" = None
-) -> str | None:
-    """The deterministic DB-derived edge id a (source, target) node-id pair
-    WOULD have in build_edges' output, without needing the edge to exist.
-
-    Used to detect "the user just dragged a connection that recreates a
-    previously-hidden DB-derived edge" (see layout_service.put_edge) —
-    reconnecting the exact same nodes should unhide the original edge
-    rather than create a redundant manual one. Returns None for pairs that
-    aren't a recognized DB-derived category (a genuinely new connection).
-    Both ids may be placement-qualified; only the bare ids matter here.
-
-    ``target_handle`` is required for a ``pathInput__`` source: unlike
-    var/const edges, a PathInput's declared name and the function parameter
-    it fills can differ (see docs/claude/code-discovery-categories.md), so
-    build_edges' real pathInput→fn edge id now encodes BOTH — without the
-    handle there's no way to recover the parameter name, so this returns
-    None (a safe degrade: the reconnect just creates a fresh manual edge
-    instead of auto-unhiding).
-    """
-    src = strip_placement(source_id)
-    tgt = strip_placement(target_id)
-    if src.startswith(PATH_INPUT_ID_PREFIX):
-        parsed = parse_fn_node_id(tgt)
-        if parsed is None or not target_handle or not target_handle.startswith(IN_HANDLE_PREFIX):
-            return None
-        fn, wid = parsed
-        pi_name = src.split("__", 1)[1]
-        param_name = target_handle[len(IN_HANDLE_PREFIX) :]
-        return f"e__{pi_name}__{param_name}__{fn}__{wid}"
-    if src.startswith((VAR_ID_PREFIX, PARAM_ID_PREFIX)):
-        parsed = parse_fn_node_id(tgt)
-        if parsed is None:
-            return None
-        fn, wid = parsed
-        x = src.split("__", 1)[1]
-        return f"e__{x}__{fn}__{wid}"
-    if tgt.startswith(VAR_ID_PREFIX):
-        parsed = parse_fn_node_id(src)
-        if parsed is None:
-            return None
-        fn, wid = parsed
-        out_type = tgt[len(VAR_ID_PREFIX) :]
-        return f"e__{fn}__{wid}__{out_type}"
-    return None
 
 
 # ---------------------------------------------------------------------------

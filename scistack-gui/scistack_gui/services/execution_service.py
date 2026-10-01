@@ -611,9 +611,14 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
         for v in fn_variants
     ]
 
-    all_edges = pipeline_store.get_manual_edges(db)
-    manual_nodes = pipeline_store.get_manual_nodes(db)
-    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
+    # Name-scoped: no node is named, so every scope's hides apply
+    # (edge_view.run_scope(db, None)), the same rule as hidden nodes.
+    from scistack_gui.domain.edge_view import effective_edges
+
+    view = effective_edges(db, None, caller=f"derive_fn_targets({function_name})")
+    all_edges = view.drawn_list
+    manual_nodes = view.manual_nodes
+    hidden_edge_ids = set(view.hidden_edge_ids)
 
     fn_node_ids = {legacy_fn_node_id(function_name)}  # legacy/manual edges
     for v in fn_variants:
@@ -762,9 +767,17 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     from scistack_gui import intent_store
 
     hidden_values = _hidden_constant_values(db, intent_store.scope_of_node(db, node_id))
-    manual_nodes = pipeline_store.get_manual_nodes(db)
-    all_edges = pipeline_store.get_manual_edges(db)
-    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
+    # The clicked node's canvas decides which hidden edges apply (decision a,
+    # plan-unified-edge-model): an edge hidden in another hypothesis tab does
+    # not disconnect this node.
+    from scistack_gui.domain.edge_view import effective_edges, run_scope
+
+    view = effective_edges(
+        db, run_scope(db, node_id), caller=f"derive_target_for_node({node_id})"
+    )
+    manual_nodes = view.manual_nodes
+    all_edges = view.drawn_list
+    hidden_edge_ids = set(view.hidden_edge_ids)
 
     meta = manual_nodes.get(node_id)
     parsed = parse_fn_node_id(node_id)
@@ -1105,14 +1118,22 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     from scistack_gui.domain.graph_builder import manual_edge_handle_index
     from scistack_gui.ids import parse_fn_node_id
 
-    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
+    from scistack_gui.domain.edge_view import effective_edges, run_scope
+
+    # Same scope rule as the run it explains (derive_target_for_node).
+    view = effective_edges(
+        db,
+        run_scope(db, node_id),
+        caller=f"disconnected_reason({function_name}, {node_id})",
+    )
+    hidden_edge_ids = set(view.hidden_edge_ids)
     if not hidden_edge_ids:
         return None
 
     manual_index = manual_edge_handle_index(
-        pipeline_store.get_manual_edges(db),
+        view.drawn_list,
         hidden_edge_ids=hidden_edge_ids,
-        manual_nodes=pipeline_store.get_manual_nodes(db),
+        manual_nodes=view.manual_nodes,
     )
 
     # Hidden edge ids and drawn edges are keyed by the NODE, which no longer
@@ -1178,7 +1199,13 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     from scistack_gui.api.pipeline import build_aggregate, ensure_node_identities
     from scistack_gui.domain.graph_builder import hidden_wirings, wirings_downstream_of
 
-    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
+    from scistack_gui.domain.edge_view import effective_edges
+
+    # A pipeline run reports on ITS canvas: hides from that scope only.
+    view = effective_edges(
+        db, pipeline_id, caller=f"disconnected_report_entries({pipeline_id})"
+    )
+    hidden_edge_ids = set(view.hidden_edge_ids)
     if not hidden_edge_ids:
         return []
 
@@ -1193,8 +1220,8 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     fn_constants = agg.fn_constants
     path_inputs = agg.path_inputs
 
-    manual_edges = pipeline_store.get_manual_edges(db)
-    manual_nodes = pipeline_store.get_manual_nodes(db)
+    manual_edges = view.drawn_list
+    manual_nodes = view.manual_nodes
     # Hidden edge ids were stored against the NODE's id, so both sides of
     # every lookup below have to be keyed by the node's token rather than by
     # the wiring — they differ for a node that was rewired and run.

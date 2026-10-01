@@ -10,8 +10,7 @@ the node:
 
 Every scenario is a bug that was found by a failed run on 2026-10-01, plus the
 hide-scope case decided for step 1. Written against the code BEFORE the
-refactor, so it must pass both before and after (except the xfail, which is
-the known scope bug that step 1 fixes).
+refactor (where the hide-scope case was xfail) and kept passing through it.
 
 The MATLAB command's reader is not covered here: the fixture function is
 Python. Step 1 routes the MATLAB service through the same EdgeView seam, and
@@ -209,14 +208,10 @@ def test_old_parameter_copy_on_an_input_port(setup):
     assert "low_hz" in reason
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known before the refactor: the run path unions every scope's hidden "
-    "edges, so an edge hidden in a hypothesis tab also disconnects the node for "
-    "runs from main. Step 1 of plan-unified-edge-model fixes it (decision a); "
-    "remove this marker then.",
-)
 def test_an_edge_hidden_in_another_tab_does_not_disconnect_main(setup):
+    """Was xfail before step 1: the run path unioned every scope's hidden
+    edges. Run-path hides now come from the node's scope
+    (edge_view.run_scope, decision a)."""
     client, node, _ = setup
     r = client.post("/api/hypotheses/main/duplicate", json={"pipeline_id": "main", "name": "H"})
     assert r.status_code == 200, r.text

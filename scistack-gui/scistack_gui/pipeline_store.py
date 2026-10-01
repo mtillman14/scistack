@@ -663,7 +663,7 @@ def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None
     ``layout.rebase_node_positions``. Returns per-store counts, for the log.
     """
     from scistack_gui import intent_store, node_wiring
-    from scistack_gui.domain.graph_builder import candidate_edge_id
+    from scistack_gui.domain.graph_builder import history_twin_edge_id
     from scistack_gui.ids import strip_placement
 
     _ensure_tables(db)
@@ -705,8 +705,15 @@ def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None
     counts["statements"] = intent_store.rekey_subject(db, old_bare, new_bare)
     counts["wiring"] = node_wiring.rekey_node(db, old_bare, new_bare)
     counts["edges"] = intent_store.rebase_edge_endpoints(db, old_bare, new_bare)
+    manual_nodes = get_manual_nodes(db)
     counts["hidden_edges"] = intent_store.rebase_hidden_edges(
-        db, old_bare, new_bare, candidate_edge_id
+        db,
+        old_bare,
+        new_bare,
+        lambda source, target, target_handle: history_twin_edge_id(
+            {"source": source, "target": target, "targetHandle": target_handle},
+            manual_nodes,
+        ),
     )
     logger.info("[pipeline_store] rebase_node %s -> %s: %s", old_bare, new_bare, counts)
     return counts

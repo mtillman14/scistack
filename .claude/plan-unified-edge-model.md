@@ -132,6 +132,28 @@ The parity test covers it: an edge hidden in a hypothesis tab, then run from `ma
 - Edge handling sits next to node identity. Step 1 changes no ids and no
   identity input, and the identity pass is untouched.
 
+### Progress (2026-10-01)
+
+- [x] Parity test written against the old code: 6 passed, 1 xfail (scope). Commit 42108147.
+- [x] `domain/edge_view.py`: `effective_edges(db, scope, caller=)` and `run_scope(db, node_id)`.
+- [x] Readers moved onto it:
+  - `_build_graph` and `ensure_node_identities` (union scope, as before);
+  - `derive_fn_targets` (union, name-scoped);
+  - `derive_target_for_node` and `disconnected_reason` (node scope);
+  - `disconnected_report_entries` and `generate_matlab_pipeline_command` (the pipeline's scope);
+  - `generate_matlab_command` (node scope);
+  - `pipeline_interface` and `build_pipeline_nodes` (the submodule's scope; they used raw rows, hides included).
+- [x] AST guard `tests/test_edge_view_guard.py` with the mutator allow-list.
+- [x] Found while moving readers: `candidate_edge_id` was a SECOND spelling of history edge ids. It keyed a
+  Parameter by its declared name instead of the argument, so a redrawn
+  `gaitrite_config -> gaitRiteConfig` never unhid. It is deleted; `put_edge` and `rebase_node` use
+  `history_twin_edge_id`, which now works without a port where the id encodes none and reads
+  hand-placed Parameter/PathInput node labels.
+- [x] Scope scenario xfail marker removed.
+- [ ] pytest run by the user.
+- [ ] Drop the now-redundant `hidden_edge_ids` filtering keyword from the edge-resolver functions and
+  `manual_edge_handle_index` (idempotent today, so harmless). Deferred to a cleanup commit.
+
 ## Step 2: one port name per argument (outline)
 
 Every input port is `in__X`, whatever feeds it. `param__X` goes away: from

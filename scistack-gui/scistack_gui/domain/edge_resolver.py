@@ -569,7 +569,7 @@ def resolve_function_edges(
             # PathInput → fn. The declared name and the parameter it fills
             # routinely differ, so ONLY the handle can say which param this
             # is; build_edges encodes both names in the DB-derived edge id
-            # for the same reason (see graph_builder.candidate_edge_id).
+            # for the same reason (see graph_builder.history_twin_edge_id).
             if src_kind == BINDING_PATHINPUT:
                 if th.startswith(IN_HANDLE_PREFIX):
                     _bind(th[len(IN_HANDLE_PREFIX) :], src_binding, edge)
