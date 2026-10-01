@@ -158,11 +158,14 @@ def _resolve_matlab_wiring(function_name: str, manual_edges: list[dict], manual_
     """
     from scistack_gui.domain.edge_resolver import resolve_function_edges
 
+    # Both callers that load edges here pass them through
+    # graph_builder.visible_manual_edges first, so nothing is left to hide.
     return resolve_function_edges(
         fn_node_ids=_fn_node_ids(function_name, manual_edges, manual_nodes),
         manual_edges=manual_edges,
         manual_nodes=manual_nodes,
         existing_node_labels={},
+        hidden_edge_ids=frozenset(),
     )
 
 
@@ -543,8 +546,18 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         name: path_input_display(obj)
         for name, obj in registry.get_path_inputs_registry().items()
     }
-    manual_edges = pipeline_store.get_manual_edges(db)
+    from scistack_gui.domain.graph_builder import visible_manual_edges
+
     manual_nodes = pipeline_store.get_manual_nodes(db)
+    # Only the edges the canvas draws, filtered once by the one owner
+    # (graph_builder.manual_edge_is_hidden). A stale manual edge under a
+    # hidden history edge otherwise reaches every helper below as a live
+    # input (2026-10-01: v bound to two types, the run refused as EachOf).
+    manual_edges = visible_manual_edges(
+        pipeline_store.get_manual_edges(db),
+        pipeline_store.get_hidden_edge_ids(db),
+        manual_nodes,
+    )
     path_input_params.update(
         _collect_edge_path_inputs(function_name, saved_pis, manual_edges, manual_nodes)
     )
@@ -590,6 +603,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
             manual_edges,
             manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         if inferred:
             # Re-order inferred class names to match the function parameter order
@@ -839,8 +853,15 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     saved_sweeps = {
         name: list(sw.alternatives) for name, sw in _reg.get_parameters_registry().items()
     }
-    manual_edges = pipeline_store.get_manual_edges(db)
+    from scistack_gui.domain.graph_builder import visible_manual_edges
+
     manual_nodes = pipeline_store.get_manual_nodes(db)
+    # Only the edges the canvas draws (graph_builder.manual_edge_is_hidden).
+    manual_edges = visible_manual_edges(
+        pipeline_store.get_manual_edges(db),
+        pipeline_store.get_hidden_edge_ids(db, pipeline_id),
+        manual_nodes,
+    )
 
     steps: list[dict] = []
     warnings: list[str] = []

@@ -16,9 +16,17 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 import pytest
+from scidb import BaseVariable
 
+from scistack_gui import pipeline_store
+from scistack_gui.db import get_db
 from scistack_gui.domain import graph_builder as gb
+from scistack_gui.domain.edge_resolver import (
+    infer_manual_fn_output_types,
+    resolve_function_edges,
+)
 from scistack_gui.domain.graph_builder import (
     hidden_wirings,
     history_twin_edge_id,
@@ -26,9 +34,11 @@ from scistack_gui.domain.graph_builder import (
     manual_edge_handle_index,
     manual_edge_is_hidden,
     manual_input_overrides,
+    visible_manual_edges,
     wiring_id,
 )
 from scistack_gui.ids import fn_node_id
+from scistack_gui.services.execution_service import derive_target_for_node
 
 FN = "calculateSymmetryOneVector"
 HISTORY = {"v": "GAITRiteLoaded"}
@@ -95,8 +105,12 @@ class TestHistoryTwinEdgeId:
         }
         assert history_twin_edge_id(edge) == f"e__formula__{FN}__{WID}"
 
-    def test_edge_into_a_variable_has_no_twin(self):
-        edge = {"id": "m", "source": NODE, "target": "var__X", "targetHandle": ""}
+    def test_output_edge(self):
+        edge = {"id": "m", "source": NODE, "target": "var__GaitRiteSymmetry"}
+        assert history_twin_edge_id(edge) == f"e__{FN}__{WID}__GaitRiteSymmetry"
+
+    def test_edge_between_variables_has_no_twin(self):
+        edge = {"id": "m", "source": "var__A", "target": "var__B"}
         assert history_twin_edge_id(edge) is None
 
 
@@ -177,3 +191,109 @@ class TestBindingFollowsTheCanvas:
             token_for=identity_token,
             manual_edges=[STALE_TWIN, RECONNECT],
         ) == set()
+
+
+class TestEdgeResolverReadsOnlyVisibleEdges:
+    """The second reader (2026-10-01, after the index fix): a node still in
+    _pipeline_nodes resolves from resolve_function_edges, which read raw rows,
+    so the MATLAB run still failed with the same EachOf."""
+
+    def test_resolve_function_edges_binds_only_the_reconnect(self):
+        resolved = resolve_function_edges(
+            fn_node_ids={NODE},
+            manual_edges=[STALE_TWIN, RECONNECT],
+            manual_nodes={},
+            existing_node_labels={},
+            hidden_edge_ids={HIDDEN_HISTORY_EDGE},
+        )
+        assert resolved.input_types == {"v": "GaitRiteLoaded_UA"}
+
+    def test_without_the_hide_both_bind(self):
+        """Control: the same rows with nothing hidden are a real EachOf."""
+        resolved = resolve_function_edges(
+            fn_node_ids={NODE},
+            manual_edges=[STALE_TWIN, RECONNECT],
+            manual_nodes={},
+            existing_node_labels={},
+            hidden_edge_ids=frozenset(),
+        )
+        assert sorted(resolved.input_type_candidates["v"]) == [
+            "GAITRiteLoaded",
+            "GaitRiteLoaded_UA",
+        ]
+
+    def test_hidden_output_twin_claims_no_output(self):
+        stale_out = {"id": "manual__out1", "source": NODE, "target": "var__OldOut"}
+        new_out = {"id": "manual__out2", "source": NODE, "target": "var__NewOut"}
+        assert infer_manual_fn_output_types(
+            {NODE},
+            [stale_out, new_out],
+            {},
+            existing_node_labels={},
+            hidden_edge_ids={f"e__{FN}__{WID}__OldOut"},
+        ) == ["NewOut"]
+
+    def test_visible_manual_edges_keeps_order_and_drops_hidden(self):
+        assert visible_manual_edges(
+            [STALE_TWIN, RECONNECT], {HIDDEN_HISTORY_EDGE}
+        ) == [RECONNECT]
+
+
+class TwinOldSignal(BaseVariable):
+    pass
+
+
+class TwinNewSignal(BaseVariable):
+    pass
+
+
+class TwinFiltered(BaseVariable):
+    pass
+
+
+class TestDeriveTargetForNodeIgnoresHiddenTwin:
+    """The path the failing MATLAB run took: a function node that is still a
+    manual row, whose id is in the fn__{fn}__{token} form, resolving its
+    target from its own edges."""
+
+    TOKEN = "aaaabbbbccccdddd"
+
+    def test_reconnected_input_is_the_only_binding(self, client):
+        TwinOldSignal.save(np.zeros(5), subject=1, session="pre")
+        TwinNewSignal.save(np.zeros(5), subject=1, session="pre")
+        node = fn_node_id("bandpass_filter", self.TOKEN)
+        for nid, ntype, label in [
+            ("mv_twin_old", "variableNode", "TwinOldSignal"),
+            ("mv_twin_new", "variableNode", "TwinNewSignal"),
+            (node, "functionNode", "bandpass_filter"),
+            ("mv_twin_out", "variableNode", "TwinFiltered"),
+            ("mc_twin_low_hz", "parameterNode", "low_hz"),
+        ]:
+            client.put(
+                f"/api/layout/{nid}",
+                json={"x": 0, "y": 0, "node_type": ntype, "label": label},
+            )
+        client.put("/api/edges/e_twin_old", json={
+            "source": "mv_twin_old", "target": node, "target_handle": "in__signal",
+        })
+        client.put("/api/edges/e_twin_new", json={
+            "source": "mv_twin_new", "target": node, "target_handle": "in__signal",
+        })
+        client.put("/api/edges/e_twin_out", json={"source": node, "target": "mv_twin_out"})
+        client.put("/api/edges/e_twin_low_hz", json={
+            "source": "mc_twin_low_hz", "target": node, "target_handle": "in__low_hz",
+        })
+
+        db = get_db()
+        # Control: both edges visible is a genuine EachOf.
+        before = derive_target_for_node(db, node)
+        assert before and isinstance(before[0]["input_types"]["signal"], list)
+
+        # The user disconnects the OLD wire. The canvas drew its history twin,
+        # so that is the id that gets hidden.
+        pipeline_store.hide_edge(
+            db, f"e__TwinOldSignal__bandpass_filter__{self.TOKEN}"
+        )
+        after = derive_target_for_node(db, node)
+        assert after
+        assert {t["input_types"]["signal"] for t in after} == {"TwinNewSignal"}

@@ -134,6 +134,13 @@ def _pathinput_call_args(text: str) -> list:
     ``scifor.PathInput(...)`` construction in ``text``."""
     calls = []
     for match in re.finditer(r"\b(?:scidb|scifor)\.PathInput\(", text):
+        # Skip the name when it sits inside a single-quoted char literal: an
+        # error message or fprintf format that SHOWS a call (+scifor/PathInput.m
+        # since a9357ddd) is not a call. An odd number of quotes before it on
+        # its line means it is inside one ('' escapes count as two).
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        if text.count("'", line_start, match.start()) % 2 == 1:
+            continue
         depth, end = 1, match.end()
         while depth and end < len(text):
             if text[end] == "(":

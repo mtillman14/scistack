@@ -597,6 +597,87 @@ def load_for_project(start: "Path | str | None" = None) -> EntitiesFile:
     return loaded
 
 
+def declared_spelling(
+    inputs: "dict[str, Any]",
+    parameter_names: "dict[str, str] | None",
+    declared: "dict[str, Parameter] | None" = None,
+) -> "dict[str, Any]":
+    """*inputs* with each Parameter-fed value replaced by the DECLARED value
+    it equals, when the two are spelled differently.
+
+    THE owner of "is this the same Parameter value" for recording. MATLAB has
+    no integers: a declared ``formulaNum = 6`` reaches ``for_each`` from MATLAB
+    as ``6.0``. Recorded as given, that value was ``"6.0"`` in history but
+    ``6`` in the declaration, so the canvas drew two "6" rows
+    (scidb.log 2026-10-01). It was also a different constant identity
+    (``constants_identity_key`` is repr-based) from a Python run of the same
+    declared ``6``. The declaration owns the value; the transport's spelling
+    is not part of it.
+
+    Applied wherever a call's identity is first derived from its inputs: the
+    top of ``_for_each_prepare`` (both run paths), and the MATLAB bridge
+    before it builds its skip hook. It is idempotent, so applying it twice is
+    harmless.
+
+    *declared* is ``{declared name: Parameter}``; it defaults to the project's
+    entities file (:func:`load_for_project`), the only place a
+    MATLAB project declares Parameters. A value with no declared Parameter,
+    no equal declared value, or one already spelled as declared is left
+    exactly as it is.
+    """
+    if not parameter_names:
+        return inputs
+    if declared is None:
+        try:
+            declared = load_for_project().parameters
+        except Exception as exc:  # noqa: BLE001 - recording must not fail on this
+            Log.warn(
+                f"[parameter] declared_spelling: could not read declared "
+                f"Parameters ({type(exc).__name__}: {exc}); values recorded as passed"
+            )
+            return inputs
+    out = dict(inputs)
+    for arg, name in parameter_names.items():
+        if arg not in out:
+            continue
+        value = out[arg]
+        if isinstance(value, EachOf):
+            continue
+        param = declared.get(name)
+        if param is None:
+            continue
+        match = _declared_equal(value, param.values)
+        if match is _NO_MATCH:
+            continue
+        out[arg] = match
+        Log.info(
+            f"[parameter] {name} (argument {arg!r}): recording the declared "
+            f"value {match!r} ({type(match).__name__}) for the passed "
+            f"{value!r} ({type(value).__name__})"
+        )
+    return out
+
+
+_NO_MATCH = object()
+
+
+def _declared_equal(value: Any, declared_values: list) -> Any:
+    """The declared value equal to *value* but spelled differently, or
+    ``_NO_MATCH``. An identical spelling (same ``repr``) is no change, so it
+    returns ``_NO_MATCH`` too. ``bool`` never matches a number: ``True == 1``
+    holds in Python, but they are different Parameter values."""
+    if any(repr(d) == repr(value) for d in declared_values):
+        return _NO_MATCH
+    for d in declared_values:
+        if isinstance(d, bool) != isinstance(value, bool):
+            continue
+        try:
+            if bool(d == value):
+                return d
+        except Exception:  # noqa: BLE001 - e.g. an array compared to a list
+            continue
+    return _NO_MATCH
+
 def clear_cache() -> None:
     """Drop the mtime cache. For tests and for a caller that has just
     written the file and cannot wait for mtime resolution to tick."""

@@ -431,6 +431,8 @@ def resolve_function_edges(
     manual_edges: list[dict],
     manual_nodes: dict[str, dict],
     existing_node_labels: dict[str, str],
+    *,
+    hidden_edge_ids: "set[str] | frozenset[str]",
 ) -> ResolvedEdges:
     """Resolve input/output/parameter connections for a function from edges.
 
@@ -456,7 +458,14 @@ def resolve_function_edges(
             sourceHandle, targetHandle.
         manual_nodes: {node_id: {"type": ..., "label": ...}} from pipeline_store.
         existing_node_labels: {node_id: label} for all DB-derived variable nodes.
+        hidden_edge_ids: required. A stored edge that
+            graph_builder.manual_edge_is_hidden hides (its own id hidden, or
+            its history twin is) binds nothing, as on the canvas.
     """
+    from scistack_gui.domain.graph_builder import visible_manual_edges
+
+    # Only edges the canvas can draw (graph_builder.manual_edge_is_hidden).
+    manual_edges = visible_manual_edges(manual_edges, hidden_edge_ids, manual_nodes)
     bindings: dict[str, dict] = {}
     output_types: list[str] = []
     glue_chains: dict[str, list[str]] = {}
@@ -614,11 +623,18 @@ def infer_manual_fn_output_types(
     manual_edges: list[dict],
     manual_nodes: dict[str, dict],
     existing_node_labels: dict[str, str],
+    *,
+    hidden_edge_ids: "set[str] | frozenset[str]",
 ) -> list[str]:
     """Infer output types from manual edges for a function (no positional matching needed).
 
     Used by the run path when DB variants exist but the user has rewired outputs.
+    Hidden edges (graph_builder.manual_edge_is_hidden) claim no output.
     """
+    from scistack_gui.domain.graph_builder import visible_manual_edges
+
+    # Only edges the canvas can draw (graph_builder.manual_edge_is_hidden).
+    manual_edges = visible_manual_edges(manual_edges, hidden_edge_ids, manual_nodes)
     fn_ids = bare_fn_node_ids(fn_node_ids)
     output_types: list[str] = []
     for edge in manual_edges:
@@ -636,6 +652,8 @@ def infer_manual_fn_param_to_class(
     manual_edges: list[dict],
     manual_nodes: dict[str, dict],
     existing_node_labels: dict[str, str],
+    *,
+    hidden_edge_ids: "set[str] | frozenset[str]",
 ) -> dict[str, str]:
     """Extract {param_name: class_name} for a fn from its outgoing manual edges.
 
@@ -649,7 +667,12 @@ def infer_manual_fn_param_to_class(
 
     Endpoint matching is placement-insensitive — see :func:`bare_fn_node_ids`,
     which documents the canvas bug an exact match caused here.
+    Hidden edges (graph_builder.manual_edge_is_hidden) map nothing.
     """
+    from scistack_gui.domain.graph_builder import visible_manual_edges
+
+    # Only edges the canvas can draw (graph_builder.manual_edge_is_hidden).
+    manual_edges = visible_manual_edges(manual_edges, hidden_edge_ids, manual_nodes)
     fn_ids = bare_fn_node_ids(fn_node_ids)
     mapping: dict[str, str] = {}
     for edge in manual_edges:

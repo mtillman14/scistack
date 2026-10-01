@@ -65,7 +65,8 @@ def _prepare_static(db, literal_file, out_name):
     prep = for_each_prepare(
         "loadOutcomes",
         "hash0",
-        {"filePath": {"kind": "pathinput", "template": str(literal_file)}},
+        # name is required since a9357ddd (a PathInput is identified by it).
+        {"filePath": {"kind": "pathinput", "name": "Outcomes", "template": str(literal_file)}},
         [out_name],
         {},
         db=db,

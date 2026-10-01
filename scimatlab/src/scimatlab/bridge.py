@@ -561,6 +561,14 @@ def for_each_prepare(
     # concrete column set drives version keys and the per-column MATLAB loop.
     inputs = external_loop.resolve_for_columns(inputs, resolved_db)
 
+    # Step 1.6: record each Parameter value as DECLARED. MATLAB passes every
+    # number as a double, so a declared 6 arrives as 6.0. The skip hook below
+    # predicts identities from these inputs, so the declared spelling must be
+    # in place before it is built, not only inside prepare. One owner:
+    # scidb.entities.declared_spelling.
+    merged_parameter_names = _parameter_names_from_matlab(parameter_names)
+    inputs = external_loop.declared_spelling(inputs, merged_parameter_names)
+
     # Resolve output class names → surrogate classes
     outputs = [get_surrogate_class(str(n)) for n in list(output_class_names)]
 
@@ -751,7 +759,7 @@ def for_each_prepare(
         # {input: declared Parameter}. MATLAB expands its Parameters before
         # this call, so the names only arrive stated; the same owner as the
         # Python path merges them (scidb.parameter.declared_input_names).
-        parameter_names=_parameter_names_from_matlab(parameter_names),
+        parameter_names=merged_parameter_names,
     )
 
     if state is None:

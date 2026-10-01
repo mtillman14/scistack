@@ -613,6 +613,7 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
 
     all_edges = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
+    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
 
     fn_node_ids = {legacy_fn_node_id(function_name)}  # legacy/manual edges
     for v in fn_variants:
@@ -635,7 +636,8 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
                     fn_node_ids.add(endpoint)
 
     manual_output_types = infer_manual_fn_output_types(
-        fn_node_ids, all_edges, manual_nodes, existing_node_labels={}
+        fn_node_ids, all_edges, manual_nodes, existing_node_labels={},
+        hidden_edge_ids=hidden_edge_ids,
     )
 
     from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
@@ -645,7 +647,6 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
     # graph_builder.manual_input_overrides. Runs whenever there is anything
     # to reconcile, not only when an edge is hidden: a manual edge onto a
     # parameter history never bound has no hidden edge to trigger on.
-    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
     if fn_variants and (hidden_edge_ids or all_edges):
         before = len(fn_variants)
         from scistack_gui.node_wiring import token_resolver
@@ -688,6 +689,7 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
         manual_edges=all_edges,
         manual_nodes=manual_nodes,
         existing_node_labels={},
+        hidden_edge_ids=hidden_edge_ids,
     )
     if not resolved.output_types:
         logger.warning(
@@ -762,6 +764,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     hidden_values = _hidden_constant_values(db, intent_store.scope_of_node(db, node_id))
     manual_nodes = pipeline_store.get_manual_nodes(db)
     all_edges = pipeline_store.get_manual_edges(db)
+    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
 
     meta = manual_nodes.get(node_id)
     parsed = parse_fn_node_id(node_id)
@@ -841,6 +844,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             manual_edges=all_edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=hidden_edge_ids,
         )
         if not resolved.output_types:
             logger.info(
@@ -905,7 +909,6 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             if stuck
             else "First run of this wiring: the node runs from its own edges.",
         )
-    hidden_edge_ids = pipeline_store.get_hidden_edge_ids(db)
     if matching and (hidden_edge_ids or all_edges):
         from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
 
@@ -937,7 +940,8 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         matching = _apply_manual_output_types(
             matching,
             infer_manual_fn_output_types(
-                {node_id}, all_edges, manual_nodes, existing_node_labels={}
+                {node_id}, all_edges, manual_nodes, existing_node_labels={},
+                hidden_edge_ids=hidden_edge_ids,
             ),
             f"node {node_id} ('{function_name}')",
         )

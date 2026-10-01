@@ -331,3 +331,27 @@ auto-unhides the history edge.
 It is logged at INFO once per edge per process, and at debug after that.
 
 Tests: `scistack-gui/tests/test_hidden_manual_twin.py`.
+
+**Second reader (same day).** The first fix covered only the handle index.
+`calculateSymmetryOneVector`'s node is still a manual row (a `fn__{fn}__{token}`
+id in `_pipeline_nodes`), so `derive_target_for_node` resolved it from
+`edge_resolver.resolve_function_edges` over **raw** rows, and the MATLAB run
+failed the same way. Now `graph_builder.visible_manual_edges` is the one filter.
+`resolve_function_edges`, `infer_manual_fn_output_types` and
+`infer_manual_fn_param_to_class` take `hidden_edge_ids` as a **required** keyword
+and filter through it. The MATLAB command service filters its edges once at load.
+`history_twin_edge_id` also covers output edges (`e__{fn}__{tok}__{type}`).
+
+**Parameter edges follow the current wiring (same day, 12:38).** A drawn
+`formulaNum -> calculateSymmetryOneVector` edge "just disappeared". The node had
+been rewired, and its current wiring had never run, so it had no constant handle
+and `formulaNum` showed as `in__formulaNum`. `group_call_sites_by_wiring` took
+ports from `is_current` call sites only, but mapped **every** call site's
+`const_fns`. So build_edges drew history's `param__formulaNum -> node` onto a
+handle the node does not render, which React Flow drops silently. It also
+dropped the user's drawn edge as superseded by that invisible twin. Now
+`const_fns` follows `is_current` too (the key stays, so the Parameter node
+remains). scidb.log says `Parameter edge(s) come only from a node's history
+wiring and are not drawn`. Tests: `tests/test_history_parameter_edges.py`.
+PathInput edges (`grouped.path_inputs`) still map every call site; they feed
+`wiring_id`, so changing them needs its own check.

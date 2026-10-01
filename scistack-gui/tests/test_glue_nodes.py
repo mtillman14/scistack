@@ -79,7 +79,7 @@ class TestEdgeResolution:
             _edge("e1", "var__RawEMG", "g1", "in__value"),
             _edge("e2", "g1", "fn__analyze", "in__emg"),
         ]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
 
         # The binding is the VARIABLE; the glue rides alongside. Glue
         # interposes on a binding — it is never a binding of its own,
@@ -94,7 +94,7 @@ class TestEdgeResolution:
             _edge("e2", "g1", "g2", "in__value"),
             _edge("e3", "g2", "fn__analyze", "in__emg"),
         ]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
 
         assert resolved.glue_chains == {"emg": ["glue_a", "glue_b"]}
         assert resolved.input_types == {"emg": "RawEMG"}
@@ -102,7 +102,7 @@ class TestEdgeResolution:
     def test_an_unwired_glue_node_binds_nothing(self):
         manual_nodes = {"g1": _glue_node("glue_x")}
         edges = [_edge("e1", "g1", "fn__analyze", "in__emg")]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
 
         # The chain is known but nothing is wired behind it, so the parameter
         # stays unbound rather than binding to nothing. This is now the ONLY
@@ -122,7 +122,7 @@ class TestEdgeResolution:
 
     def test_no_glue_leaves_the_chain_map_empty(self):
         edges = [_edge("e1", "var__RawEMG", "fn__analyze", "in__emg")]
-        resolved = resolve_function_edges(FN_IDS, edges, {}, {})
+        resolved = resolve_function_edges(FN_IDS, edges, {}, {}, hidden_edge_ids=frozenset())
         assert resolved.glue_chains == {}
 
     def test_a_glue_edge_without_a_handle_is_dropped(self):
@@ -131,7 +131,7 @@ class TestEdgeResolution:
             _edge("e1", "var__RawEMG", "g1", "in__value"),
             _edge("e2", "g1", "fn__analyze", None),
         ]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
         assert resolved.bindings == {}
         assert resolved.glue_chains == {}
 
@@ -153,7 +153,7 @@ class TestGlueChainHeadKinds:
             _edge("e1", "param__delsys_config", "g1", "in__config"),
             _edge("e2", "g1", "fn__analyze", "in__config"),
         ]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
 
         assert resolved.parameter_params == {"config": "delsys_config"}
         assert resolved.glue_chains == {"config": ["glue_config_filter"]}
@@ -169,7 +169,7 @@ class TestGlueChainHeadKinds:
             _edge("e1", "p1", "g1", "in__config"),
             _edge("e2", "g1", "fn__analyze", "in__config"),
         ]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
         assert resolved.parameter_params == {"config": "delsys_config"}
 
     def test_a_pathinput_fed_glue_binds_and_leaves_scidb_to_refuse_it(self):
@@ -184,7 +184,7 @@ class TestGlueChainHeadKinds:
             _edge("e1", "pathInput__raw_files", "g1", "in__value"),
             _edge("e2", "g1", "fn__analyze", "in__path"),
         ]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
 
         assert resolved.path_input_params == {"path": "raw_files"}
         assert resolved.glue_chains == {"path": ["glue_x"]}
@@ -196,7 +196,7 @@ class TestGlueChainHeadKinds:
             _edge("e2", "g1", "g2", "in__value"),
             _edge("e3", "g2", "fn__analyze", "in__config"),
         ]
-        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+        resolved = resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
 
         assert resolved.glue_chains == {"config": ["glue_a", "glue_b"]}
         assert resolved.parameter_params == {"config": "cfg"}
@@ -214,7 +214,7 @@ class TestGlueChainHeadKinds:
             _edge("e3", "g1", "fn__analyze", "in__config"),
         ]
         with caplog.at_level(logging.WARNING):
-            resolve_function_edges(FN_IDS, edges, manual_nodes, {})
+            resolve_function_edges(FN_IDS, edges, manual_nodes, {}, hidden_edge_ids=frozenset())
 
         text = caplog.text
         assert "in__value" in text and "in__config" in text

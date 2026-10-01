@@ -98,6 +98,7 @@ class TestResolveFunctionEdgesOutputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
+            hidden_edge_ids=frozenset(),
         )
         assert result.output_types == ["RawEMG"]
 
@@ -118,6 +119,7 @@ class TestResolveFunctionEdgesOutputs:
             manual_edges=edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.output_types == ["ProcessedSignal"]
 
@@ -141,6 +143,7 @@ class TestResolveFunctionEdgesOutputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
+            hidden_edge_ids=frozenset(),
         )
         assert result.output_types == ["RawEMG"]
 
@@ -164,6 +167,7 @@ class TestResolveFunctionEdgesOutputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.output_types == ["A", "B"]
 
@@ -182,6 +186,7 @@ class TestResolveFunctionEdgesOutputs:
             manual_edges=edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.output_types == []
 
@@ -206,6 +211,7 @@ class TestResolveFunctionEdgesInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
+            hidden_edge_ids=frozenset(),
         )
         # One view, the history shape: bare for a single type. The always-list
         # rendering is input_type_candidates, never an identity input.
@@ -232,6 +238,7 @@ class TestResolveFunctionEdgesInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert set(result.input_types["signal"]) == {"A", "B"}
 
@@ -255,6 +262,7 @@ class TestResolveFunctionEdgesInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.input_types["signal"] == "A"
 
@@ -276,6 +284,7 @@ class TestResolveFunctionEdgesInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
+            hidden_edge_ids=frozenset(),
         )
         assert result.input_types == {}
 
@@ -301,6 +310,7 @@ class TestResolveFunctionEdgesInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.input_types == {"low_hz": "Hz"}
 
@@ -325,6 +335,7 @@ class TestResolveFunctionEdgesInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.input_types == {"x": "A"}
         assert result.output_types == ["B"]
@@ -352,6 +363,7 @@ class TestResolveFunctionEdgesParameters:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.parameter_params == {"low_hz": "low_hz"}
         assert result.input_types == {}
@@ -370,6 +382,7 @@ class TestResolveFunctionEdgesParameters:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.parameter_params == {"low_hz": "low_hz"}
 
@@ -391,6 +404,7 @@ class TestResolveFunctionEdgesParameters:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.parameter_params == {"sep": "test"}
 
@@ -411,6 +425,7 @@ class TestResolveFunctionEdgesParameters:
             manual_edges=edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.parameter_params == {"cutoff": "threshold"}
 
@@ -434,6 +449,7 @@ class TestResolveFunctionEdgesParameters:
             manual_edges=edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.parameter_params == {}
 
@@ -451,6 +467,7 @@ class TestResolveFunctionEdgesParameters:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert "low_hz" not in result.input_types
 
@@ -468,6 +485,7 @@ class TestResolveFunctionEdgesParameters:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.parameter_params == {"cutoff": "low_hz"}
 
@@ -496,6 +514,7 @@ class TestResolveFunctionEdgesPathInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.path_input_params == {"filepath_or_buffer": "test_pi"}
         assert result.input_types == {}
@@ -514,6 +533,7 @@ class TestResolveFunctionEdgesPathInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.path_input_params == {"filepath_or_buffer": "test_pi"}
 
@@ -532,6 +552,7 @@ class TestResolveFunctionEdgesPathInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.path_input_params == {}
 
@@ -551,6 +572,7 @@ class TestResolveFunctionEdgesPathInputs:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result.input_types == {}
         assert result.parameter_params == {}
@@ -582,6 +604,7 @@ class TestResolveFunctionEdgesUnrelated:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == ResolvedEdges(bindings={}, output_types=[])
 
@@ -591,6 +614,7 @@ class TestResolveFunctionEdgesUnrelated:
             manual_edges=[],
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == ResolvedEdges(bindings={}, output_types=[])
 
@@ -615,6 +639,7 @@ class TestInferManualFnOutputTypes:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == ["Out"]
 
@@ -633,6 +658,7 @@ class TestInferManualFnOutputTypes:
             manual_edges=edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == []
 
@@ -656,6 +682,7 @@ class TestInferManualFnOutputTypes:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == ["Out"]
 
@@ -679,6 +706,7 @@ class TestInferManualFnOutputTypes:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == ["A", "B"]
 
@@ -696,6 +724,7 @@ class TestInferManualFnOutputTypes:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == []
 
@@ -719,6 +748,7 @@ class TestInferManualFnOutputTypes:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert set(result) == {"A", "B"}
 
@@ -739,6 +769,7 @@ class TestInferManualFnParamToClass:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={"var__Result": "Result"},
+            hidden_edge_ids=frozenset(),
         )
         assert result == {"output1": "Result"}
 
@@ -756,6 +787,7 @@ class TestInferManualFnParamToClass:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == {}
 
@@ -773,6 +805,7 @@ class TestInferManualFnParamToClass:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={"var__A": "A"},
+            hidden_edge_ids=frozenset(),
         )
         assert result == {}
 
@@ -796,6 +829,7 @@ class TestInferManualFnParamToClass:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={"var__First": "First", "var__Second": "Second"},
+            hidden_edge_ids=frozenset(),
         )
         assert result == {"p": "First"}
 
@@ -816,6 +850,7 @@ class TestInferManualFnParamToClass:
             manual_edges=edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert result == {"output_a": "CustomVar"}
 
@@ -899,6 +934,7 @@ class TestPlacementQualifiedEndpoints:
                 manual_edges=[self._edge(source)],
                 manual_nodes={},
                 existing_node_labels=labels,
+                hidden_edge_ids=frozenset(),
             )
             assert mapping == expected, (
                 f"edge source {source!r} against bare fn id did not resolve"
@@ -911,6 +947,7 @@ class TestPlacementQualifiedEndpoints:
             manual_edges=[self._edge(self.FN_BARE)],
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
+            hidden_edge_ids=frozenset(),
         )
         assert mapping == {"loaded_data": "RawEMG"}
 
@@ -921,6 +958,7 @@ class TestPlacementQualifiedEndpoints:
                 manual_edges=[self._edge(source)],
                 manual_nodes={},
                 existing_node_labels={"var__RawEMG": "RawEMG"},
+                hidden_edge_ids=frozenset(),
             )
             assert out == ["RawEMG"], f"edge source {source!r} did not resolve"
 
@@ -938,6 +976,7 @@ class TestPlacementQualifiedEndpoints:
             ],
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
+            hidden_edge_ids=frozenset(),
         )
 
         assert resolved.output_types == ["RawEMG"]
@@ -950,5 +989,6 @@ class TestPlacementQualifiedEndpoints:
             manual_edges=[self._edge(self.FN_PLACED)],
             manual_nodes={},
             existing_node_labels={"var__RawEMG": "RawEMG"},
+            hidden_edge_ids=frozenset(),
         )
         assert mapping == {}

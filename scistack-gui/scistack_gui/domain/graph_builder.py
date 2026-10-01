@@ -340,6 +340,7 @@ def group_call_sites_by_wiring(
     grouped.path_inputs = {}
 
     fkey_to_gkey: dict[FnKey, FnKey] = {}
+    historical_fkeys: set[FnKey] = set()
     member_map: dict[str, list[str]] = {}
     group_member_states: dict[FnKey, list[str]] = defaultdict(list)
 
@@ -378,6 +379,7 @@ def group_call_sites_by_wiring(
             grouped.fn_input_params.setdefault(gkey, {})
             grouped.fn_outputs.setdefault(gkey, set())
             grouped.fn_constants.setdefault(gkey, set())
+            historical_fkeys.add(fkey)
 
         member_state = run_states.get(fn_node_id(fn, cid))
         if member_state:
@@ -396,8 +398,35 @@ def group_call_sites_by_wiring(
         member_map.setdefault(fn_node_id(fn, token), []).append(fn_node_id(fn, cid))
 
     # const/path-input edge targets follow their call sites into the groups.
+    #
+    # A Parameter edge follows the CURRENT wiring, like the handle it lands on
+    # (fn_constants above). Mapping a historical call site here drew
+    # `param__X -> node` onto a `param__X` handle the node no longer renders.
+    # React Flow dropped that edge silently, and because it shares its
+    # endpoints with the user's drawn `in__X` edge, build_edges dropped the
+    # drawn one as superseded too: the edge "just disappeared" (scidb.log
+    # 2026-10-01 12:38, formulaNum -> calculateSymmetryOneVector).
+    dropped_history_const_edges: list[str] = []
     for const_name, fkeys in agg.const_fns.items():
-        grouped.const_fns[const_name] = {fkey_to_gkey.get(f, f) for f in fkeys}
+        targets = set()
+        for f in fkeys:
+            if f in historical_fkeys:
+                dropped_history_const_edges.append(
+                    f"{const_name}->{fn_node_id(*fkey_to_gkey[f])}"
+                )
+                continue
+            targets.add(fkey_to_gkey.get(f, f))
+        # The key stays even with no targets: the Parameter node itself is
+        # still part of the canvas, only the edge is not.
+        grouped.const_fns[const_name] = targets
+    if dropped_history_const_edges:
+        logger.info(
+            "[graph_builder] %d Parameter edge(s) come only from a node's "
+            "history wiring and are not drawn (the node's current wiring has "
+            "no such parameter handle): %s",
+            len(dropped_history_const_edges),
+            sorted(set(dropped_history_const_edges)),
+        )
     for pi_name, pi in agg.path_inputs.items():
         grouped.path_inputs[pi_name] = {
             **pi,
@@ -2078,8 +2107,7 @@ def manual_edge_handle_index(
     EachOf that MATLAB command generation refused).
     """
     index: dict[tuple[str, str, str], list[dict]] = {}
-    dropped: list[dict] = []
-    for edge in manual_edges:
+    for edge in visible_manual_edges(manual_edges, hidden_edge_ids, manual_nodes):
         handle = edge.get("targetHandle")
         target = edge.get("target")
         if not handle or not target:
@@ -2087,19 +2115,40 @@ def manual_edge_handle_index(
         parsed = parse_fn_node_id(target)
         if parsed is None:
             continue
-        if manual_edge_is_hidden(edge, hidden_edge_ids, manual_nodes):
-            dropped.append(edge)
-            continue
         index.setdefault((parsed[0], parsed[1], handle), []).append(edge)
-    _log_dropped_manual_edges(dropped, hidden_edge_ids, manual_nodes)
     logger.debug(
-        "[graph_builder] manual_edge_handle_index: %d edge(s) on %d handle(s), "
-        "%d hidden edge(s) left out",
+        "[graph_builder] manual_edge_handle_index: %d edge(s) on %d handle(s)",
         sum(len(v) for v in index.values()),
         len(index),
-        len(dropped),
     )
     return index
+
+
+def visible_manual_edges(
+    manual_edges: "list[dict] | tuple",
+    hidden_edge_ids: "set[str] | frozenset[str]",
+    manual_nodes: "dict[str, dict] | None" = None,
+) -> list[dict]:
+    """The stored manual edges the canvas can draw: every row that
+    :func:`manual_edge_is_hidden` does not hide.
+
+    The one filter every reader that turns manual edges into bindings goes
+    through: manual_edge_handle_index here, and edge_resolver's
+    resolve_function_edges / infer_manual_fn_output_types /
+    infer_manual_fn_param_to_class, which take ``hidden_edge_ids`` as a
+    required keyword for that reason. The index was fixed first (2026-10-01)
+    while resolve_function_edges still read raw rows, so a never-graduated
+    node still bound the stale twin and the MATLAB run still failed.
+    """
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for edge in manual_edges:
+        if manual_edge_is_hidden(edge, hidden_edge_ids, manual_nodes):
+            dropped.append(edge)
+        else:
+            kept.append(edge)
+    _log_dropped_manual_edges(dropped, hidden_edge_ids, manual_nodes)
+    return kept
 
 
 def history_twin_edge_id(
@@ -2118,6 +2167,13 @@ def history_twin_edge_id(
     """
     from scistack_gui.domain.edge_resolver import node_id_to_var_label
 
+    out_parsed = parse_fn_node_id(edge.get("source") or "")
+    if out_parsed is not None:
+        # An output edge: function -> variable, ``e__{fn}__{tok}__{type}``.
+        out_label = node_id_to_var_label(edge.get("target") or "", {}, manual_nodes or {})
+        if out_label:
+            return f"e__{out_parsed[0]}__{out_parsed[1]}__{out_label}"
+        return None
     handle = edge.get("targetHandle") or edge.get("target_handle") or ""
     parsed = parse_fn_node_id(edge.get("target") or "")
     if parsed is None or not handle:

@@ -63,6 +63,7 @@ class TestResolveIntoOneDict:
             manual_edges=edges,
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
 
         assert resolved.bindings == {
@@ -91,6 +92,7 @@ class TestResolveIntoOneDict:
             ],
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert resolved.path_input_params == {"path": "pi"}
         assert resolved.input_types == {"v": "V"}
@@ -116,6 +118,7 @@ class TestResolveIntoOneDict:
             ],
             manual_nodes={},
             existing_node_labels={},
+            hidden_edge_ids=frozenset(),
         )
         assert resolved.bindings["x"]["ref"] == ["A", "B"]
 

@@ -11,9 +11,30 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzu. A MATLAB run records a declared Parameter value as declared — added 2026-10-01
+
+**What changed:** MATLAB passes a declared `formulaNum = 6` as `6.0`. scidb now
+records the declared `6` (`scidb.entities.declared_spelling`). Before, history said
+`6.0` and the node showed two "6" rows.
+
+**Backend:** restart the GUI and MATLAB so the new scidb/scimatlab code loads.
+
+**Frontend:**
+1. On `formulaNum`, keep one declared value `6`. The old "6 · 450 rec history" row
+   stays; it is the 09-29 `6.0` records, which are not migrated.
+2. Run `calculateSymmetryOneVector`.
+
+**You should see:** in `scidb.log`, `[parameter] formulaNum (argument 'formulaNum'):
+recording the declared value 6 (int) for the passed 6.0 (float)`. After the run, the
+new records are counted on the declared `6` row, not on a third row.
+(This run currently fails to SAVE because of the GaitRiteSymmetry column mismatch,
+which is a separate open issue, so check the log line first.)
+
+---
+
 ## 0zzt. A disconnected input stays disconnected after reconnecting a different variable — added 2026-10-01
 
-**What changed:** a stored hand-drawn edge whose history twin is hidden no longer binds
+**What changed:** a stored hand-drawn edge whose history twin is hidden no longer binds or claims an output, in the canvas index AND in edge resolution (`visible_manual_edges`; the first fix missed edge resolution, so the run still failed)
 its variable (`graph_builder.manual_edge_is_hidden`). Before, disconnecting
 `GAITRiteLoaded -> calculateSymmetryOneVector.v` and drawing `GaitRiteLoaded_UA -> v`
 bound `v` to both. The MATLAB Run then failed with "more than one candidate producer
@@ -34,6 +55,12 @@ type" and nothing ran.
 
 Also: hide an input edge on a history node without drawing a replacement. The
 node should show as disconnected (before, a stale twin could hide that).
+
+Also (Parameter edge on a rewired node): the `formulaNum -> calculateSymmetryOneVector`
+edge now stays on the canvas after you draw it. You have three stored copies from
+earlier attempts (`manual__vdw6ip`, `manual__aitsva`, `manual__zg1466`); they draw
+on top of each other. scidb.log shows `1 Parameter edge(s) come only from a node's
+history wiring and are not drawn`.
 
 ---
 

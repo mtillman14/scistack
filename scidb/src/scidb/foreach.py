@@ -41,6 +41,7 @@ from .bindings import (
 from .exceptions import AmbiguousParamError, DatabaseNotConfiguredError
 from .database import database_or_none, dataset_schema_keys_of
 from .input_spec import find_pathinput, is_loadable, spec_name, type_name, variable_type
+from .entities import declared_spelling
 from .parameter import check_path_input_names, declared_input_names, path_input_specs_of
 from .roles import endpoint_kind as _roles_endpoint_kind
 from .schema_values import canonical_numeric_value, schema_str
@@ -3368,6 +3369,11 @@ def _for_each_prepare(
     on the returned state for ``+scidb/for_each.m`` to apply, because a ``.m``
     function cannot execute inside this prepare step.
     """
+    # A Parameter value is recorded as DECLARED, not as the transport spelled
+    # it (MATLAB passes a declared 6 as 6.0). Before anything below derives
+    # identity, version keys or metadata from the inputs.
+    inputs = declared_spelling(inputs, parameter_names)
+
     # Glue chains: normalized and validated up front, constant-fed ones applied.
     glue_chains, deferred_glue_chains, inputs = _normalize_glue(
         glue, inputs, glue_language
