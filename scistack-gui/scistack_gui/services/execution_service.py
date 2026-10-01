@@ -923,6 +923,25 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             if stuck
             else "First run of this wiring: the node runs from its own edges.",
         )
+    if matching and hidden_edge_ids:
+        # Which history targets this node would run, before hidden edges and
+        # drawn edges are applied: the input to the "did the hide take?"
+        # question (scidb.log 2026-10-01 22:48).
+        logger.info(
+            "[execution] node %s ('%s'): %d matching history target(s) before "
+            "reconcile: %s",
+            node_id,
+            function_name,
+            len(matching),
+            [
+                {
+                    "output": t.get("output_type"),
+                    "constants": t.get("constants") or {},
+                    "parameter_names": t.get("parameter_names") or {},
+                }
+                for t in matching[:10]
+            ],
+        )
     if matching and (hidden_edge_ids or all_edges):
         from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
 

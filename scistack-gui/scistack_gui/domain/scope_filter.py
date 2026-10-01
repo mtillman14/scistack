@@ -170,6 +170,32 @@ def resolve_scope_view(
                 else e
             )
 
+    # A FUNCTION node missing from a scope's view is what "the canvas lost my
+    # nodes" looks like (scidb.log 2026-10-01 22:51, a duplicated hypothesis
+    # drew 1 of 4 function nodes). Name each, with where it IS placed.
+    dropped_fns = [
+        n["id"]
+        for n in nodes
+        if n.get("type") == "functionNode" and n["id"] not in id_map
+    ]
+    if dropped_fns:
+        from scistack_gui.ids import strip_placement as _strip
+
+        def _placed_in(node_id: str) -> list:
+            bare = _strip(node_id)
+            return sorted(
+                scope
+                for scope, positions in (positions_by_scope or {}).items()
+                if any(_strip(k) == bare for k in positions)
+            )
+
+        logger.info(
+            "[scope_filter] scope %s: %d function node(s) not in this view: %s",
+            scope_id,
+            len(dropped_fns),
+            [f"{nid} (placed in {_placed_in(nid) or 'no scope'})" for nid in dropped_fns[:20]],
+        )
+
     logger.debug(
         "[scope_filter] scope %s: kept %d/%d node(s), %d/%d edge(s)",
         scope_id,

@@ -576,6 +576,12 @@ def reconcile_manual_inputs(
     # drew" (docs/claude/manual-edges-on-history-nodes.md §Reading scidb.log);
     # a count is strictly more informative than a repetition.
     substituted: dict[str, tuple] = {}
+    # Per wiring: how many targets a hidden edge excluded, and one KEPT
+    # target's candidates. A wiring with both is the case where a hide
+    # disconnected some of a node's targets but not all (scidb.log
+    # 2026-10-01 22:48: formulaNum hidden, the run still went ahead).
+    excluded_by_wiring: dict[str, int] = {}
+    kept_example: dict[str, dict] = {}
     for t in targets:
         bindings = t.get("bindings") or {}
         # Bare-string-when-single: wiring_id hashes the value as written, and
@@ -613,7 +619,15 @@ def reconcile_manual_inputs(
                 wid,
                 sorted(uncovered),
             )
+            excluded_by_wiring[wid] = excluded_by_wiring.get(wid, 0) + 1
             continue
+        if hidden_edge_ids and wid not in kept_example:
+            kept_example[wid] = {
+                "constants": dict(t.get("constants") or {}),
+                "parameter_names": dict(t.get("parameter_names") or {}),
+                "input_types": input_types,
+                "candidates": sorted(handle_map),
+            }
 
         overrides = manual_input_overrides(
             function_name,
@@ -657,6 +671,18 @@ def reconcile_manual_inputs(
         substituted[wid] = (overrides, new_bindings, (prev[2] if prev else 0) + 1)
         kept.append(new_target)
 
+    for wid, n_excluded in excluded_by_wiring.items():
+        if wid in kept_example:
+            logger.info(
+                "[variant_resolver] '%s' (wiring %s): %d target(s) excluded by a "
+                "hidden edge but others kept. A kept one: %s; hidden ids it did not "
+                "match: %s",
+                function_name,
+                wid,
+                n_excluded,
+                kept_example[wid],
+                sorted(h for h in hidden_edge_ids if h not in kept_example[wid]["candidates"]),
+            )
     for wid, (overrides, new_bindings, n) in substituted.items():
         logger.info(
             "[variant_resolver] '%s' (wiring %s): manual edge(s) override %s — "
