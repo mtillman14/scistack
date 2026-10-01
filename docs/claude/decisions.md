@@ -8,6 +8,38 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-01-1 — One edge model: a single effective edge set, kind-agnostic
+
+**Context.** "Edge" was not one concept. History edges have per-kind ids that
+encode their endpoints, while drawn edges have random ids. A port is `in__X`
+or `param__X` depending on what feeds it. Every reader (canvas, run,
+disconnected check, MATLAB command) worked out which edges exist from the raw
+stored rows. On 2026-10-01 alone that produced five canvas-vs-run divergences,
+each patched with a kind-specific rule.
+
+**Decision.**
+- Edge existence, visibility and identity are kind-agnostic. Kind-specific
+  code lives only in binding semantics (EachOf, Parameter fan-out, PathInput
+  replacement, glue).
+- Done in three independently shippable steps, decided one at a time:
+  1. one effective edge set per scope (`edge_view.effective_edges`) that every
+     reader uses, enforced by an AST guard and a canvas-vs-run parity test;
+     no id, port, data or frontend change;
+  2. one port name per argument (`in__X`; `param__X` removed);
+  3. hides keyed by connection `(source, target, port)` instead of edge id.
+- Steps 2 and 3 are clean breaks (hidden edges reappear once). No migration.
+
+**Consequences.** A new reader is correct by default. The twin-id rebuild and
+the required `hidden_edge_ids` plumbing shrink with each step. The run path uses the clicked
+node's scope for hidden edges, as it already does for hidden nodes; before this,
+an edge hidden in one hypothesis tab also disconnected the node in another.
+The work happens on branch `refactor/unified-edge-model`.
+
+**Full argument:** `.claude/plan-unified-edge-model.md`; history of the bug class
+in `manual-edges-on-history-nodes.md`.
+
+---
+
 ## D-2026-09-27-1 — Mark colours: plot over project over palette, paint only
 
 **Context.** The user wanted to choose the colours of summary marks (bars,
