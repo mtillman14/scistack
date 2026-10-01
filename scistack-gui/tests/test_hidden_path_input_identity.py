@@ -380,7 +380,7 @@ def _pi_overrides(edges, manual_nodes=None):
     )
 
     return manual_path_input_overrides(
-        "f", _TOKEN, manual_edge_handle_index(edges), manual_nodes or {}
+        "f", _TOKEN, manual_edge_handle_index(edges, hidden_edge_ids=frozenset()), manual_nodes or {}
     )
 
 

@@ -57,8 +57,10 @@ def measure(df):
 
 
 N_LOCATIONS = len(SUBJECTS) * len(SESSIONS) * len(TRIALS)
-PLAIN = "distribute=false"
-TABLED = "distribute=false, as_table=[df]"
+# Recorded labels carry the iteration level (2026-10-01); both runs iterate
+# every schema key of the conftest dataset.
+PLAIN = "distribute=false, level=subject/session/trial"
+TABLED = "distribute=false, as_table=[df], level=subject/session/trial"
 
 
 @pytest.fixture
@@ -187,7 +189,10 @@ def test_variant_graph_lists_the_run_axis_with_its_levels(both_runs):
 
     assert len(run_axes) == 1
     assert run_axes[0]["function"] == "measure"
-    assert run_axes[0]["levels"] == [PLAIN, TABLED]
+    # Natural-sorted labels. Since the label ends in ", level=…" (2026-10-01),
+    # ", as_table=[df]" sorts before ", level=…", so TABLED now comes first.
+    # Display order only: a run axis's default is the latest flag, not a level.
+    assert run_axes[0]["levels"] == [TABLED, PLAIN]
 
 
 # --- translations ------------------------------------------------------------

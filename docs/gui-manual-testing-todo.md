@@ -11,6 +11,70 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzt. A disconnected input stays disconnected after reconnecting a different variable — added 2026-10-01
+
+**What changed:** a stored hand-drawn edge whose history twin is hidden no longer binds
+its variable (`graph_builder.manual_edge_is_hidden`). Before, disconnecting
+`GAITRiteLoaded -> calculateSymmetryOneVector.v` and drawing `GaitRiteLoaded_UA -> v`
+bound `v` to both. The MATLAB Run then failed with "more than one candidate producer
+type" and nothing ran.
+
+**Backend:** restart the GUI so the new code loads.
+
+**Frontend:**
+1. Open the Aim 2 project. `calculateSymmetryOneVector.v` should show only the
+   `GaitRiteLoaded_UA` edge.
+2. Click Run on `calculateSymmetryOneVector`.
+
+**You should see:** the MATLAB run starts. In `scidb.log`:
+- one INFO line `stored manual edge(s) are hidden and bind nothing ... twin
+  e__GAITRiteLoaded__calculateSymmetryOneVector__... hidden`
+- `run-state propagation follows ... {'v': 'GaitRiteLoaded_UA'}`, a bare string, not a list
+- no `generate_matlab_command FAILED`
+
+Also: hide an input edge on a history node without drawing a replacement. The
+node should show as disconnected (before, a stale twin could hide that).
+
+---
+
+## 0zzs. Two iteration levels are two variants; unnamed plots show only current data; per-location delete — added 2026-10-01
+
+**What changed:** the schema keys a call iterates are now part of its identity
+(`docs/claude/iteration-level-identity.md`). A loader run per subject and the same
+loader run once are two variants instead of one. A plot with no variant rows draws only
+current records. The Variants popup can delete the record(s) at one location. Both
+bundles were rebuilt.
+
+**Backend:** your existing database will NOT open for runs (there is no migration; the
+`_invocation` table gained a column). Start a fresh database and re-run the pipeline.
+`scidb.log`'s `configure_database` line now shows the interpreter path,
+e.g. `python=3.11.9 (/path/to/venv/bin/python)`.
+
+**Frontend**
+1. Run the `pandas.read_csv` → `DemographicsTable` node once with the level set to
+   **subject**, then once with **no level** (one call).
+2. Right-click `DemographicsTable` → **🧬 Variants…**: two cards, told apart by
+   `run options of pandas.read_csv = distribute=false, level=subject` vs
+   `… level=(one call)`. The per-subject one reads "replaced by a newer run".
+3. Plot one subject (e.g. SS23) of `DemographicsTable`: one value per column, not 17.
+   `scidb.log` has `variant selection: no variant rows — the source default … keeps N of
+   M row(s)`.
+4. Expand the old card → **Locations** → open `subject SS02`, click 🗑 on its leaf →
+   the dialog names "at subject SS02" and plans only that record → delete it.
+5. Re-run the node at the SAME level with "skip computed" (Run all): it should skip.
+6. After the one-call re-run, the `DemographicsTable` variable node turns **green**,
+   even though the hidden phantom `pandas.read_csv` node (`…4b9cac03…`) is still in
+   history. `scidb.log` has `[run_state] left 1 hidden call site(s) out of the cascade`.
+7. Only ONE `GaitRiteLoaded_UA` node: the hand-placed one folded into the history node at
+   the hand-placed position, and its edge to `calculateSymmetryOneVector` came with it.
+   `scidb.log` has `merge_manual_nodes: graduating …__k7huza onto the already-placed …`.
+
+**Expect:** each level a card, the NEWEST (most recently saved) card at the top and the
+oldest at the bottom; superseded data never drawn by default; per-location
+delete leaves the rest of the card.
+
+---
+
 ## 0zzr. Variants popup: cards, Make current, Delete, before-run pin question — added 2026-09-30
 
 **What changed:** right-click a Variable node → **🧬 Variants…** now opens one popup

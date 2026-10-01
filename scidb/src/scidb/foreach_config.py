@@ -297,12 +297,17 @@ class ForEachConfig:
         distribute: bool = False,
         as_table=None,
         glue: "dict[str, list] | None" = None,
+        level: "list[str] | None" = None,
     ):
         self.fn = fn
         self.inputs = inputs
         self.where = where
         self.distribute = distribute
         self.as_table = as_table
+        # The schema keys this call iterates, in dataset order ([] = one call),
+        # or None when unknown (a display-only manifest). Version key `__level`
+        # and invocation identity, NOT call-site identity: see to_version_keys.
+        self.level = None if level is None else [str(k) for k in level]
         # {param: [GlueSpec, ...]} — normalized glue chains (see scidb.glue).
         self.glue = glue or {}
 
@@ -376,6 +381,14 @@ class ForEachConfig:
             keys["__glue_hashes"] = {
                 p: chain_hashes(c) for p, c in sorted(self.glue.items())
             }
+        # The iteration level (2026-10-01): a version key, so it reaches the
+        # record id and invocation identity (provenance_save._iteration_level),
+        # but deliberately NOT a call-site key (absent from
+        # _CALL_ID_INCLUDED_KEYS). A call site is a canvas node; running that
+        # node at another level makes a new VARIANT of it, not a new node.
+        # docs/claude/iteration-level-identity.md.
+        if self.level is not None:
+            keys["__level"] = list(self.level)
         return keys
 
     def to_call_id(self) -> str:

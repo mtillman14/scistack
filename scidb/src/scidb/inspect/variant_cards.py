@@ -143,6 +143,9 @@ class VariantCard:
     location_keys: list[str]
     #: Every location, sorted, as ``{key: value}``.
     locations: list[dict]
+    #: The record ids at each location, aligned with ``locations``: what a
+    #: per-location delete targets (``variant_delete``'s ``record_ids``).
+    location_record_ids: list[list[str]]
     #: Runs of the direct producing invocations, newest first.
     runs: list[RunRef]
     upstream: VariantUpstream
@@ -216,11 +219,20 @@ def selection_matches(selection: dict, coordinate: dict) -> bool:
     here; that rule belongs to the loader and is never needed between two
     canonical dicts."""
     from ..bindings import variant_signature
+    from ..provenance_query import run_options_label_matches
+    from ..variant import RUN_PIN_PREFIX
 
     for key, value in selection.items():
         other = coordinate.get(key, _ABSENT)
         if other is _ABSENT:
             return False
+        if key.startswith(RUN_PIN_PREFIX):
+            # The loader matches a run pin with run_options_label_matches (exact,
+            # but level-agnostic when the pin names no level); the cards use the
+            # same rule or a card could call exact what the loader widens.
+            if not run_options_label_matches(value, other):
+                return False
+            continue
         if variant_signature({"v": other}) != variant_signature({"v": value}):
             return False
     return True
@@ -276,7 +288,8 @@ def _card_id(function_name, chain_fns, selection) -> str:
 def build_variant_cards(
     db: "DatabaseManager", variable, *, include_runs: bool = True
 ) -> VariantCards:
-    """Every full-chain variant of ``variable``, oldest first. See the module
+    """Every full-chain variant of ``variable``, newest (most recently saved)
+    first. See the module
     docstring for what a card is and why."""
     from .. import provenance_query as pq
     from ..provenance import SAVE_FUNCTION_NAME
@@ -322,7 +335,7 @@ def build_variant_cards(
     # -- one closure, three walks -------------------------------------------
     t0 = time.perf_counter()
     closure = pq._build_upstream_closure(duck, rids)
-    rec_to_inv, _consts, _inv_inputs, inv_fn_hash, inv_run = closure
+    rec_to_inv, _consts, _inv_inputs, inv_fn_hash, inv_run, _rec_type = closure
     bp_map = pq.branch_params_batch(duck, rids, closure=closure)
     chain_map = pq.chain_batch(duck, rids, closure=closure)
     chain_fns = {fn for chain in chain_map.values() for fn in chain["code"]}
@@ -358,20 +371,28 @@ def build_variant_cards(
             group["first"] = first_ts
         if last_ts is not None and (group["last"] is None or last_ts > group["last"]):
             group["last"] = last_ts
-    # Oldest first. One for_each run saves its whole batch at one instant, so
-    # variants it wrote together tie; the selection's canonical text breaks the
-    # tie, which keeps the order deterministic (low_hz=10 before 20), where the
-    # card id, being a hash, would not be meaningful.
+    # NEWEST first (user, 2026-10-01): the most recently SAVED variant on top,
+    # the same "newest" `variant_pins.pin_newest` means, so the card a run just
+    # wrote is the one you see. One for_each run saves its whole batch at one
+    # instant, so variants it wrote together tie; the tie keeps a stable,
+    # readable order (producer, then the selection's canonical text: low_hz=10
+    # before 20), where the card id, being a hash, would not be meaningful.
+    # Two passes because Python's sort is stable: tie order first, then the
+    # descending recency, which leaves ties in that order. Never-saved last.
     from ..bindings import variant_signature
 
     ordered = sorted(
         groups.items(),
         key=lambda kv: (
-            str(kv[1]["first"] or "9999"),
             str(kv[1]["producer"]),
             variant_signature(kv[1]["selection"]),
             kv[0],
         ),
+    )
+    ordered.sort(key=lambda kv: str(kv[1]["last"] or ""), reverse=True)
+    Log.debug(
+        f"variant_cards({name}): newest first: "
+        f"{[(str(g['last']), k) for k, g in ordered]}"
     )
     selections = [g["selection"] for _k, g in ordered]
     axes = varying_axes(selections)
@@ -406,9 +427,20 @@ def build_variant_cards(
     cards: list[VariantCard] = []
     for key, g in ordered:
         sids = sorted(g["schema_ids"], key=lambda s: (s is None, str(s)))
-        locations = [loc_map.get(sid, {}) for sid in sids if sid is not None]
-        location_keys = [k for k in schema_keys if any(k in loc for loc in locations)]
-        locations.sort(key=lambda loc: tuple(str(loc.get(k, "")) for k in location_keys))
+        rids_at: dict = {}
+        for r in g["rids"]:
+            rids_at.setdefault(rid_sid[r], []).append(r)
+        located = [
+            (loc_map.get(sid, {}), sorted(rids_at.get(sid, [])))
+            for sid in sids
+            if sid is not None
+        ]
+        location_keys = [k for k in schema_keys if any(k in loc for loc, _r in located)]
+        located.sort(
+            key=lambda pair: tuple(str(pair[0].get(k, "")) for k in location_keys)
+        )
+        locations = [loc for loc, _r in located]
+        location_record_ids = [r for _loc, r in located]
         current_sids = {rid_sid[r] for r in g["rids"] if r in latest}
         live, total = len(current_sids), len(g["schema_ids"])
         verdict, _label = variant_verdict(
@@ -455,6 +487,7 @@ def build_variant_cards(
                 current_location_count=live,
                 location_keys=location_keys,
                 locations=locations,
+                location_record_ids=location_record_ids,
                 runs=runs,
                 upstream=upstream,
             )

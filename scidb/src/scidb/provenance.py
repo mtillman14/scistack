@@ -154,6 +154,7 @@ def compute_invocation_id(
     distribute: bool,
     input_bindings: Iterable[tuple],
     across_variants: Iterable[str] | None = None,
+    iteration_level: Iterable[str] | None = None,
 ) -> str:
     """Content-addressed id for a unique function call (an *activity*).
 
@@ -168,6 +169,13 @@ def compute_invocation_id(
             (the pooled frame carries the branch params as columns). Folded in
             ONLY when non-empty, so every id computed before 2026-09-20 is
             unchanged.
+        iteration_level: The schema keys the call ITERATED, in dataset order
+            (``[]`` = one call over the whole dataset). Identity-bearing
+            (2026-10-01): a PathInput-only loader run per subject and the same
+            loader run once write the same edges, so nothing else tells them
+            apart (docs/claude/iteration-level-identity.md). Folded in whenever
+            it is not None. ``None`` is only for activities that have no level
+            (glue hops, the synthetic ``__save__``).
         input_bindings: Iterable of input edges, one per realized input (variable
             *and* constant): ``bindings.Binding`` objects, or the legacy
             ``(param_name, input_record_id)`` / ``(param_name, input_record_id,
@@ -199,12 +207,16 @@ def compute_invocation_id(
     pooled = sorted(str(p) for p in (across_variants or []))
     if pooled:
         parts.append(f"across_variants:{canonical_hash(pooled)}")
+    level = None if iteration_level is None else [str(k) for k in iteration_level]
+    if level is not None:
+        parts.append(f"level:{canonical_hash(level)}")
     inv_id = _sha16(*parts)
     logger.debug(
-        "compute_invocation_id(fn_hash=%s, as_table=%s, distribute=%s, %d bindings) = %s",
+        "compute_invocation_id(fn_hash=%s, as_table=%s, distribute=%s, level=%s, %d bindings) = %s",
         function_hash,
         sorted(as_table or []),
         bool(distribute),
+        level,
         len(bindings),
         inv_id,
     )
@@ -505,6 +517,13 @@ def ensure_provenance_tables(duck) -> None:
     # split call write the same edges), so it is the stored fact the call id
     # and the expected-invocation predictor rebuild from; it IS folded into
     # invocation_id (only when non-empty).
+    #
+    # ``iteration_level``: the schema keys the call ITERATED (``[]`` = one
+    # call; NULL for glue hops and ``__save__``). Folded into invocation_id
+    # (2026-10-01) because nothing else records it: a PathInput-only loader run
+    # per subject and run once write identical edges. Stored so the run-option
+    # label, the predictor and the skip gate can rebuild it
+    # (docs/claude/iteration-level-identity.md).
     duck._execute("""
         CREATE TABLE IF NOT EXISTS _invocation (
             invocation_id VARCHAR PRIMARY KEY,
@@ -513,7 +532,8 @@ def ensure_provenance_tables(duck) -> None:
             as_table      VARCHAR[],
             distribute    BOOLEAN DEFAULT FALSE,
             for_columns   VARCHAR[],
-            across_variants VARCHAR[]
+            across_variants VARCHAR[],
+            iteration_level VARCHAR[]
         )
     """)
 

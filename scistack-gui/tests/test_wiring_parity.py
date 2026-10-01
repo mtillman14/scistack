@@ -62,7 +62,10 @@ def _stated_wiring(db, node_id: str, recorded_params: dict) -> str:
         token,
         recorded_params,
         {"low_hz"},
-        manual_edge_handle_index(pipeline_store.get_manual_edges(db)),
+        manual_edge_handle_index(
+            pipeline_store.get_manual_edges(db),
+            hidden_edge_ids=pipeline_store.get_hidden_edge_ids(db),
+        ),
     )
     effective = {
         **recorded_params,

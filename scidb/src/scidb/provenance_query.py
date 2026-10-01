@@ -351,7 +351,7 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
     in-memory adjacency maps using O(max_depth) batched queries.
 
     Returns ``(rec_to_inv, inv_constants, inv_var_inputs, inv_fn_hash,
-    inv_run_options)`` where:
+    inv_run_options, rec_type)`` where:
 
     * ``rec_to_inv``: ``{record_id: (inv_id, fn_name)}`` for produced records
     * ``inv_constants``: ``{inv_id: {f"{fn_name}.{param}": value}}``
@@ -366,6 +366,10 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
       spells them. Same reasoning as ``inv_fn_hash``: a re-run under different
       options is a different invocation writing to the same location, and the
       chain walk is where that becomes visible (:func:`run_options_batch`).
+    * ``rec_type``: ``{record_id: variable type}`` for produced records, read in
+      the same query. Run-option currency is judged per (function, OUTPUT
+      variable) (:func:`current_run_options`), so a chain hop has to know what
+      it produced (2026-10-01).
 
     Together these let a caller reproduce :func:`derived_branch_params` for every
     seed with a pure-Python walk and zero further DB round-trips.
@@ -376,6 +380,7 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
     inv_fn_name: dict = {}  # invocation_id -> function_name (for constant namespacing)
     inv_fn_hash: dict = {}  # invocation_id -> function_hash (for code versions)
     inv_run_options: dict = {}  # invocation_id -> run-options label
+    rec_type: dict = {}  # produced record_id -> its variable type
 
     seen_records: set = set()
     frontier = list(dict.fromkeys(seed_record_ids))
@@ -391,9 +396,10 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
             duck,
             "SELECT io.output_record_id, io.invocation_id, inv.function_name, "
             "inv.function_hash, inv.distribute, inv.as_table, inv.for_columns, "
-            "inv.across_variants "
+            "inv.across_variants, inv.iteration_level, orec.type "
             "FROM _invocation_output io "
             "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
+            "LEFT JOIN _record orec ON orec.record_id = io.output_record_id "
             "WHERE io.output_record_id IN ({ph})",
             new_records,
         )
@@ -406,14 +412,17 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
             as_table,
             for_columns,
             across_variants,
+            iteration_level,
+            out_type,
         ) in inv_rows:
+            rec_type[out_rid] = out_type
             prev = rec_to_inv.get(out_rid)
             if prev is None or inv_id < prev[0]:
                 rec_to_inv[out_rid] = (inv_id, fn_name)
             inv_fn_name[inv_id] = fn_name
             inv_fn_hash[inv_id] = fn_hash
             inv_run_options[inv_id] = run_options_label(
-                distribute, as_table, for_columns, across_variants
+                distribute, as_table, for_columns, across_variants, iteration_level
             )
 
         # 2) inputs for the newly discovered invocations (skip ones already loaded).
@@ -463,7 +472,14 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
         depth += 1
         frontier = next_frontier
 
-    return rec_to_inv, inv_constants, inv_var_inputs, inv_fn_hash, inv_run_options
+    return (
+        rec_to_inv,
+        inv_constants,
+        inv_var_inputs,
+        inv_fn_hash,
+        inv_run_options,
+        rec_type,
+    )
 
 
 def branch_params_batch(duck, record_ids, max_depth: int = 20, closure=None) -> dict:
@@ -481,7 +497,7 @@ def branch_params_batch(duck, record_ids, max_depth: int = 20, closure=None) -> 
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
-    rec_to_inv, inv_constants, inv_var_inputs, _fn_hash, _run = (
+    rec_to_inv, inv_constants, inv_var_inputs, _fn_hash, _run, _types = (
         closure
         if closure is not None
         else _build_upstream_closure(duck, seeds, max_depth)
@@ -509,7 +525,7 @@ def branch_params_batch(duck, record_ids, max_depth: int = 20, closure=None) -> 
 
 
 def run_options_label(
-    distribute, as_table, for_columns=None, across_variants=None
+    distribute, as_table, for_columns=None, across_variants=None, iteration_level=None
 ) -> str:
     """One string for an invocation's identity-bearing run options.
 
@@ -541,6 +557,13 @@ def run_options_label(
     ``invocation_id`` like its siblings — it cannot be derived from the
     edges, since a pooled call and a one-group split call write the same
     ones.
+
+    ``iteration_level`` (2026-10-01): the schema keys the call iterated, as
+    ``level=subject/trial``, or ``level=(one call)`` for a call over the whole
+    dataset. Folded into ``invocation_id`` like ``distribute``, because nothing
+    on the edges says it (a PathInput-only loader run per subject and run once
+    write the same edges). ``None``, the value for an activity with no level
+    (glue, ``__save__``), adds nothing. docs/claude/iteration-level-identity.md.
     """
     names = sorted(str(x) for x in (as_table or ()))
     per_col = sorted(str(x) for x in (for_columns or ()))
@@ -552,7 +575,77 @@ def run_options_label(
         label += f", for_columns=[{', '.join(per_col)}]"
     if pooled:
         label += f", across_variants=[{', '.join(pooled)}]"
+    if iteration_level is not None:
+        level = [str(k) for k in iteration_level]
+        label += f", level={'/'.join(level) if level else '(one call)'}"
     return label
+
+
+def run_options_label_parts(label) -> frozenset:
+    """A run-options label as its parts: ``"distribute=false, as_table=[a, b],
+    level=subject"`` → ``{"distribute=false", "as_table=[a, b]",
+    "level=subject"}``. Commas inside ``[...]`` belong to their part."""
+    parts, depth, current = [], 0, []
+    for ch in str(label or ""):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth = max(depth - 1, 0)
+        if ch == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+            continue
+        current.append(ch)
+    if current:
+        parts.append("".join(current).strip())
+    return frozenset(p for p in parts if p)
+
+
+#: Label parts that are OMITTED when empty, and the value that omission means.
+#: ``level`` is not here: a pin that omits it matches ANY level (see below).
+_LABEL_DEFAULTS = {"as_table": "[]", "for_columns": "[]", "across_variants": "[]"}
+_LEVEL_PART = "level"
+
+
+def _label_fields(label) -> dict:
+    fields: dict = {}
+    for part in run_options_label_parts(label):
+        key, _sep, value = part.partition("=")
+        fields[key.strip()] = value.strip()
+    return fields
+
+
+def run_options_label_matches(pin, label) -> bool:
+    """Whether a run-options PIN names a recorded LABEL.
+
+    THE one rule, read by the loader's run-options filter
+    (``database._filter_records_by_run_options``) and by the variant cards'
+    overlap check, so a card can never call a selection exact that the loader
+    would widen.
+
+    **Exact, except that a pin naming no ``level`` matches any level.** Every
+    other part compares as the label spells it, with an omitted
+    ``as_table`` / ``for_columns`` / ``across_variants`` meaning "none". So
+    ``"distribute=false"`` still does NOT match ``"distribute=false,
+    as_table=[df], …"``: a plain pin must not widen to the aggregating variant
+    (``scistackplotdb/tests/test_run_option_variants.py`` pins exactly that).
+    The level exception exists because labels carry ``level=…`` since
+    2026-10-01, and every pin written as ``run_options="distribute=true"``
+    would otherwise have stopped matching anything.
+    """
+    if label is None or pin is None:
+        return False
+    want = _label_fields(pin)
+    have = _label_fields(label)
+    if not want:
+        return False
+    for key in (set(want) | set(have)) - {_LEVEL_PART}:
+        default = _LABEL_DEFAULTS.get(key)
+        if want.get(key, default) != have.get(key, default):
+            return False
+    if _LEVEL_PART in want and want[_LEVEL_PART] != have.get(_LEVEL_PART):
+        return False
+    return True
 
 
 def invocation_run_options_batch(duck, invocation_ids) -> dict:
@@ -562,12 +655,13 @@ def invocation_run_options_batch(duck, invocation_ids) -> dict:
         return {}
     rows = _chunked_in(
         duck,
-        "SELECT invocation_id, distribute, as_table, for_columns, across_variants "
-        "FROM _invocation WHERE invocation_id IN ({ph})",
+        "SELECT invocation_id, distribute, as_table, for_columns, across_variants, "
+        "iteration_level FROM _invocation WHERE invocation_id IN ({ph})",
         ids,
     )
     return {
-        inv_id: run_options_label(dist, at, fc, av) for inv_id, dist, at, fc, av in rows
+        inv_id: run_options_label(dist, at, fc, av, lvl)
+        for inv_id, dist, at, fc, av, lvl in rows
     }
 
 
@@ -589,12 +683,13 @@ def run_option_axes(duck, fn_names) -> dict:
     rows = _chunked_in(
         duck,
         "SELECT DISTINCT function_name, distribute, as_table, for_columns, "
-        "across_variants FROM _invocation WHERE function_name IN ({ph})",
+        "across_variants, iteration_level FROM _invocation "
+        "WHERE function_name IN ({ph})",
         names,
     )
     labels: dict = {}
-    for fn_name, dist, at, fc, av in rows:
-        labels.setdefault(fn_name, set()).add(run_options_label(dist, at, fc, av))
+    for fn_name, dist, at, fc, av, lvl in rows:
+        labels.setdefault(fn_name, set()).add(run_options_label(dist, at, fc, av, lvl))
     out = {fn: sorted(levels) for fn, levels in labels.items() if len(levels) > 1}
     if out:
         logger.info(
@@ -608,7 +703,7 @@ def run_option_axes(duck, fn_names) -> dict:
 
 
 def current_run_options(duck, fn_names) -> dict:
-    """``{fn_name: label}`` — the run-option set each function was **most
+    """``{(fn_name, output_type): label}`` — the run-option set each function was **most
     recently run under**, judged by the newest ``_record_save`` among the
     outputs of its invocations.
 
@@ -625,6 +720,15 @@ def current_run_options(duck, fn_names) -> dict:
     at every trial 4 as "current" and the figure mixed the two.
 
     Only functions in ``fn_names`` that have any saved output appear.
+
+    **Keyed by (function, OUTPUT variable)** since 2026-10-01: ``{(fn_name,
+    output_type): label}``. Two runs of one function that write the same
+    variable under different options are rivals, and the newer wins, which is
+    the trial-4 case above and the 2026-10-01 ``DemographicsTable`` case (one
+    loader run per subject, then once). But the iteration level made
+    "different run options" common: one generic function used by two canvas
+    nodes at two levels, writing two different variables, would otherwise mark
+    one node's every record superseded and empty every load of it.
     """
     names = sorted({n for n in fn_names if n and n != SAVE_FUNCTION_NAME})
     if not names:
@@ -632,24 +736,26 @@ def current_run_options(duck, fn_names) -> dict:
     rows = _chunked_in(
         duck,
         "SELECT inv.function_name, inv.distribute, inv.as_table, inv.for_columns, "
-        "inv.across_variants, MAX(rs.timestamp) "
+        "inv.across_variants, inv.iteration_level, orec.type, MAX(rs.timestamp) "
         "FROM _invocation inv "
         "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
+        "JOIN _record orec ON orec.record_id = io.output_record_id "
         "JOIN _record_save rs ON rs.record_id = io.output_record_id "
         "WHERE inv.function_name IN ({ph}) "
         "GROUP BY inv.function_name, inv.distribute, inv.as_table, inv.for_columns, "
-        "inv.across_variants",
+        "inv.across_variants, inv.iteration_level, orec.type",
         names,
     )
-    newest: dict = {}  # fn -> (timestamp, label)
-    for fn_name, dist, at, fc, av, ts in rows:
-        label = run_options_label(dist, at, fc, av)
+    newest: dict = {}  # (fn, output type) -> (timestamp, label)
+    for fn_name, dist, at, fc, av, lvl, out_type, ts in rows:
+        label = run_options_label(dist, at, fc, av, lvl)
+        key = (fn_name, out_type)
         # Label breaks a timestamp tie deterministically, as `_order_versions`
         # does with the hash.
         candidate = (ts or "", label)
-        if fn_name not in newest or candidate > newest[fn_name]:
-            newest[fn_name] = candidate
-    return {fn: label for fn, (_ts, label) in newest.items()}
+        if key not in newest or candidate > newest[key]:
+            newest[key] = candidate
+    return {key: label for key, (_ts, label) in newest.items()}
 
 
 def run_option_superseded_records(
@@ -710,6 +816,12 @@ def run_option_superseded_records(
     current = current_run_options(duck, multi_way)
     if not current:
         return set()
+    # Currency is per (function, OUTPUT variable): one batched type read.
+    types = dict(
+        _chunked_in(
+            duck, "SELECT record_id, type FROM _record WHERE record_id IN ({ph})", rids
+        )
+    )
 
     stale = set()
     for rid in rids:
@@ -717,7 +829,7 @@ def run_option_superseded_records(
         if inv is None:  # a raw save has no producing invocation and no options
             continue
         label = run_map.get(inv[0])
-        wanted = current.get(inv[1])
+        wanted = current.get((inv[1], types.get(rid)))
         if label is not None and wanted is not None and label != wanted:
             stale.add(rid)
     if stale:
@@ -771,7 +883,7 @@ def chain_batch(duck, record_ids, max_depth: int = 20, closure=None) -> dict:
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
-    rec_to_inv, _consts, inv_var_inputs, inv_fn_hash, inv_run = (
+    rec_to_inv, _consts, inv_var_inputs, inv_fn_hash, inv_run, rec_type = (
         closure
         if closure is not None
         else _build_upstream_closure(duck, seeds, max_depth)
@@ -780,6 +892,7 @@ def chain_batch(duck, record_ids, max_depth: int = 20, closure=None) -> dict:
     for seed in seeds:
         code: dict = {}
         run: dict = {}
+        run_type: dict = {}
         visited: set = set()
         # Depth-ordered so a shallower occurrence of a function overwrites a
         # deeper one rather than the reverse (BFS, unlike branch_params' DFS —
@@ -801,10 +914,14 @@ def chain_batch(duck, record_ids, max_depth: int = 20, closure=None) -> dict:
                 if fn_name != SAVE_FUNCTION_NAME and fn_hash:
                     code.setdefault(fn_name, fn_hash)
                     run.setdefault(fn_name, inv_run.get(inv_id))
+                    run_type.setdefault(fn_name, rec_type.get(cur))
                 next_frontier.extend(inv_var_inputs.get(inv_id, ()))
             frontier = next_frontier
             depth += 1
-        out[seed] = {"code": code, "run": run}
+        # `run_type`: the variable each hop PRODUCED on this chain, the other
+        # half of the key run-option currency is judged by (function, output
+        # variable: current_run_options, 2026-10-01).
+        out[seed] = {"code": code, "run": run, "run_type": run_type}
     return out
 
 
@@ -1319,6 +1436,7 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
     full_chains = chain_batch(duck, chain_rids, max_depth)
     chains = {rid: c["code"] for rid, c in full_chains.items()}
     run_chains = {rid: c["run"] for rid, c in full_chains.items()}
+    run_types = {rid: c.get("run_type", {}) for rid, c in full_chains.items()}
     chain_fn_names = {name for chain in chains.values() for name in chain}
     ordinals = code_version_ordinals(duck, chain_fn_names)
     run_axes = run_option_axes(duck, chain_fn_names)
@@ -1371,9 +1489,15 @@ def variant_identity_batch(duck, record_ids, max_depth: int = 20) -> dict:
             if not is_latest:
                 continue
             hops = run_chains.get(rid, {})
+            hop_types = run_types.get(rid, {})
+            # Current per (function, output variable): a hop is stale only
+            # against the newest run of the same function writing the SAME
+            # variable it wrote on this chain.
             if any(
-                hops.get(fn) is not None and hops.get(fn) != label
-                for fn, label in current_run.items()
+                hops.get(fn) is not None
+                and hop_types.get(fn) == out_type
+                and hops.get(fn) != label
+                for (fn, out_type), label in current_run.items()
             ):
                 is_latest_of[rid] = False
                 stale_by_run += 1
@@ -1660,8 +1784,8 @@ def stored_invocation_signature(duck, record_id: str):
         return None
     inv_id, _fn_name, fn_hash = inv
     opts = duck._fetchone(
-        "SELECT distribute, as_table, for_columns, across_variants FROM _invocation "
-        "WHERE invocation_id = ?",
+        "SELECT distribute, as_table, for_columns, across_variants, iteration_level "
+        "FROM _invocation WHERE invocation_id = ?",
         [inv_id],
     )
     rows = duck._fetchall(
@@ -2089,8 +2213,8 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     ``invocation_ids``) to scope node-state checks to one call site.
     """
     inv_rows = duck._fetchall(
-        "SELECT invocation_id, as_table, distribute, across_variants FROM _invocation "
-        "WHERE function_name = ?",
+        "SELECT invocation_id, as_table, distribute, across_variants, iteration_level "
+        "FROM _invocation WHERE function_name = ?",
         [fn_name],
     )
     configs: dict = {}
@@ -2100,8 +2224,10 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     # Every edge of every invocation in one read — this ran three queries per
     # invocation, once per call site on every canvas build (cleanup-audit F15).
     edges_by_inv = invocation_edges_batch(duck, [row[0] for row in inv_rows])
-    for inv_id, as_table, distribute, across_variants in inv_rows:
+    for inv_id, as_table, distribute, across_variants, iteration_level in inv_rows:
         edges = edges_by_inv.get(inv_id) or {}
+        # None (no level recorded) stays None and is inferred below.
+        level = None if iteration_level is None else tuple(iteration_level)
         var_inputs = edges.get("var_inputs", [])
         constants = edges.get("constants", {})
         pooled = sorted(across_variants or [])
@@ -2127,6 +2253,9 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
             tuple(at),
             bool(distribute),
             tuple(pooled),
+            # A different level is a different config: its invocations carry a
+            # different identity, so the predictor must rebuild them with it.
+            level,
         )
         if key not in configs:
             configs[key] = {
@@ -2141,6 +2270,9 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
                 # (AcrossVariants) — the stored fact the predictor and the
                 # backward call id read; nothing on the edges says it.
                 "across_variants": pooled,
+                # The level the config ran at (docs/claude/
+                # iteration-level-identity.md), or None when unrecorded.
+                "iteration_level": None if level is None else list(level),
                 "invocation_ids": set(),
             }
         configs[key]["invocation_ids"].add(inv_id)
@@ -2152,11 +2284,16 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     schema_keys = list(getattr(duck, "dataset_schema", None) or [])
     for cfg in configs.values():
         cfg["schema_keys"] = schema_keys
-        cfg["iterated_keys"] = (
-            iterated_keys_for_invocations(duck, cfg["invocation_ids"], schema_keys)
-            if schema_keys
-            else None
-        )
+        # The RECORDED level is the fact; reading it off the outputs is the
+        # fallback for an invocation that has none.
+        if cfg["iteration_level"] is not None:
+            cfg["iterated_keys"] = list(cfg["iteration_level"])
+        else:
+            cfg["iterated_keys"] = (
+                iterated_keys_for_invocations(duck, cfg["invocation_ids"], schema_keys)
+                if schema_keys
+                else None
+            )
     return list(configs.values())
 
 
@@ -2985,7 +3122,7 @@ def superseded_batch(duck, record_ids, max_depth: int = 50) -> dict:
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
-    rec_to_inv, _consts, inv_var_inputs, _fn_hash, _run = _build_upstream_closure(
+    rec_to_inv, _consts, inv_var_inputs, _fn_hash, _run, _types = _build_upstream_closure(
         duck, seeds, max_depth
     )
 
@@ -3294,6 +3431,10 @@ def _predict_config_invocations(
                 cfg["distribute"],
                 bindings,
                 across_variants=across_variants,
+                # The level this config RAN at, so the prediction names the
+                # invocations its run wrote. A never-run fallback config has
+                # none (config_from_inputs): every pair is missing anyway.
+                iteration_level=cfg.get("iteration_level"),
             )
             into.add((inv_id, sid))
 

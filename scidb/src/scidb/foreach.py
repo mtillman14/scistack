@@ -1456,12 +1456,28 @@ def _build_skip_hook(
     _loadable_params = [
         p for p, s in inputs.items() if is_loadable(s) or isinstance(s, PathInput)
     ]
-    run_options_now = provenance_query.run_options_label(
+    _label_args = (
         bool(distribute),
         normalize_as_table(as_table, _loadable_params),
         [p for p, s in selectors.items() if (parse_selector(s) or {}).get("iterate")],
         [p for p, s in inputs.items() if isinstance(s, AcrossVariants)],
     )
+    # The iteration level is only known once _for_each_prepare has resolved
+    # the iterables, which is AFTER this hook is built (on both the Python and
+    # the MATLAB path). Prepare fills this ref; the label is spelled at
+    # compare time. Unfilled, the label has no level, never matches a record
+    # saved with one, and the combo recomputes: safe, and logged below.
+    level_ref: dict = {"level": None, "set": False}
+
+    def _run_options_now() -> str:
+        if not level_ref["set"]:
+            Log.debug(
+                f"[skip] {fn_name}: iteration level not set on the skip hook; "
+                f"comparing run options without it (the combo will recompute)"
+            )
+        return provenance_query.run_options_label(
+            *_label_args, iteration_level=level_ref["level"]
+        )
 
     def _combo_str(schema_combo: dict) -> str:
         return ", ".join(f"{k}={v}" for k, v in sorted(schema_combo.items()))
@@ -1534,6 +1550,7 @@ def _build_skip_hook(
             return _recompute(combo_str, "no provenance record")
         if sig["function_hash"] != fn_hash:
             return _recompute(combo_str, "function hash changed")
+        run_options_now = _run_options_now()
         if sig.get("run_options", run_options_now) != run_options_now:
             return _recompute(
                 combo_str,
@@ -1590,6 +1607,9 @@ def _build_skip_hook(
     # Exposed so _for_each_prepare can fill the aggregation binding after
     # Step 12 (variant-group → rid mapping) and before Step 14 (hook firing).
     _should_skip._agg_binding_ref = agg_binding_ref
+    # Exposed so _for_each_prepare can hand over the iteration level once the
+    # iterables are resolved (see _run_options_now).
+    _should_skip._iteration_level_ref = level_ref
     return _should_skip
 
 
@@ -2076,8 +2096,24 @@ def _dry_run_preview(
     )
 
 
+def _iteration_level_of(metadata_iterables: dict, db) -> list[str]:
+    """The schema keys a call iterates, in dataset order (`[]` = one call).
+
+    THE one definition of a call's iteration level: the dataset schema keys
+    present in the resolved metadata iterables. A non-schema iterable is a
+    sweep over something else and does not count; the VALUES do not matter
+    (`subject=["SS01"]` iterates the subject level as much as
+    `subject=[]` does).
+    """
+    from .database import dataset_schema_keys_of
+
+    keys = dataset_schema_keys_of(db)
+    present = set(metadata_iterables or {})
+    return [k for k in keys if k in present]
+
+
 def _build_call_identity(
-    fn, inputs: dict, where, distribute: bool, as_table, glue_chains
+    fn, inputs: dict, where, distribute: bool, as_table, glue_chains, level=None
 ) -> "tuple[dict, str]":
     """Prepare stage: the call's ``ForEachConfig`` version keys and call_id.
     Built after constant-fed glue has been applied, so the recorded constant
@@ -2090,6 +2126,7 @@ def _build_call_identity(
         distribute=distribute,
         as_table=as_table,
         glue=glue_chains,
+        level=level,
     )
     config_keys = config.to_version_keys()
     call_id = config.to_call_id()
@@ -3362,9 +3399,22 @@ def _for_each_prepare(
         )
         return None
 
+    # The iteration level: the schema keys this call iterates, final (after
+    # PathInput discovery), in dataset order. Part of invocation identity
+    # since 2026-10-01 (docs/claude/iteration-level-identity.md).
+    level = _iteration_level_of(metadata_iterables, resolved_db or db)
+    Log.info(
+        f"[level] {fn_name}: iterates "
+        + (", ".join(level) if level else "nothing (one call over the whole dataset)")
+    )
+    level_ref = getattr(_pre_combo_hook, "_iteration_level_ref", None)
+    if level_ref is not None:
+        level_ref["level"] = list(level)
+        level_ref["set"] = True
+
     # The call's identity: version keys and call_id (glue names included).
     config_keys, call_id = _build_call_identity(
-        fn, inputs, where, distribute, as_table, glue_chains
+        fn, inputs, where, distribute, as_table, glue_chains, level
     )
 
     # Only the schema combinations that exist (and are not excluded).

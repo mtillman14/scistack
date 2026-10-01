@@ -429,7 +429,12 @@ def test_a_missing_scimatlab_dir_still_emits_a_guarded_marker(monkeypatch):
     cmd = _script()
     head = cmd[: cmd.index("scidb.run_marker('begin'")]
     assert "addpath(" not in head
-    assert "try" in head.splitlines()[-1]
+    # The slice ends mid-line ("    scistack_run_marker__ = "), so the guard
+    # is the line BEFORE the call's line, as in
+    # test_an_unwritable_start_marker_does_not_fail_the_run.
+    lines = cmd.splitlines()
+    begin = next(i for i, l in enumerate(lines) if "run_marker('begin'" in l)
+    assert lines[begin - 1].strip() == "try"
 
 
 def test_the_script_reports_success_and_failure_separately():

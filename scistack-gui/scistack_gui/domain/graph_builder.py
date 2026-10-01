@@ -1894,7 +1894,10 @@ def build_edges(
     for me in manual_edges:
         if me["source"] in hidden_ids or me["target"] in hidden_ids:
             continue
-        if me["id"] in hidden_edge_ids:
+        if manual_edge_is_hidden(me, hidden_edge_ids):
+            # Own id hidden, or its history twin is (the twin is also caught
+            # as "superseded" below; checking here keeps the one rule the
+            # binding index uses, manual_edge_handle_index).
             continue
         if any(e["id"] == me["id"] for e in edges):
             continue
@@ -2035,6 +2038,9 @@ def inbound_edge_candidates_by_handle(
 
 def manual_edge_handle_index(
     manual_edges: "list[dict] | tuple",
+    *,
+    hidden_edge_ids: "set[str] | frozenset[str]",
+    manual_nodes: "dict[str, dict] | None" = None,
 ) -> dict[tuple[str, str, str], dict]:
     """Index manual edges by the (fn_name, node token, target_handle) call
     site they currently feed — the "is this exact input handle covered by
@@ -2061,8 +2067,18 @@ def manual_edge_handle_index(
     of them per build — so a node with two edges per handle needed two builds
     to migrate, doing half the work each time and logging it twice. Values are
     lists in scan order; every caller that only asks ``in`` is unaffected.
+
+    **Only edges the canvas can draw** (2026-10-01). ``hidden_edge_ids`` is
+    required: a manual edge that :func:`manual_edge_is_hidden` says is
+    hidden is left out, the same edge build_edges leaves off the canvas. The
+    index used to hold every stored row, so an old hand-drawn edge sitting
+    under a history edge the user had since disconnected still bound its
+    variable. The binding the run used then disagreed with the DAG (the
+    calculateSymmetryOneVector ``['GAITRiteLoaded', 'GaitRiteLoaded_UA']``
+    EachOf that MATLAB command generation refused).
     """
     index: dict[tuple[str, str, str], list[dict]] = {}
+    dropped: list[dict] = []
     for edge in manual_edges:
         handle = edge.get("targetHandle")
         target = edge.get("target")
@@ -2071,13 +2087,112 @@ def manual_edge_handle_index(
         parsed = parse_fn_node_id(target)
         if parsed is None:
             continue
+        if manual_edge_is_hidden(edge, hidden_edge_ids, manual_nodes):
+            dropped.append(edge)
+            continue
         index.setdefault((parsed[0], parsed[1], handle), []).append(edge)
+    _log_dropped_manual_edges(dropped, hidden_edge_ids, manual_nodes)
     logger.debug(
-        "[graph_builder] manual_edge_handle_index: %d edge(s) on %d handle(s)",
+        "[graph_builder] manual_edge_handle_index: %d edge(s) on %d handle(s), "
+        "%d hidden edge(s) left out",
         sum(len(v) for v in index.values()),
         len(index),
+        len(dropped),
     )
     return index
+
+
+def history_twin_edge_id(
+    edge: dict, manual_nodes: "dict[str, dict] | None" = None
+) -> "str | None":
+    """The id of the DB-derived edge that a manual *edge* into a function
+    duplicates, spelled exactly as build_edges spells it. None when the
+    edge does not feed a function input from a variable, Parameter or
+    PathInput.
+
+    One owner of that spelling for every reader that has to ask "is this
+    manual edge's history twin hidden?" (:func:`manual_edge_is_hidden`).
+    The formats mirror build_edges: variable ``e__{type}__{fn}__{tok}``,
+    Parameter ``e__{argument}__{fn}__{tok}`` (keyed by the handle it fills),
+    PathInput ``e__{name}__{param}__{fn}__{tok}``.
+    """
+    from scistack_gui.domain.edge_resolver import node_id_to_var_label
+
+    handle = edge.get("targetHandle") or edge.get("target_handle") or ""
+    parsed = parse_fn_node_id(edge.get("target") or "")
+    if parsed is None or not handle:
+        return None
+    fn, tok = parsed
+    source = edge.get("source") or ""
+    bare_source = strip_placement(source)
+    if handle.startswith(PARAM_ID_PREFIX):
+        # A Parameter edge targets ``param__{argument}``.
+        return f"e__{handle[len(PARAM_ID_PREFIX):]}__{fn}__{tok}"
+    if not handle.startswith(IN_HANDLE_PREFIX):
+        return None
+    param = handle[len(IN_HANDLE_PREFIX) :]
+    if bare_source.startswith(PATH_INPUT_ID_PREFIX):
+        return f"e__{bare_source[len(PATH_INPUT_ID_PREFIX):]}__{param}__{fn}__{tok}"
+    var_label = node_id_to_var_label(source, {}, manual_nodes or {})
+    if var_label:
+        return f"e__{var_label}__{fn}__{tok}"
+    return None
+
+
+def manual_edge_is_hidden(
+    edge: dict,
+    hidden_edge_ids: "set[str] | frozenset[str]",
+    manual_nodes: "dict[str, dict] | None" = None,
+) -> bool:
+    """Whether a stored manual edge is hidden: its own id is hidden, or the
+    DB-derived edge it duplicates (:func:`history_twin_edge_id`) is.
+
+    The one rule build_edges (drawing) and manual_edge_handle_index
+    (binding, disconnection, run-state, execution) share. A manual edge over
+    the same connection as a history edge is the same wire. build_edges
+    never draws both, so disconnecting the drawn one disconnects the pair.
+    Re-drawing that connection auto-unhides the history edge
+    (layout_service.put_edge), so a deliberate re-draw is never caught here.
+    """
+    if not hidden_edge_ids:
+        return False
+    if edge.get("id") in hidden_edge_ids:
+        return True
+    twin = history_twin_edge_id(edge, manual_nodes)
+    return twin is not None and twin in hidden_edge_ids
+
+
+#: Manual edge ids already reported at INFO by _log_dropped_manual_edges.
+#: The index is rebuilt several times per graph build. Reporting each stale
+#: edge once per process keeps the line findable without repeating it.
+_REPORTED_HIDDEN_MANUAL_EDGES: set[str] = set()
+
+
+def _log_dropped_manual_edges(
+    dropped: list[dict],
+    hidden_edge_ids: "set[str] | frozenset[str]",
+    manual_nodes: "dict[str, dict] | None",
+) -> None:
+    fresh = [e for e in dropped if e.get("id") not in _REPORTED_HIDDEN_MANUAL_EDGES]
+    if not fresh:
+        return
+    _REPORTED_HIDDEN_MANUAL_EDGES.update(e.get("id") for e in fresh)
+    logger.info(
+        "[graph_builder] %d stored manual edge(s) are hidden and bind nothing "
+        "(own id hidden, or their history twin is): %s",
+        len(fresh),
+        ", ".join(
+            f"{e.get('id')} ({e.get('source')} -> {e.get('target')}."
+            f"{e.get('targetHandle')}; "
+            + (
+                "own id hidden"
+                if e.get("id") in hidden_edge_ids
+                else f"twin {history_twin_edge_id(e, manual_nodes)} hidden"
+            )
+            + ")"
+            for e in fresh
+        ),
+    )
 
 
 def manual_input_overrides(
@@ -2287,7 +2402,9 @@ def input_params_with_manual_edges(
     """
     if not manual_edges:
         return fn_input_params
-    manual_index = manual_edge_handle_index(manual_edges)
+    manual_index = manual_edge_handle_index(
+        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
+    )
     if not manual_index:
         return fn_input_params
 
@@ -2366,7 +2483,9 @@ def stated_wiring_claims(
     """
     if not manual_edges or not current_by_node:
         return {}
-    manual_index = manual_edge_handle_index(manual_edges)
+    manual_index = manual_edge_handle_index(
+        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
+    )
     if not manual_index:
         return {}
     # A LIST per wiring, not one node: two nodes can share a current shape
@@ -2491,7 +2610,9 @@ def collect_manual_input_overrides(
     nodes runs before scope resolution); manual edge targets may carry a
     ``::scope`` suffix, which manual_edge_handle_index strips.
     """
-    manual_index = manual_edge_handle_index(manual_edges)
+    manual_index = manual_edge_handle_index(
+        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
+    )
     if not manual_index:
         return {}
     result: dict[str, dict[str, str]] = {}
@@ -2578,6 +2699,7 @@ def hidden_wirings(
     hidden_edge_ids: set[str],
     token_for,
     manual_edges: "list[dict] | tuple" = (),
+    manual_nodes: "dict[str, dict] | None" = None,
 ) -> set[tuple[str, str]]:
     """(fn_name, node token) pairs with at least one hidden inbound edge that
     is NOT currently covered by a manual reconnect.
@@ -2605,7 +2727,9 @@ def hidden_wirings(
     """
     if not hidden_edge_ids:
         return set()
-    manual_index = manual_edge_handle_index(manual_edges)
+    manual_index = manual_edge_handle_index(
+        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
+    )
     pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
     result: set[tuple[str, str]] = set()
     for fkey, params in fn_input_params.items():

@@ -254,3 +254,80 @@ producer of any of them is red, the consumer cannot be current.
   can mean (one meaning fewer now: a manual edge no longer leaves it empty).
 - `column-selection.md` §From the GUI.
 - `.claude/plan-manual-input-edges-on-history-nodes.md`.
+
+## Hidden nodes take no part in colour (2026-10-01)
+
+The same rule seen from the node side: **a hidden node is not a producer of
+anything on screen.** Run states are computed on ungrouped call sites, BEFORE
+`filter_hidden`, so a hidden node used to stay in the cascade. A hidden,
+disconnected phantom `pandas.read_csv` node (`fn__pandas.read_csv__4b9cac03…`,
+hidden twice by the user) was forced red. By the worst-producer rule it held
+`DemographicsTable` red after the visible node had re-run it green.
+
+- `graph_builder.hidden_fn_fkeys` maps hidden node ids to their pre-grouping
+  call sites, with the same `token_for(fn, wiring_id(...))` derivation that
+  `hidden_wirings` uses.
+- `run_state.propagate_run_states(hidden_fkeys=)` drops those call sites
+  entirely: no own state, no outputs, no inputs. Both passes pass it: pass 1 in
+  `api/pipeline._compute_run_states`, and the grouped pass in
+  `group_call_sites_by_wiring(hidden_node_ids=)`. Without the grouped pass, a
+  hidden node that alone produced a variable a visible node reads would stall
+  that consumer, which is then marked red as a "possible cycle".
+
+Tests: `scistack-gui/tests/test_run_state.py::TestHiddenNodes` and
+`test_hidden_fn_fkeys_maps_a_hidden_node_id_to_its_call_sites`.
+
+## A hand-placed entity node always folds into its DB twin (2026-10-01)
+
+`merge_manual_nodes` graduates a hand-placed node when exactly one DB node shares its
+(type, label). It used to refuse when the twin's placement already had a saved
+position in that scope (`test_graduation_skipped_if_own_placement_already_exists`),
+which left BOTH nodes drawn, permanently. On 2026-10-01 a position left over from a
+09-30 node (`var__GaitRiteLoaded_UA::main`) blocked the user's newly placed
+`var__GaitRiteLoaded_UA__k7huza`, and running `grSides` showed two
+`GaitRiteLoaded_UA` nodes.
+
+Now, for **entity nodes** (`graph_builder.ENTITY_NODE_TYPES`: variable, PathInput,
+Parameter), which each name one thing, graduation goes ahead with
+`GraduationAction.take_old_position=True`. The hand-placed position replaces the
+twin's (user decision), via `layout.graduate_manual_node(take_old_position=)`.
+Edges move as in any graduation. **Function nodes keep the old rule**: a second
+same-named function node can be a new call site, and they graduate by wiring.
+Placement stays per scope.
+
+Tests: `test_graph_builder.py::TestMergeManualNodes::
+test_an_entity_node_graduates_onto_an_already_placed_twin` /
+`test_a_function_node_still_skips_an_already_placed_twin`, and
+`test_layout.py::TestGraduateManualNode::test_take_old_position_replaces_the_canonical_position`.
+
+## A manual edge whose history twin is hidden binds nothing (2026-10-01)
+
+A user-drawn edge stays in `_pipeline_edges` forever (hide, never delete). Once
+the call site runs, the history edge over the same connection supersedes it, and
+build_edges draws only the history edge. If the user later disconnects that
+wire, the visible edge is hidden, which is the history `e__...` id. The manual
+twin is still stored, and it is still invisible.
+
+Before this fix, `manual_edge_handle_index` indexed **every** stored manual edge,
+so the invisible twin kept binding its variable. Reconnecting a different
+variable then produced an EachOf, `{'v': ['GAITRiteLoaded', 'GaitRiteLoaded_UA']}`,
+and MATLAB command generation refused it ("more than one candidate producer
+type"). A stale twin with no replacement also silently "covered" the hidden
+handle, so the node never showed as disconnected.
+
+**One owner:** `graph_builder.manual_edge_is_hidden(edge, hidden_edge_ids,
+manual_nodes)`. A manual edge is hidden if its own id is hidden or
+`history_twin_edge_id(edge)` is hidden. That function is the one spelling of
+the twin id (var `e__{type}__{fn}__{tok}`, Parameter `e__{argument}__{fn}__{tok}`,
+PathInput `e__{name}__{param}__{fn}__{tok}`). build_edges and
+`manual_edge_handle_index` both apply the rule. `hidden_edge_ids` is a
+**required** keyword on the index, so no caller can build it from raw rows.
+
+A deliberate re-draw of the same connection is not caught: `layout_service.put_edge`
+auto-unhides the history edge.
+
+**scidb.log:** `[graph_builder] N stored manual edge(s) are hidden and bind nothing
+(own id hidden, or their history twin is): manual__x (src -> tgt.handle; twin e__... hidden)`.
+It is logged at INFO once per edge per process, and at debug after that.
+
+Tests: `scistack-gui/tests/test_hidden_manual_twin.py`.

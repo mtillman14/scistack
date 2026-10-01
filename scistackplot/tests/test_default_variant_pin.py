@@ -483,3 +483,42 @@ def test_a_lone_seeded_row_still_folds_to_nothing():
 
     assert defined_sets(spec.variant_sets) == []
     assert apply_variant_sets(spec, table) is table
+
+
+def test_a_figure_with_no_variant_rows_draws_only_current_rows():
+    """Regression (2026-10-01, ``DemographicsTable``): a spec with no variant
+    rows drew EVERY generation. One subject held a newer one-row record and a
+    superseded whole-table record, and the figure drew 17 rows where there
+    should be one. The source's default (the per-location latest flag) now
+    applies when no row says otherwise."""
+    from scistackplot import VariantSet, apply_variant_sets
+
+    frame = pd.DataFrame(
+        {
+            "subject": ["SS23"] * 3,
+            "value": [1.0, 2.0, 3.0],
+            "CodeIsLatest": [True, False, False],
+        }
+    )
+    table = LongTable.from_frame(
+        frame,
+        factors=["subject"],
+        measures=["value"],
+        name="value",
+        latest_column="CodeIsLatest",
+        default_pin={"CodeIsLatest": True},
+    )
+    for spec in (
+        PlotSpec(measures=["value"]),
+        PlotSpec(measures=["value"], variant_sets=[VariantSet()]),
+    ):
+        derived = apply_variant_sets(spec, table)
+        assert derived.frame["value"].tolist() == [1.0]
+
+
+def test_no_default_pin_still_leaves_the_table_alone():
+    from scistackplot import apply_variant_sets
+
+    frame = pd.DataFrame({"subject": ["01", "02"], "value": [1.0, 2.0]})
+    table = _table(frame, [])
+    assert apply_variant_sets(PlotSpec(measures=["value"]), table) is table

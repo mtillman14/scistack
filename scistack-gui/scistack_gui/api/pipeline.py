@@ -805,6 +805,7 @@ def _build_graph(
         agg.path_inputs,
         hidden_edge_ids,
         manual_edges=manual_edges_for_fn_lookup,
+        manual_nodes=manual_nodes,
         token_for=token_for,
     )
     disconnected_fkeys = gb.wiring_disconnected_fkeys(

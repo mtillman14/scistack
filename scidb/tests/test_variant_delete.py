@@ -190,6 +190,25 @@ class TestDelete:
         assert loaded.branch_params["vd_bandpass.low_hz"] == 20
 
 
+class TestRecordTarget:
+    def test_only_the_named_records_and_their_downstream_go(self, db):
+        """The popup's per-location delete (2026-10-01): one location of a
+        card, not the card."""
+        card = _card(db, "VdFiltered", 10)
+        i = next(i for i, loc in enumerate(card.locations) if loc["subject"] == "02")
+        rids = card.location_record_ids[i]
+        plan = delete_plan(db, [{"variable": "VdFiltered", "record_ids": rids}])
+        assert plan.by_variable == {"VdFiltered": 1, "VdSteps": 1}
+        delete_variant(db, [{"variable": "VdFiltered", "record_ids": rids}], "bad file")
+        left = _card(db, "VdFiltered", 10)
+        assert [loc["subject"] for loc in left.locations] == ["01"]
+
+    def test_a_record_of_another_variable_is_refused(self, db):
+        raw = db._duck._fetchone("SELECT record_id FROM _record WHERE type = 'VdRaw'")[0]
+        with pytest.raises(ValueError, match="not VdFiltered"):
+            delete_plan(db, [{"variable": "VdFiltered", "record_ids": [raw]}])
+
+
 class TestOlderSaves:
     def test_an_older_save_of_the_variant_is_deleted_too(self, db):
         """Re-run low_hz=10 over changed input at subject 01: the card now holds

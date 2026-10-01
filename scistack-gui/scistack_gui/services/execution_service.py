@@ -1105,7 +1105,11 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     if not hidden_edge_ids:
         return None
 
-    manual_index = manual_edge_handle_index(pipeline_store.get_manual_edges(db))
+    manual_index = manual_edge_handle_index(
+        pipeline_store.get_manual_edges(db),
+        hidden_edge_ids=hidden_edge_ids,
+        manual_nodes=pipeline_store.get_manual_nodes(db),
+    )
 
     # Hidden edge ids and drawn edges are keyed by the NODE, which no longer
     # encodes its wiring (docs/claude/node-identity.md) — so every lookup below
@@ -1186,6 +1190,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     path_inputs = agg.path_inputs
 
     manual_edges = pipeline_store.get_manual_edges(db)
+    manual_nodes = pipeline_store.get_manual_nodes(db)
     # Hidden edge ids were stored against the NODE's id, so both sides of
     # every lookup below have to be keyed by the node's token rather than by
     # the wiring — they differ for a node that was rewired and run.
@@ -1195,6 +1200,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
         fn_input_params, fn_outputs, fn_constants, path_inputs, hidden_edge_ids,
         token_for,
         manual_edges=manual_edges,
+        manual_nodes=manual_nodes,
     )
     if not seed:
         return []
@@ -1220,7 +1226,9 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
 
     from scistack_gui.domain.graph_builder import manual_edge_handle_index
 
-    manual_index = manual_edge_handle_index(manual_edges)
+    manual_index = manual_edge_handle_index(
+        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
+    )
 
     entries: list[dict] = []
     seen_labels: set[str] = set()

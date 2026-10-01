@@ -733,6 +733,45 @@ def strip_answered_roles(
     )
 
 
+def _apply_default_pin(table: LongTable) -> LongTable:
+    """A figure with NO variant rows draws what the source says is current.
+
+    The source's ``default_pin`` is that answer (scidb's per-location
+    ``CodeIsLatest`` flag). Until 2026-10-01 it was read only when the GUI
+    built a variant row (:func:`default_variant_selection`), so a figure with
+    no rows (the normal case for a variable with one variant) drew EVERY
+    generation: ``DemographicsTable`` plotted one subject's newest one-row
+    record and its superseded whole-table record together, 17 rows where there
+    should be one. An unnamed plot now reads what an unnamed load reads.
+
+    No pin (one generation, a CSV source) leaves the table untouched, so a
+    project with nothing superseded behaves exactly as before.
+    """
+    pin = dict(table.default_pin or {})
+    frame = table.frame
+    if not pin:
+        Log.info(
+            "variant selection: no variant rows and no source default — all %d row(s)",
+            len(frame),
+            layer=LAYER,
+        )
+        return table
+    mask = variant_set_mask(frame, pin, latest_column=table.latest_column)
+    kept = int(mask.sum())
+    Log.info(
+        "variant selection: no variant rows — the source default %s keeps %d of "
+        "%d row(s)%s",
+        pin,
+        kept,
+        len(frame),
+        "" if kept == len(frame) else f" ({len(frame) - kept} superseded row(s) dropped)",
+        layer=LAYER,
+    )
+    if kept == len(frame):
+        return table
+    return replace(table, frame=frame[mask].copy())
+
+
 def apply_variant_sets(spec: PlotSpec, table: LongTable) -> LongTable:
     """
     Fold ``spec.variant_sets`` into a ``Variant`` factor on a derived table.
@@ -750,7 +789,7 @@ def apply_variant_sets(spec: PlotSpec, table: LongTable) -> LongTable:
     """
     sets = defined_sets(spec.variant_sets)
     if not sets:
-        return table
+        return _apply_default_pin(table)
 
     frame = table.frame
     names = [

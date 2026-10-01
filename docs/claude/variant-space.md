@@ -136,6 +136,11 @@ call was made**, not where its output sits. They are call-site identity
 (`provenance.compute_invocation_id`), stored as columns on `_invocation`, and
 reported as one string by `provenance_query.run_options_label`.
 
+**The iteration level joined them on 2026-10-01** (`level=subject` /
+`level=(one call)`), as invocation identity but NOT call-site identity. A run pin
+that names no level matches any level, and currency is per (function, output
+variable). See `iteration-level-identity.md`.
+
 They reach variant space only through the back door: because they are folded
 into `invocation_id`, re-running unchanged code under a different flag writes
 a *second* record at the same location that nothing in constants or code tells

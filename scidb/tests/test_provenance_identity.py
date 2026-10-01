@@ -165,13 +165,18 @@ def _inline_invocation_id(meta, edges):
     ]
     as_table = _normalize_as_table(meta, loadable)
     distribute = bool(meta.get("__distribute", False))
+    level = meta.get("__level")
     bindings = list(var_b)
     for param, value in const_b.items():
         bindings.append(
             Binding(param, constant_record_id_from_hash(canonical_hash(value)), None)
         )
     return compute_invocation_id(
-        meta.get("__fn_hash") or "", as_table, distribute, bindings
+        meta.get("__fn_hash") or "",
+        as_table,
+        distribute,
+        bindings,
+        iteration_level=None if level is None else list(level),
     )
 
 
@@ -194,6 +199,9 @@ def test_inline_invocation_id_matches_helper():
         ({"__fn_hash": "h4", "__distribute": True}, [("x", "r1")]),
         # several edges under ONE parameter (an aggregating call)
         ({"__fn_hash": "h5", "__as_table": ["x"]}, [("x", "r1", None), ("x", "r2", None)]),
+        # the iteration level (2026-10-01): one call, and a per-subject call
+        ({"__fn_hash": "h6", "__level": []}, [("x", "r1")]),
+        ({"__fn_hash": "h6", "__level": ["subject"]}, [("x", "r1")]),
     ]
     for meta, edges in cases:
         assert _inline_invocation_id(meta, edges) == invocation_identity(meta, edges)

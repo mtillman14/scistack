@@ -47,6 +47,12 @@ The GUI never builds a selection itself. It forwards the card's.
 `distinguishing` is computed in scidb: the axes whose value differs from at
 least one sibling card. The collapsed card header shows only these.
 
+**Order: newest first** (user, 2026-10-01), meaning the most recently SAVED card
+on top, the same "newest" as `variant_pins.pin_newest`. Cards saved at the same
+instant (one run's batch) keep a stable order by producer, then selection text.
+scidb owns the order (`build_variant_cards`); the popup and `scidb variants
+--cards` show it as given.
+
 ## 2. Pins: "current" means the DEFAULT, never "the only one"
 
 *Built 2026-09-30 (Stage 2), pytest not yet run. `scidb/variant_pins.py`

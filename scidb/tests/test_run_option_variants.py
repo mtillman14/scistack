@@ -39,6 +39,14 @@ from scidb.variant import RUN_PIN_PREFIX
 SCHEMA = ["subject", "trial"]
 TRIALS = [1, 2, 3]
 
+# The two runs' recorded labels. Since 2026-10-01 a label carries the level the
+# call iterated (docs/claude/iteration-level-identity.md): the plain run
+# iterates subject and trial, the distributed one iterates subject and slices
+# into trials. PINS below stay "distribute=true": a pin that names no level
+# matches any level (provenance_query.run_options_label_matches).
+PLAIN = "distribute=false, level=subject/trial"
+DISTRIBUTED = "distribute=true, level=subject"
+
 
 @pytest.fixture
 def db(tmp_path):
@@ -147,12 +155,12 @@ def test_run_options_are_read_off_the_chain(both_runs):
     ]
     runs = run_options_batch(both_runs._duck, rids)
     labels = {chain["make_rows"] for chain in runs.values()}
-    assert labels == {"distribute=false", "distribute=true"}
+    assert labels == {PLAIN, DISTRIBUTED}
 
 
 def test_a_function_that_ran_both_ways_is_an_axis(both_runs):
     axes = run_option_axes(both_runs._duck, ["make_rows"])
-    assert axes == {"make_rows": ["distribute=false", "distribute=true"]}
+    assert axes == {"make_rows": [PLAIN, DISTRIBUTED]}
 
 
 def test_a_function_that_ran_one_way_is_not_an_axis(db):
@@ -237,13 +245,13 @@ class TestIsLatest:
             "chain signature"
         )
         assert all(
-            ident[rid]["run_chain"] == {"make_rows": "distribute=true"} for rid in latest
+            ident[rid]["run_chain"] == {"make_rows": DISTRIBUTED} for rid in latest
         )
 
     def test_run_chain_names_the_axis(self, both_runs):
         ident = self._ident(both_runs)
         labels = {info["run_chain"].get("make_rows") for info in ident.values()}
-        assert labels == {"distribute=false", "distribute=true"}
+        assert labels == {PLAIN, DISTRIBUTED}
 
     def test_run_chain_is_empty_for_a_function_that_ran_one_way(self, db):
         """Same presence rule as code_chain: a key here IS a real axis."""
@@ -405,8 +413,9 @@ class TestCurrencyIsPerFunctionNotPerLocation:
     def test_current_run_options_is_the_newest_set(self, stale_trial):
         from scidb.provenance_query import current_run_options
 
+        # Keyed by (function, output variable) since 2026-10-01.
         assert current_run_options(stale_trial._duck, ["make_rows"]) == {
-            "make_rows": "distribute=true"
+            ("make_rows", "Loaded"): DISTRIBUTED
         }
 
     def test_the_orphaned_old_record_is_not_latest(self, stale_trial):
@@ -418,7 +427,7 @@ class TestCurrencyIsPerFunctionNotPerLocation:
         latest = {rid for rid, info in ident.items() if info["is_latest"]}
         assert len(latest) == 3
         assert all(
-            ident[rid]["run_chain"] == {"make_rows": "distribute=true"} for rid in latest
+            ident[rid]["run_chain"] == {"make_rows": DISTRIBUTED} for rid in latest
         )
 
     def test_load_path_drops_the_orphaned_record_too(self, stale_trial):

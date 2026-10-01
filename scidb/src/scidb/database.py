@@ -362,7 +362,14 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
             {chain.get(fn_name) for chain in runs.values() if fn_name in chain}
             - {None}
         )
-        if not wanted_set & set(available):
+        # Exact, except a pin naming no level matches any (`run_options_label_matches`,
+        # the one rule): "distribute=true" matches at any level.
+        match = provenance_query.run_options_label_matches
+
+        def _wanted(label) -> bool:
+            return any(match(pin, label) for pin in wanted_set)
+
+        if not any(_wanted(label) for label in available):
             raise ValueError(
                 f"{fn_name!r} ran under {available}; run_options={wanted!r} "
                 f"matches nothing."
@@ -370,7 +377,7 @@ def _filter_records_by_run_options(df, run_filter: dict, duck):
         keep = {
             rid
             for rid in record_ids
-            if runs.get(rid, {}).get(fn_name) in wanted_set
+            if _wanted(runs.get(rid, {}).get(fn_name))
         }
         n_before = len(record_ids)
         df = df[df["record_id"].isin(keep)]
@@ -738,9 +745,17 @@ def configure_database(
 
 
 def _run_context() -> str:
-    """One-line host/version fingerprint for the log header."""
+    """One-line host/version fingerprint for the log header.
+
+    Includes the interpreter PATH (``sys.executable``), not only its version:
+    the GUI runs under VS Code's selected interpreter and ``scidb`` in a
+    terminal under whichever one installed it, and "which environment wrote
+    this line" is the question when one works and the other is missing
+    packages (2026-10-01).
+    """
     import os
     import platform
+    import sys
     from importlib import metadata
 
     versions = []
@@ -749,7 +764,9 @@ def _run_context() -> str:
             versions.append(f"{pkg}={metadata.version(pkg)}")
         except Exception:
             pass
-    return f"python={platform.python_version()}, pid={os.getpid()}" + (
+    return (
+        f"python={platform.python_version()} ({sys.executable}), pid={os.getpid()}"
+    ) + (
         ", " + ", ".join(versions) if versions else ""
     )
 

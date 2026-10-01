@@ -3041,7 +3041,8 @@ class TestManualInputOverrides:
                     "targetHandle": handle,
                 }
                 for i, (src, handle, suffix) in enumerate(edges)
-            ]
+            ],
+            hidden_edge_ids=frozenset(),
         )
 
     def test_unbound_param_takes_the_manual_variable(self):
@@ -3402,7 +3403,8 @@ class TestManualEdgeHandleIndexKeepsEveryEdge:
                 wid,
                 ("var__Demographics", "in__side", ""),
                 ("var__Demographics", "in__side", "::main"),
-            )
+            ),
+            hidden_edge_ids=frozenset(),
         )
         assert len(index[(self.FN, wid, "in__side")]) == 2
 
@@ -3420,7 +3422,8 @@ class TestManualEdgeHandleIndexKeepsEveryEdge:
                 wid,
                 ("var__Demographics", "in__side", ""),
                 ("var__SideTable", "in__side", ""),
-            )
+            ),
+            hidden_edge_ids=frozenset(),
         )
         assert manual_input_overrides(self.FN, wid, history, set(), index) == {
             "side": ["Demographics", "SideTable"]
@@ -3440,7 +3443,8 @@ class TestManualEdgeHandleIndexKeepsEveryEdge:
                 wid,
                 ("var__Demographics", "in__side", ""),
                 ("var__Demographics", "in__side", "::main"),
-            )
+            ),
+            hidden_edge_ids=frozenset(),
         )
         assert manual_input_overrides(self.FN, wid, history, set(), index) == {
             "side": "Demographics"

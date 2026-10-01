@@ -186,9 +186,10 @@ class TestUpstreamOnlyDifference:
             assert [loc["subject"] for loc in card.locations] == SUBJECTS
             assert card.verdict == "current", card.verdict_label
 
-    def test_cards_are_oldest_first(self, upstream_split):
+    def test_cards_are_newest_first(self, upstream_split):
+        """Most recently saved on top (user, 2026-10-01): low_hz=20 ran second."""
         cards = upstream_split.inspect.variant_cards("VcFiltered").cards
-        assert [c.selection["vc_bandpass.low_hz"] for c in cards] == [10, 20]
+        assert [c.selection["vc_bandpass.low_hz"] for c in cards] == [20, 10]
 
 
 # ---------------------------------------------------------------------------
@@ -243,16 +244,17 @@ class TestOtherAxes:
         result = two_code_versions.inspect.variant_cards("VcScaled")
         key = f"{CODE_PIN_PREFIX}.vc_scale"
         assert result.varying_axes == [key]
-        assert [c.distinguishing[key] for c in result.cards] == ["v1", "v2"]
+        # Newest first: v2 was saved after v1.
+        assert [c.distinguishing[key] for c in result.cards] == ["v2", "v1"]
 
     def test_the_older_code_version_is_not_what_a_load_returns(self, two_code_versions):
-        v1, v2 = two_code_versions.inspect.variant_cards("VcScaled").cards
+        v2, v1 = two_code_versions.inspect.variant_cards("VcScaled").cards
         assert v1.verdict == "superseded", v1.verdict_label
         assert v1.current_location_count == 0
         assert v2.verdict == "current", v2.verdict_label
 
     def test_the_upstream_step_reports_its_code_version(self, two_code_versions):
-        v1, v2 = two_code_versions.inspect.variant_cards("VcScaled").cards
+        v2, v1 = two_code_versions.inspect.variant_cards("VcScaled").cards
         (step,) = v2.upstream.steps
         assert step.function_name == "vc_scale"
         assert [c.version for c in step.code] == ["v2"]
@@ -262,9 +264,10 @@ class TestOtherAxes:
         result = two_run_option_sets.inspect.variant_cards("VcLoaded")
         key = f"{RUN_PIN_PREFIX}._vc_rows"
         assert result.varying_axes == [key]
+        # Recorded labels carry the level each run iterated (2026-10-01).
         assert sorted(c.distinguishing[key] for c in result.cards) == [
-            "distribute=false",
-            "distribute=true",
+            "distribute=false, level=subject/trial",
+            "distribute=true, level=subject",
         ]
 
 
@@ -275,7 +278,11 @@ class TestOtherAxes:
 
 class TestUpstreamAndRuns:
     def test_the_whole_chain_is_drawn(self, upstream_split):
-        card = upstream_split.inspect.variant_cards("VcSteps").cards[0]
+        card = next(
+            c
+            for c in upstream_split.inspect.variant_cards("VcSteps").cards
+            if c.selection["vc_bandpass.low_hz"] == 10
+        )
         up = card.upstream
         assert up.variables == ["VcFiltered", "VcRaw", "VcSteps"]
         by_fn = {s.function_name: s for s in up.steps}
@@ -398,8 +405,9 @@ class TestCli:
         assert payload["variable"] == "VcSteps"
         assert payload["varying_axes"] == ["vc_bandpass.low_hz"]
         assert len(payload["cards"]) == 2
-        card = payload["cards"][0]
-        assert card["selection"] == {"vc_bandpass.low_hz": 10}
+        card = next(
+            c for c in payload["cards"] if c["selection"] == {"vc_bandpass.low_hz": 10}
+        )
         assert {s["function_name"] for s in card["upstream"]["steps"]} == {
             "vc_bandpass",
             "vc_detect",
@@ -410,6 +418,7 @@ class TestCli:
         out = capsys.readouterr().out
         assert rc == 0, out
         assert "they differ in vc_bandpass.low_hz" in out
-        assert "[1] vc_bandpass.low_hz=10" in out
-        assert "[2] vc_bandpass.low_hz=20" in out
+        # Both cards, in whichever order their (possibly tied) save times give.
+        assert "] vc_bandpass.low_hz=10" in out
+        assert "] vc_bandpass.low_hz=20" in out
         assert "step  vc_bandpass -> VcFiltered" in out

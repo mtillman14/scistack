@@ -32,6 +32,8 @@ that is not being deleted.
 
 Target kinds (a list of dicts, combined as a union):
 
+* ``{"variable": V, "record_ids": [...]}``: exactly these records of V (the
+  popup's per-location delete, e.g. a stale record a newer run never replaced);
 * ``{"variable": V, "card_id": C}``: one variant card, every record on it;
 * ``{"variable": V, "selection": S}``: every card of V whose coordinate
   satisfies S;
@@ -188,7 +190,27 @@ def _seed_records(db, targets: list[dict]) -> tuple[set, list[str]]:
         return cards_cache[variable].cards
 
     for target in targets:
-        if "card_id" in target:
+        if "record_ids" in target:
+            # Named records (the popup's per-location delete). Only records of
+            # the named variable, so a stale id from another type cannot ride in.
+            wanted = [str(r) for r in target["record_ids"] or ()]
+            variable = target.get("variable")
+            if not wanted:
+                raise ValueError("delete: a record_ids target names no records")
+            rows = pq._chunked_in(
+                duck,
+                "SELECT record_id, type FROM _record WHERE record_id IN ({ph})",
+                wanted,
+            )
+            found = {rid for rid, rtype in rows if variable is None or rtype == variable}
+            missing = sorted(set(wanted) - found)
+            if missing:
+                raise ValueError(
+                    f"delete: {len(missing)} record(s) are not "
+                    f"{variable or 'records'} in this database: {missing[:5]}"
+                )
+            seeds.update(found)
+        elif "card_id" in target:
             variable = target["variable"]
             hit = [c for c in cards_of(variable) if c.card_id == target["card_id"]]
             if not hit:

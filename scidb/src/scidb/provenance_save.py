@@ -427,6 +427,7 @@ def invocation_identity(meta: dict, bindings) -> str:
         distribute,
         edges,
         across_variants=_across_variants(meta),
+        iteration_level=_iteration_level(meta),
     )
 
 
@@ -440,6 +441,23 @@ def _across_variants(meta: dict) -> list[str]:
         except (json.JSONDecodeError, TypeError):
             raw = []
     return sorted(str(p) for p in (raw or []))
+
+
+def _iteration_level(meta: dict) -> "list[str] | None":
+    """The schema keys the call iterated (``__level``, dataset order; ``[]`` =
+    one call), or None when the meta carries none (a direct save). The ONE
+    reader of ``__level`` on the save side, so the identity, the cache key and
+    the stored column cannot disagree (docs/claude/iteration-level-identity.md).
+    """
+    if "__level" not in meta:
+        return None
+    raw = meta.get("__level")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except (json.JSONDecodeError, TypeError):
+            raw = []
+    return [str(k) for k in (raw or [])]
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +605,7 @@ def record_run(
             repr(meta.get("__as_table")),
             bool(meta.get("__distribute", False)),
             tuple(_across_variants(meta)),
+            tuple(_iteration_level(meta) or ()) if "__level" in meta else None,
         )
         inv_id = inv_cache.get(cache_key)
         if inv_id is None:
@@ -601,6 +620,7 @@ def record_run(
             as_table = _normalize_as_table(meta, loadable_params)
             distribute = bool(meta.get("__distribute", False))
             across_variants = _across_variants(meta)
+            iteration_level = _iteration_level(meta)
 
             # Assemble the full binding set (variables + constants) and the
             # constant entity/value rows it implies; constants carry no selector.
@@ -644,6 +664,7 @@ def record_run(
                 distribute,
                 bindings,
                 across_variants=across_variants,
+                iteration_level=iteration_level,
             )
             stamped = g.invocation_id or meta.get("__invocation_id")
             if stamped and stamped != inv_id:
@@ -678,6 +699,7 @@ def record_run(
                 distribute,
                 for_columns or None,
                 across_variants or None,
+                iteration_level,
             )
             for b in bindings:
                 input_edges[(inv_id, b.param, b.rid)] = b.selector
@@ -946,8 +968,10 @@ def _write_glue_nodes(
                     False,
                 ),
             )
+            # Full width: a batch of only glue rows must still fill every
+            # `_invocation` column (a glue hop has no level, so NULL).
             invocation_rows.setdefault(
-                inv_id, (inv_id, display, chain_h, None, False)
+                inv_id, (inv_id, display, chain_h, None, False, None, None, None)
             )
             input_edges.setdefault((inv_id, GLUE_INPUT_PARAM, src_rid), None)
             run_output_edges.setdefault((inv_id, 0), virt_rid)
@@ -1049,6 +1073,7 @@ def _commit_graph(
                     "distribute",
                     "for_columns",
                     "across_variants",
+                    "iteration_level",
                 ),
                 invocation_rows.values(),
                 conflict_cols=["invocation_id"],

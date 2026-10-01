@@ -131,9 +131,9 @@ def _recompute_invocation_ids(db, type_name: str) -> list[tuple[str, str]]:
             continue
         inv_id, _fn, fn_hash = inv
         sig = pq.stored_invocation_signature(duck, rid)
-        as_table, distribute, across_variants = duck._fetchone(
-            "SELECT as_table, distribute, across_variants FROM _invocation "
-            "WHERE invocation_id = ?",
+        as_table, distribute, across_variants, iteration_level = duck._fetchone(
+            "SELECT as_table, distribute, across_variants, iteration_level "
+            "FROM _invocation WHERE invocation_id = ?",
             [inv_id],
         )
         bindings = [(p, r, s) for p, edges in sig["var_inputs"].items() for r, s in edges]
@@ -144,7 +144,13 @@ def _recompute_invocation_ids(db, type_name: str) -> list[tuple[str, str]]:
             (
                 inv_id,
                 compute_invocation_id(
-                    fn_hash, as_table, distribute, bindings, across_variants=across_variants
+                    fn_hash,
+                    as_table,
+                    distribute,
+                    bindings,
+                    across_variants=across_variants,
+                    # Recorded since 2026-10-01: the level the call iterated.
+                    iteration_level=iteration_level,
                 ),
             )
         )

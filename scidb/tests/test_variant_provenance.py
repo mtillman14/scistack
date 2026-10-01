@@ -481,7 +481,8 @@ class TestNodeIdentityFields:
             )
         )
 
-        assert node.run_options == "distribute=false"
+        # A trace node reads the recorded label, level included (2026-10-01).
+        assert node.run_options == "distribute=false, level=subject/trial"
 
     def test_a_raw_record_has_no_invocation(self, two_code_versions):
         tree = two_code_versions.inspect.provenance(
@@ -658,7 +659,7 @@ class TestCli:
         assert scaled["call_id"]
         assert scaled["invocation_id"] in scaled["invocation_ids"]
         assert scaled["runs"] and scaled["runs"][0]["run_id"]
-        assert scaled["run_options"] == "distribute=false"
+        assert scaled["run_options"] == "distribute=false, level=subject/trial"
 
     def test_runs_appear_in_the_human_render(self, code_versions_path, capsys):
         rc = cli_main(
