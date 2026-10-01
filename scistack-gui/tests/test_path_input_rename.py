@@ -146,7 +146,12 @@ class TestRebaseNodeState:
         assert edge["source"] == "pathInput__RAW_EMG::hyp2"
 
         hidden = intent_store.hidden_edges(db, "main")
-        assert [h["edge_id"] for h in hidden] == ["e__RAW_EMG__path__f__0123456789abcdef"]
+        # Re-minted as the connection of the renamed endpoints (step 3).
+        from scistack_gui.domain.graph_builder import connection_id
+
+        assert [h["edge_id"] for h in hidden] == [
+            connection_id("pathInput__RAW_EMG", "fn__f__0123456789abcdef", "in__path")
+        ]
         assert hidden[0]["source"] == "pathInput__RAW_EMG"
 
     def test_ungraduated_manual_rows_are_relabelled(self, populated_db, tmp_path):

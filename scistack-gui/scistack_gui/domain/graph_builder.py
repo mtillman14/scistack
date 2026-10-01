@@ -1800,7 +1800,9 @@ def build_edges(
             key = (var_node_id(in_type), target_id)
             if key not in seen_edges:
                 seen_edges.add(key)
-                edge_id = f"e__{in_type}__{fn}__{cid}"
+                edge_id = connection_id(
+                    var_node_id(in_type), target_id, in_handle(param_name)
+                )
                 if edge_id in hidden_edge_ids:
                     hidden_var_to_fn += 1
                     hidden_hits.append(edge_id)
@@ -1833,7 +1835,7 @@ def build_edges(
             if key in seen_edges:
                 continue
             seen_edges.add(key)
-            edge_id = f"e__{fn}__{cid}__{out_type}"
+            edge_id = connection_id(source_id, var_node_id(out_type))
             if edge_id in hidden_edge_ids:
                 hidden_fn_to_var += 1
                 hidden_hits.append(edge_id)
@@ -1876,7 +1878,9 @@ def build_edges(
                 # Keyed by the ARGUMENT (the handle it fills), which is what
                 # hidden_wirings and the disconnected report spell — and the
                 # same id as before whenever node and argument share a name.
-                edge_id = f"e__{arg}__{fn}__{cid}"
+                edge_id = connection_id(
+                    param_node_id(const_name), target_id, in_handle(arg)
+                )
                 if edge_id in hidden_edge_ids:
                     hidden_const_to_fn += 1
                     hidden_hits.append(edge_id)
@@ -1920,7 +1924,9 @@ def build_edges(
             key = (path_input_node_id(pi_name), target_id, param_name)
             if key not in seen_edges:
                 seen_edges.add(key)
-                edge_id = f"e__{pi_name}__{param_name}__{fn}__{cid}"
+                edge_id = connection_id(
+                    path_input_node_id(pi_name), target_id, in_handle(param_name)
+                )
                 if edge_id in hidden_edge_ids:
                     hidden_path_to_fn += 1
                     hidden_hits.append(edge_id)
@@ -2048,46 +2054,45 @@ def _edge_list_summary(items: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def inbound_edge_candidates(
-    fn: str, wid: str, var_types=(), const_names=(), path_names=()
-) -> list[str]:
-    """Candidate inbound edge ids (var/const/pathInput -> fn) for one
-    wiring — the same id shape build_edges constructs, reusable anywhere a
-    caller needs to check "is this call site's required input hidden?"
-    without needing the edge to already exist (hidden_wirings,
-    variant_resolver.reconcile_manual_inputs)."""
-    return (
-        [f"e__{vt}__{fn}__{wid}" for vt in var_types]
-        + [f"e__{cn}__{fn}__{wid}" for cn in const_names]
-        + [f"e__{pn}__{fn}__{wid}" for pn in path_names]
-    )
-
-
 def inbound_edge_candidates_by_handle(
-    fn: str, wid: str, input_params: dict, const_names=(), path_names=()
+    fn: str,
+    wid: str,
+    input_params: dict,
+    const_names=(),
+    path_names=(),
+    parameter_names: "dict[str, str] | None" = None,
 ) -> dict[str, str]:
-    """Same candidate inbound edge ids as ``inbound_edge_candidates``, but
-    mapped to the ``target_handle`` each one feeds (``in__{param}`` /
-    ``param__{name}``) — the id shape alone doesn't say WHICH input a hidden
-    edge blocks, and callers reconciling hidden edges against manual
-    reconnects need that to check per-handle coverage rather than a flat
-    yes/no (see hidden_wirings, variant_resolver.reconcile_manual_inputs).
+    """``{connection id: in__ port}`` for every recorded inbound edge of one
+    wiring (variable, Parameter and PathInput -> fn), whether or not the edge
+    exists yet. Callers check "is this call site's required input hidden, and
+    is a drawn edge covering that port?" (hidden_wirings,
+    manual_input_overrides, variant_resolver.reconcile_manual_inputs).
 
-    ``input_params``: {param_name: var_type-or-list-of-var_types}, same
-    shape as a call site's ``fn_input_params`` entry / a DB variant's
-    ``input_types``. A list-valued param contributes one candidate per
-    element, all mapped to that param's single handle.
+    The ids are :func:`connection_id`, the same build_edges gives the edges:
+    - `input_params`: {param: var_type or list of var_types}, a call site's
+      recorded variable inputs; a list contributes one id per type;
+    - `const_names`: the ARGUMENTS fed by Parameters; `parameter_names` maps
+      an argument to its declared Parameter (the edge's source), defaulting to
+      the argument itself;
+    - `path_names`: {param: declared PathInput name}, or an iterable of params
+      whose PathInput shares the param's name.
     """
+    target = fn_node_id(fn, wid)
+    parameter_names = parameter_names or {}
     result: dict[str, str] = {}
     for param_name, type_val in input_params.items():
         handle = in_handle(param_name)
         types = type_val if isinstance(type_val, (list, set, tuple)) else [type_val]
         for vt in types:
-            result[f"e__{vt}__{fn}__{wid}"] = handle
+            if vt:
+                result[connection_id(var_node_id(vt), target, handle)] = handle
     for cname in const_names:
-        result[f"e__{cname}__{fn}__{wid}"] = in_handle(cname)
-    for pname in path_names:
-        result[f"e__{pname}__{fn}__{wid}"] = in_handle(pname)
+        source = param_node_id(parameter_names.get(cname) or cname)
+        result[connection_id(source, target, in_handle(cname))] = in_handle(cname)
+    pi_of = path_names if isinstance(path_names, dict) else {p: p for p in path_names}
+    for pname, pi_name in pi_of.items():
+        source = path_input_node_id(pi_name)
+        result[connection_id(source, target, in_handle(pname))] = in_handle(pname)
     return result
 
 
@@ -2177,71 +2182,66 @@ def visible_manual_edges(
     return kept
 
 
-def history_twin_edge_id(
-    edge: dict, manual_nodes: "dict[str, dict] | None" = None
-) -> "str | None":
-    """The id build_edges gives the DB-derived edge over the same connection as
-    *edge* (a stored manual edge, or a source/target/handle about to be
-    drawn), whether or not that edge exists. None for a connection history
-    never draws (an edge between two variables, a glue edge).
-
-    THE one spelling of history edge ids outside build_edges. Its readers:
-    - :func:`manual_edge_is_hidden` asks whether this drawn edge's history
-      twin is hidden;
-    - `layout_service.put_edge`: drawing a connection whose history edge is
-      hidden unhides it rather than storing a copy;
-    - `pipeline_store.rebase_node`: re-minting hidden edge ids after a rename.
-
-    `candidate_edge_id` was a second spelling until 2026-10-01. It keyed a
-    Parameter by its DECLARED name where build_edges uses the ARGUMENT, so
-    redrawing a deleted `gaitrite_config -> gaitRiteConfig` edge never
-    unhid it.
-
-    Formats, mirroring build_edges:
-    - variable: `e__{type}__{fn}__{tok}`;
-    - Parameter: `e__{argument}__{fn}__{tok}`;
-    - PathInput: `e__{name}__{param}__{fn}__{tok}`;
-    - output: `e__{fn}__{tok}__{type}`.
-
-    The target port is needed only where the id encodes it. A Parameter
-    without one falls back to its declared name, which is right whenever
-    name and argument coincide; a PathInput without one returns None.
+def endpoint_ref(node_id: str, manual_nodes: "dict[str, dict] | None" = None) -> str:
+    """The canonical text of one end of a connection: WHAT the node is, not
+    which id or placement it has. `fn:{name}:{token}` for a function node, and
+    `var:{type}`, `param:{declared name}`, `pi:{declared name}` for an entity,
+    whether the node is DB-derived (`var__X`, `var__X::main`) or hand-placed
+    (`var__X__abc123`, read through its stored label). Anything else (a glue
+    node, an unrecognised id) is `node:{bare id}`.
     """
     from scistack_gui.domain.edge_resolver import node_id_to_var_label
 
     manual_nodes = manual_nodes or {}
-    source = edge.get("source") or ""
-    target = edge.get("target") or ""
-    out_parsed = parse_fn_node_id(source)
-    if out_parsed is not None:
-        # An output edge: function -> variable.
-        out_label = node_id_to_var_label(target, {}, manual_nodes)
-        if out_label:
-            return f"e__{out_parsed[0]}__{out_parsed[1]}__{out_label}"
-        return None
-    parsed = parse_fn_node_id(target)
-    if parsed is None:
-        return None
-    fn, tok = parsed
-    handle = edge.get("targetHandle") or edge.get("target_handle") or ""
-    argument = handle[len(IN_HANDLE_PREFIX):] if handle.startswith(IN_HANDLE_PREFIX) else None
-    bare_source = strip_placement(source)
-    meta = manual_nodes.get(source) or manual_nodes.get(bare_source) or {}
-    if bare_source.startswith(PATH_INPUT_ID_PREFIX) or meta.get("type") == "pathInputNode":
-        if argument is None:
-            return None
-        name = meta.get("label") or bare_source[len(PATH_INPUT_ID_PREFIX):]
-        return f"e__{name}__{argument}__{fn}__{tok}"
-    if bare_source.startswith(PARAM_ID_PREFIX) or meta.get("type") == "parameterNode":
-        # Keyed by the ARGUMENT (the in__ port it fills). With no port, use
-        # the declared name.
-        if argument is None:
-            argument = meta.get("label") or bare_source[len(PARAM_ID_PREFIX):]
-        return f"e__{argument}__{fn}__{tok}"
-    var_label = node_id_to_var_label(source, {}, manual_nodes)
-    if var_label:
-        return f"e__{var_label}__{fn}__{tok}"
-    return None
+    bare = strip_placement(node_id or "")
+    parsed = parse_fn_node_id(node_id or "")
+    if parsed is not None:
+        return f"fn:{parsed[0]}:{parsed[1]}"
+    meta = manual_nodes.get(node_id) or manual_nodes.get(bare) or {}
+    kind = meta.get("type")
+    if bare.startswith(PATH_INPUT_ID_PREFIX) or kind == "pathInputNode":
+        return f"pi:{meta.get('label') or bare[len(PATH_INPUT_ID_PREFIX):]}"
+    if bare.startswith(PARAM_ID_PREFIX) or kind == "parameterNode":
+        return f"param:{meta.get('label') or bare[len(PARAM_ID_PREFIX):]}"
+    var = node_id_to_var_label(node_id or "", {}, manual_nodes)
+    if var:
+        return f"var:{var}"
+    return f"node:{bare}"
+
+
+def connection_id(
+    source: str,
+    target: str,
+    target_handle: "str | None" = None,
+    manual_nodes: "dict[str, dict] | None" = None,
+) -> str:
+    """THE id of a connection: source endpoint, target endpoint and the
+    argument it fills (the `in__` port; empty for an output edge).
+
+    Step 3 of the unified edge model (D-2026-10-01-1). History edges take this
+    as their id (build_edges), and a drawn edge over the same connection
+    computes the same id from its own endpoints, whatever kind they are. That
+    replaced four per-kind id formats and the `history_twin_edge_id` rebuild
+    that translated between them. A hide is matched by the connection id of
+    its STORED endpoints (pipeline_store.get_hidden_edge_ids), so it applies
+    to every edge over that connection, history or drawn.
+    """
+    handle = target_handle or ""
+    port = handle[len(IN_HANDLE_PREFIX):] if handle.startswith(IN_HANDLE_PREFIX) else ""
+    return (
+        f"e__{endpoint_ref(source, manual_nodes)}"
+        f"__{endpoint_ref(target, manual_nodes)}__{port}"
+    )
+
+
+def edge_connection_id(edge: dict, manual_nodes: "dict[str, dict] | None" = None) -> str:
+    """:func:`connection_id` of an edge dict (stored or built)."""
+    return connection_id(
+        edge.get("source") or "",
+        edge.get("target") or "",
+        edge.get("targetHandle") or edge.get("target_handle"),
+        manual_nodes,
+    )
 
 
 def manual_edge_is_hidden(
@@ -2249,8 +2249,9 @@ def manual_edge_is_hidden(
     hidden_edge_ids: "set[str] | frozenset[str]",
     manual_nodes: "dict[str, dict] | None" = None,
 ) -> bool:
-    """Whether a stored manual edge is hidden: its own id is hidden, or the
-    DB-derived edge it duplicates (:func:`history_twin_edge_id`) is.
+    """Whether a stored manual edge is hidden: its CONNECTION is hidden
+    (:func:`connection_id`), the same id a history edge over that connection
+    carries. Its own id is checked too, for a hide made on the manual edge.
 
     The one rule build_edges (drawing) and manual_edge_handle_index
     (binding, disconnection, run-state, execution) share. A manual edge over
@@ -2263,8 +2264,7 @@ def manual_edge_is_hidden(
         return False
     if edge.get("id") in hidden_edge_ids:
         return True
-    twin = history_twin_edge_id(edge, manual_nodes)
-    return twin is not None and twin in hidden_edge_ids
+    return edge_connection_id(edge, manual_nodes) in hidden_edge_ids
 
 
 #: Manual edge ids already reported at INFO by _log_dropped_manual_edges.
@@ -2284,7 +2284,7 @@ def _log_dropped_manual_edges(
     _REPORTED_HIDDEN_MANUAL_EDGES.update(e.get("id") for e in fresh)
     logger.info(
         "[graph_builder] %d stored manual edge(s) are hidden and bind nothing "
-        "(own id hidden, or their history twin is): %s",
+        "(own id or connection hidden): %s",
         len(fresh),
         ", ".join(
             f"{e.get('id')} ({e.get('source')} -> {e.get('target')}."
@@ -2292,7 +2292,7 @@ def _log_dropped_manual_edges(
             + (
                 "own id hidden"
                 if e.get("id") in hidden_edge_ids
-                else f"twin {history_twin_edge_id(e, manual_nodes)} hidden"
+                else f"connection {edge_connection_id(e, manual_nodes)} hidden"
             )
             + ")"
             for e in fresh
@@ -2358,7 +2358,9 @@ def manual_input_overrides(
         visible[handle] = [
             vt
             for vt in types
-            if vt and f"e__{vt}__{fn}__{wid}" not in hidden_edge_ids
+            if vt
+            and connection_id(var_node_id(vt), fn_node_id(fn, wid), handle)
+            not in hidden_edge_ids
         ]
     hidden_handles = {h for eid, h in handle_map.items() if eid in hidden_edge_ids}
 
@@ -2807,6 +2809,7 @@ def hidden_wirings(
     manual_nodes: "dict[str, dict] | None" = None,
     *,
     is_current,
+    fn_parameter_names: "dict | None" = None,
 ) -> set[tuple[str, str]]:
     """(fn_name, node token) pairs with at least one hidden inbound edge that
     is NOT currently covered by a manual reconnect.
@@ -2857,7 +2860,11 @@ def hidden_wirings(
             continue
         wid = token_for(fn, wiring)
         handle_map = inbound_edge_candidates_by_handle(
-            fn, wid, params, const_names=fn_constants.get(fkey, set())
+            fn,
+            wid,
+            params,
+            const_names=fn_constants.get(fkey, set()),
+            parameter_names=(fn_parameter_names or {}).get(fkey),
         )
         hidden_handles = {h for cid_, h in handle_map.items() if cid_ in hidden_edge_ids}
         if not hidden_handles:
@@ -2886,7 +2893,10 @@ def hidden_wirings(
                 continue
             wid = token_for(fn, wiring)
             handle = in_handle(param_name)
-            if f"e__{pi_name}__{param_name}__{fn}__{wid}" not in hidden_edge_ids:
+            pi_edge = connection_id(
+                path_input_node_id(pi_name), fn_node_id(fn, wid), in_handle(param_name)
+            )
+            if pi_edge not in hidden_edge_ids:
                 continue
             if (fn, wid, handle) in manual_index:
                 logger.info(

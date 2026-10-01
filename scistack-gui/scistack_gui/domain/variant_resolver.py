@@ -599,7 +599,11 @@ def reconcile_manual_inputs(
             ),
         )
         handle_map = inbound_edge_candidates_by_handle(
-            function_name, wid, input_types, const_names=const_names
+            function_name,
+            wid,
+            input_types,
+            const_names=const_names,
+            parameter_names=t.get("parameter_names"),
         )
         hidden_handles = {h for cid_, h in handle_map.items() if cid_ in hidden_edge_ids}
         uncovered = [h for h in hidden_handles if (function_name, wid, h) not in manual_index]

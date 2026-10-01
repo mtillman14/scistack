@@ -227,6 +227,30 @@ class TestHiddenEdges:
         )
         assert self.EDGE_ID in pipeline_store.get_hidden_edge_ids(db)
 
+    def test_a_hide_with_a_port_is_matched_by_its_connection(self, populated_db):
+        """Step 3 (D-2026-10-01-1): a hide that stored its endpoints and port
+        hides the CONNECTION, whatever id it was saved under (an old-format id
+        here), so it matches the history edge and every drawn copy."""
+        from scistack_gui.domain.graph_builder import connection_id
+
+        db = populated_db
+        pipeline_store.hide_edge(
+            db, "e__an_old_format_id", "var__RawSignal", "fn__bandpass_filter__abc123",
+            None, "in__signal",
+        )
+        assert connection_id(
+            "var__RawSignal", "fn__bandpass_filter__abc123", "in__signal"
+        ) in pipeline_store.get_hidden_edge_ids(db)
+
+    def test_a_hide_without_a_port_is_matched_by_its_saved_id(self, populated_db):
+        """No port, so the connection cannot be recomputed (the argument is part
+        of it). The saved id is a connection id for any history edge since step 3."""
+        db = populated_db
+        pipeline_store.hide_edge(
+            db, self.EDGE_ID, "var__RawSignal", "fn__bandpass_filter__abc123"
+        )
+        assert pipeline_store.get_hidden_edge_ids(db) == {self.EDGE_ID}
+
     def test_hide_edge_does_not_touch_hidden_nodes(self, populated_db):
         db = populated_db
         pipeline_store.hide_edge(

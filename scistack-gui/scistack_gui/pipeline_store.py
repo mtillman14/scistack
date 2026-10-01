@@ -663,7 +663,7 @@ def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None
     ``layout.rebase_node_positions``. Returns per-store counts, for the log.
     """
     from scistack_gui import intent_store, node_wiring
-    from scistack_gui.domain.graph_builder import history_twin_edge_id
+    from scistack_gui.domain.graph_builder import connection_id
     from scistack_gui.ids import strip_placement
 
     _ensure_tables(db)
@@ -710,9 +710,8 @@ def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None
         db,
         old_bare,
         new_bare,
-        lambda source, target, target_handle: history_twin_edge_id(
-            {"source": source, "target": target, "targetHandle": target_handle},
-            manual_nodes,
+        lambda source, target, target_handle: connection_id(
+            source, target, target_handle, manual_nodes
         ),
     )
     logger.info("[pipeline_store] rebase_node %s -> %s: %s", old_bare, new_bare, counts)
@@ -1625,15 +1624,61 @@ def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> None:
     intent_store.unhide_edge(db, edge_id, pipeline_id)
 
 
+def _hidden_connection_id(hide: dict, manual_nodes: dict) -> str:
+    """The connection a hide statement hides.
+
+    - Stored with endpoints AND a target port (every hide the GUI makes; the
+      frontend has sent both since 2026-08-09): graph_builder.connection_id of
+      them, so it matches every edge over that connection, history or drawn,
+      whatever id the edge had when it was hidden.
+    - Otherwise (an API delete with no port, or an output edge, which has no
+      port): the id it was saved under. Since step 3 (D-2026-10-01-1) a history
+      edge's id IS its connection id, so this still matches. A port-less hide
+      cannot be recomputed from its endpoints, because the argument is part of
+      the connection."""
+    from scistack_gui.domain.graph_builder import connection_id
+
+    if hide.get("source") and hide.get("target") and hide.get("target_handle"):
+        return connection_id(
+            hide["source"], hide["target"], hide["target_handle"], manual_nodes
+        )
+    return hide["edge_id"]
+
+
 def get_hidden_edge_ids(db, pipeline_id: "str | None" = None) -> set[str]:
-    """Return the set of edge IDs hidden in ``pipeline_id``.
+    """The CONNECTION ids hidden in ``pipeline_id`` (see _hidden_connection_id).
 
     ``pipeline_id=None`` (default) returns every scope's hidden ids unioned
     — see get_hidden_node_ids for why (same execution-path caveat)."""
     _ensure_tables(db)
     from scistack_gui import intent_store
 
-    return {e["edge_id"] for e in intent_store.hidden_edges(db, pipeline_id)}
+    manual_nodes = get_manual_nodes(db)
+    return {
+        _hidden_connection_id(e, manual_nodes)
+        for e in intent_store.hidden_edges(db, pipeline_id)
+    }
+
+
+def unhide_connection(db, connection: str, pipeline_id: str = ROOT_SCOPE) -> int:
+    """Remove every hide in ``pipeline_id`` whose connection is *connection*.
+    Drawing a connection whose history edge is hidden restores it
+    (layout_service.put_edge), whatever id the hide was saved under."""
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    manual_nodes = get_manual_nodes(db)
+    removed = 0
+    for e in intent_store.hidden_edges(db, pipeline_id):
+        if _hidden_connection_id(e, manual_nodes) == connection:
+            removed += intent_store.unhide_edge(db, e["edge_id"], pipeline_id) or 0
+    logger.info(
+        "[pipeline_store] unhide_connection(%r, scope=%r): %d hide(s) removed",
+        connection,
+        pipeline_id,
+        removed,
+    )
+    return removed
 
 
 def list_hidden_edges(db, pipeline_id: "str | None" = None) -> list[dict]:

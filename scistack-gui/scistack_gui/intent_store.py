@@ -927,9 +927,9 @@ def rebase_hidden_edges(db, old_bare: str, new_bare: str, edge_id_for) -> int:
     """Carry hidden DB-derived edges touching *old_bare* over to *new_bare*.
 
     A DB-derived edge id embeds its endpoints' names
-    (``e__{pi_name}__{param}__{fn}__{wid}``), so the id changes with them:
+    (``graph_builder.connection_id``: endpoints plus port), so the id changes with them:
     *edge_id_for(source, target, target_handle)* is the one function that
-    mints it (``graph_builder.history_twin_edge_id``). The old statement is
+    mints it (``graph_builder.connection_id``). The old statement is
     deleted and a new one written — keeping the old id would hide nothing,
     since the renamed node's edges will never carry it again. When no id
     can be derived the edge keeps its id and only its endpoints move.

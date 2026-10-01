@@ -28,8 +28,9 @@ from scistack_gui.domain.edge_resolver import (
     resolve_function_edges,
 )
 from scistack_gui.domain.graph_builder import (
+    connection_id,
+    edge_connection_id,
     hidden_wirings,
-    history_twin_edge_id,
     identity_token,
     manual_edge_handle_index,
     manual_edge_is_hidden,
@@ -45,7 +46,7 @@ HISTORY = {"v": "GAITRiteLoaded"}
 F_KEY = (FN, "cs1")
 WID = wiring_id(FN, HISTORY, set(), {})
 NODE = fn_node_id(FN, WID)
-HIDDEN_HISTORY_EDGE = f"e__GAITRiteLoaded__{FN}__{WID}"
+HIDDEN_HISTORY_EDGE = connection_id("var__GAITRiteLoaded", NODE, "in__v")
 
 STALE_TWIN = {
     "id": "manual__stale1",
@@ -68,11 +69,12 @@ def _fresh_report_set():
     gb._REPORTED_HIDDEN_MANUAL_EDGES.clear()
 
 
-class TestHistoryTwinEdgeId:
-    """The twin id must be spelled exactly as build_edges spells it."""
+class TestConnectionIdOfADrawnEdge:
+    """A drawn edge's connection id equals the history edge's over the same
+    connection, whatever its endpoints look like (step 3, D-2026-10-01-1)."""
 
     def test_variable_source(self):
-        assert history_twin_edge_id(STALE_TWIN) == HIDDEN_HISTORY_EDGE
+        assert edge_connection_id(STALE_TWIN) == HIDDEN_HISTORY_EDGE
 
     def test_placement_suffixes_are_ignored(self):
         edge = {
@@ -80,12 +82,12 @@ class TestHistoryTwinEdgeId:
             "source": "var__GAITRiteLoaded::main",
             "target": NODE + "::main",
         }
-        assert history_twin_edge_id(edge) == HIDDEN_HISTORY_EDGE
+        assert edge_connection_id(edge) == HIDDEN_HISTORY_EDGE
 
     def test_manual_variable_node_resolves_through_its_label(self):
         edge = {**STALE_TWIN, "source": "mv_abc"}
         manual_nodes = {"mv_abc": {"type": "variableNode", "label": "GAITRiteLoaded"}}
-        assert history_twin_edge_id(edge, manual_nodes) == HIDDEN_HISTORY_EDGE
+        assert edge_connection_id(edge, manual_nodes) == HIDDEN_HISTORY_EDGE
 
     def test_path_input_source(self):
         edge = {
@@ -94,35 +96,24 @@ class TestHistoryTwinEdgeId:
             "target": NODE,
             "targetHandle": "in__gaitRitePath",
         }
-        assert history_twin_edge_id(edge) == f"e__GaitRite__gaitRitePath__{FN}__{WID}"
+        assert edge_connection_id(edge) == connection_id(
+            "pathInput__GaitRite", NODE, "in__gaitRitePath"
+        )
 
-    def test_parameter_source_is_keyed_by_the_argument(self):
-        edge = {
-            "id": "m",
-            "source": "param__formulaNum",
-            "target": NODE,
-            "targetHandle": "in__formula",
-        }
-        assert history_twin_edge_id(edge) == f"e__formula__{FN}__{WID}"
-
-    def test_parameter_on_an_input_port_has_the_same_twin(self):
-        """A Parameter drawn onto in__X before the node ran with it; history
-        later draws the same connection as param__X."""
+    def test_parameter_source_is_keyed_by_declaration_and_argument(self):
         edge = {
             "id": "m",
             "source": "param__formulaNum::main",
             "target": NODE,
-            "targetHandle": "in__formulaNum",
+            "targetHandle": "in__formula",
         }
-        assert history_twin_edge_id(edge) == f"e__formulaNum__{FN}__{WID}"
+        assert edge_connection_id(edge) == connection_id(
+            "param__formulaNum", NODE, "in__formula"
+        )
 
     def test_output_edge(self):
         edge = {"id": "m", "source": NODE, "target": "var__GaitRiteSymmetry"}
-        assert history_twin_edge_id(edge) == f"e__{FN}__{WID}__GaitRiteSymmetry"
-
-    def test_edge_between_variables_has_no_twin(self):
-        edge = {"id": "m", "source": "var__A", "target": "var__B"}
-        assert history_twin_edge_id(edge) is None
+        assert edge_connection_id(edge) == connection_id(NODE, "var__GaitRiteSymmetry")
 
 
 class TestManualEdgeIsHidden:
@@ -163,7 +154,7 @@ class TestIndexLeavesHiddenEdgesOut:
             if r.levelno == logging.INFO and "manual__stale1" in r.getMessage()
         ]
         assert len(lines) == 1
-        assert f"twin {HIDDEN_HISTORY_EDGE} hidden" in lines[0]
+        assert f"connection {HIDDEN_HISTORY_EDGE} hidden" in lines[0]
 
 
 class TestBindingFollowsTheCanvas:
@@ -243,7 +234,7 @@ class TestEdgeResolverReadsOnlyVisibleEdges:
             [stale_out, new_out],
             {},
             existing_node_labels={},
-            hidden_edge_ids={f"e__{FN}__{WID}__OldOut"},
+            hidden_edge_ids={connection_id(NODE, "var__OldOut")},
         ) == ["NewOut"]
 
     def test_visible_manual_edges_keeps_order_and_drops_hidden(self):
@@ -304,8 +295,9 @@ class TestDeriveTargetForNodeIgnoresHiddenTwin:
 
         # The user disconnects the OLD wire. The canvas drew its history twin,
         # so that is the id that gets hidden.
+        # Hidden by id alone (no stored endpoints): the id is the connection.
         pipeline_store.hide_edge(
-            db, f"e__TwinOldSignal__bandpass_filter__{self.TOKEN}"
+            db, connection_id("var__TwinOldSignal", node, "in__signal")
         )
         after = derive_target_for_node(db, node)
         assert after
@@ -325,7 +317,7 @@ class TestOldParameterEdgeOnAnInputPort:
         "target": NODE,
         "targetHandle": "in__formulaNum",
     }
-    HISTORY_EDGE = f"e__formulaNum__{FN}__{WID}"
+    HISTORY_EDGE = connection_id("param__formulaNum", NODE, "in__formulaNum")
 
     def test_hiding_the_history_edge_hides_the_old_copy(self):
         assert manual_edge_is_hidden(self.OLD_COPY, {self.HISTORY_EDGE})

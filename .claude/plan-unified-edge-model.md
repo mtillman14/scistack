@@ -177,11 +177,42 @@ come back once. Both vite targets need rebuilding (frontend bundle trap).
   node ran with the Parameter.
 - [x] `FunctionNode.tsx`: both renderings use `in__X` and skip a name already in input_params.
   Both vite bundles rebuilt; 516 frontend tests pass.
-- [ ] pytest run by the user.
+- [x] pytest passes (user), committed 51362853.
 
-## Step 3: hides keyed by connection (outline)
+## Step 3: hides keyed by connection (built 2026-10-01)
 
-Store hidden edges as `(source, target, port)` rather than edge ids. Then
-`history_twin_edge_id` and the per-kind id formats disappear from every
-reader. History edge ids become display-only. It is a clean break: currently
-hidden edges reappear once and must be hidden again (no migration, beta rule).
+Design chosen: the edge id IS the connection key, rather than threading a new
+hidden-key type through every reader. That keeps every `id in hidden` check and
+removes every per-kind id format.
+
+- [x] `graph_builder.endpoint_ref(node_id, manual_nodes)` gives the canonical endpoint:
+  `fn:{name}:{token}`, `var:{type}`, `param:{declared}`, `pi:{declared}`, `node:{bare id}`.
+  Hand-placed nodes resolve through their labels; placements are ignored.
+- [x] `connection_id(source, target, target_handle, manual_nodes)` is
+  `e__{src}__{tgt}__{argument}`, and `edge_connection_id(edge)` applies it to an edge dict.
+  This is THE id of a connection.
+- [x] `build_edges`: all four history edge kinds take `connection_id` as their id.
+- [x] `history_twin_edge_id` and `inbound_edge_candidates` deleted.
+  `inbound_edge_candidates_by_handle` returns connection ids and takes `parameter_names`
+  (argument -> declared name), so a Parameter is named by its declaration.
+- [x] `manual_edge_is_hidden`, `manual_input_overrides`, `hidden_wirings` (new `fn_parameter_names`),
+  `reconcile_manual_inputs` (target `parameter_names`) and `disconnected_reason` /
+  `disconnected_report_entries` (through the candidate owner) now use connection ids.
+- [x] `pipeline_store.get_hidden_edge_ids` returns the connection id of each hide's STORED
+  endpoints and port, falling back to the saved id. Existing GUI hides keep working: the frontend
+  has sent endpoints and ports since 2026-08-09. `unhide_connection` is used by `put_edge`, and
+  `rebase_node` re-mints with `connection_id`.
+- [x] Fixed on the way: a variable feeding two arguments of one function no longer shares one id,
+  so hiding one no longer hides both.
+- [x] pytest passes (user).
+
+Hide matching (`pipeline_store._hidden_connection_id`):
+- a hide with endpoints AND a port matches by the connection of those (every GUI input-edge hide);
+- otherwise it matches by its saved id, which is a connection id for anything hidden since step 3.
+
+Clean-break effects: an OUTPUT edge (no port) hidden before step 3 has an old-format saved id, so it
+reappears once. A hide on a retired `param__X` port reappears once. First pytest run: the parity test
+deleted with no port, which exposed that port-less hides must fall back to the saved id.
+
+The planned cleanup (dropping the redundant `hidden_edge_ids` filtering keyword) is NOT done:
+`hidden_edge_ids` still carries connection ids for history edges, so the keyword is still needed.

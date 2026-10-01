@@ -28,7 +28,12 @@ from pathlib import Path
 
 from scidb.foreach_config import RunOptions
 
-from scistack_gui.ids import ROOT_SCOPE, fn_nodes_prefix, in_handle, legacy_fn_node_id
+from scistack_gui.ids import (
+    ROOT_SCOPE,
+    fn_nodes_prefix,
+    handle_name,
+    legacy_fn_node_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1114,7 +1119,10 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     from "never run" and surface the right explicit error (see api/run.py).
     """
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import manual_edge_handle_index
+    from scistack_gui.domain.graph_builder import (
+        inbound_edge_candidates_by_handle,
+        manual_edge_handle_index,
+    )
     from scistack_gui.ids import parse_fn_node_id
 
     from scistack_gui.domain.edge_view import effective_edges, run_scope
@@ -1173,14 +1181,21 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
         if node_wiring_now is not None and wid != node_wiring_now:
             continue
         key = node_token or token_for(function_name, wid)
-        for pname, vtype in v["input_types"].items():
-            candidate = f"e__{vtype}__{function_name}__{key}"
-            if candidate in hidden_edge_ids and (function_name, key, in_handle(pname)) not in manual_index:
-                return f"input '{pname}' is disconnected — reconnect it before running"
-        for cname in v.get("constants", {}).keys():
-            candidate = f"e__{cname}__{function_name}__{key}"
-            if candidate in hidden_edge_ids and (function_name, key, in_handle(cname)) not in manual_index:
-                return f"input '{cname}' is disconnected — reconnect it before running"
+        # The one owner of a wiring's inbound connection ids (variables first,
+        # then Parameters, named by their DECLARED name).
+        candidates = inbound_edge_candidates_by_handle(
+            function_name,
+            key,
+            v.get("input_types") or {},
+            const_names=list((v.get("constants") or {}).keys()),
+            parameter_names=v.get("parameter_names"),
+        )
+        for candidate, handle in candidates.items():
+            if candidate in hidden_edge_ids and (function_name, key, handle) not in manual_index:
+                return (
+                    f"input '{handle_name(handle)}' is disconnected — reconnect it "
+                    "before running"
+                )
     return None
 
 
@@ -1196,7 +1211,11 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     """
     from scistack_gui import pipeline_store
     from scistack_gui.api.pipeline import build_aggregate, ensure_node_identities
-    from scistack_gui.domain.graph_builder import hidden_wirings, wirings_downstream_of
+    from scistack_gui.domain.graph_builder import (
+        hidden_wirings,
+        inbound_edge_candidates_by_handle,
+        wirings_downstream_of,
+    )
 
     from scistack_gui.domain.edge_view import effective_edges
 
@@ -1232,6 +1251,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
         manual_edges=manual_edges,
         manual_nodes=manual_nodes,
         is_current=identity.is_current,
+        fn_parameter_names=agg.fn_parameter_names,
     )
     if not seed:
         return []
@@ -1271,19 +1291,16 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
         for fkey, params in fn_input_params.items():
             if fkey[0] != fn:
                 continue
-            for pname, vtype in params.items():
-                if (
-                    f"e__{vtype}__{fn}__{wid}" in hidden_edge_ids
-                    and (fn, wid, in_handle(pname)) not in manual_index
-                ):
-                    reason = f"input '{pname}' disconnected"
-                    break
-            for cname in fn_constants.get(fkey, set()):
-                if (
-                    f"e__{cname}__{fn}__{wid}" in hidden_edge_ids
-                    and (fn, wid, in_handle(cname)) not in manual_index
-                ):
-                    reason = f"input '{cname}' disconnected"
+            candidates = inbound_edge_candidates_by_handle(
+                fn,
+                wid,
+                params,
+                const_names=fn_constants.get(fkey, set()),
+                parameter_names=agg.fn_parameter_names.get(fkey),
+            )
+            for candidate, handle in candidates.items():
+                if candidate in hidden_edge_ids and (fn, wid, handle) not in manual_index:
+                    reason = f"input '{handle_name(handle)}' disconnected"
                     break
         entries.append(_entry(fn, reason))
     for fn, _wid in sorted(downstream):

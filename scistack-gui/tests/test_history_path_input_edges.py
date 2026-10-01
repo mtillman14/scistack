@@ -18,6 +18,7 @@ from __future__ import annotations
 from scistack_gui.domain.graph_builder import (
     AggregatedData,
     build_edges,
+    connection_id,
     group_call_sites_by_wiring,
     hidden_wirings,
     wiring_id,
@@ -103,17 +104,17 @@ class TestHidingAHistoryEdgeDoesNotDisconnectTheNode:
         )
 
     def test_hiding_the_stale_path_input_edge_leaves_the_node_connected(self):
-        hidden = {f"e__GaitRiteOld__gaitRitePath__{FN}__{TOKEN}"}
+        hidden = {connection_id("pathInput__GaitRiteOld", NODE, "in__gaitRitePath")}
         assert self._hidden_wirings(_rewired_path_input_agg(), hidden, _is_current) == set()
 
     def test_control_every_wiring_current_reports_it(self):
-        hidden = {f"e__GaitRiteOld__gaitRitePath__{FN}__{TOKEN}"}
+        hidden = {connection_id("pathInput__GaitRiteOld", NODE, "in__gaitRitePath")}
         assert self._hidden_wirings(
             _rewired_path_input_agg(), hidden, _all_current
         ) == {(FN, TOKEN)}
 
     def test_hiding_the_current_path_input_edge_still_disconnects(self):
-        hidden = {f"e__GaitRiteNew__gaitRitePath__{FN}__{TOKEN}"}
+        hidden = {connection_id("pathInput__GaitRiteNew", NODE, "in__gaitRitePath")}
         assert self._hidden_wirings(
             _rewired_path_input_agg(), hidden, _is_current
         ) == {(FN, TOKEN)}
@@ -127,7 +128,7 @@ class TestHidingAHistoryEdgeDoesNotDisconnectTheNode:
         for k in (hist, cur):
             agg.fn_outputs[k] = {"GaitRiteSymmetry"}
         cur_wiring = wiring_id(fn, {"v": "GaitRiteLoaded_UA"}, {"GaitRiteSymmetry"}, {})
-        hidden = {f"e__GAITRiteLoaded__{fn}__{TOKEN}"}
+        hidden = {connection_id("var__GAITRiteLoaded", fn_node_id(fn, TOKEN), "in__v")}
         assert self._hidden_wirings(
             agg, hidden, lambda f, w: f == fn and w == cur_wiring
         ) == set()

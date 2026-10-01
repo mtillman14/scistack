@@ -13,6 +13,7 @@ import hashlib
 from scidb import Parameter
 
 from scistack_gui.domain.graph_builder import (
+    connection_id,
     build_edges,
     build_parameter_nodes,
     edge_dedup_key,
@@ -118,7 +119,7 @@ class TestOneNodeAfterARun:
         assert edge["targetHandle"] == in_handle(ARG)
         # Keyed by the argument: what hidden_wirings and the disconnected
         # report spell for this handle.
-        assert edge["id"] == f"e__{ARG}__{FN}__{CID}"
+        assert edge["id"] == connection_id(param_node_id(DECLARED), FN_NODE, in_handle(ARG))
 
     def test_the_users_manual_edge_is_the_same_wire(self):
         """The manual edge the user drew (declared node -> argument handle)
@@ -151,7 +152,7 @@ class TestOneNodeAfterARun:
         [edge] = edges
         assert edge["source"] == "param__hz"
         assert edge["targetHandle"] == in_handle("hz")
-        assert edge["id"] == f"e__hz__{FN}__{CID}"
+        assert edge["id"] == connection_id("param__hz", FN_NODE, in_handle("hz"))
 
 
 def test_pending_values_keyed_by_the_node_see_rows_keyed_by_the_argument():

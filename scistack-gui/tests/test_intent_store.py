@@ -314,7 +314,12 @@ class TestHidden:
         pipeline_store.hide_edge(
             populated_db, "e1", "var__A", "fn__f__abc", None, "in__x", pipeline_id="main"
         )
-        assert pipeline_store.get_hidden_edge_ids(populated_db, "main") == {"e1"}
+        # Matched by its CONNECTION, not the id it was saved under (step 3).
+        from scistack_gui.domain.graph_builder import connection_id
+
+        assert pipeline_store.get_hidden_edge_ids(populated_db, "main") == {
+            connection_id("var__A", "fn__f__abc", "in__x")
+        }
         assert pipeline_store.get_hidden_edge_ids(populated_db, "other") == set()
         listed = pipeline_store.list_hidden_edges(populated_db, "main")
         assert listed[0]["target_handle"] == "in__x" and listed[0]["source"] == "var__A"

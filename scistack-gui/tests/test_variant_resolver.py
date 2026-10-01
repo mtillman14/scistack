@@ -6,7 +6,8 @@ All functions are pure — no DB or fixtures required.
 
 from scidb.foreach_config import RunOptions
 
-from scistack_gui.domain.graph_builder import identity_token
+from scistack_gui.domain.graph_builder import connection_id, identity_token
+from scistack_gui.ids import fn_node_id
 from scistack_gui.domain.variant_resolver import (
     build_inferred_variants,
     compute_call_id,
@@ -565,7 +566,7 @@ class TestReconcileManualInputsHiddenEdges:
 
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
-        hidden = {f"e__RawEMG__fn__{wid}"}
+        hidden = {connection_id("var__RawEMG", fn_node_id("fn", wid), "in__signal")}
         assert reconcile_manual_inputs([target], "fn", hidden, (), None, identity_token) == []
 
     def test_disconnected_constant_input_dropped(self):
@@ -573,7 +574,7 @@ class TestReconcileManualInputsHiddenEdges:
 
         target = self._target({}, constants={"low_hz": 20})
         wid = wiring_id("fn", {}, {"Out"}, {})
-        hidden = {f"e__low_hz__fn__{wid}"}
+        hidden = {connection_id("param__low_hz", fn_node_id("fn", wid), "in__low_hz")}
         assert reconcile_manual_inputs([target], "fn", hidden, (), None, identity_token) == []
 
     def test_unrelated_hidden_edge_keeps_target(self):
@@ -590,7 +591,7 @@ class TestReconcileManualInputsHiddenEdges:
         t1 = self._target({"signal": "RawEMG"}, constants={"hz": 10})
         t2 = self._target({"signal": "RawEMG"}, constants={"hz": 20})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
-        hidden = {f"e__RawEMG__fn__{wid}"}
+        hidden = {connection_id("var__RawEMG", fn_node_id("fn", wid), "in__signal")}
         assert reconcile_manual_inputs([t1, t2], "fn", hidden, (), None, identity_token) == []
 
     def test_different_wiring_of_same_function_name_unaffected(self):
@@ -601,7 +602,7 @@ class TestReconcileManualInputsHiddenEdges:
         vo2 = self._target({"signal": "RawVO2"})
         hr = self._target({"signal": "RawHeartRate"})
         wid_vo2 = wiring_id("fn", {"signal": "RawVO2"}, {"Out"}, {})
-        hidden = {f"e__RawVO2__fn__{wid_vo2}"}
+        hidden = {connection_id("var__RawVO2", fn_node_id("fn", wid_vo2), "in__signal")}
         assert reconcile_manual_inputs([vo2, hr], "fn", hidden, (), None, identity_token) == [hr]
 
     def test_multitype_input_list_checked_per_element(self):
@@ -609,7 +610,7 @@ class TestReconcileManualInputsHiddenEdges:
 
         target = self._target({"signal": ["A", "B"]})
         wid = wiring_id("fn", {"signal": ["A", "B"]}, {"Out"}, {})
-        hidden = {f"e__B__fn__{wid}"}
+        hidden = {connection_id("var__B", fn_node_id("fn", wid), "in__signal")}
         assert reconcile_manual_inputs([target], "fn", hidden, (), None, identity_token) == []
 
     def test_empty_targets_returns_empty(self):
@@ -625,7 +626,7 @@ class TestReconcileManualInputsHiddenEdges:
         target = self._target({"signal": "RawEMG"})
         target["call_id"] = "stale0000000000"
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
-        hidden = {f"e__RawEMG__fn__{wid}"}
+        hidden = {connection_id("var__RawEMG", fn_node_id("fn", wid), "in__signal")}
         manual_edges = [
             {
                 "target": fn_node_id("fn", wid),
@@ -651,7 +652,7 @@ class TestReconcileManualInputsHiddenEdges:
 
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
-        hidden = {f"e__RawEMG__fn__{wid}"}
+        hidden = {connection_id("var__RawEMG", fn_node_id("fn", wid), "in__signal")}
         manual_edges = [
             {
                 "target": fn_node_id("fn", wid),
@@ -669,7 +670,7 @@ class TestReconcileManualInputsHiddenEdges:
 
         target = self._target({"signal": "RawEMG"}, constants={"low_hz": 20})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
-        hidden = {f"e__RawEMG__fn__{wid}", f"e__low_hz__fn__{wid}"}
+        hidden = {connection_id("var__RawEMG", fn_node_id("fn", wid), "in__signal"), connection_id("param__low_hz", fn_node_id("fn", wid), "in__low_hz")}
         manual_edges = [
             {
                 "target": fn_node_id("fn", wid),
@@ -691,7 +692,7 @@ class TestReconcileManualInputsHiddenEdges:
 
         target = self._target({"signal": ["A", "B"]})
         wid = wiring_id("fn", {"signal": ["A", "B"]}, {"Out"}, {})
-        hidden = {f"e__B__fn__{wid}"}
+        hidden = {connection_id("var__B", fn_node_id("fn", wid), "in__signal")}
         manual_edges = [
             {"target": fn_node_id("fn", wid), "targetHandle": "in__signal", "source": "var__C"}
         ]
@@ -795,7 +796,7 @@ class TestReconcileManualInputsUnboundParams:
 
         target = self._target({"signal": "RawEMG"})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
-        hidden = {f"e__RawEMG__fn__{wid}"}
+        hidden = {connection_id("var__RawEMG", fn_node_id("fn", wid), "in__signal")}
         edges = [
             self._edge(wid, "in__signal", "var__OtherEMG"),
             self._edge(wid, "in__side", "var__Demographics"),
@@ -810,7 +811,7 @@ class TestReconcileManualInputsUnboundParams:
 
         target = self._target({"signal": "RawEMG"}, constants={"low_hz": 20})
         wid = wiring_id("fn", {"signal": "RawEMG"}, {"Out"}, {})
-        hidden = {f"e__low_hz__fn__{wid}"}
+        hidden = {connection_id("param__low_hz", fn_node_id("fn", wid), "in__low_hz")}
         edges = [self._edge(wid, "in__side", "var__Demographics")]
         assert reconcile_manual_inputs([target], "fn", hidden, edges, None, identity_token) == []
 

@@ -24,7 +24,7 @@ from scistack_gui.domain.graph_builder import (
     find_cycle,
     hidden_wirings,
     identity_token,
-    inbound_edge_candidates,
+    connection_id,
     is_manual_edge,
     merge_manual_nodes,
     parse_path_input,
@@ -1415,7 +1415,7 @@ class TestBuildEdges:
         assert len(var_to_fn) == 1
 
     def test_manual_edge_not_duplicated_if_already_in_db_edges(self):
-        edge_id = f"e__Raw__f__{self.F_CID}"
+        edge_id = connection_id("var__Raw", self.F_NODE, "in__signal")
         edges = build_edges(
             fn_input_params={self.F_KEY: {"signal": "Raw"}},
             fn_outputs={},
@@ -1542,7 +1542,7 @@ class TestBuildEdges:
                 }
             ],
             hidden_ids=set(),
-            hidden_edge_ids={f"e__Raw__f__{self.F_CID}"},
+            hidden_edge_ids={connection_id("var__Raw", self.F_NODE, "in__signal")},
         )
         assert not [
             e for e in edges if e["source"] == "var__Raw" and e["target"] == self.F_NODE
@@ -1595,7 +1595,7 @@ class TestBuildEdges:
             path_inputs={},
             manual_edges=[],
             hidden_ids=set(),
-            hidden_edge_ids={f"e__Raw__f__{self.F_CID}"},
+            hidden_edge_ids={connection_id("var__Raw", self.F_NODE, "in__signal")},
         )
         assert not any(e["source"] == "var__Raw" for e in edges)
 
@@ -1607,7 +1607,7 @@ class TestBuildEdges:
             path_inputs={},
             manual_edges=[],
             hidden_ids=set(),
-            hidden_edge_ids={f"e__f__{self.F_CID}__Out"},
+            hidden_edge_ids={connection_id(self.F_NODE, "var__Out")},
         )
         assert not any(e["target"] == "var__Out" for e in edges)
 
@@ -1619,7 +1619,7 @@ class TestBuildEdges:
             path_inputs={},
             manual_edges=[],
             hidden_ids=set(),
-            hidden_edge_ids={f"e__hz__f__{self.F_CID}"},
+            hidden_edge_ids={connection_id("param__hz", self.F_NODE, "in__hz")},
         )
         assert not any(e["source"] == "param__hz" for e in edges)
 
@@ -1637,7 +1637,7 @@ class TestBuildEdges:
             },
             manual_edges=[],
             hidden_ids=set(),
-            hidden_edge_ids={f"e__mypath__filepath__f__{self.F_CID}"},
+            hidden_edge_ids={connection_id("pathInput__mypath", self.F_NODE, "in__filepath")},
         )
         assert not any(e["source"] == "pathInput__mypath" for e in edges)
 
@@ -1651,7 +1651,7 @@ class TestBuildEdges:
             path_inputs={},
             manual_edges=[],
             hidden_ids=set(),
-            hidden_edge_ids={f"e__Raw__f__{self.F_CID}"},
+            hidden_edge_ids={connection_id("var__Raw", self.F_NODE, "in__signal")},
         )
         assert not any(e["source"] == "var__Raw" for e in edges)
         assert any(e["source"] == "param__hz" for e in edges)
@@ -1798,14 +1798,40 @@ class TestEdgeDedupKey:
 
 
 class TestInboundEdgeCandidates:
+    """inbound_edge_candidates_by_handle: {connection id: in__ port}, the
+    same ids build_edges gives the edges (step 3, D-2026-10-01-1)."""
+
     def test_builds_all_three_categories(self):
-        ids = inbound_edge_candidates(
-            "f", "wid123", var_types=["Raw"], const_names=["hz"], path_names=["p"]
+        from scistack_gui.domain.graph_builder import inbound_edge_candidates_by_handle
+
+        target = fn_node_id("f", "wid123")
+        got = inbound_edge_candidates_by_handle(
+            "f",
+            "wid123",
+            {"signal": "Raw"},
+            const_names=["hz"],
+            path_names={"filepath": "p"},
         )
-        assert ids == ["e__Raw__f__wid123", "e__hz__f__wid123", "e__p__f__wid123"]
+        assert got == {
+            connection_id("var__Raw", target, "in__signal"): "in__signal",
+            connection_id("param__hz", target, "in__hz"): "in__hz",
+            connection_id("pathInput__p", target, "in__filepath"): "in__filepath",
+        }
+
+    def test_a_parameter_is_named_by_its_declaration(self):
+        from scistack_gui.domain.graph_builder import inbound_edge_candidates_by_handle
+
+        got = inbound_edge_candidates_by_handle(
+            "f", "wid123", {}, const_names=["arg"], parameter_names={"arg": "declared"}
+        )
+        assert got == {
+            connection_id("param__declared", fn_node_id("f", "wid123"), "in__arg"): "in__arg"
+        }
 
     def test_empty_by_default(self):
-        assert inbound_edge_candidates("f", "wid123") == []
+        from scistack_gui.domain.graph_builder import inbound_edge_candidates_by_handle
+
+        assert inbound_edge_candidates_by_handle("f", "wid123", {}) == {}
 
 
 class TestHiddenWirings:
@@ -1819,7 +1845,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={},
             path_inputs={},
-            hidden_edge_ids={f"e__Raw__f__{wid}"},
+            hidden_edge_ids={connection_id("var__Raw", fn_node_id("f", wid), "in__signal")},
             token_for=identity_token,
             is_current=_all_current,
         )
@@ -1832,7 +1858,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={self.F_KEY: {"hz"}},
             path_inputs={},
-            hidden_edge_ids={f"e__hz__f__{wid}"},
+            hidden_edge_ids={connection_id("param__hz", fn_node_id("f", wid), "in__hz")},
             token_for=identity_token,
             is_current=_all_current,
         )
@@ -1848,7 +1874,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={},
             path_inputs={"mypath": {"functions": {(self.F_KEY, "filepath")}}},
-            hidden_edge_ids={f"e__mypath__filepath__f__{wid}"},
+            hidden_edge_ids={connection_id("pathInput__mypath", fn_node_id("f", wid), "in__filepath")},
             token_for=identity_token,
             is_current=_all_current,
         )
@@ -1862,7 +1888,7 @@ class TestHiddenWirings:
             fn_outputs={self.F_KEY: {"Out"}},
             fn_constants={},
             path_inputs={},
-            hidden_edge_ids={f"e__f__{wid}__Out"},
+            hidden_edge_ids={connection_id(fn_node_id("f", wid), "var__Out")},
             token_for=identity_token,
             is_current=_all_current,
         )
@@ -1890,7 +1916,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={},
             path_inputs={},
-            hidden_edge_ids={f"e__Raw__f__{wid}"},
+            hidden_edge_ids={connection_id("var__Raw", fn_node_id("f", wid), "in__signal")},
             token_for=identity_token,
             is_current=_all_current,
         )
@@ -1906,7 +1932,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={},
             path_inputs={},
-            hidden_edge_ids={f"e__Raw__f__{wid}"},
+            hidden_edge_ids={connection_id("var__Raw", fn_node_id("f", wid), "in__signal")},
             manual_edges=[
                 {
                     "target": fn_node_id("f", wid),
@@ -1928,7 +1954,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={},
             path_inputs={},
-            hidden_edge_ids={f"e__Raw__f__{wid}"},
+            hidden_edge_ids={connection_id("var__Raw", fn_node_id("f", wid), "in__signal")},
             manual_edges=[
                 {
                     "target": fn_node_id("f", wid),
@@ -1950,7 +1976,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={self.F_KEY: {"hz"}},
             path_inputs={},
-            hidden_edge_ids={f"e__Raw__f__{wid}", f"e__hz__f__{wid}"},
+            hidden_edge_ids={connection_id("var__Raw", fn_node_id("f", wid), "in__signal"), connection_id("param__hz", fn_node_id("f", wid), "in__hz")},
             manual_edges=[
                 {
                     "target": fn_node_id("f", wid),
@@ -1972,7 +1998,7 @@ class TestHiddenWirings:
             fn_outputs={},
             fn_constants={},
             path_inputs={},
-            hidden_edge_ids={f"e__Raw__f__{wid}"},
+            hidden_edge_ids={connection_id("var__Raw", fn_node_id("f", wid), "in__signal")},
             manual_edges=[
                 {
                     "target": f"{fn_node_id('f', wid)}::pipe_xyz",
@@ -2084,115 +2110,103 @@ class TestWiringsDownstreamOf:
         assert wirings_downstream_of({}, {}, set(), {}, token_for=identity_token) == set()
 
 
-class TestHistoryTwinEdgeId:
-    """graph_builder.history_twin_edge_id, the one spelling of history edge
-    ids outside build_edges. It replaced candidate_edge_id (2026-10-01), which
-    keyed a Parameter by its declared name where build_edges uses the argument."""
+class TestConnectionId:
+    """graph_builder.connection_id: THE id of a connection (step 3,
+    D-2026-10-01-1). History edges take it as their id; a drawn edge over the
+    same connection computes the same one from its own endpoints, whatever
+    kind they are. It replaced history_twin_edge_id and the four per-kind id
+    formats it translated between."""
 
     F_CID = _cid("f-call")
+    F_KEY = ("f", F_CID)
     F_NODE = f"fn__f__{F_CID}"
 
-    @staticmethod
-    def _twin(source, target, handle=None, manual_nodes=None):
-        from scistack_gui.domain.graph_builder import history_twin_edge_id
-
-        return history_twin_edge_id(
-            {"source": source, "target": target, "targetHandle": handle}, manual_nodes
-        )
-
-    def test_var_to_fn(self):
-        assert self._twin("var__Raw", self.F_NODE) == f"e__Raw__f__{self.F_CID}"
-
-    def test_const_to_fn_without_a_port_uses_the_declared_name(self):
-        assert self._twin("param__hz", self.F_NODE) == f"e__hz__f__{self.F_CID}"
-
-    def test_path_input_to_fn(self):
-        assert (
-            self._twin("pathInput__mypath", self.F_NODE, "in__filepath")
-            == f"e__mypath__filepath__f__{self.F_CID}"
-        )
-
-    def test_path_input_to_fn_without_handle_returns_none(self):
-        # No port, so the parameter name cannot be recovered. Safe degrade:
-        # the reconnect stores a fresh manual edge instead of unhiding.
-        assert self._twin("pathInput__mypath", self.F_NODE) is None
-
-    def test_fn_to_var(self):
-        assert self._twin(self.F_NODE, "var__Out") == f"e__f__{self.F_CID}__Out"
-
-    def test_matches_build_edges_own_id_construction(self):
-        f_key = ("f", self.F_CID)
+    def _history_id(self, source_prefix, **build):
         edges = build_edges(
-            fn_input_params={f_key: {"signal": "Raw"}},
-            fn_outputs={},
-            const_fns={},
-            path_inputs={},
-            manual_edges=[],
-            hidden_ids=set(),
+            **{
+                "fn_input_params": {},
+                "fn_outputs": {},
+                "const_fns": {},
+                "path_inputs": {},
+                "manual_edges": [],
+                "hidden_ids": set(),
+                **build,
+            }
         )
-        real_id = next(e["id"] for e in edges if e["source"] == "var__Raw")
-        assert self._twin("var__Raw", self.F_NODE, "in__signal") == real_id
+        return next(e["id"] for e in edges if e["source"].startswith(source_prefix))
 
-    def test_path_input_matches_build_edges_own_id_construction(self):
-        f_key = ("f", self.F_CID)
-        edges = build_edges(
-            fn_input_params={},
-            fn_outputs={},
-            const_fns={},
+    def test_variable_matches_build_edges(self):
+        real = self._history_id("var__", fn_input_params={self.F_KEY: {"signal": "Raw"}})
+        assert connection_id("var__Raw", self.F_NODE, "in__signal") == real
+
+    def test_output_matches_build_edges(self):
+        real = self._history_id("fn__", fn_outputs={self.F_KEY: {"Out"}})
+        assert connection_id(self.F_NODE, "var__Out") == real
+
+    def test_path_input_matches_build_edges(self):
+        real = self._history_id(
+            "pathInput__",
             path_inputs={
                 "mypath": {
                     "template": "",
                     "root_folder": None,
-                    "functions": {(f_key, "filepath")},
+                    "functions": {(self.F_KEY, "filepath")},
                 }
             },
-            manual_edges=[],
-            hidden_ids=set(),
         )
-        real_id = next(e["id"] for e in edges if e["source"] == "pathInput__mypath")
-        assert self._twin("pathInput__mypath", self.F_NODE, "in__filepath") == real_id
+        assert connection_id("pathInput__mypath", self.F_NODE, "in__filepath") == real
 
     def test_renamed_parameter_matches_build_edges(self):
-        """The case candidate_edge_id got wrong: a Parameter declared
-        gaitrite_config feeding the argument gaitRiteConfig. build_edges keys
-        the edge by the ARGUMENT."""
-        f_key = ("f", self.F_CID)
-        edges = build_edges(
-            fn_input_params={f_key: {}},
-            fn_outputs={},
-            const_fns={"gaitrite_config": {f_key}},
-            path_inputs={},
-            manual_edges=[],
-            hidden_ids=set(),
-            fn_parameter_names={f_key: {"gaitRiteConfig": "gaitrite_config"}},
+        """A Parameter declared gaitrite_config feeding the argument
+        gaitRiteConfig: the source is the declaration, the port the argument."""
+        real = self._history_id(
+            "param__",
+            fn_input_params={self.F_KEY: {}},
+            const_fns={"gaitrite_config": {self.F_KEY}},
+            fn_parameter_names={self.F_KEY: {"gaitRiteConfig": "gaitrite_config"}},
         )
-        real_id = next(e["id"] for e in edges if e["source"].startswith("param__"))
-        assert real_id == f"e__gaitRiteConfig__f__{self.F_CID}"
-        # The argument's in__ port, the only Parameter port since step 2.
         assert (
-            self._twin("param__gaitrite_config", self.F_NODE, "in__gaitRiteConfig")
-            == real_id
+            connection_id("param__gaitrite_config", self.F_NODE, "in__gaitRiteConfig")
+            == real
         )
 
-    def test_hand_placed_parameter_node_uses_its_label(self):
-        nodes = {"param__hz__bofsh3": {"type": "parameterNode", "label": "hz"}}
-        assert (
-            self._twin("param__hz__bofsh3", self.F_NODE, None, nodes)
-            == f"e__hz__f__{self.F_CID}"
+    def test_hand_placed_nodes_resolve_through_their_labels(self):
+        nodes = {
+            "param__hz__bofsh3": {"type": "parameterNode", "label": "hz"},
+            "var__Raw__x1y2z3": {"type": "variableNode", "label": "Raw"},
+            "pathInput__mypath__abc123": {"type": "pathInputNode", "label": "mypath"},
+        }
+        assert connection_id("param__hz__bofsh3", self.F_NODE, "in__hz", nodes) == (
+            connection_id("param__hz", self.F_NODE, "in__hz")
+        )
+        assert connection_id("var__Raw__x1y2z3", self.F_NODE, "in__signal", nodes) == (
+            connection_id("var__Raw", self.F_NODE, "in__signal")
+        )
+        assert connection_id(
+            "pathInput__mypath__abc123", self.F_NODE, "in__filepath", nodes
+        ) == connection_id("pathInput__mypath", self.F_NODE, "in__filepath")
+
+    def test_placements_do_not_matter(self):
+        assert connection_id("var__Raw::main", f"{self.F_NODE}::pipe_x", "in__signal") == (
+            connection_id("var__Raw", self.F_NODE, "in__signal")
         )
 
-    def test_placement_qualified_target_stripped(self):
-        placed = f"{self.F_NODE}::main"
-        assert self._twin("var__Raw", placed) == f"e__Raw__f__{self.F_CID}"
+    def test_a_different_source_or_port_is_a_different_connection(self):
+        base = connection_id("var__Raw", self.F_NODE, "in__signal")
+        assert connection_id("var__Other", self.F_NODE, "in__signal") != base
+        assert connection_id("var__Raw", self.F_NODE, "in__other") != base
+        # One PathInput per port, but a DIFFERENT PathInput is a different
+        # connection: hiding A must not hide a drawn B.
+        assert connection_id("pathInput__A", self.F_NODE, "in__p") != connection_id(
+            "pathInput__B", self.F_NODE, "in__p"
+        )
 
-    def test_two_opaque_ids_returns_none(self):
-        assert self._twin("uuid-a", "uuid-b") is None
-
-    def test_var_to_non_fn_target_returns_none(self):
-        assert self._twin("var__Raw", "param__hz") is None
-
-    def test_two_fn_nodes_returns_none(self):
-        assert self._twin(self.F_NODE, f"fn__g__{_cid('g')}") is None
+    def test_a_variable_feeding_two_arguments_is_two_connections(self):
+        """The old `e__{type}__{fn}__{tok}` id had no port, so hiding one
+        hid both."""
+        assert connection_id("var__Raw", self.F_NODE, "in__a") != connection_id(
+            "var__Raw", self.F_NODE, "in__b"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3111,7 +3125,7 @@ class TestManualInputOverrides:
         history = {"gr": "GAITRiteLoaded"}
         wid = self._wid(history)
         index = self._index(wid, ("var__OtherGR", "in__gr", ""))
-        hidden = {f"e__GAITRiteLoaded__{self.FN}__{wid}"}
+        hidden = {connection_id("var__GAITRiteLoaded", fn_node_id(self.FN, wid), "in__gr")}
         assert manual_input_overrides(self.FN, wid, history, set(), index, None, hidden) == {
             "gr": "OtherGR"
         }
@@ -3136,7 +3150,7 @@ class TestManualInputOverrides:
         history = {"gr": "GAITRiteLoaded", "other": "X"}
         wid = self._wid(history)
         index = self._index(wid, ("var__Demographics", "in__side", ""))
-        hidden = {f"e__X__{self.FN}__{wid}"}
+        hidden = {connection_id("var__X", fn_node_id(self.FN, wid), "in__other")}
         assert manual_input_overrides(self.FN, wid, history, set(), index, None, hidden) == {
             "side": "Demographics"
         }

@@ -173,7 +173,7 @@ def put_edge(
 ) -> dict:
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.graph_builder import find_cycle, history_twin_edge_id
+    from scistack_gui.domain.graph_builder import connection_id, find_cycle
     from scistack_gui.domain.scope_filter import node_scope
 
     logger.info(
@@ -186,8 +186,8 @@ def put_edge(
     )
 
     # If this connection recreates a previously-hidden DB-derived edge
-    # (same connection — graph_builder.history_twin_edge_id, the one spelling
-    # of history edge ids), unhide the ORIGINAL edge instead of
+    # (same connection — graph_builder.connection_id, which history edges
+    # take as their id), unhide the ORIGINAL edge instead of
     # creating a redundant manual one. This is what makes delete+reconnect
     # idempotent: state/execution recompute fresh from the real DB history
     # under the original edge id, not a new manual-edge id. Scoped to the
@@ -195,23 +195,36 @@ def put_edge(
     # delete_edge below) so reconnecting in one pipeline never unhides
     # another pipeline's independent placement of the same shared wiring.
     manual_nodes = pipeline_store.get_manual_nodes(db)
-    candidate = history_twin_edge_id(
-        {"source": source, "target": target, "targetHandle": target_handle},
-        manual_nodes,
-    )
-    if candidate is not None:
-        positions_by_scope = layout_store.read_positions_by_scope()
-        scope_id = node_scope(target, manual_nodes, positions_by_scope)
-        if candidate in pipeline_store.get_hidden_edge_ids(db, scope_id):
+    candidate = connection_id(source, target, target_handle, manual_nodes)
+    positions_by_scope = layout_store.read_positions_by_scope()
+    scope_id = node_scope(target, manual_nodes, positions_by_scope)
+    hidden_here = pipeline_store.get_hidden_edge_ids(db, scope_id)
+    if not target_handle and candidate not in hidden_here:
+        # A redraw with no port (an API caller; the canvas always sends one)
+        # names the two NODES only. Restore the one hidden connection between
+        # them; with several, it is ambiguous, so a drawn edge is stored.
+        between = sorted(h for h in hidden_here if h.startswith(candidate))
+        if len(between) == 1:
+            candidate = between[0]
+        elif between:
             logger.info(
-                "[layout_service] put_edge: reconnecting hidden DB-derived edge %r "
-                "in scope=%r — unhiding instead of creating a manual edge",
-                candidate,
-                scope_id,
+                "[layout_service] put_edge: %d hidden connections between %s and %s "
+                "and no port given; storing a drawn edge instead of guessing: %s",
+                len(between),
+                source,
+                target,
+                between,
             )
-            pipeline_store.unhide_edge(db, candidate, scope_id)
-            _notify_dag_updated()
-            return {"ok": True, "unhidden": candidate}
+    if candidate in hidden_here:
+        logger.info(
+            "[layout_service] put_edge: reconnecting hidden DB-derived edge %r "
+            "in scope=%r — unhiding instead of creating a manual edge",
+            candidate,
+            scope_id,
+        )
+        pipeline_store.unhide_connection(db, candidate, scope_id)
+        _notify_dag_updated()
+        return {"ok": True, "unhidden": candidate}
 
     # Checked against manual edges only (not the full DB-derived data-lineage
     # graph): computing that graph (domain.pipeline_service.get_pipeline_graph

@@ -814,6 +814,7 @@ def _build_graph(
         manual_nodes=manual_nodes,
         token_for=token_for,
         is_current=identity.is_current,
+        fn_parameter_names=agg.fn_parameter_names,
     )
     disconnected_fkeys = gb.wiring_disconnected_fkeys(
         agg.fn_input_params,

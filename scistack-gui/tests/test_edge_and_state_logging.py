@@ -38,7 +38,9 @@ class TestBuildEdgesDetail:
     F_NODE = f"fn__f__{_cid('f-call')}"
 
     def test_db_derived_hidden_and_superseded_edges_are_named(self, caplog):
-        hidden_id = f"e__f__{self.F_KEY[1]}__Hidden"
+        from scistack_gui.domain.graph_builder import connection_id
+
+        hidden_id = connection_id(self.F_NODE, "var__Hidden")
         manual_twin = {
             "id": "manual__twin",
             "source": "var__Raw",
