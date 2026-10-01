@@ -76,7 +76,11 @@ export default function VariantsPopup({
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [pinFor, setPinFor] = useState<{ card: VariantCard; release: boolean } | null>(null)
-  const [deleteFor, setDeleteFor] = useState<VariantCard | null>(null)
+  // A whole card, or (records) only the record(s) at one location of it.
+  const [deleteFor, setDeleteFor] = useState<{
+    card: VariantCard
+    records?: { ids: string[]; label: string }
+  } | null>(null)
   const [showHistory, setShowHistory] = useState(false)
 
   const load = useCallback(async () => {
@@ -154,7 +158,8 @@ export default function VariantsPopup({
                 onToggle={() => toggle(card.card_id)}
                 onPin={() => setPinFor({ card, release: false })}
                 onRelease={() => setPinFor({ card, release: true })}
-                onDelete={() => setDeleteFor(card)}
+                onDelete={() => setDeleteFor({ card })}
+                onDeleteRecords={(ids, label) => setDeleteFor({ card, records: { ids, label } })}
               />
             ))}
 
@@ -217,7 +222,8 @@ export default function VariantsPopup({
       {deleteFor && (
         <DeleteDialog
           variable={variable}
-          card={deleteFor}
+          card={deleteFor.card}
+          records={deleteFor.records}
           onCancel={() => setDeleteFor(null)}
           onDone={async () => {
             setDeleteFor(null)
@@ -244,6 +250,7 @@ function CardView({
   onPin,
   onRelease,
   onDelete,
+  onDeleteRecords,
 }: {
   index: number
   card: VariantCard
@@ -254,6 +261,7 @@ function CardView({
   onPin: () => void
   onRelease: () => void
   onDelete: () => void
+  onDeleteRecords: (ids: string[], label: string) => void
 }) {
   const badge = statusBadge(card, hasDefault)
   const badgeStyle = { ...styles.badge, ...BADGE_COLORS[badge.code] }
@@ -325,7 +333,7 @@ function CardView({
           )}
 
           <div style={styles.sectionTitle}>Locations ({card.locations.length})</div>
-          <LocationTreeView branches={locationTree(card)} />
+          <LocationTreeView branches={locationTree(card)} onDelete={onDeleteRecords} />
 
           <div style={styles.sectionTitle}>Runs ({card.runs.length})</div>
           {card.runs.length === 0 && (
@@ -424,7 +432,19 @@ function MiniDag({ card, variable }: { card: VariantCard; variable: string }) {
   )
 }
 
-function LocationTreeView({ branches, depth = 0 }: { branches: LocationBranch[]; depth?: number }) {
+function LocationTreeView({
+  branches,
+  depth = 0,
+  path = [],
+  onDelete,
+}: {
+  branches: LocationBranch[]
+  depth?: number
+  /** The labels of the branches above, so a leaf can name its whole location. */
+  path?: string[]
+  /** Per-location delete: the record(s) at a leaf, never a whole branch. */
+  onDelete?: (ids: string[], label: string) => void
+}) {
   const [open, setOpen] = useState<Set<string>>(new Set())
   if (branches.length === 0) return <div style={styles.dim}>none</div>
   return (
@@ -432,6 +452,7 @@ function LocationTreeView({ branches, depth = 0 }: { branches: LocationBranch[];
       {branches.map(b => {
         const leaf = b.children.length === 0
         const isOpen = open.has(b.label)
+        const where = [...path, b.label].join(' · ')
         return (
           <div key={b.label}>
             <span
@@ -448,8 +469,28 @@ function LocationTreeView({ branches, depth = 0 }: { branches: LocationBranch[];
             >
               {leaf ? '·' : isOpen ? '▾' : '▸'} {b.label}
               {!leaf && <span style={styles.dim}> ({b.count})</span>}
+              {leaf && b.recordIds.length > 1 && (
+                <span style={styles.dim}> ({b.recordIds.length} records)</span>
+              )}
             </span>
-            {!leaf && isOpen && <LocationTreeView branches={b.children} depth={depth + 1} />}
+            {leaf && onDelete && b.recordIds.length > 0 && (
+              <button
+                type="button"
+                style={styles.leafDelete}
+                onClick={() => onDelete(b.recordIds, where)}
+                title={`Delete only the record${b.recordIds.length === 1 ? '' : 's'} of this variant at ${where} (and what was computed from it)`}
+              >
+                🗑
+              </button>
+            )}
+            {!leaf && isOpen && (
+              <LocationTreeView
+                branches={b.children}
+                depth={depth + 1}
+                path={[...path, b.label]}
+                onDelete={onDelete}
+              />
+            )}
           </div>
         )
       })}
@@ -519,14 +560,18 @@ function ReasonDialog({
 function DeleteDialog({
   variable,
   card,
+  records,
   onCancel,
   onDone,
 }: {
   variable: string
   card: VariantCard
+  /** Set: delete only these record(s) of the card (one location), not the card. */
+  records?: { ids: string[]; label: string }
   onCancel: () => void
   onDone: () => Promise<void>
 }) {
+  const recordIds = records?.ids ?? []
   const [remove, setRemove] = useState<ParameterOffer[]>([])
   const [plan, setPlan] = useState<DeletePlanReply | null>(null)
   const [planning, setPlanning] = useState(true)
@@ -550,6 +595,7 @@ function DeleteDialog({
     callBackend('delete_variant_plan', {
       variable,
       card_id: card.card_id,
+      record_ids: recordIds,
       remove_parameter_values: removeValues,
     })
       .then(p => live && setPlan(p as DeletePlanReply))
@@ -558,14 +604,22 @@ function DeleteDialog({
     return () => {
       live = false
     }
-  }, [variable, card.card_id, removeValues])
+    // recordIds is derived from `records`, which is fixed for the dialog's life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variable, card.card_id, removeValues, records])
 
-  const offers = card.parameter_offers.filter(o => o.declared)
+  // Removing a value from a Parameter retires a SETTING, which is a whole-card
+  // decision; a per-location delete never offers it.
+  const offers = records ? [] : card.parameter_offers.filter(o => o.declared)
 
   return (
     <div style={styles.subOverlay} onClick={e => { e.stopPropagation(); if (!busy) onCancel() }}>
       <div style={{ ...styles.subDialog, width: 620 }} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div style={{ ...modalStyles.dialogTitle, color: '#ff9a9a' }}>Delete {cardHeading(card)}?</div>
+        <div style={{ ...modalStyles.dialogTitle, color: '#ff9a9a' }}>
+          {records
+            ? `Delete ${cardHeading(card)} at ${records.label}?`
+            : `Delete ${cardHeading(card)}?`}
+        </div>
         <div style={styles.dim}>
           This really deletes the records, and everything computed from them. It cannot be undone; a tombstone records
           what was deleted, by whom and why.
@@ -668,6 +722,7 @@ function DeleteDialog({
                     const out = (await callBackend('delete_variant', {
                       variable,
                       card_id: card.card_id,
+                      record_ids: recordIds,
                       reason: reason.trim(),
                       fingerprint: plan.fingerprint,
                       remove_parameter_values: removeValues,
@@ -746,6 +801,10 @@ const styles: Record<string, React.CSSProperties> = {
   handle: { opacity: 0, pointerEvents: 'none' },
   branch: { fontSize: 11, color: '#ccc', cursor: 'pointer', fontFamily: 'monospace' },
   leaf: { fontSize: 11, color: '#aaa', fontFamily: 'monospace' },
+  leafDelete: {
+    background: 'none', border: 'none', cursor: 'pointer', fontSize: 11,
+    padding: '0 4px', opacity: 0.7,
+  },
   history: { marginTop: 10 },
   historyBody: { marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 },
   dim: { fontSize: 11, color: '#9a9ab0', wordBreak: 'break-word' },

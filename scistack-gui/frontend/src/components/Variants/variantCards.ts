@@ -85,6 +85,8 @@ export interface VariantCard {
   current_location_count: number
   location_keys: string[]
   locations: Record<string, string | number>[]
+  /** Record ids at each location, aligned with `locations`. */
+  location_record_ids: string[][]
   runs: RunRef[]
   upstream: VariantUpstream
   is_default: boolean
@@ -287,6 +289,8 @@ export interface LocationBranch {
   label: string
   count: number
   children: LocationBranch[]
+  /** Every record id at or under this branch: what its delete targets. */
+  recordIds: string[]
 }
 
 /**
@@ -296,23 +300,29 @@ export interface LocationBranch {
  */
 export function locationTree(card: VariantCard): LocationBranch[] {
   const keys = card.location_keys ?? []
-  function build(rows: Record<string, string | number>[], depth: number): LocationBranch[] {
+  type Row = { loc: Record<string, string | number>; ids: string[] }
+  const rows: Row[] = (card.locations ?? []).map((loc, i) => ({
+    loc,
+    ids: card.location_record_ids?.[i] ?? [],
+  }))
+  function build(members: Row[], depth: number): LocationBranch[] {
     if (depth >= keys.length) return []
-    const groups = new Map<string, Record<string, string | number>[]>()
-    for (const row of rows) {
-      const value = row[keys[depth]]
+    const groups = new Map<string, Row[]>()
+    for (const row of members) {
+      const value = row.loc[keys[depth]]
       const label = value === undefined ? '—' : String(value)
       const list = groups.get(label)
       if (list) list.push(row)
       else groups.set(label, [row])
     }
-    return [...groups.entries()].map(([label, members]) => ({
+    return [...groups.entries()].map(([label, group]) => ({
       label: `${keys[depth]} ${label}`,
-      count: members.length,
-      children: build(members, depth + 1),
+      count: group.length,
+      children: build(group, depth + 1),
+      recordIds: group.flatMap(r => r.ids),
     }))
   }
-  return build(card.locations ?? [], 0)
+  return build(rows, 0)
 }
 
 /** The delete dialog's per-variable lines, named records first. */

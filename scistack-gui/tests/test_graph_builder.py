@@ -2277,15 +2277,33 @@ class TestMergeManualNodes:
         assert graduations[0].old_id == "uuid-old"
         assert graduations[0].new_id == "var__Raw::main"
 
-    def test_graduation_skipped_if_own_placement_already_exists(self):
-        # If THIS scope's placement is already positioned, do not re-graduate.
+    def test_an_entity_node_graduates_onto_an_already_placed_twin(self):
+        """Regression (2026-10-01, GaitRiteLoaded_UA): a stale saved position for
+        the twin's placement used to block graduation forever, leaving a duplicate
+        variable node. A variable names ONE entity, so the hand-placed node now
+        folds in and its position wins (user decision)."""
         existing = [self._db_node("var__Raw", "variableNode", "Raw")]
         manual = {"uuid-old": {"type": "variableNode", "label": "Raw", "pipeline_id": "main"}}
         to_add, graduations = merge_manual_nodes(
             existing, manual, saved_positions={"var__Raw::main": {"x": 10, "y": 20}}
         )
-        assert "uuid-old" in to_add
-        assert len(graduations) == 0
+        assert "uuid-old" not in to_add
+        assert [(g.old_id, g.new_id, g.take_old_position) for g in graduations] == [
+            ("uuid-old", "var__Raw::main", True)
+        ]
+
+    def test_a_function_node_still_skips_an_already_placed_twin(self):
+        """Function nodes keep the old rule: a second same-named function node can
+        be a genuinely new call site, so it is not folded in by label."""
+        existing = [self._db_node("fn__f__abcdef0123456789", "functionNode", "f")]
+        manual = {"uuid-fn": {"type": "functionNode", "label": "f", "pipeline_id": "main"}}
+        to_add, graduations = merge_manual_nodes(
+            existing,
+            manual,
+            saved_positions={"fn__f__abcdef0123456789::main": {"x": 1, "y": 2}},
+        )
+        assert "uuid-fn" in to_add
+        assert graduations == []
 
     def test_same_label_different_scopes_graduate_independently(self):
         """The core regression test for the placement rework: two manual

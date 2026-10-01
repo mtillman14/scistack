@@ -139,6 +139,32 @@ class TestPins:
 # ---------------------------------------------------------------------------
 
 
+class TestDeleteOneLocation:
+    def test_record_ids_target_plans_and_deletes_one_location(self, two_cards):
+        payload = svc.variable_variants(two_cards, "FilteredSignal")
+        card = _card(payload, 20)
+        assert len(card["location_record_ids"]) == len(card["locations"])
+        rids = card["location_record_ids"][0]
+        plan = svc.delete_variant_plan(
+            two_cards, "FilteredSignal", card["card_id"], record_ids=rids
+        )
+        assert plan["by_variable"] == {"FilteredSignal": 1}
+        svc.delete_variant(
+            two_cards,
+            "FilteredSignal",
+            card["card_id"],
+            "stale record",
+            plan["fingerprint"],
+            record_ids=rids,
+        )
+        after = _card(svc.variable_variants(two_cards, "FilteredSignal"), 20)
+        assert len(after["locations"]) == len(card["locations"]) - 1
+
+    def test_neither_a_card_nor_records_is_refused(self, two_cards):
+        with pytest.raises(ValueError, match="card_id or record_ids"):
+            svc.delete_variant_plan(two_cards, "FilteredSignal", "")
+
+
 class TestDelete:
     def test_plan_then_delete(self, two_cards):
         card = _card(svc.variable_variants(two_cards, "FilteredSignal"), 20)

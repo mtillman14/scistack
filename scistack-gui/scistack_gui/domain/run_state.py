@@ -26,6 +26,7 @@ def propagate_run_states(
     fn_input_params: dict[FnKey, dict],
     fn_outputs: dict[FnKey, set],
     disconnected_fkeys: set[FnKey] | None = None,
+    hidden_fkeys: set[FnKey] | None = None,
 ) -> dict[str, str]:
     """Propagate run states through the DAG, per for_each call site.
 
@@ -45,6 +46,12 @@ def propagate_run_states(
             always wins over pending/green) — the DAG loop below then
             cascades that redness downstream through var_state exactly like
             any other red own-state, no separate cascade needed.
+        hidden_fkeys: {(fn_name, call_id), ...} — call sites whose canvas
+            node the user hid (``graph_builder.hidden_fn_fkeys``). Left out of
+            the cascade ENTIRELY: a hidden node is not a producer of anything
+            on screen, so it neither colours its output variables nor takes a
+            state of its own. Without this, a hidden disconnected phantom kept
+            its output variable red by the worst-producer rule (2026-10-01).
 
     Returns:
         {node_id: "green"|"pending"|"red"} for fn__ and var__ nodes, where
@@ -70,6 +77,22 @@ def propagate_run_states(
 
     # Make a mutable copy so we don't modify the caller's dict.
     fn_own_state = dict(fn_own_states)
+
+    # Hidden nodes take no part: not producers, not consumers, no state.
+    if hidden_fkeys:
+        dropped = sorted(k for k in hidden_fkeys if k in fn_own_state)
+        for fkey in hidden_fkeys:
+            fn_own_state.pop(fkey, None)
+        fn_input_params = {k: v for k, v in fn_input_params.items() if k not in hidden_fkeys}
+        fn_outputs = {k: v for k, v in fn_outputs.items() if k not in hidden_fkeys}
+        if disconnected_fkeys:
+            disconnected_fkeys = set(disconnected_fkeys) - set(hidden_fkeys)
+        if dropped:
+            logger.info(
+                "[run_state] left %d hidden call site(s) out of the cascade: %s",
+                len(dropped),
+                dropped,
+            )
 
     # Disconnected wins over everything else — a call site missing a
     # required inbound edge is forced red even if it was green or staged

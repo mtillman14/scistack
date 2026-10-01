@@ -385,3 +385,62 @@ class TestDisconnected:
             disconnected_fkeys=set(),
         )
         assert result[fn("f")] == "green"
+
+
+# ---------------------------------------------------------------------------
+# Hidden nodes take no part (2026-10-01)
+# ---------------------------------------------------------------------------
+
+
+class TestHiddenNodes:
+    """A hidden node is not a producer of anything on screen. The regression:
+    a hidden, disconnected phantom ``pandas.read_csv`` node still produced
+    ``DemographicsTable`` in the cascade, and the worst-producer rule held the
+    variable red after the visible node had re-run it green."""
+
+    def _phantom_and_real(self, **extra):
+        return propagate_run_states(
+            fn_own_states={K("real"): "green", K("phantom"): "green"},
+            fn_input_params={K("real"): {}, K("phantom"): {}},
+            fn_outputs={K("real"): {"Table"}, K("phantom"): {"Table", "Other"}},
+            disconnected_fkeys={K("phantom")},
+            **extra,
+        )
+
+    def test_without_the_hide_the_phantom_drags_the_variable_red(self):
+        """Control: this is the bug's shape when the hide is not passed."""
+        assert self._phantom_and_real()[var("Table")] == "red"
+
+    def test_a_hidden_node_does_not_colour_its_outputs(self):
+        result = self._phantom_and_real(hidden_fkeys={K("phantom")})
+        assert result[var("Table")] == "green"
+        assert result[fn("real")] == "green"
+
+    def test_a_hidden_node_has_no_state_of_its_own(self):
+        result = self._phantom_and_real(hidden_fkeys={K("phantom")})
+        assert fn("phantom") not in result
+        # A variable only the hidden node produced is not produced at all.
+        assert var("Other") not in result
+
+    def test_a_downstream_step_reads_the_visible_producer(self):
+        result = propagate_run_states(
+            fn_own_states={K("real"): "green", K("phantom"): "red", K("down"): "green"},
+            fn_input_params={K("real"): {}, K("phantom"): {}, K("down"): {"t": "Table"}},
+            fn_outputs={K("real"): {"Table"}, K("phantom"): {"Table"}, K("down"): {"Out"}},
+            hidden_fkeys={K("phantom")},
+        )
+        assert result[fn("down")] == "green"
+
+
+def test_hidden_fn_fkeys_maps_a_hidden_node_id_to_its_call_sites():
+    """The node token is derived as hidden_wirings derives it, so a hidden
+    ``fn__{fn}__{token}`` id (placement-qualified or not) finds its call site."""
+    from scistack_gui.domain.graph_builder import hidden_fn_fkeys, wiring_id
+
+    params = {K("loader"): {}, K("other"): {}}
+    outputs = {K("loader"): {"Table"}, K("other"): {"Else"}}
+    token_for = lambda fn_name, wid: wid  # noqa: E731 — identity tokens
+    wid = wiring_id("loader", {}, {"Table"}, {})
+    for hidden in (f"fn__loader__{wid}", f"fn__loader__{wid}::main"):
+        assert hidden_fn_fkeys(params, outputs, {}, {hidden}, token_for) == {K("loader")}
+    assert hidden_fn_fkeys(params, outputs, {}, set(), token_for) == set()

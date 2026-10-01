@@ -183,15 +183,24 @@ def pin_newest_variant(db, variable: str, reason: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _delete_targets(variable: str, card_id: str, remove_parameter_values) -> list[dict]:
-    targets = [{"variable": variable, "card_id": card_id}]
+def _delete_targets(
+    variable: str, card_id: str, remove_parameter_values, record_ids=None
+) -> list[dict]:
+    """A whole card, or (``record_ids``) only the named records of it: the
+    popup's per-location delete. Either is widened by Parameter removals."""
+    if record_ids:
+        targets = [{"variable": variable, "record_ids": list(record_ids)}]
+    elif card_id:
+        targets = [{"variable": variable, "card_id": card_id}]
+    else:
+        raise ValueError("delete needs a card_id or record_ids")
     for item in remove_parameter_values or ():
         targets.append({"parameter": item["parameter"], "value": item["value"]})
     return targets
 
 
 def delete_variant_plan(
-    db, variable: str, card_id: str, remove_parameter_values=None
+    db, variable: str, card_id: str, remove_parameter_values=None, record_ids=None
 ) -> dict:
     """The confirmation dialog's contents: ``Inspector.delete_plan`` for the
     card, widened by any "also remove from the Parameter" choices. Record ids
@@ -199,7 +208,7 @@ def delete_variant_plan(
     kept, so the confirm step can refuse if the database changed."""
     from scistack_gui.db import db_connection
 
-    targets = _delete_targets(variable, card_id, remove_parameter_values)
+    targets = _delete_targets(variable, card_id, remove_parameter_values, record_ids)
     with db_connection("delete_variant_plan"):
         plan = db.inspect.delete_plan(targets)
     payload = _jsonable(plan)
@@ -219,6 +228,7 @@ def delete_variant(
     reason: str,
     fingerprint: str,
     remove_parameter_values=None,
+    record_ids=None,
 ) -> dict:
     """Delete the card (and, if asked, every variant built with the removed
     Parameter values), then take those values out of the Parameters' source.
@@ -234,7 +244,7 @@ def delete_variant(
     from scistack_gui import registry
     from scistack_gui.services.layout_service import update_parameter
 
-    targets = _delete_targets(variable, card_id, remove_parameter_values)
+    targets = _delete_targets(variable, card_id, remove_parameter_values, record_ids)
     result = Mutator(db).delete_variant(targets, reason, expect_fingerprint=fingerprint)
 
     edits: list[dict] = []

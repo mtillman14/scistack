@@ -559,15 +559,26 @@ def rebase_node_positions(
     return moved
 
 
-def graduate_manual_node(old_id: str, new_id: str) -> None:
+def graduate_manual_node(old_id: str, new_id: str, take_old_position: bool = False) -> None:
     """Transfer position from a manual node to a DB-derived node ID and
     remove the manual entry. Scope-aware: the new id stays on whichever
-    canvas the old node was placed on."""
+    canvas the old node was placed on.
+
+    ``take_old_position``: when the target already has a position in a scope,
+    replace it with the manual node's (``GraduationAction.take_old_position``,
+    the entity-node case). Default False keeps the target's position.
+    """
     with _layout_write("graduate_manual_node"):
         data = _load()
         for scope in data["positions"].values():
             old_pos = scope.get(old_id)
-            if old_pos and new_id not in scope:
+            if old_pos and (new_id not in scope or take_old_position):
+                if new_id in scope:
+                    logger.info(
+                        "[layout] graduate_manual_node %s -> %s: replacing the "
+                        "target's position %s with the hand-placed %s",
+                        old_id, new_id, scope[new_id], old_pos,
+                    )
                 scope[new_id] = old_pos
             scope.pop(old_id, None)
         _save(data)

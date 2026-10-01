@@ -196,6 +196,19 @@ class GraduationAction:
 
     old_id: str
     new_id: str
+    #: True when the target placement already had a saved position and the
+    #: hand-placed node's position should replace it (the user just placed and
+    #: wired the manual node; the twin's position is usually stale). False keeps
+    #: the original rule: the target's position is never overwritten.
+    take_old_position: bool = False
+
+
+#: Node types that name ONE entity, so two of them for the same label on one
+#: canvas is never meaningful: a hand-placed one always folds into its DB twin,
+#: even when the twin's placement is already positioned (2026-10-01). Function
+#: nodes are not here: a second same-named function node can be a genuinely
+#: new call site, and they graduate by wiring (api/pipeline refinement).
+ENTITY_NODE_TYPES = frozenset({"variableNode", "pathInputNode", "parameterNode"})
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +291,7 @@ def group_call_sites_by_wiring(
     manual_edges: "list[dict] | tuple" = (),
     manual_nodes: "dict[str, dict] | None" = None,
     hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
+    hidden_node_ids: "set[str] | frozenset[str]" = frozenset(),
 ) -> tuple[AggregatedData, dict[str, str], dict[str, list[str]]]:
     """Re-key the aggregated call-site data to (fn_name, node token) groups.
 
@@ -452,6 +466,16 @@ def group_call_sites_by_wiring(
             hidden_edge_ids=hidden_edge_ids,
         ),
         grouped.fn_outputs,
+        # Hidden nodes take no part here either (pass 1 dropped their call
+        # sites via hidden_fn_fkeys). Grouped keys ARE (fn, node token), so a
+        # hidden node id parses straight to one. Without this, a hidden node
+        # that alone produced a variable a visible node reads would leave that
+        # consumer unresolved: marked red as a "possible cycle".
+        hidden_fkeys={
+            parsed
+            for parsed in (parse_fn_node_id(nid) for nid in hidden_node_ids or ())
+            if parsed is not None and parsed in grouped.fn_input_params
+        },
     )
 
     n_groups = len(grouped.fn_input_params)
@@ -2637,6 +2661,55 @@ def hidden_wirings(
     return result
 
 
+def hidden_fn_fkeys(
+    fn_input_params: dict[FnKey, dict],
+    fn_outputs: dict[FnKey, set],
+    path_inputs: dict[str, dict],
+    hidden_ids: "set[str] | frozenset[str]",
+    token_for,
+) -> set[FnKey]:
+    """The PRE-GROUPING call sites whose canvas node the user hid.
+
+    Run states are computed on ungrouped call sites, before
+    :func:`filter_hidden` runs (which works on grouped keys), so without this a
+    hidden node stayed in the state cascade: invisible on the canvas, yet still
+    a producer of its output variables. A variable takes its WORST producer's
+    state, so a hidden, disconnected phantom node held ``DemographicsTable`` red
+    after the visible node had re-run it green (2026-10-01; the phantom
+    ``fn__pandas.read_csv__4b9cac03f80c4fc1`` was hidden twice).
+
+    The node token is derived exactly as :func:`hidden_wirings` derives it
+    (``token_for(fn, wiring_id(...))``), so a call site maps to the same node
+    id here as everywhere else.
+    """
+    hidden_tokens: set[tuple[str, str]] = set()
+    for nid in hidden_ids or ():
+        for candidate in (nid, strip_placement(nid)):
+            parsed = parse_fn_node_id(candidate)
+            if parsed is not None:
+                hidden_tokens.add(parsed)
+    if not hidden_tokens:
+        return set()
+    pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
+    result: set[FnKey] = set()
+    for fkey, params in fn_input_params.items():
+        fn, _cid = fkey
+        wid = token_for(
+            fn,
+            wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})),
+        )
+        if (fn, wid) in hidden_tokens:
+            result.add(fkey)
+    if result:
+        logger.info(
+            "[graph_builder] hidden_fn_fkeys: %d call site(s) belong to hidden node(s) "
+            "and are left out of the state cascade: %s",
+            len(result),
+            sorted(result),
+        )
+    return result
+
+
 def wiring_disconnected_fkeys(
     fn_input_params: dict[FnKey, dict],
     fn_outputs: dict[FnKey, set],
@@ -3046,13 +3119,44 @@ def merge_manual_nodes(
                     GraduationAction(old_id=node_id, new_id=target_id)
                 )
                 continue
+            if meta["type"] in ENTITY_NODE_TYPES:
+                # The twin is already positioned in this scope, often by a stale
+                # earlier placement (2026-10-01: a 09-30 node's position blocked
+                # `GaitRiteLoaded_UA` forever and both nodes stayed drawn).
+                # Graduate anyway, keeping the hand-placed node's position:
+                # the user just placed and wired it (user decision).
+                logger.info(
+                    "[graph_builder] merge_manual_nodes: graduating %s onto the "
+                    "already-placed %s, keeping the hand-placed position (the "
+                    "target's saved position is replaced)",
+                    node_id,
+                    target_id,
+                )
+                graduations.append(
+                    GraduationAction(
+                        old_id=node_id, new_id=target_id, take_old_position=True
+                    )
+                )
+                continue
+            # INFO, not DEBUG (2026-10-01): this branch leaves a hand-placed
+            # node BESIDE its DB-derived twin on the canvas, and "why is there
+            # a duplicate node" had no answer in scidb.log.
+            logger.info(
+                "[graph_builder] merge_manual_nodes: NOT graduating %s into %s — "
+                "the target already has a saved position, so both stay on the "
+                "canvas (a duplicate %r node)",
+                node_id,
+                target_id,
+                meta["label"],
+            )
         elif len(candidates) > 1:
-            logger.debug(
-                "merge_manual_nodes: not graduating %s — %d DB nodes share label %r "
-                "(multiple call sites)",
+            logger.info(
+                "[graph_builder] merge_manual_nodes: NOT graduating %s — %d DB nodes "
+                "share label %r %s; it stays a separate manual node",
                 node_id,
                 len(candidates),
                 meta["label"],
+                sorted(candidates),
             )
         to_add.append(node_id)
 

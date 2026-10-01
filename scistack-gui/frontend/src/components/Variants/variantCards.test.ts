@@ -52,6 +52,7 @@ function card(over: Partial<VariantCard> = {}): VariantCard {
       { subject: 'S01', trial: '2' },
       { subject: 'S02', trial: '1' },
     ],
+    location_record_ids: [['r1'], ['r2'], ['r3', 'r4']],
     runs: [],
     upstream: {
       variables: ['Filtered', 'Raw', 'Steps'],
@@ -124,6 +125,10 @@ test('locations group by schema level with counts', () => {
   assert.deepEqual(tree.map(b => [b.label, b.count]), [['subject S01', 2], ['subject S02', 1]])
   assert.deepEqual(tree[0].children.map(b => b.label), ['trial 1', 'trial 2'])
   assert.deepEqual(tree[0].children[0].children, [])
+  // Each branch knows the records under it: what its delete button targets.
+  assert.deepEqual(tree[0].recordIds, ['r1', 'r2'])
+  assert.deepEqual(tree[1].recordIds, ['r3', 'r4'])
+  assert.deepEqual(tree[0].children[1].recordIds, ['r2'])
 })
 
 const plan: DeletePlanReply = {

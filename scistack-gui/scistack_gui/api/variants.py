@@ -59,7 +59,10 @@ class ParameterValue(BaseModel):
 
 class DeletePlanRequest(BaseModel):
     variable: str
-    card_id: str
+    #: The card to delete whole, or "" with ``record_ids`` naming only some of
+    #: its records (the per-location delete).
+    card_id: str = ""
+    record_ids: list[str] = []
     #: The "also remove <value> from <Parameter>" choices; each widens the
     #: delete to every variant built with that value.
     remove_parameter_values: list[ParameterValue] = []
@@ -110,7 +113,7 @@ def _delete_variant_plan(db, req: DeletePlanRequest) -> dict:
     from scistack_gui.services import variant_cards_service
 
     return variant_cards_service.delete_variant_plan(
-        db, req.variable, req.card_id, _values(req)
+        db, req.variable, req.card_id, _values(req), req.record_ids
     )
 
 
@@ -118,7 +121,13 @@ def _delete_variant(db, req: DeleteRequest) -> dict:
     from scistack_gui.services import variant_cards_service
 
     return variant_cards_service.delete_variant(
-        db, req.variable, req.card_id, req.reason, req.fingerprint, _values(req)
+        db,
+        req.variable,
+        req.card_id,
+        req.reason,
+        req.fingerprint,
+        _values(req),
+        req.record_ids,
     )
 
 

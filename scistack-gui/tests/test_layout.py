@@ -278,3 +278,13 @@ class TestGraduateManualNode:
         layout_store.graduate_manual_node("manual__fn_a", "fn__fn_a")
         pos = layout_store.read_layout()["positions"]["fn__fn_a"]
         assert pos == {"x": 999.0, "y": 888.0}
+
+    def test_take_old_position_replaces_the_canonical_position(self, layout_path):
+        """The entity-node case (2026-10-01): the hand-placed node's position wins
+        over the twin's saved (often stale) one, and the manual entry goes."""
+        layout_store.write_node_position("var__Raw", 999.0, 888.0)
+        layout_store.write_manual_node("var__Raw__abc123", 10.0, 20.0, "variableNode", "Raw")
+        layout_store.graduate_manual_node("var__Raw__abc123", "var__Raw", take_old_position=True)
+        data = layout_store.read_layout()
+        assert data["positions"]["var__Raw"] == {"x": 10.0, "y": 20.0}
+        assert "var__Raw__abc123" not in data["positions"]

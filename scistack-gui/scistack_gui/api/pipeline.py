@@ -448,6 +448,7 @@ def _compute_run_states(
     disconnected_fkeys: set[tuple] | None = None,
     *,
     propagation_input_params: dict[tuple, dict] | None = None,
+    hidden_fkeys: set[tuple] | None = None,
 ) -> dict[str, str]:
     """
     Compute run_state for every function and variable node.
@@ -567,6 +568,10 @@ def _compute_run_states(
         else fn_input_params,
         fn_outputs,
         disconnected_fkeys,
+        # Call sites of HIDDEN nodes (graph_builder.hidden_fn_fkeys): run
+        # states are computed here, before filter_hidden, so the cascade has
+        # to be told which producers are not on screen.
+        hidden_fkeys=hidden_fkeys,
     )
 
     elapsed_ms = (time.monotonic() - t0) * 1000
@@ -846,6 +851,13 @@ def _build_graph(
             agg.fn_outputs,
             disconnected_fkeys,
             propagation_input_params=state_input_params,
+            hidden_fkeys=gb.hidden_fn_fkeys(
+                agg.fn_input_params,
+                agg.fn_outputs,
+                agg.path_inputs,
+                hidden_ids,
+                token_for,
+            ),
         )
         logger.info("[pipeline] computed run states for %d nodes", len(run_states))
     else:
@@ -863,6 +875,7 @@ def _build_graph(
         manual_edges=manual_edges_for_fn_lookup,
         manual_nodes=manual_nodes,
         hidden_edge_ids=hidden_edge_ids,
+        hidden_node_ids=hidden_ids,
         token_for=token_for,
         is_current=identity.is_current,
     )
@@ -1309,7 +1322,9 @@ def _build_graph(
     # Execute graduation side effects.
     logger.info("[pipeline] Executing %d graduation action(s)", len(graduations))
     for action in graduations:
-        layout_store.graduate_manual_node(action.old_id, action.new_id)
+        layout_store.graduate_manual_node(
+            action.old_id, action.new_id, take_old_position=action.take_old_position
+        )
         logger.debug(
             "[pipeline] graduated manual node: %s -> %s", action.old_id, action.new_id
         )
