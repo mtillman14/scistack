@@ -5732,6 +5732,11 @@ def _save_results(
     # ===========================================================================
     time.perf_counter()
     total_saved = 0
+    # One line per output that could not be saved. Raised as OutputSaveError
+    # after every output has been attempted and provenance written for what
+    # did save -- a logged ERROR alone let a run that saved nothing report
+    # success (scidb.log 2026-10-01, GaitRiteSymmetry 0 of 420).
+    save_failures: list[str] = []
 
     for (output_idx, save_path), items in batch_items.items():
         output_obj = outputs[output_idx]
@@ -5871,6 +5876,10 @@ def _save_results(
             Log.error(
                 f"failed to save {_output_name(output_obj)}: {type(e).__name__}: {e}"
             )
+            save_failures.append(
+                f"{_output_name(output_obj)}: {len(items)} record(s) not saved "
+                f"({type(e).__name__}: {e})"
+            )
             for data, meta in items[:3]:
                 meta_str = ", ".join(
                     f"{k}={v}" for k, v in meta.items() if not k.startswith("__")
@@ -5956,6 +5965,10 @@ def _save_results(
             except Exception as e:
                 Log.error(
                     f"[error] failed generates_file save for {_output_name(output_obj)}: {e}"
+                )
+                save_failures.append(
+                    f"{_output_name(output_obj)} (generates_file): 1 item not saved "
+                    f"({type(e).__name__}: {e})"
                 )
 
     # ===========================================================================
@@ -6045,6 +6058,14 @@ def _save_results(
         f"[batch_save] Total: saved {total_saved} record(s) in {batch_total_elapsed:.3f}s "
         f"({total_saved / batch_total_elapsed:.1f} records/s)"
     )
+    if save_failures:
+        from .exceptions import OutputSaveError
+
+        Log.error(
+            f"[batch_save] {fn_name}: {len(save_failures)} output(s) NOT saved; "
+            f"the run fails: " + "; ".join(save_failures)
+        )
+        raise OutputSaveError(fn_name, save_failures, total_saved)
 
 
 # ---------------------------------------------------------------------------

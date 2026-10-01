@@ -250,3 +250,30 @@ liveness. Not needed: the run holds the DuckDB lock from
 `configure_database` to `close_database`, so leg B already answers "still
 going" without touching the lowest MATLAB layer. Revisit if runs that
 legitimately release the lock mid-way turn out to matter.
+
+---
+
+## A run that saved nothing is a failure (2026-10-01)
+
+`verdict=done` means the script finished without an uncaught error. A failed
+**save** was not one: `foreach._save_results` caught each output's batch-insert
+error, logged ERROR, and returned normally. On 2026-10-01 a run computed 420
+`GaitRiteSymmetry` results, saved 0 (the table had no `A_Idx_GR` column), and
+was reported `done`.
+
+Now `_save_results` records every output whose batch save (or generates_file
+save) fails. It finishes the other outputs and writes provenance for what did
+save, then raises `scidb.OutputSaveError`. The error names each failed output,
+how many records were lost, and the cause. Nothing on either path catches it:
+- **Python:** `for_each` → `_for_each_save_resolved` → `_save_results`;
+- **MATLAB:** `+scidb/for_each.m` calls `bridge.for_each_save` outside any
+  `try`. The Python error becomes a MATLAB error, and the generated script's
+  `catch` writes the failure marker with the message.
+
+Records that `save_batch` **skips** individually (schema-incompatible results,
+which log WARN "N of M record(s) SKIPPED") are not a failure: the rest of that
+output saved. With an EachOf (several Parameter values), a failed save stops
+the remaining alternatives.
+
+scidb.log: `[batch_save] <fn>: N output(s) NOT saved; the run fails: ...`.
+Tests: `scidb/tests/test_output_save_error.py`.

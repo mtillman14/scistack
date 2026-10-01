@@ -79,3 +79,71 @@ class DatabaseLockedError(SciStackError):
     """
 
     pass
+
+
+class OutputSaveError(SciStackError):
+    """Raised by for_each when an output could not be saved.
+
+    The function ran, but its results did not reach the database. The save
+    used to log ERROR and return normally, so a MATLAB run that computed 420
+    results and saved none was reported "done" (scidb.log 2026-10-01,
+    GaitRiteSymmetry). Raised after every output has been attempted and
+    provenance has been written for what did save, so one failing output
+    neither hides nor blocks the others.
+
+    ``failures`` holds one line per failed output: its name, how many records
+    were lost, and the cause.
+    """
+
+    def __init__(self, fn_name: str, failures: "list[str]", saved: int) -> None:
+        self.fn_name = fn_name
+        self.failures = list(failures)
+        self.saved = saved
+        super().__init__(
+            f"{fn_name}: {len(self.failures)} output(s) could not be saved "
+            f"({saved} record(s) saved): " + "; ".join(self.failures)
+        )
+
+
+class ColumnSetChangedError(SciStackError):
+    """Raised by save_batch when a save's data columns differ from the ones
+    the variable already stores.
+
+    A variable's table takes its columns from its first save. A save with
+    other columns used to fail as an opaque DuckDB ``Binder Error`` (a new
+    column), or, worse, succeed and overwrite the variable's column list so
+    the OLD records loaded without their columns (a missing column). This
+    names the problem and the two ways out. Nothing is written for the batch.
+    """
+
+    def __init__(
+        self,
+        variable: str,
+        added: "list[str]",
+        removed: "list[str]",
+        n_existing: int,
+    ) -> None:
+        self.variable = variable
+        self.added = list(added)
+        self.removed = list(removed)
+        self.n_existing = n_existing
+        parts = []
+        if self.added:
+            parts.append(f"{len(self.added)} new ({_preview(self.added)})")
+        if self.removed:
+            parts.append(f"{len(self.removed)} missing ({_preview(self.removed)})")
+        super().__init__(
+            f"{variable} already stores {n_existing} record(s) with a different "
+            f"set of data columns than these results: " + " and ".join(parts) + ". "
+            f"A variable keeps the columns of its first save, so nothing was "
+            f"saved. To fix it, either save this output into a NEW variable "
+            f"(for example {variable}_2), or delete {variable}'s existing records "
+            f"(in the GUI: Variants popup -> Delete, which also deletes what was "
+            f"computed from them) and run again; an emptied variable takes the "
+            f"new columns."
+        )
+
+
+def _preview(names: "list[str]", limit: int = 4) -> str:
+    shown = ", ".join(names[:limit])
+    return shown + (f", ... +{len(names) - limit} more" if len(names) > limit else "")

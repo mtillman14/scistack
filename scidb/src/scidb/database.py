@@ -1278,6 +1278,60 @@ class DatabaseManager:
 
         ensure_provenance_tables(self._duck)
 
+    def _check_column_set(
+        self, table_name: str, variable_class: type[BaseVariable], columns
+    ) -> None:
+        """The one owner of "may this save write these data columns into the
+        variable's existing table". Call it before the create-if-missing
+        block of every save path.
+
+        Same columns: nothing to do. Different columns:
+        - the table holds no rows (every record was deleted): drop it and its
+          view, so the caller's create-if-missing builds it with the new
+          columns. Nothing is lost, and it is what makes "delete the old
+          records and run again" work;
+        - the table holds records: raise ColumnSetChangedError, naming the
+          columns and the two ways out. Before 2026-10-01 a NEW column failed
+          as an opaque DuckDB Binder Error, and a MISSING one silently
+          overwrote the variable's column list, so old records loaded
+          without their columns.
+        """
+        if not self._duck._table_exists(table_name):
+            return
+        existing = [
+            row[0]
+            for row in self._duck._fetchall(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = ? AND column_name <> 'record_id' "
+                "ORDER BY ordinal_position",
+                [table_name],
+            )
+        ]
+        new = [str(c) for c in columns]
+        if set(existing) == set(new):
+            return
+        added = [c for c in new if c not in set(existing)]
+        removed = [c for c in existing if c not in set(new)]
+        n_existing = self._duck._fetchall(
+            f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
+        )[0][0]
+        type_name = variable_class.__name__
+        if n_existing == 0:
+            Log.info(
+                f"[save] {type_name}: its table is empty, so it is rebuilt with "
+                f"this save's columns ({len(added)} new, {len(removed)} dropped)"
+            )
+            self._duck._execute(
+                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
+            )
+            self._duck._execute(f'DROP TABLE "{table_name}"')
+            return
+        from .exceptions import ColumnSetChangedError
+
+        err = ColumnSetChangedError(type_name, added, removed, n_existing)
+        Log.error(f"[save] {err}")
+        raise err
+
     def _create_variable_view(self, variable_class: type[BaseVariable]):
         """Create a view joining a variable table with _schema via _record.
 
@@ -1385,7 +1439,8 @@ class DatabaseManager:
             else 0
         )
 
-        # Ensure table exists
+        # Ensure table exists, with this save's columns.
+        self._check_column_set(table_name, variable_class, list(df.columns))
         if not self._duck._table_exists(table_name):
             col_defs = []
             for col in df.columns:
@@ -1513,7 +1568,8 @@ class DatabaseManager:
         data_col_types, dtype_meta = infer_data_columns(data)
         is_dataframe = isinstance(data, pd.DataFrame)
 
-        # Ensure table exists
+        # Ensure table exists, with this save's columns.
+        self._check_column_set(table_name, variable_class, list(data_col_types))
         if not self._duck._table_exists(table_name):
             data_cols_sql = ", ".join(
                 f'"{col}" {dtype}' for col, dtype in data_col_types.items()
@@ -1703,6 +1759,8 @@ class DatabaseManager:
         else:
             valid_orig_idx = list(range(n_original))
 
+        # A variable keeps the columns of its first save (_check_column_set).
+        self._check_column_set(table_name, variable_class, list(data_col_types))
         if not self._duck._table_exists(table_name):
             data_cols_sql = ", ".join(
                 f'"{col}" {dtype}' for col, dtype in data_col_types.items()

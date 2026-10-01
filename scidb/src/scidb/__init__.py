@@ -60,10 +60,12 @@ from .roles import FUNCTION_ROLES, function_role
 from .exceptions import (
     AmbiguousParamError,
     AmbiguousVersionError,
+    ColumnSetChangedError,
     DatabaseLockedError,
     DatabaseNotConfiguredError,
     NotFoundError,
     NotRegisteredError,
+    OutputSaveError,
     PipelineCycleError,
     ReservedMetadataKeyError,
     SciStackError,
@@ -178,6 +180,8 @@ __all__ = [
     "list_exclusions",
     # Exceptions
     "SciStackError",
+    "OutputSaveError",
+    "ColumnSetChangedError",
     "NotRegisteredError",
     "NotFoundError",
     "DatabaseNotConfiguredError",

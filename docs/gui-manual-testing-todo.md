@@ -11,6 +11,27 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzv. A run whose results cannot be saved is reported as failed — added 2026-10-01
+
+**What changed:** `scidb.OutputSaveError` is raised when an output's save fails. Before,
+the GaitRiteSymmetry run computed 420 results, saved 0, and was reported `done`.
+
+**Backend:** restart the GUI and MATLAB.
+
+**Frontend:** run `calculateSymmetryOneVector` again. Its save still fails because
+GaitRiteSymmetry has no A_*/U_* columns.
+
+**You should see:** the run marked failed in the Runs console, with a message naming
+`GaitRiteSymmetry: 420 record(s) not saved (ColumnSetChangedError: GaitRiteSymmetry
+already stores 450 record(s) with a different set of data columns ...)`, listing the
+new A_*/U_* and missing L_*/R_* columns and the two fixes: a new variable, or delete
+the existing records and run again. Also check that the message is readable in the
+Runs console, not cut off.
+In scidb.log: `[batch_save] calculateSymmetryOneVector: 1 output(s) NOT saved; the run fails`
+and a `[matlab_watch] ... verdict=` other than `done`.
+
+---
+
 ## 0zzu. A MATLAB run records a declared Parameter value as declared — added 2026-10-01
 
 **What changed:** MATLAB passes a declared `formulaNum = 6` as `6.0`. scidb now
