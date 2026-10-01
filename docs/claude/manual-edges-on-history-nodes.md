@@ -353,5 +353,25 @@ dropped the user's drawn edge as superseded by that invisible twin. Now
 `const_fns` follows `is_current` too (the key stays, so the Parameter node
 remains). scidb.log says `Parameter edge(s) come only from a node's history
 wiring and are not drawn`. Tests: `tests/test_history_parameter_edges.py`.
-PathInput edges (`grouped.path_inputs`) still map every call site; they feed
-`wiring_id`, so changing them needs its own check.
+PathInput edges followed on the same day (below).
+
+**PathInput edges and the disconnected state follow the current wiring too
+(same day).** Two gaps were left:
+- A node rewired from PathInput A to B and run kept drawing `A -> node` forever,
+  next to `B` on the same port. `group_call_sites_by_wiring` mapped every call
+  site into `grouped.path_inputs`. It now maps `is_current` call sites only. The
+  key stays, with `"recorded": True`, so the PathInput node is still built and
+  `build_path_input_nodes` does not mark it declared-only. Identity is
+  unaffected: it is resolved before grouping, from the raw aggregate. The only
+  readers after grouping are `build_path_input_nodes`, `build_edges` and
+  run-state propagation.
+- Hiding that stale edge, or a history **variable** edge with no drawn edge over
+  the port, turned the whole node red. `hidden_wirings` checked every recorded
+  wiring and keyed its result by node TOKEN, and `wiring_disconnected_fkeys` maps
+  a token to every call site of the node. It now takes a **required**
+  `is_current` and checks current wirings only. Its callers pass
+  `identity.is_current` (`api/pipeline._build_graph`,
+  `execution_service.disconnected_report_entries`).
+
+scidb.log: `PathInput edge(s) come only from a node's history wiring and are
+not drawn`. Tests: `tests/test_history_path_input_edges.py`.

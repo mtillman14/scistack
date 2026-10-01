@@ -179,6 +179,7 @@ class TestBindingFollowsTheCanvas:
             hidden_edge_ids=hidden,
             token_for=identity_token,
             manual_edges=[STALE_TWIN],
+            is_current=lambda _fn, _wiring: True,
         ) == {(FN, WID)}
 
     def test_reconnect_clears_the_disconnected_state(self):
@@ -190,6 +191,7 @@ class TestBindingFollowsTheCanvas:
             hidden_edge_ids={HIDDEN_HISTORY_EDGE},
             token_for=identity_token,
             manual_edges=[STALE_TWIN, RECONNECT],
+            is_current=lambda _fn, _wiring: True,
         ) == set()
 
 

@@ -11,6 +11,27 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzw. A rewired node stops drawing its old PathInput; hiding a history edge never reddens it — added 2026-10-01
+
+**What changed:** PathInput edges and the disconnected check follow a node's current
+wiring (`group_call_sites_by_wiring`, `hidden_wirings(is_current=...)`).
+
+**Backend:** restart the GUI.
+
+**Frontend:**
+1. On a PathInput-fed node that has run (e.g. `loadGaitRiteOneFile`), draw a
+   different PathInput onto the same port and Run.
+2. After the refresh, only the new PathInput edge goes into that port. The old
+   PathInput node is still on the canvas, unconnected.
+3. `calculateSymmetryOneVector`: its old `GAITRiteLoaded -> v` edge is hidden.
+   Delete your drawn `GaitRiteLoaded_UA -> v` edge, then redraw it. The node should
+   not turn red because of the hidden history edge alone.
+
+**You should see:** in scidb.log, `PathInput edge(s) come only from a node's history
+wiring and are not drawn: ['<old> -> fn__loadGaitRiteOneFile__....gaitRitePath']`.
+
+---
+
 ## 0zzv. A run whose results cannot be saved is reported as failed — added 2026-10-01
 
 **What changed:** `scidb.OutputSaveError` is raised when an output's save fails. Before,

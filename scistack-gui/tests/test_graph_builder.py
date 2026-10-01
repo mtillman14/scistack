@@ -1822,6 +1822,7 @@ class TestHiddenWirings:
             path_inputs={},
             hidden_edge_ids={f"e__Raw__f__{wid}"},
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == {("f", wid)}
 
@@ -1834,6 +1835,7 @@ class TestHiddenWirings:
             path_inputs={},
             hidden_edge_ids={f"e__hz__f__{wid}"},
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == {("f", wid)}
 
@@ -1849,6 +1851,7 @@ class TestHiddenWirings:
             path_inputs={"mypath": {"functions": {(self.F_KEY, "filepath")}}},
             hidden_edge_ids={f"e__mypath__filepath__f__{wid}"},
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == {("f", wid)}
 
@@ -1862,6 +1865,7 @@ class TestHiddenWirings:
             path_inputs={},
             hidden_edge_ids={f"e__f__{wid}__Out"},
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == set()
 
@@ -1873,6 +1877,7 @@ class TestHiddenWirings:
             path_inputs={},
             hidden_edge_ids=set(),
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == set()
 
@@ -1888,6 +1893,7 @@ class TestHiddenWirings:
             path_inputs={},
             hidden_edge_ids={f"e__Raw__f__{wid}"},
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == {("f", wid)}
 
@@ -1910,6 +1916,7 @@ class TestHiddenWirings:
                 }
             ],
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == set()
 
@@ -1931,6 +1938,7 @@ class TestHiddenWirings:
                 }
             ],
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == {("f", wid)}
 
@@ -1952,6 +1960,7 @@ class TestHiddenWirings:
                 }
             ],
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == {("f", wid)}
 
@@ -1973,6 +1982,7 @@ class TestHiddenWirings:
                 }
             ],
             token_for=identity_token,
+            is_current=_all_current,
         )
         assert result == set()
 

@@ -1205,6 +1205,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
         token_for,
         manual_edges=manual_edges,
         manual_nodes=manual_nodes,
+        is_current=identity.is_current,
     )
     if not seed:
         return []

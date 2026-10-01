@@ -427,13 +427,35 @@ def group_call_sites_by_wiring(
             len(dropped_history_const_edges),
             sorted(set(dropped_history_const_edges)),
         )
+    # PathInput edges follow the current wiring for the same reason. Mapping
+    # history here drew a rewired node's OLD PathInput edge forever, next to
+    # the new one on the same port, while the run used only the new one. The
+    # key stays (with no functions), so the PathInput node is still built.
+    # Identity is unaffected: it is resolved before grouping, from the raw agg.
+    dropped_history_pi_edges: list[str] = []
     for pi_name, pi in agg.path_inputs.items():
+        functions = set()
+        for f, pname in pi["functions"]:
+            if f in historical_fkeys:
+                dropped_history_pi_edges.append(
+                    f"{pi_name}->{fn_node_id(*fkey_to_gkey[f])}.{pname}"
+                )
+                continue
+            functions.add((fkey_to_gkey.get(f, f), pname))
+        # "recorded": it HAS run history, even when none of it is current, so
+        # build_path_input_nodes does not mistake it for declared-only.
         grouped.path_inputs[pi_name] = {
             **pi,
-            "functions": {
-                (fkey_to_gkey.get(f, f), pname) for (f, pname) in pi["functions"]
-            },
+            "functions": functions,
+            "recorded": bool(pi["functions"]) or pi.get("recorded", False),
         }
+    if dropped_history_pi_edges:
+        logger.info(
+            "[graph_builder] %d PathInput edge(s) come only from a node's history "
+            "wiring and are not drawn: %s",
+            len(dropped_history_pi_edges),
+            sorted(set(dropped_history_pi_edges)),
+        )
 
     # Staged pending values: a synthesized row per (constant, value) on
     # every group that uses the constant and hasn't already run it — a
@@ -1544,7 +1566,10 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
                     "alternate_templates": pi.get("alternate_templates", []),
                     # Seeded from the registry with no run history
                     # (seed_undiscovered_path_inputs) — see DECLARED_ONLY.
-                    DECLARED_ONLY: not pi.get("functions"),
+                    # A PathInput whose history is all on rewired-away wirings
+                    # draws no edge but has run, so it is not declared-only
+                    # ("recorded", group_call_sites_by_wiring).
+                    DECLARED_ONLY: not (pi.get("functions") or pi.get("recorded")),
                 },
             }
         )
@@ -2756,6 +2781,8 @@ def hidden_wirings(
     token_for,
     manual_edges: "list[dict] | tuple" = (),
     manual_nodes: "dict[str, dict] | None" = None,
+    *,
+    is_current,
 ) -> set[tuple[str, str]]:
     """(fn_name, node token) pairs with at least one hidden inbound edge that
     is NOT currently covered by a manual reconnect.
@@ -2788,12 +2815,23 @@ def hidden_wirings(
     )
     pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
     result: set[tuple[str, str]] = set()
+    # Only a node's CURRENT wiring can disconnect it. The result is keyed by
+    # node TOKEN and wiring_disconnected_fkeys maps it back to every call site
+    # of the node, so a hidden edge that only a rewired-away (history) wiring
+    # names used to turn the whole node red, current call sites included.
+    # `is_current` is the identity plan's answer, the same rule the node's
+    # handles and edges follow (group_call_sites_by_wiring). Required, so no
+    # caller can quietly check history.
+    skipped_history: list[tuple[str, str]] = []
     for fkey, params in fn_input_params.items():
         fn, _cid = fkey
-        wid = token_for(
-            fn,
-            wiring_id(fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})),
+        wiring = wiring_id(
+            fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
         )
+        if not is_current(fn, wiring):
+            skipped_history.append((fn, wiring))
+            continue
+        wid = token_for(fn, wiring)
         handle_map = inbound_edge_candidates_by_handle(
             fn, wid, params, const_names=fn_constants.get(fkey, set())
         )
@@ -2814,15 +2852,15 @@ def hidden_wirings(
     for pi_name, pi in path_inputs.items():
         for fkey, param_name in pi["functions"]:
             fn, _cid = fkey
-            wid = token_for(
+            wiring = wiring_id(
                 fn,
-                wiring_id(
-                    fn,
-                    fn_input_params.get(fkey, {}),
-                    fn_outputs.get(fkey, set()),
-                    pi_by_fkey.get(fkey, {}),
-                ),
+                fn_input_params.get(fkey, {}),
+                fn_outputs.get(fkey, set()),
+                pi_by_fkey.get(fkey, {}),
             )
+            if not is_current(fn, wiring):
+                continue
+            wid = token_for(fn, wiring)
             handle = in_handle(param_name)
             if f"e__{pi_name}__{param_name}__{fn}__{wid}" not in hidden_edge_ids:
                 continue
@@ -2836,6 +2874,13 @@ def hidden_wirings(
                 )
                 continue
             result.add((fn, wid))
+    if skipped_history:
+        logger.debug(
+            "[graph_builder] hidden_wirings: %d history wiring(s) not checked "
+            "(not their node's current shape): %s",
+            len(set(skipped_history)),
+            sorted(set(skipped_history)),
+        )
     if result:
         logger.info("[graph_builder] hidden_wirings: %s", sorted(result))
     return result

@@ -807,6 +807,7 @@ def _build_graph(
         manual_edges=manual_edges_for_fn_lookup,
         manual_nodes=manual_nodes,
         token_for=token_for,
+        is_current=identity.is_current,
     )
     disconnected_fkeys = gb.wiring_disconnected_fkeys(
         agg.fn_input_params,
