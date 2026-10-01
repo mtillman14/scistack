@@ -26,7 +26,7 @@
  * leaves the canvas components untouched.
  *
  * **Axes bind to nodes by PORT, not by name** (`axisByNode`). An edge into a
- * function carries `targetHandle = "param__<the function's argument name>"`,
+ * function carries `targetHandle = "in__<the function's argument name>"`,
  * which is exactly `VariantAxis.param`; the node feeding that port is the node
  * that holds the axis, whatever it is called and whatever type it is. Matching
  * `axis.param` against a node's LABEL — the Parameter ENTITY's name — is a

@@ -150,7 +150,7 @@ The parity test covers it: an edge hidden in a hypothesis tab, then run from `ma
   `history_twin_edge_id`, which now works without a port where the id encodes none and reads
   hand-placed Parameter/PathInput node labels.
 - [x] Scope scenario xfail marker removed.
-- [ ] pytest run by the user.
+- [x] pytest passes (user), committed a3bea3fd.
 - [ ] Drop the now-redundant `hidden_edge_ids` filtering keyword from the edge-resolver functions and
   `manual_edge_handle_index` (idempotent today, so harmless). Deferred to a cleanup commit.
 
@@ -162,6 +162,22 @@ history Parameter edges (`build_edges`), `FunctionNode.tsx`
 `VariantDagPopup` and `edge_resolver`'s Parameter-handle branch. It removes
 the `in__`/`param__` alias bugs. It is a clean break: hidden Parameter edges
 come back once. Both vite targets need rebuilding (frontend bundle trap).
+
+### Step 2 progress (2026-10-01)
+
+- [x] `ids.PARAM_HANDLE_PREFIX` and `param_handle` deleted. Every input port is `in__X`.
+- [x] `build_edges` and `inbound_edge_candidates_by_handle` write `in__{arg}` for Parameter edges.
+  Edge ids are unchanged, so existing hides keep working: unlike the plan's guess, no hidden
+  Parameter edge reappears.
+- [x] `edge_resolver` binds a Parameter only through `in__X`. `history_twin_edge_id` reads `in__` only.
+- [x] `execution_service` disconnect checks and `plot_service.axis_node_bindings` (Parameter edge
+  recognised by its SOURCE: a `param__` id or a hand-placed parameterNode).
+- [x] `edge_view` drops stored edges on the retired `param__X` port (WARN once per edge id,
+  clean break). The canvas still shows the connection through history's `in__X` edge when the
+  node ran with the Parameter.
+- [x] `FunctionNode.tsx`: both renderings use `in__X` and skip a name already in input_params.
+  Both vite bundles rebuilt; 516 frontend tests pass.
+- [ ] pytest run by the user.
 
 ## Step 3: hides keyed by connection (outline)
 

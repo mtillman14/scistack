@@ -2152,7 +2152,7 @@ class TestHistoryTwinEdgeId:
         real_id = next(e["id"] for e in edges if e["source"] == "pathInput__mypath")
         assert self._twin("pathInput__mypath", self.F_NODE, "in__filepath") == real_id
 
-    def test_renamed_parameter_matches_build_edges_on_either_port(self):
+    def test_renamed_parameter_matches_build_edges(self):
         """The case candidate_edge_id got wrong: a Parameter declared
         gaitrite_config feeding the argument gaitRiteConfig. build_edges keys
         the edge by the ARGUMENT."""
@@ -2168,8 +2168,11 @@ class TestHistoryTwinEdgeId:
         )
         real_id = next(e["id"] for e in edges if e["source"].startswith("param__"))
         assert real_id == f"e__gaitRiteConfig__f__{self.F_CID}"
-        for port in ("param__gaitRiteConfig", "in__gaitRiteConfig"):
-            assert self._twin("param__gaitrite_config", self.F_NODE, port) == real_id
+        # The argument's in__ port, the only Parameter port since step 2.
+        assert (
+            self._twin("param__gaitrite_config", self.F_NODE, "in__gaitRiteConfig")
+            == real_id
+        )
 
     def test_hand_placed_parameter_node_uses_its_label(self):
         nodes = {"param__hz__bofsh3": {"type": "parameterNode", "label": "hz"}}

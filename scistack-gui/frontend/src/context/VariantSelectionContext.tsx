@@ -47,7 +47,7 @@ export interface VariantSelectionValue {
   /** The axis a node supplies, by the column the popup already bound to it.
    *
    *  Binding happens ONCE, in the popup, from the pipeline EDGES — an edge into
-   *  a function carries `targetHandle = "param__<the function's argument
+   *  a function carries `targetHandle = "in__<the function's argument
    *  name>"`, which is exactly `VariantAxis.param`. The node then only has to
    *  read back what it was given.
    *

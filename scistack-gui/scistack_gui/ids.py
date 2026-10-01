@@ -87,16 +87,17 @@ NODE_TYPE_PREFIXES = {
 # Handles — the port an edge attaches to
 # ---------------------------------------------------------------------------
 #
-# A function's input port is ``in__{argument}``, its output port
-# ``out__{output name}``. An edge from a PARAMETER targets
-# ``param__{argument}`` instead -- the Parameter's own id prefix, so
-# ``graph_builder`` and ``plot_service`` (which binds a variant axis to the
-# node feeding a port) spell it identically. All three were string literals
-# at ~30 sites until 2026-09-23.
+# A function's input port is ``in__{argument}``, WHATEVER feeds it (a
+# variable, a Parameter, a PathInput, a glue node); its output port is
+# ``out__{output name}``. A port is the argument and nothing else.
+#
+# Until 2026-10-01 a Parameter-fed argument was ``param__{argument}``, so one
+# argument had two port names depending on whether the node had run with the
+# Parameter yet, and a drawn in__X edge survived the deletion of history's
+# param__X one (plan-unified-edge-model step 2, D-2026-10-01-1).
 
 IN_HANDLE_PREFIX = "in__"
 OUT_HANDLE_PREFIX = "out__"
-PARAM_HANDLE_PREFIX = PARAM_ID_PREFIX
 
 
 def in_handle(argument: str) -> str:
@@ -105,10 +106,6 @@ def in_handle(argument: str) -> str:
 
 def out_handle(name: str) -> str:
     return f"{OUT_HANDLE_PREFIX}{name}"
-
-
-def param_handle(argument: str) -> str:
-    return f"{PARAM_HANDLE_PREFIX}{argument}"
 
 
 def handle_name(handle: "str | None", prefix: str = IN_HANDLE_PREFIX) -> str | None:

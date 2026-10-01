@@ -578,16 +578,13 @@ def resolve_function_edges(
                 continue
 
             if src_kind == BINDING_PARAMETER:
-                if th.startswith(PARAM_ID_PREFIX):
-                    # DB-derived Parameter edge: build_edges writes the
-                    # constant's own name into BOTH the node id and the
-                    # handle, so here the parameter name and the declared
-                    # name are the same string by construction.
-                    _bind(th[len(PARAM_ID_PREFIX) :], src_binding, edge)
-                elif th.startswith(IN_HANDLE_PREFIX):
+                # One port per argument, whatever feeds it (ids). A stored
+                # edge on the pre-2026-10-01 param__X port is dropped like
+                # any other edge with no in__ port: redraw it.
+                if th.startswith(IN_HANDLE_PREFIX):
                     _bind(th[len(IN_HANDLE_PREFIX) :], src_binding, edge)
                 else:
-                    _drop(edge, "Parameter edge carries no parameter handle")
+                    _drop(edge, "Parameter edge carries no 'in__<param>' handle")
                 continue
 
             # Variable → fn.

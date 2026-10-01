@@ -101,7 +101,7 @@ class TestHistoryTwinEdgeId:
             "id": "m",
             "source": "param__formulaNum",
             "target": NODE,
-            "targetHandle": "param__formula",
+            "targetHandle": "in__formula",
         }
         assert history_twin_edge_id(edge) == f"e__formula__{FN}__{WID}"
 

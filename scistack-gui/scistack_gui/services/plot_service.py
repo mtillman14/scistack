@@ -25,7 +25,7 @@ from typing import Any
 
 # The Parameter input-port handle prefix (``param__{argument}``): the same
 # constant graph_builder writes edges with, so the two cannot drift.
-from scistack_gui.ids import PARAM_HANDLE_PREFIX, ROOT_SCOPE, handle_name
+from scistack_gui.ids import PARAM_ID_PREFIX, ROOT_SCOPE, handle_name, strip_placement
 
 logger = logging.getLogger(__name__)
 
@@ -753,7 +753,7 @@ def axis_node_bindings(db, axes: list[dict], pipeline_id: str = ROOT_SCOPE) -> d
     """Which canvas node supplies each variant axis — ``{column: node_id}``.
 
     **Bound by PORT, never by name.** An edge into a function carries
-    ``targetHandle = "param__<the function's own argument name>"``
+    ``targetHandle = "in__<the function's own argument name>"``
     (``graph_builder.build_edges``, both the DB-derived and the manual path),
     and that argument name is exactly ``VariantAxis.param``. So the node feeding
     that port is the node holding the axis — whatever the node is called, and
@@ -790,7 +790,16 @@ def axis_node_bindings(db, axes: list[dict], pipeline_id: str = ROOT_SCOPE) -> d
         params = [a for a in axes if a.get("kind") == "param"]
         bindings: dict[str, str] = {}
         for edge in edges:
-            argument = handle_name(edge.get("targetHandle"), PARAM_HANDLE_PREFIX)
+            # A Parameter feeds an ordinary in__ port (one port per argument),
+            # so the SOURCE says it is a Parameter edge: a param__ id, or a
+            # hand-placed parameterNode. The axis still follows the PORT.
+            source = edge.get("source") or ""
+            if not (
+                strip_placement(source).startswith(PARAM_ID_PREFIX)
+                or type_of.get(source) == "parameterNode"
+            ):
+                continue
+            argument = handle_name(edge.get("targetHandle"))
             if argument is None:
                 continue
             function = label_of.get(edge.get("target"), "")

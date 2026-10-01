@@ -30,6 +30,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from scistack_gui.ids import PARAM_ID_PREFIX
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +60,10 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     stored = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
     hidden = frozenset(pipeline_store.get_hidden_edge_ids(db, scope))
-    drawn = tuple(visible_manual_edges(stored, hidden, manual_nodes))
+    drawn = tuple(
+        e for e in visible_manual_edges(stored, hidden, manual_nodes)
+        if not _on_retired_port(e)
+    )
     logger.info(
         "[edge_view] %s: scope=%s, %d drawn of %d stored manual edge(s), "
         "%d hidden edge id(s)",
@@ -74,6 +79,37 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
         hidden_edge_ids=hidden,
         manual_nodes=manual_nodes,
     )
+
+
+#: The Parameter port, retired 2026-10-01 (step 2): every input port is in__X.
+#: It reused the Parameter node-id prefix, so ids is still the one spelling.
+_RETIRED_PORT_PREFIX = PARAM_ID_PREFIX
+
+#: Stored edge ids already reported by _on_retired_port, so the WARN is once per
+#: process rather than once per graph build.
+_REPORTED_RETIRED: set[str] = set()
+
+
+def _on_retired_port(edge: dict) -> bool:
+    """A stored edge drawn onto a `param__X` port, which no node renders since
+    step 2. Clean break (beta rule, no migration): it is not drawn and binds
+    nothing. The user redraws it onto in__X. History's own Parameter edges
+    moved to in__X with the same ids, so a run that recorded the Parameter
+    still shows it."""
+    handle = edge.get("targetHandle") or edge.get("target_handle") or ""
+    if not handle.startswith(_RETIRED_PORT_PREFIX):
+        return False
+    if edge.get("id") not in _REPORTED_RETIRED:
+        _REPORTED_RETIRED.add(edge.get("id"))
+        logger.warning(
+            "[edge_view] stored edge %s (%s -> %s) targets the retired port %r; "
+            "not drawn and binds nothing. Redraw it onto the in__ port.",
+            edge.get("id"),
+            edge.get("source"),
+            edge.get("target"),
+            handle,
+        )
+    return True
 
 
 def run_scope(db, node_id: "str | None") -> "str | None":

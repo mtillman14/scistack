@@ -348,13 +348,12 @@ class TestResolveFunctionEdgesInputs:
 
 class TestResolveFunctionEdgesParameters:
     def test_db_parameter_node_by_prefix(self):
-        # build_edges writes the declared name into BOTH the node id and the
-        # handle, so param name == declared name by construction here.
+        # A Parameter feeds the argument's ordinary in__ port (step 2).
         edges = [
             {
                 "source": "param__low_hz",
                 "target": "fn__fn",
-                "targetHandle": "param__low_hz",
+                "targetHandle": "in__low_hz",
                 "sourceHandle": "",
             }
         ]
@@ -453,12 +452,32 @@ class TestResolveFunctionEdgesParameters:
         )
         assert result.parameter_params == {}
 
-    def test_parameter_not_added_to_input_types(self):
+    def test_parameter_on_the_retired_param_port_is_dropped(self):
+        """param__X is not a port since 2026-10-01 (step 2). A stored edge on it
+        binds nothing; the user redraws it onto in__X."""
         edges = [
             {
                 "source": "param__low_hz",
                 "target": "fn__fn",
                 "targetHandle": "param__low_hz",
+                "sourceHandle": "",
+            }
+        ]
+        result = resolve_function_edges(
+            fn_node_ids={"fn__fn"},
+            manual_edges=edges,
+            manual_nodes={},
+            existing_node_labels={},
+            hidden_edge_ids=frozenset(),
+        )
+        assert result.parameter_params == {}
+
+    def test_parameter_not_added_to_input_types(self):
+        edges = [
+            {
+                "source": "param__low_hz",
+                "target": "fn__fn",
+                "targetHandle": "in__low_hz",
                 "sourceHandle": "",
             }
         ]
@@ -871,18 +890,23 @@ class TestHandleIdsMatchTheFrontend:
     is right only when the declared name and the parameter name coincide.
     """
 
-    def test_parameter_handle_prefix_is_the_backend_constant(self):
+    def test_parameter_handle_is_the_in_port(self):
+        """Since 2026-10-01 (step 2) a Parameter feeds the argument's ordinary
+        in__ port: one port per argument, whatever feeds it. The node must not
+        render the retired param__ port, or a hand-drawn edge lands on a port
+        nothing binds."""
         from pathlib import Path
 
-        from scistack_gui.ids import PARAM_ID_PREFIX
+        from scistack_gui.ids import IN_HANDLE_PREFIX, PARAM_ID_PREFIX
 
         node = Path(__file__).parent.parent / "frontend/src/components/DAG/FunctionNode.tsx"
         source = node.read_text()
-        assert f"id: `{PARAM_ID_PREFIX}${{c}}`" in source, (
-            "FunctionNode.tsx's parameter handle id must use PARAM_ID_PREFIX "
-            f"({PARAM_ID_PREFIX!r}) — it is what build_edges writes as the "
-            "targetHandle of a DB-derived Parameter edge, and what "
-            "resolve_function_edges matches on"
+        assert f"id: `{IN_HANDLE_PREFIX}${{c}}`" in source, (
+            "FunctionNode.tsx must render a Parameter's port as in__{argument}, "
+            "what build_edges writes and resolve_function_edges binds"
+        )
+        assert f"`{PARAM_ID_PREFIX}${{" not in source, (
+            "FunctionNode.tsx still renders a param__ port"
         )
 
     def test_variable_input_handle_prefix_matches(self):

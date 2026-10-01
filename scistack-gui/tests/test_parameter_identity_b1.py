@@ -19,7 +19,7 @@ from scistack_gui.domain.graph_builder import (
     pending_value_group_coverage,
 )
 
-from scistack_gui.ids import param_handle, param_node_id
+from scistack_gui.ids import in_handle, param_node_id
 
 
 def aggregate_variants(
@@ -115,7 +115,7 @@ class TestOneNodeAfterARun:
         [edge] = edges
         assert edge["source"] == param_node_id(DECLARED)
         assert edge["target"] == FN_NODE
-        assert edge["targetHandle"] == param_handle(ARG)
+        assert edge["targetHandle"] == in_handle(ARG)
         # Keyed by the argument: what hidden_wirings and the disconnected
         # report spell for this handle.
         assert edge["id"] == f"e__{ARG}__{FN}__{CID}"
@@ -134,7 +134,7 @@ class TestOneNodeAfterARun:
             hidden_ids=set(),
             fn_parameter_names=agg.fn_parameter_names,
         )
-        manual = edge_dedup_key(param_node_id(DECLARED), FN_NODE, param_handle(ARG))
+        manual = edge_dedup_key(param_node_id(DECLARED), FN_NODE, in_handle(ARG))
         assert edge_dedup_key(
             edge["source"], edge["target"], edge["targetHandle"]
         ) == manual
@@ -150,7 +150,7 @@ class TestOneNodeAfterARun:
         )
         [edge] = edges
         assert edge["source"] == "param__hz"
-        assert edge["targetHandle"] == param_handle("hz")
+        assert edge["targetHandle"] == in_handle("hz")
         assert edge["id"] == f"e__hz__{FN}__{CID}"
 
 

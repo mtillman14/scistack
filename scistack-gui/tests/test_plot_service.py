@@ -1676,7 +1676,7 @@ def test_binding_survives_a_parameter_renamed_away_from_the_argument(swept_db):
             "id": "manual__renamed",
             "source": "param__nothing_like_the_argument_name",
             "target": target,
-            "targetHandle": f"param__{argument}",
+            "targetHandle": f"in__{argument}",
         },
     )
 

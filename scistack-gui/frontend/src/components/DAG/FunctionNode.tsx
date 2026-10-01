@@ -345,17 +345,12 @@ function PipelineFunctionNode({ id, data }: Props) {
   // All left-side handles: variable inputs first (by param name), then
   // parameters.
   //
-  // The parameter handle id MUST be `param__{name}` — the backend's
-  // PARAM_ID_PREFIX, and exactly what graph_builder.build_edges writes as
-  // the targetHandle of a DB-derived Parameter→function edge. It said
-  // `const__` here (a leftover from before Constants and Sweeps merged into
-  // Parameters), so a synthesized edge's handle never matched a rendered
-  // one, and a hand-drawn edge onto this handle reached the backend with a
-  // prefix nothing recognised. That used to be absorbed by a fallback that
-  // guessed the parameter from the SOURCE NODE'S LABEL — right only when
-  // the declared name and the parameter name happen to coincide. The
-  // fallback is gone (inputs are built from edges alone), so the id has to
-  // be the real one.
+  // Every input port is `in__{argument}`, whatever feeds it (backend
+  // ids.in_handle, D-2026-10-01-1 step 2). A Parameter-fed argument used to be
+  // `param__{argument}`, so one argument had two port names depending on
+  // whether the node had run with the Parameter yet, and an edge drawn onto
+  // the one survived deleting the other. A name already in inputParams is
+  // skipped: two handles with one id make React Flow attach edges to only one.
   const columnSelections = data.columnSelections ?? {}
   const leftHandles = [
     ...Object.entries(inputParams).map(([param, type]) => {
@@ -369,7 +364,9 @@ function PipelineFunctionNode({ id, data }: Props) {
         title: cols ? `${base} ⟨${cols}⟩` : base,
       }
     }),
-    ...constParams.map(c => ({ id: `param__${c}`, label: c, title: c })),
+    ...constParams
+      .filter(c => !(c in inputParams))
+      .map(c => ({ id: `in__${c}`, label: c, title: c })),
   ]
   // Only parameters with a real selection get a chip — an unrestricted input
   // is the default and saying so on every node would bury the ones that are
@@ -679,7 +676,9 @@ function VariantFunctionNode({
       id: `in__${param}`,
       title: type ? `${param}: ${type}` : param,
     })),
-    ...(data.constant_params ?? []).map(c => ({ id: `param__${c}`, title: c })),
+    ...(data.constant_params ?? [])
+      .filter(c => !(c in (data.input_params ?? {})))
+      .map(c => ({ id: `in__${c}`, title: c })),
   ]
   const handleStyle = (
     index: number,

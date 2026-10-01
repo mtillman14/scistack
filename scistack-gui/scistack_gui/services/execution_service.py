@@ -28,7 +28,6 @@ from pathlib import Path
 
 from scidb.foreach_config import RunOptions
 
-from scistack_gui.ids import PARAM_ID_PREFIX as _PARAM_PREFIX
 from scistack_gui.ids import ROOT_SCOPE, fn_nodes_prefix, in_handle, legacy_fn_node_id
 
 logger = logging.getLogger(__name__)
@@ -1180,7 +1179,7 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
                 return f"input '{pname}' is disconnected — reconnect it before running"
         for cname in v.get("constants", {}).keys():
             candidate = f"e__{cname}__{function_name}__{key}"
-            if candidate in hidden_edge_ids and (function_name, key, f"{_PARAM_PREFIX}{cname}") not in manual_index:
+            if candidate in hidden_edge_ids and (function_name, key, in_handle(cname)) not in manual_index:
                 return f"input '{cname}' is disconnected — reconnect it before running"
     return None
 
@@ -1282,7 +1281,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
             for cname in fn_constants.get(fkey, set()):
                 if (
                     f"e__{cname}__{fn}__{wid}" in hidden_edge_ids
-                    and (fn, wid, f"{_PARAM_PREFIX}{cname}") not in manual_index
+                    and (fn, wid, in_handle(cname)) not in manual_index
                 ):
                     reason = f"input '{cname}' disconnected"
                     break

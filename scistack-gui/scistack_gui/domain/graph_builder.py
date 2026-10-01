@@ -26,7 +26,6 @@ from scistack_gui.ids import (
     fn_node_id,
     in_handle,
     out_handle,
-    param_handle,
     param_node_id,
     parse_fn_node_id,
     parse_placement_id,
@@ -1889,7 +1888,9 @@ def build_edges(
                         "id": edge_id,
                         "source": param_node_id(const_name),
                         "target": target_id,
-                        "targetHandle": param_handle(arg),
+                        # The argument's one port, whatever feeds it
+                        # (ids: a port is the argument and nothing else).
+                        "targetHandle": in_handle(arg),
                     }
                 )
     if renamed_edges:
@@ -2084,7 +2085,7 @@ def inbound_edge_candidates_by_handle(
         for vt in types:
             result[f"e__{vt}__{fn}__{wid}"] = handle
     for cname in const_names:
-        result[f"e__{cname}__{fn}__{wid}"] = param_handle(cname)
+        result[f"e__{cname}__{fn}__{wid}"] = in_handle(cname)
     for pname in path_names:
         result[f"e__{pname}__{fn}__{wid}"] = in_handle(pname)
     return result
@@ -2223,12 +2224,7 @@ def history_twin_edge_id(
         return None
     fn, tok = parsed
     handle = edge.get("targetHandle") or edge.get("target_handle") or ""
-    if handle.startswith(PARAM_ID_PREFIX):
-        argument = handle[len(PARAM_ID_PREFIX):]
-    elif handle.startswith(IN_HANDLE_PREFIX):
-        argument = handle[len(IN_HANDLE_PREFIX):]
-    else:
-        argument = None
+    argument = handle[len(IN_HANDLE_PREFIX):] if handle.startswith(IN_HANDLE_PREFIX) else None
     bare_source = strip_placement(source)
     meta = manual_nodes.get(source) or manual_nodes.get(bare_source) or {}
     if bare_source.startswith(PATH_INPUT_ID_PREFIX) or meta.get("type") == "pathInputNode":
@@ -2236,15 +2232,9 @@ def history_twin_edge_id(
             return None
         name = meta.get("label") or bare_source[len(PATH_INPUT_ID_PREFIX):]
         return f"e__{name}__{argument}__{fn}__{tok}"
-    if (
-        bare_source.startswith(PARAM_ID_PREFIX)
-        or meta.get("type") == "parameterNode"
-        or handle.startswith(PARAM_ID_PREFIX)
-    ):
-        # Keyed by the ARGUMENT (the port it fills), on param__X or in__X
-        # alike: an edge drawn onto in__X before the node ran with the
-        # Parameter is a copy of history's param__X edge (scidb.log
-        # 2026-10-01 14:52, formulaNum). With no port, use the declared name.
+    if bare_source.startswith(PARAM_ID_PREFIX) or meta.get("type") == "parameterNode":
+        # Keyed by the ARGUMENT (the in__ port it fills). With no port, use
+        # the declared name.
         if argument is None:
             argument = meta.get("label") or bare_source[len(PARAM_ID_PREFIX):]
         return f"e__{argument}__{fn}__{tok}"

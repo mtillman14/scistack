@@ -114,7 +114,9 @@ def test_constructors_round_trip_through_the_parsers():
     assert fn_id.startswith(ids.fn_nodes_prefix("bandpass"))
     assert ids.handle_name(ids.in_handle("signal")) == "signal"
     assert ids.handle_name(ids.out_handle("Filtered"), ids.OUT_HANDLE_PREFIX) == "Filtered"
-    assert ids.handle_name(ids.param_handle("low_hz"), ids.PARAM_HANDLE_PREFIX) == "low_hz"
+    # One port per argument, whatever feeds it: param__X was retired (step 2).
+    assert not hasattr(ids, "param_handle")
+    assert not hasattr(ids, "PARAM_HANDLE_PREFIX")
     assert ids.handle_name("out__x") is None
     assert ids.var_node_id("RawEMG") == "var__RawEMG"
     assert ids.path_input_node_id("EMG") == "pathInput__EMG"

@@ -548,7 +548,7 @@ class TestDisconnectedEdges:
                 "source": "param__brand_new_constant",
                 "target": bp_node_id,
                 "source_handle": None,
-                "target_handle": "param__brand_new_constant",
+                "target_handle": "in__brand_new_constant",
             },
         )
         assert r.status_code == 200
