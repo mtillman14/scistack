@@ -11,6 +11,33 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzx. Unified edge model (branch `refactor/unified-edge-model`) — added 2026-10-01
+
+**What changed:** one edge id per connection, one view every reader uses, one port per argument
+(`docs/claude/edge-model.md`). NOT merged to main; check it out in the GUI clone first.
+
+**Backend:**
+- `git fetch && git checkout refactor/unified-edge-model` in the GUI clone, then restart the GUI and MATLAB.
+- Both frontend bundles on the branch are rebuilt; no build is needed.
+
+**Frontend:**
+1. **Your existing hides survive.** On the Aim 2 project, `calculateSymmetryOneVector`'s
+   old `GAITRiteLoaded -> v` edge should still be hidden, and `v` fed only by `GaitRiteLoaded_UA`.
+   (A hidden OUTPUT edge from before may reappear once: hide it again.)
+2. **Parameter port.** `formulaNum` connects to an ordinary `formulaNum` port, the same kind as `v`.
+   scidb.log shows `[edge_view] stored edge manual__a118jj ... targets the retired port 'param__formulaNum'`.
+   That is expected; the connection stays visible through history.
+3. **Delete and redraw.** Delete the `formulaNum` edge: the node shows disconnected and Run says why.
+   Redraw it: `put_edge: reconnecting hidden DB-derived edge ... unhiding`, and the node runs.
+4. **Hypothesis tab.** Duplicate `main`, delete an input edge on a node in the copy, then run that
+   node from `main`. It runs normally.
+5. **Run.** `calculateSymmetryOneVector` and `loadGaitRiteOneFile` run and save as before.
+
+**You should see:** every run logs `[edge_view] <caller>: scope=..., N drawn of M stored manual
+edge(s), K hidden edge id(s)`. The canvas build and the run report the same counts for `main`.
+
+---
+
 ## 0zzw. A rewired node stops drawing its old PathInput; hiding a history edge never reddens it — added 2026-10-01
 
 **What changed:** PathInput edges and the disconnected check follow a node's current

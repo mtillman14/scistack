@@ -1,6 +1,6 @@
 # Plan: one edge model, kind-agnostic
 
-*2026-10-01. Status: PLANNED, on branch `refactor/unified-edge-model`. Step 1 is detailed; steps 2 and 3 are outlines,
+*2026-10-01. Status: ALL THREE STEPS BUILT, tests pass, on branch `refactor/unified-edge-model` (a3bea3fd, 51362853, 09972450). NOT merged: the user checks it manually first (GUI §0zzx). Final model: `docs/claude/edge-model.md`. Step 1 is detailed; steps 2 and 3 are outlines,
 to be decided after step 1 ships. Decision entry: D-2026-10-01-1 in
 `docs/claude/decisions.md`.*
 
