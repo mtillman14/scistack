@@ -973,7 +973,6 @@ def _build_graph(
             manual_edges=manual_edges_for_fn_lookup,
             manual_nodes=manual_nodes,
             existing_node_labels=existing_node_labels_pre,
-            hidden_edge_ids=hidden_edge_ids,
         )
         if edge_map:
             existing = matlab_param_to_class.setdefault(fn, {})
@@ -1188,7 +1187,6 @@ def _build_graph(
             manual_edges=manual_edges_list,
             manual_nodes=manual_nodes,
             existing_node_labels=existing_node_labels,
-            hidden_edge_ids=hidden_edge_ids,
         )
         # Identity comparison against a DB candidate: the variable_types_view
         # shape (bare for one type), the same one history records.
@@ -1398,7 +1396,6 @@ def _build_graph(
                 manual_edges=manual_edges_list,
                 manual_nodes=manual_nodes,
                 existing_node_labels=existing_node_labels,
-                hidden_edge_ids=hidden_edge_ids,
             )
             # Display only: handle labels are strings, so a multi-type input
             # shows its first candidate. Never an identity input.
@@ -1413,7 +1410,6 @@ def _build_graph(
                 manual_edges=manual_edges_list,
                 manual_nodes=manual_nodes,
                 existing_node_labels=existing_node_labels,
-                hidden_edge_ids=hidden_edge_ids,
             )
             # Display only (see the glue branch above): first candidate per
             # handle. Never an identity input.

@@ -55,6 +55,7 @@ def _stated_wiring(db, node_id: str, recorded_params: dict) -> str:
     """FORWARD: what the node says it is — its recorded bindings with the
     edges the user drew folded in, which is what a run of it would record."""
     from scistack_gui import pipeline_store
+    from scistack_gui.domain.edge_view import effective_edges
 
     token = node_id.split("__", 2)[2]
     overrides = manual_input_overrides(
@@ -62,9 +63,9 @@ def _stated_wiring(db, node_id: str, recorded_params: dict) -> str:
         token,
         recorded_params,
         {"low_hz"},
+        # The edges the canvas draws, as every production reader gets them.
         manual_edge_handle_index(
-            pipeline_store.get_manual_edges(db),
-            hidden_edge_ids=pipeline_store.get_hidden_edge_ids(db),
+            effective_edges(db, None, caller="test_wiring_parity").drawn_list
         ),
     )
     effective = {

@@ -214,5 +214,8 @@ Clean-break effects: an OUTPUT edge (no port) hidden before step 3 has an old-fo
 reappears once. A hide on a retired `param__X` port reappears once. First pytest run: the parity test
 deleted with no port, which exposed that port-less hides must fall back to the saved id.
 
-The planned cleanup (dropping the redundant `hidden_edge_ids` filtering keyword) is NOT done:
-`hidden_edge_ids` still carries connection ids for history edges, so the keyword is still needed.
+Cleanup (done after step 3): `hidden_edge_ids` and its filtering are removed from the four functions
+that only FILTERED drawn edges (`manual_edge_handle_index`, `edge_resolver.resolve_function_edges`,
+`infer_manual_fn_output_types`, `infer_manual_fn_param_to_class`); they take the view's edges.
+Functions that ask whether a HISTORY edge is hidden (`build_edges`, `hidden_wirings`,
+`manual_input_overrides`, `reconcile_manual_inputs`, the `disconnected_*` checks) keep it.

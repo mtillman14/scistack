@@ -2098,9 +2098,6 @@ def inbound_edge_candidates_by_handle(
 
 def manual_edge_handle_index(
     manual_edges: "list[dict] | tuple",
-    *,
-    hidden_edge_ids: "set[str] | frozenset[str]",
-    manual_nodes: "dict[str, dict] | None" = None,
 ) -> dict[tuple[str, str, str], dict]:
     """Index manual edges by the (fn_name, node token, target_handle) call
     site they currently feed — the "is this exact input handle covered by
@@ -2128,17 +2125,16 @@ def manual_edge_handle_index(
     to migrate, doing half the work each time and logging it twice. Values are
     lists in scan order; every caller that only asks ``in`` is unaffected.
 
-    **Only edges the canvas can draw** (2026-10-01). ``hidden_edge_ids`` is
-    required: a manual edge that :func:`manual_edge_is_hidden` says is
-    hidden is left out, the same edge build_edges leaves off the canvas. The
-    index used to hold every stored row, so an old hand-drawn edge sitting
-    under a history edge the user had since disconnected still bound its
-    variable. The binding the run used then disagreed with the DAG (the
-    calculateSymmetryOneVector ``['GAITRiteLoaded', 'GaitRiteLoaded_UA']``
-    EachOf that MATLAB command generation refused).
+    **Only edges the canvas can draw** (2026-10-01): *manual_edges* come from
+    `edge_view.effective_edges`, the one owner of that rule. The index used to
+    hold every stored row, so an old hand-drawn edge under a history edge the
+    user had since disconnected still bound its variable. The run then
+    disagreed with the DAG (the calculateSymmetryOneVector
+    ``['GAITRiteLoaded', 'GaitRiteLoaded_UA']`` EachOf that MATLAB command
+    generation refused).
     """
     index: dict[tuple[str, str, str], list[dict]] = {}
-    for edge in visible_manual_edges(manual_edges, hidden_edge_ids, manual_nodes):
+    for edge in manual_edges:
         handle = edge.get("targetHandle")
         target = edge.get("target")
         if not handle or not target:
@@ -2163,13 +2159,13 @@ def visible_manual_edges(
     """The stored manual edges the canvas can draw: every row that
     :func:`manual_edge_is_hidden` does not hide.
 
-    The one filter every reader that turns manual edges into bindings goes
-    through: manual_edge_handle_index here, and edge_resolver's
-    resolve_function_edges / infer_manual_fn_output_types /
-    infer_manual_fn_param_to_class, which take ``hidden_edge_ids`` as a
-    required keyword for that reason. The index was fixed first (2026-10-01)
-    while resolve_function_edges still read raw rows, so a never-graduated
-    node still bound the stale twin and the MATLAB run still failed.
+    Applied in ONE place: `edge_view.effective_edges`, which every reader
+    uses (tests/test_edge_view_guard.py). The binding functions
+    (manual_edge_handle_index, edge_resolver.resolve_function_edges and
+    friends) take the view's edges and filter nothing themselves. They each
+    used to filter too, the second copy added after the index was fixed while
+    resolve_function_edges still read raw rows, so a never-graduated node
+    still bound the stale twin and the MATLAB run still failed.
     """
     kept: list[dict] = []
     dropped: list[dict] = []
@@ -2509,9 +2505,7 @@ def input_params_with_manual_edges(
     """
     if not manual_edges:
         return fn_input_params
-    manual_index = manual_edge_handle_index(
-        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
-    )
+    manual_index = manual_edge_handle_index(manual_edges)
     if not manual_index:
         return fn_input_params
 
@@ -2590,9 +2584,7 @@ def stated_wiring_claims(
     """
     if not manual_edges or not current_by_node:
         return {}
-    manual_index = manual_edge_handle_index(
-        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
-    )
+    manual_index = manual_edge_handle_index(manual_edges)
     if not manual_index:
         return {}
     # A LIST per wiring, not one node: two nodes can share a current shape
@@ -2717,9 +2709,7 @@ def collect_manual_input_overrides(
     nodes runs before scope resolution); manual edge targets may carry a
     ``::scope`` suffix, which manual_edge_handle_index strips.
     """
-    manual_index = manual_edge_handle_index(
-        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
-    )
+    manual_index = manual_edge_handle_index(manual_edges)
     if not manual_index:
         return {}
     result: dict[str, dict[str, str]] = {}
@@ -2837,9 +2827,7 @@ def hidden_wirings(
     """
     if not hidden_edge_ids:
         return set()
-    manual_index = manual_edge_handle_index(
-        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
-    )
+    manual_index = manual_edge_handle_index(manual_edges)
     pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
     result: set[tuple[str, str]] = set()
     # Only a node's CURRENT wiring can disconnect it. The result is keyed by

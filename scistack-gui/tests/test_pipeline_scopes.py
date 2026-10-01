@@ -3079,7 +3079,6 @@ class TestNeverRunNodeMatlabCommand:
             manual_edges=pipeline_store.get_manual_edges(db),
             manual_nodes=pipeline_store.get_manual_nodes(db),
             existing_node_labels={},
-            hidden_edge_ids=frozenset(),
         )
         assert sorted(resolved.input_types["signal"]) == ["NeverRunIn4A", "NeverRunIn4B"]
 

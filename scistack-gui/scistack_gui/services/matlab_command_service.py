@@ -165,7 +165,6 @@ def _resolve_matlab_wiring(function_name: str, manual_edges: list[dict], manual_
         manual_edges=manual_edges,
         manual_nodes=manual_nodes,
         existing_node_labels={},
-        hidden_edge_ids=frozenset(),
     )
 
 
@@ -604,7 +603,6 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
             manual_edges,
             manual_nodes,
             existing_node_labels={},
-            hidden_edge_ids=frozenset(),
         )
         if inferred:
             # Re-order inferred class names to match the function parameter order

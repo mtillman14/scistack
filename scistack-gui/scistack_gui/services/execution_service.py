@@ -646,7 +646,6 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
 
     manual_output_types = infer_manual_fn_output_types(
         fn_node_ids, all_edges, manual_nodes, existing_node_labels={},
-        hidden_edge_ids=hidden_edge_ids,
     )
 
     from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
@@ -698,7 +697,6 @@ def derive_fn_targets(db, function_name: str) -> list[dict]:
         manual_edges=all_edges,
         manual_nodes=manual_nodes,
         existing_node_labels={},
-        hidden_edge_ids=hidden_edge_ids,
     )
     if not resolved.output_types:
         logger.warning(
@@ -861,7 +859,6 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             manual_edges=all_edges,
             manual_nodes=manual_nodes,
             existing_node_labels={},
-            hidden_edge_ids=hidden_edge_ids,
         )
         if not resolved.output_types:
             logger.info(
@@ -958,7 +955,6 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             matching,
             infer_manual_fn_output_types(
                 {node_id}, all_edges, manual_nodes, existing_node_labels={},
-                hidden_edge_ids=hidden_edge_ids,
             ),
             f"node {node_id} ('{function_name}')",
         )
@@ -1137,11 +1133,7 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     if not hidden_edge_ids:
         return None
 
-    manual_index = manual_edge_handle_index(
-        view.drawn_list,
-        hidden_edge_ids=hidden_edge_ids,
-        manual_nodes=view.manual_nodes,
-    )
+    manual_index = manual_edge_handle_index(view.drawn_list)
 
     # Hidden edge ids and drawn edges are keyed by the NODE, which no longer
     # encodes its wiring (docs/claude/node-identity.md) — so every lookup below
@@ -1277,9 +1269,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
 
     from scistack_gui.domain.graph_builder import manual_edge_handle_index
 
-    manual_index = manual_edge_handle_index(
-        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
-    )
+    manual_index = manual_edge_handle_index(manual_edges)
 
     entries: list[dict] = []
     seen_labels: set[str] = set()

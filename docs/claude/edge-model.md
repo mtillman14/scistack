@@ -78,6 +78,12 @@ through it:
 | pipeline-run report, MATLAB pipeline command | that pipeline |
 | submodule interface | the submodule |
 
+The visibility rule (`visible_manual_edges`) is applied there and NOWHERE else. The
+binding functions (`manual_edge_handle_index`, `edge_resolver.resolve_function_edges`,
+`infer_manual_fn_output_types`, `infer_manual_fn_param_to_class`) take the view's edges and filter
+nothing. Functions that ask whether a HISTORY edge is hidden take `hidden_edge_ids`, because history
+edges are rebuilt from the database and are not in the view's drawn list.
+
 `tests/test_edge_view_guard.py` fails if a new reader reads stored edges or
 hidden ids directly. Mutators (`put_edge`, `delete_edge`,
 `extract_to_submodule`, `read_layout`) are on its allow-list, each with a reason.

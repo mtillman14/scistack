@@ -566,9 +566,7 @@ def reconcile_manual_inputs(
     )
 
     manual_nodes = manual_nodes or {}
-    manual_index = manual_edge_handle_index(
-        manual_edges, hidden_edge_ids=hidden_edge_ids, manual_nodes=manual_nodes
-    )
+    manual_index = manual_edge_handle_index(manual_edges)
     kept = []
     # One line per WIRING, not per target. Every target of a wiring gets the
     # same overrides and the same substituted bindings, so logging inside the

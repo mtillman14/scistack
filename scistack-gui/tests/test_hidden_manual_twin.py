@@ -132,21 +132,24 @@ class TestManualEdgeIsHidden:
 
 
 class TestIndexLeavesHiddenEdgesOut:
+    """The index takes the edges the canvas draws: edge_view filters them
+    with visible_manual_edges, the one owner, and the index filters nothing."""
+
     def test_stale_twin_is_not_indexed(self):
         index = manual_edge_handle_index(
-            [STALE_TWIN, RECONNECT], hidden_edge_ids={HIDDEN_HISTORY_EDGE}
+            visible_manual_edges([STALE_TWIN, RECONNECT], {HIDDEN_HISTORY_EDGE})
         )
         assert index[(FN, WID, "in__v")] == [RECONNECT]
 
     def test_twin_is_indexed_while_its_history_edge_is_visible(self):
-        index = manual_edge_handle_index([STALE_TWIN], hidden_edge_ids=frozenset())
+        index = manual_edge_handle_index(visible_manual_edges([STALE_TWIN], frozenset()))
         assert index[(FN, WID, "in__v")] == [STALE_TWIN]
 
     def test_dropped_edge_is_logged_once_at_info(self, caplog):
         caplog.set_level(logging.INFO, logger="scistack_gui.domain.graph_builder")
         for _ in range(3):
             manual_edge_handle_index(
-                [STALE_TWIN, RECONNECT], hidden_edge_ids={HIDDEN_HISTORY_EDGE}
+                visible_manual_edges([STALE_TWIN, RECONNECT], {HIDDEN_HISTORY_EDGE})
             )
         lines = [
             r.getMessage()
@@ -163,7 +166,7 @@ class TestBindingFollowsTheCanvas:
     def test_reconnect_binds_only_the_new_variable(self):
         hidden = {HIDDEN_HISTORY_EDGE}
         index = manual_edge_handle_index(
-            [STALE_TWIN, RECONNECT], hidden_edge_ids=hidden
+            visible_manual_edges([STALE_TWIN, RECONNECT], hidden)
         )
         overrides = manual_input_overrides(FN, WID, HISTORY, set(), index, None, hidden)
         # A bare string: one source, not the EachOf MATLAB generation refuses.
@@ -171,7 +174,7 @@ class TestBindingFollowsTheCanvas:
 
     def test_stale_twin_alone_leaves_the_input_disconnected(self):
         hidden = {HIDDEN_HISTORY_EDGE}
-        index = manual_edge_handle_index([STALE_TWIN], hidden_edge_ids=hidden)
+        index = manual_edge_handle_index(visible_manual_edges([STALE_TWIN], hidden))
         assert manual_input_overrides(FN, WID, HISTORY, set(), index, None, hidden) == {}
         assert hidden_wirings(
             fn_input_params={F_KEY: HISTORY},
@@ -180,7 +183,8 @@ class TestBindingFollowsTheCanvas:
             path_inputs={},
             hidden_edge_ids=hidden,
             token_for=identity_token,
-            manual_edges=[STALE_TWIN],
+            # What the view hands it: the stale twin is already gone.
+            manual_edges=visible_manual_edges([STALE_TWIN], hidden),
             is_current=lambda _fn, _wiring: True,
         ) == {(FN, WID)}
 
@@ -205,10 +209,11 @@ class TestEdgeResolverReadsOnlyVisibleEdges:
     def test_resolve_function_edges_binds_only_the_reconnect(self):
         resolved = resolve_function_edges(
             fn_node_ids={NODE},
-            manual_edges=[STALE_TWIN, RECONNECT],
+            manual_edges=visible_manual_edges(
+                [STALE_TWIN, RECONNECT], {HIDDEN_HISTORY_EDGE}
+            ),
             manual_nodes={},
             existing_node_labels={},
-            hidden_edge_ids={HIDDEN_HISTORY_EDGE},
         )
         assert resolved.input_types == {"v": "GaitRiteLoaded_UA"}
 
@@ -219,7 +224,6 @@ class TestEdgeResolverReadsOnlyVisibleEdges:
             manual_edges=[STALE_TWIN, RECONNECT],
             manual_nodes={},
             existing_node_labels={},
-            hidden_edge_ids=frozenset(),
         )
         assert sorted(resolved.input_type_candidates["v"]) == [
             "GAITRiteLoaded",
@@ -231,10 +235,9 @@ class TestEdgeResolverReadsOnlyVisibleEdges:
         new_out = {"id": "manual__out2", "source": NODE, "target": "var__NewOut"}
         assert infer_manual_fn_output_types(
             {NODE},
-            [stale_out, new_out],
+            visible_manual_edges([stale_out, new_out], {connection_id(NODE, "var__OldOut")}),
             {},
             existing_node_labels={},
-            hidden_edge_ids={connection_id(NODE, "var__OldOut")},
         ) == ["NewOut"]
 
     def test_visible_manual_edges_keeps_order_and_drops_hidden(self):
@@ -321,16 +324,15 @@ class TestOldParameterEdgeOnAnInputPort:
 
     def test_hiding_the_history_edge_hides_the_old_copy(self):
         assert manual_edge_is_hidden(self.OLD_COPY, {self.HISTORY_EDGE})
-        index = manual_edge_handle_index([self.OLD_COPY], hidden_edge_ids={self.HISTORY_EDGE})
+        index = manual_edge_handle_index(visible_manual_edges([self.OLD_COPY], {self.HISTORY_EDGE}))
         assert (FN, WID, "in__formulaNum") not in index
 
     def test_edge_resolution_no_longer_binds_the_deleted_parameter(self):
         resolved = resolve_function_edges(
             fn_node_ids={NODE},
-            manual_edges=[self.OLD_COPY],
+            manual_edges=visible_manual_edges([self.OLD_COPY], {self.HISTORY_EDGE}),
             manual_nodes={},
             existing_node_labels={},
-            hidden_edge_ids={self.HISTORY_EDGE},
         )
         assert "formulaNum" not in resolved.parameter_params
 
@@ -340,6 +342,5 @@ class TestOldParameterEdgeOnAnInputPort:
             manual_edges=[self.OLD_COPY],
             manual_nodes={},
             existing_node_labels={},
-            hidden_edge_ids=frozenset(),
         )
         assert resolved.parameter_params == {"formulaNum": "formulaNum"}
