@@ -11,6 +11,85 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzr. Variants popup: cards, Make current, Delete, before-run pin question — added 2026-09-30
+
+**What changed:** right-click a Variable node → **🧬 Variants…** now opens one popup
+of collapsible cards, one per full-chain variant. It replaces the 🔍 Provenance and
+🧬 Variants header buttons and panels, which are gone. Plan:
+`.claude/plan-variants-popup.md`; rules: `docs/claude/variant-pins-and-deletion.md`.
+Both bundles were rebuilt.
+
+**Backend:** none. To make something to look at, run a function under two settings
+(e.g. a Parameter with two values) so its output variable has two variants, and
+ideally a downstream step after it. Terminal checks: `scidb variants <Var> --cards`
+prints the same cards; `scidb pins` and `scidb tombstones` show what the popup did.
+
+**Frontend**
+1. Right-click the output Variable → **🧬 Variants…**. You should see one card per
+   variant, with only the settings that differ in each header (e.g. `low_hz (bandpass)
+   = 20`), plus record/location counts and last saved.
+2. Expand a card. **What defines it** lists every setting. **Upstream pipeline** is a
+   small read-only graph from the raw inputs to this variable, with each step's
+   settings (code version, constants and the Parameter they came from, run options).
+   **Locations** is a tree (subject ▸ session …) with counts. **Runs** lists the runs.
+3. **Make current** on one card → reason dialog → confirm. The card gets a gold
+   **★ current (pinned)** badge and a gold border; the others read "not the default".
+   Open a DOWNSTREAM variable's popup: the card built from the pinned variant reads
+   **☆ current (via an upstream pin)**.
+4. Check that nothing is hidden: in Plot Studio, a variant row naming the other
+   variant still plots it.
+5. **Release pin** → back to every current variant flowing. The **History** link at the
+   bottom lists the pin, with its reason and release.
+6. **Delete…** on a card: the dialog lists the records per variable ("computed from it"
+   for downstream ones) and the locations where nothing would be left. The button
+   stays disabled until you type a reason. If the card's setting came from a canvas
+   Parameter that still lists it, an "Also remove <value> from the <Parameter>
+   Parameter" checkbox appears. Ticking it re-plans, possibly including other variables.
+7. Confirm the delete: the card disappears and History shows the deletion. With the
+   checkbox ticked, the Parameter's value is also gone from its declaration.
+8. With a pin in place, click **Run** on the function node that writes that variable.
+   A "Pinned variable" dialog should appear with **Cancel**, **Move pin to the new
+   output** and **Keep pin**. Try **Move**: after the run succeeds, the newest card is
+   now the pinned one. Do the same through **Run all** (the plan dialog's ▶ Run).
+
+**Expect:** no 🔍 Provenance / 🧬 Variants buttons in the header; Escape closes the
+popup; refusals (e.g. a reason left empty, or a database that changed since the delete
+plan) appear in red in place, not as a crash. `scidb.log` has `[variants]`, `[default]`,
+`variant_pins:` and `delete_plan:` / `delete_variant:` lines for each action.
+
+---
+
+## 0zzq. Variable sidebar no longer lists per-record schema locations — added 2026-09-30
+
+**What changed:** the **Records** table (one row per record, showing its schema key
+values) has been removed from the sidebar that opens when you click a Variable node.
+Only the frontend changed (`VariableSettingsPanel.tsx`). Both bundles were rebuilt.
+
+**Frontend:** click any Variable node on the canvas.
+
+**Expect:** the sidebar shows the variable name, **Plot** (quick plot + Open Plot
+Studio) and **Variants** (variant / code / record count), and nothing below that.
+There should be no table of subject/session/... values.
+
+---
+
+## 0zzp. A MATLAB run works in a freshly started MATLAB — added 2026-09-28
+
+**What changed:** the generated script's start marker (`scidb.run_marker('begin', …)`)
+now adds scimatlab's MATLAB dir to the path itself, and is wrapped in try/catch.
+It used to fail on line 6 with `Unable to resolve the name 'scidb.run_marker'`
+whenever MATLAB had not yet run a SciStack script this session.
+
+**Backend:** quit MATLAB completely and start it again (or run `restoredefaultpath`).
+
+**Frontend:** run a MATLAB function node (e.g. `calculateSymmetryOneVector`) from the GUI.
+
+**Expect:** no "Unable to resolve" error; the script gets past the preamble; the node
+resolves to success/failure (not "unknown"). `scidb.log` shows
+`[run_marker] begin marker for <run_id>: adds its writer's dir first: …`.
+
+---
+
 ## 0zzo. A rewired output keeps its node; multi-output nodes run — added 2026-09-29
 
 **What changed:** a node's call site can hold several output types, either
@@ -1707,7 +1786,7 @@ Backend only (`scope_filter.resolve_scope_view` + `declared_only` flag); no fron
 
 ---
 
-## 0q. Variants panel — "why does this variable have more variants than I expected?" — added 2026-09-22
+## 0q. Variants panel — "why does this variable have more variants than I expected?" — added 2026-09-22 — SUPERSEDED 2026-09-30: the panel was replaced by the Variants popup; see 0zzr
 
 **What changed:** `Inspector.topologies` (already in the Python API and behind
 `scidb variants <name>`) now has a GUI surface. It is **bottom-up**, where the
@@ -2753,7 +2832,7 @@ and that was fixed. **Step two has never been checked.**
 
 ---
 
-## 9. Variant provenance panel (🔍 Provenance) — added 2026-09-15
+## 9. Variant provenance panel (🔍 Provenance) — added 2026-09-15 — SUPERSEDED 2026-09-30: the panel was removed; see 0zzr
 
 **What changed:** a toolbar panel shows which functions, versions and runs
 produced a variable at a chosen variant. It gives the same answer as

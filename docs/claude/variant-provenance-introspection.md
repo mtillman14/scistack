@@ -202,6 +202,14 @@ Both vite bundles were rebuilt 2026-09-15 (see memory
   `Inspector.provenance` field by field, HTTP route, JSON-RPC handler, empty
   pin as an answer.
 
+## Superseded (2026-09-30)
+
+The GUI halves of this doc (the `ProvenancePanel`, the `TopologiesPanel`, and the
+`variable_provenance` / `variable_topologies` RPCs) were removed when the Variants
+popup replaced them (`docs/claude/variant-pins-and-deletion.md`). The scidb and
+CLI halves (`Inspector.provenance` / `topologies`, `scidb trace`, `scidb
+variants`) are unchanged.
+
 ## Open
 
 - The `_run_lines` render shows every run; a record re-run 50× prints 50

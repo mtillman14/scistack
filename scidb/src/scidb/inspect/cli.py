@@ -241,6 +241,19 @@ def _cmd_pipeline(insp: Inspector, args) -> None:
 
 
 def _cmd_variants(insp: Inspector, args) -> None:
+    if getattr(args, "cards", False):
+        # One card per FULL-CHAIN variant (upstream settings included) — the
+        # object the GUI Variants popup shows.
+        cards = insp.variant_cards(args.name)
+        if args.json:
+            _emit_json(cards)
+        else:
+            print(
+                render.render_variant_cards(
+                    cards, max_locations=None if getattr(args, "locations", False) else 4
+                )
+            )
+        return
     variants = insp.variants(args.name)
     if args.json:
         _emit_json(variants)
@@ -336,6 +349,118 @@ def _cmd_exclusions(insp: Inspector, args) -> None:
 def _cmd_exclude(mut: Mutator, args) -> None:
     result = mut.exclude_schema(args.reason, **_parse_kv(args.schema))
     _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_pin(mut: Mutator, args) -> None:
+    selection = _parse_variant(args.variant)
+    if not selection:
+        raise CLIError("pin needs at least one --variant KEY=VALUE (a card's selection)")
+    result = mut.pin_variant(args.name, selection, args.reason)
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_unpin(mut: Mutator, args) -> None:
+    result = mut.release_pin(args.name, args.reason)
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_pins(insp: Inspector, args) -> None:
+    pins = insp.variant_pins(args.name, history=args.history)
+    if args.json:
+        _emit_json(pins)
+        return
+    if not pins:
+        print("(no pins)" if args.history else "(no active pins)")
+        return
+    rows = [
+        [
+            p.variable,
+            ", ".join(f"{k}={v}" for k, v in p.selection.items()),
+            p.pinned_at,
+            p.pinned_by or "",
+            p.released_at or ("active" if p.active else ""),
+            p.reason,
+        ]
+        for p in pins
+    ]
+    print(
+        render.format_table(
+            ["variable", "selection", "pinned", "by", "released", "reason"], rows
+        )
+    )
+
+
+def _delete_targets(args) -> list[dict]:
+    """The ``delete-variant`` flags as ``variant_delete`` targets."""
+    targets: list[dict] = []
+    for card_id in args.card:
+        targets.append({"variable": args.name, "card_id": card_id})
+    selection = _parse_variant(args.variant)
+    if selection:
+        targets.append({"variable": args.name, "selection": selection})
+    for pair in args.constant:
+        key, eq, value = pair.partition("=")
+        fn, _dot, param = key.rpartition(".")
+        if not eq or not fn or not param:
+            raise CLIError(f"--constant expects FN.PARAM=VALUE, got {pair!r}")
+        targets.append({"function": fn, "param": param, "value": _literal(value)})
+    for pair in args.parameter:
+        name, sep, value = pair.partition("=")
+        if not sep:
+            raise CLIError(f"--parameter expects NAME=VALUE, got {pair!r}")
+        targets.append({"parameter": name, "value": _literal(value)})
+    if not targets:
+        raise CLIError(
+            "delete-variant needs --card, --variant, --constant or --parameter"
+        )
+    return targets
+
+
+def _literal(text: str):
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        return text
+
+
+def _cmd_delete_variant(mut: Mutator, args) -> None:
+    from ..variant_delete import delete_plan
+
+    targets = _delete_targets(args)
+    plan = delete_plan(mut._db, targets)
+    if not args.yes:
+        # A dry run is the default: the plan is printed and nothing is touched.
+        if args.json:
+            _emit_json(plan)
+        else:
+            print(render.render_delete_plan(plan))
+            print("\nNothing was deleted. Re-run with --yes to delete exactly this.")
+        return
+    result = mut.delete_variant(
+        targets, args.reason, expect_fingerprint=args.fingerprint or plan.fingerprint
+    )
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_tombstones(insp: Inspector, args) -> None:
+    stones = insp.tombstones(args.name)
+    if args.json:
+        _emit_json(stones)
+        return
+    if not stones:
+        print("(no deletions)")
+        return
+    rows = [
+        [
+            t.tombstone_id,
+            t.deleted_at,
+            t.deleted_by or "",
+            ", ".join(f"{k}={v}" for k, v in t.by_variable.items()),
+            t.reason,
+        ]
+        for t in stones
+    ]
+    print(render.format_table(["tombstone", "deleted", "by", "records", "reason"], rows))
 
 
 def _cmd_include(mut: Mutator, args) -> None:
@@ -684,6 +809,15 @@ def _add_commands(
         action="store_true",
         help="List every schema location rather than a sample.",
     )
+    p.add_argument(
+        "--cards",
+        action="store_true",
+        help=(
+            "One card per full-chain variant (upstream constants, code versions "
+            "and run options included), with its selection, upstream steps, "
+            "locations and runs."
+        ),
+    )
     p.set_defaults(_handler=_cmd_variants)
 
     p = sub.add_parser(
@@ -965,6 +1099,77 @@ def _add_commands(
         help="Why this data is re-included (stored in the audit trail).",
     )
     p.set_defaults(_write_handler=_cmd_include)
+
+    p = sub.add_parser(
+        "pin",
+        parents=[parent],
+        help="Make one variant the DEFAULT of a variable (write; hides nothing).",
+    )
+    p.add_argument("name", help="Variable type.")
+    p.add_argument(
+        "--variant",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="The variant's selection, e.g. from `scidb variants X --cards` "
+        "(repeatable).",
+    )
+    p.add_argument(
+        "--reason", required=True, help="Why this is the default (audit trail)."
+    )
+    p.set_defaults(_write_handler=_cmd_pin)
+
+    p = sub.add_parser(
+        "unpin",
+        parents=[parent],
+        help="Release a variable's pinned default (write; the pin row is kept).",
+    )
+    p.add_argument("name", help="Variable type.")
+    p.add_argument("--reason", required=True, help="Why (audit trail).")
+    p.set_defaults(_write_handler=_cmd_unpin)
+
+    p = sub.add_parser(
+        "delete-variant",
+        parents=[parent],
+        help="REALLY delete variant(s) and everything computed from them "
+        "(write; prints the plan and stops unless --yes; leaves a tombstone).",
+    )
+    p.add_argument("name", nargs="?", default=None, help="Variable type (for --card/--variant).")
+    p.add_argument("--card", action="append", default=[], help="A card id from `variants X --cards`.")
+    p.add_argument(
+        "--variant", action="append", default=[], metavar="KEY=VALUE",
+        help="Delete every card whose selection matches (repeatable).",
+    )
+    p.add_argument(
+        "--constant", action="append", default=[], metavar="FN.PARAM=VALUE",
+        help="Delete everything built with this constant value (every variable).",
+    )
+    p.add_argument(
+        "--parameter", action="append", default=[], metavar="NAME=VALUE",
+        help="Delete everything built from this Parameter value (every variable).",
+    )
+    p.add_argument("--reason", required=True, help="Why (stored on the tombstone).")
+    p.add_argument("--yes", action="store_true", help="Delete, rather than only plan.")
+    p.add_argument(
+        "--fingerprint", default=None,
+        help="Refuse unless the plan still has this fingerprint (from a dry run).",
+    )
+    p.set_defaults(_write_handler=_cmd_delete_variant)
+
+    p = sub.add_parser(
+        "tombstones", parents=[parent], help="Every variant deletion ever made."
+    )
+    p.add_argument("name", nargs="?", default=None, help="Only those touching this variable.")
+    p.set_defaults(_handler=_cmd_tombstones)
+
+    p = sub.add_parser(
+        "pins", parents=[parent], help="Active variant pins (the defaults)."
+    )
+    p.add_argument("name", nargs="?", default=None, help="Only this variable.")
+    p.add_argument(
+        "--history", action="store_true", help="Every pin ever made, released too."
+    )
+    p.set_defaults(_handler=_cmd_pins)
 
 
 def build_parser() -> argparse.ArgumentParser:

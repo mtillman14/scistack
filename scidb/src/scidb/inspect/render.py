@@ -503,6 +503,104 @@ def render_variants_table(variants: list[VariantSummary]) -> str:
     return format_table(headers, rows)
 
 
+def render_variant_cards(result, max_locations: int | None = 4) -> str:
+    """``scidb variants X --cards``: the text form of ``Inspector.variant_cards``,
+    the same object the GUI Variants popup shows.
+
+    Each card's header line carries only the axes that differ between cards
+    (``result.varying_axes``); the full selection and the upstream steps follow
+    underneath, so nothing that defines the variant is left out.
+    """
+    if not result.cards:
+        extra = (
+            f" ({result.excluded_record_count} excluded record(s))"
+            if result.excluded_record_count
+            else ""
+        )
+        return f"{result.variable}: no records{extra}"
+
+    lines = [
+        f"{result.variable} — {len(result.cards)} variant(s)"
+        + (
+            f"; they differ in {', '.join(result.varying_axes)}"
+            if result.varying_axes
+            else ""
+        )
+        + ("; produced by different functions" if result.producer_varies else "")
+    ]
+    if result.excluded_record_count:
+        lines.append(
+            f"  ({result.excluded_record_count} excluded record(s) are on no card)"
+        )
+    if result.default_selection is not None:
+        lines.append(
+            f"  default (pin(s) on {', '.join(result.default_sources)}): "
+            + ", ".join(f"{k}={v}" for k, v in result.default_selection.items())
+        )
+    for i, card in enumerate(result.cards, start=1):
+        head = (
+            ", ".join(f"{k}={v}" for k, v in card.distinguishing.items())
+            or "only variant"
+        )
+        # DEFAULT only means something once a pin narrows it; with no pin every
+        # current card is a default and marking them all would be noise.
+        pinned_view = result.default_selection is not None
+        mark = (
+            "PINNED "
+            if card.is_pinned
+            else ("DEFAULT " if pinned_view and card.is_default else "")
+        )
+        lines.append("")
+        lines.append(f"  [{i}] {mark}{head}   ({card.card_id})")
+        if card.pin_conflict:
+            lines.append(f"      note: {card.pin_conflict}")
+        lines.append(
+            f"      {card.function_name or 'direct save'} · {card.record_count} "
+            f"record(s) · {len(card.locations)} location(s)"
+            + (
+                f" · first {card.first_saved} · last {card.last_saved}"
+                if card.first_saved
+                else ""
+            )
+        )
+        lines.append(f"      {card.verdict.upper()}: {card.verdict_label}")
+        if not card.selection_exact:
+            lines.append(
+                f"      selection also matches card(s) {', '.join(card.overlaps_with)}"
+            )
+        selection = ", ".join(f"{k}={v}" for k, v in card.selection.items())
+        lines.append(f"      selection: {selection or '(empty)'}")
+        for step in card.upstream.steps:
+            parts = [f"{step.function_name} -> {step.output_type}"]
+            code = [c.version for c in step.code if c.version]
+            if code:
+                parts.append("code " + "/".join(code))
+            for param, values in step.constants.items():
+                parts.append(f"{param}=" + "|".join(values))
+            for label in step.run_options:
+                parts.append(label)
+            if not step.uniform:
+                parts.append("NOT UNIFORM")
+            lines.append("      step  " + " · ".join(parts))
+        if card.locations:
+            keys = "/".join(card.location_keys)
+            shown = card.locations if max_locations is None else card.locations[:max_locations]
+            text = ", ".join(
+                "/".join(str(loc.get(k, "")) for k in card.location_keys) for loc in shown
+            )
+            more = len(card.locations) - len(shown)
+            lines.append(
+                f"      locations  {keys} — {text}" + (f", … (+{more})" if more > 0 else "")
+            )
+        if card.runs:
+            newest = card.runs[0]
+            lines.append(
+                f"      runs  {len(card.runs)}; newest {newest.run_id[:8]} "
+                f"{newest.timestamp}" + (f" by {newest.user_id}" if newest.user_id else "")
+            )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline renderers
 # ---------------------------------------------------------------------------
@@ -983,6 +1081,39 @@ def render_exclusions(exclusions: list[ExclusionRecord], schema_keys: list[str])
             for e in exclusions
         ],
     )
+
+
+def render_delete_plan(plan) -> str:
+    """``scidb delete-variant`` without ``--yes``: what WOULD be deleted."""
+    lines = [
+        f"Would delete {plan.total_records} record(s) (cannot be undone; a "
+        f"tombstone is kept)   fingerprint {plan.fingerprint}"
+    ]
+    for variable, n in plan.by_variable.items():
+        down = plan.downstream_by_variable.get(variable, 0)
+        lines.append(
+            f"  {variable:<24} {n:>6}"
+            + (f"   ({down} computed from the deleted records)" if down else "")
+        )
+    for variable, locs in plan.lost_locations.items():
+        if locs:
+            shown = ", ".join(
+                "/".join(str(v) for v in loc.values()) for loc in locs[:6]
+            )
+            more = len(locs) - 6
+            lines.append(
+                f"  {variable}: nothing left at {len(locs)} location(s): {shown}"
+                + (f", … (+{more})" if more > 0 else "")
+            )
+    lines.append(
+        f"  {len(plan.invocation_ids)} invocation(s) and {len(plan.run_ids)} run(s) "
+        f"left with nothing are deleted too"
+    )
+    if plan.pins_to_release:
+        lines.append(f"  pins released: {', '.join(plan.pins_to_release)}")
+    for w in plan.warnings:
+        lines.append(f"  warning: {w}")
+    return "\n".join(lines)
 
 
 def render_mutation_result(result: MutationResult) -> str:

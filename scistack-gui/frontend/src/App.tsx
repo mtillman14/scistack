@@ -33,8 +33,6 @@ import PipelineDAG from "./components/DAG/PipelineDAG";
 import Breadcrumb from "./components/DAG/Breadcrumb";
 import HypothesisTabs from "./components/HypothesisTabs";
 import PathsPopup from "./components/PathsPopup";
-import ProvenancePanel from "./components/Provenance/ProvenancePanel";
-import TopologiesPanel from "./components/Variants/TopologiesPanel";
 import Sidebar from "./components/Sidebar/Sidebar";
 import PipelineRunController from "./components/PipelineRunController";
 import { RunLogProvider } from "./context/RunLogContext";
@@ -210,12 +208,6 @@ export default function App() {
   const [reporting, setReporting] = useState(false);
   const [startupErrors, setStartupErrors] = useState<StartupError[]>([]);
   const [pathsOpen, setPathsOpen] = useState(false);
-  const [provenanceOpen, setProvenanceOpen] = useState(false);
-  // The variable the Variants panel is open ON: `null` = closed, `""` = open
-  // with no node in mind (the toolbar route, which picks the first variable).
-  // A node-context-menu route passes the variable name, so the panel opens
-  // where the question was asked rather than making the user find it again.
-  const [variantsFor, setVariantsFor] = useState<string | null>(null);
 
   // Endpoint report: db.inspect.write_report → self-contained index.html
   // (figures embedded). Standalone opens it via the artifacts file route;
@@ -376,20 +368,6 @@ export default function App() {
                       >
                         📁 Paths
                       </button>
-                      <button
-                        style={styles.pathsBtn}
-                        onClick={() => setProvenanceOpen(true)}
-                        title="Pick a variable and a variant, and see the functions, versions and runs that produced it (same answer as `scidb trace --variant … --runs`)"
-                      >
-                        🔍 Provenance
-                      </button>
-                      <button
-                        style={styles.pathsBtn}
-                        onClick={() => setVariantsFor("")}
-                        title="Every shape that has produced a variable, and every run of each — with whether a load would still return its records (same answer as `scidb variants <name>`)"
-                      >
-                        🧬 Variants
-                      </button>
                       {schema.keys.length > 0 && (
                         <span style={styles.schemaKeys}>
                           schema: [{schema.keys.join(", ")}]
@@ -409,15 +387,6 @@ export default function App() {
               </ReactFlowProvider>
               <PipelineRunController />
               {pathsOpen && <PathsPopup onClose={() => setPathsOpen(false)} />}
-              {provenanceOpen && (
-                <ProvenancePanel onClose={() => setProvenanceOpen(false)} />
-              )}
-              {variantsFor !== null && (
-                <TopologiesPanel
-                  variable={variantsFor || null}
-                  onClose={() => setVariantsFor(null)}
-                />
-              )}
               {blockingErrors.length > 0 && (
                 <StartupErrorDialog errors={blockingErrors} />
               )}

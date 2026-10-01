@@ -693,6 +693,47 @@ class Inspector:
             )
         return ordered
 
+    @_timed
+    def variant_cards(self, name, include_runs: bool = True):
+        """Every **full-chain** variant of a variable, one card each.
+
+        Unlike :meth:`variants`, which groups by the producing call and so
+        merges records that differ only upstream, a card is one point in
+        variant space: upstream constants, per-function code version and run
+        options. Each card carries the ``selection`` that names it, what
+        distinguishes it from the other cards, whether a plain load still
+        returns it, every location, its runs, and its whole upstream pipeline.
+        See ``inspect/variant_cards.py`` and
+        ``docs/claude/variant-pins-and-deletion.md``.
+        """
+        from .variant_cards import build_variant_cards
+
+        return build_variant_cards(self._db, name, include_runs=include_runs)
+
+    def delete_plan(self, targets: list[dict]):
+        """What deleting ``targets`` would remove (``scidb.variant_delete``).
+        A dry run: read-only, so it works on an Inspector connection."""
+        from ..variant_delete import delete_plan
+
+        return delete_plan(self._db, targets)
+
+    def tombstones(self, variable=None) -> list:
+        """Every variant deletion ever made, oldest first."""
+        from ..variant_delete import tombstones
+
+        return tombstones(self._db, getattr(variable, "__name__", variable))
+
+    def variant_pins(self, variable=None, history: bool = False) -> list:
+        """Active variant pins (the defaults), or every pin ever made with
+        ``history=True``. ``scidb.variant_pins`` owns them."""
+        from ..variant_pins import active_pins, pin_history
+
+        name = getattr(variable, "__name__", variable)
+        if history:
+            return pin_history(self._db, name)
+        pins = active_pins(self._db)
+        return [p for v, p in sorted(pins.items()) if name is None or v == name]
+
     def _resolve_pin(
         self, variable, record_id, metadata, selection=None
     ) -> tuple[str, list[str], dict]:

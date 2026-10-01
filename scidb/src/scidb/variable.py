@@ -487,13 +487,25 @@ class BaseVariable(metaclass=VariableMeta):
                         f"No {cls.__name__} found matching metadata: {metadata}"
                     )
                 return _build_introspect_df(instances, where, version)
+            # No variant kwargs → the pinned default, if one reaches this type
+            # (scidb.variant_pins; one owner for what "the default" is).
+            from .variant_pins import default_load_args
+
+            schema_keys_set = set(_db.dataset_schema_keys)
+            named = {k: v for k, v in metadata.items() if k not in schema_keys_set}
+            default_bp, df_version = (
+                (None, version)
+                if named
+                else default_load_args(_db, cls, None, version)
+            )
             df = _db.load_all_as_df(
                 cls,
                 metadata,
                 layout="packed",
                 include_rid=False,
-                version_id=version,
+                version_id=df_version,
                 where=where,
+                **({"branch_params_filter": default_bp} if default_bp else {}),
             )
             if df.empty:
                 raise NotFoundError(
@@ -510,11 +522,17 @@ class BaseVariable(metaclass=VariableMeta):
             branch_params_filter = {
                 k: v for k, v in metadata.items() if k not in schema_keys_set
             } or None
+            # No variant kwargs → the pinned default (scidb.variant_pins).
+            from .variant_pins import default_load_args
+
+            branch_params_filter, load_version = default_load_args(
+                _db, cls, branch_params_filter, "latest"
+            )
             results = list(
                 _db.load(
                     cls,
                     schema_metadata,
-                    version_id="latest",
+                    version_id=load_version,
                     where=where,
                     branch_params_filter=branch_params_filter,
                 )
@@ -797,11 +815,16 @@ def _load_instances(cls, metadata, version, where, _db):
         branch_params_filter = {
             k: v for k, v in metadata.items() if k not in schema_keys_set
         } or None
+        from .variant_pins import default_load_args
+
+        branch_params_filter, load_version = default_load_args(
+            _db, cls, branch_params_filter, "latest"
+        )
         return list(
             _db.load(
                 cls,
                 schema_metadata,
-                version_id="latest",
+                version_id=load_version,
                 where=where,
                 branch_params_filter=branch_params_filter,
             )

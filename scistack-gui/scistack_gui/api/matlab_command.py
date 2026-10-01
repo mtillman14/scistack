@@ -750,17 +750,60 @@ def _run_marker_begin_lines(db_path: str, run_id: "str | None") -> list[str]:
 
     No ``run_id`` (the non-GUI callers, and the template command) means no
     markers at all: nothing is watching for them.
+
+    The marker brings its OWN path. ``+scidb/run_marker.m`` lives in
+    scimatlab's MATLAB directory, which the addpath block adds — but that
+    block comes after this line. A warm session still has it on the path
+    from an earlier run (``run()`` evaluates in the caller's workspace), so
+    the gap hid until a freshly started MATLAB failed with "Unable to resolve
+    the name 'scidb.run_marker'" on line 6. The scimatlab dir is therefore
+    added here, and the addpath block re-adding it later is a no-op.
+
+    And the call is guarded: ``run_marker`` never throws internally, but an
+    unresolvable name throws before it is ever entered. A start marker that
+    cannot be written means an "unknown" verdict, never a failed analysis.
     """
     if not run_id:
         return []
     from scidb.run_markers import marker_dir
 
+    from scistack_gui.server import _find_scimatlab_matlab_dir
+
+    scimatlab_dir = _find_scimatlab_matlab_dir()
+    if scimatlab_dir:
+        logger.info(
+            "[run_marker] begin marker for %s: adds its writer's dir first: %s",
+            run_id,
+            scimatlab_dir,
+        )
+        path_lines = [f"addpath('{_escape_matlab_string(scimatlab_dir)}');"]
+    else:
+        logger.warning(
+            "[run_marker] begin marker for %s: scimatlab MATLAB dir not found; "
+            "scidb.run_marker resolves only if +scidb is already on MATLAB's "
+            "path (the call is guarded, so the run proceeds either way)",
+            run_id,
+        )
+        path_lines = []
+
     return [
         "% Report this run's start/end so the GUI knows what actually happened",
         "% (scidb.run_marker; before the preamble, which can itself fail).",
-        f"scistack_run_marker__ = scidb.run_marker('begin', "
+        "% Its writer's dir is added here: the addpath block below is too late",
+        "% for this line in a freshly started MATLAB.",
+        *path_lines,
+        "try",
+        f"    scistack_run_marker__ = scidb.run_marker('begin', "
         f"'{_escape_matlab_string(str(marker_dir(db_path)))}', "
         f"'{_escape_matlab_string(run_id)}');",
+        "catch scistack_marker_err__",
+        "    % Diagnostics about the run must not fail the run.",
+        "    scistack_run_marker__ = [];",
+        "    warning('SciStack:runMarker', "
+        "'Could not write the start marker (%s): %s', ...",
+        "        scistack_marker_err__.identifier, scistack_marker_err__.message);",
+        "    clear scistack_marker_err__;",
+        "end",
         "",
     ]
 

@@ -40,7 +40,7 @@ import RunsDock from '../RunsDock'
 import GlueNode from './GlueNode'
 import PlotStudio from '../PlotStudio/PlotStudio'
 import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
-import TopologiesPanel from '../Variants/TopologiesPanel'
+import VariantsPopup from '../Variants/VariantsPopup'
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
@@ -157,10 +157,10 @@ export default function PipelineDAG() {
   // from plotTarget: looking at integrity is not the same act as opening a
   // figure, and one leads to the other rather than replacing it.
   const [locationTarget, setLocationTarget] = useState<string | null>(null)
-  // The variable the Variants panel is open on. Separate from "Provenance":
-  // they are opposite directions (bottom-up "what is in here" vs top-down
-  // "where did this pinned variant come from"), and one entry would hide the
-  // one that answers the question a user asks AT a node.
+  // The variable the Variants popup is open on: every variant as a card, with
+  // Make current / Delete, and what defines each (.claude/plan-variants-popup.md).
+  // It replaced the separate Provenance and Variants panels; the question
+  // arises AT a node, so this is where it opens.
   const [variantsTarget, setVariantsTarget] = useState<string | null>(null)
   const [sourceLoc, setSourceLoc] = useState<SourceLocation | null>(null)
   const [runFinalized, setRunFinalized] = useState(false)
@@ -967,7 +967,7 @@ export default function PipelineDAG() {
               style={styles.contextMenuItem}
               onClick={() => { setVariantsTarget(varType); setContextMenu(null) }}
               type="button"
-              title="Every shape that has produced this variable, and every run of each — with whether a load would still return its records (`scidb variants`)"
+              title="Every variant of this variable: what defines each (the whole upstream pipeline and its locations), which is current, and Make current / Delete (`scidb variants <name> --cards`)"
             >
               🧬 Variants…
             </button>
@@ -1025,7 +1025,7 @@ export default function PipelineDAG() {
         />
       )}
       {variantsTarget && (
-        <TopologiesPanel
+        <VariantsPopup
           variable={variantsTarget}
           onClose={() => setVariantsTarget(null)}
         />

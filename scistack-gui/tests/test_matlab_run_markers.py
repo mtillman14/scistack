@@ -343,6 +343,95 @@ def test_the_script_announces_itself_before_the_preamble():
     assert begin < preamble, "the start marker must precede the pyenv preamble"
 
 
+_FAKE_SCIMATLAB = "/opt/scimatlab/src/scimatlab/matlab"
+
+
+def _pin_scimatlab_dir(monkeypatch, value=_FAKE_SCIMATLAB):
+    from scistack_gui import server
+
+    monkeypatch.setattr(server, "_find_scimatlab_matlab_dir", lambda: value)
+
+
+def _pipeline_script(run_id="run-pipe"):
+    from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+
+    return generate_matlab_pipeline_command(
+        pipeline_id="main",
+        steps=[
+            {
+                "function_name": "bandpass_filter",
+                "variants": [
+                    {
+                        "input_types": {"signal": "RawSignal"},
+                        "output_type": "FilteredSignal",
+                        "constants": {"low_hz": 20},
+                        "record_count": 4,
+                    }
+                ],
+            }
+        ],
+        db_path="/data/experiment.duckdb",
+        schema_keys=["subject"],
+        run_id=run_id,
+    )
+
+
+@pytest.mark.parametrize("which", ["first_run", "variants", "pipeline"])
+def test_the_start_marker_brings_its_own_path(monkeypatch, which):
+    """The begin marker must not depend on the addpath block below it.
+
+    Regression: in a freshly started MATLAB the script died on line 6 with
+    "Unable to resolve the name 'scidb.run_marker'" — the +scidb dir was only
+    added by the addpath block, which comes after the marker. Warm sessions
+    hid it, because run() leaves the previous run's path in place.
+    """
+    _pin_scimatlab_dir(monkeypatch)
+    if which == "pipeline":
+        cmd = _pipeline_script()
+    elif which == "variants":
+        cmd = _script(
+            variants=[
+                {
+                    "input_types": {"signal": "RawSignal"},
+                    "output_type": "FilteredSignal",
+                    "constants": {"low_hz": 20},
+                    "record_count": 4,
+                }
+            ]
+        )
+    else:
+        cmd = _script()
+    own_path = cmd.index(f"addpath('{_FAKE_SCIMATLAB}');")
+    first_use = cmd.index("scidb.run_marker(")
+    assert own_path < first_use, (
+        "scimatlab's dir must be on MATLAB's path before the first "
+        "scidb.run_marker call"
+    )
+
+
+def test_an_unwritable_start_marker_does_not_fail_the_run(monkeypatch):
+    """run_marker never throws — but an unresolvable NAME throws before it is
+    entered, so the call site itself is guarded. A lost marker is an
+    'unknown' verdict, not a broken analysis."""
+    _pin_scimatlab_dir(monkeypatch)
+    lines = _script().splitlines()
+    begin = next(i for i, l in enumerate(lines) if "run_marker('begin'" in l)
+    assert lines[begin - 1].strip() == "try"
+    assert lines[begin + 1].strip().startswith("catch scistack_marker_err__")
+    tail = "\n".join(lines[begin : begin + 8])
+    assert "scistack_run_marker__ = [];" in tail
+    assert "warning('SciStack:runMarker'" in tail
+    assert "rethrow" not in tail
+
+
+def test_a_missing_scimatlab_dir_still_emits_a_guarded_marker(monkeypatch):
+    _pin_scimatlab_dir(monkeypatch, None)
+    cmd = _script()
+    head = cmd[: cmd.index("scidb.run_marker('begin'")]
+    assert "addpath(" not in head
+    assert "try" in head.splitlines()[-1]
+
+
 def test_the_script_reports_success_and_failure_separately():
     cmd = _script()
     assert "scidb.run_marker('finish'" in cmd
@@ -389,27 +478,7 @@ def test_a_first_run_reports_too():
 
 
 def test_the_pipeline_script_reports_too():
-    from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
-
-    cmd = generate_matlab_pipeline_command(
-        pipeline_id="main",
-        steps=[
-            {
-                "function_name": "bandpass_filter",
-                "variants": [
-                    {
-                        "input_types": {"signal": "RawSignal"},
-                        "output_type": "FilteredSignal",
-                        "constants": {"low_hz": 20},
-                        "record_count": 4,
-                    }
-                ],
-            }
-        ],
-        db_path="/data/experiment.duckdb",
-        schema_keys=["subject"],
-        run_id="run-pipe",
-    )
+    cmd = _pipeline_script()
     assert "scidb.run_marker('begin'" in cmd
     assert "scidb.run_marker('finish'" in cmd
     assert "run-pipe" in cmd

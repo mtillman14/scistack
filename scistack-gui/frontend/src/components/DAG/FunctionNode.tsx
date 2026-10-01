@@ -19,6 +19,7 @@ import { useScope } from '../../context/ScopeContext'
 import { useVariantSelection } from '../../context/VariantSelectionContext'
 import type { VariantSelectionValue } from '../../context/VariantSelectionContext'
 import type { Variant } from './VariableNode'
+import { movePinsAfterRun, usePinGate } from '../Variants/RunPinGate'
 
 interface FnVariantRow {
   constants: Record<string, unknown>
@@ -130,6 +131,10 @@ function PipelineFunctionNode({ id, data }: Props) {
   // without waiting for a React re-render — critical when the pipeline
   // finishes before the first render cycle completes.
   const runIdRef = useRef<string | null>(null)
+  // Pinned variables this run writes to (plan D6): the before-run question,
+  // and the pins to move once it succeeds when the user chose "Move".
+  const { gate: pinGate, dialog: pinGateDialog } = usePinGate()
+  const pendingPinMoves = useRef<string[]>([])
 
   useBackendMessage(useCallback((msg) => {
     // Support both WebSocket format (msg.type) and JSON-RPC notification format (msg.method)
@@ -168,10 +173,17 @@ function PipelineFunctionNode({ id, data }: Props) {
       finishRun(runId!, success, durationMs, cancelled, error, unknown)
       setRunning(false)
       setCancelling(false)
+      const moves = pendingPinMoves.current
+      pendingPinMoves.current = []
+      if (success && !cancelled && moves.length > 0) void movePinsAfterRun(moves, runId!)
     }
   }, [appendLine, finishRun, setRunMeta, updateProgress]))
 
   const handleRun = useCallback(async () => {
+    // A run that writes to a pinned variable asks first (keep / move / cancel).
+    const decision = await pinGate({ node_ids: [id] })
+    if (!decision.proceed) return
+    pendingPinMoves.current = decision.moveVariables
     // Generate run_id on the frontend BEFORE the fetch so the WebSocket
     // handler is already filtering on the correct ID when messages arrive.
     const newRunId = Math.random().toString(36).slice(2, 10)
@@ -226,7 +238,7 @@ function PipelineFunctionNode({ id, data }: Props) {
       finishRun(newRunId, false, 0, false, message)
       setRunning(false)
     }
-  }, [id, data, getNodes, getEdges, startRun, appendLine, finishRun])
+  }, [id, data, getNodes, getEdges, startRun, appendLine, finishRun, pinGate])
 
   // Show (endpoint nodes only): draft-run this endpoint + ancestors via
   // the pipeline compiler — zero DB writes; rendered outputs arrive on the
@@ -412,6 +424,7 @@ function PipelineFunctionNode({ id, data }: Props) {
       {sourceLoc && (
         <SourceLocationDialog location={sourceLoc} onClose={() => setSourceLoc(null)} />
       )}
+      {pinGateDialog}
 
       {leftHandles.length > 0
         ? leftHandles.map((h, i) => (

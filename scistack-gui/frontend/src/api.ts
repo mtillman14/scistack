@@ -217,10 +217,16 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     update_use_binding:     { path: (p) => `/api/pipeline-uses/${encodeURIComponent(p.use_id as string)}/binding`, method: 'PUT', body: true },
     get_pipeline_plan:      { path: (p) => `/api/pipelines/${encodeURIComponent(p.pipeline_id as string)}/plan?target=${encodeURIComponent((p.target as string) ?? '')}` },
     start_pipeline_run:     { path: (p) => `/api/pipelines/${encodeURIComponent(p.pipeline_id as string)}/run`, method: 'POST', body: true },
-    // Provenance panel and the canvas node's location tree.
-    variable_provenance:    { path: '/api/provenance/variable', method: 'POST', body: true },
-    variable_topologies:    { path: '/api/provenance/variable-topologies', method: 'POST', body: true },
+    // The canvas node's location tree.
     node_location_tree:     { path: '/api/provenance/node-location-tree', method: 'POST', body: true },
+    // Variants popup (.claude/plan-variants-popup.md): cards, pins, deletion.
+    variable_variants:      { path: '/api/variants/cards', method: 'POST', body: true },
+    pin_variant:            { path: '/api/variants/pin', method: 'POST', body: true },
+    release_pin:            { path: '/api/variants/release-pin', method: 'POST', body: true },
+    pin_newest_variant:     { path: '/api/variants/pin-newest', method: 'POST', body: true },
+    delete_variant_plan:    { path: '/api/variants/delete-plan', method: 'POST', body: true },
+    delete_variant:         { path: '/api/variants/delete', method: 'POST', body: true },
+    run_pin_conflicts:      { path: '/api/variants/run-pin-conflicts', method: 'POST', body: true },
     // Endpoint presentation (plot_/stat_ artifacts, report)
     get_endpoint_artifacts: { path: (p) => `/api/endpoints/${encodeURIComponent(p.fn_name as string)}/artifacts` },
     write_report:           { path: '/api/report', method: 'POST' },

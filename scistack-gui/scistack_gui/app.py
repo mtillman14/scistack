@@ -27,6 +27,7 @@ from scistack_gui.api.run import router as run_router
 from scistack_gui.api.schema import router as schema_router
 from scistack_gui.api.scopes import router as scopes_router
 from scistack_gui.api.variables import router as variables_router
+from scistack_gui.api.variants import router as variants_router
 from scistack_gui.api.ws import router as ws_router
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(glue_router, prefix="/api")
     app.include_router(plot_router, prefix="/api")
     app.include_router(provenance_router, prefix="/api")
+    app.include_router(variants_router, prefix="/api")
     app.include_router(ws_router)
 
     _mount_frontend(app, Path(__file__).parent / "static")

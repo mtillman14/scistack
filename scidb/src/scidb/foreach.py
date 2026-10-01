@@ -4030,8 +4030,14 @@ def _load_input(
     where: Any | None,
     branch_params_filter: dict | None = None,
     param_name: str | None = None,
+    use_default: bool = True,
 ) -> Any:
     """Load a single input and return a scifor-compatible wrapper or sentinel.
+
+    ``use_default``: an input that names no variant gets the variable's PINNED
+    default (``scidb.variant_pins``), applied at the leaf. ``AcrossVariants``
+    turns it off for its subtree, because pooling every variant is the whole
+    point of that wrapper.
 
     ``branch_params_filter`` is an orthogonal, load-time filter threaded through
     the recursion exactly like ``where``.  A ``Variant`` wrapper *injects* it into
@@ -4064,6 +4070,7 @@ def _load_input(
             where,
             branch_params_filter=branch_params_filter,
             param_name=param_name,
+            use_default=False,  # pool EVERY variant, pinned default or not
         )
 
     # Variant: inject/merge its branch_params into the inherited filter (error on
@@ -4088,6 +4095,7 @@ def _load_input(
             where,
             branch_params_filter=merged,
             param_name=param_name,
+            use_default=use_default,
         )
 
     # Merge: check if any constituent needs per-combo loading
@@ -4149,6 +4157,7 @@ def _load_input(
                 where=constituent_where,
                 branch_params_filter=branch_params_filter,
                 param_name=param_name,
+                use_default=use_default,
             )
             # Strip scidb metadata columns that would conflict when merged column-wise.
             # __record_id/__branch_params/version appear in every constituent but carry
@@ -4198,6 +4207,7 @@ def _load_input(
             where,
             branch_params_filter=branch_params_filter,
             param_name=param_name,
+            use_default=use_default,
         )
         if isinstance(inner_loaded, PerComboLoader):
             # Inner needs per-combo loading; wrap the whole Fixed spec
@@ -4233,6 +4243,7 @@ def _load_input(
                 db,
                 where,
                 branch_params_filter=branch_params_filter,
+                use_default=use_default,
             )
             loaded_df = _drop_unpopulated_schema_columns(
                 loaded_df,
@@ -4267,6 +4278,7 @@ def _load_input(
                     db,
                     where,
                     branch_params_filter=branch_params_filter,
+                    use_default=use_default,
                 )
                 return _drop_unpopulated_schema_columns(
                     loaded_df,
@@ -4965,8 +4977,14 @@ def _load_var_type_as_spread(
     db: Any | None,
     where: Any | None,
     branch_params_filter: dict | None = None,
+    use_default: bool = False,
 ) -> "pd.DataFrame":
     """Bulk load all records for a variable type into a spread DataFrame.
+
+    ``use_default`` applies the variable's pinned default when no variant is
+    named (``variant_pins.default_load_args``). It is False here and True only
+    from ``_load_input``, so the for_each INPUT path gets the default and
+    internal callers (``for_columns`` column discovery) see every variant.
 
     Routes to ``db.load_all_as_df`` (the fast bulk engine) when a database is
     available.  Falls back to the iterator-based slow path for types that the
@@ -4986,6 +5004,14 @@ def _load_var_type_as_spread(
         resolved_db = database_or_none()
 
     if resolved_db is not None and hasattr(resolved_db, "load_all_as_df"):
+        if use_default:
+            # An input naming no variant gets the pinned default. One owner
+            # for what that is; it also logs which pin(s) it came from.
+            from .variant_pins import default_load_args
+
+            branch_params_filter, _ = default_load_args(
+                resolved_db, var_type, branch_params_filter, "latest"
+            )
         # Fast path: bulk engine with spread layout.
         where_kw = {"where": where} if where is not None else {}
         bp_kw = (
@@ -5389,6 +5415,25 @@ def _save_results(
     meta_cols = [c for c in result_tbl.columns if c not in output_names]
 
     fn_name = config_keys.get("__fn", "")
+
+    # A pinned default is sticky (D6): saving new output to a pinned variable
+    # never moves the pin. The GUI asks before such a run; a terminal run is
+    # told here, once per call, so "my new results aren't showing up" has an
+    # answer in the log.
+    if db is not None and hasattr(db, "_duck"):
+        from .variant_pins import active_pins
+
+        _pins = active_pins(db)
+        for _out in outputs:
+            _pin = _pins.get(getattr(_out, "__name__", str(_out)))
+            if _pin is not None:
+                Log.info(
+                    f"[default] {fn_name}: saving to {_pin.variable}, which is "
+                    f"pinned to {_pin.selection} (pin {_pin.pin_id}). Records "
+                    f"this run writes outside that variant are NOT the default; "
+                    f"move the pin to make them so."
+                )
+
     # Handle both dict (new format) and JSON string (old format) for backward compatibility
     constants_val = config_keys.get("__constants", {})
     if isinstance(constants_val, str):

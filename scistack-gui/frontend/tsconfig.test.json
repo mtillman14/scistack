@@ -63,8 +63,8 @@
     "src/components/PlotStudio/compare.test.ts",
     "src/components/PlotStudio/differenceBars.ts",
     "src/components/PlotStudio/differenceBars.test.ts",
-    "src/components/Variants/topologies.ts",
-    "src/components/Variants/topologies.test.ts",
+    "src/components/Variants/variantCards.ts",
+    "src/components/Variants/variantCards.test.ts",
     "src/components/Sidebar/sourceLocation.ts",
     "src/components/Sidebar/sourceLocation.test.ts"
   ]

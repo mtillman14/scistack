@@ -208,9 +208,10 @@ interface Props {
   /** Row label, editable here too so the popup is self-contained. Empty means
    *  "still following the selection" — `placeholder` is what that resolves to.
    *
-   *  A row label is a PlotSpec idea. A second consumer (the Provenance panel)
-   *  wants the same canvas to answer "which variant?" and has no rows, so it
-   *  passes `showName={false}` and the field disappears — see `showName`. */
+   *  A row label is a PlotSpec idea. A consumer that asks "which variant?"
+   *  without rows passes `showName={false}` and the field disappears — see
+   *  `showName`. (The Provenance panel was one, until the Variants popup
+   *  replaced it on 2026-09-30.) */
   name: string
   placeholder?: string
   /** False for a consumer with no row to name. The three chrome props below

@@ -466,19 +466,25 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
     return rec_to_inv, inv_constants, inv_var_inputs, inv_fn_hash, inv_run_options
 
 
-def branch_params_batch(duck, record_ids, max_depth: int = 20) -> dict:
+def branch_params_batch(duck, record_ids, max_depth: int = 20, closure=None) -> dict:
     """Batched :func:`derived_branch_params` — ``{record_id: {fn.param: value}}``.
 
     Builds the upstream closure once (O(max_depth) bulk queries), then accumulates
     each requested record's branch params with an in-memory walk identical in
     semantics to the per-record version (same DFS order, same last-write-wins on
     a namespaced-key collision), so results match byte-for-byte.
+
+    ``closure`` is a prebuilt :func:`_build_upstream_closure` result that covers
+    ``record_ids``, for a caller running several walks over one subgraph
+    (``inspect.variant_cards``). Omitted, it is built here.
     """
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
-    rec_to_inv, inv_constants, inv_var_inputs, _fn_hash, _run = _build_upstream_closure(
-        duck, seeds, max_depth
+    rec_to_inv, inv_constants, inv_var_inputs, _fn_hash, _run = (
+        closure
+        if closure is not None
+        else _build_upstream_closure(duck, seeds, max_depth)
     )
     out: dict = {}
     for seed in seeds:
@@ -729,7 +735,7 @@ def run_option_superseded_records(
     return stale
 
 
-def chain_batch(duck, record_ids, max_depth: int = 20) -> dict:
+def chain_batch(duck, record_ids, max_depth: int = 20, closure=None) -> dict:
     """``{record_id: {"code": {fn_name: fn_hash}, "run": {fn_name: label}}}`` —
     every function in a record's upstream chain, including the one that
     produced it directly, with the code it ran and the run options it ran under.
@@ -759,12 +765,16 @@ def chain_batch(duck, record_ids, max_depth: int = 20) -> dict:
     hash, so there is nothing to disambiguate. Should a function genuinely run at
     two *different* versions within one chain, the shallower (later-applied) one
     wins, matching ``branch_params``' last-write-wins on a key collision.
+
+    ``closure``: as in :func:`branch_params_batch`.
     """
     seeds = list(dict.fromkeys(record_ids))
     if not seeds:
         return {}
     rec_to_inv, _consts, inv_var_inputs, inv_fn_hash, inv_run = (
-        _build_upstream_closure(duck, seeds, max_depth)
+        closure
+        if closure is not None
+        else _build_upstream_closure(duck, seeds, max_depth)
     )
     out: dict = {}
     for seed in seeds:
@@ -3181,7 +3191,9 @@ def iterated_keys_for_invocations(duck, invocation_ids, schema_keys) -> "list[st
     return level
 
 
-def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> None:
+def _predict_config_invocations(
+    duck, fn_hash: str, cfg: dict, into: set, defaults: dict | None = None
+) -> None:
     """Add expected ``(invocation_id, schema_id)`` pairs for one config × current
     input data into ``into``.
 
@@ -3236,10 +3248,20 @@ def _predict_config_invocations(duck, fn_hash: str, cfg: dict, into: set) -> Non
         (p, compute_pathinput_record_id(spec))
         for p, spec in sorted((cfg.get("path_inputs") or {}).items())
     ]
-    per_param = {
-        param: _current_records_by_schema(duck, vtype)
-        for param, vtype in input_types.items()
-    }
+    # ``defaults`` is ``{vtype: {schema_id: [rid, ...]} | None}`` from
+    # ``variant_pins.default_records_by_schema``: when a pin reaches an input
+    # type, a run feeds the PINNED DEFAULT records to an unnamed input
+    # (foreach._load_var_type_as_spread), so the prediction must enumerate those
+    # and not every current variant, or a pinned chain plans red forever. A
+    # pooled (AcrossVariants) param loads every variant and keeps the full set.
+    defaults = defaults or {}
+    per_param = {}
+    for param, vtype in input_types.items():
+        pinned = defaults.get(vtype)
+        if pinned is not None and param not in across_variants:
+            per_param[param] = pinned
+        else:
+            per_param[param] = _current_records_by_schema(duck, vtype)
     # Every candidate record's variant identity, in one closure build — the
     # aggregation grouping below reads it. Computed on the RAW rids; a glued
     # param's virtual rid inherits its source's (positional: the virtual map
@@ -3656,10 +3678,28 @@ def expected_invocations_for_function(
     expected |= realized
     _add("expected.realized_inputless", _t)
 
+    # Pinned defaults of the input types, resolved once per type through the
+    # one owner (scidb.variant_pins); an empty pins table costs one tiny query.
+    _t = _time.perf_counter()
+    from .variant_pins import active_pins, default_records_by_schema
+
+    defaults: dict = {}
+    if active_pins(db):
+        fallback_types = (
+            config_from_inputs(inputs_fallback, glue=glue_fallback)["input_types"]
+            if inputs_fallback
+            else {}
+        )
+        for vtype in {
+            t for c in configs for t in c["input_types"].values()
+        } | set(fallback_types.values()):
+            defaults[vtype] = default_records_by_schema(db, vtype)
+    _add("expected.pinned_defaults", _t)
+
     # (b) live prediction per known variant config × current input data
     _t = _time.perf_counter()
     for cfg in configs:
-        _predict_config_invocations(duck, fn_hash, cfg, expected)
+        _predict_config_invocations(duck, fn_hash, cfg, expected, defaults)
     _add("expected.predict", _t)
 
     # (c) live prediction from the declared inputs — the NEVER-RUN fallback,
@@ -3683,7 +3723,9 @@ def expected_invocations_for_function(
         already_run = any(config_call_id(fn_name, c) == fallback_cid for c in configs)
         if (call_id is None or fallback_cid == call_id) and not already_run:
             _t = _time.perf_counter()
-            _predict_config_invocations(duck, fn_hash, fallback_cfg, expected)
+            _predict_config_invocations(
+                duck, fn_hash, fallback_cfg, expected, defaults
+            )
             _add("expected.predict", _t)
         elif already_run:
             logger.debug(

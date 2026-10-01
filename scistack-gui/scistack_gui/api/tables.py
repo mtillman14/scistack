@@ -25,6 +25,7 @@ from scistack_gui.api.registry import REGISTRY_HANDLERS
 from scistack_gui.api.run import RUN_HANDLERS
 from scistack_gui.api.schema import SCHEMA_HANDLERS
 from scistack_gui.api.scopes import SCOPE_HANDLERS
+from scistack_gui.api.variants import VARIANT_HANDLERS
 from scistack_gui.api.variables import VARIABLE_HANDLERS
 
 TABLES: dict[str, tuple[Handler, ...]] = {
@@ -40,6 +41,7 @@ TABLES: dict[str, tuple[Handler, ...]] = {
     "run": RUN_HANDLERS,
     "artifacts": ARTIFACT_HANDLERS,
     "provenance": PROVENANCE_HANDLERS,
+    "variants": VARIANT_HANDLERS,
     "plot": PLOT_HANDLERS,
 }
 

@@ -1180,6 +1180,14 @@ class DatabaseManager:
                     self._ensure_schema_overrides_table()
                 with timer.phase("ensure_provenance_tables"):
                     self._ensure_provenance_tables()
+                with timer.phase("ensure_variant_pin_table"):
+                    from .variant_pins import ensure_variant_pin_table
+
+                    ensure_variant_pin_table(self._duck)
+                with timer.phase("ensure_variant_tombstone_table"):
+                    from .variant_delete import ensure_tombstone_table
+
+                    ensure_tombstone_table(self._duck)
 
         self._closed = False  # Track connection open/closed state
         self._inspector = None  # lazy scidb.inspect.Inspector (see .inspect)

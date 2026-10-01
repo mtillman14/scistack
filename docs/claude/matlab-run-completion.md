@@ -86,6 +86,22 @@ statement about a scidb run, not about a webview (CLAUDE.md NOTE 3).
   point: the preamble rethrows, and a misconfigured `pyenv` is the commonest
   way these scripts die, so a marker written after it could never tell
   "MATLAB never launched the script" from "the script died in setup".
+  **Early placement means the marker brings its own path.** It also sits
+  before the addpath block, and `+scidb/run_marker.m` lives in scimatlab's
+  MATLAB dir — so `_run_marker_begin_lines` emits its own
+  `addpath('<scimatlab dir>')` (from `_find_scimatlab_matlab_dir`, the one
+  owner of that location) immediately before the call. The later addpath
+  block re-adding it is a no-op. Without this a **freshly started** MATLAB
+  died on the marker line with `Unable to resolve the name
+  'scidb.run_marker'`; warm sessions hid it because `run()` leaves the
+  previous run's path in place. The call is also wrapped in `try/catch` →
+  `warning('SciStack:runMarker', …)`: `run_marker` never throws internally,
+  but an unresolvable *name* throws before it is entered, and a lost start
+  marker must mean an "unknown" verdict, not a failed analysis. Guarded by
+  `test_the_start_marker_brings_its_own_path` (first-run, variant and
+  pipeline generators) in `scistack-gui/tests/test_matlab_run_markers.py`.
+  Side effect on the F29 addpath timing: the scimatlab dir now always reports
+  `already_on_path=1`.
 * `<db stem>.runs/<run_id>.done` — `ok`, `interrupted`, MATLAB's
   `identifier` and `message`.
 

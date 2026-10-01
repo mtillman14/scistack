@@ -1,9 +1,9 @@
 /**
  * VariableSettingsPanel — shown in the sidebar when a variable node is selected.
  *
- * Fetches GET /api/variables/{label}/records and displays:
- *   1. Variant summary: one row per unique branch_params combination + record count.
- *   2. Records table: one row per record with schema key values and variant label.
+ * Fetches GET /api/variables/{label}/records and displays a quick plot and
+ * a variant summary: one row per unique branch_params combination + record
+ * count. Per-record schema locations are deliberately not listed.
  */
 
 import { useEffect, useState } from 'react'
@@ -23,21 +23,7 @@ interface VariantSummary {
   is_latest: boolean | null
 }
 
-interface RecordRow {
-  /* Schema key values are strings; the provenance fields below are not, so the
-     index signature has to admit them too. */
-  [key: string]: string | boolean | null
-  variant_label: string
-  fn_name: string | null
-  fn_hash: string | null
-  fn_version: string | null
-  is_latest: boolean | null
-  saved_at: string | null
-}
-
 interface VariableRecordsResponse {
-  schema_keys: string[]
-  records: RecordRow[]
   variants: VariantSummary[]
 }
 
@@ -151,42 +137,6 @@ export default function VariableSettingsPanel({ label }: Props) {
             )}
           </section>
 
-          {/* Records table */}
-          {data.records.length > 0 && (
-            <section style={styles.section}>
-              <div style={styles.sectionTitle}>Records</div>
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    {data.schema_keys.map(k => (
-                      <th key={k} style={styles.th}>{k}</th>
-                    ))}
-                    {data.variants.length > 1 && (
-                      <th style={styles.th}>variant</th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.records.map((rec, i) => (
-                    <tr key={i} style={styles.row}>
-                      {data.schema_keys.map(k => (
-                        <td key={k} style={styles.td}>
-                          <span style={styles.pill}>{rec[k] ?? '—'}</span>
-                        </td>
-                      ))}
-                      {data.variants.length > 1 && (
-                        <td style={styles.td}>
-                          <span style={{ ...styles.pill, color: '#a89cf0' }}>
-                            {rec.variant_label}
-                          </span>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </section>
-          )}
         </>
       )}
 

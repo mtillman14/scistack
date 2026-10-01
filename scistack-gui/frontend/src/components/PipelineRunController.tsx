@@ -17,6 +17,7 @@ import { callBackend } from '../api'
 import { useBackendMessage } from '../hooks/useBackendMessage'
 import { usePlanRun, type PlanRequest } from '../context/PlanRunContext'
 import { useRunLog } from '../context/RunLogContext'
+import { movePinsAfterRun, usePinGate } from './Variants/RunPinGate'
 
 interface PlanEntry {
   step: string
@@ -33,6 +34,10 @@ export default function PipelineRunController() {
   // so the message handler sees additions immediately — a run can finish
   // before the first re-render completes.
   const activeRuns = useRef<Set<string>>(new Set())
+  // Pinned variables a run writes to (plan D6): asked before the run; the
+  // pins chosen to move are moved once that run succeeds.
+  const { gate: pinGate, dialog: pinGateDialog } = usePinGate()
+  const pinMoves = useRef<Map<string, string[]>>(new Map())
 
   useBackendMessage(useCallback((msg) => {
     // Support both WebSocket format (msg.type) and JSON-RPC notification format (msg.method)
@@ -50,14 +55,22 @@ export default function PipelineRunController() {
       const unknown = (params.unknown ?? false) as boolean
       finishRun(runId, success, durationMs, cancelled, error, unknown)
       activeRuns.current.delete(runId)
+      const moves = pinMoves.current.get(runId) ?? []
+      pinMoves.current.delete(runId)
+      if (success && !cancelled && moves.length > 0) void movePinsAfterRun(moves, runId)
     }
   }, [appendLine, finishRun]))
 
-  const handleRun = useCallback(async (req: PlanRequest) => {
+  const handleRun = useCallback(async (req: PlanRequest, steps: string[]) => {
+    // The plan names its steps by function: ask about pinned outputs first.
+    // Cancel leaves the plan dialog open.
+    const decision = await pinGate({ function_names: steps })
+    if (!decision.proceed) return
     // Generate run_id on the frontend BEFORE the request so the message
     // handler is already filtering on the correct ID when output arrives.
     const runId = Math.random().toString(36).slice(2, 10)
     activeRuns.current.add(runId)
+    if (decision.moveVariables.length > 0) pinMoves.current.set(runId, decision.moveVariables)
     startRun(runId, req.label, 'pipeline')
     clearPlan()
     try {
@@ -74,15 +87,18 @@ export default function PipelineRunController() {
       appendLine(runId, `Error: ${(err as Error).message}\n`)
       finishRun(runId, false)
     }
-  }, [startRun, appendLine, finishRun, clearPlan])
+  }, [startRun, appendLine, finishRun, clearPlan, pinGate])
 
-  if (!planRequest) return null
+  if (!planRequest) return pinGateDialog
   return (
-    <PlanPreviewDialog
-      request={planRequest}
-      onRun={handleRun}
-      onCancel={clearPlan}
-    />
+    <>
+      <PlanPreviewDialog
+        request={planRequest}
+        onRun={handleRun}
+        onCancel={clearPlan}
+      />
+      {pinGateDialog}
+    </>
   )
 }
 
@@ -108,7 +124,7 @@ function PlanPreviewDialog({
   onCancel,
 }: {
   request: PlanRequest
-  onRun: (req: PlanRequest) => void
+  onRun: (req: PlanRequest, steps: string[]) => void
   onCancel: () => void
 }) {
   const [entries, setEntries] = useState<PlanEntry[] | null>(null)
@@ -177,7 +193,7 @@ function PlanPreviewDialog({
           </button>
           <button
             style={error || entries === null || entries.length === 0 ? styles.runBtnDisabled : styles.runBtn}
-            onClick={() => onRun(request)}
+            onClick={() => onRun(request, [...new Set((entries ?? []).map(e => e.step))])}
             disabled={!!error || entries === null || entries.length === 0}
             type="button"
           >
