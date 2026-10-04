@@ -265,3 +265,32 @@ class TestThroughTheManager:
         with caplog.at_level(logging.WARNING, logger="scidb"):
             _ = db.dataset_aliases
         assert "Aliased" not in caplog.text
+
+    def test_a_closed_connection_defers_validation_without_an_error(
+        self, db, tmp_path, caplog
+    ):
+        """Plot Studio reads aliases after the GUI released the connection
+        (scidb.log 2026-10-01 22:29). That used to query the closed connection,
+        so sciduckdb logged an ERROR with a traceback, and it marked the table
+        validated with no variables, so a typo went unreported."""
+        config = write_config(tmp_path, '[aliases.sesion]\nname = "Visit"\n')
+        _bump_mtime(config)
+        db.close()
+        caplog.set_level(logging.DEBUG)
+        assert db.dataset_aliases == {"sesion": {"name": "Visit"}}
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        # Deferred, not run with no variables: no typo WARNING yet.
+        assert not [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and "sesion" in r.getMessage()
+        ]
+
+        db.reopen()
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="scidb"):
+            _ = db.dataset_aliases
+        # Validated on the next access.
+        assert [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and "sesion" in r.getMessage()
+        ]

@@ -1221,3 +1221,18 @@ class TestNonContiguousSchemaKeys:
         assert batch_ids[("speed", ("S01", "RMT30", "SSV"))] == id1
         # New combo should have a distinct, non-colliding ID
         assert batch_ids[("speed", ("S01", "RMT30", "FV"))] != id1
+
+
+def test_is_open_follows_close_and_reopen(tmp_path):
+    """SciDuck owns its connection state: a best-effort reader (scidb's
+    display-only alias validation) asks is_open instead of querying a closed
+    connection, which _fetchdf would log as an ERROR."""
+    from sciduckdb import SciDuck
+
+    db = SciDuck(str(tmp_path / "open.duckdb"), dataset_schema=["subject"])
+    assert db.is_open
+    db.close()
+    assert not db.is_open
+    db.reopen()
+    assert db.is_open
+    db.close()

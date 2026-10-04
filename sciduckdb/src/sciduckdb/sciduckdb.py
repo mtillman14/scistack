@@ -816,6 +816,7 @@ class SciDuck:
             "DuckDB lock ACQUIRED (read_only=%s): %s", self.read_only, self.db_path
         )
         self.con = duckdb.connect(self.db_path, read_only=self.read_only)
+        self._open = True
         if self.read_only:
             self._validate_schema_columns()
         else:
@@ -1939,9 +1940,18 @@ class SciDuck:
     # Context manager / cleanup
     # ------------------------------------------------------------------
 
+    @property
+    def is_open(self) -> bool:
+        """Whether the connection is open: False after close(), True again
+        after reopen(). The one owner of that state. A caller that can do
+        without the database (a best-effort read) asks this rather than
+        querying a closed connection, which _fetchdf would log as an ERROR."""
+        return getattr(self, "_open", False)
+
     def close(self):
         """Close the DuckDB connection."""
         self.con.close()
+        self._open = False
         logger.debug("DuckDB lock RELEASED: %s", self.db_path)
 
     def reopen(self):
@@ -1954,6 +1964,7 @@ class SciDuck:
         self.con = duckdb.connect(
             str(self.db_path), read_only=getattr(self, "read_only", False)
         )
+        self._open = True
 
     def __enter__(self):
         """Enter context manager."""

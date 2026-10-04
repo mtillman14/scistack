@@ -2180,6 +2180,26 @@ class DatabaseManager:
                 _schema_order.validate(order, self.dataset_schema_keys)
         return order
 
+    def _variable_names_for_validation(self, what: str) -> "list[str] | None":
+        """The variable names, or None when they cannot be read right now.
+
+        For the display-only validation of `[aliases]` and `[colors]`, which
+        Plot Studio reads lazily, sometimes after the GUI has released this
+        connection. A closed connection is asked first (`SciDuck.is_open`)
+        rather than queried: querying it made sciduckdb log an ERROR with a
+        traceback for a case this code expects and handles (scidb.log
+        2026-10-01 22:29, "Connection already closed!").
+        """
+        duck = getattr(self, "_duck", None)
+        if duck is None or not getattr(duck, "is_open", True):
+            Log.debug(f"[{what}] connection closed; validation deferred to a later access")
+            return None
+        try:
+            return [str(name) for name in self.list_variables()["variable_name"]]
+        except Exception as exc:  # a half-open database
+            Log.debug(f"[{what}] variable names unavailable for validation: {exc}")
+            return None
+
     @property
     def dataset_aliases(self) -> "dict[str, dict]":
         """``{thing: {"name": …, "levels": {…}}}`` from the project's
@@ -2195,18 +2215,18 @@ class DatabaseManager:
 
         table = _aliases.project_aliases()
         if table is not getattr(self, "_validated_aliases", None):
-            self._validated_aliases = table
-            if table:
-                try:
-                    variables = [
-                        str(name) for name in self.list_variables()["variable_name"]
-                    ]
-                except Exception as exc:  # a closed or half-open database
-                    Log.debug(f"[aliases] variable names unavailable for validation: {exc}")
-                    variables = []
-                _aliases.validate(
-                    table, schema_keys=self.dataset_schema_keys, variables=variables
-                )
+            if not table:
+                self._validated_aliases = table
+            else:
+                variables = self._variable_names_for_validation("aliases")
+                # Unavailable (the GUI released the connection before Plot
+                # Studio read this): leave it unvalidated so the next access
+                # validates it, instead of marking it done with no variables.
+                if variables is not None:
+                    self._validated_aliases = table
+                    _aliases.validate(
+                        table, schema_keys=self.dataset_schema_keys, variables=variables
+                    )
         return table
 
     @property
@@ -2222,15 +2242,13 @@ class DatabaseManager:
 
         table = _colors.project_colors()
         if table is not getattr(self, "_validated_colors", None):
-            self._validated_colors = table
-            if _colors.things_of(table):
-                try:
-                    variables = [
-                        str(name) for name in self.list_variables()["variable_name"]
-                    ]
-                except Exception as exc:  # a closed or half-open database
-                    Log.debug(f"[colors] variable names unavailable for validation: {exc}")
-                    variables = []
+            if not _colors.things_of(table):
+                self._validated_colors = table
+            else:
+                variables = self._variable_names_for_validation("colors")
+                if variables is None:
+                    return table  # validate on a later access (see dataset_aliases)
+                self._validated_colors = table
                 _colors.validate(
                     table, schema_keys=self.dataset_schema_keys, variables=variables
                 )
