@@ -19,6 +19,8 @@ from scifor.discovery import (
     is_test_path,
     read_project_name,
 )
+
+from scistack_gui import history
 # NOTE: nothing walks upward for a config any more, here or in scidb. The GUI
 # DECIDES the root (resolve_project_root); registry.load_from_config pins it
 # into scifor.project_root, the one holder every layer reads.
@@ -1342,6 +1344,7 @@ def add_path(db_path: Path, new_path: Path) -> Path:
         aliases=section.get("aliases"),
         colors=section.get("colors"),
     )
+    history.note_write(target_path)
     target_path.write_text(content)
     logger.info("[config] add_path: wrote %s (added %s)", target_path, new_str)
     return target_path
@@ -1405,6 +1408,7 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
         aliases=section.get("aliases"),
         colors=section.get("colors"),
     )
+    history.note_write(toml_path)
     toml_path.write_text(content)
     logger.info("[config] remove_path: wrote %s (removed %s)", toml_path, target)
     return toml_path
@@ -1575,6 +1579,7 @@ def set_entities_file(
 
     if not entities_file.exists():
         entities_file.parent.mkdir(parents=True, exist_ok=True)
+        history.note_write(entities_file)
         entities_file.write_text(initial_text(), encoding="utf-8")
         logger.info("[config] set_entities_file: created new file %s", entities_file)
     else:
@@ -1610,6 +1615,7 @@ def set_entities_file(
         aliases=section.get("aliases"),
         colors=section.get("colors"),
     )
+    history.note_write(target_path)
     target_path.write_text(content)
     logger.info(
         "[config] set_entities_file: wrote %s (entities_file=%s, toml value=%s)",
@@ -1700,6 +1706,7 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
         aliases=section.get("aliases"),
         colors=section.get("colors"),
     )
+    history.note_write(target_path)
     target_path.write_text(content)
     logger.info(
         "[config] set_glue_dir: wrote %s (glue_dir=%s, toml value=%s)",
@@ -1756,6 +1763,7 @@ def clear_entities_file(db_path: Path) -> Path:
         aliases=section.get("aliases"),
         colors=section.get("colors"),
     )
+    history.note_write(toml_path)
     toml_path.write_text(content)
     logger.info(
         '[config] clear_entities_file: wrote %s (entities_file = "", explicit '
@@ -1834,6 +1842,7 @@ def set_project_alias(
         aliases=table,
         colors=section.get("colors"),
     )
+    history.note_write(toml_path)
     toml_path.write_text(content)
     # The reader caches on mtime; two writes inside one filesystem tick would
     # read as one version. Forget the parse so the next figure sees this one.
@@ -1910,6 +1919,7 @@ def set_project_color(
         aliases=section.get("aliases"),
         colors=table,
     )
+    history.note_write(toml_path)
     toml_path.write_text(content)
     # Same reason as set_project_alias: forget the mtime-cached parse.
     _colors.clear_cache()

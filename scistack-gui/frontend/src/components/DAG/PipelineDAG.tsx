@@ -45,7 +45,10 @@ import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
 import { applyDagreLayout } from '../../layout'
-import { callBackend, isVSCodeMode } from '../../api'
+import { callBackend, isVSCodeMode, pageUndo } from '../../api'
+import { newChange, type Change } from '../../undo'
+import { useUndoShortcuts } from '../../hooks/useUndo'
+import UndoButtons from '../UndoButtons'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import { useSelectedNode } from '../../context/SelectedNodeContext'
 import { useSidebarSelection } from '../../context/SidebarSelectionContext'
@@ -147,6 +150,9 @@ export default function PipelineDAG() {
   // handles every RPC on its own thread — fired independently they raced on
   // the layout file and the create lost, so the node was never persisted.
   const pendingCreateRef = useRef<Map<string, Promise<unknown>>>(new Map())
+  // The undo step each pending drop belongs to: the create and the re-centre
+  // are two requests in two tasks but ONE gesture, so they share a change.
+  const pendingChangeRef = useRef<Map<string, Change>>(new Map())
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   // Browser-mode fallback only: in the extension the studio is its own tab.
@@ -308,7 +314,11 @@ export default function PipelineDAG() {
       const newX = center.x - width / 2
       const newY = center.y - height / 2
       setNodes(prev => prev.map(n => n.id === id ? { ...n, position: { x: newX, y: newY } } : n))
-      const sendPosition = () => callBackend('put_layout', { node_id: id, x: newX, y: newY, pipeline_id: currentScope })
+      const change = pendingChangeRef.current.get(id)
+      pendingChangeRef.current.delete(id)
+      const sendPosition = () => callBackend(
+        'put_layout', { node_id: id, x: newX, y: newY, pipeline_id: currentScope }, { change },
+      )
       // Wait for the create so the two writes can't overlap. On a failed
       // create there is no node to position, so drop this write entirely.
       const create = pendingCreateRef.current.get(id)
@@ -378,6 +388,11 @@ export default function PipelineDAG() {
       })
       .catch(err => window.alert(`Could not paste: ${(err as Error).message}`))
   }, [clipboard, currentScope, screenToFlowPosition, bumpGraph, setClipboard])
+
+  // Cmd/Ctrl+Z / Shift+Cmd/Ctrl+Z for the whole pipeline page (canvas and
+  // sidebar edits share one stack). A Plot Studio opened over the canvas
+  // registers its own, which shadows this one while it is open.
+  useUndoShortcuts(pageUndo)
 
   // Cmd/Ctrl+C / Cmd/Ctrl+V, ignored while typing in a text field (so
   // editing a node's name/value keeps using the browser's native copy).
@@ -665,7 +680,13 @@ export default function PipelineDAG() {
 
     // Persist so it survives a DAG refresh — created IN the current scope.
     // Kept so the re-center write above can chain off it (see pendingCreateRef).
-    const create = callBackend('put_layout', { node_id: nodeId, x: position.x, y: position.y, node_type: nodeType, label, pipeline_id: currentScope })
+    const change = newChange(`add ${label}`)
+    pendingChangeRef.current.set(nodeId, change)
+    const create = callBackend(
+      'put_layout',
+      { node_id: nodeId, x: position.x, y: position.y, node_type: nodeType, label, pipeline_id: currentScope },
+      { change },
+    )
     // A node that is never measured never gets its re-center, so nothing
     // would attach a rejection handler to this promise.
     create.catch(() => {})
@@ -830,6 +851,11 @@ export default function PipelineDAG() {
       >
         <Background />
         <Controls />
+        <Panel position="top-center">
+          <div style={styles.undoPanel}>
+            <UndoButtons stack={pageUndo} />
+          </div>
+        </Panel>
         {(selectedIds.length > 0 || clipboard) && (
           <Panel position="top-right">
             <div style={styles.clipboardPanel}>
@@ -1186,6 +1212,14 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 10,
     flexShrink: 0,
+  },
+  undoPanel: {
+    padding: '4px 8px',
+    background: '#1a1a2e',
+    border: '1px solid #334155',
+    borderRadius: 6,
+    color: '#e2e8f0',
+    userSelect: 'none',
   },
   clipboardPanel: {
     display: 'flex',

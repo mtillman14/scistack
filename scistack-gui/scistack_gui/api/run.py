@@ -1975,27 +1975,27 @@ def _start_matlab_sidecar_run(req: SidecarRunRequest) -> dict:
 _NO_DB = {"needs_db": False}
 
 RUN_HANDLERS: tuple[Handler, ...] = (
-    Handler("start_run", "/run", RunRequest, _start_run, http_errors={ValueError: 400}, wants_transport=True),
-    Handler("cancel_run", "/run/{run_id}/cancel", RunRef, _cancel_run, body=False, **_NO_DB),
-    Handler("force_cancel_run", "/run/{run_id}/force-cancel", RunRef, _force_cancel_run, body=False, **_NO_DB),
+    Handler("start_run", "/run", RunRequest, _start_run, http_errors={ValueError: 400}, wants_transport=True, undoable=False),
+    Handler("cancel_run", "/run/{run_id}/cancel", RunRef, _cancel_run, body=False, **_NO_DB, undoable=False),
+    Handler("force_cancel_run", "/run/{run_id}/force-cancel", RunRef, _force_cancel_run, body=False, **_NO_DB, undoable=False),
     Handler("get_matlab_engine_status", "/matlab-engine", None, _get_matlab_engine_status, http_method="GET", **_NO_DB),
-    Handler("restart_matlab_engine", "/matlab-engine/restart", None, _restart_matlab_engine, **_NO_DB),
-    Handler("get_schema_level", "/schema-level", SchemaLevelRequest, _get_schema_level),
-    Handler("generate_matlab_command", None, MatlabCommandRequest, _generate_matlab_command),
-    Handler("generate_matlab_pipeline_command", None, MatlabCommandRequest, _generate_matlab_pipeline_command),
-    Handler("start_matlab_sidecar_run", None, SidecarRunRequest, _start_matlab_sidecar_run, **_NO_DB),
+    Handler("restart_matlab_engine", "/matlab-engine/restart", None, _restart_matlab_engine, **_NO_DB, undoable=False),
+    Handler("get_schema_level", "/schema-level", SchemaLevelRequest, _get_schema_level, undoable=False),
+    Handler("generate_matlab_command", None, MatlabCommandRequest, _generate_matlab_command, undoable=False),
+    Handler("generate_matlab_pipeline_command", None, MatlabCommandRequest, _generate_matlab_pipeline_command, undoable=False),
+    Handler("start_matlab_sidecar_run", None, SidecarRunRequest, _start_matlab_sidecar_run, **_NO_DB, undoable=False),
     # Terminal-run tracking. `watch` needs the db PATH only, and declares
     # holds_db_lock=False so the dispatch does not hold the connection
     # MATLAB is about to want; the other two never touch the database.
     Handler(
         "watch_matlab_terminal_run", None, MatlabTerminalRunRequest,
-        _watch_matlab_terminal_run, holds_db_lock=False,
+        _watch_matlab_terminal_run, holds_db_lock=False, undoable=False,
     ),
-    Handler("stop_watching_matlab_run", None, RunRef, _stop_watching_matlab_run, **_NO_DB),
+    Handler("stop_watching_matlab_run", None, RunRef, _stop_watching_matlab_run, **_NO_DB, undoable=False),
     # RPC-only: the terminal tier exists only under the VS Code host, so the
     # browser build has nothing to show here (its MATLAB runs go through the
     # sidecar, which Python drives and already reports on).
-    Handler("get_matlab_run_state", None, None, _matlab_run_state, **_NO_DB),
+    Handler("get_matlab_run_state", None, None, _matlab_run_state, **_NO_DB, undoable=False),
 )
 
 install_routes(router, RUN_HANDLERS)

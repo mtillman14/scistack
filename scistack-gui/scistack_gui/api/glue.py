@@ -109,9 +109,9 @@ GLUE_HANDLERS: tuple[Handler, ...] = (
     Handler("list_glue", "/glue", None, _list_glue, http_method="GET", **_NO_DB),
     Handler("get_glue", "/glue/{name}", GlueName, _get_glue, http_method="GET", **_NO_DB),
     Handler("get_glue_columns", "/glue/{name}/columns", GlueColumnsQuery, _get_glue_columns, http_method="GET", **_NO_DB),
-    Handler("create_glue", "/glue", CreateGlueRequest, _create_glue, notify_dag_updated=True, **_NO_DB),
-    Handler("save_glue", "/glue", SaveGlueRequest, _save_glue, http_method="PUT", notify_dag_updated=True, **_NO_DB),
-    Handler("delete_glue", "/glue/{name}", GlueName, _delete_glue, http_method="DELETE", notify_dag_updated=True, **_NO_DB),
+    Handler("create_glue", "/glue", CreateGlueRequest, _create_glue, notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="new glue node"),
+    Handler("save_glue", "/glue", SaveGlueRequest, _save_glue, http_method="PUT", notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="edit glue code"),
+    Handler("delete_glue", "/glue/{name}", GlueName, _delete_glue, http_method="DELETE", notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="remove glue node"),
 )
 
 install_routes(router, GLUE_HANDLERS)

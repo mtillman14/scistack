@@ -77,6 +77,10 @@ def _duck(db):
     return _d(db)
 
 
+#: For undo (`scistack_gui.history`): the table this module owns.
+UNDOABLE_TABLES: tuple[str, ...] = ("_intent",)
+
+
 def ensure_tables(db) -> None:
     """Create ``_intent`` if absent.
 

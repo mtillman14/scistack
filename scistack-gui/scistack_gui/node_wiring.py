@@ -81,6 +81,12 @@ def _now() -> str:
     return datetime.now().isoformat()
 
 
+#: For undo (`scistack_gui.history`). A GUI edit that forgets or re-keys a node
+#: changes these rows, so undoing it must restore them; a run's writes are
+#: not undoable, and the conflict check keeps an undo from overwriting them.
+UNDOABLE_TABLES: tuple[str, ...] = ("_node_wiring",)
+
+
 def ensure_tables(db) -> None:
     """Create ``_node_wiring`` if absent.
 

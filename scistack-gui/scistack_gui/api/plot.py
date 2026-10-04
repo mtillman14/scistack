@@ -415,16 +415,16 @@ def _client_error(req: ClientErrorRequest) -> dict:
 PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_describe", "/plot/describe", DescribeRequest, _describe,
-        holds_db_lock=False, http_errors=_NOT_INSTALLED, db_optional=True,
+        holds_db_lock=False, http_errors=_NOT_INSTALLED, db_optional=True, undoable=False,
     ),
     Handler(
         "plot_capabilities", "/plot/capabilities", SpecRequest, _capabilities,
-        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True, undoable=False,
     ),
     Handler(
         "plot_variant_graph", "/plot/variant-graph", VariantGraphRequest,
         _variant_graph, holds_db_lock=False, http_errors=_BAD_REQUEST,
-        db_optional=True,
+        db_optional=True, undoable=False,
     ),
     # Read-only picker calls that take the connection inside the service for
     # exactly as long as the query needs it. `plot_grouping_columns` is the
@@ -432,38 +432,38 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_grouping_graph", "/plot/grouping-graph", GroupingGraphRequest,
         _grouping_graph, holds_db_lock=False, http_errors=_BAD_REQUEST,
-        db_optional=True,
+        db_optional=True, undoable=False,
     ),
     Handler(
         "plot_grouping_columns", "/plot/grouping-columns",
         GroupingColumnsRequest, _grouping_columns,
-        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True, undoable=False,
     ),
     Handler(
         "plot_grouping_default_variant", "/plot/grouping-default-variant",
         GroupingDefaultVariantRequest, _grouping_default_variant,
-        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True, undoable=False,
     ),
     Handler(
         "plot_location_tree", "/plot/locations", LocationTreeRequest,
         _location_tree, holds_db_lock=False,
-        http_errors={**_BAD_REQUEST, **_NOT_INSTALLED}, db_optional=True,
+        http_errors={**_BAD_REQUEST, **_NOT_INSTALLED}, db_optional=True, undoable=False,
     ),
     Handler(
         "plot_resolve", "/plot/resolve", SpecRequest, _resolve,
-        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True, undoable=False,
     ),
     Handler(
         "plot_export", "/plot/export", ExportRequest, _export,
-        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True,
+        holds_db_lock=False, http_errors=_BAD_REQUEST, db_optional=True, undoable=False,
     ),
     Handler(
         "plot_add_to_pipeline", "/plot/add-to-pipeline", ExportRequest,
-        _add_to_pipeline, http_errors=_BAD_REQUEST,
+        _add_to_pipeline, http_errors=_BAD_REQUEST, undoable=True, undo_label="add plot to pipeline",
     ),
     Handler(
         "plot_variant_sets_save", "/plot/variant-sets", VariantSetsRequest,
-        _variant_sets_save,
+        _variant_sets_save, undoable=False,
     ),
     # Spawns a thread and returns; the HANDLER touches nothing. Its worker
     # takes the connection through `save_figure` -> `_load` on its own
@@ -472,9 +472,9 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_save_start", "/plot/save", SaveRequest, _save_start,
         holds_db_lock=False, http_errors={**_BAD_REQUEST, OSError: 400},
-        db_optional=True,
+        db_optional=True, undoable=False,
     ),
-    Handler("plot_invalidate", "/plot/invalidate", None, _invalidate),
+    Handler("plot_invalidate", "/plot/invalidate", None, _invalidate, undoable=False),
     # Saved plots (.claude/plan-saved-plots.md). Not db_optional: a CSV has
     # nowhere to keep them. The quick reads/writes keep the blanket hold;
     # `plot_saved_open` loads the plot's data frames too, so it takes the
@@ -482,47 +482,47 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     # `SavedPlotError` is a ValueError, so a refused name is a 400.
     Handler(
         "plot_saved_list", "/plot/saved/list", SavedListRequest, _saved_list,
-        http_errors=_BAD_REQUEST,
+        http_errors=_BAD_REQUEST, undoable=False,
     ),
     Handler(
         "plot_saved_save", "/plot/saved/save", SavedSaveRequest, _saved_save,
-        http_errors=_BAD_REQUEST,
+        http_errors=_BAD_REQUEST, undoable=False,
     ),
     Handler(
         "plot_saved_open", "/plot/saved/open", SavedOpenRequest, _saved_open,
-        holds_db_lock=False, http_errors={**_BAD_REQUEST, **_NOT_INSTALLED},
+        holds_db_lock=False, http_errors={**_BAD_REQUEST, **_NOT_INSTALLED}, undoable=False,
     ),
     Handler(
         "plot_saved_rename", "/plot/saved/rename", SavedRenameRequest,
-        _saved_rename, http_errors=_BAD_REQUEST,
+        _saved_rename, http_errors=_BAD_REQUEST, undoable=False,
     ),
     Handler(
         "plot_saved_hide", "/plot/saved/hide", SavedHideRequest, _saved_hide,
-        http_errors=_BAD_REQUEST,
+        http_errors=_BAD_REQUEST, undoable=False,
     ),
     Handler(
         "plot_saved_history", "/plot/saved/history", SavedHistoryRequest,
-        _saved_history, http_errors=_BAD_REQUEST,
+        _saved_history, http_errors=_BAD_REQUEST, undoable=False,
     ),
     # Writes scistack.toml, never the database: the project's display aliases
     # (scidb.aliases). A refusal (packaged project, no config) is an
     # {ok: false, error} answer the Labels section shows, not an HTTP error.
     Handler(
         "plot_project_alias_set", "/plot/project-alias", ProjectAliasRequest,
-        _project_alias_set, holds_db_lock=False, needs_db=False,
+        _project_alias_set, holds_db_lock=False, needs_db=False, undoable=True, undo_label="edit alias",
     ),
     # The same for the project's mark colours (scidb.colors); the Colours
     # section shows a refusal (packaged project, no config, not a colour).
     Handler(
         "plot_project_color_set", "/plot/project-color", ProjectColorRequest,
-        _project_color_set, holds_db_lock=False, needs_db=False,
+        _project_color_set, holds_db_lock=False, needs_db=False, undoable=True, undo_label="edit colour",
     ),
     # Touches no database at all — it only writes a log line, and must still
     # work while MATLAB holds the file (that is exactly when a webview crash
     # is worth hearing about).
     Handler(
         "report_client_error", "/client-error", ClientErrorRequest,
-        _client_error, holds_db_lock=False, needs_db=False,
+        _client_error, holds_db_lock=False, needs_db=False, undoable=False,
     ),
 )
 

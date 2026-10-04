@@ -37,7 +37,7 @@ def _node_location_tree(db, req: NodeLocationTreeRequest) -> dict:
 
 
 PROVENANCE_HANDLERS: tuple[Handler, ...] = (
-    Handler("node_location_tree", "/provenance/node-location-tree", NodeLocationTreeRequest, _node_location_tree, holds_db_lock=False),
+    Handler("node_location_tree", "/provenance/node-location-tree", NodeLocationTreeRequest, _node_location_tree, holds_db_lock=False, undoable=False),
 )
 
 install_routes(router, PROVENANCE_HANDLERS)

@@ -24,6 +24,10 @@
   "include": [
     "src/webviewRpc.ts",
     "src/webviewRpc.test.ts",
+    "src/history.ts",
+    "src/history.test.ts",
+    "src/undo.ts",
+    "src/undo.test.ts",
     "src/components/PlotStudio/locationSelection.ts",
     "src/components/PlotStudio/locationSelection.test.ts",
     "src/components/PlotStudio/groups.ts",

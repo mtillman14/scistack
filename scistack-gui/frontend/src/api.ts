@@ -8,6 +8,7 @@
  */
 
 import { WebviewRpc } from './webviewRpc';
+import { UndoStack, taskChange, type Change } from './undo';
 
 // Detect VS Code Webview environment
 const isVSCode = typeof acquireVsCodeApi === 'function';
@@ -90,7 +91,72 @@ const COALESCABLE_METHODS = new Set([
 /** In-flight coalescable requests, keyed by method + params. */
 const inFlight = new Map<string, Promise<unknown>>();
 
-export async function callBackend(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+/**
+ * The pipeline page's undo stack — the default surface for every undoable
+ * request. A Plot Studio passes its own (`{ stack }`). docs/claude/undo-redo.md.
+ */
+export const pageUndo = new UndoStack((method, params) => callBackend(method, params), 'page');
+
+export interface CallOptions {
+  /** The surface whose undo stack records this request; default pageUndo,
+   * null = record on the backend but push onto no stack. */
+  stack?: UndoStack | null;
+  /** Share one undo step across requests in different tasks (`newChange`). */
+  change?: Change;
+}
+
+/**
+ * `{method: label}` for every method the backend records for undo. The
+ * backend's Handler table owns the list (`history_status`); this is a cached
+ * read of it. A failed read is not cached, so the next request retries.
+ */
+let undoable: Promise<Record<string, string>> | null = null;
+function undoableMethods(): Promise<Record<string, string>> {
+  if (!undoable) {
+    undoable = send('history_status', {})
+      .then(raw => ((raw as { methods?: Record<string, string> })?.methods ?? {}))
+      .catch(err => {
+        console.warn('[undo] history_status failed; this request is not undoable', err);
+        undoable = null;
+        return {};
+      });
+  }
+  return undoable;
+}
+
+function send(method: string, params: Record<string, unknown>): Promise<unknown> {
+  return vscode ? callVSCode(method, params) : callFetch(method, params);
+}
+
+/** The backend's `{ok: false, error}` answer — a refusal changes nothing. */
+function refused(result: unknown): boolean {
+  return typeof result === 'object' && result !== null && (result as { ok?: unknown }).ok === false;
+}
+
+export async function callBackend(
+  method: string,
+  params: Record<string, unknown> = {},
+  options: CallOptions = {},
+): Promise<unknown> {
+  // Taken SYNCHRONOUSLY, before any await: requests started in one task
+  // share one undo step (undo.ts taskChange).
+  const change = COALESCABLE_METHODS.has(method) || method.startsWith('history_')
+    ? null
+    : (options.change ?? taskChange());
+  if (change) {
+    const label = (await undoableMethods())[method];
+    if (label !== undefined) {
+      change.label ??= label;
+      const result = await send(method, { ...params, _change: { id: change.id, label: change.label } });
+      const stack = options.stack === undefined ? pageUndo : options.stack;
+      if (stack && !refused(result)) stack.pushServer(change.id, change.label);
+      return result;
+    }
+  }
+  return callUnrecorded(method, params);
+}
+
+function callUnrecorded(method: string, params: Record<string, unknown>): Promise<unknown> {
   const send = () => (vscode ? callVSCode(method, params) : callFetch(method, params));
 
   if (!COALESCABLE_METHODS.has(method)) return send();
@@ -115,7 +181,7 @@ function callVSCode(method: string, params: Record<string, unknown>): Promise<un
 /**
  * Standalone mode: map method names to REST endpoints.
  */
-async function callFetch(method: string, params: Record<string, unknown>): Promise<unknown> {
+async function callFetch(method: string, rawParams: Record<string, unknown>): Promise<unknown> {
   const routes: Record<string, { path: string | ((p: Record<string, unknown>) => string); method?: string; body?: boolean }> = {
     get_pipeline:           { path: (p) => `/api/pipeline?pipeline_id=${encodeURIComponent((p.pipeline_id as string) ?? 'main')}${p.run_states === false ? '&run_states=false' : ''}` },
     get_layout:             { path: (p) => `/api/layout?pipeline_id=${encodeURIComponent((p.pipeline_id as string) ?? 'main')}` },
@@ -263,17 +329,28 @@ async function callFetch(method: string, params: Record<string, unknown>): Promi
     plot_project_color_set: { path: '/api/plot/project-color', method: 'POST', body: true },
     // An error boundary's report — see components/ClientErrorBoundary.tsx.
     report_client_error:    { path: '/api/client-error', method: 'POST', body: true },
+    // Undo / redo (docs/claude/undo-redo.md). The change id is in the body;
+    // a request's own undo metadata travels in the X-SciStack-Change header.
+    history_status:         { path: '/api/history/status' },
+    history_undo:           { path: '/api/history/undo', method: 'POST', body: true },
+    history_redo:           { path: '/api/history/redo', method: 'POST', body: true },
   };
 
   const route = routes[method];
   if (!route) throw new Error(`Unknown method: ${method}`);
 
+  // Undo metadata travels in a header on HTTP (the backend reads it in
+  // api/handlers.py install_routes), so it never lands in a URL or a body
+  // the route does not have.
+  const { _change, ...params } = rawParams;
   const url = typeof route.path === 'function' ? route.path(params) : route.path;
   const httpMethod = route.method ?? 'GET';
 
-  const fetchOpts: RequestInit = { method: httpMethod };
+  const headers: Record<string, string> = {};
+  if (_change) headers['X-SciStack-Change'] = JSON.stringify(_change);
+  const fetchOpts: RequestInit = { method: httpMethod, headers };
   if (route.body && httpMethod !== 'GET') {
-    fetchOpts.headers = { 'Content-Type': 'application/json' };
+    headers['Content-Type'] = 'application/json';
     fetchOpts.body = JSON.stringify(params);
   }
 

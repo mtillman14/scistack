@@ -16,6 +16,7 @@ from scistack_gui.api.artifacts import ARTIFACT_HANDLERS
 from scistack_gui.api.builtin_functions import BUILTIN_FUNCTION_HANDLERS
 from scistack_gui.api.glue import GLUE_HANDLERS
 from scistack_gui.api.handlers import Handler
+from scistack_gui.api.history import HISTORY_HANDLERS
 from scistack_gui.api.layout import LAYOUT_HANDLERS
 from scistack_gui.api.pipeline import PIPELINE_HANDLERS
 from scistack_gui.api.plot import PLOT_HANDLERS
@@ -43,6 +44,7 @@ TABLES: dict[str, tuple[Handler, ...]] = {
     "provenance": PROVENANCE_HANDLERS,
     "variants": VARIANT_HANDLERS,
     "plot": PLOT_HANDLERS,
+    "history": HISTORY_HANDLERS,
 }
 
 ALL_HANDLERS: tuple[Handler, ...] = tuple(h for table in TABLES.values() for h in table)

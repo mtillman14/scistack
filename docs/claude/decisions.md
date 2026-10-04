@@ -8,6 +8,40 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-03-1 — Undo records state diffs at the handler choke point
+
+**Context.** Undo/redo was needed across the DAG canvas and Plot Studio, and
+for every later feature. A command pattern would need a hand-written inverse
+for each of ~50 mutations, and each inverse would be a second owner of what
+its operation does.
+
+**Decision.**
+- Undoable handlers (`Handler.undoable=True`) are wrapped in
+  `scistack_gui.history.recording`. It diffs every tracked GUI table by
+  primary key and records the before/after bytes of every project file
+  written (`history.note_write`). Undo writes the before side back; redo
+  writes the after side.
+- The backend owns the change records, and the frontend owns the order,
+  with one stack per surface (the pipeline page, and each Plot Studio).
+  Plot Studio spec edits are local entries on its own stack.
+- Undo and redo are idempotent (`applied`/`undone`). Every touched row and
+  file must be unchanged since, or the step is refused, writes nothing,
+  and is dropped from the stack. There is no "undo anyway".
+- Undo of a create removes the created row or file. That is exempt from
+  "never delete, mark hidden", because it restores an exact earlier state.
+- Saved plots, runs, data and variant deletion are not undoable.
+- Two guard tests make every non-GET handler declare `undoable`, and make
+  every GUI table and file write tracked.
+
+**Consequences.** A new feature gets undo by declaring one flag. Records are
+in memory (500), so a backend restart forgets them. Each undoable call reads
+the tracked tables twice; `snapshot_ms` is logged for every record so the
+cost is measured, not assumed.
+
+**Full argument:** `undo-redo.md`; plan `.claude/plan-undo-redo.md`.
+
+---
+
 ## D-2026-10-01-1 — One edge model: a single effective edge set, kind-agnostic
 
 **Context.** "Edge" was not one concept. History edges have per-kind ids that

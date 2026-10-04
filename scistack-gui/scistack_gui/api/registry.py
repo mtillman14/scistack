@@ -31,7 +31,7 @@ def _refresh_module() -> dict:
 
 REGISTRY_HANDLERS: tuple[Handler, ...] = (
     Handler("get_registry", "/registry", None, _get_registry, needs_db=False, http_method="GET"),
-    Handler("refresh_module", "/refresh", None, _refresh_module, needs_db=False, notify_dag_updated=True),
+    Handler("refresh_module", "/refresh", None, _refresh_module, needs_db=False, notify_dag_updated=True, undoable=False),
 )
 
 install_routes(router, REGISTRY_HANDLERS)

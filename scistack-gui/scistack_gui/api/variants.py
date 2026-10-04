@@ -144,13 +144,13 @@ def _run_pin_conflicts(db, req: RunConflictRequest) -> dict:
 _USER_ERRORS = {ValueError: 400, NotFoundError: 400, KeyError: 400}
 
 VARIANT_HANDLERS: tuple[Handler, ...] = (
-    Handler("variable_variants", "/variants/cards", VariableRef, _variable_variants, holds_db_lock=False, http_errors=_USER_ERRORS),
-    Handler("pin_variant", "/variants/pin", PinRequest, _pin_variant, http_errors=_USER_ERRORS, notify_dag_updated=True),
-    Handler("release_pin", "/variants/release-pin", ReleaseRequest, _release_pin, http_errors=_USER_ERRORS, notify_dag_updated=True),
-    Handler("pin_newest_variant", "/variants/pin-newest", ReleaseRequest, _pin_newest_variant, http_errors=_USER_ERRORS, notify_dag_updated=True),
-    Handler("delete_variant_plan", "/variants/delete-plan", DeletePlanRequest, _delete_variant_plan, holds_db_lock=False, http_errors=_USER_ERRORS),
-    Handler("delete_variant", "/variants/delete", DeleteRequest, _delete_variant, http_errors=_USER_ERRORS, notify_dag_updated=True),
-    Handler("run_pin_conflicts", "/variants/run-pin-conflicts", RunConflictRequest, _run_pin_conflicts, holds_db_lock=False),
+    Handler("variable_variants", "/variants/cards", VariableRef, _variable_variants, holds_db_lock=False, http_errors=_USER_ERRORS, undoable=False),
+    Handler("pin_variant", "/variants/pin", PinRequest, _pin_variant, http_errors=_USER_ERRORS, notify_dag_updated=True, undoable=True, undo_label="make current"),
+    Handler("release_pin", "/variants/release-pin", ReleaseRequest, _release_pin, http_errors=_USER_ERRORS, notify_dag_updated=True, undoable=True, undo_label="release pin"),
+    Handler("pin_newest_variant", "/variants/pin-newest", ReleaseRequest, _pin_newest_variant, http_errors=_USER_ERRORS, notify_dag_updated=True, undoable=True, undo_label="pin newest"),
+    Handler("delete_variant_plan", "/variants/delete-plan", DeletePlanRequest, _delete_variant_plan, holds_db_lock=False, http_errors=_USER_ERRORS, undoable=False),
+    Handler("delete_variant", "/variants/delete", DeleteRequest, _delete_variant, http_errors=_USER_ERRORS, notify_dag_updated=True, undoable=False),
+    Handler("run_pin_conflicts", "/variants/run-pin-conflicts", RunConflictRequest, _run_pin_conflicts, holds_db_lock=False, undoable=False),
 )
 
 install_routes(router, VARIANT_HANDLERS)

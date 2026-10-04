@@ -11,6 +11,61 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzy. Undo / redo on the canvas and in Plot Studio — added 2026-10-03
+
+**What changed:** Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z and Ctrl+Y, plus ↶/↷ buttons,
+undo and redo every document edit (`docs/claude/undo-redo.md`). The canvas page
+has one stack. Each Plot Studio has its own.
+
+**Backend:**
+- Reload the VS Code window to load the backend. Both frontend bundles are
+  rebuilt; no build is needed.
+- scidb.log should show one `[history] history_record id=... method=... rows=N
+  files=M snapshot_ms=a+b` line per edit, and `[history] undo id=... -> ok` per
+  undo. **Note the `snapshot_ms` values on the Aim 2 project:** they are the
+  per-edit cost of undo and have not been measured on real data.
+
+**Frontend (canvas):**
+1. **Keys reach the webview.** Drag a node, then press Cmd+Z with the canvas
+   focused (click empty canvas first). The node goes back. Shift+Cmd+Z moves
+   it again. *If nothing happens but the ↶ button works, the key never
+   reached the webview: tell Claude (the fallback is a VS Code keybinding).*
+2. **Drop = one step.** Drag a function from the sidebar onto the canvas.
+   One Cmd+Z removes it completely; one redo brings it back at the same
+   place, with the same node id (check its wiring survives a refresh).
+3. **Connect / disconnect.** Draw an edge, undo, redo. Delete an edge, undo:
+   it is back.
+4. **Delete a node with edges.** Select a node with edges and press
+   Backspace. One Cmd+Z restores the node AND its edges.
+5. **Sidebar edits.** Untick a value on a Parameter node, rename a hypothesis tab,
+   create a Parameter. Each one undoes, and the Parameter's line is removed
+   from the entities file. Redo puts the line back.
+6. **Text fields keep their own undo.** Type in a node's name field and press
+   Cmd+Z: the TEXT is undone. The canvas is unchanged.
+7. **Conflict.** Create a Parameter, then edit the entities file by hand in
+   VS Code and save. Cmd+Z on the canvas shows "Cannot undo "add parameter"
+   — it was changed since: …entities…" next to ↶/↷, and the file keeps your
+   hand edit.
+8. **Restart.** Make an edit, reload the window, then press ↶. Nothing is
+   offered, because history does not survive a restart.
+
+**Frontend (Plot Studio, own tab):**
+1. Change the kind, a role and a colour. Cmd+Z undoes them one at a time, and
+   the figure redraws after each one.
+2. Type a title. One Cmd+Z, pressed outside the field, removes the whole
+   title, not one letter at a time.
+3. Edit a project alias (Labels → project). Cmd+Z restores `scistack.toml`
+   and the figure redraws with the old label.
+4. With the canvas's Plot Studio modal open (browser build), Cmd+Z undoes
+   the PLOT, not the canvas.
+5. Saving a plot is not undoable. The saved-plots rail is unchanged by
+   Cmd+Z.
+
+**You should see:** the ↶/↷ tooltips name the step ("Undo: connect (⌘Z)").
+Nothing undoes a run, a variant Delete, or an export.
+
+---
+
 ## 0zzx. Unified edge model (branch `refactor/unified-edge-model`) — added 2026-10-01
 
 **What changed:** one edge id per connection, one view every reader uses, one port per argument

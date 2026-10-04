@@ -503,12 +503,12 @@ _NO_DB = {"needs_db": False}
 PROJECT_HANDLERS: tuple[Handler, ...] = (
     Handler("get_project_code", "/project/code", None, _get_project_code, http_method="GET", **_NO_DB),
     Handler("get_project_paths", "/project/paths", None, _get_project_paths, http_method="GET", **_NO_DB),
-    Handler("add_project_path", "/project/paths", PathBody, _add_project_path, notify_dag_updated=True, **_NO_DB),
+    Handler("add_project_path", "/project/paths", PathBody, _add_project_path, notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="add path"),
     # The browser sends the path as a query parameter (DELETE without a body).
-    Handler("remove_project_path", "/project/paths", PathBody, _remove_project_path, http_method="DELETE", body=False, notify_dag_updated=True, **_NO_DB),
-    Handler("set_entities_file", "/project/entities-file", PathBody, _set_entities_file, notify_dag_updated=True, **_NO_DB),
-    Handler("clear_entities_file", "/project/entities-file", None, _clear_entities_file, http_method="DELETE", notify_dag_updated=True, **_NO_DB),
-    Handler("refresh_project", "/project/refresh", None, _refresh_project, notify_dag_updated=True, **_NO_DB),
+    Handler("remove_project_path", "/project/paths", PathBody, _remove_project_path, http_method="DELETE", body=False, notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="remove path"),
+    Handler("set_entities_file", "/project/entities-file", PathBody, _set_entities_file, notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="set entities file"),
+    Handler("clear_entities_file", "/project/entities-file", None, _clear_entities_file, http_method="DELETE", notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="clear entities file"),
+    Handler("refresh_project", "/project/refresh", None, _refresh_project, notify_dag_updated=True, **_NO_DB, undoable=False),
 )
 
 install_routes(router, PROJECT_HANDLERS)

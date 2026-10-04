@@ -112,6 +112,19 @@ class Handler:
     #: the transports is what the HOST can do (the extension can dispatch a
     #: MATLAB script to the MathWorks terminal; the browser cannot).
     wants_transport: bool = False
+    #: Whether a call is recorded for undo (``scistack_gui.history``;
+    #: ``docs/claude/undo-redo.md``). Every non-GET handler must say True or
+    #: False explicitly — ``test_every_mutating_handler_decides_undo`` — so a
+    #: new mutation cannot be forgotten. None = a read (GET) that never writes.
+    undoable: bool | None = None
+    #: What the Undo button says ("Undo: delete edge"); None = the method
+    #: name with underscores as spaces.
+    undo_label: str | None = None
+
+    @property
+    def label(self) -> str:
+        """The human name of one call, for the undo stack."""
+        return self.undo_label or self.name.replace("_", " ")
 
     @property
     def path_params(self) -> tuple[str, ...]:
@@ -134,20 +147,78 @@ class Handler:
             return None
         return self.params.model_validate(dict(params or {}))
 
-    def invoke(self, req: Any, db: Any, *, transport: str) -> Any:
-        """Run the handler on a parsed request — shared by both transports."""
+    def invoke(
+        self, req: Any, db: Any, *, transport: str, change: "dict | None" = None
+    ) -> Any:
+        """Run the handler on a parsed request — shared by both transports.
+
+        *change* is the client's undo metadata (``{"id", "label"}``, see
+        :func:`pop_change`). An undoable handler given one is recorded under
+        that id; one called without (a script, a test) still holds the
+        history lock so it cannot land inside another call's recording.
+        """
+        from scistack_gui import history
+
         args: list[Any] = []
         if self.needs_db:
             args.append(db)
         if self.params is not None:
             args.append(req)
         kwargs = {"transport": transport} if self.wants_transport else {}
-        result = self.call(*args, **kwargs)
+        if self.undoable and change:
+            with history.recording(
+                change["id"], label=change.get("label") or self.label, method=self.name
+            ):
+                result = self.call(*args, **kwargs)
+        elif self.undoable:
+            with history.exclusive():
+                result = self.call(*args, **kwargs)
+        else:
+            if change:
+                logger.debug(
+                    "[history] %s is not undoable; change %s ignored",
+                    self.name,
+                    change.get("id"),
+                )
+            result = self.call(*args, **kwargs)
         if self.notify_dag_updated and _succeeded(result):
             from scistack_gui.api.ws import push_message
 
             push_message({"type": "dag_updated"})
         return result
+
+
+#: The reserved request key carrying undo metadata on the RPC transport, and
+#: the header carrying the same JSON object on HTTP. Owned here; the
+#: frontend's ``api.ts`` is the one sender.
+CHANGE_PARAM = "_change"
+CHANGE_HEADER = "X-SciStack-Change"
+
+
+def pop_change(params: "dict | None") -> "dict | None":
+    """Remove and return the ``_change`` metadata from raw request params.
+
+    Done BEFORE model validation, in one place for both transports, so no
+    request model has to know undo exists. A malformed value is dropped
+    (logged): undo metadata must never be the reason an edit is refused.
+    """
+    if not params or CHANGE_PARAM not in params:
+        return None
+    raw = params.pop(CHANGE_PARAM)
+    return _valid_change(raw)
+
+
+def _valid_change(raw: Any) -> "dict | None":
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = None
+    if isinstance(raw, dict) and isinstance(raw.get("id"), str) and raw["id"]:
+        label = raw.get("label")
+        return {"id": raw["id"], "label": label if isinstance(label, str) else None}
+    logger.warning("[history] ignoring malformed change metadata: %r", raw)
+    return None
 
 
 def _succeeded(result: Any) -> bool:
@@ -159,6 +230,8 @@ def rpc_methods(handlers: Iterable[Handler]) -> dict[str, Callable[[dict], Any]]
 
     def _entry(h: Handler) -> Callable[[dict], Any]:
         def rpc(params: dict) -> Any:
+            params = dict(params or {})
+            change = pop_change(params)
             req = h.parse(params)
             db = None
             if h.needs_db:
@@ -172,7 +245,7 @@ def rpc_methods(handlers: Iterable[Handler]) -> dict[str, Callable[[dict], Any]]
                     db = None
                 else:
                     db = get_db()
-            return h.invoke(req, db, transport="rpc")
+            return h.invoke(req, db, transport="rpc", change=change)
 
         rpc.__name__ = f"rpc_{h.name}"
         rpc.__doc__ = h.call.__doc__
@@ -234,6 +307,10 @@ def install_routes(router: APIRouter, handlers: Iterable[Handler]) -> None:
                         )
                     data.update(parsed)
             data.update(request.path_params)
+            change = pop_change(data)
+            header = request.headers.get(CHANGE_HEADER)
+            if header and change is None:
+                change = _valid_change(header)
             try:
                 req = h.parse(data)
             except ValidationError as exc:
@@ -248,7 +325,7 @@ def install_routes(router: APIRouter, handlers: Iterable[Handler]) -> None:
 
             def _run() -> Any:
                 try:
-                    return h.invoke(req, db, transport="http")
+                    return h.invoke(req, db, transport="http", change=change)
                 except BaseException as exc:
                     for exc_type, status in h.http_errors.items():
                         if isinstance(exc, exc_type):

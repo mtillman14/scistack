@@ -70,6 +70,22 @@ def _duck(db):
     return db._duck
 
 
+#: Every table `_ensure_tables` creates here, for undo (`scistack_gui.history`).
+#: A new table must be added, or `test_every_gui_table_is_tracked` fails.
+UNDOABLE_TABLES: tuple[str, ...] = (
+    "_pipeline_nodes",
+    "_node_config",
+    "_pipeline_builtin_functions",
+    "_pipeline_parameter_value_groups",
+    "_pipeline_path_input_history",
+    "_pipeline_path_input_renames",
+    "_pipeline_hidden_ports",
+    "_pipelines",
+    "_pipeline_uses",
+    "_hypotheses",
+)
+
+
 def _ensure_tables(db) -> None:
     """Create pipeline tables if they don't already exist, each with its
     final schema (no migrations — see the module docstring)."""

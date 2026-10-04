@@ -11,6 +11,8 @@ from __future__ import annotations
 import keyword
 import logging
 
+from scistack_gui import history
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,6 +121,7 @@ def create_variable(
 
     try:
         ensure_scidb_import(target_file)
+        history.note_write(target_file)
         with open(target_file, "a") as f:
             f.writelines(lines)
     except OSError as e:
@@ -214,6 +217,7 @@ def _create_matlab_variable(name: str, docstring: str | None = None) -> dict:
         body = body.replace("end\n", f"    % {docstring}\nend\n")
 
     try:
+        history.note_write(target_file)
         target_file.write_text(body, encoding="utf-8")
     except OSError as e:
         return {"ok": False, "error": f"Failed to write .m file: {e}"}

@@ -43,7 +43,7 @@ def _write_report(db) -> dict:
 
 ARTIFACT_HANDLERS: tuple[Handler, ...] = (
     Handler("get_endpoint_artifacts", "/endpoints/{fn_name}/artifacts", FunctionName, _get_endpoint_artifacts, http_method="GET"),
-    Handler("write_report", "/report", None, _write_report, http_errors={Exception: 500}),
+    Handler("write_report", "/report", None, _write_report, http_errors={Exception: 500}, undoable=False),
 )
 
 install_routes(router, ARTIFACT_HANDLERS)

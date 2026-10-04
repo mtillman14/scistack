@@ -32,7 +32,7 @@ def _create_builtin_function(req: CreateBuiltinFunctionRequest) -> dict:
 
 
 BUILTIN_FUNCTION_HANDLERS: tuple[Handler, ...] = (
-    Handler("create_builtin_function", "/functions/builtin", CreateBuiltinFunctionRequest, _create_builtin_function, needs_db=False),
+    Handler("create_builtin_function", "/functions/builtin", CreateBuiltinFunctionRequest, _create_builtin_function, needs_db=False, undoable=True, undo_label="add built-in function"),
 )
 
 install_routes(router, BUILTIN_FUNCTION_HANDLERS)

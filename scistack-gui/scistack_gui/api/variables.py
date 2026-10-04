@@ -408,7 +408,7 @@ VARIABLE_HANDLERS: tuple[Handler, ...] = (
     Handler("get_variable_records", "/variables/{name}/records", VariableName, _get_variable_records, http_method="GET"),
     Handler("get_variable_plot_data", "/variables/{name}/plot-data", VariableName, _get_variable_plot_data, http_method="GET"),
     Handler("get_variable_columns", "/variables/{variable_type}/columns", VariableColumnsQuery, _get_variable_columns, http_method="GET"),
-    Handler("create_variable", "/variables/create", CreateVariableRequest, _create_variable, needs_db=False),
+    Handler("create_variable", "/variables/create", CreateVariableRequest, _create_variable, needs_db=False, undoable=True, undo_label="new variable"),
 )
 
 install_routes(router, VARIABLE_HANDLERS)

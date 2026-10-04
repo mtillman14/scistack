@@ -24,6 +24,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from scistack_gui import history
+
 logger = logging.getLogger(__name__)
 
 GLUE_PREFIX = "glue_"
@@ -235,6 +237,7 @@ def create_glue_node(
         return {"ok": False, "error": f"{path} already exists."}
 
     source = initial_body(name, param=param, language=language)
+    history.note_write(path)
     path.write_text(source, encoding="utf-8")
     logger.info("[glue] created %s (%s)", path, language)
     # Full config re-read, not the narrow per-file reload: a brand-new glue
@@ -287,6 +290,7 @@ def update_glue_source(name: str, source: str) -> dict:
     path = Path(current["path"])
     language = current.get("language", "python")
     previous = path.read_text(encoding="utf-8")
+    history.note_write(path)
     path.write_text(source, encoding="utf-8")
     result = _refresh(path)
 
@@ -304,6 +308,7 @@ def update_glue_source(name: str, source: str) -> dict:
             "server log for the import traceback)"
         )
     if failure:
+        history.note_write(path)
         path.write_text(previous, encoding="utf-8")
         _refresh(path)
         return {"ok": False, "error": f"{name} was not saved: {failure}"}

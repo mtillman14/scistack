@@ -209,7 +209,8 @@ export default function EditTab() {
   const selectRole = (role: FunctionRole | 'all') => {
     setRoleFilter(role)
     setSelectedItem(null)
-    callBackend('set_note', { key: ROLE_NOTE_KEY, text: role }).catch(console.error)
+    // A view preference kept as a note, not an edit: no undo step.
+    callBackend('set_note', { key: ROLE_NOTE_KEY, text: role }, { stack: null }).catch(console.error)
   }
 
   function fetchRegistry() {

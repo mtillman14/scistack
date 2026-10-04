@@ -36,6 +36,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scistack_gui import history
+
 logger = logging.getLogger(__name__)
 
 
@@ -252,6 +254,7 @@ def ensure_language_stubs(config) -> InitResult:
             continue
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            history.note_write(path)
             path.write_text(text, encoding="utf-8")
         except OSError as e:
             logger.warning("[project_init] Could not create %s: %s", path, e)

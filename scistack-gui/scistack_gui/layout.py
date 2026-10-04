@@ -23,7 +23,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from scistack_gui import pipeline_store
+from scistack_gui import history, pipeline_store
 from scistack_gui.ids import ROOT_SCOPE
 from scistack_gui.db import get_db, get_db_path
 
@@ -208,6 +208,8 @@ def _save(data: dict) -> None:
         len(data.get("positions", {})),
         len(data.get("constants", [])),
     )
+    # Positions are cosmetic: restoring them needs no registry reload.
+    history.note_write(p, reload=False)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         with tmp.open("w") as f:

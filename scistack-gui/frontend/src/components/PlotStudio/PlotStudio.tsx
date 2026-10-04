@@ -19,6 +19,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-cartesian-dist-min'
 import { callBackend, isVSCodeMode } from '../../api'
+import { UndoStack } from '../../undo'
+import { useHistoryState, useUndoShortcuts } from '../../hooks/useUndo'
+import UndoButtons from '../UndoButtons'
 import { injectedDbName } from '../../session'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import VariantDagPopup from './VariantDagPopup'
@@ -810,7 +813,13 @@ export default function PlotStudio({
     [csvPath]
   )
   const [describe, setDescribe] = useState<DescribeResponse | null>(null)
-  const [spec, setSpec] = useState<Spec | null>(null)
+  // This panel's own undo stack (docs/claude/undo-redo.md): spec edits are
+  // local steps; its project alias/colour writes and "Add to pipeline" are
+  // server steps on the same stack. One per instance, like one per editor.
+  const undo = useMemo(() => new UndoStack((method, params) => callBackend(method, params), 'plot'), [])
+  useUndoShortcuts(undo)
+  // setSpec = a user edit (an undo step); replaceSpec = loading (not one).
+  const [spec, setSpec, replaceSpec] = useHistoryState<Spec | null>(undo, null, 'figure edit')
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
 
   // Factors of the resolved table (Variant included, selected-away columns
@@ -964,7 +973,10 @@ export default function PlotStudio({
   useEffect(() => {
     let cancelled = false
     setDescribe(null)
-    setSpec(null)
+    // Opening is loading, not editing: no undo step, and the old figure's
+    // steps do not apply to the one being opened.
+    replaceSpec(null)
+    undo.clear()
     setFigures([])
     setLoadError('')
     setLoadedPlot(null)
@@ -984,7 +996,7 @@ export default function PlotStudio({
           const keys = (response.table?.factors ?? [])
             .filter(f => f.is_schema_key)
             .map(f => f.name)
-          setSpec(
+          replaceSpec(
             initialLocation?.length
               ? applyPickedLocation(response.spec, initialLocation, keys)
               : response.spec
@@ -1513,28 +1525,38 @@ export default function PlotStudio({
     launchResolve(spec, figureIndex, specKey)
   }, [spec, figureIndex, specKey, launchResolve])
 
+  // A server undo/redo from this panel (an alias or colour) changed the
+  // config the figure was drawn with, and no broadcast reaches a plot tab:
+  // draw it again. Through a ref so the stack keeps one stable callback.
+  const refreshResolveRef = useRef(refreshResolve)
+  refreshResolveRef.current = refreshResolve
+  useEffect(() => {
+    undo.onServerApplied = () => refreshResolveRef.current()
+    return () => { undo.onServerApplied = null }
+  }, [undo])
+
   /** One edit to the project's [aliases]; resolves to an error or null. */
   const writeProjectAlias = useCallback(
     (edit: ProjectAliasEdit): Promise<string | null> =>
-      callBackend('plot_project_alias_set', { ...edit }).then(reply => {
+      callBackend('plot_project_alias_set', { ...edit }, { stack: undo }).then(reply => {
         const result = reply as { ok: boolean; error?: string }
         if (!result.ok) return result.error ?? 'The project alias was not written.'
         refreshResolve()
         return null
       }),
-    [refreshResolve]
+    [refreshResolve, undo]
   )
 
   /** One edit to the project's [colors]; resolves to an error or null. */
   const writeProjectColor = useCallback(
     (edit: ProjectColorEdit): Promise<string | null> =>
-      callBackend('plot_project_color_set', { ...edit }).then(reply => {
+      callBackend('plot_project_color_set', { ...edit }, { stack: undo }).then(reply => {
         const result = reply as { ok: boolean; error?: string }
         if (!result.ok) return result.error ?? 'The project colour was not written.'
         refreshResolve()
         return null
       }),
-    [refreshResolve]
+    [refreshResolve, undo]
   )
 
   /** Add or remove one factor from the y-limit scope, keeping panel order. */
@@ -2409,14 +2431,14 @@ export default function PlotStudio({
   const handleAddToPipeline = useCallback(() => {
     if (!spec) return
     setNotice('Writing endpoint…')
-    callBackend('plot_add_to_pipeline', { spec: outputSpec })
+    callBackend('plot_add_to_pipeline', { spec: outputSpec }, { stack: undo })
       .then(raw => {
         const result = raw as { ok?: boolean; error?: string; function_name?: string; file?: string }
         if (result.error) setNotice(`Could not add: ${result.error}`)
         else setNotice(`Added ${result.function_name} to ${result.file}. Wire it up on the canvas.`)
       })
       .catch(err => setNotice(`Could not add: ${(err as Error).message}`))
-  }, [spec, outputSpec])
+  }, [spec, outputSpec, undo])
 
   // --- saved plots ----------------------------------------------------------
   // Keyed by the variable `describe` resolved (the prop may be empty, meaning
@@ -3512,6 +3534,8 @@ export default function PlotStudio({
           takes the figure out of the panel. Out of the rail so it is never a
           scroll away, and still there with the controls hidden. */}
       <div style={styles.toolbar}>
+        {/* This panel's undo/redo (Cmd/Ctrl+Z works too, outside text fields). */}
+        <UndoButtons stack={undo} />
         {/* Which size the preview's labels and legend are decided at: the
             file's (and drawn at it), or the pane's. A view setting. */}
         <label

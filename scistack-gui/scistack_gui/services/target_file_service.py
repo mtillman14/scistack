@@ -37,6 +37,8 @@ import re
 import tempfile
 from pathlib import Path
 
+from scistack_gui import history
+
 logger = logging.getLogger(__name__)
 
 _IMPORT_SCIDB_RE = re.compile(r"^import scidb$", re.MULTILINE)
@@ -148,6 +150,7 @@ def ensure_scidb_import(target_file: Path) -> None:
     text = target_file.read_text() if target_file.exists() else ""
     if _IMPORT_SCIDB_RE.search(text):
         return
+    history.note_write(target_file)
     with open(target_file, "a") as f:
         f.write("\nimport scidb\n" if text else "import scidb\n")
     logger.debug("[target_file_service] Added 'import scidb' to %s", target_file)
@@ -164,6 +167,7 @@ def append_and_refresh(line: str, target_file: Path) -> "dict | None":
     the shared registry on each create."""
     try:
         ensure_scidb_import(target_file)
+        history.note_write(target_file)
         with open(target_file, "a") as f:
             f.write(line)
     except OSError as e:
@@ -801,6 +805,7 @@ def _atomic_write(path: Path, text: str) -> None:
     """Replace *path*'s contents via a temp file in the same directory, so a
     crash mid-write can never leave a half-written entities file (which the
     scanner would then fail to parse, taking every entity in it down)."""
+    history.note_write(path)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
     try:
         with os.fdopen(fd, "w") as f:
