@@ -1,7 +1,7 @@
 # The edge model: one id, one view, one port per argument
 
-*Written 2026-10-01 after the unified-edge-model refactor (branch
-`refactor/unified-edge-model`, D-2026-10-01-1, plan
+*Written 2026-10-01 after the unified-edge-model refactor (merged to main 2026-10-03 from
+the deleted branch `refactor/unified-edge-model`, D-2026-10-01-1, plan
 `.claude/plan-unified-edge-model.md`). Read this before touching how edges are
 drawn, hidden, bound to inputs, or matched against history.*
 

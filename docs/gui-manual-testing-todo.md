@@ -14,11 +14,11 @@ steps (clicks in the GUI), and what you should see.
 ## 0zzx. Unified edge model (branch `refactor/unified-edge-model`) — added 2026-10-01
 
 **What changed:** one edge id per connection, one view every reader uses, one port per argument
-(`docs/claude/edge-model.md`). NOT merged to main; check it out in the GUI clone first.
+(`docs/claude/edge-model.md`). Merged to main on 2026-10-03 (a2bb8682).
 
 **Backend:**
-- `git fetch && git checkout refactor/unified-edge-model` in the GUI clone, then restart the GUI and MATLAB.
-- Both frontend bundles on the branch are rebuilt; no build is needed.
+- On main: pull if testing from the Windows clone, then reload the VS Code window and restart MATLAB.
+- Both frontend bundles are rebuilt; no build is needed.
 
 **Frontend:**
 1. **Your existing hides survive.** On the Aim 2 project, `calculateSymmetryOneVector`'s
