@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Publish to PyPI + VS Code Marketplace
 
 # Lockstep release: a single version tag (e.g. v0.2.0) builds and publishes
 # every library package at that version. The version itself comes from the tag
@@ -58,7 +58,7 @@ jobs:
           # under scistack_gui/static/ (vite's "standalone" target). Nothing
           # here rebuilds it, so a stale commit ships a stale UI — rebuild and
           # commit the bundle before tagging. The "webview" vite target and the
-          # VS Code extension itself ship separately via vsce, not PyPI.
+          # VS Code extension itself ship via the publish-vscode job below.
           # scidb-net is excluded — outdated, slated for removal.
           for pkg in scicanonicalhash path-gen scistacklog sciduckdb \
                      scifor scilineage scistackplot scidb \
@@ -90,3 +90,47 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+
+  # The VS Code extension ships from the SAME tag as the PyPI packages, so its
+  # version always equals theirs: package.json holds the placeholder 0.0.0 in
+  # git and scripts/stamp-version.js writes the tag's X.Y.Z into it here.
+  # Runs only after PyPI succeeds, so the extension never points users at a
+  # `pip install scistack-gui==X.Y.Z` that does not exist yet.
+  # Secrets live in the `vscode-marketplace` environment:
+  #   VSCE_PAT — Azure DevOps PAT, scope Marketplace (Manage), all orgs
+  #   OVSX_PAT — open-vsx.org access token (Cursor / VSCodium / Windsurf)
+  publish-vscode:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: vscode-marketplace
+    defaults:
+      run:
+        working-directory: scistack-gui/extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install extension + frontend dependencies
+        run: |
+          npm ci
+          npm ci --prefix ../frontend
+      - name: Stamp version from tag
+        run: npm run stamp-version   # reads GITHUB_REF_NAME, refuses non-X.Y.Z
+      - name: Build bundle + webview and package the .vsix
+        run: |
+          npm run build:all
+          npx vsce package --out "scistack-gui-${GITHUB_REF_NAME#v}.vsix"
+          ls -la *.vsix
+      - name: Publish to the VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath scistack-gui-*.vsix
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish scistack-gui-*.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scistack-gui-vsix
+          path: scistack-gui/extension/*.vsix

@@ -11,6 +11,27 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzc. Extension / scistack-gui version check on startup — added 2026-10-07
+
+The extension now compares its own version with the installed `scistack-gui`
+Python package's on every server start. A locally built extension is `0.0.0`
+(never warns), so to see the warning, use a Marketplace build or temporarily
+set `"version"` in `extension/package.json` to e.g. `0.1.29` and rebuild.
+
+1. Open a database (**SciStack: Open Pipeline**). In the **SciStack** Output
+   Channel, after "Server ready", there should be a line
+   `Versions: extension X, scistack-gui Y — match|skipped (...)|mismatch`.
+2. With an editable install (`scistack-gui` reports `0.1.30.devN`), it should
+   say `skipped (scistack-gui ... is a dev build)` and show no notification.
+3. With the extension version set to something else than the installed
+   package: a yellow warning appears naming both versions and the
+   `pip install scistack-gui==<extension version>` fix. Open a second
+   database: the warning does NOT appear again (once per window).
+4. **Plot CSV File** from the Explorer (plot-only server) should log the same
+   Versions line.
+
+---
+
 ## 0zzzb. Automatic text size: each element as big as it fits, Print / Slide band — added 2026-10-06
 
 **What changed:** a new plot's text sizes itself (`docs/claude/plot-text-and-labels.md`,

@@ -87,6 +87,39 @@ def _respond_error(req_id, code: int, message: str):
     _send({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}})
 
 
+def package_version() -> str | None:
+    """The installed ``scistack-gui`` version, as the release tag stamped it.
+
+    hatch-vcs writes it into the distribution metadata at build time; the
+    VS Code extension's ``package.json`` is stamped from the same tag, so
+    the two are equal for a matched install. None when running from a tree
+    with no installed distribution — the extension then skips its check.
+    """
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version("scistack-gui")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _send_ready(params: dict) -> None:
+    """Emit the startup ``ready`` notification — the one place it is built.
+
+    Carries this package's version so the extension can warn when the
+    installed ``scistack-gui`` and the extension come from different releases.
+    """
+    version = package_version()
+    logger.info("[startup] scistack-gui version %s", version)
+    _send(
+        {
+            "jsonrpc": "2.0",
+            "method": "ready",
+            "params": {**params, "version": version},
+        }
+    )
+
+
 def _send_progress(message: str) -> None:
     """Emit a startup progress notification. Uses _send directly because
     notify.enable() has not been called yet during startup."""
@@ -460,15 +493,9 @@ def _run_plot_only(t0: float, log_file: "Path | None") -> None:
         time.monotonic() - t0,
         len(WITHOUT_DB_METHODS),
     )
-    _send(
-        {
-            "jsonrpc": "2.0",
-            "method": "ready",
-            # The extension prints these; name the mode rather than leaving
-            # an empty database name to be read as a failed open.
-            "params": {"db_name": "(no database)", "schema_keys": [], "db_loaded": False},
-        }
-    )
+    # The extension prints these; name the mode rather than leaving an empty
+    # database name to be read as a failed open.
+    _send_ready({"db_name": "(no database)", "schema_keys": [], "db_loaded": False})
     _serve_stdin()
 
 
@@ -822,16 +849,7 @@ def main():
 
     # Signal readiness
     logger.info("Startup complete in %.2fs", time.monotonic() - t0)
-    _send(
-        {
-            "jsonrpc": "2.0",
-            "method": "ready",
-            "params": {
-                "db_name": db_path.name,
-                "schema_keys": db.dataset_schema_keys,
-            },
-        }
-    )
+    _send_ready({"db_name": db_path.name, "schema_keys": db.dataset_schema_keys})
 
     # Release the DuckDB file lock now that startup is complete. It will be
     # reacquired automatically when the first request arrives. This allows

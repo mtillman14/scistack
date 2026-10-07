@@ -2,8 +2,25 @@
   "name": "scistack-gui",
   "displayName": "SciStack Pipeline GUI",
   "description": "Visual pipeline builder for SciStack scientific data processing",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "publisher": "scistack",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mtillman14/scistack.git",
+    "directory": "scistack-gui/extension"
+  },
+  "homepage": "https://github.com/mtillman14/scistack/tree/main/scistack-gui/extension#readme",
+  "bugs": {
+    "url": "https://github.com/mtillman14/scistack/issues"
+  },
+  "keywords": [
+    "scientific",
+    "pipeline",
+    "provenance",
+    "data processing",
+    "duckdb"
+  ],
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -89,14 +106,16 @@
     "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
     "build:webview": "cd ../frontend && VITE_BUILD_TARGET=webview npx vite build",
     "build:all": "npm run build && npm run build:webview",
-    "test": "tsc -p tsconfig.test.json && node --test dist/test",
-    "package": "npm run build:all && vsce package"
+    "test": "tsc -p tsconfig.test.json && node --test dist/test scripts",
+    "package": "npm run build:all && vsce package",
+    "stamp-version": "node scripts/stamp-version.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.80.0",
     "@types/node": "^20.0.0",
     "esbuild": "^0.20.0",
     "typescript": "^5.4.0",
-    "@vscode/vsce": "^2.24.0"
+    "@vscode/vsce": "^3.6.0",
+    "ovsx": "^0.10.0"
   }
 }

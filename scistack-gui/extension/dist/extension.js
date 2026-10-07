@@ -1824,6 +1824,29 @@ var PythonProcess = class {
   }
 };
 
+// src/versionCheck.ts
+var DEV_VERSION = "0.0.0";
+function checkServerVersion(extensionVersion, serverVersion) {
+  if (extensionVersion === DEV_VERSION) {
+    return { kind: "skipped", reason: "extension is an unstamped dev build" };
+  }
+  if (!serverVersion) {
+    return {
+      kind: "mismatch",
+      message: `SciStack extension ${extensionVersion} is talking to a scistack-gui Python package that did not report its version (older than this extension). Run: pip install scistack-gui==${extensionVersion}`
+    };
+  }
+  if (/\.dev\d|\+/.test(serverVersion)) {
+    return { kind: "skipped", reason: `scistack-gui ${serverVersion} is a dev build` };
+  }
+  if (serverVersion === extensionVersion)
+    return { kind: "match" };
+  return {
+    kind: "mismatch",
+    message: `SciStack extension ${extensionVersion} does not match the installed scistack-gui Python package ${serverVersion}. Things may break. Run: pip install scistack-gui==${extensionVersion}`
+  };
+}
+
 // src/serverArgs.ts
 function buildServerArgs({
   dbPath,
@@ -2209,6 +2232,8 @@ var SessionManager = class {
     this.channel = channel;
     this.registry = new SessionRegistry();
     this.changeHandlers = [];
+    /** One version-mismatch warning per extension host, not one per session. */
+    this.versionWarned = false;
   }
   /** Called whenever the set of sessions, or the active one, changes. */
   onDidChange(handler) {
@@ -2462,11 +2487,27 @@ var SessionManager = class {
       opts.log.appendLine(
         `Server ready \u2014 DB: ${ready.db_name}, schema: [${(ready.schema_keys ?? []).join(", ")}]`
       );
+      this.reportVersionMismatch(opts.log, ready.version);
       return python;
     } catch (err) {
       python.kill();
       await reportStartupFailure(opts.log, this.channel, python, interpreterSource, err);
       return void 0;
+    }
+  }
+  /**
+   * Log both versions, and warn (once per extension host) when the installed
+   * scistack-gui package is from a different release than this extension.
+   */
+  reportVersionMismatch(log, serverVersion) {
+    const extensionVersion = this.context.extension.packageJSON.version;
+    const verdict = checkServerVersion(extensionVersion, serverVersion);
+    log.appendLine(
+      `  Versions: extension ${extensionVersion}, scistack-gui ${serverVersion ?? "(not reported)"} \u2014 ${verdict.kind}${verdict.kind === "skipped" ? ` (${verdict.reason})` : ""}`
+    );
+    if (verdict.kind === "mismatch" && !this.versionWarned) {
+      this.versionWarned = true;
+      vscode5.window.showWarningMessage(verdict.message);
     }
   }
   /**

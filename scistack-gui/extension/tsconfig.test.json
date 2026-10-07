@@ -17,6 +17,7 @@
     "src/rpcPending.ts",
     "src/plotTheme.ts",
     "src/webviewCsp.ts",
+    "src/versionCheck.ts",
     "src/*.test.ts"
   ]
 }

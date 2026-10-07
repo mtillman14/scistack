@@ -28,6 +28,7 @@ import { DagPanel } from './dagPanel';
 import { PanelRegistry } from './panelRegistry';
 import { PlotPanel } from './plotPanel';
 import { PythonProcess } from './pythonProcess';
+import { checkServerVersion } from './versionCheck';
 import { buildPlotOnlyServerArgs, buildServerArgs } from './serverArgs';
 import {
   LogSink,
@@ -272,6 +273,8 @@ export class SessionManager {
    */
   private plotOnly: Session | undefined;
   private readonly changeHandlers: (() => void)[] = [];
+  /** One version-mismatch warning per extension host, not one per session. */
+  private versionWarned = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -574,11 +577,29 @@ export class SessionManager {
       opts.log.appendLine(
         `Server ready — DB: ${ready.db_name}, schema: [${(ready.schema_keys ?? []).join(', ')}]`,
       );
+      this.reportVersionMismatch(opts.log, ready.version);
       return python;
     } catch (err) {
       python.kill();
       await reportStartupFailure(opts.log, this.channel, python, interpreterSource, err);
       return undefined;
+    }
+  }
+
+  /**
+   * Log both versions, and warn (once per extension host) when the installed
+   * scistack-gui package is from a different release than this extension.
+   */
+  private reportVersionMismatch(log: LogSink, serverVersion: string | null | undefined): void {
+    const extensionVersion: string = this.context.extension.packageJSON.version;
+    const verdict = checkServerVersion(extensionVersion, serverVersion);
+    log.appendLine(
+      `  Versions: extension ${extensionVersion}, scistack-gui ${serverVersion ?? '(not reported)'}` +
+        ` — ${verdict.kind}${verdict.kind === 'skipped' ? ` (${verdict.reason})` : ''}`,
+    );
+    if (verdict.kind === 'mismatch' && !this.versionWarned) {
+      this.versionWarned = true;
+      vscode.window.showWarningMessage(verdict.message);
     }
   }
 

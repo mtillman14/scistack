@@ -1,3 +1,6 @@
 # Compiled output of `npm test` (tsc -p tsconfig.test.json). The rest of
 # dist/ is the intentionally committed extension bundle.
 dist/test/
+
+# Packaged extension (vsce package). Release builds come from CI.
+*.vsix

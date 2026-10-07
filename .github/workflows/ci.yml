@@ -161,3 +161,27 @@ jobs:
             python -m build --outdir dist_ci "$pkg"
           done
           python -m twine check dist_ci/*
+
+  extension:
+    # The VS Code extension: unit tests, then a full rebuild + `vsce package`
+    # so a manifest/.vscodeignore problem fails the PR, not the release.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scistack-gui/extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install extension + frontend dependencies
+        run: |
+          npm ci
+          npm ci --prefix ../frontend
+      - name: Extension tests
+        run: npm test
+      - name: Build bundle + webview and package the .vsix
+        run: |
+          npm run build:all
+          npx vsce package --out scistack-gui.vsix
+          npx vsce ls

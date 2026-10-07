@@ -2,6 +2,16 @@
 
 Visual pipeline builder for SciStack scientific data processing.
 
+## Install
+
+The extension is the front end; the work happens in the `scistack-gui` Python package, which you install into your project's environment **at the same version as the extension** (both are released together from one tag):
+
+```
+pip install scistack-gui==<extension version>
+```
+
+The extension version is shown on its page in the Extensions view. If the two drift apart (the Marketplace auto-updates the extension; pip never updates your venv), the extension warns on startup with the exact `pip install` command, and logs both versions to the **SciStack** Output Channel.
+
 ## Usage
 
 Run **SciStack: Open Pipeline** from the Command Palette and select a `.duckdb` file (and optionally a pipeline `.py` module).
@@ -33,7 +43,7 @@ The notification always names the interpreter that was used and where that path 
 ## Tests
 
 ```
-npm test     # tsc -p tsconfig.test.json && node --test dist/test
+npm test     # tsc -p tsconfig.test.json && node --test dist/test scripts
 ```
 
 Covers the startup-failure diagnostics (`src/startupDiagnostics.test.ts`). Only `vscode`-free modules are compiled into `dist/test`.

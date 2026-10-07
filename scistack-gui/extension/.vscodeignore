@@ -1,6 +1,13 @@
+# Only the bundle, README, LICENSE and package.json ship in the .vsix.
 src/**
+scripts/**
 node_modules/**
 .vscode/**
-tsconfig.json
+dist/test/**
+**/*.map
 **/*.ts
-!dist/**
+tsconfig*.json
+build-on-windows.ps1
+to_run_on_linux_from_windows.md
+**/.DS_Store
+.gitignore
