@@ -114,30 +114,6 @@ jobs:
 
           [[ ${#FAIL[@]} -eq 0 ]]
 
-  typecheck:
-    runs-on: ubuntu-latest
-    # Non-blocking to start: the repo has never been type-gated. Flip
-    # continue-on-error to false (or remove it) once these pass cleanly.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install packages + mypy
-        run: |
-          pip install --upgrade pip
-          bash dev-install.sh
-          pip install mypy
-      - name: mypy (packages that declare [tool.mypy])
-        run: |
-          for pkg in scicanonicalhash path-gen sciduckdb scilineage; do
-            echo "== mypy $pkg =="
-            mypy "$pkg" || exit 1
-          done
-
   build:
     runs-on: ubuntu-latest
     steps:

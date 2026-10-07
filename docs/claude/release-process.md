@@ -29,7 +29,7 @@ Known exception not yet fixed: `scidb/src/scidb/__init__.py` hardcodes
 
 ```
 tag push
-  └─ ci            (ci.yml via workflow_call: pytest matrix, typecheck, build, extension)
+  └─ ci            (ci.yml via workflow_call: pytest matrix, build, extension)
       └─ publish   (PyPI: build 13 packages, refuse .dev/rc/+local, trusted publishing)
           └─ publish-vscode
                npm ci (extension + frontend)
