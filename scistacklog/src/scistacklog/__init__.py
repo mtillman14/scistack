@@ -41,6 +41,7 @@ import threading
 import time
 import warnings
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 __all__ = ["Log", "LAYERS"]
 
@@ -58,6 +59,9 @@ LAYERS = (
     "scistackplotdb",
     "matlab",
 )
+
+#: Set inside :meth:`Log.trial`: the label its demoted records carry.
+_TRIAL: ContextVar[str | None] = ContextVar("scistacklog_trial", default=None)
 
 # scidb's historical 0-3 level scale — the MATLAB-facing numeric contract.
 _SCIDB_TO_PY = {
@@ -343,6 +347,29 @@ class Log:
 
     @classmethod
     @contextmanager
+    def trial(cls, label: str):
+        """Demote INFO and WARN records to DEBUG while a trial runs.
+
+        For work whose result is measured and then discarded — a layout tried
+        at one candidate text size, say — whose own INFO/WARN lines would
+        otherwise read as the real result's. Each demoted record keeps its
+        original level in the text: ``[label] WARN: …``. ERROR is never
+        demoted. Context-local (``contextvars``), so a trial on one thread
+        does not quiet another; nested trials keep the innermost label.
+
+        Usage::
+
+            with Log.trial("auto-size 12pt"):
+                fig = render(candidate)
+        """
+        token = _TRIAL.set(label)
+        try:
+            yield
+        finally:
+            _TRIAL.reset(token)
+
+    @classmethod
+    @contextmanager
     def step(cls, name: str, *, layer: str = "scidb"):
         """Trace one named operation: entry/exit at DEBUG, failure at ERROR.
 
@@ -482,6 +509,13 @@ class Log:
         cls, py_level: int, msg: str, args: tuple, layer: str, exc_info: bool
     ) -> None:
         cls.attach()
+        trial = _TRIAL.get()
+        if trial is not None and logging.DEBUG < py_level < logging.ERROR:
+            # A trial's INFO and WARN describe a layout that is thrown away;
+            # at their own level they would read as the real figure's.
+            short = _SHORT_NAMES.get(py_level, logging.getLevelName(py_level))
+            msg = f"[{trial}] {short}: {msg}"
+            py_level = logging.DEBUG
         name = str(layer).split(".", 1)[0]
         if name not in LAYERS:
             with cls._lock:

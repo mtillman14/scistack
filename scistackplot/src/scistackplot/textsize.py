@@ -14,14 +14,27 @@ how the plotly bracket labels came to be ``0.8 x`` while matplotlib's were
 Pure, no matplotlib import: the ratios below ARE matplotlib's
 ``font_manager.font_scalings``, pinned by ``tests/test_textsize.py`` against
 the real thing, so an unset size here is exactly what matplotlib's relative
-name would have resolved to. See docs/claude/plot-text-and-labels.md.
+name would have resolved to.
+
+An AUTO spec (``base`` None) is sized by ``autosize``: it chooses a size per
+element and :func:`resolve_sizes` takes them as ``auto=``. Renderers call
+:func:`sizes_for`, which passes a resolved plot's settled sizes, so no consumer
+ever turns ``None`` into a number of its own. See docs/claude/plot-text-and-labels.md.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING, Mapping
+
+from scistacklog import Log
 
 from .spec import StyleOptions, TextSizes
+
+if TYPE_CHECKING:
+    from .resolved import ResolvedPlot
+
+LAYER = "scistackplot"
 
 #: matplotlib's ``font_scalings`` for the relative names its rc defaults use:
 #: ``axes.labelsize`` / ``x|ytick.labelsize`` / ``legend.fontsize`` are
@@ -82,38 +95,70 @@ class ResolvedSizes:
         return " ".join(parts) + ("  (* fixed)" if self.pinned else "")
 
 
+#: ``TextSizes`` fields that are not an element's size: ``base`` is what the
+#: elements derive from, ``target`` picks the auto band. Neither is a pin.
+_NOT_ELEMENTS = frozenset({"base", "target"})
+
 #: Every element, in the order the log states them.
 _ELEMENTS = tuple(f.name for f in fields(ResolvedSizes) if f.name != "pinned")
 
 
-def resolve_sizes(style: StyleOptions | TextSizes) -> ResolvedSizes:
-    """Every element's size in points, derived where the user set none."""
+def resolve_sizes(
+    style: StyleOptions | TextSizes, *, auto: Mapping[str, float] | None = None
+) -> ResolvedSizes:
+    """Every element's size in points, derived where the user set none.
+
+    ``auto`` is ``autosize.AutoTextSize.sizes`` for an auto spec (``base``
+    None): ``{element: pt, "base": pt}``. A size the user fixed still wins;
+    an element auto did not size is derived from ``base`` as before. Callers
+    holding a resolved plot use :func:`sizes_for`, which passes it.
+    """
     text = style.text if isinstance(style, StyleOptions) else style
-    base = float(text.base)
+    chosen = dict(auto or {}) if text.base is None else {}
+    if text.base is not None:
+        base = float(text.base)
+    elif "base" in chosen:
+        base = float(chosen["base"])
+    else:
+        base = _unsettled_base(text)
 
-    def pick(value: float | None, derived: float) -> float:
-        return float(value) if value is not None else round(derived, 3)
+    def pick(name: str, derived: float) -> float:
+        value = getattr(text, name)
+        if value is not None:
+            return float(value)
+        if name in chosen:
+            return float(chosen[name])
+        return round(derived, 3)
 
-    x_ticks = pick(text.x_ticks, base * MEDIUM)
-    legend = pick(text.legend, base * MEDIUM)
+    x_ticks = pick("x_ticks", base * MEDIUM)
+    legend = pick("legend", base * MEDIUM)
     pinned = frozenset(
-        f.name for f in fields(TextSizes) if f.name != "base" and getattr(text, f.name) is not None
+        f.name
+        for f in fields(TextSizes)
+        if f.name not in _NOT_ELEMENTS and getattr(text, f.name) is not None
     )
     return ResolvedSizes(
         base=base,
-        title=pick(text.title, base * LARGE),
-        x_label=pick(text.x_label, base * MEDIUM),
-        y_label=pick(text.y_label, base * MEDIUM),
+        title=pick("title", base * LARGE),
+        x_label=pick("x_label", base * MEDIUM),
+        y_label=pick("y_label", base * MEDIUM),
         x_ticks=x_ticks,
-        y_ticks=pick(text.y_ticks, base * MEDIUM),
+        y_ticks=pick("y_ticks", base * MEDIUM),
         # Unset brackets scale with the ticks they sit under, so a fixed tick
         # size moves them too — they are read as one block.
-        groups=pick(text.groups, x_ticks * SMALL),
+        groups=pick("groups", x_ticks * SMALL),
         legend=legend,
         legend_title=float(text.legend_title) if text.legend_title is not None else None,
-        differences=pick(text.differences, base * MEDIUM),
+        differences=pick("differences", base * MEDIUM),
         pinned=pinned,
     )
+
+
+def sizes_for(resolved: "ResolvedPlot") -> ResolvedSizes:
+    """The sizes ``resolved`` is drawn at: its spec, and its settled auto
+    sizes (``ResolvedPlot.auto_text``). What every renderer reads."""
+    auto = resolved.auto_text
+    return resolve_sizes(resolved.spec.style, auto=auto.sizes if auto is not None else None)
 
 
 def rc_params(sizes: ResolvedSizes) -> dict[str, float]:
@@ -142,3 +187,23 @@ def rc_params(sizes: ResolvedSizes) -> dict[str, float]:
 
 def _num(value: float) -> str:
     return f"{value:g}"
+
+
+def _unsettled_base(text: TextSizes) -> float:
+    """The base for an AUTO size nobody settled: the band's ceiling.
+
+    Renderers settle first (``autosize.settle``), so this is reached only by a
+    caller sizing text outside a render — a size estimate, a test, a describe.
+    Logged at DEBUG so a renderer that forgot to settle shows up in scidb.log
+    as this line next to its own render line.
+    """
+    from .autosize import BANDS
+
+    ceiling = BANDS[text.target].ceiling_pt
+    Log.debug(
+        "text size is auto but unsettled; sizing at the %s ceiling %gpt",
+        text.target,
+        ceiling,
+        layer=LAYER,
+    )
+    return ceiling

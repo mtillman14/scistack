@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from scistackplot import render_matplotlib, resolve  # noqa: E402
 from scistackplot.render.mpl import LEGEND_ATTR, LEGEND_BUDGET  # noqa: E402
 from scistackplot.ticklabels import TICK_POLICY  # noqa: E402
+from test_mpl_label_fit import FIXED_14  # noqa: E402
 from test_mpl_label_fit import _graph1 as _plain_graph1  # noqa: E402
 from test_mpl_label_fit import _graph2 as _plain_graph2  # noqa: E402
 from test_mpl_label_fit import gait_table  # noqa: E402,F401
@@ -82,7 +83,7 @@ def test_a_long_title_wraps_before_anything_shrinks():
         kind=PlotKind.BAR,
         show_sample=["subject"],
         sample_color="subject",
-        style=StyleOptions(width=5.0, height=4.0),
+        style=StyleOptions(text=FIXED_14, width=5.0, height=4.0),
     )
     figure = _draw(spec, _roomy_x_table())
     try:

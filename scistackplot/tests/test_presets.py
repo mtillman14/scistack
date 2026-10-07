@@ -23,6 +23,7 @@ from scistackplot import (
     PlotSpec,
     Role,
     StyleOptions,
+    TextSizes,
     VariantSet,
     YAxis,
     apply_preset,
@@ -328,3 +329,46 @@ def test_shape_warning(made_on, shape, warns):
 def test_template_round_trip_through_replace_keeps_identity():
     spec = replace(full_spec(), measures=["StepWidth"])
     assert apply_preset(make_template(full_spec()), spec).spec == spec
+
+
+# ---------------------------------------------------------------------------
+# Automatic text size (autosize, 2026-10-06)
+# ---------------------------------------------------------------------------
+
+
+def _with_text(spec: PlotSpec, text: TextSizes) -> PlotSpec:
+    return replace(spec, style=replace(spec.style, text=text))
+
+
+def test_an_auto_preset_carries_auto_and_its_target():
+    """`style.text` is template: a preset made on an auto plot applies auto,
+    with its Print/Slide band, even over a target whose font was fixed."""
+    template = make_template(_with_text(_box(), TextSizes(target="slide")))
+    assert template["style"]["text"] == {"target": "slide"}, "base None is dropped, not stored"
+    target = _with_text(_target(), TextSizes(base=11.0, x_ticks=9.0))
+    applied = apply_preset(template, target).spec
+    assert applied.style.text == TextSizes(target="slide")
+
+
+def test_a_fixed_preset_fixes_an_auto_target():
+    template = make_template(_with_text(_box(), TextSizes(base=12.0, legend=9.0)))
+    applied = apply_preset(template, _target()).spec
+    assert applied.style.text == TextSizes(base=12.0, legend=9.0)
+
+
+def test_a_preset_never_stores_chosen_auto_sizes():
+    """The sizes auto chose are a property of one figure's labels at one
+    size, not a setting: a template holds `target` and nothing chosen."""
+    template = json.dumps(make_template(_box()))
+    assert "auto" not in template and "sizes" not in template
+
+
+def test_an_applied_auto_preset_is_sized_for_the_new_variable(width_table):
+    pytest.importorskip("matplotlib")
+    from scistackplot import resolve
+    from scistackplot.autosize import settle
+
+    applied = apply_preset(make_template(_box()), _target(), table=width_table).spec
+    (resolved,) = resolve(applied, width_table)
+    auto = settle(resolved).auto_text
+    assert auto is not None and auto.target == "print"

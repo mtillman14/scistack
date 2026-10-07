@@ -7,13 +7,20 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
+  basePlaceholder,
+  baseTitle,
   fixedTickNote,
   formatPt,
   hasFixedSizes,
+  isAutoText,
   placeholderFor,
   resetTextSizes,
+  rowTitle,
   textSizeRows,
+  textTarget,
+  textTargets,
   withTextSize,
+  withTextTarget,
 } from './textSizes.js'
 
 /** What `ResolvedSizes.to_dict()` sends for `TextSizes(base=14, title=20)`. */
@@ -84,4 +91,74 @@ test('the overlap notice names a fixed tick size', () => {
   assert.equal(fixedTickNote({ x_ticks: 9 }), 'The x tick font is fixed at 9 pt.')
   assert.equal(fixedTickNote({ base: 9 }), null)
   assert.equal(formatPt(11.662), '11.7')
+})
+
+/** What an AUTO spec's render sends (`autosize.text_sizes_meta`). */
+const AUTO_META = {
+  base: 9.5,
+  title: 14.4,
+  x_label: 12,
+  y_label: 12,
+  x_ticks: 9.5,
+  y_ticks: 12,
+  groups: 8,
+  legend: 10,
+  legend_title: null,
+  differences: 12,
+  pinned: [],
+  auto: {
+    target: 'print',
+    sizes: { x_ticks: 9.5, y_ticks: 12, legend: 10, base: 9.5 },
+    binding: { x_ticks: 'x ticks rotate 45°', legend: 'legend moves below' },
+    at_floor: [],
+    layouts: 5,
+    ms: 420,
+  },
+  target: 'print',
+  targets: ['print', 'slide'],
+}
+
+test('the auto block, target and targets are not element boxes', () => {
+  const keys = textSizeRows(AUTO_META, {}).map(r => r.key)
+  for (const key of ['auto', 'target', 'targets', 'base', 'pinned']) assert.ok(!keys.includes(key), key)
+  assert.ok(keys.includes('differences'))
+})
+
+test('an auto row says what stopped it growing', () => {
+  const rows = textSizeRows(AUTO_META, {})
+  const ticks = rows.find(r => r.key === 'x_ticks')!
+  assert.equal(ticks.autoReason, 'x ticks rotate 45°')
+  assert.equal(placeholderFor(ticks), 'auto · 9.5')
+  assert.match(rowTitle(ticks), /next size up fails \(x ticks rotate 45°\)/)
+  const yTicks = rows.find(r => r.key === 'y_ticks')!
+  assert.equal(yTicks.autoReason, null)
+  assert.equal(rowTitle(yTicks), yTicks.title)
+})
+
+test('a fixed row carries no auto reason', () => {
+  const ticks = textSizeRows(AUTO_META, { x_ticks: 11 }).find(r => r.key === 'x_ticks')!
+  assert.equal(ticks.pinned, true)
+  assert.equal(ticks.autoReason, null)
+})
+
+test('the Font box reads auto, and the chosen size once rendered', () => {
+  assert.equal(isAutoText({}), true)
+  assert.equal(isAutoText({ base: 12 }), false)
+  assert.equal(basePlaceholder(undefined), 'auto')
+  assert.equal(basePlaceholder(AUTO_META), 'auto · 9.5')
+  assert.equal(basePlaceholder(META), 'auto', 'a fixed-size render has no auto block')
+  assert.match(baseTitle(AUTO_META), /5 layout\(s\), 420 ms; limited: x_ticks \(x ticks rotate 45°\)/)
+})
+
+test('the target defaults to print and is stored even when default', () => {
+  assert.equal(textTarget({}), 'print')
+  assert.equal(textTarget({ target: 'slide' }), 'slide')
+  assert.deepEqual(withTextTarget({ x_ticks: 9 }, 'print'), { x_ticks: 9, target: 'print' })
+  assert.deepEqual(textTargets(undefined), ['print', 'slide'])
+  assert.deepEqual(textTargets(AUTO_META), ['print', 'slide'])
+})
+
+test('reset keeps the target, and the target is not a fixed size', () => {
+  assert.deepEqual(resetTextSizes({ target: 'slide', title: 20 }), { target: 'slide' })
+  assert.equal(hasFixedSizes({ target: 'slide' }), false)
 })

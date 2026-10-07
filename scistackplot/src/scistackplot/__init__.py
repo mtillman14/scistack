@@ -120,12 +120,14 @@ from .spec import (
     Statistic,
     Alias,
     StyleOptions,
+    TEXT_TARGETS,
     TextSizes,
     VariantSet,
     YAxis,
     grid_shape_for,
 )
-from .textsize import ResolvedSizes, rc_params, resolve_sizes
+from .textsize import ResolvedSizes, rc_params, resolve_sizes, sizes_for
+from .autosize import AutoTextSize, BANDS, settle as settle_text_size
 from .aliases import AliasError, DisplayText, display_text
 from .colors import ColorError, MarkColors, mark_colors, parse_color
 from .figsize import (
@@ -229,7 +231,13 @@ __all__ = [
     # text sizes (docs/claude/plot-text-and-labels.md)
     "ResolvedSizes",
     "resolve_sizes",
+    "sizes_for",
     "rc_params",
+    # automatic text size (autosize)
+    "TEXT_TARGETS",
+    "BANDS",
+    "AutoTextSize",
+    "settle_text_size",
     # figure size presets
     "ASPECT_PRESETS",
     "CUSTOM_ASPECT",

@@ -11,6 +11,51 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzb. Automatic text size: each element as big as it fits, Print / Slide band — added 2026-10-06
+
+**What changed:** a new plot's text sizes itself (`docs/claude/plot-text-and-labels.md`,
+"Automatic size"). With **Font (pt)** empty, every empty text box is chosen
+by Python as large as the figure lays it out cleanly, element by element.
+A long x title shrinks only the x title, never the y ticks. A new
+**Print / Slide** select beside Font picks the band (8–12 pt / 14–28 pt at the
+saved size). Typing a Font number brings back the old fixed behaviour.
+
+**Backend:**
+- Reload the VS Code window to load the backend. Both frontend bundles are
+  rebuilt.
+- scidb.log shows one INFO per figure:
+  `auto text size: print band at W x H in: x_ticks=9.5 (x ticks rotate 45°), y_ticks=12, …; N layout(s) in M ms`.
+  Note the ms: that is the extra cost per preview resize. Please report it.
+- With `SCIDB_LOG_LEVEL=DEBUG`, every trial layout appears as
+  `auto text size layout k: …`, and its own lines are prefixed
+  `[auto-size trial …] WARN: …` at DEBUG. No trial WARN should appear at WARN.
+
+**Frontend (Plot Studio, own tab):**
+1. Open a **new** plot of a scalar variable with a nested x axis (e.g.
+   session × group). Font shows `auto · N`. Every box below shows
+   `auto · N`. Hover Font: it says how many layouts it took and what limited
+   each element.
+2. Drag the pane narrower (Fit pane), or set W to 3.5 in. The x tick sizes go
+   down, but the y tick size stays put unless something on the y side limits
+   it. Hover X ticks: "Auto: the next size up fails (x ticks rotate 45°)".
+3. Give the plot a very long X label (Labels section). Only **X label**
+   shrinks; Y ticks and X ticks keep their sizes.
+4. Switch the select to **Slide** at 13.33 × 7.5 in. All text grows (to up
+   to 28 pt). Switch back to **Print**: it returns.
+5. Type 14 in Font. The select greys out and every placeholder becomes the
+   old derived sizes (14, 16.8, 11.7…). Clear Font: auto again.
+6. Save the figure and open the PNG: the text sizes match the preview's
+   placeholders. Export code: the generated function starts with a
+   `# text sizes: auto, chosen by scistackplot…` comment and its
+   `rc_context` carries the same numbers.
+7. A saved plot from before today opens at its stored 14 pt (fixed, not auto).
+8. Save the auto plot as a preset (Slide selected) and apply it to another
+   variable. Font stays empty (auto), the select still says Slide, and the
+   chosen sizes are the ones that fit THIS variable's labels, not copies of
+   the first plot's. A preset saved with Font = 12 applies Font = 12.
+
+---
+
 ## 0zzz. Plot presets: save settings without the data, apply to another variable — added 2026-10-06
 
 **What changed:** Plot Studio's right-hand column has a **Presets** section

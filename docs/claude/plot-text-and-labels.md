@@ -5,7 +5,7 @@ decisions behind it. Plan and stage notes: `.claude/plan-plot-text-sizes-and-ali
 When a stage lands, update the "Status" line and correct anything the build
 changed.*
 
-**Status:** Stages 1-5 built 2026-09-24; tests pass. Stage 6 (the GUI Labels section and the project alias write) built 2026-09-24: npm tests pass, pytest unrun. GUI not checked by eye (manual tests §0zj, §0zk). Stage 7 (the README section and ADR D-2026-09-24-2) built. All stages built.
+**Status:** Automatic size built 2026-10-06 (pytest unrun, GUI §0zzzb unchecked). Stages 1-5 built 2026-09-24; tests pass. Stage 6 (the GUI Labels section and the project alias write) built 2026-09-24: npm tests pass, pytest unrun. GUI not checked by eye (manual tests §0zj, §0zk). Stage 7 (the README section and ADR D-2026-09-24-2) built. All stages built.
 
 This covers two questions about any piece of text in a figure: **how big
 is it**, and **what does it say**. Both are display-only. Neither changes
@@ -17,7 +17,8 @@ which rows are drawn, their order, or anything a run computes.
 
 | `TextSizes` field | What it sizes | Unset → |
 |---|---|---|
-| `base` | matplotlib `font.size`; everything unset below | 14 pt |
+| `base` | matplotlib `font.size`; everything unset below | **auto** (see "Automatic size"); a number = fixed |
+| `target` | not a size: `print` / `slide`, the auto band | `print` |
 | `title` | figure title / `suptitle` | matplotlib `large` of base |
 | `x_label` | x axis title, `supxlabel` | `medium` |
 | `y_label` | y axis title **and facet-panel y titles** | `medium` |
@@ -27,8 +28,9 @@ which rows are drawn, their order, or anything a run computes.
 | `legend` | legend entries | `medium` |
 | `legend_title` | legend title | `medium` |
 
-`None` always means "derived". An all-`None` spec draws exactly what the
-single `font_size` knob drew before, and a regression test pins that.
+`None` always means "derived": from `base` when it is fixed, or by the
+automatic size when it is not. A spec with only `base` fixed draws exactly
+what the single `font_size` knob drew before, and a regression test pins that.
 
 `font_size` and `tick_font_size` were replaced by this group as a clean break
 (beta rule). A saved plot that still has them reverts them to defaults, and
@@ -56,6 +58,96 @@ it (`meta.label_fit`, the GUI notice names the element) and does not
 override you. The x tick pin has always worked this way. The rule now covers
 `groups` and `legend` too.
 
+### Automatic size (`base` unset): `scistackplot/autosize.py`
+
+*Built 2026-10-06 (plan `.claude/plan-auto-text-size.md`, ADR D-2026-10-06-2).
+pytest not run yet; GUI §0zzzb not checked by eye.*
+
+A new plot leaves `base` unset, which means **auto**. Every element the user
+did not fix is made **as large as the figure lays it out cleanly**, within the
+band of `TextSizes.target`. A number in `base` brings back the fixed
+behaviour above: no search, every unset element derived from it.
+
+**Sizing per element, not one shared base** (user, 2026-10-06). A long x title
+must not shrink the y tick labels. Each element searches its own range:
+`title`, `x_label`, `y_label`, `x_ticks`, `y_ticks`, `groups`, `legend` and
+`differences`. The legend title follows the legend entries, as before.
+
+| | Floor | Ceiling (body text) | Ceiling ratio per element |
+|---|---|---|---|
+| `print` (default) | 8 pt | 12 pt | title ×1.2, brackets ×0.833, rest ×1 |
+| `slide` | 14 pt | 28 pt | same |
+
+Why the band follows the **destination** and not the width: the saved file is
+exactly W × H, so a point here is a point on paper. A 7.2 in figure can be a
+journal's double column or half a slide, so the width cannot tell which. The
+user names the destination instead. Choosing Slide never resizes the figure
+(13.33 × 7.5 in is only PowerPoint's default). The band assumes the figure is
+placed at its saved size.
+
+**What counts as too big** is read off a real matplotlib layout
+(`render.mpl.layout_report` → `LayoutReport.blame()`). Each problem is blamed
+on the element that has it:
+
+| Problem | Blamed on |
+|---|---|
+| x tick fit shrinks, thins, **rotates**, or still overlaps | `x_ticks` |
+| bracket fit shrinks or still overlaps | `groups` |
+| legend shrinks or **moves below** | `legend` |
+| y-side text runs into the panel on its left | `y_ticks`, `y_label` |
+| x-side text runs into the panel below | `x_ticks`, `x_label`, `groups` |
+| an element's own text runs past the canvas edge (measured per artist) | that element |
+| overflow no element explains | every element |
+| the panels keep < 55 % of the canvas (`MIN_DATA_FRACTION`) | every element |
+
+Wrapping onto two lines, stripping a numbered prefix, wrapping the legend
+title and shortening its handles are **not** problems (`HARMLESS_STEPS`):
+nothing is lost. Rotation and legend-below are allowed only when the
+element's floor still needs them (user). The floor is then chosen and the
+existing fitting does the rest; `at_floor` names those elements.
+
+**The search** (`choose_sizes`, pure, injected `measure`) is a parallel binary
+search. One layout probes every unfinished element at its own midpoint, so the
+cost is about log2(candidates) + 1 layouts in total, not that number per element.
+The first layout puts everything at its ceiling, and a figure that fits there
+costs one layout. The elements interact (smaller y ticks widen the panels the
+x ticks sit under), so the final combination is verified. Whatever it still
+blames steps down one candidate, up to `VERIFY_ROUNDS` times. Brackets are
+then capped at the x tick size, and `base` (matplotlib `font.size`, for text
+that is no element) is the smaller tick size (`autosize.with_base`, the one
+rule).
+
+**Where it runs, and how every consumer gets the same numbers:**
+
+| Path | What it does |
+|---|---|
+| `autosize.settle(resolved, width_in, height_in)` | searches, logs one INFO, sets `ResolvedPlot.auto_text`; memoised on `(id(resolved), W, H, text)` |
+| `render.mpl.render` | settles first (a trial is already settled, so it never recurses) |
+| `layout_decisions` | settles at the size it decides at (the pane's in Fit pane) and returns `auto_text` |
+| `render_plotly(decisions=…)` | **applies** `decisions["auto_text"]`, never a second search; settles only when undecided |
+| `write_figure` (Save) | through `render_matplotlib` |
+| `generate_plot_function` | settles figure 1 once (`_export_auto`) and reads it via `_export_sizes`; the numbers are literals, with a `# text sizes: auto…` comment |
+| every renderer | `textsize.sizes_for(resolved)` = `resolve_sizes(style, auto=…)` |
+
+`resolve_sizes` on an unsettled auto spec (outside a render) falls back to the
+band's ceiling and logs a DEBUG line, `text size is auto but unsettled`. If
+that line sits next to a render line, some consumer skipped `sizes_for`.
+
+**Known limits.**
+- A fan-out's generated code uses figure 1's sizes for every figure (one
+  function, one `rc_context`). The preview and Save size each figure on its own.
+- Saved plots from before 2026-10-06 stored `base: 14` and open fixed (no
+  migration, beta rule).
+- The search costs ~5 extra layouts at print, ~7 at slide, on every preview
+  resize that changes the size. That has not been measured on real data yet;
+  the INFO line carries the ms.
+
+**Logging.** Trial layouts run inside `scistacklog.Log.trial(...)`: their own
+INFO/WARN (overlap, legend too tall) are demoted to DEBUG and prefixed
+`[auto-size trial x_ticks=… ] WARN:`, so a discarded candidate never reads as
+the figure's problem. DEBUG also has one `auto text size layout k: sizes ->
+blame in ms` line per layout.
+
 ### In the GUI
 
 The Figure size section has **Font (pt)** (`base`) and a **Text sizes (pt)**
@@ -67,6 +159,16 @@ box **deletes** the key (`textSizes.withTextSize`) rather than storing null,
 because `PlotSpec.to_dict` drops nulls and a stored null would make a
 reopened saved plot read as "● modified". The logic lives in
 `frontend/.../PlotStudio/textSizes.ts` (node-tested).
+
+**Auto in the GUI (2026-10-06).** An empty Font box is auto; its placeholder is
+`auto · N`, N being the chosen `base`. Its tooltip (`textSizes.baseTitle`)
+says how many layouts the search took and which elements were limited, and
+by what. Each element box shows its chosen size, and its tooltip
+(`rowTitle`) adds "Auto: the next size up fails (x ticks rotate 45°)". The
+**Print / Slide** select writes `style.text.target`. It is built from
+`meta.text_sizes.targets` (Python's `TEXT_TARGETS`) and is disabled while
+Font is fixed. The target is stored even when it is the default, because
+`to_dict` always writes it. Reset keeps `base` and `target`.
 
 ## Part 2: what it says: display labels
 
@@ -280,3 +382,11 @@ the merge but has no GUI control yet.
 - "The text is the wrong size": the INFO figure-size line lists the resolved
   sizes and marks pinned ones. A size that seems ignored is usually unset and
   derived from `base`.
+- "Auto chose a small size": `grep "auto text size" scidb.log`. The INFO line
+  names each element's size and the problem that stopped the next size up.
+  At DEBUG, each trial layout's sizes and blame are listed, and the trial's
+  own lines carry `[auto-size trial …]`. A binding of "plot area N% of the
+  canvas" shrinks every element: the figure is too small for its text.
+- "Preview and file disagree on size": the preview applies
+  `layout_decisions["auto_text"]` from the size it decided at (the pane in
+  Fit pane). Save decides at the size it writes.

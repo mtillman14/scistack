@@ -88,6 +88,7 @@ def full_spec() -> PlotSpec:
             height=4.5,
             text=TextSizes(
                 base=10.0,
+                target="slide",
                 title=16.0,
                 x_label=11.0,
                 y_label=12.0,

@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("matplotlib")
 
 from scistackplot import layout_decisions, render_plotly, resolve  # noqa: E402
+from test_mpl_label_fit import FIXED_14  # noqa: E402
 from scistackplot.render.plotly_ import PREVIEW_FONT_FAMILY, X_GROUP_TAG  # noqa: E402
 from test_mpl_label_fit import (  # noqa: E402,F401
     _graph1,
@@ -80,7 +81,7 @@ def test_a_wrapped_legend_title_is_wrapped_in_the_preview_too():
         kind=PlotKind.BAR,
         show_sample=["subject"],
         sample_color="subject",
-        style=StyleOptions(width=5.0, height=4.0),
+        style=StyleOptions(text=FIXED_14, width=5.0, height=4.0),
     )
     resolved = _one(spec, _roomy_x_table())
     decisions = layout_decisions(resolved)

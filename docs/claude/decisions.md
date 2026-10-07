@@ -8,6 +8,38 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-06-2 — Automatic text size: per element, by real layouts, in a destination band
+
+**Context.** Text was a fixed 14 pt at any figure size. The user wants each
+new figure's text "as close to publishable as possible": the bigger the
+better, within limits. A single shared base would let one long label shrink
+everything (the user's objection: a long x title must not shrink the y ticks).
+
+**Decision.**
+- `TextSizes.base = None` means AUTO and is the default. A number is the old
+  fixed behaviour; a fixed element is never searched.
+- `scistackplot.autosize` is the one owner. It runs a parallel binary search
+  per element (x/y ticks, x/y titles, title, brackets, legend, difference
+  labels) over real matplotlib layouts, and blames each layout problem on
+  the element that has it. Plot area < 55% of the canvas is the one shared
+  rule.
+- The band follows the destination (`TextSizes.target`: print 8–12 pt,
+  slide 14–28 pt), not the width (user). Choosing Slide never resizes the
+  figure.
+- Rotation and moving the legend below count as "too big", like shrinking
+  and thinning. They are allowed only at the floor (user).
+- Results ride on `ResolvedPlot.auto_text`. Renderers read
+  `textsize.sizes_for`. The preview applies `layout_decisions["auto_text"]`.
+  Codegen settles once and bakes the numbers into its literals.
+- Trial layouts log through `scistacklog.Log.trial`, which demotes their
+  INFO and WARN to DEBUG.
+
+**Consequences.** Each figure costs about log2(candidates) + 2 extra layouts
+(about 5 print, 7 slide) unless it fits at the ceiling (1). This is memoised
+per resolve. A fan-out's generated code uses figure 1's sizes. Saved plots
+from before keep their stored 14 pt (no migration, beta rule).
+Full argument: `docs/claude/plot-text-and-labels.md`, "Automatic size".
+
 ## D-2026-10-06-1 — Plot presets: one field partition, the saved-plot store and salvage path
 
 **Context.** Saved plots keep settings + data for one variable. Users want

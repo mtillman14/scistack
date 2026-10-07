@@ -18,8 +18,9 @@ import json
 import math
 import keyword
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Mapping, NamedTuple
 
 from scistacklog import Log
 
@@ -54,7 +55,7 @@ from .spec import (
 )
 from .table import MISSING_LEVEL, LongTable
 from .paper import PAPER, figure_rc_params, paper_axes_code, seaborn_err_kws
-from .textsize import resolve_sizes
+from .textsize import ResolvedSizes, resolve_sizes
 from .weights import sample_weight, spaghetti_weight
 from .ylimits import GLOBAL_KEY, pinned_ends
 from .variants import (
@@ -66,6 +67,11 @@ from .variants import (
 )
 
 LAYER = "scistackplot"
+
+#: The auto text sizes of the function being generated
+#: (``autosize.AutoTextSize.sizes``), set once by :func:`generate_plot_function`
+#: and read by :func:`_export_sizes`; None for a fixed size.
+_EXPORT_AUTO: ContextVar[Mapping[str, float] | None] = ContextVar("export_auto", default=None)
 
 #: Marker delimiting the embedded spec inside a generated docstring.
 SPEC_BEGIN = "scistackplot-spec:"
@@ -129,7 +135,59 @@ def generate_plot_function(
     The signature is ``(df, filename)`` — the shape scidb's ``plot_`` contract
     passes — and the function returns a Figure, which the framework saves to
     ``filename`` and closes.
+
+    An AUTO text size is settled here, once, exactly as the preview and Save
+    settle it (``autosize.settle`` at the spec's size), and the chosen sizes
+    are emitted as literals: the generated code does not search.
     """
+    auto, note = _export_auto(spec, table)
+    token = _EXPORT_AUTO.set(auto.sizes if auto is not None else None)
+    try:
+        return _generate_plot_function(spec, table, function_name=function_name, auto_note=note)
+    finally:
+        _EXPORT_AUTO.reset(token)
+
+
+def _export_auto(spec: PlotSpec, table: LongTable):
+    """``(AutoTextSize | None, comment lines)`` for an auto spec."""
+    if spec.style.text.base is not None:
+        return None, []
+    try:
+        from .autosize import settle
+        from .reduce import MAX_TRANSPORT_POINTS, resolve
+
+        figures = resolve(spec, table, max_points=MAX_TRANSPORT_POINTS)
+        if not figures:
+            return None, []
+        auto = settle(figures[0]).auto_text
+    except Exception as exc:  # no matplotlib, an unresolvable spec, …
+        Log.warn("generated code: auto text size not settled (%s)", exc, layer=LAYER)
+        return None, [f"    # text sizes: auto, not settled ({type(exc).__name__})"]
+    if auto is None:
+        return None, []
+    fanout = (
+        f" on figure 1 of {len(figures)} (every figure of the fan-out uses these)"
+        if len(figures) > 1
+        else ""
+    )
+    if fanout:
+        Log.info("generated code: auto text sizes chosen%s", fanout, layer=LAYER)
+    return auto, [f"    # text sizes: auto, chosen by scistackplot{fanout}: {auto.describe()}"]
+
+
+def _export_sizes(style) -> ResolvedSizes:
+    """The sizes the generated code draws at: the spec's, and the auto
+    sizes :func:`generate_plot_function` settled. The one reader in codegen."""
+    return resolve_sizes(style, auto=_EXPORT_AUTO.get())
+
+
+def _generate_plot_function(
+    spec: PlotSpec,
+    table: LongTable,
+    *,
+    function_name: str | None,
+    auto_note: list[str],
+) -> str:
     name = function_name or default_function_name(spec)
     base = table
     table = apply_level_groups(spec, apply_variant_sets(spec, table))
@@ -174,7 +232,8 @@ def generate_plot_function(
         # function runs inside a pipeline, and a global font.size would leak
         # into every figure drawn after it. The dict is paper.figure_rc_params,
         # the one render_matplotlib opens, so every text size and the paper match.
-        f"    with plt.rc_context({figure_rc_params(resolve_sizes(spec.style))!r}):",
+        *auto_note,
+        f"    with plt.rc_context({figure_rc_params(_export_sizes(spec.style))!r}):",
     ]
     # A body line that carries its own newline continues at the body indent,
     # so the extra level has to be applied to the continuation too.
@@ -1813,7 +1872,7 @@ def _plot_call(
                     f'    _ax.set_ylabel(" · ".join({shown}))',
                 ]
             )
-    sizes = resolve_sizes(style)
+    sizes = _export_sizes(style)
     if sizes.y_label != sizes.x_label:
         # rc has one key for both axis titles (axes.labelsize = the x title),
         # so a different y title size is said per axes, as render_matplotlib
@@ -2342,7 +2401,7 @@ def _difference_bar_lines(export: _DifferenceExport | None, style) -> list[str]:
         return []
     from .diffbars import LINE_PT
 
-    font_pt = resolve_sizes(style).differences
+    font_pt = _export_sizes(style).differences
     order = (
         f"_diff_x = {{str(_v): _i for _i, _v in enumerate({export.order_expr})}}"
         if export.order_expr

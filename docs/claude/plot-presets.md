@@ -10,6 +10,14 @@ same settings with the data taken out, kept for the whole project. Apply it
 to any variable's plot and that variable is drawn the same way: same kind,
 roles, grouping, facets, text sizes, colours, difference bars, and so on.
 
+**Text sizes and the automatic size** (2026-10-07). `style.text` is template,
+so a preset carries what the user SET: a fixed Font, or auto (`base` unset,
+dropped by `to_dict`) plus its Print/Slide `target`. The sizes auto chose are
+never stored. They belong to one figure's labels at one size
+(`ResolvedPlot.auto_text`), so an applied auto preset is sized again for the
+new variable. Presets saved before 2026-10-06 stored `base: 14` and apply it
+fixed. Tests: `test_presets.py`, "Automatic text size".
+
 Decisions (user, 2026-10-06):
 
 - **D1** Presets live in the project database only (not per user, not

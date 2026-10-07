@@ -32,10 +32,15 @@ from scistackplot import (  # noqa: E402
     PlotSpec,
     Role,
     StyleOptions,
+    TextSizes,
     generate_plot_function,
     render_matplotlib,
     resolve,
 )
+
+#: These tests are about the fitting ladder at a FIXED size (written at the
+#: old 14 pt default), not about the automatic size (test_autosize.py).
+FIXED_14 = TextSizes(base=14.0)
 
 SESSIONS = ["BL", "MID24", "POST24", "MO1FU", "MO3FU"]
 GROUPS = ["Digitimer", "Onward", "Sham"]
@@ -83,7 +88,7 @@ def _graph1(width=6.0, height=4.5, **style) -> PlotSpec:
         color="session",
         kind=PlotKind.BAR,
         show_sample=["subject"],
-        style=StyleOptions(width=width, height=height, **style),
+        style=StyleOptions(text=FIXED_14, width=width, height=height, **style),
     )
 
 
@@ -100,7 +105,7 @@ def _graph2(width=8.0, height=5.0, **style) -> PlotSpec:
         color="InterventionGroup",
         kind=PlotKind.BAR,
         show_sample=["subject"],
-        style=StyleOptions(width=width, height=height, **style),
+        style=StyleOptions(text=FIXED_14, width=width, height=height, **style),
     )
 
 
@@ -300,7 +305,7 @@ def _single_axis_spec(width) -> PlotSpec:
         roles={"level": Role.GROUP, "trial": Role.COLLAPSE},
         groups=["level"],
         kind=PlotKind.BAR,
-        style=StyleOptions(width=width, height=3.0),
+        style=StyleOptions(text=FIXED_14, width=width, height=3.0),
     )
 
 

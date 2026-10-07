@@ -165,6 +165,11 @@ class GridReach:
     left_inner_pt: float
     below_outer_pt: float
     below_inner_pt: float
+    #: Worst run of a panel's text INTO its neighbour in the export itself
+    #: (left: y-side text into the panel on its left; below: x-side text into
+    #: the panel below). 0 when nothing overlaps. Read by ``autosize``.
+    left_overlap_pt: float = 0.0
+    below_overlap_pt: float = 0.0
 
     def describe(self) -> str:
         return (

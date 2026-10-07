@@ -88,12 +88,18 @@ import {
   type PreviewMode,
 } from './preview'
 import {
+  baseTitle,
+  basePlaceholder,
   fixedTickNote,
   hasFixedSizes,
   placeholderFor,
   resetTextSizes,
+  rowTitle,
   textSizeRows,
+  textTarget,
+  textTargets,
   withTextSize,
+  withTextTarget,
   type ResolvedTextSizes,
   type TextSizesValue,
 } from './textSizes'
@@ -1482,12 +1488,21 @@ export default function PlotStudio({
     })
   }, [])
 
-  /** Clear every per-element size; `base` stays. */
+  /** Clear every per-element size; `base` and `target` stay. */
   const resetText = useCallback(() => {
     setSpec(prev => {
       if (!prev) return prev
       const style = prev.style ?? {}
       return { ...prev, style: { ...style, text: resetTextSizes(style.text) } }
+    })
+  }, [])
+
+  /** Where the figure is going (`style.text.target`): picks the auto band. */
+  const setTextTarget = useCallback((target: string) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const style = prev.style ?? {}
+      return { ...prev, style: { ...style, text: withTextTarget(style.text, target) } }
     })
   }, [])
 
@@ -2097,8 +2112,13 @@ export default function PlotStudio({
     return { ...spec, style: { ...(spec.style ?? {}), width: figWidth, height: figHeight } }
   }, [spec, figWidth, figHeight, specWidth, specHeight])
   // Points in the export, px in the preview — one number, so a change is
-  // visible before anything is saved. 14 is `TextSizes.base`.
-  const fontSize = typeof spec?.style?.text?.base === 'number' ? spec.style.text.base : 14
+  // visible before anything is saved. null = AUTO (`TextSizes.base` None):
+  // Python chooses every size (scistackplot.autosize) and reports them in
+  // layout.meta.text_sizes, read below; nothing here guesses a number.
+  const fontSize = typeof spec?.style?.text?.base === 'number' ? spec.style.text.base : null
+  const textMeta = (figures[0]?.figure?.layout?.meta as { text_sizes?: ResolvedTextSizes } | undefined)
+    ?.text_sizes
+  const drawnFont = fontSize ?? (typeof textMeta?.base === 'number' ? textMeta.base : null)
   // What the size IS: the dropdown only reads it. Custom is a readout (it
   // cannot be picked); whether W and H move together is the Lock checkbox.
   const aspect = aspectName(figWidth, figHeight, presets)
@@ -3361,6 +3381,7 @@ export default function PlotStudio({
               width: figWidth,
               height: figHeight,
               font: fontSize,
+              fontTarget: textTarget(spec?.style?.text),
               yMin: spec?.y_axis?.minimum ?? null,
               yMax: spec?.y_axis?.maximum ?? null,
               panelOverrides: panelOverrideCount,
@@ -3563,23 +3584,49 @@ export default function PlotStudio({
               </Section>
             )}
 
-            {/* One box per text element (StyleOptions.text). Empty = derived
-                from Font; the placeholder is the size Python resolved
-                (layout.meta.text_sizes), never computed here. A typed size is
-                fixed: the label and legend fits never shrink it. */}
+            {/* One box per text element (StyleOptions.text). Font empty =
+                AUTO: Python sizes every empty element as large as the figure
+                lays it out cleanly, inside the Print / Slide band
+                (scistackplot.autosize). Every placeholder is the size Python
+                chose or derived (layout.meta.text_sizes), never computed
+                here. A typed size is fixed: auto and the label and legend
+                fits never shrink it. */}
             <Section title="Text">
               <div style={styles.textSizesHeader}>
-                <PositiveNumberInput
+                <SizeInput
                   label="Font (pt)"
                   value={fontSize}
+                  placeholder={basePlaceholder(textMeta)}
+                  resolved={drawnFont}
                   onChange={base => setTextSize('base', base)}
-                  title="matplotlib font.size: every text size below that is empty scales with it"
+                  title={baseTitle(textMeta)}
                 />
+                <label
+                  style={styles.factorRow}
+                  title={
+                    'Where the figure is going: the band auto sizes within. ' +
+                    'Print 8–12 pt, Slide 14–28 pt, at the saved size — place the ' +
+                    'figure at its saved size for the band to hold. Ignored when Font is fixed'
+                  }
+                >
+                  <select
+                    value={textTarget(spec?.style?.text)}
+                    onChange={e => setTextTarget(e.target.value)}
+                    style={styles.select}
+                    disabled={fontSize !== null}
+                  >
+                    {textTargets(textMeta).map(target => (
+                      <option key={target} value={target}>
+                        {target === 'print' ? 'Print' : target === 'slide' ? 'Slide' : target}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 {hasFixedSizes(spec?.style?.text) && (
                   <button
                     type="button"
                     style={styles.inlineButton}
-                    title="Clear every size below so they all follow Font again"
+                    title="Clear every size below so they all follow Font (or auto) again"
                     onClick={resetText}
                   >
                     Reset
@@ -3592,22 +3639,20 @@ export default function PlotStudio({
                   gridTemplateColumns: `repeat(${textSizeColumns(railWidth)}, 1fr)`,
                 }}
               >
-                {textSizeRows(
-                  (figures[0]?.figure?.layout?.meta as
-                    | { text_sizes?: ResolvedTextSizes }
-                    | undefined)?.text_sizes,
-                  spec?.style?.text,
-                ).map(row => (
-                  <SizeInput
-                    key={row.key}
-                    label={row.label}
-                    title={row.title}
-                    value={spec?.style?.text?.[row.key] ?? null}
-                    placeholder={placeholderFor(row)}
-                    resolved={row.resolved ?? fontSize}
-                    onChange={value => setTextSize(row.key, value)}
-                  />
-                ))}
+                {textSizeRows(textMeta, spec?.style?.text).map(row => {
+                  const value = spec?.style?.text?.[row.key]
+                  return (
+                    <SizeInput
+                      key={row.key}
+                      label={row.label}
+                      title={rowTitle(row)}
+                      value={typeof value === 'number' ? value : null}
+                      placeholder={placeholderFor(row)}
+                      resolved={row.resolved ?? drawnFont}
+                      onChange={next => setTextSize(row.key, next)}
+                    />
+                  )
+                })}
               </div>
             </Section>
 

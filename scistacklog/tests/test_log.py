@@ -450,3 +450,49 @@ def test_positional_matlab_call_shapes(tmp_path):
     assert "plain positional" in log_file.read_text(encoding="utf-8")
     assert Log.get_level("file") == Log.DEBUG
     assert Log.get_level("console") == Log.INFO
+
+
+# -- Log.trial ---------------------------------------------------------------
+
+
+def test_trial_demotes_info_and_warn_to_debug(tmp_path):
+    """A discarded trial's INFO/WARN must not read as the real result's: at
+    INFO they vanish from the file, at DEBUG they keep their level in text."""
+    path = tmp_path / "scidb.log"
+    Log.set_path(str(path))
+    with Log.trial("auto-size 12pt"):
+        Log.info("figure size 8 x 6 in", layer="scistackplot")
+        Log.warn("legend too tall", layer="scistackplot")
+    Log.info("after the trial", layer="scistackplot")
+    text = read_text_or_empty(path)
+    assert "figure size" not in text
+    assert "legend too tall" not in text
+    assert "after the trial" in text
+
+
+def test_trial_records_keep_their_level_in_the_text(tmp_path):
+    path = tmp_path / "scidb.log"
+    Log.set_path(str(path))
+    Log.set_level("DEBUG", sink="file")
+    with Log.trial("auto-size 12pt"):
+        Log.warn("legend too tall", layer="scistackplot")
+    (line,) = [l for l in read_lines(path) if "legend too tall" in l]
+    assert " DEBUG [scistackplot] [auto-size 12pt] WARN: legend too tall" in line
+
+
+def test_trial_never_demotes_error(tmp_path):
+    path = tmp_path / "scidb.log"
+    Log.set_path(str(path))
+    with Log.trial("auto-size 12pt"):
+        Log.error("render failed", layer="scistackplot")
+    assert "ERROR [scistackplot] render failed" in read_text_or_empty(path)
+
+
+def test_trial_ends_on_exception(tmp_path):
+    path = tmp_path / "scidb.log"
+    Log.set_path(str(path))
+    with pytest.raises(RuntimeError):
+        with Log.trial("t"):
+            raise RuntimeError("boom")
+    Log.warn("real warning", layer="scistackplot")
+    assert "WARN  [scistackplot] real warning" in read_text_or_empty(path)

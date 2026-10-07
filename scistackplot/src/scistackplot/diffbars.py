@@ -584,10 +584,10 @@ def estimate_label_box(label: str, font_pt: float) -> tuple[float, float]:
 
 def figure_sizes(resolved: "ResolvedPlot", label_boxes: dict | None = None) -> BarSizes:
     """The sizes for *resolved*: the label font from the one text-size owner."""
-    from .textsize import resolve_sizes
+    from .textsize import sizes_for
 
     return BarSizes(
-        label_font_pt=resolve_sizes(resolved.spec.style).differences,
+        label_font_pt=sizes_for(resolved).differences,
         label_boxes=dict(label_boxes or {}),
     )
 

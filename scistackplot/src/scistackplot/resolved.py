@@ -292,6 +292,11 @@ class ResolvedPlot:
     difference_siblings: list["ResolvedPlot"] = field(
         default_factory=list, repr=False, compare=False
     )
+    #: The AUTO text sizes this plot is drawn at (``autosize.AutoTextSize``),
+    #: set by ``autosize.settle`` (spec ``text.base`` None). None when the size
+    #: is fixed or not settled yet. Renderers read it through
+    #: ``textsize.sizes_for``; ``layout.meta.text_sizes.auto`` reports it.
+    auto_text: Any = field(default=None, repr=False, compare=False)
 
     @property
     def figure_label(self) -> str:

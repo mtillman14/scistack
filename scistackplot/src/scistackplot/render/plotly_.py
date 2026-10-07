@@ -42,7 +42,7 @@ from ..diffbars import (
     place_figure,
     sibling_floors,
 )
-from ..textsize import resolve_sizes
+from ..textsize import sizes_for
 from ..weights import mark_weights_meta, sample_weight, spaghetti_weight
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
@@ -98,10 +98,18 @@ def render(
     :func:`_apply_decisions`. ``fixed_size_px`` draws at that size instead of
     filling the pane.
     """
+    # Auto text: the sizes the export's layout chose (decisions), never a
+    # second search; undecided, autosize searches at the spec's size.
+    from ..autosize import apply, settle, text_sizes_meta
+
+    if decisions is not None and decisions.get("auto_text") is not None:
+        resolved = apply(resolved, decisions["auto_text"])
+    else:
+        resolved = settle(resolved)
     with Log.timer("render_plotly", layer=LAYER, extra=str(resolved.kind)):
         n_rows, n_cols = grid_shape(resolved)
         style = resolved.spec.style
-        sizes = resolve_sizes(style)
+        sizes = sizes_for(resolved)
         traces: list[dict] = []
         legend_on = shows_legend(resolved)
         geometry = _bracket_geometry(resolved, decisions)
@@ -171,8 +179,9 @@ def render(
                 # export produces — the same numbers `render_mpl` logs.
                 "figure_size": describe_size(style.width, style.height),
                 # Every text size as the export resolves it, fixed ones listed —
-                # the GUI shows a derived size as the placeholder of its box.
-                "text_sizes": sizes.to_dict(),
+                # the GUI shows a derived size as the placeholder of its box —
+                # plus how auto chose them and the targets (autosize owner).
+                "text_sizes": text_sizes_meta(resolved, sizes),
                 # Which weight knob applies here and what it resolves to
                 # (weights.mark_weights_meta): the GUI shows a knob only when
                 # this says so, never by testing the kind itself.
@@ -329,7 +338,7 @@ def _bracket_geometry(resolved: ResolvedPlot, decisions: dict | None) -> Bracket
     if measured is not None:
         Log.debug("preview x brackets from the export: %s", measured.describe(), layer=LAYER)
         return measured
-    sizes = resolve_sizes(resolved.spec.style)
+    sizes = sizes_for(resolved)
     estimated = BracketGeometry(
         tick_depth_pt=PAPER.tick_length + 3.0 + UPRIGHT_LINE_HEIGHT * sizes.x_ticks,
         row_height_pt=UPRIGHT_LINE_HEIGHT * sizes.groups,
@@ -413,7 +422,7 @@ def _add_x_groups(
                 # The one owner's bracket size (textsize), which the matplotlib
                 # side draws the same label at. It was 0.8 x here and "small"
                 # (0.833 x) there: two owners of one number.
-                "font": {"size": resolve_sizes(resolved.spec.style).groups},
+                "font": {"size": sizes_for(resolved).groups},
                 "xanchor": "center",
                 "yanchor": "top",
             }
@@ -928,7 +937,7 @@ def _add_axes(
     y_anchor = "x" if slot == 1 else f"x{slot}"
 
     x0, y0, cell_width, cell_height = _cell(row, col, n_rows, n_cols, gaps)
-    sizes = resolve_sizes(resolved.spec.style)
+    sizes = sizes_for(resolved)
 
     layout[x_key] = {
         **plotly_axis_style(),
@@ -1333,7 +1342,7 @@ def _add_difference_bars(
     def at(value: float) -> float:
         return math.log10(value) if log else value
 
-    font_pt = resolve_sizes(resolved.spec.style).differences
+    font_pt = sizes_for(resolved).differences
     for number, bar in enumerate(bars):
         layout.setdefault("shapes", []).append(
             {

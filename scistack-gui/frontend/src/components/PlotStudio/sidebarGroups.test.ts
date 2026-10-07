@@ -150,3 +150,14 @@ test('structure summary names the comparison after the grouping', () => {
     'group session · vs session s1 (%)'
   )
 })
+
+test('appearance summary says when the text is auto, and for where', () => {
+  assert.equal(
+    appearanceSummary({ width: 8, height: 6, font: null, yMin: null, yMax: null }),
+    '8×6 in · auto text (print) · y auto'
+  )
+  assert.equal(
+    appearanceSummary({ width: 13.33, height: 7.5, font: null, fontTarget: 'slide', yMin: null, yMax: null }),
+    '13.33×7.5 in · auto text (slide) · y auto'
+  )
+})

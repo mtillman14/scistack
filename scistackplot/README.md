@@ -295,7 +295,7 @@ fixed_size_px=...)` draws exactly those. The Plot Studio previews at the export
 size (drawn at Width x Height, 1 pt = 1 px) or at the pane's size ("Fit pane").
 
 `StyleOptions.text` (`TextSizes`) sizes each piece of text separately:
-`base` (points, default 14) is matplotlib's `font.size`, and `title`,
+`base` (points) is matplotlib's `font.size`, and `title`,
 `x_label`, `y_label`, `x_ticks`, `y_ticks`, `groups` (the bracket rows),
 `legend` and `legend_title` are each either fixed or `None`, which derives
 them from `base` with matplotlib's own ratios. Only `base` set draws exactly
@@ -304,6 +304,17 @@ fit, which may still rotate, wrap or move it. `scistackplot.textsize` is the
 one owner (`resolve_sizes`, `rc_params`). The export, the generated code and
 the plotly preview (as px) all read it, under `rc_context` so nothing leaks
 into the next figure. See `docs/claude/plot-text-and-labels.md`.
+
+**Automatic size (the default).** With `base` unset (`None`), `scistackplot.autosize`
+makes each unfixed element as large as the figure lays it out cleanly, inside
+the band of `TextSizes.target`: `"print"` (8–12 pt, the default) or `"slide"`
+(14–28 pt), in points at the saved size. It searches per element on real
+matplotlib layouts. A rotated or shrunk x tick limits only `x_ticks`, a legend
+moved below limits only `legend`, and a plot area under 55 % of the canvas
+limits all of them. The chosen sizes ride on `ResolvedPlot.auto_text`, and
+every renderer reads them through `textsize.sizes_for`.
+`settle_text_size(resolved)` runs the search by hand. A number in `base`
+turns it off.
 
 The figure's **paper** (white background, black text, a black frame round every
 panel, outward ticks, no grid, and the error-bar ink) has one owner,

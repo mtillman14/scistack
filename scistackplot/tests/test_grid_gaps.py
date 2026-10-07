@@ -25,11 +25,16 @@ from scistackplot import (  # noqa: E402
     PlotSpec,
     Role,
     StyleOptions,
+    TextSizes,
     layout_decisions,
     render_matplotlib,
     render_plotly,
     resolve,
 )
+
+#: The panel-spacing measurements here were written at the old fixed 14 pt
+#: default; the automatic size is tested in test_autosize.py.
+FIXED_14 = TextSizes(base=14.0)
 from scistackplot.render.mpl import GRID_REACH_ATTR  # noqa: E402
 from scistackplot.render.plotly_ import X_GAP, X_GROUP_TAG  # noqa: E402
 from test_ylimits import _spec, spread_table  # noqa: E402,F401
@@ -41,7 +46,7 @@ NARROW = (4.0, 3.0)
 def _side_by_side(table, width, height):
     """Two panels in one row on DIFFERENT y scales, so the right panel keeps
     its own tick numbers as well as its y title."""
-    spec = _spec(["subject", "muscle"], style=StyleOptions(width=width, height=height))
+    spec = _spec(["subject", "muscle"], style=StyleOptions(text=FIXED_14, width=width, height=height))
     return resolve(spec, table)
 
 
@@ -120,7 +125,7 @@ def _wrapped_nested_grid(rotation):
         groups=["group", "session"],
         kind=PlotKind.BOX,
         facet=FacetOptions(n_cols=2),
-        style=StyleOptions(width=8.0, height=8.0, tick_rotation=rotation),
+        style=StyleOptions(text=FIXED_14, width=8.0, height=8.0, tick_rotation=rotation),
     )
     return resolve(spec, table)[0]
 
@@ -174,7 +179,7 @@ def _shared_row(*overrides, **style):
         measures=["EMG"],
         roles={"subject": Role.GROUP, "muscle": Role.FACET, "trial": Role.GROUP},
         kind=PlotKind.LINE,
-        style=StyleOptions(width=WIDE[0], height=WIDE[1], **style),
+        style=StyleOptions(text=FIXED_14, width=WIDE[0], height=WIDE[1], **style),
         panel_overrides=list(overrides),
     )
     (resolved,) = resolve(spec, table)

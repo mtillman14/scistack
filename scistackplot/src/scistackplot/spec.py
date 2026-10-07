@@ -829,10 +829,15 @@ class TextSizes:
     ``scistackplot.textsize`` is the one reader (docs/claude/plot-text-and-labels.md).
     """
 
-    #: 14 rather than matplotlib's 10: at 8 x 6 in the default was unreadable
-    #: once the figure sat in a slide or a two-column page (user, 2026-09-16).
-    #: The plotly preview uses the same number as px.
-    base: float = 14.0
+    #: ``None`` = AUTO (user, 2026-10-06): the largest size at which the figure
+    #: lays out cleanly, inside the ``target``'s band (``scistackplot.autosize``
+    #: decides it per figure and size; renderers draw the settled number). A
+    #: number fixes it. The plotly preview uses the same number as px.
+    base: float | None = None
+    #: Where the figure is going, which picks the auto band: ``"print"`` (a
+    #: journal page) or ``"slide"``. Ignored when ``base`` is fixed. The
+    #: values are :data:`TEXT_TARGETS`; the bands are ``autosize.BANDS``.
+    target: str = "print"
     #: The figure title (``suptitle``, a heatmap's axes title).
     title: float | None = None
     #: The x axis title, including the one shared under several columns.
@@ -851,6 +856,18 @@ class TextSizes:
     #: A difference bar's label ("*"). Own size (user, 2026-09-27); unset,
     #: it is ``base`` times ``medium``, like the tick labels.
     differences: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.target not in TEXT_TARGETS:
+            raise ValueError(
+                f"text target {self.target!r} is not one of {', '.join(TEXT_TARGETS)}"
+            )
+
+
+#: Where a figure's text is sized for (``TextSizes.target``). The one list:
+#: ``autosize.BANDS`` has a band per entry (a test pins that), and the GUI
+#: toggle is built from ``layout.meta.text_sizes.auto.targets``.
+TEXT_TARGETS: tuple[str, ...] = ("print", "slide")
 
 
 @dataclass(frozen=True)

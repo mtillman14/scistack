@@ -21,7 +21,7 @@ from ..resolved import MPL_DASHES, ResolvedPlot
 from ..spec import PlotKind
 from ..table import natural_sort_key
 from ..paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
-from ..textsize import ResolvedSizes, resolve_sizes
+from ..textsize import ResolvedSizes, sizes_for
 from ..weights import describe_weights, sample_weight, spaghetti_weight
 from ..ticklabels import (
     BRACKET_POLICY,
@@ -81,6 +81,11 @@ def render(resolved: ResolvedPlot):
         matplotlib.use("Agg", force=False)
     import matplotlib.pyplot as plt
 
+    from ..autosize import settle
+
+    # An auto text size is chosen before anything is drawn (autosize owns
+    # it; a trial layout arrives here already settled, so this never recurses).
+    resolved = settle(resolved)
     with Log.timer("render_mpl", layer=LAYER, extra=str(resolved.kind)):
         style = resolved.spec.style
         # rc_context, not rcParams: text reads the size at CREATION, so this
@@ -91,7 +96,7 @@ def render(resolved: ResolvedPlot):
         # (textsize.rc_params), so nothing here depends on a relative name.
         # The paper (background, frame, ticks, grid) is stated alongside them
         # by its own owner, paper.figure_rc_params, instead of inherited.
-        sizes = resolve_sizes(style)
+        sizes = sizes_for(resolved)
         with plt.rc_context(figure_rc_params(sizes)):
             n_rows, n_cols = grid_shape(resolved)
             # The size the file will have, exactly (figure_file.write_figure
@@ -572,7 +577,7 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
     style = resolved.spec.style
     # matplotlib has ONE rc key for both axis titles (axes.labelsize = the x
     # title's size), so the y title is sized here.
-    y_label_pt = resolve_sizes(style).y_label
+    y_label_pt = sizes_for(resolved).y_label
     for row in range(n_rows):
         for col in range(n_cols):
             ax = axes[row][col]
@@ -787,7 +792,7 @@ def _fit_x_ticks(fig, ticks: list[_XTicks], resolved: ResolvedPlot):
             layer=LAYER,
         )
     style = resolved.spec.style
-    sizes = resolve_sizes(style)
+    sizes = sizes_for(resolved)
     policy = replace(
         TICK_POLICY,
         pin_rotation=style.tick_rotation,
@@ -908,7 +913,7 @@ def _draw_x_groups(
         for item in ticks
         for depth in depths
     ]
-    sizes = resolve_sizes(resolved.spec.style)
+    sizes = sizes_for(resolved)
     policy = replace(
         BRACKET_POLICY,
         pin_font_pt=sizes.groups if sizes.is_pinned("groups") else None,
@@ -985,6 +990,7 @@ def _draw_x_groups(
                     multialignment="center",
                     fontsize=fit.font_pt,
                     clip_on=False,
+                    gid=X_GROUP_LABEL_GID,
                 )
         ax.xaxis.labelpad = geometry.title_pad_pt(plan.depth)
     Log.debug("x bracket rows: %s", deepest.describe(), layer=LAYER)
@@ -1009,7 +1015,7 @@ def _shared_x_title(
     for _, _, ax in labelled:
         ax.set_xlabel("")
     text = fig.supxlabel(
-        title, y=y + 0.01, va="bottom", fontsize=resolve_sizes(resolved.spec.style).x_label
+        title, y=y + 0.01, va="bottom", fontsize=sizes_for(resolved).x_label
     )
     height = text.get_window_extent(fig.canvas.get_renderer()).height
     figure_height = fig.get_size_inches()[1] * fig.dpi or 1.0
@@ -1058,6 +1064,10 @@ def _fit_x_labels(fig, labelled: list[Any], resolved: ResolvedPlot, rect) -> Non
 #: Attribute on a rendered Figure holding its measured ``base.GridReach``.
 GRID_REACH_ATTR = "scistackplot_grid_reach"
 
+#: matplotlib gid of a bracket row's label, so the auto text size can find
+#: them (``layout_report``).
+X_GROUP_LABEL_GID = "x-group-label"
+
 
 def _grid_reach(fig, axes, n_rows: int, n_cols: int) -> GridReach:
     """How far each visible panel's text reaches outside its axes, measured on
@@ -1080,15 +1090,18 @@ def _grid_reach(fig, axes, n_rows: int, n_cols: int) -> GridReach:
             left[side] = max(left[side], _pt(fig, box.x0 - tight.x0))
             side = "outer" if row == n_rows - 1 else "inner"
             below[side] = max(below[side], _pt(fig, box.y0 - tight.y0))
+    overlap = {"left": 0.0, "below": 0.0}
     for (row, col), (box, tight) in boxes.items():
         neighbour = boxes.get((row, col - 1))
         if neighbour is not None and tight.x0 < neighbour[0].x1:
+            overlap["left"] = max(overlap["left"], _pt(fig, neighbour[0].x1 - tight.x0))
             Log.warn(
                 "panel (%d,%d): its y labels run %.1fpt into the panel on its left",
                 row, col, _pt(fig, neighbour[0].x1 - tight.x0), layer=LAYER,
             )
         neighbour = boxes.get((row + 1, col))
         if neighbour is not None and tight.y0 < neighbour[0].y1:
+            overlap["below"] = max(overlap["below"], _pt(fig, neighbour[0].y1 - tight.y0))
             Log.warn(
                 "panel (%d,%d): its x labels run %.1fpt into the panel below",
                 row, col, _pt(fig, neighbour[0].y1 - tight.y0), layer=LAYER,
@@ -1098,6 +1111,8 @@ def _grid_reach(fig, axes, n_rows: int, n_cols: int) -> GridReach:
         left_inner_pt=left["inner"],
         below_outer_pt=below["outer"],
         below_inner_pt=below["inner"],
+        left_overlap_pt=overlap["left"],
+        below_overlap_pt=overlap["below"],
     )
     Log.debug("panel text reach: %s", reach.describe(), layer=LAYER)
     return reach
@@ -1412,7 +1427,7 @@ def _apply_legend(fig, resolved: ResolvedPlot) -> _Legend | None:
     if entries is None:
         return None
     handles, labels, blocks = entries
-    text = resolve_sizes(resolved.spec.style)
+    text = sizes_for(resolved)
     sizes = _legend_ladder(text)
     base = sizes[0]
 
@@ -1645,7 +1660,7 @@ def _sibling_placement(sibling: ResolvedPlot, resolved: ResolvedPlot):
 def _measure_difference_labels(fig, resolved: ResolvedPlot) -> dict[str, tuple[float, float]]:
     """Each label's box ``(width, height)`` in points, as drawn (``va``
     bottom, so the height includes the descent)."""
-    size = resolve_sizes(resolved.spec.style).differences
+    size = sizes_for(resolved).differences
     renderer = fig.canvas.get_renderer()
     per_px = 72.0 / fig.dpi
     found: dict[str, tuple[float, float]] = {}
@@ -1730,16 +1745,16 @@ def layout_decisions(
     """
     import matplotlib.pyplot as plt
 
+    from ..autosize import at_size, settle
+
     style = resolved.spec.style
     width = float(width_in or style.width)
     height = float(height_in or style.height)
-    target = resolved
-    if (width, height) != (style.width, style.height):
-        target = replace(
-            resolved,
-            spec=replace(resolved.spec, style=replace(style, width=width, height=height)),
-        )
     with Log.timer("layout_decisions", layer=LAYER, extra=f"{width:.2f}x{height:.2f}in"):
+        # Auto text is chosen at the size being decided (the pane's, in Fit
+        # pane), keyed on the caller's object so the preview's later
+        # render_plotly and a Save of the same resolve reuse it.
+        target = at_size(settle(resolved, width_in=width, height_in=height), width, height)
         fig = render(target)
         try:
             fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
@@ -1752,8 +1767,108 @@ def layout_decisions(
                 # diffbars.FigurePlacement, or None: the preview draws these
                 # bars and ranges rather than placing its own.
                 "difference_bars": getattr(fig, DIFF_BARS_ATTR, None),
+                # autosize.AutoTextSize, or None when the size is fixed: the
+                # preview draws at these sizes rather than searching again.
+                "auto_text": target.auto_text,
                 "width_in": width,
                 "height_in": height,
             }
         finally:
             plt.close(fig)
+
+
+def layout_report(resolved: ResolvedPlot):
+    """What a layout of ``resolved`` needed (``autosize.LayoutReport``): the
+    measurements the auto text size judges a candidate by. Renders, reads
+    what the export already records on the figure, closes it."""
+    import matplotlib.pyplot as plt
+
+    from ..autosize import LayoutReport
+
+    fig = render(resolved)
+    try:
+        fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
+        ticks, brackets = fits.get("ticks"), fits.get("brackets")
+        legend = getattr(fig, LEGEND_ATTR, None) or {}
+        reach = getattr(fig, GRID_REACH_ATTR, None)
+        by_element, unattributed = _overflow_by_element(fig)
+        return LayoutReport(
+            tick_steps=tuple(ticks.steps) if ticks is not None else (),
+            ticks_fit=ticks.fits if ticks is not None else True,
+            bracket_steps=tuple(brackets.steps) if brackets is not None else (),
+            brackets_fit=brackets.fits if brackets is not None else True,
+            legend_steps=tuple(legend.get("steps", ())),
+            left_overlap_pt=reach.left_overlap_pt if reach is not None else 0.0,
+            below_overlap_pt=reach.below_overlap_pt if reach is not None else 0.0,
+            overflow_by_element=by_element,
+            unattributed_overflow_in=unattributed,
+            data_fraction=_data_fraction(fig),
+        )
+    finally:
+        plt.close(fig)
+
+
+def _data_fraction(fig) -> float:
+    """The visible axes boxes' area over the canvas area (colorbars and
+    other non-panel axes excluded: they carry no data of the panels)."""
+    renderer = fig.canvas.get_renderer()
+    width_px, height_px = (v * fig.dpi for v in fig.get_size_inches())
+    canvas = (width_px * height_px) or 1.0
+    area = 0.0
+    for ax in fig.axes:
+        if not ax.get_visible() or ax.get_label() == "<colorbar>":
+            continue
+        box = ax.get_window_extent(renderer)
+        area += box.width * box.height
+    return area / canvas
+
+
+def _element_artists(fig) -> dict[str, list]:
+    """The drawn text of each auto-sized element, to measure overflow by."""
+    out: dict[str, list] = {e: [] for e in (
+        "title", "x_label", "y_label", "x_ticks", "y_ticks", "groups", "legend", "differences"
+    )}
+    for name, attr in (("title", "_suptitle"), ("x_label", "_supxlabel"), ("y_label", "_supylabel")):
+        text = getattr(fig, attr, None)
+        if text is not None:
+            out[name].append(text)
+    for ax in fig.axes:
+        if not ax.get_visible():
+            continue
+        out["title"].append(ax.title)
+        out["x_label"].append(ax.xaxis.label)
+        out["y_label"].append(ax.yaxis.label)
+        out["x_ticks"].extend(ax.get_xticklabels())
+        out["y_ticks"].extend(ax.get_yticklabels())
+        for text in ax.texts:
+            gid = text.get_gid()
+            if gid == X_GROUP_LABEL_GID:
+                out["groups"].append(text)
+            elif gid == DIFF_LABEL_GID:
+                out["differences"].append(text)
+    out["legend"].extend(fig.legends)
+    return out
+
+
+def _overflow_by_element(fig) -> tuple[tuple[tuple[str, float], ...], float]:
+    """``((element, inches), ...)`` for each element whose own text reaches
+    past the canvas, and the overflow nothing listed explains (inches)."""
+    from ..figure_file import canvas_overflow
+
+    renderer = fig.canvas.get_renderer()
+    width_px, height_px = (v * fig.dpi for v in fig.get_size_inches())
+    found = []
+    worst = 0.0
+    for element, artists in _element_artists(fig).items():
+        reach = 0.0
+        for artist in artists:
+            if not artist.get_visible() or (hasattr(artist, "get_text") and not artist.get_text()):
+                continue
+            box = artist.get_window_extent(renderer)
+            reach = max(reach, -box.x0, -box.y0, box.x1 - width_px, box.y1 - height_px)
+        if reach > 0:
+            inches = reach / fig.dpi
+            found.append((element, round(inches, 3)))
+            worst = max(worst, inches)
+    total = canvas_overflow(fig)
+    return tuple(found), max(0.0, total - worst) if total > worst + 1e-3 else 0.0

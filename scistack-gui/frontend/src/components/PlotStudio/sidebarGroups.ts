@@ -163,7 +163,10 @@ function num(value: number): string {
 export function appearanceSummary(args: {
   width: number
   height: number
-  font: number
+  /** The fixed font size, or null for AUTO (`TextSizes.base` None). */
+  font: number | null
+  /** `style.text.target`, said when the font is auto. */
+  fontTarget?: string
   yMin: number | null
   yMax: number | null
   /** Non-empty per-panel overrides (panelOverrides.overrideCount). */
@@ -173,7 +176,8 @@ export function appearanceSummary(args: {
     args.yMin === null && args.yMax === null
       ? 'y auto'
       : `y ${args.yMin === null ? 'auto' : num(args.yMin)}–${args.yMax === null ? 'auto' : num(args.yMax)}`
-  const parts = [`${num(args.width)}×${num(args.height)} in`, `${num(args.font)} pt`, y]
+  const font = args.font === null ? `auto text (${args.fontTarget ?? 'print'})` : `${num(args.font)} pt`
+  const parts = [`${num(args.width)}×${num(args.height)} in`, font, y]
   const panels = args.panelOverrides ?? 0
   if (panels > 0) parts.push(`${panels} panel${panels === 1 ? '' : 's'} set`)
   return parts.join(SEP)

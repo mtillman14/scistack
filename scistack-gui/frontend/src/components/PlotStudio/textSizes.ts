@@ -10,15 +10,42 @@
  * See docs/claude/plot-text-and-labels.md.
  */
 
-/** `layout.meta.text_sizes`, as `ResolvedSizes.to_dict()` writes it. */
-export interface ResolvedTextSizes {
-  /** Points per element. `legend_title` is null when it follows the entries. */
-  [element: string]: number | null | string[] | undefined
-  pinned?: string[]
+/** How auto chose the sizes (`autosize.AutoTextSize.to_dict()`). */
+export interface AutoTextMeta {
+  target: string
+  /** Points per element auto sized, plus `base`. */
+  sizes: Record<string, number>
+  /** Element -> why the next size up failed. Absent = at its ceiling. */
+  binding: Record<string, string>
+  /** Elements whose floor still needed fitting. */
+  at_floor: string[]
+  layouts: number
+  ms: number
 }
 
-/** `StyleOptions.text` as the panel holds it: only the sizes that are set. */
-export type TextSizesValue = Record<string, number | undefined>
+/** `layout.meta.text_sizes`: `ResolvedSizes.to_dict()` plus the auto block
+ *  (`autosize.text_sizes_meta`). */
+export interface ResolvedTextSizes {
+  /** Points per element. `legend_title` is null when it follows the entries. */
+  [element: string]: number | null | string | string[] | AutoTextMeta | undefined
+  pinned?: string[]
+  /** Null when `base` is fixed. */
+  auto?: AutoTextMeta | null
+  target?: string
+  targets?: string[]
+}
+
+/** `StyleOptions.text` as the panel holds it: only the sizes that are set,
+ *  and `target` (a string). */
+export type TextSizesValue = Record<string, number | string | undefined>
+
+/** Meta keys that are not an element's box. */
+const NOT_ROWS = new Set(['base', 'pinned', 'auto', 'target', 'targets'])
+/** `style.text` keys that are not an element's size. */
+const NOT_SIZES = new Set(['base', 'target'])
+
+/** Before the first render: Python's `spec.TEXT_TARGETS`, for the toggle. */
+const FALLBACK_TARGETS = ['print', 'slide']
 
 export interface TextSizeRow {
   key: string
@@ -27,6 +54,8 @@ export interface TextSizeRow {
   /** What Python resolved for this element; null = "follows the legend". */
   resolved: number | null
   pinned: boolean
+  /** Auto only: why this element is not larger (Python's words), or null. */
+  autoReason: string | null
 }
 
 /** Labels for the elements this build knows. An element Python adds later
@@ -64,19 +93,19 @@ export function textSizeRows(
   meta: ResolvedTextSizes | undefined | null,
   text: TextSizesValue | undefined,
 ): TextSizeRow[] {
-  const keys = meta
-    ? Object.keys(meta).filter(key => key !== 'base' && key !== 'pinned')
-    : FALLBACK_ORDER
+  const keys = meta ? Object.keys(meta).filter(key => !NOT_ROWS.has(key)) : FALLBACK_ORDER
   return keys.map(key => {
     const value = meta?.[key]
     const known = KNOWN[key]
+    // The panel's own spec says what is set; meta lags one render behind.
+    const pinned = typeof text?.[key] === 'number'
     return {
       key,
       label: known?.label ?? key,
       title: known?.title ?? key,
       resolved: typeof value === 'number' ? value : null,
-      // The panel's own spec says what is set; meta lags one render behind.
-      pinned: typeof text?.[key] === 'number',
+      pinned,
+      autoReason: (!pinned && meta?.auto?.binding?.[key]) || null,
     }
   })
 }
@@ -85,6 +114,57 @@ export function textSizeRows(
 export function placeholderFor(row: TextSizeRow): string {
   if (row.resolved === null) return row.key === 'legend_title' ? '= legend' : 'auto'
   return `auto · ${formatPt(row.resolved)}`
+}
+
+/** A row's hover text: what it sizes, and for an auto size what stopped it
+ *  growing ("x ticks rotate 45°" — it would at the next size up). */
+export function rowTitle(row: TextSizeRow): string {
+  return row.autoReason
+    ? `${row.title}. Auto: the next size up fails (${row.autoReason})`
+    : row.title
+}
+
+/** Whether `base` is auto (unset) in the panel's spec. */
+export function isAutoText(text: TextSizesValue | undefined): boolean {
+  return typeof text?.base !== 'number'
+}
+
+/** The Font box's placeholder while auto: the chosen font size, if known. */
+export function basePlaceholder(meta: ResolvedTextSizes | undefined | null): string {
+  return typeof meta?.base === 'number' && meta?.auto ? `auto · ${formatPt(meta.base)}` : 'auto'
+}
+
+/** The Font box's hover text: how auto works, and what it decided. */
+export function baseTitle(meta: ResolvedTextSizes | undefined | null): string {
+  const intro =
+    'Empty = auto: each text element is as large as the figure lays it out cleanly, ' +
+    'within the Print or Slide band. A number fixes the font and every empty size below follows it'
+  const auto = meta?.auto
+  if (!auto) return intro
+  const limited = Object.entries(auto.binding)
+  const floor = auto.at_floor.length ? `; still fitted at the floor: ${auto.at_floor.join(', ')}` : ''
+  return (
+    `${intro}. Chosen in ${auto.layouts} layout(s), ${auto.ms} ms` +
+    (limited.length ? `; limited: ${limited.map(([e, why]) => `${e} (${why})`).join('; ')}` : '; all at the ceiling') +
+    floor
+  )
+}
+
+/** The targets the toggle offers: Python's list once a render has sent it. */
+export function textTargets(meta: ResolvedTextSizes | undefined | null): string[] {
+  return meta?.targets?.length ? meta.targets : FALLBACK_TARGETS
+}
+
+/** The panel's target (`print` unless set). */
+export function textTarget(text: TextSizesValue | undefined): string {
+  return typeof text?.target === 'string' ? text.target : 'print'
+}
+
+/** `style.text` with the target set. Stored even when it is the default,
+ *  because Python's `to_dict` always writes it (a deleted key would read
+ *  as "modified" against a saved plot). */
+export function withTextTarget(text: TextSizesValue | undefined, target: string): TextSizesValue {
+  return { ...(text ?? {}), target }
 }
 
 /**
@@ -103,14 +183,16 @@ export function withTextSize(
   return next
 }
 
-/** `style.text` with every per-element size cleared; `base` is kept. */
+/** `style.text` with every per-element size cleared; `base` and `target` are kept. */
 export function resetTextSizes(text: TextSizesValue | undefined): TextSizesValue {
-  return typeof text?.base === 'number' ? { base: text.base } : {}
+  const kept: TextSizesValue = {}
+  for (const key of NOT_SIZES) if (text?.[key] !== undefined) kept[key] = text[key]
+  return kept
 }
 
-/** Whether any element other than `base` is set. */
+/** Whether any element (not `base`, not `target`) is set. */
 export function hasFixedSizes(text: TextSizesValue | undefined): boolean {
-  return Object.entries(text ?? {}).some(([key, value]) => key !== 'base' && typeof value === 'number')
+  return Object.entries(text ?? {}).some(([key, value]) => !NOT_SIZES.has(key) && typeof value === 'number')
 }
 
 /** For the overlap notice: the fixed x tick size, if that is what overlaps. */

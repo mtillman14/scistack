@@ -43,10 +43,38 @@ def test_ratios_are_matplotlibs_font_scalings():
     del matplotlib
 
 
-def test_the_default_base_is_14():
-    """10 pt at 8 x 6 in was unreadable on a slide (user, 2026-09-16)."""
-    assert TextSizes().base == 14.0
+def test_the_default_size_is_auto_for_print():
+    """A new plot sizes its text automatically (user, 2026-10-06): base None,
+    target print. A fixed number is still the old behaviour."""
+    assert TextSizes().base is None
+    assert TextSizes().target == "print"
     assert StyleOptions().text == TextSizes()
+
+
+def test_target_is_not_a_pin():
+    """`target` is a TextSizes field but no element: it must never be listed
+    as fixed, or the fitting would refuse to shrink anything."""
+    assert resolve_sizes(TextSizes(base=12.0, target="slide")).pinned == frozenset()
+
+
+def test_auto_sizes_are_used_and_fixed_ones_win():
+    sizes = resolve_sizes(
+        TextSizes(y_label=17.0), auto={"base": 9.0, "x_ticks": 9.0, "y_ticks": 11.0, "y_label": 8.0}
+    )
+    assert (sizes.base, sizes.x_ticks, sizes.y_ticks) == (9.0, 9.0, 11.0)
+    assert sizes.y_label == 17.0 and sizes.pinned == frozenset({"y_label"})
+    # An element auto did not size derives from the auto base, as ever.
+    assert sizes.title == pytest.approx(9.0 * 1.2)
+
+
+def test_auto_sizes_are_ignored_when_base_is_fixed():
+    sizes = resolve_sizes(TextSizes(base=10.0), auto={"base": 20.0, "x_ticks": 20.0})
+    assert sizes.base == 10.0 and sizes.x_ticks == 10.0
+
+
+def test_an_unknown_target_is_refused():
+    with pytest.raises(ValueError, match="text target"):
+        TextSizes(target="poster")
 
 
 def test_a_fixed_size_is_used_as_given_and_pinned():
