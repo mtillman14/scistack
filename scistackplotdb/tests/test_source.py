@@ -357,23 +357,37 @@ def test_two_code_versions_are_refused_not_pooled(two_code_versions):
         validate(spec.with_roles(**{"Code:scale_signal": Role.COLLAPSE}), table)
 
 
-def test_code_version_assigned_to_colour_resolves(two_code_versions):
+def test_two_code_versions_compare_as_one_variant_row_each(two_code_versions):
+    """Comparing versions is one variant row per version, coloured by Variant.
+
+    Since 2026-09-30 a figure with NO variant rows draws only the current
+    version (`variants._apply_default_pin`), so colouring by the raw
+    ``Code:scale_signal`` column of an unpinned spec has one level left. The
+    supported way to put v1 beside v2 is a row each; the code axis is then
+    answered by the rows and leaves the factor list, and ``Variant`` carries it.
+    """
+    from scistackplot import VARIANT_FACTOR, VariantSet
+
     table = ScidbSource(two_code_versions).get_table(["Scaled"])
     spec = PlotSpec(
         measures=["Scaled"],
+        variant_sets=[
+            VariantSet(name="v1", selection={"Code:scale_signal": "v1"}),
+            VariantSet(name="v2", selection={"Code:scale_signal": "v2"}),
+        ],
         roles={
             "session": Role.GROUP,
-            "Code:scale_signal": Role.GROUP,
+            VARIANT_FACTOR: Role.GROUP,
             "subject": Role.COLLAPSE,
             "trial": Role.COLLAPSE,
         },
-        groups=["Code:scale_signal", "session"],
-        color="Code:scale_signal",
+        groups=[VARIANT_FACTOR, "session"],
+        color=VARIANT_FACTOR,
         kind=PlotKind.BOX,
     )
 
     resolved = resolve(spec, table)[0]
-    assert len(resolved.color_order) == 2
+    assert sorted(str(c) for c in resolved.color_order) == ["v1", "v2"]
 
 
 @pytest.fixture
@@ -567,24 +581,40 @@ def test_pinned_render_keeps_only_the_newest_rows(two_code_versions):
     )
 
 
-def test_clearing_the_variant_brings_every_version_back(two_code_versions):
-    """The opening variant is a starting point, not a lock — the old records are
-    still there and deleting the row plots them."""
+def test_clearing_the_variant_draws_current_and_rows_bring_old_versions_back(
+    two_code_versions,
+):
+    """The opening variant is a starting point, not a lock — but an EMPTY row
+    list is not "everything" any more.
+
+    Deleting every row draws what an unnamed load reads: the current version
+    only (2026-09-30, `variants._apply_default_pin`; before it, a spec with no
+    rows drew every generation and ``DemographicsTable`` plotted a superseded
+    record beside its replacement). The old records are still there: a row per
+    version brings both back, one point per record.
+    """
     from dataclasses import replace
 
-    from scistackplot import default_spec
+    from scistackplot import VARIANT_FACTOR, VariantSet, default_spec
 
     table = ScidbSource(two_code_versions).get_table(["Scaled"])
     spec = default_spec(table, "Scaled")
 
-    # Deleting the row brings the code axis back as an ordinary factor needing a
-    # role: the coloured grouping layer, innermost, one point per record.
-    unpinned = _one_figure(
-        replace(spec, variant_sets=[], roles={**spec.roles, "Code:scale_signal": Role.GROUP}),
+    cleared = _one_figure(replace(spec, variant_sets=[]), table)
+    assert resolve(cleared, table)[0].row_count == 3 * 2 * 2
+
+    both = _one_figure(
+        replace(
+            spec,
+            variant_sets=[
+                VariantSet(name="v1", selection={"Code:scale_signal": "v1"}),
+                VariantSet(name="v2", selection={"Code:scale_signal": "v2"}),
+            ],
+        ),
         table,
-        color="Code:scale_signal",
+        color=VARIANT_FACTOR,
     )
-    resolved = resolve(unpinned, table)[0]
+    resolved = resolve(both.with_roles(**{VARIANT_FACTOR: Role.GROUP}), table)[0]
 
     assert resolved.row_count == 2 * 3 * 2 * 2
     assert set(_rows(resolved)[resolved.encoding.color]) == {"v1", "v2"}

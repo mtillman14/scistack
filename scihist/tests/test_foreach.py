@@ -4,36 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from conftest import make_simple_mock_db
 from scidb import Fixed, for_each
-
-
-def _make_simple_mock_db():
-    """Minimal mock DB for tests that only need save_batch to work.
-
-    Uses empty dataset_schema_keys so schema values are not coerced to strings,
-    keeping assertions like ``meta["subject"] == 42`` valid.
-    """
-
-    class _SimpleMockDB:
-        dataset_schema_keys = []
-
-        def distinct_schema_values(self, key):
-            return []
-
-        def distinct_schema_combinations(self, keys):
-            return []
-
-        def save_batch(self, variable_class, data_items, profile=False):
-            ids = []
-            for data, meta in data_items:
-                variable_class.save(data, **meta)
-                ids.append(f"mock-id-{len(ids)}")
-            return ids
-
-        def _save_lineage_rows_batch(self, items, output_type):
-            pass  # mock: lineage rows not tracked
-
-    return _SimpleMockDB()
 
 
 class MockVariable:
@@ -136,7 +108,7 @@ class TestForEachBasic:
             process,
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
         )
 
@@ -154,7 +126,7 @@ class TestForEachBasic:
             process,
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1, 2],
             session=["A", "B"],
         )
@@ -172,7 +144,7 @@ class TestForEachBasic:
             process,
             inputs={"a": MockVariableA, "b": MockVariableB},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
         )
 
@@ -188,7 +160,7 @@ class TestForEachBasic:
             process,
             inputs={"x": MockVariableA},
             outputs=[MockVariableA, MockVariableB],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
         )
 
@@ -225,6 +197,7 @@ class TestForEachWithFixed:
             outputs=[MockOutput],
             subject=[1],
             session=["A", "B"],
+            db=make_simple_mock_db(),
         )
 
         # Check baseline always loaded with session="BL"
@@ -318,7 +291,7 @@ class TestForEachErrorHandling:
             sometimes_fails,
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1, 2, 3],
         )
 
@@ -339,7 +312,7 @@ class TestForEachOutput:
             process,
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
         )
 
@@ -356,7 +329,7 @@ class TestForEachOutput:
             process,
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[42],
             session=["XYZ"],
         )
@@ -382,7 +355,7 @@ class TestForEachWithConstants:
             process,
             inputs={"x": MockVariableA, "smoothing": 0.2},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
         )
 
@@ -399,7 +372,7 @@ class TestForEachWithConstants:
             process,
             inputs={"x": MockVariableA, "smoothing": 0.2},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
         )
 
@@ -421,7 +394,7 @@ class TestForEachWithConstants:
             process,
             inputs={"a": MockVariableA, "b": MockVariableB, "threshold": 10},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1, 2],
         )
 
@@ -448,7 +421,7 @@ class TestForEachWithConstants:
                 "method": "bandpass",
             },
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
         )
 
@@ -479,6 +452,7 @@ class TestForEachWithConstants:
             inputs={"x": CountingVariable, "factor": 2.5},
             outputs=[MockOutput],
             subject=[1],
+            db=make_simple_mock_db(),
         )
 
         # Only the variable should trigger a load, not the constant
@@ -515,7 +489,7 @@ class TestForEachWithConstants:
                 "threshold": 5.0,
             },
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1],
             session=["A"],
         )
@@ -653,20 +627,22 @@ class TestForEachAllLevels:
 
     def test_no_db_raises_helpful_error(self):
         """If no db is available, should raise a clear error."""
-        import unittest.mock as mock
 
         def process(x):
             return "result"
 
-        # Patch get_database to raise (simulating no configured database)
-        with mock.patch.dict("sys.modules", {"scidb": None, "scidb.database": None}):
-            with pytest.raises(ValueError, match="no database is available"):
-                for_each(
-                    process,
-                    inputs={"x": MockVariableA},
-                    outputs=[MockOutput],
-                    subject=[],
-                )
+        # The real condition, not a simulation: the autouse clear_global_state
+        # fixture leaves no database configured, so get_database() raises
+        # DatabaseNotConfiguredError and for_each turns it into this message.
+        # (Blanking scidb out of sys.modules stopped modelling it once scidb
+        # imported scidb.database at module load.)
+        with pytest.raises(ValueError, match="no database is available"):
+            for_each(
+                process,
+                inputs={"x": MockVariableA},
+                outputs=[MockOutput],
+                subject=[],
+            )
 
     def test_dry_run_with_empty_list(self, capsys):
         """dry_run should work after resolving [] to all values."""
@@ -957,20 +933,19 @@ class TestForEachDistribute:
 
     def test_distribute_validation_no_db(self):
         """Should raise ValueError with helpful message when no db available."""
-        import unittest.mock as mock
 
         def process(x):
             return [1, 2]
 
-        with mock.patch.dict("sys.modules", {"scidb": None, "scidb.database": None}):
-            with pytest.raises(ValueError, match="no database is available"):
-                for_each(
-                    process,
-                    inputs={"x": MockVariableA},
-                    outputs=[MockOutput],
-                    distribute=True,
-                    subject=[1],
-                )
+        # No database configured (autouse clear_global_state) — the real case.
+        with pytest.raises(ValueError, match="no database is available"):
+            for_each(
+                process,
+                inputs={"x": MockVariableA},
+                outputs=[MockOutput],
+                distribute=True,
+                subject=[1],
+            )
 
     def test_distribute_dry_run(self, capsys):
         """Dry run should show distribute info without executing."""
@@ -1610,6 +1585,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
             subject=[1],
+            db=make_simple_mock_db(),
         )
 
         assert isinstance(result, pd.DataFrame)
@@ -1625,6 +1601,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
             subject=[1],
+            db=make_simple_mock_db(),
         )
 
         assert "subject" in result.columns
@@ -1644,6 +1621,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
             subject=[1, 2, 3],
+            db=make_simple_mock_db(),
         )
 
         assert len(result) == 3
@@ -1661,6 +1639,7 @@ class TestForEachReturnValue:
             outputs=[MockOutput],
             subject=[1, 2],
             session=["A", "B"],
+            db=make_simple_mock_db(),
         )
 
         assert len(result) == 4
@@ -1678,6 +1657,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput, MockOutputB],
             subject=[1, 2],
+            db=make_simple_mock_db(),
         )
 
         assert len(result) == 2
@@ -1711,6 +1691,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MyOutput],
             subject=[1],
+            db=make_simple_mock_db(),
         )
 
         assert "my_custom_name" in result.columns
@@ -1732,6 +1713,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[NoViewName],
             subject=[1],
+            db=make_simple_mock_db(),
         )
 
         assert "NoViewName" in result.columns
@@ -1751,6 +1733,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
             subject=[1, 2, 3],
+            db=make_simple_mock_db(),
         )
 
         assert len(result) == 2
@@ -1826,6 +1809,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
             subject=[1, 2],
+            db=make_simple_mock_db(),
         )
 
         # One row per subject, not one per DataFrame row.
@@ -1855,6 +1839,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
             subject=[1, 2],
+            db=make_simple_mock_db(),
         )
 
         assert len(result) == 2
@@ -1877,6 +1862,7 @@ class TestForEachReturnValue:
             inputs={"x": MockVariableA},
             outputs=[MockOutput, MockOutputB],
             subject=[1],
+            db=make_simple_mock_db(),
         )
 
         # One row for the single combination; each output is its own column
@@ -1904,7 +1890,7 @@ class TestForEachReturnValue:
             process,
             inputs={"x": MockVariableA},
             outputs=[MockOutput],
-            db=_make_simple_mock_db(),
+            db=make_simple_mock_db(),
             subject=[1, 2],
         )
 

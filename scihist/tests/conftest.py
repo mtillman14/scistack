@@ -46,3 +46,32 @@ def clear_global_state():
     yield
     if hasattr(_local, "database"):
         delattr(_local, "database")
+
+
+def make_simple_mock_db():
+    """Minimal mock DB for tests that only need save_batch to work.
+
+    Uses empty dataset_schema_keys so schema values are not coerced to strings,
+    keeping assertions like ``meta["subject"] == 42`` valid.
+    """
+
+    class _SimpleMockDB:
+        dataset_schema_keys = []
+
+        def distinct_schema_values(self, key):
+            return []
+
+        def distinct_schema_combinations(self, keys):
+            return []
+
+        def save_batch(self, variable_class, data_items, profile=False):
+            ids = []
+            for data, meta in data_items:
+                variable_class.save(data, **meta)
+                ids.append(f"mock-id-{len(ids)}")
+            return ids
+
+        def _save_lineage_rows_batch(self, items, output_type):
+            pass  # mock: lineage rows not tracked
+
+    return _SimpleMockDB()

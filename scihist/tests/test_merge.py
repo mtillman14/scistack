@@ -1,4 +1,13 @@
-"""Tests for Merge input wrapper."""
+"""Tests for Merge input wrapper.
+
+These run with NO database, which is what sends a Merge down the per-combo
+path (``PerComboLoaderMerge``: each constituent's own ``.load()``) that the
+mocks implement. Any db — even a mock — switches scidb to bulk-loading the
+constituents from it instead (``scidb.foreach._load_input``). Saving, though,
+needs a database, and since 2026-09-30 a failed save raises OutputSaveError
+instead of being logged and ignored. So the for_each calls here pass
+``save=False``: they assert what the function RECEIVED, never what was saved.
+"""
 
 import numpy as np
 import pandas as pd
@@ -200,6 +209,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(GaitData, ForceData)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         assert len(received) == 1
@@ -226,6 +236,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(GaitData, PareticSide)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         assert len(received) == 1
@@ -252,6 +263,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(GaitData, PareticSide)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -274,6 +286,7 @@ class TestMergeInForEach:
             inputs={"kinematics": Merge(StepLength, StepWidth)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -299,6 +312,7 @@ class TestMergeInForEach:
             inputs={"kinematics": Merge(StepLength, StepWidth)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -324,6 +338,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(StepLength, StepWidth, CadenceRate)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -346,6 +361,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(StepLength, StepWidth)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         assert received_types[0] is pd.DataFrame
@@ -378,6 +394,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(TrackingA, TrackingB)},
             outputs=[MockOutput],
             subject=[1, 2, 3],
+            save=False,
         )
 
         assert call_count[0] == 3
@@ -404,6 +421,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(StepLength, StepWidth), "smoothing": 0.5},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df, smoothing = received[0]
@@ -426,6 +444,7 @@ class TestMergeInForEach:
             inputs={"data": Merge(StepLength, StepWidth)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -462,6 +481,7 @@ class TestMergeComposability:
             outputs=[MockOutput],
             subject=[1],
             session=["A"],
+            save=False,
         )
 
         # VarA should get session="A", VarB should get session="BL"
@@ -491,6 +511,7 @@ class TestMergeComposability:
             inputs={"data": Merge(cs, PareticSide)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -540,6 +561,7 @@ class TestMergeComposability:
             outputs=[MockOutput],
             subject=[1],
             session=["A"],
+            save=False,
         )
 
         # TrackingGait should be loaded with session="BL" override
@@ -720,6 +742,7 @@ class TestMergeEdgeCases:
             inputs={"data": Merge(GaitData, PareticSide)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -743,6 +766,7 @@ class TestMergeEdgeCases:
             inputs={"data": Merge(GaitData, PareticSide)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -767,6 +791,7 @@ class TestMergeEdgeCases:
             inputs={"data": Merge(GaitData, ForceData)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
@@ -789,6 +814,7 @@ class TestMergeEdgeCases:
             inputs={"data": Merge(StepLength, StepWidth, CadenceRate)},
             outputs=[MockOutput],
             subject=[1],
+            save=False,
         )
 
         df = received[0]
