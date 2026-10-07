@@ -34,4 +34,6 @@ test('an unstamped dev extension never warns', () => {
 test('an editable / dev Python install never warns', () => {
   assert.strictEqual(checkServerVersion('0.1.29', '0.1.30.dev4').kind, 'skipped');
   assert.strictEqual(checkServerVersion('0.1.29', '0.1.30.dev4+gabc123').kind, 'skipped');
+  // A never-installed source tree reports the shared dev placeholder.
+  assert.strictEqual(checkServerVersion('0.1.29', DEV_VERSION).kind, 'skipped');
 });

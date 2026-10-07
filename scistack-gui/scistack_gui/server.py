@@ -87,29 +87,15 @@ def _respond_error(req_id, code: int, message: str):
     _send({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}})
 
 
-def package_version() -> str | None:
-    """The installed ``scistack-gui`` version, as the release tag stamped it.
-
-    hatch-vcs writes it into the distribution metadata at build time; the
-    VS Code extension's ``package.json`` is stamped from the same tag, so
-    the two are equal for a matched install. None when running from a tree
-    with no installed distribution — the extension then skips its check.
-    """
-    import importlib.metadata
-
-    try:
-        return importlib.metadata.version("scistack-gui")
-    except importlib.metadata.PackageNotFoundError:
-        return None
-
-
 def _send_ready(params: dict) -> None:
     """Emit the startup ``ready`` notification — the one place it is built.
 
-    Carries this package's version so the extension can warn when the
-    installed ``scistack-gui`` and the extension come from different releases.
+    Carries ``scistack_gui.__version__`` (the release tag, via hatch-vcs) so
+    the extension can warn when the installed ``scistack-gui`` and the
+    extension come from different releases. "0.0.0" = never-installed tree.
     """
-    version = package_version()
+    from scistack_gui import __version__ as version
+
     logger.info("[startup] scistack-gui version %s", version)
     _send(
         {

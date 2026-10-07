@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from scistack_gui import __version__
 from scistack_gui.api.artifacts import router as artifacts_router
 from scistack_gui.api.bootstrap import router as bootstrap_router
 from scistack_gui.api.builtin_functions import router as builtin_functions_router
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="SciStack GUI", version="0.1.0")
+    app = FastAPI(title="SciStack GUI", version=__version__)
 
     # Allow the Vite dev server (localhost:5173) to call the backend during
     # development. In production, both are served from the same origin so this

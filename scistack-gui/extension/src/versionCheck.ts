@@ -10,7 +10,11 @@
  * Kept free of `vscode` so it runs under `npm test`.
  */
 
-/** package.json's committed placeholder; only CI stamps a real version. */
+/**
+ * "Dev build" on both sides: package.json's committed placeholder (only CI
+ * stamps a real version), and the Python packages' `__version__` when the
+ * source tree was never installed.
+ */
 export const DEV_VERSION = '0.0.0';
 
 export type VersionVerdict =
@@ -27,8 +31,7 @@ export function checkServerVersion(
     return { kind: 'skipped', reason: 'extension is an unstamped dev build' };
   }
   if (!serverVersion) {
-    // An older server that predates the field, or a source tree with no
-    // installed distribution. The former is itself a mismatch.
+    // A server older than this handshake — itself a mismatch.
     return {
       kind: 'mismatch',
       message:
@@ -37,7 +40,7 @@ export function checkServerVersion(
         `Run: pip install scistack-gui==${extensionVersion}`,
     };
   }
-  if (/\.dev\d|\+/.test(serverVersion)) {
+  if (serverVersion === DEV_VERSION || /\.dev\d|\+/.test(serverVersion)) {
     // hatch-vcs's spelling for a checkout past the last tag (editable install).
     return { kind: 'skipped', reason: `scistack-gui ${serverVersion} is a dev build` };
   }

@@ -10,14 +10,19 @@ tag:
 | --- | --- |
 | Every Python package (13 of them) | `hatch-vcs` (`[tool.hatch.version] source = "vcs"`) reads the tag at build time |
 | VS Code extension | `extension/scripts/stamp-version.js` writes the tag's `X.Y.Z` into `package.json` **in CI only** |
-| Running server | `scistack_gui.server.package_version()` → `importlib.metadata.version("scistack-gui")` |
+| `__version__` of every package that has one (all but scistacklog, sciduckdb, scimatlab) | `importlib.metadata.version(<dist>)`, falling back to `"0.0.0"` when the tree was never installed |
+| Running server (ready frame) | `scistack_gui.__version__` |
 
 `extension/package.json` is committed as `"version": "0.0.0"`, a placeholder
 that means "dev build". `scripts/stamp-version.test.js` asserts it, so a real
 version committed there (which would be a second owner of the version) fails `npm test`.
 
-Known exception not yet fixed: `scidb/src/scidb/__init__.py` hardcodes
-`__version__ = "0.1.0"`, which does not follow the tag.
+`"0.0.0"` means "dev build" everywhere: the extension placeholder, and a
+Python `__version__` with no installed metadata. The extension never warns on
+it. `scistack-gui/tests/test_version_single_owner.py` fails if any package
+source assigns `__version__` a literal other than that fallback. Before
+2026-10-07, ten packages hardcoded `"0.1.0"`, so every saved plot and preset
+recorded `saved_with: {"scistackplot": "0.1.0"}`.
 
 ## Cutting a release
 
@@ -80,7 +85,7 @@ updates their venv. So on every server start:
 
 1. `server._send_ready(params)` is the **only** builder of the `ready`
    notification, used by both the database server and the plot-only server.
-   It adds `"version": package_version()` and logs `[startup] scistack-gui version X`.
+   It adds `"version": scistack_gui.__version__` and logs `[startup] scistack-gui version X`.
    `tests/test_server_ready_version.py` asserts that the literal
    `"method": "ready"` appears once in `server.py`, so a second hand-built
    frame cannot come back.
@@ -89,8 +94,8 @@ updates their venv. So on every server start:
    `versionCheck.checkServerVersion` (no `vscode` import, so it is unit-tested under `npm test`).
 3. The verdict is one of:
    - `match`: both versions are equal.
-   - `skipped`: the extension is `0.0.0` (local build), or the server version
-     contains `.devN` or `+` (an editable install past the last tag). Dev
+   - `skipped`: the extension is `0.0.0` (local build), or the server reports `0.0.0`
+     (never installed) or a version containing `.devN` or `+` (an editable install past the last tag). Dev
      setups never see a warning.
    - `mismatch`: the versions differ, or the server reported no version (a
      server older than this handshake). This shows one warning per extension

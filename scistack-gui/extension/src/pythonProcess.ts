@@ -30,7 +30,7 @@ interface ReadyParams {
   schema_keys?: string[];
   /** False for a plot-only server: no database, only the `plot_*` methods. */
   db_loaded?: boolean;
-  /** Installed scistack-gui version; null from a tree with no distribution. */
+  /** Installed scistack-gui version ("0.0.0" = never installed); absent from servers older than the handshake. */
   version?: string | null;
 }
 

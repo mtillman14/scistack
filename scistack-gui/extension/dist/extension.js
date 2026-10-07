@@ -1836,7 +1836,7 @@ function checkServerVersion(extensionVersion, serverVersion) {
       message: `SciStack extension ${extensionVersion} is talking to a scistack-gui Python package that did not report its version (older than this extension). Run: pip install scistack-gui==${extensionVersion}`
     };
   }
-  if (/\.dev\d|\+/.test(serverVersion)) {
+  if (serverVersion === DEV_VERSION || /\.dev\d|\+/.test(serverVersion)) {
     return { kind: "skipped", reason: `scistack-gui ${serverVersion} is a dev build` };
   }
   if (serverVersion === extensionVersion)

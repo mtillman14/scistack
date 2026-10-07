@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.metadata
 
+import scistack_gui
 from scistack_gui import server
 
 
@@ -26,14 +27,7 @@ def test_ready_carries_the_installed_version(monkeypatch):
     assert frame["params"]["db_name"] == "x.duckdb"
     assert frame["params"]["schema_keys"] == ["subject"]
     assert frame["params"]["version"] == importlib.metadata.version("scistack-gui")
-
-
-def test_version_is_none_without_an_installed_distribution(monkeypatch):
-    def missing(_name):
-        raise importlib.metadata.PackageNotFoundError(_name)
-
-    monkeypatch.setattr(importlib.metadata, "version", missing)
-    assert server.package_version() is None
+    assert frame["params"]["version"] == scistack_gui.__version__
 
 
 def test_both_ready_senders_use_the_one_builder():
