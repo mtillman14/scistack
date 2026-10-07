@@ -112,7 +112,8 @@ easily as a pip version.
 ## What ships in the .vsix
 
 `.vscodeignore` whitelists by exclusion. The package should contain exactly
-`package.json`, `README.md`, `LICENSE`, `dist/extension.js`, and
+`package.json`, `icon.png` (256x256 RGBA, from spec/images), `README.md`, `LICENSE`,
+`dist/extension.js`, and
 `dist/webview/{index.js,index.css,index.html}`. Verify with:
 
 ```

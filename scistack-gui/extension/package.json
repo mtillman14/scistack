@@ -4,6 +4,7 @@
   "description": "Visual pipeline builder for SciStack scientific data processing",
   "version": "0.0.0",
   "publisher": "scistack",
+  "icon": "icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
