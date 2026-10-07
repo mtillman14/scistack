@@ -1,19 +1,14 @@
-import sys
-sys.path.insert(0, "examples/aim2/src/cycles")
-import scidb
-import pipeline
+from scidb.database import DatabaseManager
 
-scidb.configure_database("examples/aim2/aim2.duckdb",
-                        ["subject", "session", "speed", "trial", "cycle"])
-
-sym = pipeline.CycleSymmetry.load(as_df=True)
-print("CycleSymmetry dtypes:\n", sym.dtypes)
-print("cycle types:", sorted({type(v).__name__ for v in sym["cycle"]}))
-print("cycle values:", sorted({repr(v) for v in sym["cycle"]}))
-print("trial values:", sorted({repr(v) for v in sym["trial"]}))
-
-dev = pipeline.CycleDeviation.load(as_df=True)
-print("\nCycleDeviation rows:", len(dev))
-print("cycle types:", sorted({type(v).__name__ for v in dev["cycle"]}))
-print("cycle values:", sorted({repr(v) for v in dev["cycle"]}))
-print("per trial:", dev.groupby(["subject", "session", "speed", "trial"]).size().describe().to_dict())
+db = DatabaseManager(
+    "/Users/mitchelltillman/Documents/Work/Stroke-R01-Aim-2/data/Stroke-R01-Aim2.duckdb",
+    ["subject", "session", "speed", "trial", "cycle"],
+    read_only=True,
+)
+agg = db.get_aggregated_variants()
+for row in agg["constants"].get("formulaNum", {}).get("values", []):
+    print("history value:", repr(row["value"]), "records:", row["record_count"])
+from scistack_gui import registry
+p = registry.get_parameters_registry().get("formulaNum")
+print("declared values:", [repr(v) for v in p.values] if p else None)
+db.close()
