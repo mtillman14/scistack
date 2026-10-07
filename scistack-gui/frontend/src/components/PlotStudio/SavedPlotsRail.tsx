@@ -13,7 +13,7 @@
  * shows them; it does not repeat them.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { notesSummary, savedAtLabel, type RestoreNote, type SavedPlotInfo } from './savedPlots'
 
@@ -40,6 +40,8 @@ interface Props {
   onRename: (plotId: string, name: string) => Promise<boolean>
   onRemove: (plotId: string) => Promise<void>
   onDismissNotes: () => void
+  /** Shown below the saved plots, in the same column (the Presets section). */
+  children?: ReactNode
 }
 
 type Pending =
@@ -64,6 +66,7 @@ export default function SavedPlotsRail({
   onRename,
   onRemove,
   onDismissNotes,
+  children,
 }: Props) {
   const [pending, setPending] = useState<Pending>(null)
   const [showNotes, setShowNotes] = useState(false)
@@ -73,14 +76,14 @@ export default function SavedPlotsRail({
 
   if (collapsed) {
     return (
-      <div style={styles.collapsed}>
-        <button type="button" style={styles.headerButton} onClick={onToggle} title="Show saved plots">
+      <div style={railStyles.collapsed}>
+        <button type="button" style={railStyles.headerButton} onClick={onToggle} title="Show saved plots">
           ❮
         </button>
-        <div style={styles.verticalLabel} onClick={onToggle}>
+        <div style={railStyles.verticalLabel} onClick={onToggle}>
           Saved plots{plots.length ? ` (${plots.length})` : ''}
         </div>
-        {loaded && modified && <span style={styles.modifiedDot} title="Unsaved changes">●</span>}
+        {loaded && modified && <span style={railStyles.modifiedDot} title="Unsaved changes">●</span>}
       </div>
     )
   }
@@ -102,22 +105,22 @@ export default function SavedPlotsRail({
   }
 
   return (
-    <div style={styles.rail}>
-      <div style={styles.header}>
-        <span style={styles.title}>Saved plots</span>
-        <button type="button" style={styles.headerButton} onClick={onToggle} title="Hide saved plots">
+    <div style={railStyles.rail}>
+      <div style={railStyles.header}>
+        <span style={railStyles.title}>Saved plots</span>
+        <button type="button" style={railStyles.headerButton} onClick={onToggle} title="Hide saved plots">
           ❯
         </button>
       </div>
 
-      <div style={styles.body}>
-        <div style={styles.current}>
-          <div style={styles.currentName} title={loaded ? `${loaded.name} (version ${loaded.version})` : ''}>
-            {loaded ? loaded.name : <span style={styles.unsaved}>Unsaved plot</span>}
-            {loaded && modified && <span style={styles.modifiedDot} title="Unsaved changes"> ●</span>}
+      <div style={railStyles.body}>
+        <div style={railStyles.current}>
+          <div style={railStyles.currentName} title={loaded ? `${loaded.name} (version ${loaded.version})` : ''}>
+            {loaded ? loaded.name : <span style={railStyles.unsaved}>Unsaved plot</span>}
+            {loaded && modified && <span style={railStyles.modifiedDot} title="Unsaved changes"> ●</span>}
           </div>
           {loaded && (
-            <div style={styles.meta}>
+            <div style={railStyles.meta}>
               version {loaded.version}{modified ? ' · modified' : ''}
             </div>
           )}
@@ -130,7 +133,7 @@ export default function SavedPlotsRail({
               onCancel={() => setPending(null)}
             />
           ) : (
-            <button type="button" style={styles.primaryButton} onClick={startSaving} disabled={busy}>
+            <button type="button" style={railStyles.primaryButton} onClick={startSaving} disabled={busy}>
               {loaded ? 'Save…' : 'Save plot…'}
             </button>
           )}
@@ -145,19 +148,19 @@ export default function SavedPlotsRail({
         </div>
 
         {notes.length > 0 && (
-          <div style={styles.notes}>
+          <div style={railStyles.notes}>
             <div>
               Restored with changes: {notesSummary(notes)}.{' '}
-              <button type="button" style={styles.linkButton} onClick={() => setShowNotes(v => !v)}>
+              <button type="button" style={railStyles.linkButton} onClick={() => setShowNotes(v => !v)}>
                 {showNotes ? 'Hide' : 'Details'}
               </button>
               {' · '}
-              <button type="button" style={styles.linkButton} onClick={onDismissNotes}>
+              <button type="button" style={railStyles.linkButton} onClick={onDismissNotes}>
                 Dismiss
               </button>
             </div>
             {showNotes && (
-              <ul style={styles.noteList}>
+              <ul style={railStyles.noteList}>
                 {notes.map((note, i) => (
                   <li key={i}>
                     <code>{note.path || 'plot'}</code>: {note.message}
@@ -165,11 +168,11 @@ export default function SavedPlotsRail({
                 ))}
               </ul>
             )}
-            <div style={styles.noteHint}>Save to keep these settings in the current format.</div>
+            <div style={railStyles.noteHint}>Save to keep these settings in the current format.</div>
           </div>
         )}
 
-        {error && <div style={styles.error}>{error}</div>}
+        {error && <div style={railStyles.error}>{error}</div>}
 
         {pending?.kind === 'discard' && (
           <Question
@@ -181,17 +184,17 @@ export default function SavedPlotsRail({
         )}
 
         {plots.length === 0 ? (
-          <div style={styles.hint}>
+          <div style={railStyles.hint}>
             No saved plots for this variable yet. Save one to reopen it later
             exactly as it looks now.
           </div>
         ) : (
-          <div style={styles.list}>
+          <div style={railStyles.list}>
             {plots.map(plot => {
               const isLoaded = plot.plot_id === loaded?.plot_id
               if (pending?.kind === 'renaming' && pending.plotId === plot.plot_id) {
                 return (
-                  <div key={plot.plot_id} style={styles.row}>
+                  <div key={plot.plot_id} style={railStyles.row}>
                     <NameBox
                       initial={pending.text}
                       actionLabel="Rename"
@@ -207,18 +210,18 @@ export default function SavedPlotsRail({
               return (
                 <div key={plot.plot_id}>
                   <div
-                    style={{ ...styles.row, ...(isLoaded ? styles.rowLoaded : null) }}
+                    style={{ ...railStyles.row, ...(isLoaded ? railStyles.rowLoaded : null) }}
                     title={`Open "${plot.name}" (version ${plot.version})`}
                   >
-                    <button type="button" style={styles.rowOpen} onClick={() => open(plot)} disabled={busy}>
-                      <span style={styles.rowName}>{plot.name}</span>
-                      <span style={styles.meta}>
+                    <button type="button" style={railStyles.rowOpen} onClick={() => open(plot)} disabled={busy}>
+                      <span style={railStyles.rowName}>{plot.name}</span>
+                      <span style={railStyles.meta}>
                         {savedAtLabel(plot.saved_at)} · v{plot.version}
                       </span>
                     </button>
                     <button
                       type="button"
-                      style={styles.iconButton}
+                      style={railStyles.iconButton}
                       title="Rename"
                       onClick={() => setPending({ kind: 'renaming', plotId: plot.plot_id, text: plot.name })}
                     >
@@ -226,7 +229,7 @@ export default function SavedPlotsRail({
                     </button>
                     <button
                       type="button"
-                      style={styles.iconButton}
+                      style={railStyles.iconButton}
                       title="Remove from this list"
                       onClick={() => setPending({ kind: 'removing', plot })}
                     >
@@ -246,6 +249,8 @@ export default function SavedPlotsRail({
             })}
           </div>
         )}
+
+        {children}
       </div>
     </div>
   )
@@ -253,13 +258,14 @@ export default function SavedPlotsRail({
 
 interface NameBoxProps {
   initial: string
+  placeholder?: string
   actionLabel: string
   busy: boolean
   onSubmit: (name: string) => void | Promise<void>
   onCancel: () => void
 }
 
-function NameBox({ initial, actionLabel, busy, onSubmit, onCancel }: NameBoxProps) {
+export function NameBox({ initial, placeholder = 'Plot name', actionLabel, busy, onSubmit, onCancel }: NameBoxProps) {
   const [text, setText] = useState(initial)
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -268,23 +274,23 @@ function NameBox({ initial, actionLabel, busy, onSubmit, onCancel }: NameBoxProp
   }, [])
   const submit = () => { void onSubmit(text) }
   return (
-    <div style={styles.nameBox}>
+    <div style={railStyles.nameBox}>
       <input
         ref={input}
-        style={styles.input}
+        style={railStyles.input}
         value={text}
-        placeholder="Plot name"
+        placeholder={placeholder}
         onChange={e => setText(e.target.value)}
         onKeyDown={e => {
           if (e.key === 'Enter') submit()
           if (e.key === 'Escape') onCancel()
         }}
       />
-      <div style={styles.buttonRow}>
-        <button type="button" style={styles.primaryButton} onClick={submit} disabled={busy}>
+      <div style={railStyles.buttonRow}>
+        <button type="button" style={railStyles.primaryButton} onClick={submit} disabled={busy}>
           {actionLabel}
         </button>
-        <button type="button" style={styles.headerButton} onClick={onCancel}>
+        <button type="button" style={railStyles.headerButton} onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -299,15 +305,15 @@ interface QuestionProps {
   onCancel: () => void
 }
 
-function Question({ text, confirmLabel, onConfirm, onCancel }: QuestionProps) {
+export function Question({ text, confirmLabel, onConfirm, onCancel }: QuestionProps) {
   return (
-    <div style={styles.question}>
+    <div style={railStyles.question}>
       <div>{text}</div>
-      <div style={styles.buttonRow}>
-        <button type="button" style={styles.primaryButton} onClick={onConfirm}>
+      <div style={railStyles.buttonRow}>
+        <button type="button" style={railStyles.primaryButton} onClick={onConfirm}>
           {confirmLabel}
         </button>
-        <button type="button" style={styles.headerButton} onClick={onCancel}>
+        <button type="button" style={railStyles.headerButton} onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -315,7 +321,8 @@ function Question({ text, confirmLabel, onConfirm, onCancel }: QuestionProps) {
   )
 }
 
-const styles: Record<string, React.CSSProperties> = {
+/** Shared with PresetsSection, so the two halves of the column look alike. */
+export const railStyles: Record<string, React.CSSProperties> = {
   rail: {
     width: 230, flexShrink: 0, display: 'flex', flexDirection: 'column',
     minHeight: 0, borderLeft: '1px solid var(--ps-border)',

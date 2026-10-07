@@ -21,7 +21,8 @@ out into several figures (ITERATE) is still one saved plot.
 | Reading a stored spec whose shape may have drifted | `scistackplot/restore.py`: `restore_spec` | `scistackplotdb.saved` |
 | Checking a restored spec against today's data | `scistackplot/restore.py`: `reconcile` (roles through `variants.stale_role_names`) | `scistackplotdb.saved` |
 | "Which roles no longer name a factor?" | `scistackplot/variants.py`: `stale_role_names` | `strip_answered_roles` (acts at resolve), `reconcile` (reports) |
-| Storage, versions, names, hiding | `scistackplotdb/saved.py` | GUI service, scripts |
+| Storage rules: versions, names, hiding (shared with presets, 2026-10-06) | `scistackplotdb/_versioned.py`: `VersionedStore` | `scistackplotdb/saved.py`, `scistackplotdb/presets.py` |
+| Saved-plot rows, envelope, opening | `scistackplotdb/saved.py` | GUI service, scripts |
 | What a valid name is, and whether it clashes | `scistackplotdb.saved.check_name`, `SavedPlotExists` | GUI (displays the answer) |
 | JSON adapter + loading the table with the panel's cached source | `scistack_gui/services/saved_plot_service.py` | the six `plot_saved_*` handlers in `api/plot.py` |
 | View settings (preview mode, aspect choice, figure index): meaning + lenient read | `frontend/.../PlotStudio/savedPlots.ts` | `PlotStudio.tsx` |

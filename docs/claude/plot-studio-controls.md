@@ -58,7 +58,7 @@ The design history is in `.claude/plot-studio-sidebar-redesign.md`.
 | **Figure toolbar** | — | Preview at (default Fit pane), W, H, unit (in/mm/px) | view state `previewMode`; W/H write `style.{width,height}` via `commitSize`; unit is per-viewer localStorage `scistack.plotStudio.sizeUnit` |
 | | — | Format, Save image / Save all, Save data (CSV) + depth chooser, Export code, Add to pipeline | actions, nothing in the spec |
 
-Right rail: Saved plots (`SavedPlotsRail.tsx`), unchanged.
+Right rail: Saved plots (`SavedPlotsRail.tsx`), then Presets (`PresetsSection.tsx`, its `children`; docs/claude/plot-presets.md).
 
 ## Why each control sits where it does
 

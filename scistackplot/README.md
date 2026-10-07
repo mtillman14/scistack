@@ -164,6 +164,24 @@ never raises, except when there is no usable measure and no
 them. It reports stale roles and leaves them in place, because resolve drops
 them itself. See `docs/claude/saved-plots.md`.
 
+## Presets: the settings without the data
+
+`make_template` takes a spec's settings without the variable: no measure,
+no variant rows, no title, y label or y limits. `apply_preset` draws another
+variable with them and checks the result against that variable's data:
+
+```python
+from scistackplot import apply_preset, make_template
+
+template = make_template(step_length_spec)            # plain JSON
+applied = apply_preset(template, PlotSpec(measures=["StepWidth"]), table=width_table)
+applied.spec, applied.notes   # notes: roles the data lacks, a kind it cannot draw, ...
+```
+
+`presets.FIELD_CLASSES` is the one statement of which settings travel. The
+GUI's Presets section and `scistackplotdb.save_preset` store templates in
+the project database. See `docs/claude/plot-presets.md`.
+
 ## Arranging the subplots
 
 Faceted panels flow in order by default, wrapping at `FacetOptions.wrap`. When

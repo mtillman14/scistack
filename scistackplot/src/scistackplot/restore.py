@@ -57,6 +57,9 @@ class NoteKind(str, Enum):
     MEASURE_REPLACED = "measure_replaced"
     #: The setting names something today's data does not have (:func:`reconcile`).
     NOT_IN_DATA = "not_in_data"
+    #: The plot kind cannot draw this variable; the default kind is used
+    #: (:func:`scistackplot.presets.apply_preset`).
+    KIND_UNAVAILABLE = "kind_unavailable"
 
     def __str__(self) -> str:
         return self.value

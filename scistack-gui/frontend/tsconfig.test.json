@@ -46,6 +46,8 @@
     "src/components/PlotStudio/preview.test.ts",
     "src/components/PlotStudio/savedPlots.ts",
     "src/components/PlotStudio/savedPlots.test.ts",
+    "src/components/PlotStudio/presets.ts",
+    "src/components/PlotStudio/presets.test.ts",
     "src/components/PlotStudio/textSizes.ts",
     "src/components/PlotStudio/textSizes.test.ts",
     "src/components/PlotStudio/aliasEdit.ts",

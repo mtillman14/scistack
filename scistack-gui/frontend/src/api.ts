@@ -324,6 +324,14 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     plot_saved_rename:      { path: '/api/plot/saved/rename', method: 'POST', body: true },
     plot_saved_hide:        { path: '/api/plot/saved/hide', method: 'POST', body: true },
     plot_saved_history:     { path: '/api/plot/saved/history', method: 'POST', body: true },
+    // Plot presets: settings without the data, project-wide; applied to any
+    // variable (.claude/plan-plot-presets.md). "hide" is Remove.
+    plot_preset_list:       { path: '/api/plot/presets/list', method: 'POST', body: true },
+    plot_preset_save:       { path: '/api/plot/presets/save', method: 'POST', body: true },
+    plot_preset_apply:      { path: '/api/plot/presets/apply', method: 'POST', body: true },
+    plot_preset_rename:     { path: '/api/plot/presets/rename', method: 'POST', body: true },
+    plot_preset_hide:       { path: '/api/plot/presets/hide', method: 'POST', body: true },
+    plot_preset_history:    { path: '/api/plot/presets/history', method: 'POST', body: true },
     // One edit to the project's [aliases] in scistack.toml (scidb.aliases).
     plot_project_alias_set: { path: '/api/plot/project-alias', method: 'POST', body: true },
     plot_project_color_set: { path: '/api/plot/project-color', method: 'POST', body: true },

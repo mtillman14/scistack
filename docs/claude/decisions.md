@@ -8,6 +8,30 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-06-1 — Plot presets: one field partition, the saved-plot store and salvage path
+
+**Context.** Saved plots keep settings + data for one variable. Users want
+the settings alone, applied to a new variable. Two risks: the "what is the
+data?" rule written twice (save and apply drifting), and a second copy of
+the named/versioned/hidden storage rules.
+
+**Decision.**
+- `scistackplot.presets.FIELD_CLASSES` classifies every spec setting as
+  DATA, VARIABLE_TEXT, REBASED or TEMPLATE. Save strips with it, apply fills
+  from the target with it. A guard test fails on an unclassified field.
+- Title, y label and y limits (incl. per-panel ones and the measure's own
+  alias) stay with the variable (user, D2). Applying replaces every
+  template setting (user, D3). Project database only (user, D1).
+- Apply = `restore_spec` + `reconcile` + kind fallback via `capabilities`.
+  There is no preset-specific drift code.
+- `scistackplotdb._versioned.VersionedStore` owns the storage rules for
+  both `_saved_plot` and `_plot_preset`. `saved.py` was moved onto it with
+  its API unchanged.
+
+**Consequences.** A new spec field must be classified. A preset applies with
+notes rather than failing. Applying in the GUI is one undo step. See
+`docs/claude/plot-presets.md`.
+
 ## D-2026-10-03-1 — Undo records state diffs at the handler choke point
 
 **Context.** Undo/redo was needed across the DAG canvas and Plot Studio, and

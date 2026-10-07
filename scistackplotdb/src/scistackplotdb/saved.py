@@ -30,13 +30,12 @@ open; only an explicit save writes. See ``.claude/plan-saved-plots.md``.
 
 from __future__ import annotations
 
-import json
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 from scistacklog import Log
+
+from ._versioned import MAX_NAME_LENGTH, VersionedStore  # noqa: F401  (re-exported)
 
 LAYER = "scistackplotdb"
 
@@ -45,9 +44,6 @@ TABLE = "_saved_plot"
 #: The envelope's layout version. Written on every save and logged on every
 #: load; nothing branches on it (salvage, never migrate).
 ENVELOPE_FORMAT = 1
-
-#: Longest name accepted. A name is a list label, not a description.
-MAX_NAME_LENGTH = 120
 
 
 class SavedPlotError(ValueError):
@@ -122,31 +118,27 @@ class SavedPlot:
 # Table
 # ---------------------------------------------------------------------------
 
+#: The rules (names, versions, hiding, never deleting) live in `_versioned`,
+#: shared with presets so the two stores cannot drift apart.
+STORE = VersionedStore(
+    table=TABLE,
+    id_column="plot_id",
+    scope_column="variable",
+    noun="saved plot",
+    tag="saved_plot",
+    error=SavedPlotError,
+)
+
 
 def ensure_table(db) -> None:
     """Create ``_saved_plot`` if absent. Called by every write."""
-    db._duck._execute(f"""
-        CREATE TABLE IF NOT EXISTS {TABLE} (
-            plot_id       VARCHAR NOT NULL,
-            variable      VARCHAR NOT NULL,
-            name          VARCHAR NOT NULL,
-            version       INTEGER NOT NULL,
-            saved_at      VARCHAR NOT NULL,
-            hidden        BOOLEAN NOT NULL DEFAULT FALSE,
-            envelope_json VARCHAR NOT NULL,
-            PRIMARY KEY (plot_id, version)
-        )
-    """)
+    STORE.ensure_table(db)
 
 
 def _table_exists(db) -> bool:
     """Reads never create the table: listing an untouched database must not
     write to it."""
-    row = db._duck._fetchone(
-        "SELECT count(*) FROM information_schema.tables WHERE table_name = ?",
-        [TABLE],
-    )
-    return bool(row and row[0])
+    return STORE.table_exists(db)
 
 
 # ---------------------------------------------------------------------------
@@ -200,94 +192,28 @@ def save_plot(
         "view": view,
         "saved_with": {"scistackplot": plot_version},
     }
-    try:
-        text = json.dumps(envelope, sort_keys=True)
-    except (TypeError, ValueError) as exc:
-        raise SavedPlotError(f"The plot's settings are not storable as JSON: {exc}") from exc
-
-    ensure_table(db)
-    current = _visible_by_name(db, variable, name)
-    if current is not None and not overwrite and current.plot_id != current_plot_id:
-        Log.info(
-            "[saved_plot] save of %s / %r refused: another plot (%s) has that "
-            "name and overwrite was not confirmed",
-            variable,
-            name,
-            current.plot_id[:8],
-            layer=LAYER,
-        )
-        raise SavedPlotExists(current)
-    plot_id = current.plot_id if current else uuid.uuid4().hex
-    saved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    # One statement: the next version number is decided inside the insert, so
-    # two saves racing on one plot cannot both claim the same version.
-    db._duck._execute(
-        f"""
-        INSERT INTO {TABLE} (plot_id, variable, name, version, saved_at, hidden, envelope_json)
-        SELECT ?, ?, ?, COALESCE(MAX(version), 0) + 1, ?, FALSE, ?
-        FROM {TABLE} WHERE plot_id = ?
-        """,
-        [plot_id, variable, name, saved_at, text, plot_id],
-    )
-    info = _latest_info(db, plot_id)
-    Log.info(
-        "[saved_plot] saved %s / %r as version %d (%s, %d bytes, envelope format %d)",
+    row, _new = STORE.save(
+        db,
         variable,
         name,
-        info.version,
-        "new plot" if current is None else f"plot {plot_id[:8]}",
-        len(text),
-        ENVELOPE_FORMAT,
-        layer=LAYER,
+        envelope,
+        overwrite=overwrite,
+        current_id=current_plot_id,
+        on_clash=lambda clash: SavedPlotExists(_info(clash)),
     )
-    return info
+    return _info(row)
 
 
 def rename_saved_plot(db, plot_id: str, new_name: str) -> SavedPlotInfo:
     """Rename a plot (every version). Refused when another visible plot of
     the same variable already has that name."""
-    new_name = check_name(new_name)
-    info = _require(db, plot_id)
-    clash = _visible_by_name(db, info.variable, new_name)
-    if clash is not None and clash.plot_id != plot_id:
-        raise SavedPlotError(
-            f"{info.variable} already has a saved plot named {new_name!r}."
-        )
-    db._duck._execute(f"UPDATE {TABLE} SET name = ? WHERE plot_id = ?", [new_name, plot_id])
-    Log.info(
-        "[saved_plot] renamed %s / %r -> %r (plot %s)",
-        info.variable,
-        info.name,
-        new_name,
-        plot_id[:8],
-        layer=LAYER,
-    )
-    return _latest_info(db, plot_id)
+    return _info(STORE.rename(db, plot_id, new_name))
 
 
 def hide_saved_plot(db, plot_id: str, hidden: bool = True) -> SavedPlotInfo:
     """Remove a plot from the list, keeping every row. ``hidden=False``
     brings it back."""
-    info = _require(db, plot_id)
-    if not hidden:
-        clash = _visible_by_name(db, info.variable, info.name)
-        if clash is not None and clash.plot_id != plot_id:
-            raise SavedPlotError(
-                f"{info.variable} already has a saved plot named {info.name!r}; "
-                f"rename one of them first."
-            )
-    db._duck._execute(
-        f"UPDATE {TABLE} SET hidden = ? WHERE plot_id = ?", [bool(hidden), plot_id]
-    )
-    Log.info(
-        "[saved_plot] %s %s / %r (plot %s)",
-        "hid" if hidden else "unhid",
-        info.variable,
-        info.name,
-        plot_id[:8],
-        layer=LAYER,
-    )
-    return _latest_info(db, plot_id)
+    return _info(STORE.set_hidden(db, plot_id, hidden))
 
 
 # ---------------------------------------------------------------------------
@@ -297,42 +223,12 @@ def hide_saved_plot(db, plot_id: str, hidden: bool = True) -> SavedPlotInfo:
 
 def list_saved_plots(db, variable: str, *, include_hidden: bool = False) -> list[SavedPlotInfo]:
     """The newest version of each saved plot of *variable*, newest first."""
-    if not _table_exists(db):
-        return []
-    rows = db._duck._fetchall(
-        f"""
-        SELECT plot_id, variable, name, version, saved_at, hidden
-        FROM {TABLE} AS t
-        WHERE variable = ?
-          AND version = (SELECT MAX(version) FROM {TABLE} WHERE plot_id = t.plot_id)
-          {"" if include_hidden else "AND NOT hidden"}
-        ORDER BY saved_at DESC, name
-        """,
-        [variable],
-    )
-    plots = [_info(row) for row in rows]
-    Log.debug(
-        "[saved_plot] %s: %d saved plot(s) listed%s",
-        variable,
-        len(plots),
-        " (hidden included)" if include_hidden else "",
-        layer=LAYER,
-    )
-    return plots
+    return [_info(row) for row in STORE.list_rows(db, variable, include_hidden=include_hidden)]
 
 
 def saved_plot_history(db, plot_id: str) -> list[SavedPlotInfo]:
     """Every version of one plot, newest first."""
-    if not _table_exists(db):
-        return []
-    rows = db._duck._fetchall(
-        f"""
-        SELECT plot_id, variable, name, version, saved_at, hidden
-        FROM {TABLE} WHERE plot_id = ? ORDER BY version DESC
-        """,
-        [plot_id],
-    )
-    return [_info(row) for row in rows]
+    return [_info(row) for row in STORE.history(db, plot_id)]
 
 
 def load_saved_plot(
@@ -361,29 +257,11 @@ def load_saved_plot(
     """
     from scistackplot import NoteKind, RestoreNote, reconcile, restore_spec
 
-    if not _table_exists(db):
-        raise SavedPlotError(f"No saved plot {plot_id!r}: nothing has been saved yet.")
-    if version is None:
-        row = db._duck._fetchone(
-            f"""
-            SELECT plot_id, variable, name, version, saved_at, hidden, envelope_json
-            FROM {TABLE} WHERE plot_id = ? ORDER BY version DESC LIMIT 1
-            """,
-            [plot_id],
-        )
-    else:
-        row = db._duck._fetchone(
-            f"""
-            SELECT plot_id, variable, name, version, saved_at, hidden, envelope_json
-            FROM {TABLE} WHERE plot_id = ? AND version = ?
-            """,
-            [plot_id, int(version)],
-        )
-    if row is None:
-        which = f"version {version} of " if version is not None else ""
-        raise SavedPlotError(f"No saved plot {which}{plot_id!r}.")
-    info = _info(row[:6])
-    envelope = _parse_envelope(row[6], info)
+    row, text = STORE.load(db, plot_id, version)
+    info = _info(row)
+    envelope = STORE.parse_envelope(
+        text, f"{info.variable} / {info.name!r} version {info.version}"
+    )
 
     restored = restore_spec(envelope.get("spec"), fallback_measure=info.variable)
     spec, notes = restored.spec, list(restored.notes)
@@ -448,20 +326,10 @@ def load_saved_plot(
 def check_name(name: Any) -> str:
     """A saved plot's name, trimmed, or :class:`SavedPlotError` saying why not.
 
-    The one statement of what a name may be; the GUI asks the backend rather
-    than repeating the rule.
+    The one statement of what a name may be (``VersionedStore.check_name``);
+    the GUI asks the backend rather than repeating the rule.
     """
-    if not isinstance(name, str):
-        raise SavedPlotError("A saved plot needs a name.")
-    name = " ".join(name.split())  # trim, and no tabs/newlines in a list label
-    if not name:
-        raise SavedPlotError("A saved plot needs a name.")
-    if len(name) > MAX_NAME_LENGTH:
-        raise SavedPlotError(
-            f"A saved plot's name is at most {MAX_NAME_LENGTH} characters "
-            f"(this one is {len(name)})."
-        )
-    return name
+    return STORE.check_name(name)
 
 
 def _check_text(value: Any, what: str) -> str:
@@ -480,66 +348,3 @@ def _info(row) -> SavedPlotInfo:
         saved_at=str(saved_at),
         hidden=bool(hidden),
     )
-
-
-def _visible_by_name(db, variable: str, name: str) -> SavedPlotInfo | None:
-    """The visible plot of *variable* called *name*, if any."""
-    if not _table_exists(db):
-        return None
-    row = db._duck._fetchone(
-        f"""
-        SELECT plot_id, variable, name, version, saved_at, hidden
-        FROM {TABLE}
-        WHERE variable = ? AND name = ? AND NOT hidden
-        ORDER BY version DESC LIMIT 1
-        """,
-        [variable, name],
-    )
-    return _info(row) if row else None
-
-
-def _latest_info(db, plot_id: str) -> SavedPlotInfo:
-    row = db._duck._fetchone(
-        f"""
-        SELECT plot_id, variable, name, version, saved_at, hidden
-        FROM {TABLE} WHERE plot_id = ? ORDER BY version DESC LIMIT 1
-        """,
-        [plot_id],
-    )
-    if row is None:
-        raise SavedPlotError(f"No saved plot {plot_id!r}.")
-    return _info(row)
-
-
-def _require(db, plot_id: str) -> SavedPlotInfo:
-    if not _table_exists(db):
-        raise SavedPlotError(f"No saved plot {plot_id!r}: nothing has been saved yet.")
-    return _latest_info(db, plot_id)
-
-
-def _parse_envelope(text: str, info: SavedPlotInfo) -> dict:
-    """The stored envelope as a dict. A row that is not one opens on
-    defaults, via ``restore_spec``'s fallback, rather than failing the open."""
-    try:
-        envelope = json.loads(text)
-    except (TypeError, ValueError) as exc:
-        Log.warn(
-            "[saved_plot] %s / %r version %d: stored envelope is not JSON (%s)",
-            info.variable,
-            info.name,
-            info.version,
-            exc,
-            layer=LAYER,
-        )
-        return {}
-    if not isinstance(envelope, dict):
-        Log.warn(
-            "[saved_plot] %s / %r version %d: stored envelope is %s, not a table",
-            info.variable,
-            info.name,
-            info.version,
-            type(envelope).__name__,
-            layer=LAYER,
-        )
-        return {}
-    return envelope

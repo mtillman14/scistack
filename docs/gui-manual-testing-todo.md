@@ -11,6 +11,49 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzz. Plot presets: save settings without the data, apply to another variable — added 2026-10-06
+
+**What changed:** Plot Studio's right-hand column has a **Presets** section
+under Saved plots (`docs/claude/plot-presets.md`). "Save settings as
+preset…" keeps everything except the variable, its variants, the title, the
+y label and the y limits. Clicking a preset applies it to the open plot.
+
+**Backend:**
+- Reload the VS Code window to load the backend. Both frontend bundles are
+  rebuilt; no build is needed.
+- scidb.log should show `[preset] template made from <var>: ...` on save,
+  `[preset] applied '<name>' to <var>: N note(s), kind ...` on apply, and
+  one `[apply_preset]`/`[reconcile]` WARN per note.
+
+**Frontend (Plot Studio, own tab):**
+1. Open a scalar variable (e.g. StepLength). Set roles, kind = box, a figure
+   size, text sizes, a colour, a title "Length" and a y max. Click **Save
+   settings as preset…**, name it "Session box". It lists as "made on
+   StepLength (scalar)".
+2. Open another scalar variable (e.g. StepWidth) and type a title "Width".
+   Click "Session box". The figure takes the preset's kind, roles, size and
+   colours. **The title stays "Width"** and the y axis autoscales (the y max
+   was not carried). The banner says `Applied "Session box".`
+3. Press Cmd/Ctrl+Z (outside a text field). The settings from before the
+   apply come back in one step.
+4. Open a 1-D variable. "Session box" shows ⚠ with a tooltip explaining the
+   shape differs. Apply it: it still draws (box of per-cell values). Expand
+   **Details** to see any notes.
+5. Open a variable at a coarser level (e.g. subject-level). Apply the preset.
+   The banner counts the settings "not in this variable's data". Details
+   names `roles.session` etc. The figure still draws.
+6. Save another preset under the name "Session box": you are asked whether
+   to add a version to it. Rename and remove (✕) a preset. Remove says it is
+   hidden, not deleted.
+7. Open a saved plot, apply a preset, then click Save. The saved plot gets a
+   new version with the preset's settings.
+8. A CSV plot shows no Presets section (no database).
+
+**You should see:** the Variants section unchanged by applying a preset
+(the variant pins are the variable's own).
+
+---
+
 ## 0zzy. Undo / redo on the canvas and in Plot Studio — added 2026-10-03
 
 **What changed:** Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z and Ctrl+Y, plus ↶/↷ buttons,

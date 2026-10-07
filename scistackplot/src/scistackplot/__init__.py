@@ -95,6 +95,7 @@ from .roles import (
     with_requirements_for,
 )
 from .restore import NoteKind, RestoreError, RestoreNote, Restored, reconcile, restore_spec
+from .presets import FieldClass, apply_preset, make_template, shape_warning
 from .compare import CompareMode, Comparison
 from .diffbars import DifferenceBar, bars_for_panel, slot_endpoints
 from .panels import PanelOverride, override_for
@@ -193,6 +194,11 @@ __all__ = [
     "RestoreNote",
     "RestoreError",
     "NoteKind",
+    # presets: settings without the data (docs/claude/plot-presets.md)
+    "make_template",
+    "apply_preset",
+    "shape_warning",
+    "FieldClass",
     "FacetOptions",
     "YAxis",
     # per-panel overrides (docs/claude/per-panel-overrides.md)

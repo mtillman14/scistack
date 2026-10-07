@@ -35,6 +35,8 @@ import {
 } from './locationSelection'
 import { orderGroups, placeGroupLayer } from './groups'
 import SavedPlotsRail, { type SaveResult } from './SavedPlotsRail'
+import PresetsSection, { type PresetSaveResult } from './PresetsSection'
+import type { AppliedPreset, PresetInfo } from './presets'
 import {
   isModified,
   iterateSignature as iterateSignatureOf,
@@ -931,6 +933,14 @@ export default function PlotStudio({
   const [restoreNotes, setRestoreNotes] = useState<RestoreNote[]>([])
   const [savedBusy, setSavedBusy] = useState(false)
   const [savedError, setSavedError] = useState('')
+  // Plot presets (.claude/plan-plot-presets.md): settings without the data,
+  // project-wide. The backend decides what a preset keeps and how it fits
+  // this variable; the panel only applies the spec it is handed.
+  const [plotPresets, setPlotPresets] = useState<PresetInfo[]>([])
+  const [appliedPreset, setAppliedPreset] = useState<PresetInfo | null>(null)
+  const [presetNotes, setPresetNotes] = useState<RestoreNote[]>([])
+  const [presetBusy, setPresetBusy] = useState(false)
+  const [presetError, setPresetError] = useState('')
   // `modifiedKey` of the settings as last opened or saved. Null = always
   // modified (a plot restored with notes is not in the current format yet).
   const [baseline, setBaseline] = useState<string | null>(null)
@@ -2577,6 +2587,106 @@ export default function PlotStudio({
     }
   }, [loadedPlot])
 
+  // --- presets --------------------------------------------------------------
+  // The variable's raw shape, so the list can warn about a preset made on a
+  // differently shaped variable (`scistackplot.shape_warning` decides).
+  const rawShape = capabilities?.raw_shape ?? null
+
+  useEffect(() => {
+    setAppliedPreset(null)
+    setPresetNotes([])
+  }, [savedVariable])
+
+  useEffect(() => {
+    if (!savedVariable) { setPlotPresets([]); return }
+    let cancelled = false
+    callBackend('plot_preset_list', { shape: rawShape })
+      .then(raw => {
+        if (!cancelled) setPlotPresets((raw as { presets: PresetInfo[] }).presets ?? [])
+      })
+      .catch(err => !cancelled && setPresetError(`Could not list presets: ${(err as Error).message}`))
+    return () => { cancelled = true }
+  }, [savedVariable, rawShape])
+
+  const savePreset = useCallback(
+    async (name: string, overwrite: boolean): Promise<PresetSaveResult> => {
+      if (!spec || !savedVariable) return { ok: false }
+      setPresetBusy(true)
+      setPresetError('')
+      try {
+        const result = (await callBackend('plot_preset_save', {
+          name,
+          spec,
+          made_on_shape: rawShape,
+          overwrite,
+          current_preset_id: appliedPreset?.preset_id ?? null,
+        })) as { ok: boolean; preset?: PresetInfo; presets?: PresetInfo[]; exists?: PresetInfo }
+        if (!result.ok) return { ok: false, exists: result.exists }
+        setPlotPresets(result.presets ?? [])
+        console.info(`[PlotStudio] saved preset "${name}" v${result.preset?.version}`)
+        return { ok: true }
+      } catch (err) {
+        setPresetError(`Could not save the preset: ${(err as Error).message}`)
+        return { ok: false }
+      } finally {
+        setPresetBusy(false)
+      }
+    },
+    [spec, savedVariable, rawShape, appliedPreset]
+  )
+
+  const applyPreset = useCallback((presetId: string) => {
+    if (!spec) return
+    setPresetBusy(true)
+    setPresetError('')
+    callBackend('plot_preset_apply', { preset_id: presetId, spec })
+      .then(raw => {
+        const result = raw as AppliedPreset
+        const { spec: applied, notes, ...info } = result.preset
+        console.info(
+          `[PlotStudio] applied preset "${info.name}" v${info.version}: ${notes.length} note(s)`,
+          notes
+        )
+        // A user edit, so one undo step restores the settings from before.
+        setSpec(applied as Spec)
+        if (result.capabilities) {
+          setCapabilities(result.capabilities as Capabilities)
+          capsSpecRef.current = JSON.stringify(applied)
+        }
+        setAppliedPreset(info as PresetInfo)
+        setPresetNotes(notes)
+      })
+      .catch(err => setPresetError(`Could not apply: ${(err as Error).message}`))
+      .finally(() => setPresetBusy(false))
+  }, [spec, setSpec])
+
+  const renamePreset = useCallback(async (presetId: string, name: string): Promise<boolean> => {
+    setPresetError('')
+    try {
+      const result = (await callBackend('plot_preset_rename', {
+        preset_id: presetId, name, shape: rawShape,
+      })) as { preset: PresetInfo; presets: PresetInfo[] }
+      setPlotPresets(result.presets ?? [])
+      setAppliedPreset(current => (current?.preset_id === presetId ? result.preset : current))
+      return true
+    } catch (err) {
+      setPresetError(`Could not rename: ${(err as Error).message}`)
+      return false
+    }
+  }, [rawShape])
+
+  const removePreset = useCallback(async (presetId: string) => {
+    setPresetError('')
+    try {
+      const result = (await callBackend('plot_preset_hide', {
+        preset_id: presetId, shape: rawShape,
+      })) as { presets: PresetInfo[] }
+      setPlotPresets(result.presets ?? [])
+    } catch (err) {
+      setPresetError(`Could not remove: ${(err as Error).message}`)
+    }
+  }, [rawShape])
+
   const savedRail = savedVariable ? (
     <SavedPlotsRail
       collapsed={savedRailCollapsed}
@@ -2592,7 +2702,20 @@ export default function PlotStudio({
       onRename={renameSaved}
       onRemove={removeSaved}
       onDismissNotes={() => setRestoreNotes([])}
-    />
+    >
+      <PresetsSection
+        presets={plotPresets}
+        applied={appliedPreset}
+        notes={presetNotes}
+        busy={presetBusy}
+        error={presetError}
+        onSave={savePreset}
+        onApply={applyPreset}
+        onRename={renamePreset}
+        onRemove={removePreset}
+        onDismissNotes={() => { setAppliedPreset(null); setPresetNotes([]) }}
+      />
+    </SavedPlotsRail>
   ) : null
 
   // --- render -------------------------------------------------------------

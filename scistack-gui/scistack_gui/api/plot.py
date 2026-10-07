@@ -27,6 +27,12 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/plot/saved/rename             plot_saved_rename
     POST /api/plot/saved/hide               plot_saved_hide
     POST /api/plot/saved/history            plot_saved_history
+    POST /api/plot/presets/list             plot_preset_list
+    POST /api/plot/presets/save             plot_preset_save
+    POST /api/plot/presets/apply            plot_preset_apply
+    POST /api/plot/presets/rename           plot_preset_rename
+    POST /api/plot/presets/hide             plot_preset_hide
+    POST /api/plot/presets/history          plot_preset_history
     POST /api/plot/project-alias            plot_project_alias_set
     POST /api/plot/project-color            plot_project_color_set
     POST /api/client-error                  report_client_error
@@ -51,7 +57,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from scistack_gui.api.handlers import Handler, install_routes
-from scistack_gui.services import plot_service, saved_plot_service
+from scistack_gui.services import plot_preset_service, plot_service, saved_plot_service
 from scistack_gui.services.client_errors import report_client_error
 
 logger = logging.getLogger(__name__)
@@ -220,6 +226,45 @@ class SavedHistoryRequest(BaseModel):
     plot_id: str
 
 
+class PresetListRequest(BaseModel):
+    #: The panel's raw shape ("scalar", "1d", ...), for each preset's
+    #: shape warning. None = no warnings.
+    shape: str | None = None
+
+
+class PresetSaveRequest(BaseModel):
+    name: str
+    #: The panel's full spec; the data is taken out by scistackplot.presets.
+    spec: dict
+    #: The panel's raw shape, recorded as "made on ... (shape)".
+    made_on_shape: str | None = None
+    overwrite: bool | None = True
+    current_preset_id: str | None = None
+
+
+class PresetApplyRequest(BaseModel):
+    preset_id: str
+    #: The panel's CURRENT spec: its data and variable text are kept.
+    spec: dict
+    version: int | None = None
+
+
+class PresetRenameRequest(BaseModel):
+    preset_id: str
+    name: str
+    shape: str | None = None
+
+
+class PresetHideRequest(BaseModel):
+    preset_id: str
+    hidden: bool | None = True
+    shape: str | None = None
+
+
+class PresetHistoryRequest(BaseModel):
+    preset_id: str
+
+
 class ClientErrorRequest(BaseModel):
     where: str | None = "webview"
     message: str | None = ""
@@ -382,6 +427,37 @@ def _saved_history(db, req: SavedHistoryRequest) -> dict:
     return saved_plot_service.history(db, req.plot_id)
 
 
+def _preset_list(db, req: PresetListRequest) -> dict:
+    return plot_preset_service.list_presets(db, req.shape)
+
+
+def _preset_save(db, req: PresetSaveRequest) -> dict:
+    return plot_preset_service.save(
+        db,
+        req.name,
+        req.spec,
+        made_on_shape=req.made_on_shape,
+        overwrite=req.overwrite is not False,
+        current_preset_id=req.current_preset_id,
+    )
+
+
+def _preset_apply(db, req: PresetApplyRequest) -> dict:
+    return plot_preset_service.apply(db, req.preset_id, req.spec, req.version)
+
+
+def _preset_rename(db, req: PresetRenameRequest) -> dict:
+    return plot_preset_service.rename(db, req.preset_id, req.name, req.shape)
+
+
+def _preset_hide(db, req: PresetHideRequest) -> dict:
+    return plot_preset_service.hide(db, req.preset_id, req.hidden is not False, req.shape)
+
+
+def _preset_history(db, req: PresetHistoryRequest) -> dict:
+    return plot_preset_service.history(db, req.preset_id)
+
+
 def _project_alias_set(req: ProjectAliasRequest) -> dict:
     return plot_service.set_project_alias(
         req.thing,
@@ -503,6 +579,33 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_saved_history", "/plot/saved/history", SavedHistoryRequest,
         _saved_history, http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    # Plot presets (.claude/plan-plot-presets.md): the same policy as saved
+    # plots. `plot_preset_apply` loads the target's data frames, so it takes
+    # the connection itself; `PresetError` is a ValueError (a 400).
+    Handler(
+        "plot_preset_list", "/plot/presets/list", PresetListRequest, _preset_list,
+        http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    Handler(
+        "plot_preset_save", "/plot/presets/save", PresetSaveRequest, _preset_save,
+        http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    Handler(
+        "plot_preset_apply", "/plot/presets/apply", PresetApplyRequest, _preset_apply,
+        holds_db_lock=False, http_errors={**_BAD_REQUEST, **_NOT_INSTALLED}, undoable=False,
+    ),
+    Handler(
+        "plot_preset_rename", "/plot/presets/rename", PresetRenameRequest,
+        _preset_rename, http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    Handler(
+        "plot_preset_hide", "/plot/presets/hide", PresetHideRequest, _preset_hide,
+        http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    Handler(
+        "plot_preset_history", "/plot/presets/history", PresetHistoryRequest,
+        _preset_history, http_errors=_BAD_REQUEST, undoable=False,
     ),
     # Writes scistack.toml, never the database: the project's display aliases
     # (scidb.aliases). A refusal (packaged project, no config) is an
