@@ -502,7 +502,6 @@ def record_run(
     *,
     function_name: str,
     where_clause: str | None,
-    user_id: str | None,
     glue_virtual: dict | None = None,
     glue_chains: dict | None = None,
     parameter_names: dict | None = None,
@@ -856,7 +855,6 @@ def record_run(
         duck,
         run_id,
         created_at,
-        user_id,
         function_name,
         where_clause,
         entity_rows,
@@ -988,7 +986,6 @@ def _commit_graph(
     duck,
     run_id,
     created_at,
-    user_id,
     function_name,
     where_clause,
     entity_rows,
@@ -1162,9 +1159,9 @@ def _commit_graph(
         from .intent import current_origin
 
         duck.con.execute(
-            "INSERT INTO _run (run_id, timestamp, user_id, function_name, "
-            "where_clause, origin) VALUES (?, ?, ?, ?, ?, ?)",
-            [run_id, created_at, user_id, function_name, where_clause, current_origin()],
+            "INSERT INTO _run (run_id, timestamp, function_name, "
+            "where_clause, origin) VALUES (?, ?, ?, ?, ?)",
+            [run_id, created_at, function_name, where_clause, current_origin()],
         )
         _timed(
             "3f_run_invocation",

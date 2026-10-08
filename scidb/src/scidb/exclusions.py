@@ -116,8 +116,8 @@ def list_exclusions(db: DatabaseManager | None = None):
         db: DatabaseManager (defaults to ``get_database()``).
 
     Returns:
-        pandas.DataFrame with schema-key columns plus ``reason``,
-        ``changed_at``, and ``changed_by`` columns.
+        pandas.DataFrame with schema-key columns plus ``reason`` and
+        ``changed_at`` columns.
     """
     db = _get_db(db)
     schema_keys = db.dataset_schema_keys
@@ -133,7 +133,7 @@ def list_exclusions(db: DatabaseManager | None = None):
                    ) AS rn
             FROM {_TABLE}
         )
-        SELECT {key_cols}, reason, changed_at, changed_by
+        SELECT {key_cols}, reason, changed_at
         FROM latest
         WHERE rn = 1 AND status = FALSE
         ORDER BY changed_at DESC
@@ -299,8 +299,7 @@ def ensure_overrides_table(db: DatabaseManager) -> None:
             {schema_cols},
             status     BOOLEAN   NOT NULL,
             reason     TEXT      NOT NULL,
-            changed_at TIMESTAMP NOT NULL,
-            changed_by TEXT
+            changed_at TIMESTAMP NOT NULL
         )
     """)
 
@@ -387,15 +386,13 @@ def _insert_row(
     status: bool,
     reason: str,
 ) -> None:
-    from .database import get_user_id
-
     all_keys = db.dataset_schema_keys
-    col_names = list(all_keys) + ["status", "reason", "changed_at", "changed_by"]
+    col_names = list(all_keys) + ["status", "reason", "changed_at"]
     values: list = []
     for k in all_keys:
         v = schema_keys.get(k)
         values.append(str(v) if v is not None else None)
-    values += [status, reason, datetime.now(timezone.utc), get_user_id()]
+    values += [status, reason, datetime.now(timezone.utc)]
 
     placeholders = ", ".join(["?"] * len(col_names))
     col_str = ", ".join(f'"{c}"' for c in col_names)

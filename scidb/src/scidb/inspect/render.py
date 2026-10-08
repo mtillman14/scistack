@@ -80,8 +80,7 @@ class RenderStyle:
     id_abbrev_len: int = 8
     id_ellipsis: str = "…"
     label_sep: str = "    "  # between segments of a record/fn line
-    saved_fmt: str = "saved {ts} by {user}"
-    saved_no_user_fmt: str = "saved {ts}"
+    saved_fmt: str = "saved {ts}"
     fn_hash_fmt: str = "fn_hash {h}"
     run_note_fmt: str = "(run {n}×, last {ts})"
     raw_tag: str = "  (raw save)"
@@ -91,7 +90,6 @@ class RenderStyle:
     invocation_fmt: str = "invocation {inv}"
     run_options_fmt: str = "run options: {opts}"
     run_line_fmt: str = "run {rid}  {ts}"
-    run_user_fmt: str = "  by {user}"
     run_where_fmt: str = "  where {where}"
     run_variant_fmt: str = "  [{variant}]"  # per-run inv/hash when they differ
     reproduced_note_fmt: str = "  ({n} producing invocations)"
@@ -596,7 +594,7 @@ def render_variant_cards(result, max_locations: int | None = 4) -> str:
             newest = card.runs[0]
             lines.append(
                 f"      runs  {len(card.runs)}; newest {newest.run_id[:8]} "
-                f"{newest.timestamp}" + (f" by {newest.user_id}" if newest.user_id else "")
+                f"{newest.timestamp}"
             )
     return "\n".join(lines)
 
@@ -826,7 +824,7 @@ def render_runs_table(runs: list[RunRecord]) -> str:
     if not runs:
         return "(no runs recorded)"
     has_run_meta = any(r.run_id is not None for r in runs)
-    headers = ["timestamp", "user", "function"]
+    headers = ["timestamp", "function"]
     if has_run_meta:
         headers.append("invocations")
         # Which surfaces the run read (gui / script / replay). "?" for a row
@@ -835,7 +833,7 @@ def render_runs_table(runs: list[RunRecord]) -> str:
     headers.append("where")
     rows = []
     for r in runs:
-        row = [r.timestamp, r.user_id, r.function_name]
+        row = [r.timestamp, r.function_name]
         if has_run_meta:
             row.append(r.n_invocations)
             row.append(r.origin or "?")
@@ -881,8 +879,6 @@ def _run_lines(n, prefix: str, s: RenderStyle) -> list[str]:
         line = prefix + s.run_line_fmt.format(
             rid=_abbrev(run.run_id, s), ts=run.timestamp
         )
-        if run.user_id:
-            line += s.run_user_fmt.format(user=run.user_id)
         if run.invocation_id != n.invocation_id or run.function_hash != n.function_hash:
             line += s.run_variant_fmt.format(
                 variant=f"{_abbrev(run.invocation_id, s)}"
@@ -909,11 +905,7 @@ def render_trace(
             head += f"  {schema_str}"
         parts = [head, s.record_id_fmt.format(rid=_abbrev(n.record_id, s))]
         if n.saved:
-            parts.append(
-                s.saved_fmt.format(ts=n.saved, user=n.saved_by)
-                if n.saved_by
-                else s.saved_no_user_fmt.format(ts=n.saved)
-            )
+            parts.append(s.saved_fmt.format(ts=n.saved))
         label = s.label_sep.join(parts)
         if n.function_name is None:
             label += s.raw_tag
@@ -1069,14 +1061,13 @@ def render_exclusions(exclusions: list[ExclusionRecord], schema_keys: list[str])
         return "(no schema exclusions)"
     used_keys = [k for k in schema_keys if any(k in e.schema for e in exclusions)]
     return format_table(
-        [*used_keys, "reason", "since", "by"],
+        [*used_keys, "reason", "since"],
         [
             [
                 # Wildcard keys (omitted at exclude time) render as *.
                 *[e.schema.get(k, "*") for k in used_keys],
                 e.reason,
                 e.changed_at,
-                e.changed_by,
             ]
             for e in exclusions
         ],
@@ -1130,7 +1121,7 @@ def render_records(records: list[RecordSummary], schema_keys: list[str]) -> str:
     # Only show schema columns that at least one record uses.
     used_keys = [k for k in schema_keys if any(k in r.schema for r in records)]
     has_previews = any(r.value_preview is not None for r in records)
-    headers = ["record_id", *used_keys, "saved", "user", "v", "excluded"]
+    headers = ["record_id", *used_keys, "saved", "v", "excluded"]
     if has_previews:
         headers.append("value")
     rows = []
@@ -1139,7 +1130,6 @@ def render_records(records: list[RecordSummary], schema_keys: list[str]) -> str:
             r.record_id,
             *[r.schema.get(k, "") for k in used_keys],
             r.timestamp,
-            r.user_id,
             r.schema_version,
             "yes" if r.excluded else "",
         ]

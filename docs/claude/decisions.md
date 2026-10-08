@@ -8,6 +8,29 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-1 — No user identity
+
+**Context.** History recorded who did things: `SCIDB_USER_ID` was read into
+`_run.user_id`, `_record_save.user_id`, `_variant_pin.pinned_by`, the
+tombstone table's `deleted_by` and `_exclusions.changed_by`, and shown as
+"by X" in the inspector, the scidb CLI and the Variants popup. Portability
+(`portability.md`) wants history shared by default, and a "who" makes
+every shared history a privacy question. It also makes two people's
+histories of the same computation differ.
+
+**Decision.** User identity is not a SciStack concept. Nothing reads the
+environment for it, no table has a who-column, nothing displays one. History
+records what ran and when. None of the removed values were in any ID or
+hash, so no record identity changes.
+
+**Consequences.** Old databases keep the nullable columns (no migrations in
+beta). Every insert names its columns, so they're left NULL and nothing reads
+them. `scidb/tests/test_no_user_identity.py` fails if the concept reappears
+in any package's source, or if a fresh database gets a who-column or stores
+a `SCIDB_USER_ID` value.
+
+---
+
 ## D-2026-10-06-2 — Automatic text size: per element, by real layouts, in a destination band
 
 **Context.** Text was a fixed 14 pt at any figure size. The user wants each

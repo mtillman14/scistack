@@ -173,7 +173,7 @@ def producing_invocation_batch(duck, record_ids) -> dict:
 
 
 def runs_for_invocations_batch(duck, invocation_ids) -> dict:
-    """``{invocation_id: [(run_id, timestamp, user_id, where_clause), ...]}``,
+    """``{invocation_id: [(run_id, timestamp, where_clause), ...]}``,
     oldest run first — the ``_run_invocation`` ⨝ ``_run`` join, batched.
 
     One (chunked) query per call, never one per node: a trace tree resolves
@@ -187,16 +187,15 @@ def runs_for_invocations_batch(duck, invocation_ids) -> dict:
         return {}
     rows = _chunked_in(
         duck,
-        "SELECT ri.invocation_id, run.run_id, run.timestamp, run.user_id, "
-        "run.where_clause "
+        "SELECT ri.invocation_id, run.run_id, run.timestamp, run.where_clause "
         "FROM _run_invocation ri "
         "JOIN _run run ON run.run_id = ri.run_id "
         "WHERE ri.invocation_id IN ({ph})",
         ids,
     )
     out: dict = {}
-    for inv_id, run_id, ts, uid, where in rows:
-        out.setdefault(inv_id, []).append((run_id, ts, uid, where))
+    for inv_id, run_id, ts, where in rows:
+        out.setdefault(inv_id, []).append((run_id, ts, where))
     for runs in out.values():
         runs.sort(key=lambda r: (r[1] or "", r[0] or ""))
     missing = [i for i in ids if i not in out]
@@ -2028,17 +2027,17 @@ def pipeline(db, record_id: str, max_depth: int = 20) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Execution audit (§9b) — who/when/which filter produced a record
+# Execution audit (§9b) — when/which filter produced a record
 # ---------------------------------------------------------------------------
 def execution_audit(duck, record_id: str) -> list[dict]:
     """Every run that (re)produced ``record_id``, oldest first.
 
-    Each entry: ``{timestamp, user_id, where_clause, function_name}``. Because
+    Each entry: ``{timestamp, where_clause, function_name}``. Because
     re-runs append ``_run`` rows, a changed ``where=`` filter shows up as
     distinct audit rows rather than being lost to first-wins.
     """
     rows = duck._fetchall(
-        "SELECT run.timestamp, run.user_id, run.where_clause, inv.function_name "
+        "SELECT run.timestamp, run.where_clause, inv.function_name "
         "FROM _invocation_output io "
         "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
         "JOIN _run_invocation ri ON ri.invocation_id = io.invocation_id "
@@ -2048,8 +2047,8 @@ def execution_audit(duck, record_id: str) -> list[dict]:
         [record_id],
     )
     return [
-        {"timestamp": ts, "user_id": uid, "where_clause": wc, "function_name": fn}
-        for ts, uid, wc, fn in rows
+        {"timestamp": ts, "where_clause": wc, "function_name": fn}
+        for ts, wc, fn in rows
     ]
 
 

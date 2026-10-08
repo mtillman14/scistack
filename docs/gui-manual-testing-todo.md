@@ -11,6 +11,29 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzd. No user identity anywhere — added 2026-10-08
+
+SciStack no longer records who ran, saved, pinned, deleted or excluded
+anything (D-2026-10-08-1). Both frontend bundles are rebuilt.
+
+Backend: reload the VS Code window so the edited scidb is loaded. To prove
+the old variable is ignored, set `SCIDB_USER_ID=alice` in the environment
+VS Code starts from first.
+
+1. Run a function, then open its output variable's **Variants** popup. Each
+   run line reads `<run id> <timestamp>` with optional `· <run options>` /
+   `· where ...`, and **no "by ..."**.
+2. Pin a variant, then open the pin/deletion history in the popup. It reads
+   `pinned <time>: <selection> — "<reason>"`, with no "by". The same goes for a
+   deletion line (`deleted <time>: ...`).
+3. Terminal: `scidb runs` has no `user` column; `scidb trace <Var>` shows
+   `saved <time>` with no "by"; `scidb pins --history` and `scidb tombstones`
+   have no `by` column; `scidb exclusions` has no `by` column.
+4. On an OLD database (made before today), all of the above still works.
+   The old columns are still in the file but are ignored.
+
+---
+
 ## 0zzzc. Extension / scistack-gui version check on startup — added 2026-10-07
 
 The extension now compares its own version with the installed `scistack-gui`

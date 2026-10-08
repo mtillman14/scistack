@@ -11,7 +11,6 @@ function tbl = list_exclusions()
 %       <schema key columns>  - Schema key values (strings; NULL if wildcard)
 %       reason                - Human-readable exclusion reason
 %       changed_at            - Timestamp of the exclusion
-%       changed_by            - User ID who added the exclusion (may be empty)
 %
 %   Returns an empty table if no exclusions are currently active.
 

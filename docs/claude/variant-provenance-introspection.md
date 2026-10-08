@@ -96,7 +96,7 @@ New fields on `TraceNode`:
 | `code_version` | per-function ordinal (`v1`/`v2`); None for a single-version function (the ordinal map omits those on purpose) |
 | `runs: list[RunRef]` | every run that produced the record, oldest first; only with `include_runs=True` |
 
-`RunRef = (run_id, timestamp, user_id, where_clause, invocation_id,
+`RunRef = (run_id, timestamp, where_clause, invocation_id,
 function_hash, run_options)`. The per-run invocation/hash/options are carried
 so that, should a record ever have a second producer (see the next section
 for why the save path never writes one), each run still says which

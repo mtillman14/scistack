@@ -130,7 +130,7 @@ collapse trap (`variant.pin_loads_uncollapsed`) is respected.
 - **Sticky.** A new run never moves a pin. Before a GUI run that would write to
   a pinned variable, the user chooses Keep pin / Move pin to the new output /
   Cancel. Terminal runs log an INFO note instead.
-- **History.** `_variant_pin(variable, selection_json, reason, pinned_by,
+- **History.** `_variant_pin(variable, selection_json, reason,
   pinned_at, released_at)`. Moving or releasing a pin sets `released_at` and
   never removes the row.
 

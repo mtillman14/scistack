@@ -217,7 +217,6 @@ def test_execution_audit_records_run(db):
     assert entry["timestamp"]
     assert set(entry.keys()) == {
         "timestamp",
-        "user_id",
         "where_clause",
         "function_name",
     }

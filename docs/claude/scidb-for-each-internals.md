@@ -75,7 +75,6 @@ CREATE TABLE IF NOT EXISTS _record_metadata (
     content_hash    VARCHAR,
     lineage_hash    VARCHAR,
     schema_version  INTEGER,
-    user_id         VARCHAR,
     branch_params   VARCHAR DEFAULT '{}',
     excluded        BOOLEAN DEFAULT FALSE,
     PRIMARY KEY (record_id, timestamp)

@@ -228,7 +228,7 @@ def test_record_run_refuses_a_graph_that_disagrees_with_the_record(db):
         "Out", 1, 0, "out_rid_1", meta, bindings=[Binding("x", "r1")], invocation_id="0" * 16
     )
     with pytest.raises(RuntimeError, match="identity drift"):
-        record_run(db, [bad], function_name="f", where_clause=None, user_id="t")
+        record_run(db, [bad], function_name="f", where_clause=None)
 
 
 # ---------------------------------------------------------------------------

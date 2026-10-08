@@ -102,7 +102,7 @@ def test_jsonable_converts_dataclasses_inside_lists():
     popup indexed a string."""
     from scidb.variant_pins import VariantPin
 
-    pin = VariantPin("p1", "X", {"f.k": 1}, "why", None, "2026-09-30T00:00:00")
+    pin = VariantPin("p1", "X", {"f.k": 1}, "why", "2026-09-30T00:00:00")
     out = svc._jsonable([pin, {"nested": [pin]}])
     assert out[0]["pin_id"] == "p1" and out[0]["selection"] == {"f.k": 1}
     assert out[1]["nested"][0]["reason"] == "why"

@@ -53,7 +53,6 @@ class VariantPin:
     #: Canonical selection (``variant.normalize_selection``), values as stored.
     selection: dict
     reason: str
-    pinned_by: str | None
     pinned_at: str
     released_at: str | None = None
     release_reason: str | None = None
@@ -76,7 +75,6 @@ def ensure_variant_pin_table(duck) -> None:
             variable       VARCHAR NOT NULL,
             selection_json VARCHAR NOT NULL,
             reason         VARCHAR NOT NULL,
-            pinned_by      VARCHAR,
             pinned_at      VARCHAR NOT NULL,
             released_at    VARCHAR,
             release_reason VARCHAR
@@ -85,13 +83,12 @@ def ensure_variant_pin_table(duck) -> None:
 
 
 def _row_to_pin(row) -> VariantPin:
-    pin_id, variable, selection_json, reason, by, at, released, rel_reason = row
+    pin_id, variable, selection_json, reason, at, released, rel_reason = row
     return VariantPin(
         pin_id=pin_id,
         variable=variable,
         selection=json.loads(selection_json),
         reason=reason,
-        pinned_by=by,
         pinned_at=at,
         released_at=released,
         release_reason=rel_reason,
@@ -99,7 +96,7 @@ def _row_to_pin(row) -> VariantPin:
 
 
 _COLUMNS = (
-    "pin_id, variable, selection_json, reason, pinned_by, pinned_at, "
+    "pin_id, variable, selection_json, reason, pinned_at, "
     "released_at, release_reason"
 )
 
@@ -161,7 +158,6 @@ def pin_variant(
     pin on the same variable is released first, with a reason that names the
     new pin.
     """
-    from .database import get_user_id
     from .inspect.variant_cards import build_variant_cards
     from .provenance_query import records_for_variant
     from .variant import normalize_selection
@@ -194,17 +190,15 @@ def pin_variant(
         variable=name,
         selection=canonical,
         reason=str(reason),
-        pinned_by=get_user_id(),
         pinned_at=_now(),
     )
     db._duck._execute(
-        f"INSERT INTO {TABLE} ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)",
+        f"INSERT INTO {TABLE} ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, NULL, NULL)",
         [
             pin.pin_id,
             pin.variable,
             json.dumps(pin.selection, sort_keys=True, default=str),
             pin.reason,
-            pin.pinned_by,
             pin.pinned_at,
         ],
     )

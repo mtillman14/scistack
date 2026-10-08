@@ -91,7 +91,6 @@ class SchemaTree:
 @dataclass
 class RunRecord:
     timestamp: str
-    user_id: str | None
     function_name: str
     where_clause: str | None  # display-only by design — never parsed
     run_id: str | None = None  # set by runs(); audit rows have no run_id
@@ -155,7 +154,6 @@ class RunRef:
 
     run_id: str
     timestamp: str
-    user_id: str | None
     where_clause: str | None  # display-only by design — never parsed
     invocation_id: str
     function_hash: str | None
@@ -190,7 +188,6 @@ class TraceNode:
     path_inputs: dict[str, str]  # param → spec string
     inputs: list[TraceInput]
     saved: str | None
-    saved_by: str | None
     run_count: int
     last_run: str | None
     # --- down to the run (Stage 2) --------------------------------------
@@ -254,7 +251,6 @@ class RecordSummary:
     variable: str
     schema: dict[str, str]
     timestamp: str
-    user_id: str | None
     content_hash: str
     schema_version: int
     excluded: bool
@@ -286,7 +282,6 @@ class ExclusionRecord:
     schema: dict[str, str]  # only the keys the exclusion names (rest = wildcard)
     reason: str
     changed_at: str
-    changed_by: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -921,16 +916,15 @@ class Inspector:
             nrid = n["record_id"]
             producers = all_producing.get(nrid, [])
             inv = producing.get(nrid)
-            saved_ts, saved_by = saves.get(nrid, (None, None))
+            saved_ts = saves.get(nrid)
             n_runs, last_run = run_info.get(nrid, (0, None))
             runs: list[RunRef] = []
             for inv_id, _fn_name, fn_hash in producers:
-                for run_id, ts, uid, where in inv_runs.get(inv_id, ()):
+                for run_id, ts, where in inv_runs.get(inv_id, ()):
                     runs.append(
                         RunRef(
                             run_id=run_id,
                             timestamp=_iso(ts) or "",
-                            user_id=uid,
                             where_clause=where,
                             invocation_id=inv_id,
                             function_hash=fn_hash,
@@ -957,7 +951,6 @@ class Inspector:
                         for i in n["inputs"]
                     ],
                     saved=_iso(saved_ts),
-                    saved_by=saved_by,
                     run_count=int(n_runs),
                     last_run=_iso(last_run),
                     invocation_id=inv[0] if inv else None,
@@ -983,7 +976,6 @@ class Inspector:
             audit = [
                 RunRecord(
                     timestamp=_iso(a["timestamp"]) or "",
-                    user_id=a["user_id"],
                     function_name=a["function_name"],
                     where_clause=a["where_clause"],
                 )
@@ -1046,19 +1038,19 @@ class Inspector:
         )
 
     def _latest_saves_batch(self, rids) -> dict:
-        """{record_id: (timestamp, user_id)} of the newest save event."""
+        """{record_id: timestamp} of the newest save event."""
         if not rids:
             return {}
         placeholders = ", ".join(["?"] * len(rids))
         rows = self._duck._fetchall(
-            f"SELECT record_id, timestamp, user_id FROM ("
+            f"SELECT record_id, timestamp FROM ("
             f"SELECT rs.*, ROW_NUMBER() OVER ("
             f"PARTITION BY record_id ORDER BY timestamp DESC) AS rn "
             f"FROM _record_save rs WHERE record_id IN ({placeholders})"
             f") WHERE rn = 1",
             list(rids),
         )
-        return {rid: (ts, uid) for rid, ts, uid in rows}
+        return {rid: ts for rid, ts in rows}
 
     def _run_info_batch(self, rids) -> dict:
         """{record_id: (run_count, last_run_timestamp)} from the _run audit."""
@@ -1086,12 +1078,12 @@ class Inspector:
             params.append(getattr(fn, "__name__", fn))
         params.append(int(limit))
         rows = self._duck._fetchall(
-            "SELECT r.run_id, r.timestamp, r.user_id, r.function_name, "
+            "SELECT r.run_id, r.timestamp, r.function_name, "
             "r.where_clause, r.origin, COUNT(ri.invocation_id) "
             "FROM _run r "
             "LEFT JOIN _run_invocation ri ON ri.run_id = r.run_id "
             + where
-            + "GROUP BY r.run_id, r.timestamp, r.user_id, r.function_name, "
+            + "GROUP BY r.run_id, r.timestamp, r.function_name, "
             "r.where_clause, r.origin "
             "ORDER BY r.timestamp DESC LIMIT ?",
             params,
@@ -1099,14 +1091,13 @@ class Inspector:
         return [
             RunRecord(
                 timestamp=_iso(ts) or "",
-                user_id=uid,
                 function_name=fn_name,
                 where_clause=wc,
                 run_id=run_id,
                 n_invocations=int(n),
                 origin=origin,
             )
-            for run_id, ts, uid, fn_name, wc, origin, n in rows
+            for run_id, ts, fn_name, wc, origin, n in rows
         ]
 
     @_timed
@@ -1198,7 +1189,6 @@ class Inspector:
         return [
             RunRecord(
                 timestamp=_iso(a["timestamp"]) or "",
-                user_id=a["user_id"],
                 function_name=a["function_name"],
                 where_clause=a["where_clause"],
             )
@@ -1406,9 +1396,6 @@ class Inspector:
                     variable=str(row["variable_name"]),
                     schema=schema,
                     timestamp=_iso(row["timestamp"]) or "",
-                    user_id=None
-                    if pd.isna(row.get("user_id"))
-                    else str(row["user_id"]),
                     content_hash=str(row["content_hash"]),
                     schema_version=int(row["schema_version"]),
                     excluded=bool(row["excluded"]),
@@ -1518,9 +1505,6 @@ class Inspector:
                     schema=schema,
                     reason=str(row["reason"]),
                     changed_at=_iso(row["changed_at"]) or "",
-                    changed_by=None
-                    if pd.isna(row.get("changed_by"))
-                    else str(row["changed_by"]),
                 )
             )
         return out

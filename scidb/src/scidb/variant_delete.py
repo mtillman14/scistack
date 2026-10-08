@@ -100,7 +100,6 @@ class DeletePlan:
 class Tombstone:
     tombstone_id: str
     deleted_at: str
-    deleted_by: str | None
     reason: str
     targets: list[dict]
     by_variable: dict[str, int]
@@ -126,7 +125,6 @@ def ensure_tombstone_table(duck) -> None:
         CREATE TABLE IF NOT EXISTS {TOMBSTONE_TABLE} (
             tombstone_id    VARCHAR PRIMARY KEY,
             deleted_at      VARCHAR NOT NULL,
-            deleted_by      VARCHAR,
             reason          VARCHAR NOT NULL,
             targets_json    VARCHAR NOT NULL,
             counts_json     VARCHAR NOT NULL,
@@ -142,15 +140,14 @@ def tombstones(db: "DatabaseManager", variable: str | None = None) -> list[Tombs
     if not duck._table_exists(TOMBSTONE_TABLE):
         return []
     rows = duck._fetchall(
-        "SELECT tombstone_id, deleted_at, deleted_by, reason, targets_json, "
+        "SELECT tombstone_id, deleted_at, reason, targets_json, "
         f"counts_json, record_ids_json FROM {TOMBSTONE_TABLE} ORDER BY deleted_at"
     )
     out = []
-    for tid, at, by, reason, targets, counts, rids in rows:
+    for tid, at, reason, targets, counts, rids in rows:
         t = Tombstone(
             tombstone_id=tid,
             deleted_at=at,
-            deleted_by=by,
             reason=reason,
             targets=json.loads(targets),
             by_variable=json.loads(counts),
@@ -484,7 +481,6 @@ def delete_variant(
 ) -> DeleteResult:
     """Delete what :func:`delete_plan` names, in one transaction. Cannot be
     undone; leaves a tombstone."""
-    from .database import get_user_id
     from .provenance import GLUE_TYPE
     from .variant_pins import release_pin
 
@@ -546,20 +542,18 @@ def delete_variant(
         tomb = Tombstone(
             tombstone_id=uuid.uuid4().hex[:16],
             deleted_at=datetime.now().isoformat(),
-            deleted_by=get_user_id(),
             reason=str(reason),
             targets=list(targets),
             by_variable=plan.by_variable,
             record_ids=plan.record_ids,
         )
         duck._execute(
-            f"INSERT INTO {TOMBSTONE_TABLE} (tombstone_id, deleted_at, deleted_by, "
+            f"INSERT INTO {TOMBSTONE_TABLE} (tombstone_id, deleted_at, "
             "reason, targets_json, counts_json, record_ids_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?)",
             [
                 tomb.tombstone_id,
                 tomb.deleted_at,
-                tomb.deleted_by,
                 tomb.reason,
                 json.dumps(tomb.targets, sort_keys=True, default=str),
                 json.dumps(tomb.by_variable, sort_keys=True),

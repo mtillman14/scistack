@@ -221,7 +221,6 @@ def test_distribute_fanout_one_invocation_unique_slots(db):
         graph_records,
         function_name="calc_fanout",
         where_clause=None,
-        user_id="tester",
     )
     assert run_id is not None
 
@@ -242,7 +241,6 @@ def test_distribute_fanout_one_invocation_unique_slots(db):
         graph_records,
         function_name="calc_fanout",
         where_clause=None,
-        user_id="tester",
     )
     assert _count(db, "_invocation") == 1
     assert _count(db, "_invocation_output") == n

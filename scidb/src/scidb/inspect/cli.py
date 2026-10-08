@@ -377,7 +377,6 @@ def _cmd_pins(insp: Inspector, args) -> None:
             p.variable,
             ", ".join(f"{k}={v}" for k, v in p.selection.items()),
             p.pinned_at,
-            p.pinned_by or "",
             p.released_at or ("active" if p.active else ""),
             p.reason,
         ]
@@ -385,7 +384,7 @@ def _cmd_pins(insp: Inspector, args) -> None:
     ]
     print(
         render.format_table(
-            ["variable", "selection", "pinned", "by", "released", "reason"], rows
+            ["variable", "selection", "pinned", "released", "reason"], rows
         )
     )
 
@@ -454,13 +453,12 @@ def _cmd_tombstones(insp: Inspector, args) -> None:
         [
             t.tombstone_id,
             t.deleted_at,
-            t.deleted_by or "",
             ", ".join(f"{k}={v}" for k, v in t.by_variable.items()),
             t.reason,
         ]
         for t in stones
     ]
-    print(render.format_table(["tombstone", "deleted", "by", "records", "reason"], rows))
+    print(render.format_table(["tombstone", "deleted", "records", "reason"], rows))
 
 
 def _cmd_include(mut: Mutator, args) -> None:

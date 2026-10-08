@@ -46,7 +46,7 @@ from .across_variants import AcrossVariants
 from .artifact_stamp import read_artifact_stamp, stamp_artifact
 from .column_selection import ColumnSelection
 from .parameter import Parameter
-from .database import configure_database, get_database, get_user_id
+from .database import configure_database, get_database
 from .discover import (
     DiscoveryResult,
     ModuleError,
@@ -142,7 +142,6 @@ __all__ = [
     # Configuration
     "configure_database",
     "get_database",
-    "get_user_id",
     # Save
     "save",
     # Pipeline node staleness

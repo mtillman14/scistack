@@ -21,7 +21,6 @@ export type Verdict = 'current' | 'partially_superseded' | 'superseded'
 export interface RunRef {
   run_id: string
   timestamp: string
-  user_id: string | null
   where_clause: string | null
   invocation_id: string
   function_hash: string | null
@@ -100,7 +99,6 @@ export interface VariantPin {
   variable: string
   selection: Record<string, unknown>
   reason: string
-  pinned_by: string | null
   pinned_at: string
   released_at: string | null
   release_reason: string | null
@@ -109,7 +107,6 @@ export interface VariantPin {
 export interface TombstoneSummary {
   tombstone_id: string
   deleted_at: string
-  deleted_by: string | null
   reason: string
   targets: Record<string, unknown>[]
   by_variable: Record<string, number>

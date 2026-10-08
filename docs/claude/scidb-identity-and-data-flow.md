@@ -36,7 +36,6 @@ MyVar.save(data,           flat_metadata                  |  subject        |
                                                         |  branch_params        |
                                                         |  lineage_hash         |
                                                         |  schema_version       |
-                                                        |  user_id              |
                                                         |  excluded             |
                                                         +-----------------------+
                                                                  |
@@ -122,7 +121,6 @@ CREATE TABLE IF NOT EXISTS _record_metadata (
     content_hash    VARCHAR,
     lineage_hash    VARCHAR,
     schema_version  INTEGER,
-    user_id         VARCHAR,
     branch_params   VARCHAR DEFAULT '{}',
     excluded        BOOLEAN DEFAULT FALSE,
     PRIMARY KEY (record_id, timestamp)
@@ -141,7 +139,6 @@ Source: `/workspace/scidb/src/scidb/database.py`, lines 582-597.
 | `content_hash`   | SHA-256 of data content (16 hex)                                | `canonical_hash(data)`                                                          | `"d4e5f6a7b8c9d0e1"`                          |
 | `lineage_hash`   | Hash of computation invocation                                  | From `LineageFcnResult.invoked.hash` (scihist path only)                        | `"1234abcd5678ef90"`                          |
 | `schema_version` | Variable class schema version                                   | `variable.schema_version`                                                       | `1`                                           |
-| `user_id`        | Who saved it                                                    | `os.environ.get("SCIDB_USER_ID")`                                               | `"alice"`                                     |
 | `branch_params`  | JSON: accumulated pipeline constants                            | Merged from upstream records + namespaced current constants                     | `'{"bandpass.low_hz":20}'`                    |
 | `excluded`       | Soft-delete flag                                                | Set by user via `exclude()`                                                     | `FALSE`                                       |
 
@@ -428,7 +425,7 @@ DatabaseManager.save(instance, metadata, lineage=..., lineage_hash=...)
     +-- _save_record_metadata(
     |     record_id, timestamp, "MyVar", schema_id,
     |     version_keys={}, content_hash, lineage_hash,
-    |     schema_version=1, user_id, branch_params=None
+    |     schema_version=1, branch_params=None
     |   )
     |     --> INSERT INTO _record_metadata ... ON CONFLICT DO NOTHING
     |

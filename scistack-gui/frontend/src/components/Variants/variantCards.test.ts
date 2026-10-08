@@ -182,7 +182,7 @@ test('the summary names the axes and where the default comes from', () => {
 
 test('pin conflicts name each variable once', () => {
   const pin = {
-    pin_id: 'p', variable: 'Filtered', selection: {}, reason: '', pinned_by: null,
+    pin_id: 'p', variable: 'Filtered', selection: {}, reason: '',
     pinned_at: '', released_at: null, release_reason: null,
   }
   const conflicts = [

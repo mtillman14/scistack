@@ -590,7 +590,7 @@ def _card_runs(rids, rec_to_inv, inv_runs, inv_fn_hash, inv_run) -> list[RunRef]
     seen: set = set()
     out: list[RunRef] = []
     for inv_id in sorted({rec_to_inv[r][0] for r in rids if r in rec_to_inv}):
-        for run_id, ts, uid, where in inv_runs.get(inv_id, ()):
+        for run_id, ts, where in inv_runs.get(inv_id, ()):
             if (run_id, inv_id) in seen:
                 continue
             seen.add((run_id, inv_id))
@@ -598,7 +598,6 @@ def _card_runs(rids, rec_to_inv, inv_runs, inv_fn_hash, inv_run) -> list[RunRef]
                 RunRef(
                     run_id=run_id,
                     timestamp=_iso(ts) or "",
-                    user_id=uid,
                     where_clause=where,
                     invocation_id=inv_id,
                     function_hash=inv_fn_hash.get(inv_id),

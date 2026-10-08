@@ -370,7 +370,7 @@ scidb.include_schema(subject=3, trial=2, reason="trial 2 recording was OK after 
    - `status` (BOOLEAN NOT NULL — `1` = included, `0` = excluded).
    - `reason` (TEXT NOT NULL)
    - `changed_at` (TIMESTAMP)
-   - `changed_by` (TEXT — git user or env var)
+   - (`changed_by` removed 2026-10-08: no user identity, D-2026-10-08-1)
    - Every write is an INSERT; rows are never updated or deleted, so
      the table is its own audit trail. The default state of any combo
      (no matching rows) is implicitly *included*. `exclude_schema(...)`

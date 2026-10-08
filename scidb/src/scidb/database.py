@@ -646,19 +646,6 @@ def _unflatten_struct_columns(df, struct_info):
     return result
 
 
-def get_user_id() -> str | None:
-    """
-    Get the current user ID from environment.
-
-    The user ID is used for attribution in cross-user provenance tracking.
-    Set the SCIDB_USER_ID environment variable to identify the current user.
-
-    Returns:
-        The user ID string, or None if not set.
-    """
-    return os.environ.get("SCIDB_USER_ID")
-
-
 def configure_database(
     dataset_db_path: str | Path,
     dataset_schema_keys: list[str],
@@ -1248,7 +1235,7 @@ class DatabaseManager:
     def _ensure_record_save_table(self):
         """Create ``_record_save`` — the append-only **save-event audit log**.
 
-        One row per save event ``(record_id, timestamp)``; ``user_id`` is the only
+        One row per save event ``(record_id, timestamp)``; there is no other
         per-event payload. Everything else about a record (its type/variable_name,
         schema_id, content_hash, schema_version, and the mutable ``excluded`` flag)
         lives on the content-addressed ``_record`` entity row and is obtained by
@@ -1261,7 +1248,6 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS _record_save (
                 record_id VARCHAR NOT NULL,
                 timestamp VARCHAR NOT NULL,
-                user_id VARCHAR,
                 PRIMARY KEY (record_id, timestamp)
             )
         """)
@@ -1390,7 +1376,6 @@ class DatabaseManager:
         self,
         record_id: str,
         timestamp: str,
-        user_id: str | None,
     ) -> None:
         """Append a save-event row to ``_record_save``. Always inserts (audit trail).
 
@@ -1402,11 +1387,11 @@ class DatabaseManager:
         )
         self._duck._execute(
             """
-            INSERT INTO _record_save (record_id, timestamp, user_id)
-            VALUES (?, ?, ?)
+            INSERT INTO _record_save (record_id, timestamp)
+            VALUES (?, ?)
             ON CONFLICT (record_id, timestamp) DO NOTHING
             """,
-            [record_id, timestamp, user_id],
+            [record_id, timestamp],
         )
 
     def _save_columnar(
@@ -1673,7 +1658,6 @@ class DatabaseManager:
         table_name = self._ensure_registered(variable_class)
         type_name = variable_class.__name__
         schema_version = variable_class.schema_version
-        user_id = get_user_id()
 
         # --- One-time setup from first item ---
         first_data, first_meta = data_items[0]
@@ -1848,7 +1832,7 @@ class DatabaseManager:
         timestamp = datetime.now().isoformat()
         record_ids = []
         data_table_rows = []  # (record_id, ...data_cols)
-        metadata_rows = []  # (rid,ts,type,schema_id,content_hash,sv,user) → _record_save + _record
+        metadata_rows = []  # (rid,ts,type,schema_id,content_hash,sv) → _record_save + _record
 
         t4_hash = 0.0
         # Which DataFrame serialization path the hashes took (F30): "fast"
@@ -1944,7 +1928,6 @@ class DatabaseManager:
                     schema_id,
                     content_hash,
                     schema_version,
-                    user_id,
                 )
             )
             t4_meta += time.perf_counter() - _t
@@ -2061,13 +2044,13 @@ class DatabaseManager:
 
             # Append save-event rows (audit trail — every execution logged).
             # metadata_rows is (record_id, timestamp, variable_name, schema_id,
-            # content_hash, schema_version, user_id); _record_save keeps only the
-            # (record_id, timestamp, user_id) save-event columns.
+            # content_hash, schema_version); _record_save keeps only the
+            # (record_id, timestamp) save-event columns.
             t6c = time.perf_counter()
             self._duck._bulk_insert(
                 "_record_save",
-                ["record_id", "timestamp", "user_id"],
-                [(r[0], r[1], r[6]) for r in metadata_rows],
+                ["record_id", "timestamp"],
+                [(r[0], r[1]) for r in metadata_rows],
                 conflict_cols=["record_id", "timestamp"],
             )
             timings["record_save_insert"] = time.perf_counter() - t6c
@@ -2382,7 +2365,7 @@ class DatabaseManager:
         # type/schema/content/excluded columns the log no longer stores. Aliased
         # back to the legacy column names so downstream row access is unchanged.
         meta_select = (
-            "rm.record_id, rm.timestamp, rm.user_id, "
+            "rm.record_id, rm.timestamp, "
             "r.type AS variable_name, r.schema_id, r.content_hash, "
             "r.schema_version, r.excluded"
         )
@@ -2936,7 +2919,6 @@ class DatabaseManager:
         """
         table_name = self._ensure_registered(type(variable))
         type_name = variable.__class__.__name__
-        user_id = get_user_id()
 
         # Drop transient for_each bookkeeping that must not become version keys:
         # __branch_params (accumulated constants, now derived from the graph).
@@ -3033,7 +3015,6 @@ class DatabaseManager:
             self._save_record_event(
                 record_id=record_id,
                 timestamp=created_at,
-                user_id=user_id,
             )
 
             # Mirror into the bipartite entities table (_record). Covers raw /
@@ -4823,7 +4804,7 @@ class DatabaseManager:
     def get_execution_audit(self, record_id: str) -> list[dict]:
         """List every execution that (re)produced ``record_id`` (§9b).
 
-        Each entry: ``{timestamp, user_id, where_clause, function_name}``,
+        Each entry: ``{timestamp, where_clause, function_name}``,
         oldest first. Re-runs append rows, so a changed ``where=`` filter is
         preserved rather than lost to first-wins.
         """

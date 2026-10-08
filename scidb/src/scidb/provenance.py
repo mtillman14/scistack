@@ -595,7 +595,7 @@ def ensure_provenance_tables(duck) -> None:
     """)
 
     # Audit log: one row per for_each EXECUTION (fresh row every run, even when
-    # it reproduces existing invocations). Captures when/who/where.
+    # it reproduces existing invocations). Captures when/where (never who: docs/claude/decisions.md, no user identity).
     # ``origin`` on _run — which surfaces the run read (rule 3 of
     # docs/claude/intent-and-fact.md): ``gui`` / ``script`` / ``replay``. NULL
     # is treated by every consumer as "unknown", never as any origin.
@@ -603,7 +603,6 @@ def ensure_provenance_tables(duck) -> None:
         CREATE TABLE IF NOT EXISTS _run (
             run_id        VARCHAR PRIMARY KEY,
             timestamp     VARCHAR NOT NULL,
-            user_id       VARCHAR,
             function_name VARCHAR NOT NULL,
             where_clause  VARCHAR,
             origin        VARCHAR

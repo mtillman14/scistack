@@ -174,16 +174,14 @@ export default function VariantsPopup({
                   <div style={styles.historyBody}>
                     {reply.pin_history.map(p => (
                       <div key={p.pin_id} style={styles.dim}>
-                        pinned {p.pinned_at}
-                        {p.pinned_by ? ` by ${p.pinned_by}` : ''}: {selectionLines(p.selection).join(', ')}
+                        pinned {p.pinned_at}: {selectionLines(p.selection).join(', ')}
                         {' — '}“{p.reason}”
                         {p.released_at ? ` · released ${p.released_at} (“${p.release_reason}”)` : ' · active'}
                       </div>
                     ))}
                     {reply.tombstones.map(t => (
                       <div key={t.tombstone_id} style={styles.dim}>
-                        deleted {t.deleted_at}
-                        {t.deleted_by ? ` by ${t.deleted_by}` : ''}:{' '}
+                        deleted {t.deleted_at}:{' '}
                         {Object.entries(t.by_variable).map(([v, n]) => `${v} ${n}`).join(', ')}
                         {' — '}“{t.reason}”
                       </div>
@@ -344,7 +342,6 @@ function CardView({
           {card.runs.map(run => (
             <div key={`${run.run_id}-${run.invocation_id}`} style={styles.dim}>
               <code>{short(run.run_id)}</code> {run.timestamp}
-              {run.user_id ? ` by ${run.user_id}` : ''}
               {run.run_options ? ` · ${run.run_options}` : ''}
               {run.where_clause ? ` · where ${run.where_clause}` : ''}
             </div>

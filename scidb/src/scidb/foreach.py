@@ -5897,7 +5897,6 @@ def _save_results(
     if generated_items:
         from datetime import datetime
 
-        from .database import get_user_id
         from .provenance import insert_record_entity
         from .provenance_save import invocation_identity
 
@@ -5906,7 +5905,6 @@ def _save_results(
             from .database import get_database
 
             _db = get_database()
-        _user = get_user_id()
         Log.info(
             f"[batch_save] Saving {len(generated_items)} generates_file item(s) (lineage-only)"
         )
@@ -5933,7 +5931,6 @@ def _save_results(
                 _db._save_record_event(
                     record_id=generated_id,
                     timestamp=ts,
-                    user_id=_user,
                 )
                 insert_record_entity(
                     _db._duck,
@@ -5980,7 +5977,6 @@ def _save_results(
     # ===========================================================================
     if graph_records:
         try:
-            from .database import get_user_id
             from .provenance_save import record_run
 
             active_db = db
@@ -5994,7 +5990,6 @@ def _save_results(
                 graph_records,
                 function_name=fn_name,
                 where_clause=where_clause,
-                user_id=get_user_id(),
                 glue_virtual=glue_virtual,
                 glue_chains=glue_chains,
                 parameter_names=state.parameter_names,

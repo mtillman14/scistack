@@ -52,13 +52,13 @@ is a first-class node rather than a flat edge table.
 | `_invocation` | One row per unique function call: `invocation_id, function_name, function_hash, as_table (VARCHAR[]), distribute, across_variants (VARCHAR[])`. (`as_table`/`distribute`/`across_variants` are identity-bearing run options, hence invariant per invocation, hence stored as queryable columns not JSON — `RunOptions` in `foreach_config`; `across_variants` added 2026-09-20 so an explicitly pooled input is a recorded fact, not a prediction.) |
 | `_invocation_input` | Edges call→input: `(invocation_id, param_name, input_record_id, selector)`, PK `(invocation_id, param_name, input_record_id)`. `selector` carries ColumnSelection JSON, else NULL. |
 | `_invocation_output` | Edges call→output: `(invocation_id, output_num, output_record_id)`, PK `(invocation_id, output_num)`. |
-| `_run` | Append-only audit, one row per `for_each` **execution**: `run_id, timestamp, user_id, function_name, where_clause`. |
+| `_run` | Append-only audit, one row per `for_each` **execution**: `run_id, timestamp, function_name, where_clause, origin`. No user identity (D-2026-10-08-1). |
 | `_run_invocation` | Many-to-many run↔invocation. |
 
 ### Supporting tables
 
 - **`_record_save`** (renamed/slimmed from the old `_record_metadata`) — the
-  append-only **save-event audit log**: `(record_id, timestamp, user_id)`, PK
+  append-only **save-event audit log**: `(record_id, timestamp)`, PK
   `(record_id, timestamp)`. Multiple timestamps per `record_id` = the re-save
   trail. This is the **only** source of per-save recency (the "latest" variant
   collapse orders by it), because `_record` is `ON CONFLICT DO NOTHING` so its
@@ -375,7 +375,7 @@ verified green on `dev-hist`.
    `test_unified_variant_tracking.py`; new `consumed_input_schema_ids` unit tests
    in `test_provenance_read.py`.
 5. **Slim & rename `_record_metadata` → `_record_save` (breaking).** Now
-   `(record_id, timestamp, user_id)`; the duplicated
+   `(record_id, timestamp)` (`user_id` later removed, D-2026-10-08-1); the duplicated
    `variable_name`/`schema_id`/`content_hash`/`schema_version` columns gone, and
    the mutable `excluded` flag moved to `_record`. Every reader now joins `_record`
    (`_find_record` via shared `meta_select`/`meta_from` fragments; plus
