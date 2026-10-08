@@ -10,11 +10,6 @@ import logging
 
 import pytest
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
-
 from scidb import colors, schema_order
 
 EXAMPLE = """
@@ -65,8 +60,10 @@ class TestReading:
     def test_scistack_toml(self, tmp_path):
         assert colors.colors_in(write_config(tmp_path, EXAMPLE)) == EXPECTED
 
-    def test_pyproject_toml(self, tmp_path):
-        assert colors.colors_in(write_config(tmp_path, EXAMPLE, pyproject=True)) == EXPECTED
+    def test_a_pyproject_is_never_config(self, tmp_path):
+        """2026-10-08: config lives only in scistack.toml; [tool.scistack]
+        in a pyproject.toml is not read."""
+        assert colors.colors_in(write_config(tmp_path, EXAMPLE, pyproject=True)) == {}
 
     def test_no_table_is_empty(self, tmp_path):
         assert colors.colors_in(write_config(tmp_path, "")) == {}
@@ -148,10 +145,6 @@ class TestRender:
         assert text.startswith('[colors]\ndefault = "#333333"')
         assert '[colors."Demographics.Sex"]' in text
         assert '"01" = "#d55e00"' in text
-
-    def test_pyproject_root(self):
-        parsed = tomllib.loads(colors.render_colors_table(EXPECTED, root="tool.scistack.colors"))
-        assert parsed["tool"]["scistack"]["colors"] == EXPECTED
 
     def test_nothing_renders_as_nothing(self):
         assert colors.render_colors_table({}) == ""

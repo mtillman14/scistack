@@ -48,10 +48,9 @@ import ProjectBootstrapWizard from "./components/Bootstrap/ProjectBootstrapWizar
 
 /**
  * Startup diagnostics reported by the backend's get_info response.
- * Populated by Phase 8 (stale lockfile handling): when a project is opened
- * with an out-of-date uv.lock the backend tries to run `uv sync`, and any
- * failure shows up here as a blocking error so the user never interacts
- * with a broken venv.
+ * Populated by the Phase 8 project-open checks (scistack_gui.startup, e.g.
+ * Windows-written config paths); a blocking one stops interaction until the
+ * user fixes it.
  */
 interface StartupError {
   kind: string;
@@ -402,9 +401,8 @@ export default function App() {
 
 /**
  * Blocking modal shown when the backend reports a startup-time error
- * (e.g. failed `uv sync`). There's no dismiss button on purpose — the
- * user needs to fix the problem and restart the project rather than
- * interact with a broken venv.
+ * marked blocking. There's no dismiss button on purpose — the user needs
+ * to fix the problem and restart the project.
  */
 function StartupErrorDialog({ errors }: { errors: StartupError[] }) {
   return (

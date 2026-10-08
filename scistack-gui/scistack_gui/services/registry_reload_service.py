@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def reload_registries_from_disk(db_path: Path) -> SciStackConfig:
-    """Re-parse [tool.scistack] from disk and reload both the Python and
+    """Re-parse scistack.toml from disk and reload both the Python and
     MATLAB registries against the fresh config. Returns the new config."""
     from scistack_gui import matlab_registry, registry
     from scistack_gui.config import load_config

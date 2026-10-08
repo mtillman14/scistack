@@ -1,14 +1,14 @@
 """
-scistack — project & environment tooling for SciStack scientific pipelines.
+scistack — project tooling for SciStack scientific pipelines.
 
-Top-level modules:
+- ``scistack init`` (:mod:`scistack.__main__`): a thin front end over
+  ``scidb.project.init_project``, the one owner of creating a project.
+- :mod:`scistack.user_config` — user-global configuration (library taps).
 
-- :mod:`scistack.uv_wrapper` — thin wrapper around the ``uv`` CLI
-- :mod:`scistack.project` — project scaffolder
-- :mod:`scistack.user_config` — user-global configuration (coming in Phase 5)
+SciStack does not manage Python environments (no uv, 2026-10-08): a project
+is an ordinary package, installed with whatever tool the user prefers.
 """
 
-from scistack.project import scaffold_project, validate_project_name
 from scistack.user_config import (
     Tap,
     UserConfig,
@@ -17,18 +17,6 @@ from scistack.user_config import (
     load_config,
     refresh_tap,
     remove_tap,
-)
-from scistack.uv_wrapper import (
-    AddResult,
-    LockedPackage,
-    RemoveResult,
-    SyncResult,
-    UvNotFoundError,
-    add,
-    is_lockfile_stale,
-    read_lockfile,
-    remove,
-    sync,
 )
 
 # The release tag owns the version (hatch-vcs writes it into the installed
@@ -41,20 +29,6 @@ except _metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
-    # uv wrapper
-    "sync",
-    "add",
-    "remove",
-    "read_lockfile",
-    "is_lockfile_stale",
-    "SyncResult",
-    "AddResult",
-    "RemoveResult",
-    "LockedPackage",
-    "UvNotFoundError",
-    # project scaffolder
-    "scaffold_project",
-    "validate_project_name",
     # user config
     "load_config",
     "add_tap",

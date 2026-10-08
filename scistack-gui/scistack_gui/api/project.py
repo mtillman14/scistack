@@ -3,7 +3,7 @@ Project config panel — the scan logic, and the handler table for both
 transports (``api/handlers.py``; ``PROJECT_HANDLERS`` at the bottom).
 
     GET    /api/project/code           get_project_code   — scanned exports from src/{project}/
-    GET    /api/project/paths          get_project_paths  — resolved [tool.scistack] paths (Paths popup)
+    GET    /api/project/paths          get_project_paths  — resolved scistack.toml paths (Paths popup)
     POST   /api/project/paths          add_project_path   — add a discovery path (loose-script projects)
     DELETE /api/project/paths          remove_project_path
     POST   /api/project/entities-file  set_entities_file
@@ -119,15 +119,14 @@ def get_project_code() -> dict:
 
 
 def get_project_paths() -> dict:
-    """Return the resolved [tool.scistack] paths for the header's Paths popup.
+    """Return the resolved scistack.toml paths for the header's Paths popup.
 
-    Reads the same pyproject.toml/scistack.toml that project mode loaded at
+    Reads the same scistack.toml that project mode loaded at
     startup (re-parsed here since the GUI doesn't keep the SciStackConfig
     around after registry load). Single-file mode has no such config, so
     that case is reported as ``configured: False`` rather than an error.
 
-    Also reports ``packaged`` (pyproject.toml present -- read-only in the
-    Paths popup) and ``managed_paths`` (the raw, pre-discovery ``modules``
+    Also reports ``managed_paths`` (the raw, pre-discovery ``modules``
     entries as written to scistack.toml -- what the popup's editable add/
     remove list actually displays; empty until the first path is added via
     :func:`add_project_path`, even in folder-scan mode).
@@ -141,7 +140,7 @@ def get_project_paths() -> dict:
         config = load_config(None, db_path)
     except FileNotFoundError:
         logger.info(
-            "[project.paths] no [tool.scistack] config found near %s "
+            "[project.paths] no scistack.toml found near %s "
             "(single-file mode)",
             db_path,
         )

@@ -7,7 +7,7 @@ Every stage: INFO logs at each named operation (snake_case op names, no
 step numbers), tests that would have caught the problem, pytest commands
 handed to the user (one package at a time).
 
-## Stage 0: remove user identity entirely — DONE 2026-10-08 (uncommitted, pytest unrun)
+## Stage 0: remove user identity entirely — DONE, committed adba4cc9 (2026-10-08), tests pass
 
 Clean break (beta: no deprecation, no migration). Old databases keep their
 now-unused nullable columns; nothing reads or writes them.
@@ -36,34 +36,56 @@ now-unused nullable columns; nothing reads or writes them.
   `scidb-identity-and-data-flow.md` and other docs naming `user_id`.
 - GUI manual testing entry: Variants popup shows no "by …".
 
-## Stage 1: one owner for creating a project (`init`); config into `[tool.scistack]`
+## Stage 1: `scistack.toml` is the only config; one owner for `init` — DONE 2026-10-08, tests pass
 
-- New `scidb.project` module: `init_project(root, *, name, schema_keys, ...)`,
-  where every step creates only if absent (never rewrites an existing file).
-  Absorbs `scistack/project.py::scaffold_project` and
-  `scistack_gui/services/project_init_service.ensure_project_files`; both
-  become thin callers. Also fix the `server.py` drift trap (it duplicates
-  bootstrap inline).
-- Produces a buildable package: `pyproject.toml` with `[build-system]`,
-  `[project]`, `[tool.scistack]`; `src/<pkg>/__init__.py`;
-  `src/<pkg>/scistack_entities.toml` declared as package data.
-- Config: new projects get `[tool.scistack]` only. `scistack.toml` is still
-  read (loose projects), but `init` never creates one. Change the
-  conventional entities location in `scidb.entities.resolve_entities_path`
-  (the one owner) from `src/scistack_entities.toml` to inside the package.
-  Existing projects with an explicit `entities_file` key are unaffected.
-  The old fallback location is dropped (beta clean break).
-- Installed packages' entities: make sure discovery of `packages = [...]`
-  reads an entities file shipped inside an installed package (open Q1 in the
-  doc).
-- Remove uv: `scistack/uv_wrapper.py`, `uv sync` on scaffold,
-  `test_uv_wrapper.py`, the GUI's lockfile-staleness hook in `startup.py`.
-- CLI: `scistack init` (works in an existing folder, safe to re-run;
-  replaces `scistack project new`).
-- GUI: "New Project" and every project open call `init_project`.
-- Tests: running init twice is a no-op; an existing file is left
-  byte-for-byte unchanged; CLI and GUI produce identical trees; a built
-  wheel contains the entities file.
+User decision 2026-10-08 (option A): config lives ONLY in `scistack.toml`,
+which the GUI owns and writes. `pyproject.toml` is packaging only and never
+a config source; the GUI never edits it. Neither file ships in the wheel.
+
+### 1a. `scistack.toml` is the only config file
+- scifor.discovery owns the file name and its location:
+  `CONFIG_FILENAME = "scistack.toml"`, `config_path_at(root)`.
+  `project_config_at` and the GUI's `config.locate_config_at` both use it
+  (they disagreed before: scifor took a pyproject only with a
+  `[tool.scistack]` section, the GUI took any pyproject). `[tool.scistack]`
+  is never read again (beta clean break).
+- `read_project_name` stays: it reads packaging metadata (`[project].name`)
+  so a project's own `src/<name>/` package is discovered. That is not config.
+- GUI: remove `_reject_packaged_project` and the "packaged = read-only"
+  mode (`describe_managed_paths.packaged`, PathsPopup read-only branch,
+  glue/target-file/project-init refusals). Every project's config is
+  GUI-editable.
+- scidb CLI: `db = "..."` read from `scistack.toml`, not
+  `[tool.scistack]`.
+- Tests + `config-file-formats.md` rewritten; user docs updated.
+
+### 1b. Remove uv
+- `scistack/uv_wrapper.py`, `test_uv_wrapper.py`, the scaffold's `uv sync`,
+  the GUI's lockfile-staleness check (`startup.py`, `server.py`).
+
+### 1c. One owner for creating a project
+- `scidb.project.init_project(root, *, name=None, schema_keys=None,
+  scaffold_package=False)`. Every step creates only if absent; an existing
+  file is never rewritten.
+  - Always: `scistack.toml` (with `entities_file`), the entities TOML.
+  - `scaffold_package=True` (CLI `scistack init`, GUI "New Project"):
+    `pyproject.toml` (`[project]`, `[build-system]`, the entities TOML as
+    package data), `src/<pkg>/__init__.py`, entities at
+    `src/<pkg>/scistack_entities.toml`, `.gitignore`.
+  - Opening an existing project only ensures config + entities, as today: it
+    never turns someone's folder of scripts into a package unasked.
+- The `scistack.toml` writer (`_render_scistack_toml`) moves from the GUI
+  into scidb so `init` and the GUI write through one renderer.
+- `scistack/project.py::scaffold_project` and
+  `project_init_service.ensure_project_files` become thin callers.
+  `scistack init` replaces `scistack project new`.
+- Entities conventional fallback (`src/scistack_entities.toml`) unchanged;
+  new projects get an explicit `entities_file` key inside the package.
+- Tests: init twice is a no-op; existing files byte-for-byte unchanged;
+  CLI and GUI produce identical trees.
+
+Moved to Stage 5: reading entities files shipped inside installed packages
+(today only the project's own file is ever loaded).
 
 ## Stage 2: portable-state declaration + import fixes (GUI section)
 
@@ -127,6 +149,10 @@ the trust prompt).
 
 ## Stage 5: code + environment
 
+- Read entities files shipped inside installed SciStack packages (moved
+  from Stage 1): today only the project's own file is loaded
+  (`scidb.entities.load_for_project`). Name collisions between the project
+  and an installed package are a load error, as for duplicate PathInputs.
 - Build the project wheel (PEP 517 build of the project), with `.m` files
   and the entities file as package data. Record resolved versions
   (`pylock.toml` if the installed pip supports it, else a `pip freeze`-style
@@ -191,3 +217,17 @@ the trust prompt).
 0 (independent, do first) → 1 → 2 → 3 → 4 → {5, 6, 7} → 8 → 9.
 Stages 5–7 are independent of each other once 4 lands; 6 needs Stage 2's
 schema-key remap hooks.
+
+## Notes from Stage 1 (2026-10-08)
+
+- Extra owners created: `scidb.config_file` (the only writer of
+  scistack.toml; keeps unknown keys), `scifor.discovery.own_package_dir`,
+  `scidb.entities.default_entities_relpath(root, package=None)`.
+- GUI first-write seeding (`config._first_write_seed_roots`) still writes the
+  project root and database directory as ABSOLUTE paths into `modules` /
+  `[matlab] sources`. That is a portability bug for Stage 4/6 (a config
+  exported from one machine names another machine's folders). `init` seeds
+  `"."` instead.
+- `scidb.discover.scan_project` lost `skip_dists`/`library_filter` (they only
+  filtered uv.lock entries).
+- Browser wizard: creation can no longer opt out of an entities file.

@@ -1,9 +1,7 @@
 /**
  * EntitiesFileEditor — the TOML file new Variable/Parameter/PathInput
  * declarations created from the sidebar's "+" buttons are written to.
- * Rendered inside PathsPopup.tsx, loose-script projects only (packaged
- * projects configure this by hand in pyproject.toml, same as
- * ManagedPathsList's directories).
+ * Rendered inside PathsPopup.tsx, for every project.
  *
  * Backed by set_entities_file/clear_entities_file, which write/rewrite
  * scistack.toml. Leaving the field blank and hitting "Set" auto-creates a

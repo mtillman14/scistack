@@ -11,6 +11,39 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzze. One config file (scistack.toml), project creation = `init` — added 2026-10-08
+
+Config lives only in `scistack.toml`; `pyproject.toml` is packaging only.
+Creating a database now makes the folder a SciStack project (package layout).
+uv is gone. Both frontend bundles are rebuilt; reload the VS Code window.
+
+Backend steps: none beyond the reload. Terminal checks are at the end.
+
+1. **Create from VS Code** in an EMPTY folder `gait_test`: new database,
+   schema keys `subject`. Expect in the folder: `pyproject.toml`,
+   `scistack.toml`, `.gitignore`, `src/gait_test/__init__.py`,
+   `src/gait_test/scistack_entities.toml`, the `.duckdb`. `scidb.log` has
+   `[project] init_project: root=... package=gait_test` and `created ...` lines.
+2. In that project, create a Variable and a PathInput from the sidebar "+".
+   They land in `src/gait_test/scistack_entities.toml`.
+3. **Packaged project is editable now:** open a project that has a
+   `pyproject.toml`. The 📁 Paths popup shows the EDITABLE path list (no
+   "Packaged project — edit by hand" text). Add a path; `scistack.toml`
+   changes, and `pyproject.toml` is byte-for-byte unchanged (`git diff`).
+4. **Unknown keys survive:** add `db = "x.duckdb"` and `my_flag = true` to
+   `scistack.toml` by hand, then add/remove a path, set an alias and a colour
+   in Plot Studio. Both keys are still in the file afterwards.
+5. **Opening never scaffolds:** open an existing database in a folder of loose
+   scripts with no `pyproject.toml`. No `pyproject.toml` or `src/<name>/` appears.
+6. **Browser wizard** (`scistack-gui` standalone): the "Entities file" field
+   starts blank; creating with it blank puts the file in `src/<folder>/`.
+7. No startup dialog about `uv` or a lockfile appears anywhere.
+8. Terminal: `scistack init` in a new folder lists `created ...` lines; run it
+   again and every line is `kept ...`. `scistack init --schema-keys subject`
+   also creates `<name>.duckdb`. `scistack project new` no longer exists.
+
+---
+
 ## 0zzzd. No user identity anywhere — added 2026-10-08
 
 SciStack no longer records who ran, saved, pinned, deleted or excluded

@@ -83,8 +83,10 @@ class TestReading:
     def test_scistack_toml(self, tmp_path):
         assert aliases.aliases_in(write_config(tmp_path, EXAMPLE)) == EXPECTED
 
-    def test_pyproject_toml(self, tmp_path):
-        assert aliases.aliases_in(write_config(tmp_path, EXAMPLE, pyproject=True)) == EXPECTED
+    def test_a_pyproject_is_never_config(self, tmp_path):
+        """2026-10-08: config lives only in scistack.toml; [tool.scistack]
+        in a pyproject.toml is not read."""
+        assert aliases.aliases_in(write_config(tmp_path, EXAMPLE, pyproject=True)) == {}
 
     def test_no_table_is_empty(self, tmp_path):
         assert aliases.aliases_in(write_config(tmp_path, "")) == {}
@@ -200,10 +202,6 @@ class TestRender:
     def test_nothing_renders_as_nothing(self):
         assert aliases.render_aliases_table({}) == ""
         assert aliases.render_aliases_table(None) == ""
-
-    def test_a_pyproject_root(self):
-        text = aliases.render_aliases_table(EXPECTED, root="tool.scistack.aliases")
-        assert tomllib.loads(text)["tool"]["scistack"]["aliases"]["session"]["name"] == "Session"
 
     def test_what_the_reader_drops_is_never_written(self):
         text = aliases.render_aliases_table({"session": {"name": "S", "bogus": 1}})

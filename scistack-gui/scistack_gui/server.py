@@ -522,8 +522,8 @@ def main():
         "-p",
         type=Path,
         default=None,
-        help="Path to pyproject.toml or directory containing one "
-        "(project mode — reads [tool.scistack] config)",
+        help="Path to scistack.toml or the directory containing one "
+        "(project mode — reads scistack.toml)",
     )
     parser.add_argument(
         "--schema-keys",
@@ -537,7 +537,7 @@ def main():
         type=Path,
         default=None,
         help="Directory to treat as the project root when no "
-        "pyproject.toml/scistack.toml exists yet (the VS Code workspace "
+        "scistack.toml exists yet (the VS Code workspace "
         "folder). Determines where a new scistack.toml and entities file "
         "are written; without it the database's own directory is the last "
         "resort, which is usually a datasets folder.",
@@ -628,7 +628,7 @@ def main():
         from scistack_gui.services.project_init_service import ensure_project_files
 
         try:
-            init = ensure_project_files(db_path, args.project)
+            init = ensure_project_files(db_path, args.project, create_new=create_new)
             if init.created:
                 logger.info("[startup] project init created: %s", init.created)
             for warning in init.warnings:
@@ -641,7 +641,7 @@ def main():
     from scistack_gui import registry
 
     if args.project:
-        # Project mode: load from [tool.scistack] in pyproject.toml
+        # Project mode: load scistack.toml
         from scistack_gui.config import load_config
 
         try:
@@ -730,7 +730,7 @@ def main():
         logger.info("Loaded module: %s", module_path)
     else:
         # No --module/--project given: best-effort auto-discovery, either
-        # from a pyproject.toml/scistack.toml found near the database, or
+        # from a scistack.toml at the project root, or
         # (more commonly, for a loose-scripts project) a folder scan of the
         # database's directory. Never fatal — an empty registry here is no
         # worse than today's default of not discovering anything at all.
@@ -822,16 +822,13 @@ def main():
 
     enable()
 
-    # Phase 8: Stale lockfile detection on project open.
-    # If pyproject.toml exists next to the db, check whether uv.lock is
-    # out of date and silently sync if so. On failure, the error is
-    # recorded in scistack_gui.startup; the frontend picks it up via the
-    # next `get_info` call.
+    # Phase 8: project-open diagnostics. A problem is recorded in
+    # scistack_gui.startup; the frontend picks it up via the next
+    # `get_info` call.
     from scistack_gui import startup as _startup
 
     if registry._config is not None:
         _startup.check_windows_config_paths(registry._config)
-    _startup.check_lockfile_staleness(db_path.parent)
 
     # Signal readiness
     logger.info("Startup complete in %.2fs", time.monotonic() - t0)

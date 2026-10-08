@@ -1,5 +1,10 @@
 # Phase 8 — GUI Startup Diagnostics
 
+> **2026-10-08:** the uv lockfile check this doc was written for is gone
+> (SciStack no longer manages environments; `.claude/plan-portability.md`
+> Stage 1b). The pattern below still holds for the remaining check,
+> `check_windows_config_paths`, and for any new one.
+
 Design rationale for `scistack_gui/startup.py` and the startup-error
 delivery flow. Read this before adding any new project-open check (lockfile
 staleness is the first but won't be the last) so new checks follow the same

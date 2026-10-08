@@ -3,7 +3,7 @@ Function and variable class registry.
 
 Supports two modes:
   1. **Single-file mode** (legacy): populated via --module at startup.
-  2. **Project mode**: populated from a [tool.scistack] config that lists
+  2. **Project mode**: populated from a scistack.toml config that lists
      multiple .py files, pip packages, and auto-discovered entry-point plugins.
 
 Gives the backend access to the actual Python objects needed to reconstruct
@@ -236,7 +236,7 @@ def load_from_config(
     config: SciStackConfig, on_progress: ProgressCallback | None = None
 ) -> dict:
     """
-    Load all functions and variables from a [tool.scistack] config.
+    Load all functions and variables from a scistack.toml config.
 
     *on_progress*, if given, receives one short message per module file
     before it is imported (the server's startup passes ``_send_progress``).

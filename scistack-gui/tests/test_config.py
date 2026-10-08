@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scistack_gui.config import (
     SciStackConfig,
-    _extract_scistack_section,
     _normalize,
     add_path,
     clear_entities_file,
@@ -34,35 +33,46 @@ from scistack_gui.config import (
 # themselves; see test_set_entities_file_outside_project_root_written_absolute.
 
 # ---------------------------------------------------------------------------
-# _extract_scistack_section
+# scistack.toml is the only config file (2026-10-08)
 # ---------------------------------------------------------------------------
 
-
-def test_empty_scistack_toml_returns_empty_dict():
-    """An empty scistack.toml should return {} (valid all-defaults config)."""
-    result = _extract_scistack_section({}, "scistack.toml")
-    assert result == {}
-
-
-def test_scistack_toml_with_content():
-    """A scistack.toml with actual content returns that content."""
-    data = {"modules": ["foo.py"], "auto_discover": False}
-    result = _extract_scistack_section(data, "scistack.toml")
-    assert result == data
+#: A packaging file the GUI must never edit; tests compare it byte for byte.
+PYPROJECT = (
+    '[project]\nname = "x"\nversion = "0.1.0"\n\n'
+    '# a comment the GUI must keep\n[tool.ruff]\nline-length = 100\n'
+)
 
 
-def test_pyproject_with_scistack_section():
-    """pyproject.toml with [tool.scistack] returns the section."""
-    data = {"tool": {"scistack": {"modules": ["bar.py"]}}}
-    result = _extract_scistack_section(data, "pyproject.toml")
-    assert result == {"modules": ["bar.py"]}
+def test_a_pyproject_alone_is_not_config(tmp_path):
+    """A pyproject.toml is packaging metadata: with no scistack.toml the
+    project is folder-scanned, and its [tool.scistack] is never read."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.scistack]\nmodules = ["listed.py"]\nauto_discover = false\n'
+    )
+    (tmp_path / "listed.py").write_text("")
+    (tmp_path / "stray.py").write_text("")
+
+    assert locate_config_at(tmp_path) is None
+    config = load_config(tmp_path, tmp_path / "dummy.duckdb")
+    # Folder-scan: both files found, and auto_discover keeps its default.
+    assert sorted(p.name for p in config.modules) == ["listed.py", "stray.py"]
+    assert config.auto_discover is True
 
 
-def test_pyproject_without_scistack_section():
-    """pyproject.toml without [tool.scistack] returns None."""
-    data = {"tool": {"black": {"line-length": 88}}}
-    result = _extract_scistack_section(data, "pyproject.toml")
-    assert result is None
+def test_scistack_toml_is_used_and_a_pyproject_beside_it_is_ignored(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "x"\n\n[tool.scistack]\nmodules = ["wrong.py"]\n'
+    )
+    (tmp_path / "scistack.toml").write_text(
+        'modules = ["right.py"]\nauto_discover = false\n'
+    )
+    (tmp_path / "right.py").write_text("")
+    (tmp_path / "wrong.py").write_text("")
+
+    assert locate_config_at(tmp_path) == _normalize(tmp_path / "scistack.toml")
+    config = load_config(tmp_path, tmp_path / "dummy.duckdb")
+    assert [p.name for p in config.modules] == ["right.py"]
+    assert config.auto_discover is False
 
 
 # ---------------------------------------------------------------------------
@@ -83,44 +93,47 @@ def test_empty_scistack_toml_loads_defaults(tmp_path):
     assert config.auto_discover is True
 
 
-def test_pyproject_without_scistack_section_loads_defaults(tmp_path):
-    """A pyproject.toml lacking [tool.scistack] should use all defaults."""
-    toml_file = tmp_path / "pyproject.toml"
-    toml_file.write_text("[tool.black]\nline-length = 88\n")
-
-    config = load_config(tmp_path, tmp_path / "dummy.duckdb")
-    assert isinstance(config, SciStackConfig)
-    assert config.project_root == tmp_path
-    assert config.modules == []
-    assert config.packages == []
-    assert config.auto_discover is True
+def _make_own_package(tmp_path, name="my_pkg"):
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\nversion = "0.1.0"\n'
+    )
+    pkg = tmp_path / "src" / name
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "steps.py").write_text("from . import __name__ as _n\n")
+    return pkg
 
 
 def test_packaged_project_auto_folds_own_name_into_packages(tmp_path):
-    """A packaged project ([project].name + src/{name}/, no explicit
-    [tool.scistack] packages entry) should have its own code auto-folded
-    into config.packages -- otherwise registry.load_from_config never
-    loads it, and a function shown in the "Discovered Code" panel would
-    raise KeyError at actual run time (the packaged-mode execution gap)."""
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "my_pkg"\nversion = "0.1.0"\n[tool.scistack]\n'
-    )
-    (tmp_path / "src" / "my_pkg").mkdir(parents=True)
-    (tmp_path / "src" / "my_pkg" / "__init__.py").write_text("")
+    """A project that is itself a package ([project].name + src/{name}/, no
+    explicit packages entry) has its own code auto-folded into
+    config.packages -- otherwise registry.load_from_config never loads it,
+    and a function shown in the "Discovered Code" panel would raise
+    KeyError at actual run time (the packaged-mode execution gap)."""
+    _make_own_package(tmp_path)
+    (tmp_path / "scistack.toml").write_text("")
 
     config = load_config(tmp_path, tmp_path / "dummy.duckdb")
     assert config.packages == ["my_pkg"]
 
 
+def test_folder_scan_also_folds_the_own_package_not_its_files(tmp_path):
+    """With no scistack.toml, the project's own package is still loaded as a
+    package, and its files are NOT also imported as loose modules (that
+    breaks relative imports and loads the code twice)."""
+    _make_own_package(tmp_path)
+    (tmp_path / "loose.py").write_text("")
+
+    config = load_config(tmp_path, tmp_path / "dummy.duckdb")
+    assert config.packages == ["my_pkg"]
+    assert [p.name for p in config.modules] == ["loose.py"]
+
+
 def test_packaged_project_already_listed_not_duplicated(tmp_path):
-    """If the project's own name is already in [tool.scistack] packages,
-    auto-fold must not add a second entry."""
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "my_pkg"\nversion = "0.1.0"\n'
-        '[tool.scistack]\npackages = ["my_pkg"]\n'
-    )
-    (tmp_path / "src" / "my_pkg").mkdir(parents=True)
-    (tmp_path / "src" / "my_pkg" / "__init__.py").write_text("")
+    """If the project's own name is already in packages, auto-fold must not
+    add a second entry."""
+    _make_own_package(tmp_path)
+    (tmp_path / "scistack.toml").write_text('packages = ["my_pkg"]\n')
 
     config = load_config(tmp_path, tmp_path / "dummy.duckdb")
     assert config.packages == ["my_pkg"]
@@ -130,17 +143,17 @@ def test_packaged_project_without_src_layout_not_auto_folded(tmp_path):
     """No src/{name}/ directory -- matches scan_project's own precondition,
     so auto-fold must not add a name that isn't actually importable this way."""
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "my_pkg"\nversion = "0.1.0"\n[tool.scistack]\n'
+        '[project]\nname = "my_pkg"\nversion = "0.1.0"\n'
     )
+    (tmp_path / "scistack.toml").write_text("")
 
     config = load_config(tmp_path, tmp_path / "dummy.duckdb")
     assert config.packages == []
 
 
 def test_directory_without_any_toml_falls_back_to_folder_scan(tmp_path):
-    """A directory with no toml files no longer raises — it falls back to
-    scanning the directory directly for .py/.m files (zero-config mode for
-    loose-script projects with no pyproject.toml/scistack.toml at all)."""
+    """A directory with no scistack.toml falls back to scanning the
+    directory directly for .py/.m files (zero-config mode)."""
     (tmp_path / "pipeline.py").write_text("")
 
     config = load_config(tmp_path, tmp_path / "dummy.duckdb")
@@ -158,13 +171,11 @@ def test_explicit_config_found_does_not_fall_back_to_folder_scan(tmp_path):
     assert config.modules == []
 
 
-def test_pyproject_with_scistack_section_loads_normally(tmp_path):
-    """Happy path: pyproject.toml with [tool.scistack] works as before."""
-    toml_file = tmp_path / "pyproject.toml"
-    toml_file.write_text(
-        '[tool.scistack]\nmodules = ["pipeline.py"]\nauto_discover = false\n'
+def test_scistack_toml_with_modules_loads_normally(tmp_path):
+    """Happy path: a scistack.toml listing a module."""
+    (tmp_path / "scistack.toml").write_text(
+        'modules = ["pipeline.py"]\nauto_discover = false\n'
     )
-    # Create the module file so we don't get a warning
     (tmp_path / "pipeline.py").write_text("")
 
     config = load_config(tmp_path, tmp_path / "dummy.duckdb")
@@ -674,7 +685,7 @@ def test_matlab_addpath_deduplicates(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Folder-scan fallback (no pyproject.toml/scistack.toml anywhere)
+# Folder-scan fallback (no scistack.toml anywhere)
 # ---------------------------------------------------------------------------
 
 
@@ -875,7 +886,7 @@ def test_add_path_appends_to_existing_scistack_toml_preserving_other_keys(tmp_pa
 
 
 def test_add_path_preserves_matlab_entities_file(tmp_path):
-    """Every _render_scistack_toml call site must pass entities_file through,
+    """Every config write must carry entities_file through,
     or the Paths popup silently drops it on save — the exact class of bug
     this function has had before (see its docstring)."""
     db_path = tmp_path / "proj.duckdb"
@@ -962,17 +973,21 @@ def test_add_path_rejects_file_not_directory(tmp_path):
         add_path(db_path, a_file)
 
 
-def test_add_path_rejects_packaged_project(tmp_path):
-    """pyproject.toml projects are out of scope for this write path --
-    the Paths popup keeps its old read-only view for those."""
+def test_add_path_writes_scistack_toml_and_never_touches_pyproject(tmp_path):
+    """2026-10-08: every project's config is scistack.toml and GUI-editable;
+    a pyproject.toml beside it is packaging and stays byte-for-byte as it was."""
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
-    (tmp_path / "pyproject.toml").write_text("[tool.scistack]\n")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT)
     shared_repo = tmp_path / "shared_repo"
     shared_repo.mkdir()
 
-    with pytest.raises(ValueError):
-        add_path(db_path, shared_repo)
+    written = add_path(db_path, shared_repo)
+
+    assert written == tmp_path / "scistack.toml"
+    assert str(_normalize(shared_repo)) in _read_raw_section(written)["modules"]
+    assert pyproject.read_text() == PYPROJECT
 
 
 def test_remove_path_deletes_entry_from_both_lists(tmp_path):
@@ -1004,13 +1019,17 @@ def test_remove_path_noop_when_no_config_file(tmp_path):
     assert not (tmp_path / "scistack.toml").exists()
 
 
-def test_remove_path_rejects_packaged_project(tmp_path):
+def test_remove_path_ignores_a_pyproject(tmp_path):
+    """A [tool.scistack] table is not config: with no scistack.toml there is
+    nothing to remove from, and the pyproject.toml is never edited."""
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
-    (tmp_path / "pyproject.toml").write_text("[tool.scistack]\nmodules = [\"x\"]\n")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(FileNotFoundError):
         remove_path(db_path, tmp_path / "x")
+    assert pyproject.read_text() == PYPROJECT
 
 
 # ---------------------------------------------------------------------------
@@ -1067,9 +1086,10 @@ def test_entities_file_key_still_wins_over_the_conventional_path(tmp_path):
 
 
 def test_packaged_project_also_gets_the_conventional_fallback(tmp_path):
-    """The GUI refuses to WRITE a pyproject.toml, but reading is not writing:
-    a packaged project with the conventional file must still discover it."""
-    (tmp_path / "pyproject.toml").write_text("[tool.scistack]\nmodules = []\n")
+    """A project that is also a Python package still discovers the
+    conventional entities file."""
+    (tmp_path / "pyproject.toml").write_text(PYPROJECT)
+    (tmp_path / "scistack.toml").write_text("modules = []\n")
     (tmp_path / "src").mkdir()
     conventional = tmp_path / "src" / "scistack_entities.toml"
     conventional.write_text('variables = ["RawEMG"]\n')
@@ -1392,13 +1412,17 @@ def test_set_entities_file_preserves_legacy_variable_file_key(tmp_path):
     assert data["entities_file"] == "src/scistack_entities.toml"
 
 
-def test_set_entities_file_rejects_packaged_project(tmp_path):
+def test_set_entities_file_beside_a_pyproject_writes_scistack_toml(tmp_path):
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
-    (tmp_path / "pyproject.toml").write_text("[tool.scistack]\n")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT)
 
-    with pytest.raises(ValueError):
-        set_entities_file(db_path, None)
+    created = set_entities_file(db_path, None)
+
+    assert created.exists()
+    assert _read_raw_section(tmp_path / "scistack.toml")["entities_file"]
+    assert pyproject.read_text() == PYPROJECT
 
 
 def test_clear_entities_file_writes_an_explicit_opt_out_and_keeps_file(tmp_path):
@@ -1429,15 +1453,16 @@ def test_clear_entities_file_noop_when_no_config_file(tmp_path):
         clear_entities_file(db_path)
 
 
-def test_clear_entities_file_rejects_packaged_project(tmp_path):
+def test_clear_entities_file_ignores_a_pyproject(tmp_path):
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.scistack]\nentities_file = "x.toml"\n'
-    )
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT + '\n[tool.scistack]\nentities_file = "x.toml"\n')
+    before = pyproject.read_text()
 
-    with pytest.raises(ValueError):
+    with pytest.raises(FileNotFoundError):
         clear_entities_file(db_path)
+    assert pyproject.read_text() == before
 
 
 # ---------------------------------------------------------------------------
@@ -1530,11 +1555,12 @@ def test_locate_config_at_does_not_walk_upward(tmp_path):
     assert locate_config_at(child) is None
 
 
-def test_locate_config_at_prefers_pyproject(tmp_path):
-    (tmp_path / "scistack.toml").write_text("modules = []\n")
+def test_locate_config_at_never_picks_a_pyproject(tmp_path):
     (tmp_path / "pyproject.toml").write_text("[tool.scistack]\n")
+    assert locate_config_at(tmp_path) is None
 
-    assert locate_config_at(tmp_path) == _normalize(tmp_path / "pyproject.toml")
+    (tmp_path / "scistack.toml").write_text("modules = []\n")
+    assert locate_config_at(tmp_path) == _normalize(tmp_path / "scistack.toml")
 
 
 # ---------------------------------------------------------------------------
@@ -1756,7 +1782,7 @@ def test_normalize_still_preserves_the_alias_spelling(tmp_path):
 def test_glue_dir_round_trips_through_add_path(tmp_path):
     """The documented trap: a new key silently dropped on the next Paths save.
 
-    Every _render_scistack_toml call site must thread glue_dir through, exactly
+    Every config write must carry glue_dir through, exactly
     as they must for entities_file."""
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -1862,7 +1888,7 @@ def test_add_path_preserves_a_hand_authored_schema_keys_table(tmp_path):
 
     The Paths popup rewrites the whole file from the fields it knows, so a
     level order the user typed would be DELETED by an unrelated '+' click —
-    the exact failure `_render_scistack_toml`'s docstring says must not
+    the exact failure `scidb.config_file`'s docstring says must not
     happen, one table later.
     """
     db_path = tmp_path / "proj.duckdb"
@@ -1888,6 +1914,38 @@ def test_add_path_preserves_a_hand_authored_schema_keys_table(tmp_path):
     }
     # And the write it was actually asked to do still happened.
     assert str(_normalize(shared_repo)) in data["modules"]
+
+
+def test_every_gui_config_write_keeps_keys_it_does_not_know(tmp_path):
+    """scistack.toml is the only config file (2026-10-08), so a key the GUI
+    has no field for (the scidb CLI's ``db``, anything a user adds) must
+    survive every GUI write -- each writer goes through scidb.config_file
+    with the whole section."""
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text(
+        'modules = []\ndb = "data/x.duckdb"\nmy_flag = true\n'
+        'custom = { a = 1, b = ["c"] }\n\n[matlab]\nextra = "v"\n'
+    )
+    shared_repo = tmp_path / "shared_repo"
+    shared_repo.mkdir()
+
+    add_path(db_path, shared_repo)
+    set_entities_file(db_path, None)
+    set_project_alias(db_path, "session", name="Session")
+    set_project_color(db_path, "session", level="BL", color="#111111")
+    remove_path(db_path, shared_repo)
+    clear_entities_file(db_path)
+
+    data = _read_raw_section(toml_file)
+    assert data["db"] == "data/x.duckdb"
+    assert data["my_flag"] is True
+    assert data["custom"] == {"a": 1, "b": ["c"]}
+    assert data["matlab"]["extra"] == "v"
+    assert data["aliases"]["session"]["name"] == "Session"
+    assert data["colors"]["session"]["BL"] == "#111111"
+    assert data["entities_file"] == ""
 
 
 def test_a_preserved_schema_keys_table_is_rendered_last(tmp_path):
@@ -2028,13 +2086,17 @@ def test_a_new_alias_is_read_back_at_once(tmp_path):
     assert aliases.aliases_in(toml_file)["session"] == {"name": "Visit"}
 
 
-def test_set_project_alias_refuses_a_packaged_project(tmp_path):
+def test_set_project_alias_beside_a_pyproject_writes_scistack_toml(tmp_path):
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n\n[tool.scistack]\n")
-    with pytest.raises(ValueError, match=r"tool\.scistack\.aliases\.session"):
-        set_project_alias(db_path, "session", name="Session")
-    assert "aliases" not in (tmp_path / "pyproject.toml").read_text()
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT)
+    (tmp_path / "scistack.toml").write_text("modules = []\n")
+
+    set_project_alias(db_path, "session", name="Session")
+
+    assert _read_raw_section(tmp_path / "scistack.toml")["aliases"]["session"]["name"] == "Session"
+    assert pyproject.read_text() == PYPROJECT
 
 
 def test_set_project_alias_never_creates_a_config(tmp_path):
@@ -2110,13 +2172,17 @@ def test_a_new_colour_is_read_back_at_once(tmp_path):
     assert colors.colors_in(toml_file) == {"session": {"BL": "#222222"}}
 
 
-def test_set_project_color_refuses_a_packaged_project(tmp_path):
+def test_set_project_color_beside_a_pyproject_writes_scistack_toml(tmp_path):
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n\n[tool.scistack]\n")
-    with pytest.raises(ValueError, match=r"tool\.scistack\.colors"):
-        set_project_color(db_path, "session", level="BL", color="#111111")
-    assert "colors" not in (tmp_path / "pyproject.toml").read_text()
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT)
+    (tmp_path / "scistack.toml").write_text("modules = []\n")
+
+    set_project_color(db_path, "session", level="BL", color="#111111")
+
+    assert _read_raw_section(tmp_path / "scistack.toml")["colors"]["session"]["BL"] == "#111111"
+    assert pyproject.read_text() == PYPROJECT
 
 
 def test_set_project_color_never_creates_a_config(tmp_path):

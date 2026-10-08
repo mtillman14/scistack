@@ -9,8 +9,6 @@ from pathlib import Path
 import pytest
 from scidb.discover import (
     DiscoveryResult,
-    _dist_to_import_names,
-    _read_uv_lock_packages,
     scan_project,
 )
 
@@ -35,7 +33,7 @@ def project_factory(tmp_path: Path):
                     "variables.py": "from scidb import BaseVariable\\n"
                                     "class Raw(BaseVariable): schema_version = 1\\n",
                 },
-                uv_lock_packages=["numpy"],
+                packages=["numpy"],
             )
     """
     created_packages: list[str] = []
@@ -43,7 +41,7 @@ def project_factory(tmp_path: Path):
     def _make(
         package_name: str,
         files: dict[str, str] | None = None,
-        uv_lock_packages: list[str] | None = None,
+        packages: list[str] | None = None,
         pyproject_extra: str = "",
     ) -> Path:
         project_root = tmp_path / package_name
@@ -63,13 +61,10 @@ def project_factory(tmp_path: Path):
             full.parent.mkdir(parents=True, exist_ok=True)
             full.write_text(textwrap.dedent(content))
 
-        if uv_lock_packages is not None:
-            lock_lines = ["version = 1\n"]
-            for name in uv_lock_packages:
-                lock_lines.append(
-                    f'\n[[package]]\nname = "{name}"\nversion = "0.0.0"\n'
-                )
-            (project_root / "uv.lock").write_text("".join(lock_lines))
+        if packages is not None:
+            # Libraries are what scistack.toml lists, never a lockfile.
+            listed = ", ".join(f'"{name}"' for name in packages)
+            (project_root / "scistack.toml").write_text(f"packages = [{listed}]\n")
 
         created_packages.append(package_name)
         return project_root
@@ -378,7 +373,7 @@ class TestScanProject:
         assert result.project_code.function_count == 2
         assert result.project_code.parameter_count == 1
         assert result.project_code.is_empty is False
-        assert result.libraries == {}  # no uv.lock
+        assert result.libraries == {}  # no scistack.toml packages
 
     def test_import_error_captured_not_thrown(self, project_factory):
         root = project_factory(
@@ -443,8 +438,8 @@ class TestScanProject:
         assert result.project_code.is_empty
         assert result.project_code.name == "fix_no_src"
 
-    def test_missing_uv_lock(self, project_factory):
-        """No uv.lock → no libraries, no error."""
+    def test_no_configured_packages(self, project_factory):
+        """No scistack.toml packages → no libraries, no error."""
         root = project_factory(
             package_name="fix_no_lock",
             files={
@@ -472,138 +467,70 @@ class TestScanProject:
 
 
 # ---------------------------------------------------------------------------
-# uv.lock integration: real scan of an installed package
+# Libraries: the packages listed in scistack.toml (never uv.lock, 2026-10-08)
 # ---------------------------------------------------------------------------
-class TestUvLockIntegration:
-    def test_scans_library_from_uv_lock(self, project_factory):
-        """
-        Put scidb itself in uv.lock. The scanner should import it and
-        find non-empty exports (scidb's own test_variables if any, or at
-        minimum zero-error scan).
-        """
+class TestConfiguredLibraries:
+    def test_scans_a_listed_library(self, project_factory):
         root = project_factory(
             package_name="fix_lib_scan",
             files={},
-            uv_lock_packages=["scilineage"],  # scilineage is importable in test env
+            packages=["scilineage"],  # scilineage is importable in test env
         )
         result = scan_project(root)
         assert "scilineage" in result.libraries
-        scilineage_result = result.libraries["scilineage"]
-        # No hard claim about exports — just that it scanned without fatal error
-        # at the top-level package. There may be errors for individual submodules
-        # that do optional imports, but the package itself should import.
-        assert scilineage_result.name == "scilineage"
+        # No hard claim about exports — only that the top-level package was
+        # scanned (submodules with optional imports may record errors).
+        assert result.libraries["scilineage"].name == "scilineage"
 
     def test_zero_export_library_returned_not_filtered(self, project_factory):
-        """
-        Scanner returns zero-export libraries unchanged. The panel layer
-        (Phase 6) is responsible for filtering them.
-        """
-        # We'll use ``json`` — it's a stdlib module but we can still fake
-        # it as a "library" by listing something installed that has no
-        # scistack exports. Use "pytest" — installed in the test env,
-        # definitely no BaseVariable subclasses.
+        """The scanner returns zero-export libraries; the panel layer filters."""
         root = project_factory(
             package_name="fix_zero_export",
             files={},
-            uv_lock_packages=["pytest"],
+            packages=["pytest"],
         )
         result = scan_project(root)
         assert "pytest" in result.libraries
-        # pytest has zero scistack exports — it should be returned but empty.
         assert result.libraries["pytest"].is_empty
-        # And the ``non_empty_libraries`` view should hide it.
         assert "pytest" not in result.non_empty_libraries()
 
     def test_missing_library_captured_as_error(self, project_factory):
-        """
-        A distribution listed in uv.lock but not installed is reported
-        as a single error entry, not a thrown exception.
-        """
+        """A listed package that is not installed is an error entry, not a
+        thrown exception."""
         root = project_factory(
             package_name="fix_missing_lib",
             files={},
-            uv_lock_packages=["nonexistent_package_xyz_12345"],
+            packages=["nonexistent_package_xyz_12345"],
         )
         result = scan_project(root)
-        assert "nonexistent_package_xyz_12345" in result.libraries
         pkg = result.libraries["nonexistent_package_xyz_12345"]
         assert len(pkg.errors) >= 1
         assert pkg.is_empty
 
-    def test_skip_dists_filter(self, project_factory):
-        """``skip_dists`` parameter skips named distributions entirely."""
-        root = project_factory(
-            package_name="fix_skip",
-            files={},
-            uv_lock_packages=["pytest", "scilineage"],
-        )
-        result = scan_project(root, skip_dists=["pytest"])
-        assert "pytest" not in result.libraries
-        assert "scilineage" in result.libraries
-
-    def test_library_filter_callable(self, project_factory):
-        root = project_factory(
-            package_name="fix_filter",
-            files={},
-            uv_lock_packages=["pytest", "scilineage"],
-        )
-        result = scan_project(
-            root,
-            library_filter=lambda name: name.startswith("sci"),
-        )
-        assert "scilineage" in result.libraries
-        assert "pytest" not in result.libraries
-
     def test_project_name_skipped_from_libraries(self, project_factory):
-        """If the project name shows up in its own uv.lock, it's skipped."""
         root = project_factory(
             package_name="fix_self",
             files={},
-            uv_lock_packages=["fix_self", "scilineage"],
+            packages=["fix_self", "scilineage"],
         )
         result = scan_project(root)
         assert "fix_self" not in result.libraries
         assert "scilineage" in result.libraries
 
-
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-class TestHelpers:
-    # read_project_name moved to scifor.discovery -- see
-    # scifor/tests/test_discovery.py's TestReadProjectName for its direct
-    # unit tests.
-
-    def test_read_uv_lock_packages(self, tmp_path):
-        (tmp_path / "uv.lock").write_text(
-            textwrap.dedent(
-                """
-                version = 1
-
-                [[package]]
-                name = "numpy"
-                version = "2.0.0"
-
-                [[package]]
-                name = "pandas"
-                version = "2.0.0"
-                """
-            )
+    def test_a_uv_lock_is_never_read(self, project_factory):
+        root = project_factory(package_name="fix_uv", files={})
+        (root / "uv.lock").write_text(
+            'version = 1\n\n[[package]]\nname = "scilineage"\nversion = "0"\n'
         )
-        names = _read_uv_lock_packages(tmp_path)
-        assert names == ["numpy", "pandas"]
+        assert scan_project(root).libraries == {}
 
-    def test_read_uv_lock_missing(self, tmp_path):
-        assert _read_uv_lock_packages(tmp_path) == []
-
-    def test_dist_to_import_names_known_package(self):
-        # pytest is definitely installed
-        names = _dist_to_import_names("pytest")
-        assert "pytest" in names or "_pytest" in names
-
-    def test_dist_to_import_names_missing(self):
-        assert _dist_to_import_names("definitely_not_a_real_package_xyz") == []
+    def test_tool_scistack_packages_in_pyproject_are_never_read(self, project_factory):
+        root = project_factory(
+            package_name="fix_tool",
+            files={},
+            pyproject_extra='\n[tool.scistack]\npackages = ["scilineage"]\n',
+        )
+        assert scan_project(root).libraries == {}
 
 
 # ---------------------------------------------------------------------------

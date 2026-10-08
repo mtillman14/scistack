@@ -187,9 +187,7 @@ def get_or_create_target_file() -> "tuple[Path | None, str | None]":
          single-file mode (``--module``).
       2. Project-mode config with no ``entities_file`` set: auto-create a
          default one for loose-script projects and persist it into
-         scistack.toml. Packaged (``pyproject.toml``) projects get a clear
-         hand-edit error instead -- the Paths popup never auto-writes to
-         pyproject.toml (see ``config._reject_packaged_project``).
+         scistack.toml.
       3. No config and no module loaded at all: the original error.
 
     Note what is *not* here any more: ``variable_file``. A ``.py`` entities
@@ -217,15 +215,7 @@ def get_or_create_target_file() -> "tuple[Path | None, str | None]":
             "auto-create for project at %s",
             db_path,
         )
-        try:
-            config_mod.set_entities_file(db_path, None)
-        except ValueError as e:
-            logger.info("[target_file_service] Auto-create refused: %s", e)
-            return None, (
-                "No entities_file configured for this packaged project. Add "
-                'entities_file = "path/to/scistack_entities.toml" under '
-                "[tool.scistack] in pyproject.toml, then hit Refresh."
-            )
+        config_mod.set_entities_file(db_path, None)
 
         new_config = reload_registries_from_disk(db_path)
         logger.info(

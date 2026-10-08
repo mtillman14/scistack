@@ -189,7 +189,7 @@ def _create_matlab_variable(name: str, docstring: str | None = None) -> dict:
             "ok": False,
             "error": (
                 "Nowhere to write the classdef: configure "
-                "[tool.scistack.matlab] variable_dir, or an entities_file "
+                "[matlab] variable_dir in scistack.toml, or an entities_file "
                 "for its default location."
             ),
         }

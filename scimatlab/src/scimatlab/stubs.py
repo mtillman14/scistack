@@ -60,7 +60,7 @@ def variable_stub_dir(project_start: "Path | str | None" = None) -> "Path | None
 
     Resolution order:
 
-    1. ``[tool.scistack.matlab] variable_dir``, relative to the config file's
+    1. scistack.toml's ``[matlab] variable_dir``, relative to the config file's
        directory -- an explicitly configured home always wins.
     2. ``<entities_file.parent>/scistack_variables``.
 

@@ -158,7 +158,11 @@ class TestEnsureProjectFiles:
         assert result.entities_file is None
         assert not (tmp_path / "src" / "scistack_entities.toml").exists()
 
-    def test_a_packaged_project_is_reported_not_written(self, tmp_path):
+    def test_a_packaged_project_gets_scistack_toml_and_pyproject_is_untouched(
+        self, tmp_path
+    ):
+        """2026-10-08: a pyproject.toml is packaging only. The project still
+        gets its scistack.toml and entities file; the pyproject is never edited."""
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "demo"\n', encoding="utf-8"
         )
@@ -167,10 +171,9 @@ class TestEnsureProjectFiles:
         result = ensure_project_files(tmp_path / "data.duckdb")
 
         assert (tmp_path / "pyproject.toml").read_text() == before
-        assert not (tmp_path / "scistack.toml").exists()
-        assert result.created == []
-        assert any("pyproject.toml" in w for w in result.warnings)
-        assert any("entities_file" in w for w in result.warnings)
+        assert (tmp_path / "scistack.toml").exists()
+        assert result.entities_file is not None and result.entities_file.exists()
+        assert not result.warnings
 
 
 class TestLanguageStubs:
@@ -234,7 +237,7 @@ class TestLanguageStubs:
         assert not [n for n in tree.body if isinstance(n, ast.ClassDef)]
 
     def test_no_stubs_without_an_entities_file(self, tmp_path):
-        """A packaged project init refused: nothing to sit beside."""
+        """No entities file configured: nothing to sit beside."""
 
         class _Config:
             entities_file = None
@@ -368,3 +371,69 @@ class TestEveryEntryPointInitializesTheProject:
             f"scistack_gui.{module_name} no longer calls ensure_project_files; "
             "projects opened through it will have no entities file configured"
         )
+
+    @pytest.mark.parametrize("module_name", ["server", "bootstrap"])
+    def test_passes_create_new_so_creating_a_database_runs_init(self, module_name):
+        """2026-10-08: creating a database from either entry point runs
+        scidb.project.init_project; the flag is the only thing that says so."""
+        import ast
+        import importlib
+        import inspect
+
+        module = importlib.import_module(f"scistack_gui.{module_name}")
+        tree = ast.parse(inspect.getsource(module))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ensure_project_files"
+        ]
+        assert calls and all(
+            any(kw.arg == "create_new" for kw in c.keywords) for c in calls
+        ), f"scistack_gui.{module_name} calls ensure_project_files without create_new"
+
+
+def _tree_bytes(root):
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.suffix != ".duckdb"
+    }
+
+
+class TestCreatingADatabaseRunsInit:
+    """The GUI and ``scistack init`` share one owner of the project layout
+    (scidb.project.init_project), so they cannot produce different trees."""
+
+    def test_create_new_produces_exactly_what_init_project_produces(
+        self, tmp_path, tmp_path_factory
+    ):
+        from scidb.project import init_project
+
+        result = ensure_project_files(tmp_path / "study.duckdb", create_new=True)
+        assert not result.warnings
+
+        other = tmp_path_factory.mktemp("cli") / tmp_path.name
+        init_project(other)
+
+        assert _tree_bytes(tmp_path) == _tree_bytes(other)
+        assert (tmp_path / "pyproject.toml").exists()
+
+    def test_opening_never_turns_a_folder_into_a_package(self, tmp_path):
+        (tmp_path / "analysis.py").write_text("")
+
+        ensure_project_files(tmp_path / "study.duckdb")
+
+        assert not (tmp_path / "pyproject.toml").exists()
+        assert not any((tmp_path / "src").glob("*/__init__.py"))
+
+    def test_create_new_entities_file_is_inside_the_package(self, tmp_path):
+        from scidb.project import package_name_for
+
+        result = ensure_project_files(tmp_path / "study.duckdb", create_new=True)
+
+        pkg = package_name_for(tmp_path)
+        assert result.entities_file is not None
+        assert result.entities_file.name == "scistack_entities.toml"
+        assert result.entities_file.parent.name == pkg

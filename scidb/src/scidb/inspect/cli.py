@@ -42,35 +42,31 @@ class CLIError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def _pyproject_db(start: Path) -> str | None:
-    """Find ``[tool.scistack] db = "…"`` in the nearest pyproject.toml upward."""
-    try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib  # type: ignore[no-redef]
-        except ImportError:
-            Log.debug("scidb cli: no tomllib/tomli — skipping pyproject.toml discovery")
-            return None
-    for directory in [start, *start.parents]:
-        pyproject = directory / "pyproject.toml"
-        if not pyproject.is_file():
-            continue
-        try:
-            with open(pyproject, "rb") as f:
-                data = tomllib.load(f)
-        except Exception as e:
-            Log.warn(f"scidb cli: could not parse {pyproject}: {e}")
-            continue
-        db = data.get("tool", {}).get("scistack", {}).get("db")
-        if db:
-            return str((directory / db).resolve()) if not Path(db).is_absolute() else db
-    return None
+def _config_db(start: Path) -> str | None:
+    """``db = "…"`` from the project's ``scistack.toml`` at *start*.
+
+    The config file and its location have one owner
+    (``scifor.discovery.project_config_at``): the root itself, never a parent
+    folder, and never a ``pyproject.toml`` (packaging only, 2026-10-08).
+    """
+    from scifor.discovery import project_config_at, read_scistack_section
+
+    config = project_config_at(start)
+    if config is None:
+        Log.debug(f"scidb cli: no scistack.toml at {start}")
+        return None
+    db = (read_scistack_section(config) or {}).get("db")
+    if not db:
+        return None
+    if not isinstance(db, str):
+        Log.warn(f"scidb cli: {config} db must be a string, got {db!r}; ignoring it")
+        return None
+    return db if Path(db).is_absolute() else str((config.parent / db).resolve())
 
 
 def resolve_db_path(db_flag: str | None, cwd: Path | None = None) -> tuple[str, str]:
     """Resolve the database path → (path, source). Discovery order:
-    --db flag > SCIDB_DATABASE env > pyproject [tool.scistack] db > single
+    --db flag > SCIDB_DATABASE env > scistack.toml db > single
     *.duckdb in cwd.
     """
     cwd = cwd or Path.cwd()
@@ -79,9 +75,9 @@ def resolve_db_path(db_flag: str | None, cwd: Path | None = None) -> tuple[str, 
     env = os.environ.get("SCIDB_DATABASE")
     if env:
         return env, "SCIDB_DATABASE env var"
-    from_pyproject = _pyproject_db(cwd)
-    if from_pyproject:
-        return from_pyproject, "pyproject.toml [tool.scistack] db"
+    from_config = _config_db(cwd)
+    if from_config:
+        return from_config, "scistack.toml db"
     candidates = sorted(cwd.glob("*.duckdb"))
     if len(candidates) == 1:
         return str(candidates[0]), "single *.duckdb in cwd"
@@ -93,7 +89,7 @@ def resolve_db_path(db_flag: str | None, cwd: Path | None = None) -> tuple[str, 
         )
     raise CLIError(
         "No database found. Pass --db PATH, set SCIDB_DATABASE, add "
-        '[tool.scistack] db = "..." to pyproject.toml, or run in a '
+        'db = "..." to scistack.toml, or run in a '
         "directory containing exactly one .duckdb file."
     )
 

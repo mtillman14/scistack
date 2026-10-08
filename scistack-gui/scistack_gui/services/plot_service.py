@@ -225,7 +225,7 @@ def set_project_alias(
     the kept resolve used for resize re-renders is forgotten, because it
     holds text drawn before the edit.
 
-    A refusal — a packaged project, no config — is ``{ok: False, error}``:
+    A refusal — no config — is ``{ok: False, error}``:
     a state to show beside the box, not a fault.
     """
     from scistack_gui.config import _UNCHANGED
@@ -260,7 +260,7 @@ def set_project_color(
     the colour through ``scistackplot.colors.parse_color``). As with
     :func:`set_project_alias`, no table is dropped — a built table reads the
     project's colours live (``LongTable.colors_source``) — and a refusal
-    (packaged project, no config, text that is not a colour) is
+    (no config, text that is not a colour) is
     ``{ok: False, error}``.
     """
     from scistack_gui.config import set_project_color as write_color

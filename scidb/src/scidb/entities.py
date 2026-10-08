@@ -101,6 +101,29 @@ they have no value to carry."""
 DEFAULT_ENTITIES_FILENAME = "scistack_entities.toml"
 DEFAULT_ENTITIES_RELPATH = Path("src") / DEFAULT_ENTITIES_FILENAME
 
+
+def default_entities_relpath(root: "Path | str", package: "str | None" = None) -> Path:
+    """Where a NEW entities file goes for the project at *root*, relative to
+    it: inside the project's own package when it is one -- *package* when
+    the caller is creating that package (``scidb.project.init_project``),
+    else ``scifor.discovery.own_package_dir``
+    (``src/<name>/scistack_entities.toml``, so it is package data and ships
+    in the project's wheel), else :data:`DEFAULT_ENTITIES_RELPATH`.
+
+    The one owner of that default: ``scidb.project.init_project`` and the
+    GUI's ``config.set_entities_file`` both ask here. It decides only where a
+    file is CREATED; which file a project uses is
+    :func:`resolve_entities_path`.
+    """
+    from scifor.discovery import own_package_dir
+
+    if package is None:
+        own = own_package_dir(Path(root))
+        if own is None:
+            return DEFAULT_ENTITIES_RELPATH
+        package = own[0]
+    return Path("src") / package / DEFAULT_ENTITIES_FILENAME
+
 _PATH_INPUT_KEYS = frozenset({"template", "root_folder"})
 
 
@@ -447,7 +470,7 @@ def _name_error(name: str, result: EntitiesFile) -> "str | None":
 
 
 def _project_config(start: "Path | str | None") -> "Path | None":
-    """The ``scistack.toml``/``pyproject.toml`` of the project rooted at
+    """The ``scistack.toml`` of the project rooted at
     *start* (default: ``scifor.project_root()``), or ``None`` -- with the one
     debug log both callers below want. *start* IS the root: nothing walks up
     from it (see ``scifor.discovery.project_config_at``)."""

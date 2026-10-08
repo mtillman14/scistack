@@ -23,8 +23,8 @@ When `--db PATH` is omitted, the database is discovered in this order:
 
 1. `--db PATH` flag
 2. `SCIDB_DATABASE` environment variable
-3. `db = "..."` under `[tool.scistack]` in the nearest `pyproject.toml`
-   (searched upward from the current directory)
+3. `db = "..."` in the project's `scistack.toml` (in the current directory
+   only; a relative path is relative to that file)
 4. exactly one `*.duckdb` file in the current directory
    (an error lists the candidates if there are several)
 

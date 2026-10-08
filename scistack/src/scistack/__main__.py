@@ -2,8 +2,13 @@
 ``scistack`` CLI entry point.
 
 Usage:
-    scistack project new <name> --schema-keys subject session
+    scistack init [PATH] [--name NAME] [--schema-keys subject session ...]
     scistack db <command> ...      # alias for the ``scidb`` CLI
+
+``init`` is a thin front end over ``scidb.project.init_project``, the one
+owner of "make this folder a SciStack project" (the GUI calls the same
+function when it creates a database). It only creates what is missing, so it
+is safe to run in an existing folder and to run twice.
 """
 
 from __future__ import annotations
@@ -16,33 +21,39 @@ from pathlib import Path
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="scistack",
-        description="SciStack project & environment tooling.",
+        description="SciStack project tooling.",
     )
     sub = parser.add_subparsers(dest="command")
 
-    # --- project new ---
-    proj = sub.add_parser("project", help="Project management commands.")
-    proj_sub = proj.add_subparsers(dest="project_command")
-    new = proj_sub.add_parser("new", help="Scaffold a new SciStack project.")
-    new.add_argument(
-        "name", help="Project name (lowercase, underscores, starts with a letter)."
+    init = sub.add_parser(
+        "init",
+        help="Make a folder a SciStack project (creates only what is missing).",
     )
-    new.add_argument(
-        "--schema-keys",
-        nargs="+",
-        required=True,
-        help="Metadata keys that define the dataset schema (e.g. subject session).",
-    )
-    new.add_argument(
-        "--parent-dir",
+    init.add_argument(
+        "path",
+        nargs="?",
         type=Path,
         default=Path.cwd(),
-        help="Parent directory for the project folder (default: current directory).",
+        help="Project folder (default: the current directory; created if absent).",
     )
-    new.add_argument(
-        "--no-uv-sync",
-        action="store_true",
-        help="Skip running 'uv sync' after scaffolding.",
+    init.add_argument(
+        "--name",
+        default=None,
+        help="Package name (default: pyproject.toml's [project].name, else the "
+        "folder name made into a valid identifier).",
+    )
+    init.add_argument(
+        "--schema-keys",
+        nargs="+",
+        default=None,
+        help="Also create the project database with these schema keys "
+        "(top-down, e.g. subject session trial).",
+    )
+    init.add_argument(
+        "--db",
+        default=None,
+        help="Database file name for --schema-keys (default: <name>.duckdb in "
+        "the project folder).",
     )
 
     # --- db (alias for the scidb CLI; wiring lives in scidb.inspect.cli) ---
@@ -55,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.command == "project" and args.project_command == "new":
-        return _cmd_project_new(args)
+    if args.command == "init":
+        return _cmd_init(args)
 
     if args.command == "db":
         dispatch = getattr(args, "_dispatch", None)
@@ -67,31 +78,55 @@ def main(argv: list[str] | None = None) -> int:
     return 1
 
 
-def _cmd_project_new(args: argparse.Namespace) -> int:
-    from scistack.project import scaffold_project, validate_project_name
+def _cmd_init(args: argparse.Namespace) -> int:
+    from scidb.project import init_project
 
     try:
-        validate_project_name(args.name)
-    except ValueError as e:
+        report = init_project(args.path, name=args.name)
+    except (ValueError, OSError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    try:
-        project_root = scaffold_project(
-            parent_dir=args.parent_dir,
-            name=args.name,
-            schema_keys=args.schema_keys,
-            run_uv_sync=not args.no_uv_sync,
-        )
-    except FileExistsError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    for path in report.created:
+        print(f"created  {_rel(path, report.root)}")
+    for path in report.kept:
+        print(f"kept     {_rel(path, report.root)}")
 
-    print(f"Created project: {project_root}")
+    if args.schema_keys:
+        db_path = report.root / (args.db or f"{report.package}.duckdb")
+        if db_path.exists():
+            print(f"kept     {_rel(db_path, report.root)} (database already exists)")
+        else:
+            try:
+                _create_database(db_path, args.schema_keys)
+            except Exception as e:  # surfaced, never swallowed
+                print(f"Error creating {db_path}: {e}", file=sys.stderr)
+                return 1
+            print(f"created  {_rel(db_path, report.root)} (schema: {', '.join(args.schema_keys)})")
+
+    for warning in report.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    print(f"SciStack project {report.package!r} ready at {report.root}")
     return 0
+
+
+def _create_database(db_path: Path, schema_keys: list[str]) -> None:
+    """Create the project's DuckDB file, leaving no configured database
+    behind (this is a tool, not the user's pipeline)."""
+    from scidb.database import clear_current_database
+
+    from scidb import configure_database
+
+    db = configure_database(db_path, schema_keys)
+    db.close()
+    clear_current_database()
+
+
+def _rel(path: Path, root: Path) -> str:
+    try:
+        return Path(path).relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
 
 
 if __name__ == "__main__":

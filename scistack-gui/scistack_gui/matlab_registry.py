@@ -2,7 +2,7 @@
 MATLAB function and variable registry.
 
 Mirrors the role of :mod:`scistack_gui.registry` for Python code, but for
-MATLAB .m files declared in ``[tool.scistack.matlab]``.
+MATLAB .m files declared in scistack.toml's ``[matlab]`` table.
 
 Module-level state tracks discovered MATLAB functions and variables.
 On load, Python surrogate classes are created for each MATLAB variable via

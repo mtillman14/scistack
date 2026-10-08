@@ -1,9 +1,9 @@
 """
 Discovery scanner for scistack projects.
 
-Walks a project's ``src/{project}/`` tree and all packages listed in
-``uv.lock`` (that are currently importable in the environment), and
-collects the pipeline-relevant exports of each module:
+Walks a project's ``src/{project}/`` tree and every package listed under
+``packages`` in its ``scistack.toml``, and collects the pipeline-relevant
+exports of each module:
 
 * :class:`BaseVariable` subclasses (via ``issubclass`` check)
 * ``@scistack``-tagged plain functions (pipeline steps)
@@ -34,22 +34,11 @@ Typical use::
 
 from __future__ import annotations
 
-import importlib.metadata
 import logging
-import sys
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover
-    try:
-        import tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:
-        import tomli as tomllib  # type: ignore[no-redef]
 
 from scifor import EachOf, PathInput
 from scifor.discovery import PathInsert, purge_module, read_project_name, walk_package
@@ -296,91 +285,34 @@ def scan_package(package_name: str) -> PackageResult:
 # ---------------------------------------------------------------------------
 # Project-level scanner
 # ---------------------------------------------------------------------------
-def _read_uv_lock_packages(project_root: Path) -> list[str]:
-    """Return all package names listed in ``uv.lock``.
+def _configured_packages(project_root: Path) -> list[str]:
+    """The ``packages`` the project's ``scistack.toml`` lists (import names),
+    or ``[]``. The same list the GUI registry loads, so the two never
+    disagree about which libraries a project uses. Never a lockfile: SciStack
+    does not depend on uv (2026-10-08)."""
+    from scifor.discovery import project_config_at, read_scistack_section
 
-    The project's own package and virtual dependency-group packages are
-    NOT filtered out here — callers should skip by name if needed.
-    """
-    lock_path = project_root / "uv.lock"
-    if not lock_path.exists():
+    config = project_config_at(project_root)
+    if config is None:
         return []
-    try:
-        with open(lock_path, "rb") as f:
-            data = tomllib.load(f)
-    except Exception:
-        logger.warning("Failed to parse %s", lock_path, exc_info=True)
+    packages = (read_scistack_section(config) or {}).get("packages", [])
+    if not isinstance(packages, list):
+        logger.warning("%s: packages must be a list; ignoring %r", config, packages)
         return []
-
-    names: list[str] = []
-    for entry in data.get("package", []):
-        name = entry.get("name")
-        if isinstance(name, str) and name:
-            names.append(name)
-    return names
+    return [p for p in packages if isinstance(p, str) and p]
 
 
-def _dist_to_import_names(dist_name: str) -> list[str]:
-    """Resolve a PyPI distribution name to the top-level import names it provides.
-
-    Uses ``top_level.txt`` if available, otherwise scans the RECORD for
-    top-level ``__init__.py`` files, otherwise falls back to normalizing
-    the distribution name (``python-dateutil`` -> ``python_dateutil``).
-    """
-    try:
-        dist = importlib.metadata.distribution(dist_name)
-    except importlib.metadata.PackageNotFoundError:
-        logger.debug("Distribution not found in env: %s", dist_name)
-        return []
-
-    # 1. top_level.txt (legacy wheels / setuptools)
-    try:
-        top_level = dist.read_text("top_level.txt")
-    except Exception:
-        top_level = None
-    if top_level:
-        names = [line.strip() for line in top_level.splitlines() if line.strip()]
-        if names:
-            return names
-
-    # 2. Scan dist.files for top-level packages.
-    import_names: set[str] = set()
-    for file in dist.files or []:
-        parts = file.parts
-        if len(parts) >= 2 and parts[-1] == "__init__.py":
-            top = parts[0]
-            # Skip dist-info / data dirs.
-            if top.endswith(".dist-info") or top.endswith(".data"):
-                continue
-            import_names.add(top)
-    if import_names:
-        return sorted(import_names)
-
-    # 3. Ultimate fallback: PEP 503 normalized name with underscores.
-    return [dist_name.replace("-", "_")]
-
-
-def scan_project(
-    project_root: Path,
-    *,
-    skip_dists: Iterable[str] = (),
-    library_filter: Callable[[str], bool] | None = None,
-) -> DiscoveryResult:
+def scan_project(project_root: Path) -> DiscoveryResult:
     """
     Scan a scistack project for all pipeline-relevant exports.
 
     Walks ``{project_root}/src/{project_name}/`` (adding ``src/`` to
-    ``sys.path`` for the duration of the call) and every top-level package
-    provided by each distribution listed in ``{project_root}/uv.lock``.
+    ``sys.path`` for the duration of the call; the name is
+    ``pyproject.toml``'s ``[project].name``, packaging metadata) and every
+    package listed under ``packages`` in the project's ``scistack.toml``.
 
     Args:
-        project_root: The project directory (containing ``pyproject.toml``).
-        skip_dists: Optional iterable of distribution names to skip entirely
-            (e.g. ``["scidb", "scistack-gui"]`` to hide framework packages
-            from the library panel).
-        library_filter: Optional predicate run on each distribution name;
-            if it returns False the distribution is not scanned. Applied
-            after ``skip_dists``.
+        project_root: The project directory.
 
     Returns:
         A :class:`DiscoveryResult` with ``project_code`` and ``libraries``
@@ -412,42 +344,17 @@ def scan_project(
             purge_module(project_name)
             project_result = scan_package(project_name)
 
-    # --- Libraries from uv.lock ---
+    # --- Libraries: scistack.toml `packages` ---
     libraries: dict[str, PackageResult] = {}
-    skip_set = set(skip_dists)
-    if project_name is not None:
-        skip_set.add(project_name)
-
-    for dist_name in _read_uv_lock_packages(project_root):
-        if dist_name in skip_set:
+    for name in _configured_packages(project_root):
+        if name == project_name:
             continue
-        if library_filter is not None and not library_filter(dist_name):
-            continue
-
-        import_names = _dist_to_import_names(dist_name)
-        if not import_names:
-            libraries[dist_name] = PackageResult(
-                name=dist_name,
-                errors=[
-                    ModuleError(
-                        module_name=dist_name,
-                        traceback=(
-                            f"Distribution {dist_name!r} from uv.lock is not "
-                            f"installed in the current environment."
-                        ),
-                    )
-                ],
-            )
-            continue
-
-        # A single distribution may expose multiple top-level packages
-        # (e.g. ``setuptools`` -> pkg_resources, setuptools, ...). Merge
-        # all of them into one PackageResult keyed by the dist name.
-        merged = PackageResult(name=dist_name)
-        for import_name in import_names:
-            sub = scan_package(import_name)
-            merged.modules.extend(sub.modules)
-            merged.errors.extend(sub.errors)
-        libraries[dist_name] = merged
+        libraries[name] = scan_package(name)
+    logger.info(
+        "scan_project(%s): project %s, %d configured library package(s)",
+        project_root,
+        project_name,
+        len(libraries),
+    )
 
     return DiscoveryResult(project_code=project_result, libraries=libraries)

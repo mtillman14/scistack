@@ -100,17 +100,22 @@ def test_auto_creates_default_when_config_present_but_unset(populated_db, tmp_pa
     assert target2 == expected
 
 
-def test_packaged_project_returns_hand_edit_error(populated_db, tmp_path):
+def test_a_pyproject_does_not_block_auto_create(populated_db, tmp_path):
+    """2026-10-08: a pyproject.toml is packaging only, so a project that has
+    one still gets its entities file auto-created into scistack.toml."""
     from scistack_gui.db import get_db_path
 
-    (tmp_path / "pyproject.toml").write_text("[tool.scistack]\n")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[tool.scistack]\n")
     _registry._config = config_mod.load_config(None, get_db_path())
     _registry._module_path = None
 
     target, err = get_or_create_target_file()
 
-    assert target is None
-    assert "pyproject.toml" in err
+    assert err is None
+    assert target is not None and target.exists()
+    assert (tmp_path / "scistack.toml").exists()
+    assert pyproject.read_text() == "[tool.scistack]\n"
 
 
 def test_no_config_and_no_module_returns_original_error():

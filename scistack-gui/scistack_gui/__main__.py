@@ -51,8 +51,8 @@ def main():
         "-p",
         type=Path,
         default=None,
-        help="Path to pyproject.toml or directory containing one "
-        "(project mode — reads [tool.scistack] config).",
+        help="Path to scistack.toml or the directory containing one "
+        "(project mode — reads scistack.toml).",
     )
     parser.add_argument(
         "--schema-keys",
@@ -66,7 +66,7 @@ def main():
         type=Path,
         default=None,
         help="Directory to treat as the project root when no "
-        "pyproject.toml/scistack.toml exists yet. Determines where a new "
+        "scistack.toml exists yet. Determines where a new "
         "scistack.toml and entities file are written; defaults to the "
         "working directory.",
     )

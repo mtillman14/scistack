@@ -33,15 +33,14 @@ def project_client(populated_db, tmp_path):
 
     project_name = "test_project"
 
-    # pyproject.toml next to the database. [tool.scistack] (even empty) is
-    # required for load_config's auto-search (project_path=None) to
-    # recognize this as project-mode config rather than falling back to
-    # folder-scan -- see config.resolve_project_root + locate_config_at. The
-    # autouse _pin_project_root fixture pins the root to tmp_path, so a config
-    # file placed HERE is the one that gets found.
+    # A project that is itself a package: pyproject.toml (packaging only)
+    # names it, scistack.toml (the config; empty = defaults) makes this
+    # project-mode rather than folder-scan. The autouse _pin_project_root
+    # fixture pins the root to tmp_path, so the files placed HERE are found.
     (tmp_path / "pyproject.toml").write_text(
-        f'[project]\nname = "{project_name}"\nversion = "0.1.0"\n[tool.scistack]\n'
+        f'[project]\nname = "{project_name}"\nversion = "0.1.0"\n'
     )
+    (tmp_path / "scistack.toml").write_text("")
 
     # Source package with variables, functions, constants
     src = tmp_path / "src" / project_name

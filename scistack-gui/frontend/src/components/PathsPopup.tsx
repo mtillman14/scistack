@@ -5,11 +5,10 @@
  * a config surface you check occasionally shouldn't eat a slot in the tab
  * bar you look at constantly). Two sections:
  *
- *   - Configured Paths: the resolved [tool.scistack] config (Python
- *     modules/packages + MATLAB functions/variables/addpath) via the new
- *     GET /api/project/paths endpoint — read-only. Editing writes to
- *     pyproject.toml by hand today; a write-back UI is future work (see
- *     .claude/plan-todos-order-26.08.12.md item #3's progress note).
+ *   - Paths: the project's scistack.toml (via GET /api/project/paths),
+ *     editable for every project. scistack.toml is the only config file;
+ *     a pyproject.toml is packaging and is never read or written here
+ *     (2026-10-08).
  *   - Discovered Code: the existing ProjectConfigPanel browser, unchanged.
  */
 
@@ -21,10 +20,9 @@ import EntitiesFileEditor from './EntitiesFileEditor'
 
 interface PathsInfo {
   configured: boolean
-  packaged: boolean
   managed_paths: string[]
   project_root: string
-  /** The scistack.toml/pyproject.toml actually in use, or null if none yet. */
+  /** The scistack.toml actually in use, or null if none yet. */
   config_path?: string | null
   modules?: string[]
   entities_file?: string | null
@@ -64,24 +62,6 @@ export default function PathsPopup({ onClose }: { onClose: () => void }) {
             {error && <div style={styles.errorBanner}>{error}</div>}
             {!paths ? (
               <div style={styles.emptyText}>Loading…</div>
-            ) : paths.packaged ? (
-              <>
-                <div style={styles.pathsGrid}>
-                  <PathRow label="Project root" values={[paths.project_root]} />
-                  <PathRow label="Python modules" values={paths.modules ?? []} />
-                  <PathRow label="Python packages" values={paths.packages ?? []} />
-                  <PathRow label="Entities file" values={paths.entities_file ? [paths.entities_file] : []} />
-                  <PathRow label="Variable file (read-only)" values={paths.variable_file ? [paths.variable_file] : []} />
-                  <PathRow label="MATLAB functions" values={paths.matlab_functions ?? []} />
-                  <PathRow label="MATLAB variables" values={paths.matlab_variables ?? []} />
-                  <PathRow label="MATLAB addpath" values={paths.matlab_addpath ?? []} />
-                  <PathRow label="MATLAB variable dir" values={paths.matlab_variable_dir ? [paths.matlab_variable_dir] : []} />
-                  <PathRow label="MATLAB entities script (read-only)" values={paths.matlab_entities_file ? [paths.matlab_entities_file] : []} />
-                </div>
-                <div style={styles.hint}>
-                  Packaged project (pyproject.toml found) — edit these under <span style={styles.mono}>[tool.scistack]</span> / <span style={styles.mono}>[tool.scistack.matlab]</span> by hand, then hit Refresh below.
-                </div>
-              </>
             ) : (
               <>
                 {/* Everything below is resolved relative to the project root

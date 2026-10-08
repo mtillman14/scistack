@@ -8,6 +8,51 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-3 — One owner for creating a project; no uv
+
+**Context.** Two code paths created projects and produced different trees:
+`scistack project new` (`pyproject.toml`, `.scistack/`, `uv sync`) and the
+GUI's `ensure_project_files` (`scistack.toml` and an entities file). The user
+does not want SciStack managing environments.
+
+**Decision.** `scidb.project.init_project` is the one owner. `scistack init`
+and GUI database creation (`ensure_project_files(create_new=True)`, both entry
+points) call it. It only creates what is missing: a buildable
+`pyproject.toml`, `src/<pkg>/__init__.py`, the entities file inside the
+package (`scidb.entities.default_entities_relpath`), `.gitignore`, and
+`scistack.toml` seeded with `"."`. Opening a database never scaffolds a
+package. uv is gone: `scistack/uv_wrapper.py`, the GUI's lockfile check, and
+`scan_project` reading `uv.lock` (it reads `scistack.toml` `packages`).
+
+**Consequences.** The browser wizard's "Entities file" field is optional
+(blank = inside the package); creation can no longer opt out of an entities
+file (clear it in Paths afterwards). `scifor.discovery.own_package_dir` is the
+one answer to "is this project a package".
+
+---
+
+## D-2026-10-08-2 — `scistack.toml` is the only config file
+
+**Context.** Config could live in `scistack.toml` or in `pyproject.toml`
+`[tool.scistack]`. scifor and the GUI picked between them by different rules,
+and the GUI refused to edit packaged projects. Portability needs one config.
+Options weighed: `[tool.scistack]` everywhere (one file, but the GUI would
+edit the user's packaging file) vs. `scistack.toml` (GUI-owned).
+
+**Decision (user, option A).** `scistack.toml` only. `pyproject.toml` is
+packaging: only `[project].name` is read; `[tool.scistack]` is ignored; the
+GUI never edits it. The name and location have one owner
+(`scifor.discovery.CONFIG_FILENAME` / `config_path_at`), and so does the text
+(`scidb.config_file.render`/`write`). Every writer passes the whole config,
+so keys the writer does not know (e.g. the scidb CLI's `db`) survive.
+
+**Consequences.** Packaged projects are now GUI-editable (the read-only Paths
+mode is gone). A project's own package is loaded as a package in every mode,
+never also as loose files. Neither config file ships in a wheel. Doc:
+`config-file-formats.md`.
+
+---
+
 ## D-2026-10-08-1 — No user identity
 
 **Context.** History recorded who did things: `SCIDB_USER_ID` was read into

@@ -21,8 +21,6 @@ plot:
     [aliases.StepLength]
     name = "Step length (cm)"
 
-    # pyproject.toml: the same under [tool.scistack.aliases.…]
-
 ``name`` renames the thing where the figure says what it IS (an axis title, a
 legend title); ``levels`` renames its values wherever they appear (ticks,
 legend entries, brackets, panel titles). ``levels`` is a sub-table, never keys
@@ -300,20 +298,19 @@ def _toml_key(key: str) -> str:
     return key if _BARE_KEY.match(key) else _toml_str(key)
 
 
-def render_aliases_table(raw: Any, *, root: str = SECTION) -> str:
+def render_aliases_table(raw: Any) -> str:
     """The ``[aliases]`` tables as TOML text ("" when there is nothing).
 
     Goes through :func:`normalize` first, so the file never holds what the
     reader would drop. Tables only, so it is safe anywhere AFTER the
     top-level keys — the caller emits it last (a table swallows every key
     below it). Level keys are always quoted: ``"01"`` must stay text, and a
-    bare ``01`` is not a valid TOML key anyway. ``root`` is the table path,
-    ``tool.scistack.aliases`` for a pyproject.
+    bare ``01`` is not a valid TOML key anyway.
     """
     table = normalize(raw)
     blocks: list[str] = []
     for thing, entry in table.items():
-        header = f"{root}.{_toml_key(thing)}"
+        header = f"{SECTION}.{_toml_key(thing)}"
         lines = [f"[{header}]"]
         if "name" in entry:
             lines.append(f"name = {_toml_str(entry['name'])}")

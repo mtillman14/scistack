@@ -60,8 +60,6 @@ def _glue_dir(create: bool = False) -> "Path | None":
         db_path = None
     if db_path is None:
         return None
-    # A packaged project refuses the auto-write (config._reject_packaged_project);
-    # let the caller turn that into a hand-edit message rather than a 500.
     path = set_glue_dir(Path(db_path))
     if cfg is not None:
         cfg.glue_dir = path
@@ -214,17 +212,7 @@ def create_glue_node(
     if registry.lookup_function(name) is not None:
         return {"ok": False, "error": f"'{name}' already exists."}
 
-    try:
-        path = glue_file_path(name, language, create=True)
-    except ValueError as exc:
-        # Packaged project: the Paths popup never auto-writes pyproject.toml.
-        return {
-            "ok": False,
-            "error": (
-                f'Add glue_dir = "src/scistack_glue" under [tool.scistack] in '
-                f"pyproject.toml by hand, then hit Refresh. ({exc})"
-            ),
-        }
+    path = glue_file_path(name, language, create=True)
     if path is None:
         return {
             "ok": False,

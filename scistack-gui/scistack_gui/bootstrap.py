@@ -4,7 +4,7 @@ Shared "open or create a SciStack project" sequence.
 Both entry points that can load a database run the exact same steps: import
 user pipeline code (project / module / auto-discover), open or create the
 DuckDB file, restore manually-declared builtin function references, bridge
-Python logging into scidb.log, and check for a stale uv.lock.
+Python logging into scidb.log, and run the project-open diagnostics.
 
 Historically this only ran once, inline in ``__main__.py``'s ``main()``,
 because the browser CLI always loaded a database before starting uvicorn.
@@ -108,7 +108,9 @@ def open_or_create_project(
     if not module and init_project_files:
         from scistack_gui.services.project_init_service import ensure_project_files
 
-        init = ensure_project_files(db_path, project, entities_file)
+        init = ensure_project_files(
+            db_path, project, entities_file, create_new=create_new
+        )
         warnings.extend(init.warnings)
 
     # Import user code first so that configure_database() can auto-register
@@ -248,7 +250,6 @@ def open_or_create_project(
 
     if loaded_config is not None:
         _startup.check_windows_config_paths(loaded_config)
-    _startup.check_lockfile_staleness(db_path.parent)
     for err in _startup.get_startup_errors():
         logger.warning("[bootstrap] startup warning [%s]: %s", err.kind, err.message)
 

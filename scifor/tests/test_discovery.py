@@ -176,6 +176,52 @@ class TestReadProjectName:
         assert read_project_name(tmp_path) is None
 
 
+class TestScistackTomlIsTheOnlyConfig:
+    """User decision 2026-10-08: config lives only in scistack.toml.
+    pyproject.toml is packaging metadata and never a config source."""
+
+    def test_config_path_is_scistack_toml_at_the_root(self, tmp_path):
+        from scifor.discovery import CONFIG_FILENAME, config_path_at
+
+        assert CONFIG_FILENAME == "scistack.toml"
+        assert config_path_at(tmp_path) == tmp_path / "scistack.toml"
+        # A file's folder is the root.
+        f = tmp_path / "pipeline.py"
+        f.write_text("")
+        assert config_path_at(f) == tmp_path / "scistack.toml"
+
+    def test_tool_scistack_in_pyproject_is_never_config(self, tmp_path):
+        from scifor.discovery import project_config_at
+
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "x"\n\n[tool.scistack]\nmodules = ["a.py"]\n'
+        )
+        assert project_config_at(tmp_path) is None
+
+    def test_scistack_toml_is_used_beside_a_pyproject(self, tmp_path):
+        """No precedence rule: a pyproject.toml next to it changes nothing."""
+        from scifor.discovery import project_config_at, read_scistack_section
+
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "x"\n\n[tool.scistack]\nmodules = ["wrong.py"]\n'
+        )
+        (tmp_path / "scistack.toml").write_text('modules = ["right.py"]\n')
+        config = project_config_at(tmp_path)
+        assert config == tmp_path / "scistack.toml"
+        assert read_scistack_section(config) == {"modules": ["right.py"]}
+
+    def test_empty_file_is_a_config_and_garbage_is_not(self, tmp_path):
+        from scifor.discovery import project_config_at, read_scistack_section
+
+        cfg = tmp_path / "scistack.toml"
+        cfg.write_text("")
+        assert read_scistack_section(cfg) == {}
+        assert project_config_at(tmp_path) == cfg
+        cfg.write_text("this is = = not toml")
+        assert read_scistack_section(cfg) is None
+        assert project_config_at(tmp_path) is None
+
+
 class TestPathInsert:
     def test_inserts_and_removes_path(self, tmp_path):
         target = str(tmp_path / "my_src")

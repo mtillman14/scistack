@@ -226,7 +226,7 @@ is that `scistack-gui` is published and `scistack` depends on it, making
 direction is load-bearing: the GUI must **not** depend on `scistack`, or the
 graph gains a `scistack → scistack-gui → scistack` cycle. The one place the GUI
 reaches upward today — `startup.py:134`, importing `scistack.uv_wrapper` for a uv
-lockfile staleness check — is removed as part of that stage.
+lockfile staleness check — was removed with uv itself on 2026-10-08.
 
 ## What CI actually covers
 

@@ -202,7 +202,14 @@ class TestCreateProjectEagerEntitiesFile:
         )
         assert resp.status_code == 200
 
-        entities_file = tmp_path / "src" / "scistack_entities.toml"
+        # Creating a database runs scidb.project.init_project: the project
+        # becomes a package and its entities file lives inside it.
+        from scidb.project import package_name_for
+
+        pkg = package_name_for(tmp_path)
+        assert (tmp_path / "pyproject.toml").exists()
+        assert (tmp_path / "src" / pkg / "__init__.py").exists()
+        entities_file = tmp_path / "src" / pkg / "scistack_entities.toml"
         assert entities_file.exists()
         # Scaffolded as TOML with its three kinds, not as Python.
         content = entities_file.read_text()
@@ -218,7 +225,7 @@ class TestCreateProjectEagerEntitiesFile:
         # look for the absolute path and had been failing since that commit.
         with open(toml_path, "rb") as f:
             written = tomllib.load(f)
-        assert written["entities_file"] == str(entities_file.relative_to(tmp_path))
+        assert written["entities_file"] == entities_file.relative_to(tmp_path).as_posix()
 
     def test_create_respects_custom_entities_file(self, api_client, tmp_path):
         resp = api_client.post(
@@ -234,12 +241,12 @@ class TestCreateProjectEagerEntitiesFile:
         assert (tmp_path / "pipeline" / "my_entities.toml").exists()
         assert not (tmp_path / "src" / "scistack_entities.toml").exists()
 
-    def test_create_with_null_entities_file_skips_eager_setup(
+    def test_create_with_null_entities_file_uses_the_package_default(
         self, api_client, tmp_path
     ):
-        """Opting out (explicit null) leaves the project in the old
-        pure-folder-scan state -- only entity creation still lazily
-        auto-creates a target file later."""
+        """2026-10-08: creating a database always sets the project up; a
+        blank wizard field (null) means the default location, inside the
+        package. Opting out is the Paths popup's clear, after creation."""
         resp = api_client.post(
             "/api/bootstrap/create",
             json={
@@ -250,8 +257,11 @@ class TestCreateProjectEagerEntitiesFile:
             },
         )
         assert resp.status_code == 200
-        assert not (tmp_path / "scistack.toml").exists()
-        assert not (tmp_path / "src" / "scistack_entities.toml").exists()
+        from scidb.project import package_name_for
+
+        pkg = package_name_for(tmp_path)
+        assert (tmp_path / "scistack.toml").exists()
+        assert (tmp_path / "src" / pkg / "scistack_entities.toml").exists()
 
     def test_create_keeps_a_project_s_existing_entities_file(
         self, api_client, tmp_path
@@ -321,11 +331,12 @@ class TestCreateProjectEagerEntitiesFile:
 
         assert "SAMPLING_RATE_HZ" in _registry.get_parameters_registry()
 
-    def test_create_skips_eager_setup_for_packaged_project(self, api_client, tmp_path):
-        """A pyproject.toml with [tool.scistack] already present makes this
-        a packaged project -- entities_file must be hand-added there
-        (config._reject_packaged_project), so eager creation is skipped
-        rather than failing the whole database-creation request."""
+    def test_create_beside_a_pyproject_still_sets_up_and_never_edits_it(
+        self, api_client, tmp_path
+    ):
+        """2026-10-08: a pyproject.toml is packaging only. Creating a database
+        still writes scistack.toml and the entities file; the pyproject is
+        left byte-for-byte as it was."""
         (tmp_path / "pyproject.toml").write_text("[tool.scistack]\n")
 
         resp = api_client.post(
@@ -337,8 +348,14 @@ class TestCreateProjectEagerEntitiesFile:
             },
         )
         assert resp.status_code == 200
-        assert not (tmp_path / "src" / "scistack_entities.toml").exists()
-        assert not (tmp_path / "scistack.toml").exists()
+        # The existing pyproject names no project, so init leaves it alone and
+        # derives the package from the folder; the entities file goes inside it.
+        from scidb.project import package_name_for
+
+        pkg = package_name_for(tmp_path)
+        assert (tmp_path / "src" / pkg / "scistack_entities.toml").exists()
+        assert (tmp_path / "scistack.toml").exists()
+        assert (tmp_path / "pyproject.toml").read_text() == "[tool.scistack]\n"
 
     def test_pathinput_created_after_bootstrap_lands_in_eager_entities_file(
         self, api_client, tmp_path
@@ -364,7 +381,11 @@ class TestCreateProjectEagerEntitiesFile:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-        entities_file = tmp_path / "src" / "scistack_entities.toml"
+        from scidb.project import package_name_for
+
+        entities_file = (
+            tmp_path / "src" / package_name_for(tmp_path) / "scistack_entities.toml"
+        )
         assert 'RAW_EMG = "{subject}.mat"' in entities_file.read_text()
 
 

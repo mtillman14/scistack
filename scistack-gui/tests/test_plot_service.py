@@ -2803,7 +2803,9 @@ def test_a_refused_project_alias_is_an_answer_not_an_error(tmp_path, monkeypatch
     reply = plot_service.set_project_alias("session", set_name=True, name="Session")
 
     assert reply["ok"] is False
-    assert "pyproject.toml" in reply["error"]
+    # A pyproject.toml is not config (2026-10-08): this project has none.
+    assert "scistack.toml" in reply["error"]
+    assert "aliases" not in (tmp_path / "pyproject.toml").read_text()
 
 
 def test_a_project_color_write_answers_ok_and_drops_the_kept_resolve(tmp_path, monkeypatch):

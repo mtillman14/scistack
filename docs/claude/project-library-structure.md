@@ -1,5 +1,11 @@
 # Project & Library Structure
 
+> **Partly superseded (2026-10-08).** Still current: the project/library wall
+> and "one project = one .duckdb". Superseded: uv and `uv.lock` (removed), the
+> `.scistack/` snapshot folder (see `portability.md`), and the layout below
+> (see `scidb.project.init_project` and `config-file-formats.md`: config lives
+> only in `scistack.toml`, the entities file inside `src/<pkg>/`).
+
 How scistack organizes user code for the GUI's Functions/Variables/Constants sidebar and for reproducible scientific workflows. This doc captures the design agreed on during the 2026-04-09 brainstorming session.
 
 ## Core concepts

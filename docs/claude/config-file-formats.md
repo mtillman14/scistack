@@ -1,40 +1,32 @@
-# Config File Formats: `pyproject.toml` vs `scistack.toml`
+# Config File Format: `scistack.toml`
 
-SciStack GUI reads its project configuration from **one** of two TOML files. They are functionally equivalent — the same fields, same defaults, same behavior. The only difference is where the keys live in the file.
+**One file.** A SciStack project's configuration lives in `scistack.toml` at
+the project root, and nowhere else (decision 2026-10-08, plan
+`.claude/plan-portability.md` Stage 1a). The whole file is the config.
 
-## `pyproject.toml` — nested under `[tool.scistack]`
+`pyproject.toml` is **packaging metadata only**. Its `[project].name` is read
+so that a project that is itself a package (`src/<name>/`) gets its own code
+loaded as a package; nothing else in it is read, and a `[tool.scistack]` table
+there is ignored. The GUI never edits a `pyproject.toml`.
 
-The scistack section is nested inside the standard Python project file:
+Why not `[tool.scistack]` inside `pyproject.toml`? The GUI writes the config
+constantly (Paths popup, entities file, glue dir, aliases, colors) by
+regenerating the whole file. That is safe in a file the GUI owns and
+impossible in the user's packaging file, where a writer bug would break
+`pip install`, wheel builds and therefore project export. Neither file ships
+inside a wheel, so installing one project into another never brings a second
+config either way.
 
-```toml
-[project]
-name = "my_study"
-version = "0.1.0"
-dependencies = ["scidb"]
-
-[tool.scistack]
-modules = ["src/my_study/pipeline.py"]
-entities_file = "src/scistack_entities.toml"
-packages = ["lab_shared_utils"]
-auto_discover = true
-
-[tool.scistack.matlab]
-functions = ["matlab/functions/*.m"]
-variables = ["matlab/types/*.m"]
-variable_dir = "matlab/types"
-```
-
-Use this when your project already has a `pyproject.toml` (the common case for Python projects managed with uv, pip, or hatch).
-
-## `scistack.toml` — top-level keys
-
-The entire file IS the scistack config. No `[tool.scistack]` nesting needed:
+The location has one owner: `scifor.discovery.CONFIG_FILENAME` /
+`config_path_at(root)`. scidb (`project_config_at`), the scidb CLI and the
+GUI (`config.locate_config_at`) all go through it.
 
 ```toml
 modules = ["src/my_study/pipeline.py"]
 entities_file = "src/scistack_entities.toml"
 packages = ["lab_shared_utils"]
 auto_discover = true
+db = "data/my_study.duckdb"      # optional: the scidb CLI's default database
 
 [matlab]
 functions = ["matlab/functions/*.m"]
@@ -42,23 +34,9 @@ variables = ["matlab/types/*.m"]
 variable_dir = "matlab/types"
 ```
 
-Use this when:
-- The project doesn't have a `pyproject.toml` (e.g. a pure MATLAB project)
-- You want scistack config in a separate file for clarity
-
-## Mapping between formats
-
-| `pyproject.toml` key | `scistack.toml` key |
-|---|---|
-| `[tool.scistack].modules` | `modules` |
-| `[tool.scistack].entities_file` | `entities_file` |
-| `[tool.scistack].variable_file` | `variable_file` |
-| `[tool.scistack].packages` | `packages` |
-| `[tool.scistack].auto_discover` | `auto_discover` |
-| `[tool.scistack.matlab].functions` | `[matlab].functions` |
-| `[tool.scistack.matlab].variables` | `[matlab].variables` |
-| `[tool.scistack.matlab].variable_dir` | `[matlab].variable_dir` |
-| `[tool.scistack.matlab].entities_file` | `[matlab].entities_file` |
+With no `scistack.toml`, the GUI falls back to a folder scan of the project
+root (a project's own `src/<name>/` package is still loaded as a package, not
+as loose files).
 
 ## The three entity-declaration keys
 
@@ -96,11 +74,8 @@ authoritative, logging which rule fired:
 A `.duckdb` usually lives in a datasets folder that has nothing to do with
 the code.
 
-Then `config.locate_config_at(root)` looks for `pyproject.toml`, then
-`scistack.toml`, **in that directory only**.
-
-**Key rule**: `pyproject.toml` always wins over `scistack.toml` in the same
-directory.
+Then `config.locate_config_at(root)` looks for `scistack.toml` **in that
+directory only**. A `pyproject.toml` there is never config.
 
 ### Why there is no upward walk any more
 
@@ -152,10 +127,6 @@ The one table in this file that scidb reads and the GUI never writes.
 [schema_keys]
 session = ["BL", "POST", "FU"]
 speed   = ["SSV", "FAST"]
-
-# pyproject.toml
-[tool.scistack.schema_keys]
-session = ["BL", "POST", "FU"]
 ```
 
 A schema key's levels have no inherent order: `session` is chronological to the
@@ -223,8 +194,6 @@ name = "Session"                  # variable, "Var.Column", ColName, Variant
 [aliases."Demographics.Sex"]
 name = "Sex"
 levels = { "F" = "Female", "M" = "Male" }
-
-# pyproject.toml: the same under [tool.scistack.aliases.…]
 ```
 
 - **Display only.** Nothing in scidb reads it to decide anything.
@@ -256,8 +225,6 @@ default = "#333333"               # the one colour of a figure with no colour la
 [colors.session]                  # one table per thing: schema key, variable,
 "BL" = "#0072b2"                  # "Var.Column", ColName, Variant; keys are
 "01" = "#d55e00"                  # level TEXT (quoted)
-
-# pyproject.toml: the same under [tool.scistack.colors…]
 ```
 
 - **Display only.** Plotting paints with it, and each plot may override it
@@ -278,7 +245,7 @@ default = "#333333"               # the one colour of a figure with no colour la
 
 ## All fields are optional
 
-Every config field has a sensible default. An empty `scistack.toml` (or a `pyproject.toml` with an empty `[tool.scistack]` section, or even a `pyproject.toml` with no `[tool.scistack]` at all) produces a valid config:
+Every config field has a sensible default. An empty `scistack.toml` produces a valid config:
 
 | Field | Default | Effect when omitted |
 |---|---|---|
@@ -341,7 +308,7 @@ Auto-discovery is almost always what you want. Set it to `false` only if:
 
 | Mechanism | Who declares it | Where it's configured |
 |---|---|---|
-| `packages = [...]` | The **project** author lists packages to scan | Project's `scistack.toml` or `pyproject.toml` |
+| `packages = [...]` | The **project** author lists packages to scan | Project's `scistack.toml` |
 | `auto_discover = true` | The **library** author declares an entry point | Library's own `pyproject.toml` |
 
 Both can be used together. If the same package appears via both `packages` and auto-discovery, it is only scanned once.
@@ -349,9 +316,9 @@ Both can be used together. If the same package appears via both `packages` and a
 ## Edge cases
 
 - **Empty `scistack.toml`**: Valid. Parses as `{}`, uses all defaults.
-- **`pyproject.toml` without `[tool.scistack]`**: Valid. Uses all defaults. (This was previously a `ValueError` but was fixed to be more forgiving — many projects have a `pyproject.toml` for packaging but haven't added `[tool.scistack]` yet.)
+- **A `pyproject.toml` with `[tool.scistack]`**: ignored (2026-10-08). Move the keys into `scistack.toml`.
 - **No config file at all**: not an error. `load_config` falls back to folder-scan discovery rooted at the project root (`_folder_scan_config`), and `services.project_init_service.ensure_project_files` creates a `scistack.toml` + entities file at open/create time. This is server-side for both front ends; the VS Code extension used to pre-check and prompt for it in `projectInit.ts`, which was removed along with the "How should SciStack discover your pipeline code?" picker.
-- **Both files in the same directory**: `pyproject.toml` is used; `scistack.toml` is ignored.
+- **Both files in the same directory**: `scistack.toml` is the config; `pyproject.toml` is packaging only.
 
 ## Paths are cross-platform, in both directions
 
@@ -394,7 +361,9 @@ this makes them *fail legibly*, it does not make them portable.
 
 ## Implementation
 
-- **Parser**: `scistack_gui/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_extract_scistack_section()`, `_config_path()`
+- **Parser**: `scistack_gui/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_config_path()`; file name and location: `scifor/discovery.py` `CONFIG_FILENAME`, `config_path_at()`
 - **Cross-platform path reading**: `scifor/discovery.py` — `resolve_config_path()`, `normalize_config_separators()`, `is_windows_absolute()`
-- **Config/entities-file creation**: `scistack_gui/services/project_init_service.py` — `ensure_project_files()`, called from `bootstrap.open_or_create_project()`
+- **Project creation** (one owner): `scidb/project.py` — `init_project()`, called by `scistack init` and, on database creation, by the GUI's `ensure_project_files(create_new=True)`
+- **Config/entities-file creation on open**: `scistack_gui/services/project_init_service.py` — `ensure_project_files()`, called from `bootstrap.open_or_create_project()` and `server.py`
+- **Writing scistack.toml** (one owner): `scidb/config_file.py` — `render()`, `write()`; every key survives a write
 - **VS Code server argv**: `extension/src/serverArgs.ts` — `buildServerArgs()`; never passes `--module`/`--project`, so the project root is always `--project-root` (the workspace folder)

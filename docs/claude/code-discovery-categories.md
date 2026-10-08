@@ -51,7 +51,8 @@ Two separate scanners exist, used in different contexts:
   callable qualifies.
 
 - **`scidb/src/scidb/discover.py`** (`scan_project`) — used for packaged
-  projects (walks `src/{project}/` + everything in `uv.lock`). Here a
+  projects (walks `src/{project}/` + the `packages` its scistack.toml lists;
+  never a lockfile since 2026-10-08). Here a
   function must be explicitly tagged `@scistack` (`is_scistack_function`,
   `scidb/src/scidb/pipeline.py`) to be picked up.
 

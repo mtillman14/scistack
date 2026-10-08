@@ -28,12 +28,11 @@
  * database's own directory for .py/.m files. Nothing needs to be typed in
  * up front; "Refresh Code" in the header re-scans later once files exist.
  *
- * The "Entities file" field (create mode only) is the one exception: it's
- * passed as `entities_file` to POST /api/bootstrap/create, which eagerly
- * writes a scistack.toml + that TOML file at project-creation time (see
- * api/bootstrap.py, config.set_entities_file) — so a freshly-created
- * project immediately has a real config file instead of only getting one
- * lazily, the first time an entity is created from the GUI.
+ * Creating a database runs scidb.project.init_project (via POST
+ * /api/bootstrap/create): the folder becomes a SciStack project -- a package
+ * with pyproject.toml, src/<name>/, scistack.toml and the entities file. The
+ * optional "Entities file" field overrides where that file goes; blank means
+ * the default, inside the package (2026-10-08).
  */
 
 import { useState } from "react";
@@ -52,9 +51,7 @@ export default function ProjectBootstrapWizard({ onReady }: Props) {
   const [createFolder, setCreateFolder] = useState("");
   const [createFilename, setCreateFilename] = useState("");
   const [createSchemaKeys, setCreateSchemaKeys] = useState("");
-  const [createEntitiesFile, setCreateEntitiesFile] = useState(
-    "src/scistack_entities.toml",
-  );
+  const [createEntitiesFile, setCreateEntitiesFile] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,7 +159,7 @@ export default function ProjectBootstrapWizard({ onReady }: Props) {
                   style={styles.input}
                   value={createEntitiesFile}
                   onChange={(e) => setCreateEntitiesFile(e.target.value)}
-                  placeholder="src/scistack_entities.toml"
+                  placeholder="blank = src/<project>/scistack_entities.toml"
                 />
               </Field>
             </>

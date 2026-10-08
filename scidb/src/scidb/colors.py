@@ -15,8 +15,6 @@ A project pins what colour a level is painted in, once, for every plot:
     [colors."Demographics.Sex"]
     "F" = "#cc79a7"
 
-    # pyproject.toml: the same under [tool.scistack.colors…]
-
 Directly under ``[colors]`` a STRING is a setting (only ``default``) and a
 TABLE is a thing, so a variable called ``default`` cannot collide with the
 setting.
@@ -218,23 +216,22 @@ def validate(
 # ---------------------------------------------------------------------------
 
 
-def render_colors_table(raw: Any, *, root: str = SECTION) -> str:
+def render_colors_table(raw: Any) -> str:
     """The ``[colors]`` tables as TOML text ("" when there is nothing).
 
     Goes through :func:`normalize` first, so the file never holds what the
     reader would drop. Tables only, so it is safe anywhere AFTER the
     top-level keys — the caller emits it last. ``default`` sits under the
     ``[colors]`` header itself, before any thing's table. Level keys are
-    always quoted (``"01"`` must stay text). ``root`` is
-    ``tool.scistack.colors`` for a pyproject.
+    always quoted (``"01"`` must stay text).
     """
     table = normalize(raw)
     blocks: list[str] = []
     default = default_of(table)
     if default:
-        blocks.append(f"[{root}]\n{DEFAULT_KEY} = {_toml_str(default)}")
+        blocks.append(f"[{SECTION}]\n{DEFAULT_KEY} = {_toml_str(default)}")
     for thing, entry in things_of(table).items():
-        lines = [f"[{root}.{_toml_key(thing)}]"]
+        lines = [f"[{SECTION}.{_toml_key(thing)}]"]
         lines.extend(f"{_toml_str(level)} = {_toml_str(colour)}" for level, colour in entry.items())
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks) + ("\n" if blocks else "")

@@ -1778,16 +1778,15 @@ class TestFormatMatlabValue:
 
 
 class TestConfigMatlabParsing:
-    def test_pyproject_with_matlab(self, tmp_path):
+    def test_matlab_table(self, tmp_path):
         from scistack_gui.config import load_config
 
-        # Create a pyproject.toml with MATLAB section.
-        (tmp_path / "pyproject.toml").write_text(
+        # Create a scistack.toml with a [matlab] table.
+        (tmp_path / "scistack.toml").write_text(
             textwrap.dedent("""\
-            [tool.scistack]
             modules = []
 
-            [tool.scistack.matlab]
+            [matlab]
             functions = ["matlab/bandpass_filter.m"]
             variables = ["matlab/types/*.m"]
             variable_dir = "matlab/types"
@@ -1825,7 +1824,7 @@ class TestConfigMatlabParsing:
     def test_scistack_toml(self, tmp_path):
         from scistack_gui.config import load_config
 
-        # Create a scistack.toml (standalone, no pyproject.toml).
+        # Create a scistack.toml.
         (tmp_path / "scistack.toml").write_text(
             textwrap.dedent("""\
             modules = []
@@ -1846,9 +1845,8 @@ class TestConfigMatlabParsing:
     def test_no_matlab_section(self, tmp_path):
         from scistack_gui.config import load_config
 
-        (tmp_path / "pyproject.toml").write_text(
+        (tmp_path / "scistack.toml").write_text(
             textwrap.dedent("""\
-            [tool.scistack]
             modules = []
         """)
         )
@@ -1866,12 +1864,11 @@ class TestConfigMatlabParsing:
     def test_explicit_entities_file(self, tmp_path):
         from scistack_gui.config import load_config
 
-        (tmp_path / "pyproject.toml").write_text(
+        (tmp_path / "scistack.toml").write_text(
             textwrap.dedent("""\
-            [tool.scistack]
             modules = []
 
-            [tool.scistack.matlab]
+            [matlab]
             functions = ["process.m"]
             entities_file = "scistack_entities.m"
         """)

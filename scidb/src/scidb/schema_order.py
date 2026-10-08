@@ -13,10 +13,6 @@ is:
     session = ["BL", "POST", "FU"]
     speed   = ["SSV", "FAST"]
 
-    # pyproject.toml
-    [tool.scistack.schema_keys]
-    session = ["BL", "POST", "FU"]
-
 The rule, in full:
 
 * **Declared levels come first, in the declared order.**

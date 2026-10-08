@@ -50,13 +50,16 @@ class CreateProjectRequest(BaseModel):
     schema_keys: list[str]
     module: str | None = None
     project: str | None = None
-    entities_file: str | None = "src/scistack_entities.toml"
+    entities_file: str | None = None
     """Where to create an entities file *if this project has none*.
 
     Relative to the *project root*, not to ``folder`` -- ``folder`` is where
     the database goes, which is typically a datasets directory. See
-    ``config.resolve_project_root``. An explicit ``null`` opts out of project
-    initialization entirely."""
+    ``config.resolve_project_root``. ``None`` (blank in the wizard) means the
+    default, inside the project's package
+    (``scidb.entities.default_entities_relpath``). Creating a database always
+    sets the project up (``scidb.project.init_project``, 2026-10-08); to have
+    no entities file, clear it in the Paths popup afterwards."""
 
 
 class OpenProjectRequest(BaseModel):
@@ -113,9 +116,8 @@ def create_project(req: CreateProjectRequest) -> dict:
             schema_keys=req.schema_keys,
             module=module,
             project=project,
-            # An explicit null entities_file is an opt-out, so bootstrap's
-            # own initialization must not put the files back.
-            init_project_files=bool(req.entities_file),
+            # Creating a database always sets the project up (init).
+            init_project_files=True,
             # Where to put one IF the project has none. This used to be a
             # separate eager config_mod.set_entities_file call right here,
             # which unconditionally re-pointed the key -- so creating a

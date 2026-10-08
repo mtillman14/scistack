@@ -124,15 +124,27 @@ class TestDiscovery:
         assert path == str(db_path)
         assert "SCIDB_DATABASE" in source
 
-    def test_pyproject_key(self, db_path, tmp_path, monkeypatch):
-        pytest.importorskip("tomllib")
+    def test_scistack_toml_db_key(self, db_path, tmp_path, monkeypatch):
+        monkeypatch.delenv("SCIDB_DATABASE", raising=False)
+        (tmp_path / "scistack.toml").write_text(f'db = "{db_path.as_posix()}"\n')
+        path, source = resolve_db_path(None, cwd=tmp_path)
+        assert Path(path) == db_path
+        assert "scistack.toml" in source
+
+    def test_scistack_toml_relative_db_key(self, db_path, tmp_path, monkeypatch):
+        monkeypatch.delenv("SCIDB_DATABASE", raising=False)
+        (tmp_path / "scistack.toml").write_text('db = "data/x.duckdb"\n')
+        path, _ = resolve_db_path(None, cwd=tmp_path)
+        assert Path(path) == (tmp_path / "data" / "x.duckdb").resolve()
+
+    def test_a_pyproject_db_key_is_never_read(self, db_path, tmp_path, monkeypatch):
+        """2026-10-08: pyproject.toml is packaging only."""
         monkeypatch.delenv("SCIDB_DATABASE", raising=False)
         (tmp_path / "pyproject.toml").write_text(
             f'[tool.scistack]\ndb = "{db_path.as_posix()}"\n'
         )
-        path, source = resolve_db_path(None, cwd=tmp_path)
-        assert Path(path) == db_path
-        assert "pyproject" in source
+        with pytest.raises(CLIError):
+            resolve_db_path(None, cwd=tmp_path)
 
     def test_single_duckdb_in_cwd(self, db_path, monkeypatch):
         monkeypatch.delenv("SCIDB_DATABASE", raising=False)

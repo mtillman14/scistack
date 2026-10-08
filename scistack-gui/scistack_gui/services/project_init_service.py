@@ -93,23 +93,32 @@ def ensure_project_files(
     db_path: Path,
     project: "Path | None" = None,
     entities_file: "str | Path | None" = None,
+    *,
+    create_new: bool = False,
 ) -> InitResult:
     """Ensure scistack.toml and the TOML entities file exist. Idempotent.
+
+    *create_new* (a database is being CREATED, from either GUI entry point)
+    first runs ``scidb.project.init_project`` -- the one owner of "make this
+    folder a SciStack project", shared with ``scistack init`` -- which makes
+    the project a package (pyproject.toml, src/<pkg>/) with its entities file
+    inside it. Opening an existing database never does: it must not turn a
+    folder of scripts into a package unasked.
 
     Call BEFORE the first ``load_config``: this can create the config file
     the load is about to read.
 
     *entities_file* is where to put one **if the project has none** -- the
     creation wizard's "Entities file" field, relative to the project root;
-    ``None`` means the conventional ``src/scistack_entities.toml``. A project
+    ``None`` means ``scidb.entities.default_entities_relpath`` (inside the
+    project's package when it is one). A project
     that already declares one keeps it, and the request is reported rather
     than applied: creating a database must never silently re-point an
     existing project's declarations at a new, empty file (which is what the
     wizard did, since it always sent its default).
 
-    A packaged project (``pyproject.toml`` at the root) is left completely
-    alone and reported instead -- ``config._reject_packaged_project``'s
-    standing decision is that the GUI never hand-edits a pyproject.
+    A ``pyproject.toml`` changes nothing here: it is packaging, never config,
+    and the GUI never edits it (2026-10-08).
     """
     from scistack_gui import config as config_mod
 
@@ -122,17 +131,25 @@ def ensure_project_files(
         return result
     result.project_root = project_root
 
+    if create_new:
+        from scidb.project import init_project
+
+        try:
+            report = init_project(project_root, entities_file=entities_file)
+        except (ValueError, OSError) as e:
+            logger.warning("[project_init] init_project failed for %s: %s", project_root, e)
+            result.warnings.append(f"Could not set up the project: {e}")
+        else:
+            result.created.extend(str(p) for p in report.created)
+            result.warnings.extend(report.warnings)
+            logger.info(
+                "[project_init] init_project(%s): package %s, created %d file(s)",
+                project_root,
+                report.package,
+                len(report.created),
+            )
+
     existing = config_mod.locate_config_at(project_root)
-    if existing is not None and existing.name == "pyproject.toml":
-        message = (
-            f"Packaged project ({existing}): not creating a scistack.toml or an "
-            f"entities file. To declare entities from the GUI, add "
-            f'entities_file = "src/scistack_entities.toml" under [tool.scistack] '
-            f"in pyproject.toml."
-        )
-        logger.info("[project_init] %s", message)
-        result.warnings.append(message)
-        return result
 
     # Already fully set up: don't rewrite scistack.toml just to put back what
     # it already says. set_entities_file re-renders the whole file, which

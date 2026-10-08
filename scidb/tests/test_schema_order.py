@@ -52,11 +52,11 @@ class TestReading:
             "session": ["BL", "POST", "FU"]
         }
 
-    def test_pyproject_toml(self, tmp_path):
+    def test_a_pyproject_is_never_config(self, tmp_path):
+        """2026-10-08: config lives only in scistack.toml; [tool.scistack]
+        in a pyproject.toml is not read."""
         write_config(tmp_path, 'session = ["BL", "POST"]\n', pyproject=True)
-        assert schema_order.declared_level_order(tmp_path) == {
-            "session": ["BL", "POST"]
-        }
+        assert schema_order.declared_level_order(tmp_path) == {}
 
     def test_no_config_and_no_table_are_both_empty(self, tmp_path):
         assert schema_order.declared_level_order(tmp_path) == {}

@@ -97,7 +97,7 @@ end
 
 The class name becomes the database table name — no properties or methods needed. Types are auto-registered with Python on first use (save, load, etc.).
 
-A variable declared in the project's TOML entities file (`variables = [...]`, e.g. one created in the GUI) does not need a hand-written file: `scidb.entities()` checks every declared name with `exist(name, 'class')` and writes a stub classdef for the ones MATLAB cannot resolve, then adds that directory to the path. Stubs go to `[tool.scistack.matlab] variable_dir` when configured, otherwise to `scistack_variables/` beside the entities file (`scimatlab.stubs`). A name that already resolves is never touched, so a hand-written classdef is never shadowed by a generated one.
+A variable declared in the project's TOML entities file (`variables = [...]`, e.g. one created in the GUI) does not need a hand-written file: `scidb.entities()` checks every declared name with `exist(name, 'class')` and writes a stub classdef for the ones MATLAB cannot resolve, then adds that directory to the path. Stubs go to `scistack.toml`'s `[matlab] variable_dir` when configured, otherwise to `scistack_variables/` beside the entities file (`scimatlab.stubs`). A name that already resolves is never touched, so a hand-written classdef is never shadowed by a generated one.
 
 ## API Reference
 

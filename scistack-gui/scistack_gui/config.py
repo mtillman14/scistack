@@ -1,5 +1,7 @@
 """
-Parse [tool.scistack] configuration from pyproject.toml or scistack.toml.
+Parse the project configuration from scistack.toml, the only config file
+(2026-10-08: pyproject.toml is packaging metadata and is never read as config;
+see scifor.discovery.CONFIG_FILENAME).
 
 Supports multi-source pipeline discovery: explicit .py modules,
 pip-installed packages, auto-discovered entry-point plugins, and
@@ -15,9 +17,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from scifor.discovery import (
-    extract_scistack_section,
+    CONFIG_FILENAME,
+    config_path_at,
     is_test_path,
-    read_project_name,
+    own_package_dir,
 )
 
 from scistack_gui import history
@@ -42,7 +45,7 @@ DEFAULT_GLUE_RELPATH = "src/scistack_glue"
 
 
 def _config_path(project_root: Path, raw) -> Path:
-    """A path *read from* scistack.toml/pyproject.toml, made absolute.
+    """A path *read from* scistack.toml, made absolute.
 
     Every raw config value goes through here rather than
     ``_normalize(project_root / raw)`` so that separator handling lives in
@@ -144,6 +147,19 @@ def _same_path(a, b) -> bool:
     return key_a is not None and key_a == _identity_key(b)
 
 
+def _is_under(path: Path, directory: Path) -> bool:
+    """Whether *path* lies inside *directory*: a lexical prefix test with the
+    platform's case rule (``os.path.normcase``).
+
+    Deliberately not :func:`_same_path` per parent (two ``stat`` calls each,
+    for every file of a folder scan): every caller derives both paths from
+    the same project-root spelling, so the spellings agree by construction.
+    """
+    p = os.path.normcase(os.path.normpath(str(path)))
+    d = os.path.normcase(os.path.normpath(str(directory)))
+    return p.startswith(d.rstrip(os.sep) + os.sep)
+
+
 def _dedupe_same_paths(paths: list[Path], what: str) -> list[Path]:
     """Drop paths already present under a different spelling, first wins.
 
@@ -179,10 +195,10 @@ def _dedupe_same_paths(paths: list[Path], what: str) -> list[Path]:
 
 @dataclass
 class SciStackConfig:
-    """Parsed [tool.scistack] configuration."""
+    """Parsed scistack.toml configuration."""
 
     project_root: Path
-    """Directory containing the pyproject.toml or scistack.toml."""
+    """Directory containing the scistack.toml."""
 
     modules: list[Path] = field(default_factory=list)
     """Resolved absolute paths to user .py files."""
@@ -296,7 +312,7 @@ class SciStackConfig:
 
 
 def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
-    """Load a SciStackConfig from a pyproject.toml.
+    """Load a SciStackConfig from the project's scistack.toml.
 
     Parameters
     ----------
@@ -313,12 +329,11 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     ------
     FileNotFoundError
         If an explicit ``project_path`` was given and does not exist on disk.
-        (When no pyproject.toml/scistack.toml can be *located*, this function
+        (When no scistack.toml can be *located*, this function
         no longer raises — it falls back to scanning the project root for
         ``.py``/``.m`` files directly. See :func:`_folder_scan_config`.)
     ValueError
-        If the located pyproject.toml has no ``[tool.scistack]`` section or
-        the section is invalid.
+        If the located scistack.toml holds an invalid value.
     """
     logger.info(
         "[config] Locating config file (project_path=%s, db_path=%s)",
@@ -332,7 +347,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
         # next to the .duckdb is what produced "0 .py, 0 .m" for a project
         # whose code lives on another drive entirely.
         logger.info(
-            "[config] No pyproject.toml/scistack.toml found; falling back to "
+            "[config] No scistack.toml found; falling back to "
             "folder-scan discovery rooted at %s",
             root,
         )
@@ -344,23 +359,15 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     with open(toml_path, "rb") as f:
         data = tomllib.load(f)
 
-    logger.info("[config] Extracting [tool.scistack] section")
-    section = _extract_scistack_section(data, toml_path.name)
-    if section is None:
-        logger.info(
-            "[config] %s has no [tool.scistack] section; using defaults.", toml_path
-        )
-        section = {}
-    else:
-        logger.debug(
-            "[config] Found config section with keys: %s", list(section.keys())
-        )
+    # The whole file is the config (an empty one is all defaults).
+    section = data
+    logger.debug("[config] Config keys: %s", list(section.keys()))
 
     # --- modules ---
     logger.info("[config] Processing modules list")
     raw_modules = section.get("modules", [])
     if not isinstance(raw_modules, list):
-        raise ValueError("[tool.scistack] modules must be a list of file paths.")
+        raise ValueError("scistack.toml: modules must be a list of file paths.")
     logger.debug("[config] Found %d module entries in config", len(raw_modules))
     modules: list[Path] = []
     for entry_idx, entry in enumerate(raw_modules):
@@ -406,7 +413,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
             else:
                 if not p.exists():
                     logger.warning(
-                        "[config] Module listed in [tool.scistack] not found: %s",
+                        "[config] Module listed in scistack.toml not found: %s",
                         p,
                     )
                 else:
@@ -421,6 +428,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
             "[config] Excluded %d test file(s) from modules discovery", excluded_count
         )
     modules = _dedupe_same_paths(modules, "module file(s)")
+    modules = _without_own_package_files(project_root, modules, "modules")
     logger.info("[config] Resolved %d module files total", len(modules))
 
     # --- entities_file (TOML, the write target) ---
@@ -510,38 +518,19 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     logger.info("[config] Processing packages list")
     packages = section.get("packages", [])
     if not isinstance(packages, list):
-        raise ValueError("[tool.scistack] packages must be a list of package names.")
+        raise ValueError("scistack.toml: packages must be a list of package names.")
     logger.debug("[config] Found %d packages: %s", len(packages), packages)
 
-    # A packaged project (pyproject.toml with a [project].name + src/{name}/
-    # layout) gets its OWN code auto-folded into packages, so it flows
-    # through the same registry.load_from_config -> _load_packages pipeline
-    # used for execution -- otherwise a packaged project relying purely on
-    # this automatic layout (no explicit packages=[...] entry) would show
-    # functions in the "Discovered Code" panel that raise KeyError at
-    # actual run time (registry.get_function never having been populated).
-    # Deliberately NOT uv.lock-based -- this only reads ordinary packaging
-    # metadata ([project].name), so it works regardless of package manager.
-    own_name = read_project_name(project_root)
-    if (
-        own_name
-        and own_name not in packages
-        and (project_root / "src" / own_name).is_dir()
-    ):
-        packages = [*packages, own_name]
-        logger.info(
-            "[config] Auto-folded packaged project's own code (%s) into packages",
-            own_name,
-        )
+    packages = _with_own_package(project_root, packages)
 
     # --- auto_discover ---
     logger.info("[config] Processing auto_discover setting")
     auto_discover = section.get("auto_discover", True)
     if not isinstance(auto_discover, bool):
-        raise ValueError("[tool.scistack] auto_discover must be true or false.")
+        raise ValueError("scistack.toml: auto_discover must be true or false.")
     logger.debug("[config] auto_discover = %s", auto_discover)
 
-    # --- MATLAB section ([tool.scistack.matlab] or [matlab] in scistack.toml) ---
+    # --- MATLAB section ([matlab] in scistack.toml) ---
     logger.info("[config] Processing MATLAB configuration")
     matlab_section = section.get("matlab", {})
     if matlab_section:
@@ -741,7 +730,7 @@ def _resolve_glob_paths(
     for ``.m`` files), or a glob pattern (only ``.m`` matches are kept).
     """
     if not isinstance(raw_entries, list):
-        raise ValueError(f"[tool.scistack] {label} must be a list of file paths.")
+        raise ValueError(f"scistack.toml: {label} must be a list of file paths.")
     logger.debug("[config] Resolving %d entries for %s", len(raw_entries), label)
     result: list[Path] = []
     for entry_idx, entry in enumerate(raw_entries):
@@ -807,16 +796,6 @@ def _resolve_glob_paths(
 
 
 
-def _extract_scistack_section(data: dict, filename: str) -> dict | None:
-    """Extract the scistack config section from parsed TOML data.
-
-    For pyproject.toml the section is at ``[tool.scistack]``.
-    For scistack.toml the section is at the top level (the whole file).
-    """
-    logger.debug("[config] Extracting scistack section from %s", filename)
-    return extract_scistack_section(data, filename)
-
-
 # ---------------------------------------------------------------------------
 # Which directory is "the project"?
 # ---------------------------------------------------------------------------
@@ -839,26 +818,23 @@ def set_project_root_hint(path: "Path | str | None") -> None:
 
 
 def locate_config_at(root: Path) -> Path | None:
-    """The config file in *root*, or ``None``.
+    """The ``scistack.toml`` in *root*, or ``None``.
 
     **Looks in that directory and nowhere else.** No upward walk: the
     project root is decided once, by :func:`resolve_project_root`, and the
     config file lives there by definition. Walking is what let the reader
     and the writer disagree — see :func:`resolve_project_root`.
 
-    ``pyproject.toml`` wins over ``scistack.toml`` when both exist: a
-    packaged project's own metadata file is the more authoritative of the
-    two, and ``add_path`` refuses to write to it anyway
-    (``_reject_packaged_project``).
+    The location is ``scifor.discovery.config_path_at`` (its one owner).
+    Existence only, not parseability, unlike scifor's ``project_config_at``:
+    the GUI loads it next and must report a parse error, not treat a broken
+    file as "no config".
     """
-    for name in ("pyproject.toml", "scistack.toml"):
-        candidate = _normalize(root) / name
-        if candidate.exists():
-            logger.debug("[config] Found %s at project root %s", name, root)
-            return candidate
-    logger.info(
-        "[config] No pyproject.toml/scistack.toml at project root %s", root
-    )
+    candidate = config_path_at(_normalize(root))
+    if candidate.exists():
+        logger.debug("[config] Found %s at project root %s", CONFIG_FILENAME, root)
+        return candidate
+    logger.info("[config] No %s at project root %s", CONFIG_FILENAME, root)
     return None
 
 
@@ -930,7 +906,7 @@ def resolve_project_root(project_path: "Path | None", db_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Folder-scan fallback (no pyproject.toml/scistack.toml present)
+# Folder-scan fallback (no scistack.toml present)
 # ---------------------------------------------------------------------------
 
 # Directories never worth walking into, for either language.
@@ -1008,6 +984,56 @@ def _walk_source_files(root: Path, suffix: str, *, matlab: bool = False) -> list
     return sorted(results)
 
 
+def _own_package_dir(project_root: Path) -> "tuple[str, Path] | None":
+    """``scifor.discovery.own_package_dir`` (the one owner), logged."""
+    own = own_package_dir(project_root)
+    logger.debug("[config] own package of %s: %s", project_root, own)
+    return own
+
+
+def _without_own_package_files(project_root: Path, files: list, what: str) -> list:
+    """*files* minus those inside the project's own package.
+
+    That package is loaded as a package (:func:`_with_own_package`), never as
+    loose files: importing ``src/<name>/x.py`` as a top-level module breaks
+    its relative imports and loads it twice. Applies to a folder scan and to
+    a ``modules`` entry that covers it (``"."``, which ``scidb.project`` seeds).
+    """
+    own = _own_package_dir(project_root)
+    if own is None:
+        return files
+    kept = [p for p in files if not _is_under(p, own[1])]
+    if len(kept) != len(files):
+        logger.info(
+            "[config] %s: %d file(s) of package %s left to the package loader",
+            what,
+            len(files) - len(kept),
+            own[0],
+        )
+    return kept
+
+
+def _with_own_package(project_root: Path, packages: list) -> list:
+    """*packages* plus the project's own package, if it is one.
+
+    The ONE place this happens, for both a scistack.toml config and a
+    folder scan. The project's own code then flows through the same
+    ``registry.load_from_config -> _load_packages`` pipeline used for
+    execution; otherwise a function shown in "Discovered Code" would raise
+    KeyError at run time (``registry.get_function`` never populated), and in
+    a folder scan its files would be imported as loose modules, breaking
+    the package's relative imports. Deliberately not lockfile-based: only
+    ordinary packaging metadata, so any package manager works.
+    """
+    own = _own_package_dir(project_root)
+    if own is None or own[0] in packages:
+        return packages
+    logger.info(
+        "[config] Auto-folded the project's own package (%s) into packages", own[0]
+    )
+    return [*packages, own[0]]
+
+
 def _folder_scan_config(root: Path) -> SciStackConfig:
     """Build a :class:`SciStackConfig` by scanning *root* directly for
     ``.py``/``.m`` files, with no config file at all.
@@ -1024,6 +1050,8 @@ def _folder_scan_config(root: Path) -> SciStackConfig:
     """
     logger.info("[config] Folder-scan: walking %s for .py/.m files", root)
     py_files = _walk_source_files(root, ".py")
+    packages = _with_own_package(root, [])
+    py_files = _without_own_package_files(root, py_files, "folder-scan")
     m_files = _walk_source_files(root, ".m", matlab=True)
     logger.info(
         "[config] Folder-scan found %d .py file(s), %d .m file(s)",
@@ -1036,6 +1064,7 @@ def _folder_scan_config(root: Path) -> SciStackConfig:
     config = SciStackConfig(
         project_root=root,
         modules=py_files,
+        packages=packages,
         matlab_sources=m_files,
         matlab_addpath=addpath,
     )
@@ -1050,12 +1079,12 @@ def _folder_scan_config(root: Path) -> SciStackConfig:
 
 
 # ---------------------------------------------------------------------------
-# Writing scistack.toml (GUI Paths popup, loose-script projects only)
+# Writing scistack.toml (GUI Paths popup and every other config edit)
 # ---------------------------------------------------------------------------
 #
-# pyproject.toml-based ("packaged") projects are out of scope for this
-# write path -- see add_path/remove_path's explicit rejection below. This
-# is deliberately not a general-purpose TOML editor: scistack.toml has no
+# scistack.toml is the only config file and the GUI owns it; the GUI never
+# edits a pyproject.toml (2026-10-08). This is deliberately not a
+# general-purpose TOML editor: scistack.toml has no
 # [project]/[build-system] noise to preserve, its entire content is keys
 # this module already knows about, so every write regenerates the whole
 # file from those known keys rather than attempting comment/formatting
@@ -1078,121 +1107,20 @@ def _portable_relpath(rel: Path) -> str:
     return rel.as_posix()
 
 
-def _toml_str(s: str) -> str:
-    """Render *s* as a quoted TOML basic string, escaping backslashes
-    (important for Windows paths) and double quotes."""
-    escaped = s.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+def _write_config(path: Path, section: dict) -> Path:
+    """Write the WHOLE config *section* to *path* through scidb's one
+    renderer (``scidb.config_file``: every key survives, including ones this
+    module does not know), after telling undo (``history``) the file is about
+    to change. The only way this module writes scistack.toml."""
+    from scidb import config_file
 
-
-def _toml_array(items: list) -> str:
-    if not items:
-        return "[]"
-    inner = ",\n    ".join(_toml_str(str(item)) for item in items)
-    return f"[\n    {inner},\n]"
-
-
-def _render_scistack_toml(
-    *,
-    modules: list,
-    entities_file=None,
-    glue_dir=None,
-    variable_file=None,
-    packages: list,
-    auto_discover: bool,
-    matlab_functions: list,
-    matlab_variables: list,
-    matlab_sources: list,
-    matlab_variable_dir,
-    matlab_entities_file=None,
-    schema_keys: dict | None = None,
-    aliases: dict | None = None,
-    colors: dict | None = None,
-) -> str:
-    """Render a complete scistack.toml from known [tool.scistack] fields.
-
-    Round-trips every field this module understands (not just modules/
-    matlab.sources) so that add_path/remove_path never silently drop
-    hand-authored packages/auto_discover/entities_file/etc. That includes
-    the read-only ``variable_file``/``[matlab] entities_file`` keys: this
-    function no longer writes them from scratch, but must not delete one a
-    user still has.
-    """
-    lines = [
-        "# Written by the SciStack GUI's Paths popup.",
-        "# Hand-editing is fine -- this file is re-read on every scan.",
-        "",
-        f"modules = {_toml_array(modules)}",
-    ]
-    if entities_file is not None:
-        lines.append(f"entities_file = {_toml_str(str(entities_file))}")
-    if glue_dir is not None:
-        lines.append(f"glue_dir = {_toml_str(str(glue_dir))}")
-    if variable_file is not None:
-        lines.append(f"variable_file = {_toml_str(str(variable_file))}")
-    if packages:
-        lines.append(f"packages = {_toml_array(packages)}")
-    if not auto_discover:
-        lines.append("auto_discover = false")
-    if (
-        matlab_functions
-        or matlab_variables
-        or matlab_sources
-        or matlab_variable_dir
-        or matlab_entities_file
-    ):
-        lines.append("")
-        lines.append("[matlab]")
-        if matlab_functions:
-            lines.append(f"functions = {_toml_array(matlab_functions)}")
-        if matlab_variables:
-            lines.append(f"variables = {_toml_array(matlab_variables)}")
-        if matlab_sources:
-            lines.append(f"sources = {_toml_array(matlab_sources)}")
-        if matlab_variable_dir is not None:
-            lines.append(f"variable_dir = {_toml_str(str(matlab_variable_dir))}")
-        if matlab_entities_file is not None:
-            lines.append(f"entities_file = {_toml_str(str(matlab_entities_file))}")
-
-    # `[schema_keys]` is HAND-AUTHORED (scidb.schema_order reads it; nothing
-    # here writes it), and this function rewrites the whole file — so it has to
-    # be carried across or the Paths popup silently deletes a level order the
-    # user typed. Emitted last: a TOML table swallows every key after it, so a
-    # top-level key rendered below this line would land inside it.
-    if schema_keys:
-        lines.append("")
-        lines.append("[schema_keys]")
-        for key, levels in schema_keys.items():
-            if isinstance(levels, (list, tuple)):
-                lines.append(f"{key} = {_toml_array(list(levels))}")
-    # `[aliases]` likewise: display names every plot reads (scidb.aliases).
-    # Tables only, so it is safe here, after [schema_keys]; scidb owns the
-    # grammar, so the text comes from its renderer, never from this module.
-    if aliases:
-        from scidb.aliases import render_aliases_table
-
-        rendered = render_aliases_table(aliases)
-        if rendered:
-            lines.append("")
-            lines.append(rendered.rstrip("\n"))
-    # `[colors]` likewise: mark colours every plot reads (scidb.colors). Its
-    # `default` sits under the bare `[colors]` header, which is a table too,
-    # so it is still safe here after every top-level key.
-    if colors:
-        from scidb.colors import render_colors_table
-
-        rendered = render_colors_table(colors)
-        if rendered:
-            lines.append("")
-            lines.append(rendered.rstrip("\n"))
-    lines.append("")
-    return "\n".join(lines)
+    history.note_write(path)
+    return config_file.write(path, section)
 
 
 def _load_raw_scistack_section(toml_path: Path) -> dict:
     with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-    return _extract_scistack_section(data, toml_path.name) or {}
+        return tomllib.load(f)
 
 
 def _resolve_raw_entry(entry: str, project_root: Path) -> Path:
@@ -1205,20 +1133,8 @@ def _resolve_raw_entry(entry: str, project_root: Path) -> Path:
     return _config_path(project_root, entry)
 
 
-def _reject_packaged_project(toml_path: Path | None) -> None:
-    if toml_path is not None and toml_path.name == "pyproject.toml":
-        raise ValueError(
-            "Packaged project (pyproject.toml found at "
-            f"{toml_path}) -- the Paths popup's add/remove UI only manages "
-            "loose-script projects (scistack.toml). Edit [tool.scistack] "
-            "in pyproject.toml by hand instead."
-        )
-
-
 def describe_managed_paths(db_path: Path) -> dict:
-    """Info the Paths popup needs to pick its rendering mode: whether the
-    resolved config is a packaged (pyproject.toml) project -- read-only in
-    the popup -- and, for loose-script projects, the raw (pre-discovery)
+    """Info the Paths popup needs: the raw (pre-discovery)
     ``modules`` entries currently written to scistack.toml. Empty until the
     first path is added via :func:`add_path`, even if folder-scan discovery
     is already finding files implicitly.
@@ -1231,13 +1147,11 @@ def describe_managed_paths(db_path: Path) -> dict:
     """
     project_root = resolve_project_root(None, db_path)
     toml_path = locate_config_at(project_root)
-    packaged = toml_path is not None and toml_path.name == "pyproject.toml"
     managed_paths: list[str] = []
-    if toml_path is not None and toml_path.name == "scistack.toml":
+    if toml_path is not None:
         section = _load_raw_scistack_section(toml_path)
         managed_paths = list(section.get("modules", []))
     return {
-        "packaged": packaged,
         "managed_paths": managed_paths,
         "project_root": str(project_root),
         "config_path": str(toml_path) if toml_path is not None else None,
@@ -1249,10 +1163,7 @@ def add_path(db_path: Path, new_path: Path) -> Path:
     ``[matlab] sources`` lists, creating the file if none exists yet, and
     return the file that was written.
 
-    Only valid for loose-script projects (no pyproject.toml at the
-    resolved project root) -- see :func:`_reject_packaged_project`.
-
-    On the very first write (no scistack.toml/pyproject.toml found at all,
+    On the very first write (no scistack.toml found at all,
     i.e. the project was previously running on pure folder-scan discovery),
     seeds both lists with the project root itself first, so the code that
     was implicitly discovered under folder-scan mode doesn't silently
@@ -1275,7 +1186,6 @@ def add_path(db_path: Path, new_path: Path) -> Path:
     # path added earlier.
     project_root = resolve_project_root(None, db_path)
     toml_path = locate_config_at(project_root)
-    _reject_packaged_project(toml_path)
 
     is_first_write = toml_path is None
     if is_first_write:
@@ -1325,27 +1235,14 @@ def add_path(db_path: Path, new_path: Path) -> Path:
     else:
         raw_sources.append(new_str)
 
-    content = _render_scistack_toml(
-        modules=raw_modules,
-        entities_file=section.get("entities_file"),
-        glue_dir=section.get("glue_dir"),
-        variable_file=section.get("variable_file"),
-        packages=list(section.get("packages", [])),
-        auto_discover=section.get("auto_discover", True),
-        matlab_functions=list(matlab_section.get("functions", [])),
-        matlab_variables=list(matlab_section.get("variables", [])),
-        matlab_sources=raw_sources,
-        matlab_variable_dir=matlab_section.get("variable_dir"),
-        matlab_entities_file=matlab_section.get("entities_file"),
-        # Round-tripped, never written by the GUI: hand-authored level order
-        # would otherwise be DELETED by the Paths popup, which rewrites the
-        # whole file from the fields it knows.
-        schema_keys=section.get("schema_keys"),
-        aliases=section.get("aliases"),
-        colors=section.get("colors"),
+    _write_config(
+        target_path,
+        {
+            **section,
+            "modules": raw_modules,
+            "matlab": {**section.get("matlab", {}), "sources": raw_sources},
+        },
     )
-    history.note_write(target_path)
-    target_path.write_text(content)
     logger.info("[config] add_path: wrote %s (added %s)", target_path, new_str)
     return target_path
 
@@ -1364,9 +1261,8 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
     toml_path = locate_config_at(project_root)
     if toml_path is None:
         raise FileNotFoundError(
-            f"No scistack.toml/pyproject.toml at {project_root}; nothing to remove."
+            f"No scistack.toml at {project_root}; nothing to remove."
         )
-    _reject_packaged_project(toml_path)
 
     section = _load_raw_scistack_section(toml_path)
     project_root = toml_path.parent
@@ -1389,27 +1285,14 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
     )
     logger.info("[config] remove_path: dropping %d entry/entries for %s", removed, target)
 
-    content = _render_scistack_toml(
-        modules=raw_modules,
-        entities_file=section.get("entities_file"),
-        glue_dir=section.get("glue_dir"),
-        variable_file=section.get("variable_file"),
-        packages=list(section.get("packages", [])),
-        auto_discover=section.get("auto_discover", True),
-        matlab_functions=list(matlab_section.get("functions", [])),
-        matlab_variables=list(matlab_section.get("variables", [])),
-        matlab_sources=raw_sources,
-        matlab_variable_dir=matlab_section.get("variable_dir"),
-        matlab_entities_file=matlab_section.get("entities_file"),
-        # Round-tripped, never written by the GUI: hand-authored level order
-        # would otherwise be DELETED by the Paths popup, which rewrites the
-        # whole file from the fields it knows.
-        schema_keys=section.get("schema_keys"),
-        aliases=section.get("aliases"),
-        colors=section.get("colors"),
+    _write_config(
+        toml_path,
+        {
+            **section,
+            "modules": raw_modules,
+            "matlab": {**section.get("matlab", {}), "sources": raw_sources},
+        },
     )
-    history.note_write(toml_path)
-    toml_path.write_text(content)
     logger.info("[config] remove_path: wrote %s (removed %s)", toml_path, target)
     return toml_path
 
@@ -1516,13 +1399,10 @@ def set_entities_file(
     """Set (or auto-create) the TOML entities file, and write the key into
     scistack.toml.
 
-    Only valid for loose-script projects (no pyproject.toml at the resolved
-    project root) -- see :func:`_reject_packaged_project`. Packaged
-    projects must add ``entities_file`` under ``[tool.scistack]`` in
-    pyproject.toml by hand, same as every other path in that mode.
-
     If *file_path* is ``None``, defaults to
-    ``<project_root>/src/scistack_entities.toml``, where *project root* is
+    ``scidb.entities.default_entities_relpath`` under the project root
+    (inside the project's package when it is one, else
+    ``src/scistack_entities.toml``), where *project root* is
     :func:`resolve_project_root`'s answer -- **not** the database's own
     directory, which is usually a datasets folder that project files have
     no business being written into. A relative *file_path* resolves against
@@ -1540,7 +1420,6 @@ def set_entities_file(
     logger.info("[config] set_entities_file: db_path=%s, file_path=%s", db_path, file_path)
     project_root = resolve_project_root(None, db_path)
     toml_path = locate_config_at(project_root)
-    _reject_packaged_project(toml_path)
 
     is_first_write = toml_path is None
     if is_first_write:
@@ -1565,7 +1444,7 @@ def set_entities_file(
     # scidb owns both the default location and the file's initial contents
     # -- it owns the format (CLAUDE.md NOTE 3), so the GUI never hard-codes
     # either.
-    from scidb.entities import DEFAULT_ENTITIES_RELPATH, initial_text
+    from scidb.entities import default_entities_relpath, initial_text
 
     if file_path is not None:
         raw_target = Path(file_path)
@@ -1575,7 +1454,7 @@ def set_entities_file(
             else _normalize(project_root / raw_target)
         )
     else:
-        entities_file = _normalize(project_root / DEFAULT_ENTITIES_RELPATH)
+        entities_file = _normalize(project_root / default_entities_relpath(project_root))
 
     if not entities_file.exists():
         entities_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1596,27 +1475,15 @@ def set_entities_file(
     except ValueError:
         entities_file_for_toml = entities_file
 
-    content = _render_scistack_toml(
-        modules=raw_modules,
-        entities_file=entities_file_for_toml,
-        glue_dir=section.get("glue_dir"),
-        variable_file=section.get("variable_file"),
-        packages=list(section.get("packages", [])),
-        auto_discover=section.get("auto_discover", True),
-        matlab_functions=list(matlab_section.get("functions", [])),
-        matlab_variables=list(matlab_section.get("variables", [])),
-        matlab_sources=raw_sources,
-        matlab_variable_dir=matlab_section.get("variable_dir"),
-        matlab_entities_file=matlab_section.get("entities_file"),
-        # Round-tripped, never written by the GUI: hand-authored level order
-        # would otherwise be DELETED by the Paths popup, which rewrites the
-        # whole file from the fields it knows.
-        schema_keys=section.get("schema_keys"),
-        aliases=section.get("aliases"),
-        colors=section.get("colors"),
+    _write_config(
+        target_path,
+        {
+            **section,
+            "modules": raw_modules,
+            "entities_file": entities_file_for_toml,
+            "matlab": {**section.get("matlab", {}), "sources": raw_sources},
+        },
     )
-    history.note_write(target_path)
-    target_path.write_text(content)
     logger.info(
         "[config] set_entities_file: wrote %s (entities_file=%s, toml value=%s)",
         target_path,
@@ -1644,7 +1511,6 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
     logger.info("[config] set_glue_dir: db_path=%s, dir_path=%s", db_path, dir_path)
     project_root = resolve_project_root(None, db_path)
     toml_path = locate_config_at(project_root)
-    _reject_packaged_project(toml_path)
 
     is_first_write = toml_path is None
     if is_first_write:
@@ -1687,27 +1553,15 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
     except ValueError:
         glue_dir_for_toml = glue_dir
 
-    content = _render_scistack_toml(
-        modules=raw_modules,
-        entities_file=section.get("entities_file"),
-        glue_dir=glue_dir_for_toml,
-        variable_file=section.get("variable_file"),
-        packages=list(section.get("packages", [])),
-        auto_discover=section.get("auto_discover", True),
-        matlab_functions=list(matlab_section.get("functions", [])),
-        matlab_variables=list(matlab_section.get("variables", [])),
-        matlab_sources=raw_sources,
-        matlab_variable_dir=matlab_section.get("variable_dir"),
-        matlab_entities_file=matlab_section.get("entities_file"),
-        # Round-tripped, never written by the GUI: hand-authored level order
-        # would otherwise be DELETED by the Paths popup, which rewrites the
-        # whole file from the fields it knows.
-        schema_keys=section.get("schema_keys"),
-        aliases=section.get("aliases"),
-        colors=section.get("colors"),
+    _write_config(
+        target_path,
+        {
+            **section,
+            "modules": raw_modules,
+            "glue_dir": glue_dir_for_toml,
+            "matlab": {**section.get("matlab", {}), "sources": raw_sources},
+        },
     )
-    history.note_write(target_path)
-    target_path.write_text(content)
     logger.info(
         "[config] set_glue_dir: wrote %s (glue_dir=%s, toml value=%s)",
         target_path,
@@ -1738,33 +1592,17 @@ def clear_entities_file(db_path: Path) -> Path:
     toml_path = locate_config_at(project_root)
     if toml_path is None:
         raise FileNotFoundError(
-            f"No scistack.toml/pyproject.toml at {project_root}; nothing to clear."
+            f"No scistack.toml at {project_root}; nothing to clear."
         )
-    _reject_packaged_project(toml_path)
 
     section = _load_raw_scistack_section(toml_path)
-    matlab_section = dict(section.get("matlab", {}))
-    content = _render_scistack_toml(
-        modules=list(section.get("modules", [])),
-        entities_file="",
-        glue_dir=section.get("glue_dir"),
-        variable_file=section.get("variable_file"),
-        packages=list(section.get("packages", [])),
-        auto_discover=section.get("auto_discover", True),
-        matlab_functions=list(matlab_section.get("functions", [])),
-        matlab_variables=list(matlab_section.get("variables", [])),
-        matlab_sources=list(matlab_section.get("sources", [])),
-        matlab_variable_dir=matlab_section.get("variable_dir"),
-        matlab_entities_file=matlab_section.get("entities_file"),
-        # Round-tripped, never written by the GUI: hand-authored level order
-        # would otherwise be DELETED by the Paths popup, which rewrites the
-        # whole file from the fields it knows.
-        schema_keys=section.get("schema_keys"),
-        aliases=section.get("aliases"),
-        colors=section.get("colors"),
+    _write_config(
+        toml_path,
+        {
+            **section,
+            "entities_file": "",
+        },
     )
-    history.note_write(toml_path)
-    toml_path.write_text(content)
     logger.info(
         '[config] clear_entities_file: wrote %s (entities_file = "", explicit '
         "opt-out; the file itself is untouched)",
@@ -1793,9 +1631,8 @@ def set_project_alias(
     ``level=`` + ``alias=`` sets or clears one level's alias. The edit itself
     is ``scidb.aliases.with_alias`` and the TOML text is
     ``scidb.aliases.render_aliases_table``, through this module's whole-file
-    writer (``_render_scistack_toml``), so everything else in the file comes
-    back as it was. Loose-script projects only: a pyproject.toml is edited by
-    hand, and a project with no config file is refused rather than given
+    writer (``_write_config``), so everything else in the file comes
+    back as it was. A project with no config file is refused rather than given
     one (creating the first file switches discovery modes — ``add_path``'s
     job, not an alias's).
     """
@@ -1815,35 +1652,17 @@ def set_project_alias(
             f"No scistack.toml at {project_root}. Aliases can only be saved to "
             "a project config; set this one for the plot instead."
         )
-    if toml_path.name == "pyproject.toml":
-        raise ValueError(
-            f"Packaged project ({toml_path}): the GUI does not edit "
-            f"pyproject.toml. Add it by hand under [tool.scistack.aliases."
-            f"{thing}], or set it for this plot instead."
-        )
 
     section = _load_raw_scistack_section(toml_path)
     edit = {} if name is _UNCHANGED else {"name": name or None}
     table = _aliases.with_alias(section.get("aliases"), thing, level=level, alias=alias, **edit)
-    matlab_section = dict(section.get("matlab", {}))
-    content = _render_scistack_toml(
-        modules=list(section.get("modules", [])),
-        entities_file=section.get("entities_file"),
-        glue_dir=section.get("glue_dir"),
-        variable_file=section.get("variable_file"),
-        packages=list(section.get("packages", [])),
-        auto_discover=section.get("auto_discover", True),
-        matlab_functions=list(matlab_section.get("functions", [])),
-        matlab_variables=list(matlab_section.get("variables", [])),
-        matlab_sources=list(matlab_section.get("sources", [])),
-        matlab_variable_dir=matlab_section.get("variable_dir"),
-        matlab_entities_file=matlab_section.get("entities_file"),
-        schema_keys=section.get("schema_keys"),
-        aliases=table,
-        colors=section.get("colors"),
+    _write_config(
+        toml_path,
+        {
+            **section,
+            "aliases": table,
+        },
     )
-    history.note_write(toml_path)
-    toml_path.write_text(content)
     # The reader caches on mtime; two writes inside one filesystem tick would
     # read as one version. Forget the parse so the next figure sees this one.
     _aliases.clear_cache()
@@ -1872,8 +1691,8 @@ def set_project_color(
     only ever holds ``#rrggbb`` from here, and a bad one is refused
     (``ColorError``, a ValueError) with nothing written. The edit is
     ``scidb.colors.with_color`` and the text ``scidb.colors.render_colors_table``,
-    through the whole-file writer. The refusals of
-    :func:`set_project_alias` apply: no pyproject.toml, no new config.
+    through the whole-file writer. The refusal of
+    :func:`set_project_alias` applies: no new config.
     """
     from scidb import colors as _colors
     from scistackplot.colors import parse_color
@@ -1892,35 +1711,16 @@ def set_project_color(
             f"No scistack.toml at {project_root}. Colours can only be saved to "
             "a project config; set this one for the plot instead."
         )
-    if toml_path.name == "pyproject.toml":
-        where = "default" if thing is None else thing
-        raise ValueError(
-            f"Packaged project ({toml_path}): the GUI does not edit "
-            f"pyproject.toml. Add it by hand under [tool.scistack.colors] "
-            f"({where}), or set it for this plot instead."
-        )
 
     section = _load_raw_scistack_section(toml_path)
     table = _colors.with_color(section.get("colors"), thing, level=level, color=canonical)
-    matlab_section = dict(section.get("matlab", {}))
-    content = _render_scistack_toml(
-        modules=list(section.get("modules", [])),
-        entities_file=section.get("entities_file"),
-        glue_dir=section.get("glue_dir"),
-        variable_file=section.get("variable_file"),
-        packages=list(section.get("packages", [])),
-        auto_discover=section.get("auto_discover", True),
-        matlab_functions=list(matlab_section.get("functions", [])),
-        matlab_variables=list(matlab_section.get("variables", [])),
-        matlab_sources=list(matlab_section.get("sources", [])),
-        matlab_variable_dir=matlab_section.get("variable_dir"),
-        matlab_entities_file=matlab_section.get("entities_file"),
-        schema_keys=section.get("schema_keys"),
-        aliases=section.get("aliases"),
-        colors=table,
+    _write_config(
+        toml_path,
+        {
+            **section,
+            "colors": table,
+        },
     )
-    history.note_write(toml_path)
-    toml_path.write_text(content)
     # Same reason as set_project_alias: forget the mtime-cached parse.
     _colors.clear_cache()
     logger.info(

@@ -1,7 +1,6 @@
 /**
- * ManagedPathsList — the editable path list for loose-script projects
- * (no pyproject.toml), rendered inside PathsPopup.tsx in place of the
- * read-only grid used for packaged projects.
+ * ManagedPathsList — the editable path list of the project's scistack.toml,
+ * rendered inside PathsPopup.tsx (every project; 2026-10-08).
  *
  * Each entry is a directory the GUI recursively discovers Python (.py)
  * and MATLAB (.m) code under — typically an external, reusable

@@ -87,35 +87,58 @@ def read_project_name(project_root: Path) -> str | None:
     return name if isinstance(name, str) else None
 
 
-CONFIG_FILENAMES = ("pyproject.toml", "scistack.toml")
-"""Project config files, in precedence order: ``pyproject.toml`` always
-wins over ``scistack.toml`` in the same directory."""
+def own_package_dir(project_root: Path) -> "tuple[str, Path] | None":
+    """``(name, project_root/src/<name>)`` when the project is itself a
+    package: ``pyproject.toml``'s ``[project].name`` with a ``src/<name>/``
+    directory. ``None`` otherwise.
 
-
-def extract_scistack_section(data: dict, filename: str) -> dict | None:
-    """The scistack config section of already-parsed TOML *data*.
-
-    ``[tool.scistack]`` for pyproject.toml; the whole file for
-    scistack.toml (an empty one parses to ``{}``, which is a valid
-    all-defaults config, and is deliberately distinct from the ``None``
-    returned when there is no section at all).
+    THE answer to "is this project a package, and where is it?" -- the GUI's
+    config loader, ``scidb.discover.scan_project``, the default entities
+    location and ``scidb.project.init_project`` all ask here. Reads packaging
+    metadata only, never config (config is scistack.toml).
     """
-    if filename == "scistack.toml":
-        return data
-    section = data.get("tool", {}).get("scistack")
-    return section if isinstance(section, dict) else None
+    project_root = Path(project_root)
+    name = read_project_name(project_root)
+    if not name:
+        return None
+    pkg_dir = project_root / "src" / name
+    return (name, pkg_dir) if pkg_dir.is_dir() else None
+
+
+CONFIG_FILENAME = "scistack.toml"
+"""THE project config file, and the only one (user decision 2026-10-08).
+
+``pyproject.toml`` is packaging metadata only and is never read for
+configuration: no ``[tool.scistack]`` table, no precedence rule between two
+files. The GUI owns and writes ``scistack.toml``; it never edits a
+``pyproject.toml``. Neither file ships in a wheel, so a project installed into
+another never brings a second config. See docs/claude/config-file-formats.md.
+"""
+
+
+def config_path_at(root: Path) -> Path:
+    """Where the config of the project rooted at *root* lives, whether or not
+    it exists yet. The one spelling of that location: readers and the GUI's
+    writer both start here, so they cannot pick different files.
+
+    *root* may be a file (its folder is used) or a directory.
+    """
+    root = Path(os.path.abspath(str(root)))
+    search_dir = root if root.is_dir() else root.parent
+    return search_dir / CONFIG_FILENAME
 
 
 def read_scistack_section(toml_path: Path) -> dict | None:
-    """Parse *toml_path* and return its scistack section, or ``None`` if it
-    is unparseable or has none."""
+    """Parse the config file *toml_path* and return its contents (the whole
+    file is the config), or ``None`` if it is unparseable. An empty file
+    parses to ``{}``: a valid all-defaults config, deliberately distinct from
+    ``None``."""
     try:
         with open(toml_path, "rb") as f:
-            data = tomllib.load(f)
+            return tomllib.load(f)
     except Exception:
         logger.debug("Failed to parse %s while reading scistack config", toml_path)
         return None
-    return extract_scistack_section(data, toml_path.name)
 
 
 _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
@@ -202,7 +225,7 @@ def resolve_config_path(root: Path, raw: str) -> Path:
 
 
 def project_config_at(root: Path) -> Path | None:
-    """The config file in *root* that carries a scistack section, or ``None``.
+    """The parseable ``scistack.toml`` in *root*, or ``None``.
 
     **Looks in *root* and nowhere else.** The project root is decided once,
     by ``scifor.pathinput.project_root`` (the pinned root, else the cwd), and
@@ -213,14 +236,11 @@ def project_config_at(root: Path) -> Path | None:
 
     *root* may be a file (its folder is used) or a directory.
     """
-    root = Path(os.path.abspath(str(root)))
-    search_dir = root if root.is_dir() else root.parent
-    for name in CONFIG_FILENAMES:
-        candidate = search_dir / name
-        if candidate.exists() and read_scistack_section(candidate) is not None:
-            logger.debug("Found project config %s", candidate)
-            return candidate
-    logger.debug("No project config with a scistack section in %s", search_dir)
+    candidate = config_path_at(root)
+    if candidate.exists() and read_scistack_section(candidate) is not None:
+        logger.debug("Found project config %s", candidate)
+        return candidate
+    logger.debug("No parseable %s in %s", CONFIG_FILENAME, candidate.parent)
     return None
 
 

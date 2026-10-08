@@ -40,10 +40,10 @@ Live collaboration (two people merging back and forth) is **out of scope**.
 - **Schemas don't have to match.** Import suggests the exporter's schema but
   lets the user enter their own (see "Schema on import").
 - **Standard Python packaging.** Code travels as a wheel built from
-  `pyproject.toml`. Project configuration lives in `[tool.scistack]` there.
-  When one project installs another, the installed one's `pyproject.toml` is
-  not part of the wheel, so there's only ever one project configuration in
-  play. No uv.
+  `pyproject.toml`, which is packaging only. Project configuration lives
+  only in `scistack.toml`, which the GUI owns (decision 2026-10-08, see
+  `config-file-formats.md`). Neither file is in the wheel, so installing one
+  project into another never brings a second configuration. No uv.
 - **Layering.** The bundle format, options, manifest, code packaging, schema
   choice, history/data sections and verification live in **scidb**. The GUI
   state section lives in **scistack-gui** and plugs into scidb's bundle as a
@@ -59,26 +59,20 @@ Live collaboration (two people merging back and forth) is **out of scope**.
 | Entity declarations (Variables, Parameters, PathInputs) | `scistack_entities.toml` | always. **Moves into the package** (`src/<pkg>/scistack_entities.toml`) so it is package data and travels with installed code |
 | Dependencies | `pyproject.toml` `[project]` | always (in the wheel) + record of exact resolved versions |
 | Environment | not recorded today | always: Python version, platform, MATLAB release and toolboxes |
-| Project config | `pyproject.toml` `[tool.scistack]` (`scistack.toml` is retired as the default) | always |
+| Project config | `scistack.toml` (the only config file) | always |
 | GUI state | `_pipeline_*`, `_node_config`, `_intent`, `_node_wiring`, `_hypotheses`, `<db>.layout.json`, `_variant_pin`, scistackplotdb saved plots and presets | always, when the project has any |
 | Run history | `_record`, `_invocation*`, `_run`, `_run_invocation`, `_function_source`, `_constant`, `_schema` | default on |
 | Derived variable data | the variable tables + `_record_save` | opt-in |
 | Raw input files | wherever the user keeps them | **never** |
 
-### Why entities stay a separate file and don't move into `[tool.scistack]`
+### Why entities stay a separate file inside the package
 
-`[tool.scistack]` holds **project** configuration: it should *not* travel when
-the project is installed into another project, and the wheel drops it. Entity
+`scistack.toml` holds **project** configuration: it should *not* travel when
+the project is installed into another project, and it isn't in the wheel. Entity
 declarations are part of the **code**: an installed project's Variables and
 Parameters must travel with its functions, or its functions refer to things
 the importer doesn't know about. So the two have opposite needs. Entities stay
 a separate TOML file, but inside the package so they're package data.
-
-There's a second reason: the GUI writes the entities file constantly, using
-scidb's span-based editor (`scidb.entities.upsert_entry`, etc.). That editor
-assumes `variables`, `[parameters]` and `[path_inputs]` sit at the top level.
-Keeping GUI writes out of `pyproject.toml` means the GUI never edits the
-file that controls the user's packaging.
 
 PathInput `root_folder` values are machine-specific, so they're the one part
 of the entities file that isn't really "code". Import rewrites them (see
@@ -94,7 +88,7 @@ manifest.json   format_version, scistack version, export options used,
 env/            resolved-versions record, Python/platform/MATLAB info
 code/           <project>-<version>-py3-none-any.whl
                 wheelhouse/                    (opt-in)
-config/         [tool.scistack] table
+config/         scistack.toml
 gui/            GUI state section (omitted for script-only projects)
 history/        provenance tables (Parquet)    (default on)
 data/           variable tables (Parquet)      (opt-in)
@@ -170,7 +164,7 @@ Status as of 2026-10-08.
 | E7 | Hidden nodes/edges/combos | 🔧 | Left out on purpose; must be included when history is included. |
 | E8 | Positions | 🔧 | From `<db>.layout.json`; a store in the list. |
 | E9 | Parameters / Sweeps / PathInput values | 🔧 | Bundled by registry lookup. Replace with the entities file travelling in the wheel; check the `layout.json` constants palette as an owner. |
-| E10 | Project config | ❌ | `[tool.scistack]`. |
+| E10 | Project config | ❌ | `scistack.toml`. |
 | E11 | Code + entities file | ❌ | |
 | E12 | Wheel + resolved versions + environment | ❌ | |
 | E13 | Run history | ❌ | Default on. Requires user ID removed first. |
