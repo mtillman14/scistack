@@ -260,6 +260,11 @@ def load_from_config(
     from scifor.pathinput import set_project_root
 
     set_project_root(config.project_root)
+    # Which packages are LIBRARIES (their functions are named `pkg.fn`) is
+    # read from this config; forget the previous project's answer.
+    from scidb import names as _names
+
+    _names.clear_cache()
 
     old_fns = set(_functions.keys())
     old_vars = set(BaseVariable._all_subclasses.keys())
@@ -306,7 +311,9 @@ def load_from_config(
 
     # Last, so a TOML declaration wins over a same-named one discovered in a
     # module: the entities file is the file the GUI writes, so if the two
-    # disagree, what the user just edited is what they should see.
+    # disagree, what the user just edited is what they should see. (For a
+    # Variable a TOML entry is only a NAME, so a module that DEFINES the
+    # class keeps its definition: `scidb.variable.same_definition`.)
     if config.entities_file is not None:
         _load_entities_file(config.entities_file)
     else:
@@ -513,11 +520,19 @@ def _load_packages(names: list[str]) -> None:
             "[registry] Processing package %d/%d: %s", pkg_idx + 1, len(names), pkg_name
         )
 
+        from scidb.names import library_packages
+
+        is_library = pkg_name.split(".")[0] in library_packages()
+
         def on_module(mod) -> None:
             source = f"package:{mod.__name__}"
             _scan_module_functions(mod, source=source)
-            _scan_module_parameters(mod, source=source)
-            _scan_module_path_inputs(mod, source=source)
+            # A library's Parameters and PathInputs are its internals (a
+            # PathInput is one project's data layout): they stay out of the
+            # project's names (portability.md, "Reusing code").
+            if not is_library:
+                _scan_module_parameters(mod, source=source)
+                _scan_module_path_inputs(mod, source=source)
             _scan_module_variables(mod, source=source)
 
         fn_count_before = len(_functions)
@@ -548,6 +563,58 @@ def _load_packages(names: list[str]) -> None:
             fn_count_after - fn_count_before,
             len(wr.per_module) - 1,
         )
+        if is_library:
+            _load_library_entities(pkg_name)
+
+
+def _load_library_entities(pkg_name: str) -> None:
+    """Register the Variables an installed LIBRARY's entities file declares.
+
+    A library ships its declarations inside its package
+    (``<pkg>/scistack_entities.toml``, the default location ``scidb.project``
+    gives new projects), so they travel with its code. Only VARIABLES enter
+    the project: a library's Parameters and PathInputs stay its own
+    (portability.md, "Reusing code"). A name the project already has is
+    left alone -- a TOML declaration only says the type exists
+    (``scidb.variable.same_definition``), and the project's own definition
+    is the one that counts.
+    """
+    import importlib.resources
+
+    from scidb import BaseVariable
+    from scidb.entities import DEFAULT_ENTITIES_FILENAME, load
+
+    try:
+        candidate = importlib.resources.files(pkg_name) / DEFAULT_ENTITIES_FILENAME
+    except (ModuleNotFoundError, TypeError) as e:
+        logger.debug("[registry] %s: no package resources (%s)", pkg_name, e)
+        return
+    if not candidate.is_file():
+        logger.debug("[registry] library %s ships no entities file", pkg_name)
+        return
+    path = Path(str(candidate))
+    # Snapshot BEFORE loading: constructing each declared class registers it
+    # (`__init_subclass__`), and a name the project already defines keeps its
+    # definition there (a name-only declaration never replaces one).
+    before = set(BaseVariable._all_subclasses)
+    result = load(path)
+    added, already = [], []
+    for name in result.variables:
+        if name in before:
+            already.append(name)
+            continue
+        _register_variable(name, source=f"package:{pkg_name}:{path.name}")
+        added.append(name)
+    for err in result.errors:
+        _record_load_error(f"{path}:{err.line}" if err.line else str(path), err.describe())
+    logger.info(
+        "[registry] library %s entities: %d variable(s) added, %d already declared "
+        "by the project, %d parameter(s)/path input(s) kept to the library",
+        pkg_name,
+        len(added),
+        len(already),
+        len(result.parameters) + len(result.path_inputs),
+    )
 
 
 def _load_entry_points() -> None:
@@ -660,6 +727,8 @@ def _scan_module_functions(module, *, source: str) -> None:
     """
     module_name = getattr(module, "__name__", None)
     logger.debug("[registry] Scanning module for functions: %s", source)
+    from scidb.names import function_name, library_of
+
     discovered = []
     skipped_reexports = []
     for name, obj in inspect.getmembers(
@@ -670,8 +739,12 @@ def _scan_module_functions(module, *, source: str) -> None:
         if getattr(obj, "__module__", None) != module_name:
             skipped_reexports.append(name)
             continue
-        _register_function(name, obj, source=source)
-        discovered.append(name)
+        # THE recorded name (scidb.names): a library's function is `pkg.fn`,
+        # the project's own code keeps its name, so a script run and a GUI
+        # run of the same function record the same name.
+        key = function_name(obj) if library_of(obj) else name
+        _register_function(key, obj, source=source)
+        discovered.append(key)
     if discovered:
         logger.debug(
             "[registry] Discovered %d functions from %s: %s",
@@ -688,6 +761,23 @@ def _scan_module_functions(module, *, source: str) -> None:
         )
 
 
+def _is_library_source(source: "str | None") -> bool:
+    """Whether a declaration *source* is an installed LIBRARY (a package the
+    project lists, or an entry point) rather than the project itself. The
+    project's own package is scanned as ``package:...`` too, so the package
+    name is checked against ``scidb.names.library_packages``."""
+    if not source:
+        return False
+    if source.startswith("entrypoint:"):
+        return True
+    if source.startswith("package:"):
+        from scidb.names import library_packages
+
+        top = source[len("package:"):].split(":")[0].split(".")[0]
+        return top in library_packages()
+    return False
+
+
 def _register_variable(name: str, *, source: str) -> None:
     """Record that *this* registry registered variable *name* from *source*.
 
@@ -696,16 +786,44 @@ def _register_variable(name: str, *, source: str) -> None:
     statement executed. This only records the attribution that lets
     :func:`_unregister_tracked_variables` withdraw it later.
     """
+    from scidb import BaseVariable
+
     previous = _variable_sources.get(name)
     if previous is not None and previous != source:
-        logger.warning(
-            "[registry] Variable '%s' is declared in more than one place: %s "
-            "and %s. The last one scanned wins; remove one to make which is "
-            "used deterministic.",
-            name,
-            previous,
-            source,
-        )
+        conflict = BaseVariable.definition_conflicts().get(name)
+        if conflict is None and (_is_library_source(previous) or _is_library_source(source)):
+            # Across a library boundary the same name declared the same way
+            # is ONE type (scidb.variable.same_definition; portability.md
+            # "Reusing code"): nothing to fix, nothing to warn.
+            logger.info(
+                "[registry] Variable '%s' is declared in %s and in %s with the "
+                "same definition: one type",
+                name,
+                previous,
+                source,
+            )
+        elif conflict is None:
+            # Two declarations INSIDE the project (a hand-written classdef and
+            # a TOML entry, two modules): the same type, but redundant -- one
+            # is enough, and which is used should not depend on scan order.
+            logger.warning(
+                "[registry] Variable '%s' is declared in more than one place: %s "
+                "and %s. They agree, but one declaration is enough; remove the "
+                "other.",
+                name,
+                previous,
+                source,
+            )
+        else:
+            kept, rejected = conflict
+            message = (
+                f"Variable '{name}' is defined differently in {previous} and "
+                f"{source} (module {rejected.__module__} vs {kept.__module__}). "
+                f"A Variable's name is its table, so one definition is used: "
+                f"{kept.__module__}'s. Remove the other definition or rename it."
+            )
+            logger.warning("[registry] %s", message)
+            _record_load_error(source, message)
     _variable_sources[name] = source
 
 

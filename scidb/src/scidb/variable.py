@@ -5,6 +5,9 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from .log import Log
+from .names import library_of
+
 if TYPE_CHECKING:
     from .column_selection import ColumnSelection
 
@@ -103,10 +106,56 @@ class BaseVariable(metaclass=VariableMeta):
     # Global registry of all subclasses (for auto-registration with database)
     _all_subclasses: dict[str, type["BaseVariable"]] = {}
 
+    #: Same-name declarations from two modules that are NOT the same
+    #: definition: ``{name: (kept, rejected)}``. See :func:`same_definition`.
+    _definition_conflicts: dict[str, tuple[type, type]] = {}
+
     def __init_subclass__(cls, **kwargs):
-        """Register subclass in global registry when defined."""
+        """Register subclass in global registry when defined.
+
+        A Variable's name is its table, so it is not namespaced: the same name
+        from two places is ONE type when the definitions agree
+        (:func:`same_definition`; decided 2026-10-08, ``docs/claude/
+        portability.md`` "Reusing code"). When they do not, the conflict is
+        recorded with both classes (the GUI reports it as a load error naming
+        both sources) and the project's definition is kept over a library's,
+        whichever was defined first. A redefinition in the SAME module is
+        an edit, and simply replaces.
+        """
         super().__init_subclass__(**kwargs)
-        cls._all_subclasses[cls.__name__] = cls
+        name = cls.__name__
+        existing = BaseVariable._all_subclasses.get(name)
+        if (
+            existing is not None
+            and existing is not cls
+            and getattr(cls, "_declared_only", False)
+            and not getattr(existing, "_declared_only", False)
+        ):
+            # A name-only declaration (an entities TOML) of a type that is
+            # already DEFINED: the definition stays (same type, more specific).
+            return
+        if (
+            existing is None
+            or existing is cls
+            or getattr(existing, "__module__", None) == getattr(cls, "__module__", None)
+            or same_definition(existing, cls)
+        ):
+            BaseVariable._all_subclasses[name] = cls
+            return
+        keep, rejected = _preferred_definition(existing, cls)
+        BaseVariable._definition_conflicts[name] = (keep, rejected)
+        BaseVariable._all_subclasses[name] = keep
+        Log.warn(
+            f"[variable] Variable {name!r} is defined differently in "
+            f"{rejected.__module__} and {keep.__module__}; keeping "
+            f"{keep.__module__}'s. A Variable's name is its table: remove one "
+            f"definition or rename it."
+        )
+
+    @classmethod
+    def definition_conflicts(cls) -> dict[str, tuple[type, type]]:
+        """``{name: (kept, rejected)}`` for every unresolved conflict."""
+        return dict(BaseVariable._definition_conflicts)
 
     def __class_getitem__(cls, key):
         """
@@ -211,6 +260,7 @@ class BaseVariable(metaclass=VariableMeta):
         already holding a reference keeps working. It only stops *lookup by
         name* from finding it.
         """
+        BaseVariable._definition_conflicts.pop(name, None)
         return cls._all_subclasses.pop(name, None) is not None
 
     def __init__(self, data: Any):
@@ -861,3 +911,63 @@ def _build_introspect_df(instances, where, version):
     df["where"] = repr(where) if where is not None else None
     df["version_mode"] = version
     return df
+
+
+# ---------------------------------------------------------------------------
+# Same name, same definition? (portability: identical declarations merge)
+# ---------------------------------------------------------------------------
+
+#: What makes two Variable definitions different: how the data is stored.
+_CODEC_METHODS = ("to_db", "from_db")
+
+
+def _own_codec(cls: type, method: str):
+    """The function *cls* uses for *method* if a class below BaseVariable
+    overrides it, else ``None`` (the default codec)."""
+    for klass in cls.__mro__:
+        if klass is BaseVariable:
+            return None
+        if method in vars(klass):
+            attr = vars(klass)[method]
+            return getattr(attr, "__func__", attr)
+    return None
+
+
+def _code_key(fn) -> tuple:
+    """A comparison key for a function's logic, independent of which file
+    it was written in: bytecode, names, and constants other than nested
+    code objects (whose repr carries a file name)."""
+    code = getattr(fn, "__code__", None)
+    if code is None:
+        return (repr(fn),)
+    consts = tuple(c for c in code.co_consts if not hasattr(c, "co_code"))
+    return (code.co_code, code.co_names, repr(consts))
+
+
+def same_definition(a: type, b: type) -> bool:
+    """Whether two same-named Variable classes are the same TYPE.
+
+    Same ``schema_version`` and the same codec (``to_db``/``from_db``: both
+    the default, or the same code). A class built from an entities TOML
+    declaration (``_declared_only``) only says the type EXISTS, so it agrees
+    with any definition of that name.
+    """
+    if getattr(a, "_declared_only", False) or getattr(b, "_declared_only", False):
+        return True
+    if getattr(a, "schema_version", 1) != getattr(b, "schema_version", 1):
+        return False
+    for method in _CODEC_METHODS:
+        fa, fb = _own_codec(a, method), _own_codec(b, method)
+        if fa is None and fb is None:
+            continue
+        if fa is None or fb is None or _code_key(fa) != _code_key(fb):
+            return False
+    return True
+
+
+def _preferred_definition(existing: type, new: type) -> "tuple[type, type]":
+    """``(kept, rejected)`` for two conflicting definitions: the project's
+    own over a library's (``scidb.names.library_of``), else the newer."""
+    if library_of(new) and not library_of(existing):
+        return existing, new
+    return new, existing

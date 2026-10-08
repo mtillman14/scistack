@@ -33,6 +33,7 @@ from typing import Literal
 
 from .input_spec import find_pathinput
 from .log import Log
+from .names import function_name
 from .schema_values import schema_str
 
 logger = logging.getLogger(__name__)
@@ -310,7 +311,7 @@ def check_multiple_nodes_state(
                 }
                 continue
         else:
-            fn_name = getattr(fn, "__name__", None) or type(fn).__name__
+            fn_name = function_name(fn) if getattr(fn, "__name__", None) else type(fn).__name__
 
         outputs = node.get("outputs", [])
         call_id = node.get("call_id")
@@ -440,7 +441,7 @@ def check_node_state(
 
         db = get_database()
 
-    fn_name = getattr(fn, "__name__", None) or type(fn).__name__
+    fn_name = function_name(fn) if getattr(fn, "__name__", None) else type(fn).__name__
 
     # Node completeness = invocation membership (§9c). Expected invocation_ids
     # are derived LIVE from current input data over each variant config the
@@ -791,7 +792,7 @@ def check_pathinput_node_state(
     from . import provenance_query
     from .provenance import compute_constant_record_id
 
-    fn_name = getattr(fn, "__name__", None) or type(fn).__name__
+    fn_name = function_name(fn) if getattr(fn, "__name__", None) else type(fn).__name__
     schema_keys = list(db.dataset_schema_keys)
 
     def _norm(combo: dict) -> dict:

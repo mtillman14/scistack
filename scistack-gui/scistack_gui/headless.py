@@ -75,3 +75,50 @@ def _open(db_path, *, project, discover: bool, schema_keys):
     for warning in result.warnings:
         logger.warning("[headless] %s", warning)
     return gui_db.get_db()
+
+
+# ---------------------------------------------------------------------------
+# Whole-project bundles (scidb.bundle), composed for the terminal and tests
+# ---------------------------------------------------------------------------
+
+
+def bundle_providers() -> list:
+    """The bundle sections this installation can write and read, beyond
+    scidb's own ``config``: the GUI's canvas and the saved plots/presets.
+    The one list both directions use."""
+    from scistackplotdb.bundle_section import PlotsSection
+
+    from scistack_gui.bundle_section import CodeSection, GuiSection
+
+    return [CodeSection(), GuiSection(), PlotsSection()]
+
+
+def export_project_bundle(db_path: "Path | str", out_path: "Path | str", *, options=None) -> Path:
+    """Open the project WITH discovery and write it as a ``.scistack``."""
+    from scidb.bundle import export_project
+    from scifor.pathinput import project_root
+
+    db = open_for_export(db_path)
+    return export_project(
+        project_root(), db, out_path, options=options, providers=bundle_providers()
+    )
+
+
+def import_project_bundle(
+    bundle_path: "Path | str",
+    target_root: "Path | str",
+    *,
+    schema_keys: "list[str] | None" = None,
+):
+    """Make a NEW project at *target_root* from a ``.scistack``, opening it
+    WITHOUT discovery (the bundle's code never runs here)."""
+    from scidb.bundle import import_project
+
+    root = Path(target_root)
+
+    def _open(db_path, keys):
+        return open_for_import(db_path, project=root, schema_keys=keys)
+
+    return import_project(
+        bundle_path, root, providers=bundle_providers(), schema_keys=schema_keys, open_db=_open
+    )

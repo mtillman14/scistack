@@ -163,36 +163,88 @@ that already has an (empty) `main` compares contents and FORKS to
 "main (imported)". A whole-project import into a new project must apply
 `main` onto `main` instead.
 
-## Stage 4: bundle format + options (scidb)
+## Stage 4: bundle format + options (scidb) — DONE 2026-10-08, tests pass
 
-- `scidb.bundle`: `ExportOptions` (the one owner of defaults:
-  `include_history=True`, `include_data=False`, `include_wheelhouse=False`),
-  `Manifest`, `FORMAT_VERSION`, `.scistack` writer/reader (a plain zip) with
-  content hashes.
-- Section-provider interface: scidb owns `code`, `env`, `config`, `history`,
-  `data`. scistack-gui registers `gui`.
-- `export_project(root, options) -> Path`,
-  `import_project(bundle, target, options) -> ImportReport`.
-- Tests: manifest round trip; refuses an unknown format version; a bundle
-  with no `gui/` section imports cleanly.
+- `scidb/bundle.py`: `ExportOptions` (the one owner of the defaults:
+  history on, data off, wheelhouse off), the manifest (format, versions,
+  package, database file name, schema keys, options, per-file SHA-256),
+  `.scistack` = plain zip; `read_bundle` refuses a changed, missing or
+  unlisted file and another format version. `export_project(root, db, out,
+  options, providers)`; `import_project(bundle, target, providers,
+  schema_keys, open_db)` makes a NEW project only (config written, then
+  `init_project`, then the front end's `open_db`, then each provider); a
+  section with no importer is reported. scidb owns the `config` section.
+- Providers are passed explicitly; scidb imports neither the GUI nor the
+  plotting packages:
+  - `scistack_gui/bundle_section.GuiSection`: every visible pipeline's
+    canvas (`canvas_snapshot`), hypotheses, and the global GUI state via
+    `portability_service.export_globals`/`apply_globals` (factored out of
+    the pipeline export/import, one owner). Every pipeline keeps its id;
+    `main` is filled, never forked. Hidden edges applied only when the
+    bundle carries history.
+  - `scistackplotdb/bundle_section.PlotsSection`: saved plots and presets,
+    row for row (`VersionedStore.dump_rows`/`load_rows`).
+- `headless.bundle_providers()`, `export_project_bundle`,
+  `import_project_bundle`: the compositions Stage 8's CLI calls.
+- Tests: `scidb/tests/test_bundle.py`, `scistack-gui/tests/
+  test_bundle_project.py`, a plots round trip in `scistackplotdb/tests/
+  test_saved_plots.py`.
 
-## Stage 5: code + environment
+Known gaps until later stages: no code/env section (Stage 5), so an
+imported project has its canvas but not its functions; no history/data
+(Stage 7); the config section is copied verbatim, including the GUI's
+absolute first-write seeds (Stage 6). The single-pipeline JSON export (GUI
+Export button) remains a separate document format.
 
-- Read entities files shipped inside installed SciStack packages (moved
-  from Stage 1): today only the project's own file is loaded
-  (`scidb.entities.load_for_project`). Name collisions between the project
-  and an installed package are a load error, as for duplicate PathInputs.
-- Build the project wheel (PEP 517 build of the project), with `.m` files
-  and the entities file as package data. Record resolved versions
-  (`pylock.toml` if the installed pip supports it, else a `pip freeze`-style
-  list), plus Python version, platform and, if available, MATLAB `ver`.
-- Optional wheelhouse (`pip wheel -w`).
-- Loose-file projects: refuse with "run `scistack init`", which makes them
-  packages.
-- I16: test that a function's identity is the same loaded as a loose file
-  and installed from the wheel. If it differs, fix in the identity owner.
-- Install on import (I5), after the trust prompt, into the running
-  interpreter; MATLAB path setup in scimatlab (I6).
+## Stage 5: names across packages + code and environment sections — DONE 2026-10-08, tests pass
+
+Revised 2026-10-08 with the user ("Reusing code" in `docs/claude/
+portability.md`): a bundle import is a COPY (source), libraries are
+installed and namespaced, identical declarations merge.
+
+### 5a. Names when code comes from several places
+- Entities files shipped inside installed SciStack packages (listed in
+  `scistack.toml` `packages`) are read; today only the project's own file is.
+- Merge rule (one owner, in scidb): the same Variable name declared the same
+  way is one type; a different definition (schema_version, custom
+  to_db/from_db) is an error naming both sources and which to remove.
+- Functions from an installed package are qualified `package.fn`, through the
+  same mechanism as library functions (`library_functions.
+  with_qualified_name`), so the recorded name equals the canvas label.
+- An installed package's Parameters and PathInputs are not registered into
+  the project's names.
+- Tests: two packages with the same function name both load, qualified;
+  identical Variable declarations merge; conflicting ones fail with both
+  sources named; a library PathInput is not on the project's palette.
+
+### 5b. Code and environment sections
+- `code` section: the project's source tree, as files (pyproject.toml,
+  `src/<pkg>/`, other code files under the root that discovery loads, glue
+  files, `.m` files, the entities file). A file discovery loads from OUTSIDE
+  the root is listed in the report, not copied (Stage 6 roots).
+- `env` section (scidb): Python version, platform, installed distributions
+  with versions (`importlib.metadata`), MATLAB release if a MATLAB engine
+  is already running in-process (never started for this).
+- Import: the code section is written before `init_project` (a new
+  "files" phase in `scidb.bundle.import_project`, before the database
+  opens), so the new project's `src/<pkg>/` IS the exporter's code (copy).
+  Dependencies are compared with the env record; missing or different
+  distributions are reported with the `pip install` command. Nothing is
+  installed automatically and nothing is imported (trust: Stage 8).
+- Tests: bundle round trip reproduces the source tree byte for byte; files
+  outside the root are reported; env section lists the running Python; a
+  missing distribution is reported.
+
+Moved to Stage 10: building wheels, the optional wheelhouse.
+
+As built: `scidb/names.py` (one owner of the recorded function name; switched
+foreach, CallSite, StepSpec, node state, the GUI registry and code export);
+`variable.same_definition` + `BaseVariable.definition_conflicts`;
+`registry._load_library_entities`; env section and `check_environment` in
+`scidb/bundle.py` with a "files" import phase and unsafe-path refusal;
+`bundle_section.CodeSection` (in the GUI package: the config loader owns
+which files are code). Tests: `scidb/tests/test_names.py`, `test_bundle.py`,
+`scistack-gui/tests/test_library_names.py`, `test_bundle_project.py`.
 
 ## Stage 6: schema choice + PathInput roots on import
 
@@ -241,9 +293,24 @@ that already has an (empty) `main` compares contents and FORKS to
   content hashes with the imported history, report records that differ.
 - Subset/anonymize exports (E15).
 
+
+## Stage 10: share a submodule as a library; use or copy it
+
+- "Share as library" on a submodule tab: generate a package from it (the
+  functions it uses, their declarations, the submodule as a source-defined
+  `scidb.Pipeline`, written by the existing code export), optionally built
+  as a wheel. The source project can switch to the library.
+- "Add library" + place its submodule: read-only on the canvas, functions
+  qualified (5a), placed through the Stage 6 key map when schemas differ,
+  chained to other submodules by name or by port bindings.
+- "Make my own copy" when the user tries to edit a library submodule: copy
+  into `src/<pkg>/<lib>/` (functions qualified by the subpackage, 5a), like
+  Duplicate.
+- Optional wheelhouse for archives (`pip wheel -w`).
+
 ## Order and dependencies
 
-0 (independent, do first) → 1 → 2 → 3 → 4 → {5, 6, 7} → 8 → 9.
+0 → 1 → 2 → 3 → 4 → {5, 6, 7} → 8 → 9; 10 after 5, 6 and 8.
 Stages 5–7 are independent of each other once 4 lands; 6 needs Stage 2's
 schema-key remap hooks.
 

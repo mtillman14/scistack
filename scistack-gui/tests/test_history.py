@@ -298,6 +298,7 @@ def test_every_gui_table_is_tracked():
 _WRITE_ALLOWLIST = {
     ("services/code_export_service.py", "export_pipeline_to_code"): "export",
     ("services/portability_service.py", "export_pipeline_to_file"): "export",
+    ("bundle_section.py", "import_"): "writes a NEW project's code (bundle import), not an edit to undo",
     ("services/plot_service.py", "_figure_number"): "export manifest",
     ("layout.py", "_replace_with_retry"): "helper; its caller _save notes the write",
 }

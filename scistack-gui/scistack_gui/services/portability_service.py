@@ -114,49 +114,56 @@ def _notes_for(names: set[str], pipeline_ids: list[str]) -> dict[str, str]:
     }
 
 
-def export_pipeline(db, pipeline_id: str) -> dict:
-    """Build the portable document for ``pipeline_id`` + every pipeline it
-    (transitively) uses. See module docstring for what is/isn't included."""
+def hypothesis_of(db, pipeline_id: str) -> "dict | None":
+    """The hypothesis fields of *pipeline_id*, or ``None`` when it is not one."""
     from scistack_gui import pipeline_store as ps
-    from scistack_gui.services import canvas_snapshot
 
-    pipeline_ids = _closure_pipeline_ids(db, pipeline_id)
-    names_by_id = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
+    h = {x["pipeline_id"]: x for x in ps.list_hypotheses(db)}.get(pipeline_id)
+    if h is None:
+        return None
+    return {
+        "research_question": h["research_question"],
+        "hypothesis_statement": h["hypothesis_statement"],
+        "evidence_for": h["evidence_for"],
+        "evidence_against": h["evidence_against"],
+    }
 
-    # The canvas as data: the same capture duplicate/paste use, so an export
-    # carries exactly what a duplicate would (settings of nodes that have
-    # run, every intent statement, hidden ports). Hidden EDGES are captured
-    # but not applied on import: they hide history-derived connections the
-    # target has no history for.
-    snap = canvas_snapshot.capture(db, pipeline_ids)
 
-    referenced_names: dict[str, set[str]] = {t: set() for t in _GLOBAL_NODE_TYPES}
-    for n in snap.nodes:
-        if n.node_type in referenced_names:
-            referenced_names[n.node_type].add(n.label)
+def export_globals(db, snap, pipeline_ids: list[str]) -> dict:
+    """The project-wide GUI state the captured nodes depend on -- shared by
+    a pipeline document and a whole-project bundle (one owner):
 
-    # PathInput/Sweep are source-scanned now (see
-    # docs/claude/code-discovery-categories.md) — bundling their resolved
-    # value here is no longer "the only copy" but an IMPORT-TIME FALLBACK:
-    # if the importing user's project doesn't locally define a same-named
-    # PathInput/Sweep, import_pipeline_document materializes one from this
-    # value via create_path_input/create_parameter.
+    * ``constants``/``sweeps``/``path_inputs``: the Parameters and PathInputs
+      the canvas names, with their values (an IMPORT-TIME FALLBACK: a target
+      that does not define the name gets it materialised into its source);
+    * ``notes`` about the captured names and pipelines;
+    * ``builtin_functions``: manually declared library references the canvas
+      uses (no source file to rediscover them from);
+    * ``parameter_value_groups``: a Parameter's generated-set grouping.
+
+    Needs the code registry (the project is opened WITH discovery to export).
+    """
+    from scistack_gui import pipeline_store as ps
     from scistack_gui import registry
     from scistack_gui.domain.graph_builder import path_input_display
+
+    referenced: dict[str, set[str]] = {t: set() for t in _GLOBAL_NODE_TYPES}
+    for n in snap.nodes:
+        if n.node_type in referenced:
+            referenced[n.node_type].add(n.label)
+    labels = {n.label for n in snap.nodes}
 
     path_input_registry = registry.get_path_inputs_registry()
     path_inputs = [
         {"name": name, **path_input_display(path_input_registry[name])}
-        for name in sorted(referenced_names["pathInputNode"])
+        for name in sorted(referenced["pathInputNode"])
         if name in path_input_registry
     ]
-
-    # Constants and Sweeps are ONE node type on the canvas (Parameters, D6),
-    # so one referenced-name set feeds both bundles — PARTITIONED, never
-    # duplicated: a Parameter the registry knows as a Sweep bundles its value
-    # list; everything else bundles as a constant.
+    # Constants and Sweeps are ONE node type on the canvas (Parameters, D6):
+    # PARTITIONED, never duplicated. A Parameter the registry knows as a Sweep
+    # bundles its value list; everything else bundles as a constant.
     sweep_registry = registry.get_parameters_registry()
-    referenced_params = sorted(referenced_names["parameterNode"])
+    referenced_params = sorted(referenced["parameterNode"])
     sweeps = [
         {"name": name, "values": list(sweep_registry[name].alternatives)}
         for name in referenced_params
@@ -168,29 +175,33 @@ def export_pipeline(db, pipeline_id: str) -> dict:
         for name in referenced_params
         if name not in sweep_registry
     }
-
-    hypothesis = None
-    hyp_by_id = {h["pipeline_id"]: h for h in ps.list_hypotheses(db)}
-    if pipeline_id in hyp_by_id:
-        h = hyp_by_id[pipeline_id]
-        hypothesis = {
-            "research_question": h["research_question"],
-            "hypothesis_statement": h["hypothesis_statement"],
-            "evidence_for": h["evidence_for"],
-            "evidence_against": h["evidence_against"],
-        }
-
-    labels = {n.label for n in snap.nodes}
-    notes = _notes_for(labels, pipeline_ids)
-    # Project-global GUI rows the exported nodes depend on: a manually
-    # declared built-in function (no source file to rediscover it from) and a
-    # Parameter's generated-set grouping (display only).
-    builtin_functions = [b for b in ps.get_builtin_functions(db) if b["name"] in labels]
-    value_groups = {
-        name: group
-        for name, group in ps.get_parameter_value_groups(db).items()
-        if name in referenced_names["parameterNode"]
+    return {
+        "constants": constants,
+        "path_inputs": path_inputs,
+        "sweeps": sweeps,
+        "notes": _notes_for(labels, pipeline_ids),
+        "builtin_functions": [b for b in ps.get_builtin_functions(db) if b["name"] in labels],
+        "parameter_value_groups": {
+            name: group
+            for name, group in ps.get_parameter_value_groups(db).items()
+            if name in referenced["parameterNode"]
+        },
     }
+
+
+def export_pipeline(db, pipeline_id: str) -> dict:
+    """Build the portable document for ``pipeline_id`` + every pipeline it
+    (transitively) uses. See module docstring for what is/isn't included."""
+    from scistack_gui import pipeline_store as ps
+    from scistack_gui.services import canvas_snapshot
+
+    pipeline_ids = _closure_pipeline_ids(db, pipeline_id)
+    names_by_id = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
+
+    # The canvas as data: the same capture duplicate/paste use, so an export
+    # carries exactly what a duplicate would.
+    snap = canvas_snapshot.capture(db, pipeline_ids)
+    globals_ = export_globals(db, snap, pipeline_ids)
 
     document = {
         "format_version": FORMAT_VERSION,
@@ -200,20 +211,16 @@ def export_pipeline(db, pipeline_id: str) -> dict:
             {"pipeline_id": pid, "name": names_by_id.get(pid, pid), "is_root": pid == pipeline_id}
             for pid in pipeline_ids
         ],
-        "hypothesis": hypothesis,
+        "hypothesis": hypothesis_of(db, pipeline_id),
         "canvas": snap.to_dict(),
-        "constants": constants,
-        "path_inputs": path_inputs,
-        "sweeps": sweeps,
-        "notes": notes,
-        "builtin_functions": builtin_functions,
-        "parameter_value_groups": value_groups,
+        **globals_,
     }
     logger.info(
         "[portability] export_pipeline(%s): %d pipeline(s); canvas %s; "
         "%d constant(s), %d path_input(s), %d sweep(s), %d note(s)",
         pipeline_id, len(pipeline_ids), snap.describe(),
-        len(constants), len(path_inputs), len(sweeps), len(notes),
+        len(globals_["constants"]), len(globals_["path_inputs"]),
+        len(globals_["sweeps"]), len(globals_["notes"]),
     )
     return document
 
@@ -360,85 +367,59 @@ def _unresolved_labels(snap) -> list[str]:
     return sorted(unresolved)
 
 
-def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> dict:
-    """Recreate an exported document in ``db``. Pipeline ids are preserved
-    as the portable identity used for reuse/fork decisions — see module
-    docstring's "Identity-based reuse"; node/edge/use ids are always fresh
-    (``canvas_snapshot.apply``). Returns ``{"ok", "pipeline_id" (the
-    resolved root), "reused": {...}, "unresolved_labels": [...],
-    "materialization_errors": [...], "deferred": {...}}``.
-
-    ``discovered=False`` (portability Stage 3: the target was opened with
-    ``bootstrap.open_or_create_project(discover=False)``) skips the two steps
-    that need the code registry -- adding missing PathInputs/Sweeps to the
-    target's source, and checking that every label resolves -- and reports
-    them as ``deferred`` / ``unresolved_labels=None`` instead. Everything else
-    (canvas, constants, notes, built-in references, value groups) needs only
-    the database and the layout file. Nothing here imports user code."""
+def local_global_names(db, *, discovered: bool) -> dict:
+    """The constant/PathInput/Sweep names the target already has, read BEFORE
+    anything is written: ``read_all_constant_names`` also scans saved
+    positions for ``param__`` ids, so a read after placing nodes would make
+    every imported constant look like it already existed. PathInput/Sweep
+    names come from the registry, so only when *discovered*."""
     from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.services import canvas_snapshot
 
-    version = document.get("format_version")
-    if version != FORMAT_VERSION:
-        raise ValueError(
-            f"unsupported export format_version: {version!r} (this SciStack "
-            f"reads version {FORMAT_VERSION}; re-export from an up-to-date SciStack)"
-        )
-
-    snap = canvas_snapshot.CanvasSnapshot.from_dict(document.get("canvas") or {})
-    root_old_id = document["root_pipeline_id"]
-
-    # Captured BEFORE any node/position writes below. read_all_constant_
-    # names still scans saved positions for canonical param__-prefixed ids
-    # as a fallback discovery mechanism, so capturing it AFTER creating
-    # nodes would make every freshly-imported constant name look like it
-    # "already existed locally".
-    local_constant_names = set(layout_store.read_all_constant_names())
+    names = {"constants": set(layout_store.read_all_constant_names())}
     if discovered:
         from scistack_gui import registry
 
-        local_path_input_names = set(registry.get_path_inputs_registry())
-        local_sweep_names = set(registry.get_parameters_registry())
+        names["path_inputs"] = set(registry.get_path_inputs_registry())
+        names["sweeps"] = set(registry.get_parameters_registry())
     else:
-        local_path_input_names, local_sweep_names = set(), set()
+        names["path_inputs"], names["sweeps"] = set(), set()
+    return names
 
-    # ALL pipelines, hidden included — matches create_pipeline's own
-    # uniqueness check, so a name suffix decided here never turns out to
-    # collide with a hidden pipeline down the line.
-    existing_names = {p["name"] for p in ps.list_all_pipelines(db)}
-    resolution: dict[str, str] = {}
-    reused_pipelines: set[str] = set()
-    new_root_pid = _resolve_pipeline(
-        db, document, snap, root_old_id, resolution, reused_pipelines, existing_names
-    )
-    reused_pipeline_names = sorted(
-        next(p["name"] for p in document["pipelines"] if p["pipeline_id"] == old_pid)
-        for old_pid in reused_pipelines
-    )
-    if document.get("hypothesis"):
-        h = document["hypothesis"]
-        ps.tag_as_hypothesis(db, new_root_pid)
-        ps.update_hypothesis(
-            db, new_root_pid,
-            research_question=h.get("research_question", ""),
-            hypothesis_statement=h.get("hypothesis_statement", ""),
-            evidence_for=h.get("evidence_for", []),
-            evidence_against=h.get("evidence_against", []),
-        )
 
-    # A reused pipeline's own content already exists verbatim as part of the
-    # local match; only created/forked pipelines receive the snapshot. A use
-    # whose child was reused keeps pointing at it (apply falls back to the
-    # captured child id, which IS the reused id).
-    pipeline_map = {
-        old: new for old, new in resolution.items() if old not in reused_pipelines
-    }
-    old_to_new = canvas_snapshot.apply(db, snap, pipeline_map, include_hides=False)
+def apply_hypothesis(db, pipeline_id: str, h: "dict | None") -> None:
+    """Tag *pipeline_id* as a hypothesis with the fields in *h* (no-op on None)."""
+    from scistack_gui import pipeline_store as ps
+
+    if not h:
+        return
+    ps.tag_as_hypothesis(db, pipeline_id)
+    ps.update_hypothesis(
+        db, pipeline_id,
+        research_question=h.get("research_question", ""),
+        hypothesis_statement=h.get("hypothesis_statement", ""),
+        evidence_for=h.get("evidence_for", []),
+        evidence_against=h.get("evidence_against", []),
+    )
+
+
+def apply_globals(
+    db, document: dict, resolution: "dict[str, str]", local: dict, *, discovered: bool
+) -> dict:
+    """Write the :func:`export_globals` part of *document* into *db*, never
+    overwriting what the target already has (shared by a pipeline import and
+    a whole-project import; one owner). *resolution* maps exported pipeline
+    ids to local ones (a submodule note follows its pipeline). *local* is
+    :func:`local_global_names`, read before any write.
+
+    Without discovery, PathInput/Sweep materialisation (which writes source
+    through the registry) is DEFERRED and reported, not attempted.
+    """
+    from scistack_gui import layout as layout_store
+    from scistack_gui import pipeline_store as ps
 
     reused_constants = []
     for name, values in document.get("constants", {}).items():
-        if name in local_constant_names:
+        if name in local["constants"]:
             reused_constants.append(name)
             continue
         layout_store.write_constant(name)
@@ -449,18 +430,19 @@ def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> 
     # reused UNTOUCHED; only on a local miss is the bundled value
     # MATERIALIZED into the importer's own configured source file, and a
     # failure is surfaced, not silently dropped.
-    from scistack_gui.services.parameter_service import create_parameter
-    from scistack_gui.services.path_input_service import create_path_input
-
     materialization_errors: list[dict] = []
     deferred: dict[str, list[str]] = {"path_inputs": [], "sweeps": []}
+    reused_path_inputs: list[str] = []
+    reused_sweeps: list[str] = []
+    if discovered:
+        from scistack_gui.services.parameter_service import create_parameter
+        from scistack_gui.services.path_input_service import create_path_input
 
-    reused_path_inputs = []
     for pi in document.get("path_inputs", []):
         if not discovered:
             deferred["path_inputs"].append(pi["name"])
             continue
-        if pi["name"] in local_path_input_names:
+        if pi["name"] in local["path_inputs"]:
             reused_path_inputs.append(pi["name"])
             continue
         result = create_path_input(
@@ -474,12 +456,11 @@ def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> 
                 {"kind": "path_input", "name": pi["name"], "error": result.get("error")}
             )
 
-    reused_sweeps = []
     for sw in document.get("sweeps", []):
         if not discovered:
             deferred["sweeps"].append(sw["name"])
             continue
-        if sw["name"] in local_sweep_names:
+        if sw["name"] in local["sweeps"]:
             reused_sweeps.append(sw["name"])
             continue
         result = create_parameter(sw["name"], sw.get("values", []))
@@ -501,8 +482,7 @@ def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> 
         layout_store.write_note(key, text)
         n_notes += 1
 
-    # Built-in function references and value groups: added where absent,
-    # never overwriting a local row.
+    # Built-in function references and value groups: added where absent.
     local_builtins = {b["name"] for b in ps.get_builtin_functions(db)}
     for b in document.get("builtin_functions") or []:
         if b["name"] not in local_builtins:
@@ -514,34 +494,90 @@ def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> 
                 db, name, kind=group["kind"], spec=group["spec"], values=group["values"]
             )
 
-    unresolved = _unresolved_labels(snap) if discovered else None
     if not discovered:
         logger.info(
-            "[portability] import without discovery: deferred %d path input(s), "
-            "%d sweep(s); labels not checked",
+            "[portability] globals without discovery: deferred %d path input(s), "
+            "%d sweep(s)",
             len(deferred["path_inputs"]),
             len(deferred["sweeps"]),
         )
-
-    logger.info(
-        "[portability] import_pipeline_document: %d pipeline(s) (%d reused), "
-        "%d id(s) written -> root=%s (reused %d constant(s), %d path_input(s), "
-        "%d sweep(s); %d note(s) added; %d unresolved label(s), %d "
-        "materialization error(s))",
-        len(resolution), len(reused_pipelines), len(old_to_new), new_root_pid,
-        len(reused_constants), len(reused_path_inputs), len(reused_sweeps),
-        n_notes, -1 if unresolved is None else len(unresolved), len(materialization_errors),
-    )
     return {
-        "ok": True,
-        "pipeline_id": new_root_pid,
         "reused": {
-            "pipelines": reused_pipeline_names,
             "constants": reused_constants,
             "path_inputs": reused_path_inputs,
             "sweeps": reused_sweeps,
         },
-        "unresolved_labels": unresolved,
         "materialization_errors": materialization_errors,
         "deferred": deferred,
+        "notes_added": n_notes,
+    }
+
+
+def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> dict:
+    """Recreate an exported document in ``db``. Pipeline ids are preserved
+    as the portable identity used for reuse/fork decisions — see module
+    docstring's "Identity-based reuse"; node/edge/use ids are always fresh
+    (``canvas_snapshot.apply``). Returns ``{"ok", "pipeline_id" (the
+    resolved root), "reused": {...}, "unresolved_labels": [...] | None,
+    "materialization_errors": [...], "deferred": {...}}``.
+
+    ``discovered=False`` (portability Stage 3: the target was opened with
+    ``bootstrap.open_or_create_project(discover=False)``) skips the two steps
+    that need the code registry -- adding missing PathInputs/Sweeps to the
+    target's source, and checking that every label resolves -- and reports
+    them as ``deferred`` / ``unresolved_labels=None`` instead. Nothing here
+    imports user code."""
+    from scistack_gui import pipeline_store as ps
+    from scistack_gui.services import canvas_snapshot
+
+    version = document.get("format_version")
+    if version != FORMAT_VERSION:
+        raise ValueError(
+            f"unsupported export format_version: {version!r} (this SciStack "
+            f"reads version {FORMAT_VERSION}; re-export from an up-to-date SciStack)"
+        )
+
+    snap = canvas_snapshot.CanvasSnapshot.from_dict(document.get("canvas") or {})
+    local = local_global_names(db, discovered=discovered)
+
+    # ALL pipelines, hidden included — matches create_pipeline's own
+    # uniqueness check, so a name suffix decided here never turns out to
+    # collide with a hidden pipeline down the line.
+    existing_names = {p["name"] for p in ps.list_all_pipelines(db)}
+    resolution: dict[str, str] = {}
+    reused_pipelines: set[str] = set()
+    new_root_pid = _resolve_pipeline(
+        db, document, snap, document["root_pipeline_id"], resolution,
+        reused_pipelines, existing_names,
+    )
+    reused_pipeline_names = sorted(
+        next(p["name"] for p in document["pipelines"] if p["pipeline_id"] == old_pid)
+        for old_pid in reused_pipelines
+    )
+    apply_hypothesis(db, new_root_pid, document.get("hypothesis"))
+
+    # A reused pipeline's own content already exists verbatim as part of the
+    # local match; only created/forked pipelines receive the snapshot. A use
+    # whose child was reused keeps pointing at it (apply falls back to the
+    # captured child id, which IS the reused id).
+    pipeline_map = {
+        old: new for old, new in resolution.items() if old not in reused_pipelines
+    }
+    old_to_new = canvas_snapshot.apply(db, snap, pipeline_map, include_hides=False)
+    globals_report = apply_globals(db, document, resolution, local, discovered=discovered)
+    unresolved = _unresolved_labels(snap) if discovered else None
+
+    logger.info(
+        "[portability] import_pipeline_document: %d pipeline(s) (%d reused), "
+        "%d id(s) written -> root=%s; globals %s; %s unresolved label(s)",
+        len(resolution), len(reused_pipelines), len(old_to_new), new_root_pid,
+        globals_report["reused"], "unchecked" if unresolved is None else len(unresolved),
+    )
+    return {
+        "ok": True,
+        "pipeline_id": new_root_pid,
+        "reused": {"pipelines": reused_pipeline_names, **globals_report["reused"]},
+        "unresolved_labels": unresolved,
+        "materialization_errors": globals_report["materialization_errors"],
+        "deferred": globals_report["deferred"],
     }

@@ -107,6 +107,7 @@ from . import intent  # noqa: E402
 from . import schema_order  # noqa: E402
 from . import aliases  # noqa: E402
 from . import colors  # noqa: E402
+from . import names  # noqa: E402
 
 # The release tag owns the version (hatch-vcs writes it into the installed
 # metadata); "0.0.0" marks a source tree that was never installed.

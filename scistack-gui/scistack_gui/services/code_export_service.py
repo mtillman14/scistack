@@ -320,9 +320,17 @@ def _generate_python_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
     finally:
         _discard_compiled(built)
 
+    from scidb.names import function_name, library_of
+
     lines = [_py_header(db), ""]
+    # A library's function is called through its package (`preprocessing.
+    # filter_emg`): the script then records the same qualified name a GUI run
+    # records (scidb.names), and needs that package imported.
+    libraries = sorted({lib for spec in steps if (lib := library_of(spec.fn))})
+    if libraries:
+        lines += [f"import {lib}" for lib in libraries] + [""]
     for spec in steps:
-        fn_name = getattr(spec.fn, "__name__", repr(spec.fn))
+        fn_name = function_name(spec.fn)
         outputs = [o for o in spec.outputs if isinstance(o, type)]
         output_names = [o.__name__ for o in outputs]
         inputs_src = _py_dict_literal(spec.inputs)

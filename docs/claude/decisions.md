@@ -8,6 +8,63 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-6 — Names across packages: qualified library functions, merged Variables
+
+**Context.** Once projects use libraries (and a bundle's code arrives in a
+new project), two packages can declare the same name. A load error for
+every collision would be common and mostly wrong: usually both mean the
+same thing.
+
+**Decision (user, 2026-10-08).**
+- A function from a LIBRARY is recorded as `pkg.fn`; the project's own code
+  is bare. One owner, `scidb.names.function_name`, used by every recording
+  site (call site, run, node state, pipeline steps), the GUI registry and
+  code export, so a script and a GUI run record the same name. A library is
+  OPT-IN: listed under `packages` or advertising a `scistack.plugins` entry
+  point, never "anything installed" (SciStack's own stubs carry user
+  function names).
+- Variables are not namespaced (the name is the table, the record type, the
+  MATLAB class, and `.` means `Variable.Column`). `variable.same_definition`:
+  same `schema_version` and codec = one type; a TOML entry only names a type
+  and agrees with any definition (and never replaces one); a real conflict
+  is recorded (`BaseVariable.definition_conflicts`) and reported naming
+  both sources, the project's definition kept over a library's. A
+  redefinition in the same module is an edit. The silent merge is for a
+  LIBRARY boundary; two agreeing declarations inside the project (a
+  classdef and a TOML entry) still warn, since one is redundant.
+- A library's Parameters and PathInputs stay out of the project's names.
+
+**Consequences.** Clean break (beta): a project that already ran functions
+from a listed package now records them under `pkg.fn`, so earlier runs
+appear under the bare name. A project's own entities TOML no longer
+replaces a module-defined Variable of the same name (it still wins for
+Parameters/PathInputs). Doc: `portability.md` "Reusing code".
+
+---
+
+## D-2026-10-08-5 — The `.scistack` bundle: scidb owns the format, sections are passed in
+
+**Context.** A whole project has to travel as one file, written and read
+from the terminal and from the GUI. Its parts are owned by three packages
+(scidb: config, later history/data/code; scistack-gui: canvases;
+scistackplotdb: saved plots), and scidb must not import the other two.
+
+**Decision.** `scidb/bundle.py` owns the format: a plain zip named
+`.scistack`, a manifest with a per-file SHA-256 that the reader checks (a
+changed, missing or unlisted file is refused), `ExportOptions` as the one
+owner of the defaults. Sections are provider objects (`name`, `export`,
+`import_`) the front end passes in explicitly — no global registry, no
+entry points. Import only ever makes a NEW project; the database is opened
+through the front end's `open_db` (the GUI's never runs code). The GUI
+section keeps every pipeline id and fills `main` rather than forking it.
+
+**Consequences.** The manifest lists only sections actually written, so a
+bundle never claims history it lacks. A section with no importer at the
+target is reported. The single-pipeline JSON (GUI Export button) is a
+separate format for importing into an existing project.
+
+---
+
 ## D-2026-10-08-4 — One owner for copying a canvas
 
 **Context.** Two paths copied canvas state. `scope_service._clone_nodes`

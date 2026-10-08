@@ -313,3 +313,38 @@ def test_a_failing_table_loader_opens_unreconciled_with_a_note(db):
     opened = load_saved_plot(db, info.plot_id, table_for=table_for)
     assert opened.spec.show_sample == ["cycle"]  # not reconciled, not lost
     assert [(n.path, n.kind) for n in opened.notes] == [("", NoteKind.NOT_IN_DATA)]
+
+
+# ---------------------------------------------------------------------------
+# Project bundles (scidb.bundle "plots" section): copied row for row
+# ---------------------------------------------------------------------------
+
+
+def test_the_plots_section_copies_every_row_and_version(db, tmp_path):
+    from types import SimpleNamespace
+
+    from scidb import configure_database
+
+    from scistackplotdb.bundle_section import PlotsSection
+    from scistackplotdb.saved import STORE
+
+    first = save_plot(db, "StepLength", "Fig 3", _spec(), VIEW)
+    save_plot(db, "StepLength", "Fig 3", _spec(groups=[]), VIEW)  # version 2
+    hidden = save_plot(db, "StepLength", "Old", _spec(), VIEW)
+    hide_saved_plot(db, hidden.plot_id)
+    before = STORE.dump_rows(db)
+    assert len(before) == 3
+
+    files = PlotsSection().export(SimpleNamespace(db=db))
+    assert set(files) == {"saved_plots.json"}  # no presets saved: no file
+
+    other = configure_database(tmp_path / "other.duckdb", ["subject", "session", "trial"])
+    try:
+        report = PlotsSection().import_(SimpleNamespace(db=other), files)
+        assert report == {TABLE: 3}
+        assert STORE.dump_rows(other) == before
+        assert load_saved_plot(other, first.plot_id).spec == _spec(groups=[])
+        # A second load adds nothing: rows are keyed (id, version).
+        assert STORE.load_rows(other, before) == 0
+    finally:
+        other.close()

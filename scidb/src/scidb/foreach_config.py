@@ -11,6 +11,8 @@ from scilineage.hashing import (
     compute_function_hash_with_sources,
 )
 
+from .names import function_name
+
 
 def _compute_fn_hash(fn: Callable) -> str:
     """Compute a stable hash of the function's bytecode and constants.
@@ -329,7 +331,7 @@ class ForEachConfig:
         from .glue import chain_names
 
         return CallSite(
-            fn_name=getattr(self.fn, "__name__", repr(self.fn)),
+            fn_name=function_name(self.fn),
             inputs=self.call_site_inputs(),
             constants=self._get_direct_constants(),
             options=self.options,

@@ -352,3 +352,41 @@ class VersionedStore:
             )
             return {}
         return envelope
+
+    # ---- copying a whole store (project bundles) ------------------------
+
+    def _all_columns(self) -> list[str]:
+        scope = [self.scope_column] if self.scope_column else []
+        return [self.id_column, *scope, "name", "version", "saved_at", "hidden", "envelope_json"]
+
+    def dump_rows(self, db) -> list[dict]:
+        """Every row, every version, hidden ones too, as plain dicts: what a
+        project bundle carries (``scistackplotdb.bundle_section``). Nothing
+        is filtered -- a copy keeps the history the original kept."""
+        if not self.table_exists(db):
+            return []
+        cols = self._all_columns()
+        rows = db._duck._fetchall(
+            f"SELECT {', '.join(cols)} FROM {self.table} ORDER BY {self.id_column}, version"
+        )
+        Log.info("[%s] dump_rows: %d row(s)", self.tag, len(rows), layer=LAYER)
+        return [dict(zip(cols, row)) for row in rows]
+
+    def load_rows(self, db, rows: list[dict]) -> int:
+        """Insert *rows* (from :meth:`dump_rows`) verbatim, ids and versions
+        kept; a row already present is left as it is. Returns rows inserted."""
+        if not rows:
+            return 0
+        self.ensure_table(db)
+        cols = self._all_columns()
+        before = db._duck._fetchone(f"SELECT count(*) FROM {self.table}")[0]
+        for row in rows:
+            db._duck._execute(
+                f"INSERT INTO {self.table} ({', '.join(cols)}) "
+                f"VALUES ({', '.join('?' for _ in cols)}) ON CONFLICT DO NOTHING",
+                [row.get(c) for c in cols],
+            )
+        after = db._duck._fetchone(f"SELECT count(*) FROM {self.table}")[0]
+        Log.info("[%s] load_rows: %d of %d row(s) inserted", self.tag, after - before,
+                 len(rows), layer=LAYER)
+        return after - before

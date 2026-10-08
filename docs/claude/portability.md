@@ -55,9 +55,9 @@ Live collaboration (two people merging back and forth) is **out of scope**.
 
 | Layer | Lives in | In the export |
 |---|---|---|
-| Code | `src/<pkg>/`, glue functions, `.m` files | always (wheel; `.m` files as package data) |
+| Code | `src/<pkg>/`, glue functions, `.m` files | always, as SOURCE (a bundle import is a copy into the new project; see "Reusing code"). Wheels are for libraries (Stage 10) |
 | Entity declarations (Variables, Parameters, PathInputs) | `scistack_entities.toml` | always. **Moves into the package** (`src/<pkg>/scistack_entities.toml`) so it is package data and travels with installed code |
-| Dependencies | `pyproject.toml` `[project]` | always (in the wheel) + record of exact resolved versions |
+| Dependencies | `pyproject.toml` `[project]` | always (the file travels with the code) + record of exact resolved versions |
 | Environment | not recorded today | always: Python version, platform, MATLAB release and toolboxes |
 | Project config | `scistack.toml` (the only config file) | always |
 | GUI state | `_pipeline_*`, `_node_config`, `_intent`, `_node_wiring`, `_hypotheses`, `<db>.layout.json`, `_variant_pin`, scistackplotdb saved plots and presets | always, when the project has any |
@@ -86,16 +86,23 @@ A `.scistack` file. It is an ordinary zip with a different extension.
 manifest.json   format_version, scistack version, export options used,
                 sections present, content hashes, exporter's schema
 env/            resolved-versions record, Python/platform/MATLAB info
-code/           <project>-<version>-py3-none-any.whl
-                wheelhouse/                    (opt-in)
+code/           the project's source tree (pyproject.toml, src/<pkg>/, other
+                code files under the root that discovery loads)
+                wheelhouse/                    (opt-in, Stage 10)
 config/         scistack.toml
-gui/            GUI state section (omitted for script-only projects)
+gui/gui.json    every visible pipeline's canvas + global GUI state (GuiSection)
+plots/          saved_plots.json, presets.json (PlotsSection), when any exist
 history/        provenance tables (Parquet)    (default on)
 data/           variable tables (Parquet)      (opt-in)
 ```
 
 Open formats (Parquet, JSON, TOML) throughout, so a bundle can be read
 without SciStack.
+
+Built in Stage 4 (`scidb/bundle.py`): manifest, config, gui, plots. Sections
+are providers the front end passes in (`headless.bundle_providers()`); the
+manifest lists only the sections actually written. env, code, history and
+data come in Stages 5 and 7.
 
 ## Schema on import
 
@@ -147,6 +154,60 @@ History is also a choice at import time (default on when present). For reuse
 on new data with the same schema, the recipient can decline it so their
 database holds only their own results.
 
+## Reusing code: copies, libraries, and names
+
+Decided with the user 2026-10-08.
+
+### What people reuse is a submodule
+
+A scientist reuses lab A's `preprocessing` submodule in projects B, C and D,
+not all of project A. Depending on a whole project would bring its other
+pipelines, its data layout (PathInputs), its config and its history, and
+every later change to A would ripple into B, C and D. So projects still
+depend only on libraries (`project-library-structure.md`), and SciStack makes
+a library out of a submodule in one click instead of asking scientists to
+restructure code by hand.
+
+### Two ways code arrives, chosen at the natural moment
+
+| | How | When | Names |
+|---|---|---|---|
+| **Copy** | Source written into the project: a whole-project bundle into `src/<pkg>/`; a library submodule the user chose to edit into `src/<pkg>/<lib>/` | Importing a `.scistack` (handoff, reuse on new data): always a copy. "Make my own copy" on a library submodule. | The project's own top-level code is bare; a copied subpackage's functions are qualified by it (`preprocessing.filter_emg`), so two copies' `filter` cannot clash. |
+| **Use** | An installed library; its submodule is placed read-only | Placing a library submodule (the default) | Functions qualified by the library (`preprocessing.filter_emg`), like library functions (`pandas.read_csv`, `library-function-name-identity.md`). |
+
+Nobody is asked "dependency or copy?" in the abstract: they get **use** by
+default and **copy** when they try to change something.
+
+### "Share as library" (portability Stage 10)
+
+On a submodule tab: generate a package from it — the functions it uses,
+their declarations, and the submodule itself as a source-defined pipeline
+(`scidb.Pipeline` + `for_each`, which `pipeline_discovery.py` already seeds
+onto a canvas as a submodule, written by the existing code export). The
+source project can then switch to the library, so there is one copy.
+
+### Names when code from several places meets
+
+- **Functions** from an installed library or a copied subpackage are
+  qualified by it. Only the project's own top-level code is bare.
+- **Variables are not namespaced.** The name is the database table, the
+  record `type` and the MATLAB class name, and `.` already means
+  `Variable.Column`. Instead: the same name declared the same way is ONE
+  type (a project's `variables = ["RawEMG"]` and a library's `RawEMG` merge
+  silently); only genuinely different definitions (a different
+  `schema_version`, a custom `to_db`/`from_db`) are an error naming both
+  sources and which to remove.
+- **A library's Parameters and PathInputs stay out of the project's names.**
+  They are the library's internals (defaults its own functions use); a
+  PathInput is one project's data layout. A project that wants one on its
+  canvas declares its own.
+- **Chaining submodules from several libraries:** matching variable names
+  connect by themselves; differing names are wired with the placed
+  submodule's port bindings (`_pipeline_uses.binding`) or a glue node.
+- **Different schemas:** placing a library submodule into a project with
+  other schema keys goes through the same key map as a bundle import
+  ("Schema on import").
+
 ## Export steps
 
 Key: ✅ exists · 🔧 exists but needs fixing or has more than one owner · ❌ missing.
@@ -164,13 +225,13 @@ Status as of 2026-10-08.
 | E7 | Hidden nodes/edges/combos | 🔧 | Captured (shared with duplicate) but not applied on a canvas-only import; applied with history (Stage 7). |
 | E8 | Positions | ✅ | In the snapshot. |
 | E9 | Parameters / Sweeps / PathInput values | 🔧 | Bundled by registry lookup. Replace with the entities file travelling in the wheel; check the `layout.json` constants palette as an owner. |
-| E10 | Project config | ❌ | `scistack.toml`. |
-| E11 | Code + entities file | ❌ | |
-| E12 | Wheel + resolved versions + environment | ❌ | |
+| E10 | Project config | 🔧 | `scistack.toml` is the bundle's `config` section (scidb). Copied verbatim; absolute first-write seeds still need Stage 6. |
+| E11 | Code + entities file | ✅ | `bundle_section.CodeSection`: the files discovery loads (the config loader's list), `pyproject.toml`, the own package with its data; code from outside the root is listed, not copied (Stage 5). |
+| E12 | Wheel + resolved versions + environment | 🔧 | Environment ✅ (`scidb.bundle` env section: Python, platform, every distribution's version, MATLAB if already loaded; Stage 5). Wheels: Stage 10 (libraries only). |
 | E13 | Run history | ❌ | Default on. Requires user ID removed first. |
 | E14 | Derived variable data | ❌ | Opt-in. Only `scidb/csv_export.py` exists. |
 | E15 | Subset / anonymize subjects | ❌ | Later. |
-| E16 | Manifest, format version, `.scistack` archive | 🔧 | JSON with `FORMAT_VERSION = 1` written to `exports/`. |
+| E16 | Manifest, format version, `.scistack` archive | ✅ | `scidb/bundle.py`: manifest with per-file SHA-256, plain zip, `ExportOptions` as the one owner of defaults (Stage 4). |
 | E17 | Plain-script export | ✅ | `code_export_service.py`. |
 
 ## Import steps
@@ -178,11 +239,11 @@ Status as of 2026-10-08.
 | # | Step | Status | Notes |
 |---|---|---|---|
 | I0 | Run without the GUI | ✅ | `headless.open_for_import`: bootstrap with `discover=False`; nothing imports user code (Stage 3). |
-| I1 | GUI button + CLI; new project or current project | 🔧 | The GUI imports into the open database only. |
-| I2 | Check the format version | ✅ | |
+| I1 | GUI button + CLI; new project or current project | 🔧 | Whole project: `headless.import_project_bundle` into a NEW project (Stage 4). Single pipeline into the current project: the GUI's JSON import. CLI/GUI front ends: Stage 8. |
+| I2 | Check the format version | ✅ | Bundle (`read_bundle`, also hashes and unlisted files) and the single-pipeline document. |
 | I3 | Ask the user to trust the bundle's code | ❌ | Must come before anything imports the bundle's code. |
-| I4 | Create the project folder (`init`) | 🔧 | Two owners today: `scistack/project.py::scaffold_project` vs `project_init_service.ensure_project_files`. |
-| I5 | Install the wheel + dependencies | ❌ | Into the interpreter the project runs under. |
+| I4 | Create the project folder (`init`) | ✅ | `scidb.project.init_project`, the one owner (Stage 1); `import_project` calls it after writing the bundle's config. |
+| I5 | Install the wheel + dependencies | 🔧 | Code arrives as SOURCE (a copy, before init). Declared dependencies are compared with the exporter's versions and the `pip install` command is reported; nothing is installed automatically (Stage 5). |
 | I6 | MATLAB paths for the installed `.m` files | ❌ | `scimatlab`. |
 | I7 | PathInput roots | ❌ | Ask, write to the entities file. |
 | I8 | Schema choice + key map | ❌ | See "Schema on import". |
@@ -193,15 +254,14 @@ Status as of 2026-10-08.
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
 | I14 | Restore history / data | ❌ | New empty project + schema kept only; a verbatim copy. |
 | I15 | Check that every canvas node's code is found | 🔧 | Needs discovery. A headless import (`discovered=False`) reports it unchecked (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`); the GUI checks on open. |
-| I16 | Same function identity from a wheel and from loose files | ❌ | Unverified; test it. |
+| I16 | Same function identity from a wheel and from loose files | ✅ | Moot for a bundle import: the code stays source in `src/<pkg>/`, the exporter's own layout. Revisit for libraries (Stage 10). |
 | I17 | Reproduction check | ❌ | Later: `scistack verify` re-runs against the recipient's own copy of the raw files (read, never copied) and compares content hashes with the imported history. |
 | I18 | Import report | 🔧 | A summary dict is returned; needs a report view, including everything the schema remap flagged. |
 
 ## Open questions
 
-1. Installed projects' entities files: does discovery of `packages = [...]`
-   already read an entities file shipped inside an installed package? If not,
-   Stage 1 adds it.
+1. Installed packages' entities files: not read today (only the project's own
+   file is loaded). Stage 5 adds it, under the merge rule in "Reusing code".
 2. Constants path (E9): is the `layout.json` palette still a real owner, or
    leftover from before Parameters moved into the entities TOML?
 

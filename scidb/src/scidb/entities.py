@@ -331,7 +331,12 @@ def _make_variable_class(name: str) -> type:
     from a ``class X(BaseVariable)`` statement, including registration via
     ``__init_subclass__`` and a working ``==``.
     """
-    return type(BaseVariable)(name, (BaseVariable,), {"__module__": __name__})
+    # `_declared_only`: a TOML declaration names a type, it does not define a
+    # codec, so it agrees with any definition of the name
+    # (`variable.same_definition`).
+    return type(BaseVariable)(
+        name, (BaseVariable,), {"__module__": __name__, "_declared_only": True}
+    )
 
 
 def _load_parameters(data: dict, result: EntitiesFile) -> None:

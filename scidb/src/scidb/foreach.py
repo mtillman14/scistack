@@ -49,6 +49,7 @@ from .variant import match_bare_name
 from .filters import Filter
 from .foreach_config import ForEachConfig
 from .log import Log
+from .names import function_name as _function_name
 from .per_combo import PerComboLoader, PerComboLoaderMerge
 from .pipeline import Pipeline as _Pipeline
 from .pipeline import Step, active_pipeline
@@ -656,7 +657,7 @@ def for_each(
     # tuple-unpacking / raw-value wrappers existed only to collapse
     # LineageFcnResults, which no longer exist.)
 
-    fn_name = getattr(fn, "__name__", repr(fn))
+    fn_name = _function_name(fn)
 
     # Read-side round-trip guard: did a selection this function ran with
     # before fail to reach this run? One query, log-only, at run entry — NOT
@@ -1445,7 +1446,7 @@ def _build_skip_hook(
     # otherwise compute from the plain Python function.
     fn_hash = fn_hash if fn_hash is not None else compute_function_hash(fn, truncate=16)
     # Plain function name (``.fcn`` peel kept only for any legacy wrapped input).
-    fn_name = getattr(getattr(fn, "fcn", fn), "__name__", None) or repr(fn)
+    fn_name = _function_name(fn)
     selectors = compute_input_selectors(inputs)
     # The run options THIS call runs under, spelled the way the graph spells
     # them (`run_options_label`), so a record produced under other options —
@@ -5710,7 +5711,7 @@ def _save_results(
         from .provenance_save import check_selector_round_trip
 
         check_selector_round_trip(
-            getattr(getattr(fn, "fcn", fn), "__name__", None) or "<fn>",
+            _function_name(fn),
             input_selectors,
             _selectors_recorded,
             context=(

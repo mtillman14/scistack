@@ -50,6 +50,7 @@ from typing import Any
 from scifor.locations import LocationFilter
 
 from .log import Log
+from .names import function_name
 from .roles import endpoint_kind
 
 # Attribute names stamped onto a tagged function.
@@ -134,7 +135,7 @@ class StepSpec:
 
     @property
     def name(self) -> str:
-        return getattr(self.fn, "__name__", repr(self.fn))
+        return function_name(self.fn)
 
     def input_classes(self) -> set[type]:
         classes: set[type] = set()

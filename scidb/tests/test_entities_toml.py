@@ -50,6 +50,11 @@ class TestLoad:
         assert result.errors == []
 
     def test_variables_become_basevariable_subclasses(self, tmp_path):
+        # Start clean: another test module may still have a DEFINED class of
+        # the same name registered, and a TOML entry only names a type -- it
+        # never replaces a definition (variable.same_definition).
+        for name in ("StepLength", "EmgEnvelope"):
+            BaseVariable.unregister(name)
         path = write(tmp_path, """
             variables = ["StepLength", "EmgEnvelope"]
         """)
