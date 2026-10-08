@@ -2,9 +2,14 @@
 Pipeline import/export between SciStack users (to-do #7,
 plan-pipeline-import-export.md).
 
-Exports one pipeline's DOCUMENT (wiring, layout, config) — recursively
-including every pipeline it uses, so the result is self-contained — as a
-single portable JSON file. Never exports data/records/run history: a
+Exports one pipeline's DOCUMENT — recursively including every pipeline it
+uses, so the result is self-contained — as a single portable JSON file. The
+canvas inside it is a ``canvas_snapshot`` capture: the SAME capture/apply
+that duplicate and paste use (one owner, 2026-10-08), so an export carries
+exactly what a duplicate would: nodes (history-derived ones as manual
+nodes), every intent statement as resolved in the source scope, positions,
+edges, uses and their bindings, hidden ports. Sidebar notes about the
+exported items travel too. Never exports data/records/run history: a
 node's ``label`` is just a name the importing user's OWN registry resolves
 locally, same as any manual node already works today. Constants/
 PathInputs/Sweeps referenced by name are REUSED locally when that name
@@ -16,8 +21,10 @@ the bundled value into the importer's own source (via
 ``path_input_service``) rather than just leaving a dangling reference —
 see ``import_pipeline_document``'s ``materialization_errors``.
 
-Deliberately NOT exported: hidden nodes/edges/combos
-(``_pipeline_hidden_nodes/_edges/_combos``). All three apply exclusively
+Deliberately NOT applied on import: hidden edges (captured, because the
+snapshot is shared with duplicate, but import passes ``include_hides=False``).
+Hidden nodes are absent by construction: the capture reads the visible
+graph. Hides apply exclusively
 to DB-DERIVED ("graduated") wiring — content that only exists because the
 exporting user already ran it locally. A freshly-imported pipeline has no
 execution history in the target database, so nothing auto-derives there
@@ -28,10 +35,9 @@ PORTS (``_pipeline_hidden_ports``) DO export: that's a pure wiring-shape
 override, present the moment nodes/edges are placed, independent of any
 execution history.
 
-Import uses the same "fresh id + remap" pattern
-``scope_service._clone_nodes`` already uses within one database, just
-spanning a DATABASE boundary and every table that function doesn't touch
-(hidden ports, globals, hypothesis tag).
+Import is ``canvas_snapshot.apply`` (fresh ids), spanning a DATABASE
+boundary, plus what only a cross-project copy needs (globals, hypothesis
+tag, notes).
 
 **Identity-based reuse (2026-08-14, user-reported):** every pipeline in
 the closure — root AND submodules, at any nesting depth — carries a
@@ -52,7 +58,7 @@ against the LOCAL pipeline (if any) already holding that same id:
 Pipeline NAMES are consequently not required to be globally unique —
 two different users' independently-created, same-named pipelines simply
 coexist locally under distinct ids, deduplicated by suffix on display
-name only. See ``_resolve_pipeline``/``_content_signature``.
+name only. See ``_resolve_pipeline`` and ``canvas_snapshot.signature``.
 """
 
 from __future__ import annotations
@@ -63,14 +69,9 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-FORMAT_VERSION = 1
-
-_PREFIX_BY_TYPE = {
-    "functionNode": "fn",
-    "variableNode": "var",
-    "parameterNode": "param",
-    "pathInputNode": "pathInput",
-}
+#: 2 (2026-10-08): the canvas is a ``canvas_snapshot.CanvasSnapshot`` (every
+#: intent statement, settings of run nodes, notes). Version 1 is refused (beta).
+FORMAT_VERSION = 2
 
 # Node types whose label names a global (name-shared, not scope-scoped)
 # definition that needs bundling alongside the wiring that references it.
@@ -100,102 +101,46 @@ def _closure_pipeline_ids(db, root_pipeline_id: str) -> list[str]:
     return seen
 
 
+def _notes_for(names: set[str], pipeline_ids: list[str]) -> dict[str, str]:
+    """The sidebar notes (``layout.read_notes``, keyed ``kind:name``) about
+    any of *names* or about a submodule in *pipeline_ids*."""
+    from scistack_gui import layout as layout_store
+
+    wanted = set(names) | set(pipeline_ids)
+    return {
+        key: text
+        for key, text in layout_store.read_notes().items()
+        if key.partition(":")[2] in wanted
+    }
+
+
 def export_pipeline(db, pipeline_id: str) -> dict:
     """Build the portable document for ``pipeline_id`` + every pipeline it
     (transitively) uses. See module docstring for what is/isn't included."""
-    from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store as ps
-    from scistack_gui.services.pipeline_service import get_pipeline_graph
+    from scistack_gui.services import canvas_snapshot
 
     pipeline_ids = _closure_pipeline_ids(db, pipeline_id)
-    pipeline_id_set = set(pipeline_ids)
     names_by_id = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
-    positions_by_scope = layout_store.read_positions_by_scope()
 
-    nodes: list[dict] = []
-    connectable_ids: set[str] = set()  # real node ids + pipelineNode use_ids
+    # The canvas as data: the same capture duplicate/paste use, so an export
+    # carries exactly what a duplicate would (settings of nodes that have
+    # run, every intent statement, hidden ports). Hidden EDGES are captured
+    # but not applied on import: they hide history-derived connections the
+    # target has no history for.
+    snap = canvas_snapshot.capture(db, pipeline_ids)
+
     referenced_names: dict[str, set[str]] = {t: set() for t in _GLOBAL_NODE_TYPES}
-
-    graphs_by_pid: dict[str, dict] = {}
-    for pid in pipeline_ids:
-        graph = get_pipeline_graph(db, pid)
-        graphs_by_pid[pid] = graph
-        manual_nodes = ps.get_manual_nodes(db, pid)
-        scope_positions = positions_by_scope.get(pid, {})
-        for node in graph["nodes"]:
-            nid = node["id"]
-            ntype = node["type"]
-            if ntype == "pipelineNode":
-                connectable_ids.add(nid)  # captured via `uses` below, not `nodes`
-                continue
-            label = node.get("data", {}).get("label", "")
-            pos = scope_positions.get(nid, {"x": 0.0, "y": 0.0})
-            config = manual_nodes.get(nid, {}).get("config") or {}
-            nodes.append({
-                "node_id": nid,
-                "pipeline_id": pid,
-                "node_type": ntype,
-                "label": label,
-                "config": config,
-                "x": pos.get("x", 0.0),
-                "y": pos.get("y", 0.0),
-            })
-            connectable_ids.add(nid)
-            if ntype in referenced_names:
-                referenced_names[ntype].add(label)
-
-    edges: list[dict] = []
-    seen_edge_ids: set[str] = set()
-    for pid in pipeline_ids:
-        for e in graphs_by_pid[pid]["edges"]:
-            eid = e["id"]
-            if eid in seen_edge_ids:
-                continue
-            if e["source"] not in connectable_ids or e["target"] not in connectable_ids:
-                continue
-            seen_edge_ids.add(eid)
-            edges.append({
-                "edge_id": eid,
-                "source": e["source"],
-                "target": e["target"],
-                "source_handle": e.get("sourceHandle"),
-                "target_handle": e.get("targetHandle"),
-            })
-
-    uses: list[dict] = []
-    for pid in pipeline_ids:
-        scope_positions = positions_by_scope.get(pid, {})
-        for use in ps.get_pipeline_uses(db, pid):
-            if use["child_pipeline_id"] not in pipeline_id_set:
-                continue  # defensive; shouldn't happen given the closure walk above
-            pos = scope_positions.get(use["use_id"], {"x": 0.0, "y": 0.0})
-            uses.append({
-                "use_id": use["use_id"],
-                "parent_pipeline_id": pid,
-                "child_pipeline_id": use["child_pipeline_id"],
-                "binding": use["binding"] or {},
-                "x": pos.get("x", 0.0),
-                "y": pos.get("y", 0.0),
-            })
-
-    hidden_ports: list[dict] = []
-    for pid in pipeline_ids:
-        hp = ps.get_hidden_ports(db, pid)
-        for direction, var_types in hp.items():
-            for var_type in var_types:
-                hidden_ports.append({
-                    "pipeline_id": pid, "direction": direction, "var_type": var_type,
-                })
+    for n in snap.nodes:
+        if n.node_type in referenced_names:
+            referenced_names[n.node_type].add(n.label)
 
     # PathInput/Sweep are source-scanned now (see
     # docs/claude/code-discovery-categories.md) — bundling their resolved
     # value here is no longer "the only copy" but an IMPORT-TIME FALLBACK:
     # if the importing user's project doesn't locally define a same-named
     # PathInput/Sweep, import_pipeline_document materializes one from this
-    # value via create_path_input/create_parameter. Every
-    # referenced name is bundled even if the exporting user's own copy is
-    # also source-backed — the resolved value is always available and
-    # cheap, so there's no reason to omit it.
+    # value via create_path_input/create_parameter.
     from scistack_gui import registry
     from scistack_gui.domain.graph_builder import path_input_display
 
@@ -207,20 +152,16 @@ def export_pipeline(db, pipeline_id: str) -> dict:
     ]
 
     # Constants and Sweeps are ONE node type on the canvas (Parameters, D6),
-    # so one referenced-name set feeds both bundles — but they must be
-    # PARTITIONED, not duplicated into each. A Parameter the registry knows
-    # as a Sweep bundles its value list here; everything else bundles as a
-    # constant below. Without the partition, every sweep also landed in
-    # ``constants`` with an empty pending list, polluting the document with
-    # entries import would then try to materialise as constants.
+    # so one referenced-name set feeds both bundles — PARTITIONED, never
+    # duplicated: a Parameter the registry knows as a Sweep bundles its value
+    # list; everything else bundles as a constant.
     sweep_registry = registry.get_parameters_registry()
     referenced_params = sorted(referenced_names["parameterNode"])
-    sweep_names = [name for name in referenced_params if name in sweep_registry]
     sweeps = [
         {"name": name, "values": list(sweep_registry[name].alternatives)}
-        for name in sweep_names
+        for name in referenced_params
+        if name in sweep_registry
     ]
-
     all_pending = ps.get_pending_constants(db)
     constants = {
         name: sorted(all_pending.get(name, set()))
@@ -239,6 +180,18 @@ def export_pipeline(db, pipeline_id: str) -> dict:
             "evidence_against": h["evidence_against"],
         }
 
+    labels = {n.label for n in snap.nodes}
+    notes = _notes_for(labels, pipeline_ids)
+    # Project-global GUI rows the exported nodes depend on: a manually
+    # declared built-in function (no source file to rediscover it from) and a
+    # Parameter's generated-set grouping (display only).
+    builtin_functions = [b for b in ps.get_builtin_functions(db) if b["name"] in labels]
+    value_groups = {
+        name: group
+        for name, group in ps.get_parameter_value_groups(db).items()
+        if name in referenced_names["parameterNode"]
+    }
+
     document = {
         "format_version": FORMAT_VERSION,
         "root_pipeline_id": pipeline_id,
@@ -248,19 +201,19 @@ def export_pipeline(db, pipeline_id: str) -> dict:
             for pid in pipeline_ids
         ],
         "hypothesis": hypothesis,
-        "nodes": nodes,
-        "edges": edges,
-        "uses": uses,
-        "hidden_ports": hidden_ports,
+        "canvas": snap.to_dict(),
         "constants": constants,
         "path_inputs": path_inputs,
         "sweeps": sweeps,
+        "notes": notes,
+        "builtin_functions": builtin_functions,
+        "parameter_value_groups": value_groups,
     }
     logger.info(
-        "[portability] export_pipeline(%s): %d pipeline(s), %d node(s), %d edge(s), "
-        "%d use(s), %d constant(s), %d path_input(s), %d sweep(s)",
-        pipeline_id, len(pipeline_ids), len(nodes), len(edges), len(uses),
-        len(constants), len(path_inputs), len(sweeps),
+        "[portability] export_pipeline(%s): %d pipeline(s); canvas %s; "
+        "%d constant(s), %d path_input(s), %d sweep(s), %d note(s)",
+        pipeline_id, len(pipeline_ids), snap.describe(),
+        len(constants), len(path_inputs), len(sweeps), len(notes),
     )
     return document
 
@@ -286,7 +239,7 @@ def export_pipeline_to_file(db, pipeline_id: str) -> dict:
     out_dir = Path(str(db.dataset_db_path)).resolve().parent / EXPORT_DIRNAME
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{safe_name}_{timestamp}.json"
-    out_path.write_text(json.dumps(document, indent=2))
+    out_path.write_text(json.dumps(document, indent=2, default=str))
 
     logger.info("[portability] export written: %s", out_path)
     return {"path": str(out_path), "document": document}
@@ -306,111 +259,8 @@ def _unique_name(existing: set[str], desired: str) -> str:
     return candidate
 
 
-def _canon(value) -> str:
-    import json
-
-    return json.dumps(value or {}, sort_keys=True)
-
-
-def _content_signature(nodes, edges, hidden_ports, uses) -> tuple:
-    """A hashable, order-independent fingerprint of one scope's OWN
-    content (never recurses itself — the caller feeds it already-resolved
-    child identities via ``uses``, which is what makes the comparison
-    recursive overall — see ``_resolve_pipeline``).
-
-    ``nodes``: iterable of (node_type, label, config dict).
-    ``edges``: iterable of ((src_type, src_label), (tgt_type, tgt_label),
-        source_handle, target_handle) — endpoints already resolved to
-        canonical (type, label) pairs, not raw ids (ids are never
-        comparable across a database/scope boundary).
-    ``hidden_ports``: iterable of (direction, var_type).
-    ``uses``: iterable of (child_identity, binding dict) — ``child_identity``
-        is the RESOLVED pipeline_id the use points at (a local pid on the
-        local side; the already-resolved new pid on the document side —
-        see ``_resolve_pipeline``), so two uses only compare equal when
-        they point at the same actual (or actually-matched) child.
-    """
-    nodes_sig = frozenset((t, lb, _canon(c)) for t, lb, c in nodes)
-    edges_sig = frozenset((s, t, sh, th) for s, t, sh, th in edges)
-    hidden_sig = frozenset(hidden_ports)
-    uses_sig = frozenset((child, _canon(binding)) for child, binding in uses)
-    return (nodes_sig, edges_sig, hidden_sig, uses_sig)
-
-
-def _document_pipeline_signature(document: dict, old_pid: str, child_resolution: dict) -> tuple:
-    """``_content_signature`` for one exported pipeline_id's OWN content,
-    given its children's ALREADY-RESOLVED new pipeline_ids
-    (``child_resolution``: old_child_pid -> new_pid)."""
-    nodes_here = [n for n in document["nodes"] if n["pipeline_id"] == old_pid]
-    node_label_by_id = {n["node_id"]: (n["node_type"], n["label"]) for n in nodes_here}
-    uses_here = [u for u in document.get("uses", []) if u["parent_pipeline_id"] == old_pid]
-    use_label_by_id = {
-        u["use_id"]: ("pipelineNode", child_resolution[u["child_pipeline_id"]])
-        for u in uses_here
-    }
-    label_by_id = {**node_label_by_id, **use_label_by_id}
-    connectable = set(label_by_id)
-
-    nodes = [(n["node_type"], n["label"], n.get("config") or {}) for n in nodes_here]
-    edges = [
-        (
-            label_by_id.get(e["source"], (None, None)),
-            label_by_id.get(e["target"], (None, None)),
-            e.get("source_handle"),
-            e.get("target_handle"),
-        )
-        for e in document.get("edges", [])
-        if e["source"] in connectable and e["target"] in connectable
-    ]
-    hidden = [
-        (hp["direction"], hp["var_type"])
-        for hp in document.get("hidden_ports", [])
-        if hp["pipeline_id"] == old_pid
-    ]
-    uses = [(child_resolution[u["child_pipeline_id"]], u.get("binding") or {}) for u in uses_here]
-    return _content_signature(nodes, edges, hidden, uses)
-
-
-def _local_pipeline_signature(db, pipeline_id: str) -> tuple:
-    """``_content_signature`` for an EXISTING local pipeline's OWN
-    content — the comparison target for ``_document_pipeline_signature``."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.services.pipeline_service import get_pipeline_graph
-
-    graph = get_pipeline_graph(db, pipeline_id)
-    manual_nodes = ps.get_manual_nodes(db, pipeline_id)
-
-    nodes = []
-    label_by_id: dict[str, tuple] = {}
-    for node in graph["nodes"]:
-        if node["type"] == "pipelineNode":
-            continue
-        label = node.get("data", {}).get("label", "")
-        config = manual_nodes.get(node["id"], {}).get("config") or {}
-        nodes.append((node["type"], label, config))
-        label_by_id[node["id"]] = (node["type"], label)
-
-    uses_here = ps.get_pipeline_uses(db, pipeline_id)
-    for u in uses_here:
-        label_by_id[u["use_id"]] = ("pipelineNode", u["child_pipeline_id"])
-
-    edges = [
-        (
-            label_by_id.get(e["source"], (None, None)),
-            label_by_id.get(e["target"], (None, None)),
-            e.get("sourceHandle"),
-            e.get("targetHandle"),
-        )
-        for e in graph["edges"]
-    ]
-    hp = ps.get_hidden_ports(db, pipeline_id)
-    hidden = [("input", t) for t in hp["input"]] + [("output", t) for t in hp["output"]]
-    uses = [(u["child_pipeline_id"], u.get("binding") or {}) for u in uses_here]
-    return _content_signature(nodes, edges, hidden, uses)
-
-
 def _resolve_pipeline(
-    db, document: dict, old_pid: str,
+    db, document: dict, snap, old_pid: str,
     resolution: dict, reused: set, existing_names: set,
 ) -> str:
     """Post-order resolve ``old_pid`` -> a local pipeline_id, recursing
@@ -424,30 +274,33 @@ def _resolve_pipeline(
         forked: fresh id, name suffixed on collision.
       - no local pipeline holds this id -> created fresh, PRESERVING the
         id; name suffixed only if it collides with some other pipeline.
-    Memoized in ``resolution`` (also handles a submodule shared by more
-    than one parent in the closure); reused old_pids are recorded into
-    ``reused`` so the caller can skip re-creating their nodes/edges/uses/
-    hidden-ports (they already exist, verbatim, as part of the match).
+    Content is compared by ``canvas_snapshot.signature`` on BOTH sides (the
+    document's snapshot, and a fresh capture of the local pipeline), so the
+    two sides cannot be fingerprinted by different rules. Memoized in
+    ``resolution``; reused old_pids are recorded into ``reused`` so the
+    caller leaves their content alone (it already exists, verbatim).
     """
     if old_pid in resolution:
         return resolution[old_pid]
 
     from scistack_gui import pipeline_store as ps
+    from scistack_gui.services import canvas_snapshot
 
     name = next(p["name"] for p in document["pipelines"] if p["pipeline_id"] == old_pid)
 
     child_resolution: dict[str, str] = {}
-    for u in document.get("uses", []):
-        if u["parent_pipeline_id"] == old_pid:
-            child_resolution[u["child_pipeline_id"]] = _resolve_pipeline(
-                db, document, u["child_pipeline_id"], resolution, reused, existing_names
+    for u in snap.uses:
+        if u.parent_pipeline_id == old_pid:
+            child_resolution[u.child_pipeline_id] = _resolve_pipeline(
+                db, document, snap, u.child_pipeline_id, resolution, reused, existing_names
             )
 
     local = ps.get_pipeline(db, old_pid)
     if local is not None:
         try:
-            doc_sig = _document_pipeline_signature(document, old_pid, child_resolution)
-            match = doc_sig == _local_pipeline_signature(db, old_pid)
+            doc_sig = canvas_snapshot.signature(snap, old_pid, child_resolution)
+            local_snap = canvas_snapshot.capture(db, [old_pid])
+            match = doc_sig == canvas_snapshot.signature(local_snap, old_pid, {})
         except Exception:
             # Equality-checking must never block an import — fail safe to
             # "no match" (forks into a fresh, renamed copy, same as any
@@ -477,9 +330,6 @@ def _resolve_pipeline(
             "forking a new copy", name, old_pid,
         )
 
-    # No local match by identity (either this id is unseen locally, or it
-    # IS seen but content forked, in which case old_pid is already taken
-    # by the diverged local pipeline and a fresh id is required).
     new_pid = old_pid if local is None else f"pipe_{uuid.uuid4().hex[:12]}"
     new_name = _unique_name(existing_names, name)
     existing_names.add(new_name)
@@ -488,7 +338,7 @@ def _resolve_pipeline(
     return created_pid
 
 
-def _unresolved_labels(node_docs: list[dict]) -> list[str]:
+def _unresolved_labels(snap) -> list[str]:
     """function/variable labels the import placed a node for that aren't
     in the LOCAL registry yet — informational only (see module docstring:
     nothing blocks the import on this)."""
@@ -496,43 +346,46 @@ def _unresolved_labels(node_docs: list[dict]) -> list[str]:
     from scistack_gui import matlab_registry, registry
 
     unresolved: set[str] = set()
-    for n in node_docs:
-        ntype, label = n["node_type"], n["label"]
-        if ntype == "functionNode":
+    for n in snap.nodes:
+        if n.node_type == "functionNode":
             # lookup_function covers library references (pandas.read_csv),
             # which resolve by import rather than living in the registry.
-            if registry.lookup_function(label) is None and not matlab_registry.is_matlab_function(
-                label
+            if registry.lookup_function(n.label) is None and not matlab_registry.is_matlab_function(
+                n.label
             ):
-                unresolved.add(label)
-        elif ntype == "variableNode":
-            if label not in BaseVariable._all_subclasses:
-                unresolved.add(label)
+                unresolved.add(n.label)
+        elif n.node_type == "variableNode":
+            if n.label not in BaseVariable._all_subclasses:
+                unresolved.add(n.label)
     return sorted(unresolved)
 
 
 def import_pipeline_document(db, document: dict) -> dict:
     """Recreate an exported document in ``db``. Pipeline ids are preserved
     as the portable identity used for reuse/fork decisions — see module
-    docstring's "Identity-based reuse"; node/edge/use ids are always fresh.
-    Returns ``{"ok", "pipeline_id" (the resolved root), "reused": {...},
-    "unresolved_labels": [...]}``."""
+    docstring's "Identity-based reuse"; node/edge/use ids are always fresh
+    (``canvas_snapshot.apply``). Returns ``{"ok", "pipeline_id" (the
+    resolved root), "reused": {...}, "unresolved_labels": [...],
+    "materialization_errors": [...]}``."""
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store as ps
+    from scistack_gui.services import canvas_snapshot
 
     version = document.get("format_version")
     if version != FORMAT_VERSION:
-        raise ValueError(f"unsupported export format_version: {version!r}")
+        raise ValueError(
+            f"unsupported export format_version: {version!r} (this SciStack "
+            f"reads version {FORMAT_VERSION}; re-export from an up-to-date SciStack)"
+        )
 
+    snap = canvas_snapshot.CanvasSnapshot.from_dict(document.get("canvas") or {})
     root_old_id = document["root_pipeline_id"]
 
     # Captured BEFORE any node/position writes below. read_all_constant_
     # names still scans saved positions for canonical param__-prefixed ids
     # as a fallback discovery mechanism, so capturing it AFTER creating
     # nodes would make every freshly-imported constant name look like it
-    # "already existed locally" — it would just be finding the node this
-    # same call just wrote a position for. PathInput/Sweep no longer have
-    # this concern (source-scanned, not position-scanned).
+    # "already existed locally".
     from scistack_gui import registry
 
     local_constant_names = set(layout_store.read_all_constant_names())
@@ -540,13 +393,13 @@ def import_pipeline_document(db, document: dict) -> dict:
     local_sweep_names = set(registry.get_parameters_registry())
 
     # ALL pipelines, hidden included — matches create_pipeline's own
-    # uniqueness check (pipeline_store.py), so a name suffix decided here
-    # never turns out to collide with a hidden pipeline down the line.
+    # uniqueness check, so a name suffix decided here never turns out to
+    # collide with a hidden pipeline down the line.
     existing_names = {p["name"] for p in ps.list_all_pipelines(db)}
-    pipeline_id_map: dict[str, str] = {}
-    reused_pipelines: set[str] = set()  # old_pids reused verbatim from a local match
+    resolution: dict[str, str] = {}
+    reused_pipelines: set[str] = set()
     new_root_pid = _resolve_pipeline(
-        db, document, root_old_id, pipeline_id_map, reused_pipelines, existing_names
+        db, document, snap, root_old_id, resolution, reused_pipelines, existing_names
     )
     reused_pipeline_names = sorted(
         next(p["name"] for p in document["pipelines"] if p["pipeline_id"] == old_pid)
@@ -563,80 +416,14 @@ def import_pipeline_document(db, document: dict) -> dict:
             evidence_against=h.get("evidence_against", []),
         )
 
-    # A reused pipeline's own nodes/uses/edges/hidden-ports already exist,
-    # verbatim, as part of the local match found for it — recreating them
-    # would duplicate content INSIDE what's meant to be the one shared
-    # pipeline. owning_pid_of resolves an edge endpoint (real node OR a
-    # placed submodule/use) back to the scope it belongs to, so edges can
-    # be skipped the same way.
-    owning_pid_of: dict[str, str] = {n["node_id"]: n["pipeline_id"] for n in document["nodes"]}
-    owning_pid_of.update(
-        {u["use_id"]: u["parent_pipeline_id"] for u in document.get("uses", [])}
-    )
-
-    node_id_map: dict[str, str] = {}
-    for n in document["nodes"]:
-        old_pid = n["pipeline_id"]
-        if old_pid in reused_pipelines:
-            continue
-        new_pid = pipeline_id_map.get(old_pid)
-        if new_pid is None:
-            continue  # defensive; every node's pipeline_id is in `pipelines`
-        prefix = _PREFIX_BY_TYPE.get(n["node_type"], n["node_type"])
-        new_id = f"{prefix}__{n['label']}__{uuid.uuid4().hex[:8]}"
-        node_id_map[n["node_id"]] = new_id
-        ps.write_manual_node(db, new_id, n["node_type"], n["label"], new_pid)
-        if n.get("config"):
-            ps.update_node_config(db, new_id, n["config"])
-        layout_store.write_node_position(
-            new_id, n.get("x", 0.0), n.get("y", 0.0), pipeline_id=new_pid
-        )
-
-    for u in document.get("uses", []):
-        if u["parent_pipeline_id"] in reused_pipelines:
-            continue  # already exists as part of the reused parent's own content
-        new_parent = pipeline_id_map.get(u["parent_pipeline_id"])
-        new_child = pipeline_id_map.get(u["child_pipeline_id"])
-        if new_parent is None or new_child is None:
-            logger.warning(
-                "[portability] import: dropping use %r (parent/child not in this import)",
-                u["use_id"],
-            )
-            continue
-        new_use_id = ps.add_pipeline_use(db, new_parent, new_child, u.get("binding") or {})
-        node_id_map[u["use_id"]] = new_use_id
-        layout_store.write_node_position(
-            new_use_id, u.get("x", 0.0), u.get("y", 0.0), pipeline_id=new_parent
-        )
-
-    n_edges = 0
-    for e in document.get("edges", []):
-        if owning_pid_of.get(e["source"]) in reused_pipelines:
-            continue  # already exists as part of the reused scope's own content
-        src = node_id_map.get(e["source"])
-        tgt = node_id_map.get(e["target"])
-        if src is None or tgt is None:
-            logger.warning(
-                "[portability] import: dropping edge %r -> %r (endpoint not found)",
-                e["source"], e["target"],
-            )
-            continue
-        ps.write_manual_edge(db, {
-            "id": f"edge_{uuid.uuid4().hex[:12]}",
-            "source": src,
-            "target": tgt,
-            "sourceHandle": e.get("source_handle"),
-            "targetHandle": e.get("target_handle"),
-        })
-        n_edges += 1
-
-    for hp in document.get("hidden_ports", []):
-        if hp["pipeline_id"] in reused_pipelines:
-            continue  # already exists as part of the reused scope's own content
-        new_pid = pipeline_id_map.get(hp["pipeline_id"])
-        if new_pid is None:
-            continue
-        ps.hide_port(db, new_pid, hp["direction"], hp["var_type"])
+    # A reused pipeline's own content already exists verbatim as part of the
+    # local match; only created/forked pipelines receive the snapshot. A use
+    # whose child was reused keeps pointing at it (apply falls back to the
+    # captured child id, which IS the reused id).
+    pipeline_map = {
+        old: new for old, new in resolution.items() if old not in reused_pipelines
+    }
+    old_to_new = canvas_snapshot.apply(db, snap, pipeline_map, include_hides=False)
 
     reused_constants = []
     for name, values in document.get("constants", {}).items():
@@ -647,17 +434,10 @@ def import_pipeline_document(db, document: dict) -> dict:
         for v in values:
             ps.add_pending_constant(db, name, v)
 
-    # PathInput/Sweep are source-scanned now (see
-    # docs/claude/code-discovery-categories.md): a name already defined
-    # locally is reused UNTOUCHED (the local source declaration is never
-    # overwritten with the bundled document value — same "shared by name"
-    # precedent as constants above). Only on a local miss is the bundled
-    # value MATERIALIZED into the importer's own configured source file via
-    # path_input_service, so the imported pipeline ends up backed by real
-    # local source too, never a phantom GUI-only value. A materialization
-    # failure (e.g. no variable_file configured) is surfaced, not silently
-    # dropped — the node still imports but stays unresolved until the user
-    # configures a target and re-imports or creates it by hand.
+    # PathInput/Sweep are source-scanned: a name already defined locally is
+    # reused UNTOUCHED; only on a local miss is the bundled value
+    # MATERIALIZED into the importer's own configured source file, and a
+    # failure is surfaced, not silently dropped.
     from scistack_gui.services.parameter_service import create_parameter
     from scistack_gui.services.path_input_service import create_path_input
 
@@ -690,15 +470,42 @@ def import_pipeline_document(db, document: dict) -> dict:
                 {"kind": "parameter", "name": sw["name"], "error": result.get("error")}
             )
 
-    unresolved = _unresolved_labels(document["nodes"])
+    # Notes: added where the target has none for that item; a local note is
+    # never overwritten. A submodule's note follows its resolved pipeline id.
+    local_notes = layout_store.read_notes()
+    n_notes = 0
+    for key, text in (document.get("notes") or {}).items():
+        kind, _, name = key.partition(":")
+        if kind == "submodule" and name in resolution:
+            key = f"{kind}:{resolution[name]}"
+        if key in local_notes:
+            continue
+        layout_store.write_note(key, text)
+        n_notes += 1
+
+    # Built-in function references and value groups: added where absent,
+    # never overwriting a local row.
+    local_builtins = {b["name"] for b in ps.get_builtin_functions(db)}
+    for b in document.get("builtin_functions") or []:
+        if b["name"] not in local_builtins:
+            ps.write_builtin_function(db, b["name"], b["language"])
+    local_groups = ps.get_parameter_value_groups(db)
+    for name, group in (document.get("parameter_value_groups") or {}).items():
+        if name not in local_groups:
+            ps.set_parameter_value_group(
+                db, name, kind=group["kind"], spec=group["spec"], values=group["values"]
+            )
+
+    unresolved = _unresolved_labels(snap)
 
     logger.info(
-        "[portability] import_pipeline_document: %d pipeline(s) (%d reused), %d node(s), "
-        "%d edge(s) -> root=%s (reused %d constant(s), %d path_input(s), %d sweep(s); "
-        "%d unresolved label(s), %d materialization error(s))",
-        len(pipeline_id_map), len(reused_pipelines), len(document["nodes"]), n_edges, new_root_pid,
+        "[portability] import_pipeline_document: %d pipeline(s) (%d reused), "
+        "%d id(s) written -> root=%s (reused %d constant(s), %d path_input(s), "
+        "%d sweep(s); %d note(s) added; %d unresolved label(s), %d "
+        "materialization error(s))",
+        len(resolution), len(reused_pipelines), len(old_to_new), new_root_pid,
         len(reused_constants), len(reused_path_inputs), len(reused_sweeps),
-        len(unresolved), len(materialization_errors),
+        n_notes, len(unresolved), len(materialization_errors),
     )
     return {
         "ok": True,

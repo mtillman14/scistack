@@ -267,3 +267,39 @@ def legacy_fn_node_id(fn_name: str) -> BareNodeId:
     edge lookups still name a function node this way."""
     return BareNodeId(f"{FN_ID_PREFIX}{fn_name}")
 
+
+
+# ---------------------------------------------------------------------------
+# Minting manual-node and drawn-edge ids
+# ---------------------------------------------------------------------------
+#
+# A manually placed node and a drawn edge are ALLOCATED, not derived (see
+# docs/claude/node-identity.md): the id carries no meaning beyond being
+# unique. Every Python site that creates one (duplicate, paste, extract to
+# submodule, import) mints it here. The frontend mints its own on drag/draw
+# (PipelineDAG.tsx), a different language; the shapes agree.
+
+#: Node-id prefix per React Flow node type, for minting manual nodes.
+MANUAL_NODE_PREFIX = {
+    "functionNode": "fn",
+    "variableNode": "var",
+    "parameterNode": "param",
+    "pathInputNode": "pathInput",
+}
+
+
+def new_manual_node_id(node_type: str, label: str) -> BareNodeId:
+    """A fresh manual node id: ``{prefix}__{label}__{8 hex}``."""
+    import uuid
+
+    prefix = MANUAL_NODE_PREFIX.get(node_type, node_type)
+    return BareNodeId(f"{prefix}__{label}__{uuid.uuid4().hex[:8]}")
+
+
+def new_manual_edge_id() -> str:
+    """A fresh drawn-edge statement id: ``edge_{12 hex}``. Distinct from
+    ``graph_builder.connection_id``, which DERIVES the id of the connection an
+    edge draws (its endpoints and port) for matching and hiding."""
+    import uuid
+
+    return f"edge_{uuid.uuid4().hex[:12]}"

@@ -8,6 +8,30 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-4 — One owner for copying a canvas
+
+**Context.** Two paths copied canvas state. `scope_service._clone_nodes`
+(duplicate, paste) carried every intent statement, hides and placements.
+`portability_service` (export/import) was a weaker re-implementation: it
+dropped the settings of nodes that had run, carried no statements or notes,
+and minted its own ids.
+
+**Decision.** `services/canvas_snapshot.py` is the one owner: `capture`
+reads the resolved graph into plain data (history-derived nodes included),
+and `apply` writes it with fresh ids (`ids.new_manual_node_id`/
+`new_manual_edge_id`), always as manual nodes. Duplicate and paste are
+capture + apply; export is capture + `to_dict`; import is `from_dict` +
+apply (with `include_hides=False`). Import's reuse-or-fork decision compares
+`canvas_snapshot.signature` on both sides. Every GUI table is classified in
+its owner's `PORTABILITY` (canvas / global / history), with a guard test.
+Export format v2; v1 is refused.
+
+**Consequences.** Schema-key remap (Stage 6) is a pure function over a
+snapshot. Saved plots, presets and variant pins are not in the GUI snapshot
+(Stage 4 sections).
+
+---
+
 ## D-2026-10-08-3 — One owner for creating a project; no uv
 
 **Context.** Two code paths created projects and produced different trees:

@@ -11,6 +11,33 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzf. Export/import carries settings, notes; duplicate unchanged — added 2026-10-08
+
+Export/import and duplicate/paste now share one copy mechanism
+(`services/canvas_snapshot.py`). Export documents are format 2; an old
+(format 1) JSON file is refused with a message. No frontend change; reload
+the VS Code window to load the backend.
+
+1. **Duplicate still works:** duplicate a hypothesis tab that has RUN nodes
+   with settings (a schema level, an excluded subject, run options). The copy
+   shows the same nodes, positions (+40/+40), edges and the same settings
+   on each node. Hidden edges stay hidden in the copy.
+2. **Paste still works:** copy two connected nodes, paste elsewhere: they land
+   at the paste point, keep their relative layout and the edge between them.
+3. **Export → import into another project:** in project A, give a node that
+   has already run a setting (e.g. exclude subject S02) and a sidebar note on
+   its variable. Export the tab. In project B (different folder), import the
+   JSON. The imported node has the same setting, the variable's note
+   appears in B, and positions match A's.
+4. **A note already in B is kept:** give B its own note on the same item
+   before importing; after import B's note is unchanged.
+5. **Old export file:** importing a JSON exported before today shows an error
+   naming `format_version` (nothing is created).
+6. `scidb.log`: lines `[canvas_snapshot] capture ...` and `[canvas_snapshot]
+   apply -> ...` with counts of nodes, statements, edges.
+
+---
+
 ## 0zzze. One config file (scistack.toml), project creation = `init` — added 2026-10-08
 
 Config lives only in `scistack.toml`; `pyproject.toml` is packaging only.

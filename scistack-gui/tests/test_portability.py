@@ -18,6 +18,7 @@ from __future__ import annotations
 from scistack_gui import pipeline_store as ps
 from scistack_gui.db import get_db
 from scistack_gui.services.portability_service import (
+    FORMAT_VERSION,
     export_pipeline,
     import_pipeline_document,
 )
@@ -43,7 +44,7 @@ class TestExportImportSameDatabase:
 
         db = get_db()
         document = export_pipeline(db, pid)
-        assert document["format_version"] == 1
+        assert document["format_version"] == FORMAT_VERSION
         assert {p["pipeline_id"] for p in document["pipelines"]} == {pid}
 
         result = import_pipeline_document(db, document)
@@ -73,9 +74,9 @@ class TestExportImportSameDatabase:
 
         db = get_db()
         document = export_pipeline(db, pid)
-        assert document["format_version"] == 1
+        assert document["format_version"] == FORMAT_VERSION
         assert {p["pipeline_id"] for p in document["pipelines"]} == {pid}
-        assert {(n["node_type"], n["label"]) for n in document["nodes"]} == {
+        assert {(n["node_type"], n["label"]) for n in document["canvas"]["nodes"]} == {
             ("variableNode", "RawSignal"),
             ("functionNode", "custom_proc"),
             ("variableNode", "FilteredSignal"),
@@ -206,7 +207,7 @@ class TestExportImportCrossDatabase:
         source_db = get_db()
         document = export_pipeline(source_db, parent)
         assert {p["pipeline_id"] for p in document["pipelines"]} == {parent, child}
-        assert any(u["use_id"] == use_id for u in document["uses"])
+        assert any(u["use_id"] == use_id for u in document["canvas"]["uses"])
 
         target_db = self._second_db(tmp_path)
         result = import_pipeline_document(target_db, document)
@@ -533,3 +534,167 @@ class TestHiddenPipelineReimport:
         names = [p["name"] for p in ps.list_pipelines(target_db)]
         assert names.count("test") == 0  # the hidden original stays hidden, not counted here
         assert "test (imported)" in names
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 (2026-10-08): the canvas travels as a canvas_snapshot -- the same
+# capture/apply duplicate and paste use -- so nothing a duplicate keeps is
+# lost by an export.
+# ---------------------------------------------------------------------------
+
+
+def _second_db(tmp_path):
+    from scidb import configure_database
+
+    from scistack_gui import db as gui_db
+
+    db_path = tmp_path / "other_user.duckdb"
+    db = configure_database(db_path, ["subject", "session"])
+    gui_db._db = db
+    gui_db._db_path = db_path
+    return db
+
+
+def _node_by_label(db, pid, label):
+    from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+    graph = get_pipeline_graph(db, pid)
+    matches = [n for n in graph["nodes"] if n.get("data", {}).get("label") == label]
+    assert len(matches) == 1, f"expected one {label!r} node, got {matches}"
+    return matches[0]["id"]
+
+
+EXCLUDE_S02 = {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}
+
+
+class TestCanvasSnapshotCarriesEverything:
+    def _pipeline(self, client):
+        pid = client.post("/api/pipelines", json={"name": "loading"}).json()["pipeline_id"]
+        client.put("/api/layout/mv_in", json={
+            "x": 5, "y": 7, "node_type": "variableNode", "label": "RawSignal", "pipeline_id": pid,
+        })
+        client.put("/api/layout/mf_proc", json={
+            "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": pid,
+        })
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/layout/mf_proc/config", json={"config": EXCLUDE_S02})
+        return pid
+
+    def test_document_is_version_2_with_a_canvas(self, client):
+        pid = self._pipeline(client)
+        document = export_pipeline(get_db(), pid)
+        assert document["format_version"] == FORMAT_VERSION == 2
+        assert {"nodes", "uses", "edges", "hides", "hidden_ports"} <= set(document["canvas"])
+        assert "nodes" not in document  # the v1 top-level shape is gone
+
+    def test_a_version_1_document_is_refused(self, client):
+        import pytest
+
+        with pytest.raises(ValueError, match="format_version"):
+            import_pipeline_document(get_db(), {"format_version": 1})
+
+    def test_node_settings_travel_as_statements(self, client, tmp_path):
+        pid = self._pipeline(client)
+        document = export_pipeline(get_db(), pid)
+
+        target_db = _second_db(tmp_path)
+        result = import_pipeline_document(target_db, document)
+
+        new_fn = _node_by_label(target_db, result["pipeline_id"], "custom_proc")
+        config = ps.get_node_config(target_db, new_fn)
+        assert config.get("schemaSelection") == EXCLUDE_S02["schemaSelection"]
+
+    def test_positions_and_edges_travel(self, client, tmp_path):
+        from scistack_gui import layout as layout_store
+        from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+        pid = self._pipeline(client)
+        document = export_pipeline(get_db(), pid)
+        target_db = _second_db(tmp_path)
+        new_pid = import_pipeline_document(target_db, document)["pipeline_id"]
+
+        var_id = _node_by_label(target_db, new_pid, "RawSignal")
+        fn_id = _node_by_label(target_db, new_pid, "custom_proc")
+        pos = layout_store.read_positions_by_scope()[new_pid][var_id]
+        assert (pos["x"], pos["y"]) == (5, 7)
+        edges = {(e["source"], e["target"]) for e in get_pipeline_graph(target_db, new_pid)["edges"]}
+        assert (var_id, fn_id) in edges
+
+    def test_notes_travel_and_never_overwrite(self, client, tmp_path):
+        from scistack_gui import layout as layout_store
+
+        pid = self._pipeline(client)
+        layout_store.write_note("variable:RawSignal", "raw from the force plate")
+        layout_store.write_note("function:custom_proc", "exporter's note")
+        layout_store.write_note("variable:Unrelated", "not on this canvas")
+        document = export_pipeline(get_db(), pid)
+        assert set(document["notes"]) == {"variable:RawSignal", "function:custom_proc"}
+
+        _second_db(tmp_path)
+        layout_store.write_note("function:custom_proc", "importer's own note")
+        import_pipeline_document(get_db(), document)
+
+        notes = layout_store.read_notes()
+        assert notes["variable:RawSignal"] == "raw from the force plate"
+        assert notes["function:custom_proc"] == "importer's own note"
+        assert "variable:Unrelated" not in notes
+
+    def test_ids_are_minted_by_the_owner(self, client, tmp_path):
+        """Import never spells an id itself: nodes via ids.new_manual_node_id
+        (``{prefix}__{label}__{8 hex}``)."""
+        import re
+
+        pid = self._pipeline(client)
+        document = export_pipeline(get_db(), pid)
+        target_db = _second_db(tmp_path)
+        new_pid = import_pipeline_document(target_db, document)["pipeline_id"]
+
+        fn_id = _node_by_label(target_db, new_pid, "custom_proc")
+        from scistack_gui.ids import strip_placement
+
+        assert re.fullmatch(r"fn__custom_proc__[0-9a-f]{8}", strip_placement(fn_id))
+
+    def test_snapshot_round_trips_through_json(self, client):
+        import json
+
+        from scistack_gui.services.canvas_snapshot import CanvasSnapshot, capture
+
+        pid = self._pipeline(client)
+        snap = capture(get_db(), [pid])
+        again = CanvasSnapshot.from_dict(json.loads(json.dumps(snap.to_dict(), default=str)))
+        assert again.to_dict() == json.loads(json.dumps(snap.to_dict(), default=str))
+        assert snap.nodes and any(n.statements for n in snap.nodes)
+
+    def test_duplicate_and_export_capture_the_same_settings(self, client):
+        """One owner: a duplicate and an export/import of the same pipeline
+        carry the same statements for the same node."""
+        pid = self._pipeline(client)
+        db = get_db()
+        dup = client.post(f"/api/pipelines/{pid}/duplicate", json={"name": "loading copy"})
+        assert dup.status_code == 200, dup.text
+        dup_pid = dup.json()["pipeline_id"]
+
+        dup_fn = _node_by_label(db, dup_pid, "custom_proc")
+        assert ps.get_node_config(db, dup_fn).get("schemaSelection") == EXCLUDE_S02["schemaSelection"]
+
+
+def test_every_gui_table_is_classified():
+    """Every GUI table says how it travels (canvas / global / history), in
+    its owner module's PORTABILITY, so a new table cannot be silently left
+    out of export (mirrors test_history.test_every_gui_table_is_tracked)."""
+    import re
+    from pathlib import Path
+
+    from scistack_gui.services.canvas_snapshot import PORTABILITY_CLASSES, table_portability
+
+    gui_pkg = Path(__file__).resolve().parents[1] / "scistack_gui"
+    created: set[str] = set()
+    for path in gui_pkg.rglob("*.py"):
+        created |= set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", path.read_text()))
+    assert created, "the scan found no tables — the pattern is stale"
+    classified = table_portability()
+    assert set(classified) == created, (
+        "a GUI table must be classified in its module's PORTABILITY "
+        "(docs/claude/portability.md)"
+    )
+    assert set(classified.values()) <= set(PORTABILITY_CLASSES)

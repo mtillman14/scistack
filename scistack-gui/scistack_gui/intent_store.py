@@ -80,6 +80,10 @@ def _duck(db):
 #: For undo (`scistack_gui.history`): the table this module owns.
 UNDOABLE_TABLES: tuple[str, ...] = ("_intent",)
 
+#: Portability (see ``pipeline_store.PORTABILITY``): statements about canvas
+#: nodes travel in ``services.canvas_snapshot`` (resolved per scope).
+PORTABILITY: dict[str, str] = {"_intent": "canvas"}
+
 
 def ensure_tables(db) -> None:
     """Create ``_intent`` if absent.
@@ -327,6 +331,24 @@ def rekey_subject(db, old_ref: str, new_ref: str, *, old_wins: bool = True) -> i
     return moved
 
 
+def resolved_statements(db, subject_ref: str, scope: str) -> list[Statement]:
+    """One subject's statements AS RESOLVED in *scope*: the scope's own over
+    legacy ``global`` ones, one per ``(aspect, key)``.
+
+    The read half of :func:`copy_subject`, split out so a canvas can be
+    captured as data (``services.canvas_snapshot``) and written back later,
+    into this database or another, by the same rule.
+    """
+    from scistack_gui.ids import strip_placement
+
+    resolved: dict[tuple[str, str | None], Statement] = {}
+    for st in _in_scope_order(
+        load_statements(db, subject_refs=[strip_placement(subject_ref)], scopes=[scope])
+    ):
+        resolved[(st.aspect, st.key)] = st
+    return list(resolved.values())
+
+
 def copy_subject(
     db, src_ref: str, dst_ref: str, *, src_scope: str | None = None, dst_scope: str | None = None
 ) -> int:
@@ -354,11 +376,9 @@ def copy_subject(
     src_ref, dst_ref = strip_placement(src_ref), strip_placement(dst_ref)
     if src_ref == dst_ref and src_scope == dst_scope:
         return 0
-    resolved: dict[tuple[str, str | None], Statement] = {}
-    for st in _in_scope_order(load_statements(db, subject_refs=[src_ref], scopes=[src_scope])):
-        resolved[(st.aspect, st.key)] = st
     rows = [
-        replace(st, subject_ref=dst_ref, scope=dst_scope) for st in resolved.values()
+        replace(st, subject_ref=dst_ref, scope=dst_scope)
+        for st in resolved_statements(db, src_ref, src_scope)
     ]
     put_statements(db, rows)
     if rows:

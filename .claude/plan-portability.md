@@ -87,26 +87,49 @@ a config source; the GUI never edits it. Neither file ships in the wheel.
 Moved to Stage 5: reading entities files shipped inside installed packages
 (today only the project's own file is ever loaded).
 
-## Stage 2: portable-state declaration + import fixes (GUI section)
+## Stage 2: one owner for "a canvas as data" (capture/apply) + import fixes — DONE 2026-10-08, tests pass
 
-- Each GUI store declares the tables or files it contributes to an export,
-  beside its `CREATE TABLE`, with two functions: an ID remap and a
-  schema-key remap. This is the same pattern as
-  `UNDOABLE_TABLES`/`history.py`. Stores: `pipeline_store`, `intent_store`,
-  `node_wiring`, `layout` (positions, palette, notes), `_variant_pin`
-  (scidb), scistackplotdb saved plots and presets.
-- `portability_service` becomes a walker over that declaration (E3).
-- Fix E5: export settings for run nodes too (`get_node_configs`).
-- Fix I10/I11: mint node IDs through `ids.py` and edge IDs through
-  `graph_builder.connection_id`. Guard test: portability code builds no ID
-  strings itself.
-- E7: hidden nodes/edges/combos exported when history is in the bundle.
-- E9: stop resolving Parameter/PathInput values through the registry for
-  export (the entities file travels whole); resolve doc open Q2 (palette).
-- Positions missing → automatic layout on import.
-- Tests: round trip of every declared store; a newly added table with no
-  portable/not-portable declaration fails a test; extend
-  `tests/test_portability.py`.
+Refined 2026-10-08 after reading the code. `scope_service._clone_nodes`
+(duplicate, paste) already copies canvas state correctly (resolved graph,
+every intent statement via `intent_store.copy_subject`, hidden edges,
+placements); `portability_service` re-implemented a weaker copy of it
+(settings of run nodes dropped, no statements, no hides, its own id
+minting). So the fix is ONE owner, not a per-table remap mechanism:
+
+- `scistack_gui/canvas_snapshot.py`:
+  - `capture(db, pipeline_ids, node_ids=None) -> CanvasSnapshot`: plain data
+    read from the RESOLVED graph (what the canvas shows, history-derived
+    nodes included), so a snapshot never depends on run history: every
+    node is written as a manual node on apply ("de-graduation", the same
+    thing `_clone_nodes` already does).
+  - `apply(db, snapshot, pipeline_map, translation) -> old_to_new`: fresh
+    ids, nodes, statements (as resolved in the source scope, written at the
+    target scope), edges, uses, hides, hidden ports, positions.
+  - `to_dict` / `from_dict`: the JSON form inside the bundle.
+  - The snapshot is DATA, so Stage 6's schema-key remap is a pure function
+    over it, applied before `apply`.
+- `intent_store.copy_subject` splits into `resolved_statements` (capture)
+  and `put_statements` (apply).
+- `_clone_nodes` = capture + apply (+ its source-side placement
+  solidifying). `portability_service` export = capture(closure) + globals;
+  import = pipeline resolution (unchanged: reuse/fork by `pipeline_id`) +
+  apply. FORMAT_VERSION 2 (v1 refused, beta).
+- ID minting: `ids.new_manual_node_id(prefix, label)`,
+  `ids.new_manual_edge_id()`; every Python minting site uses them (the
+  frontend mints its own, a different language).
+- Declaration + guard: every GUI table is classified in its owner module
+  (`PORTABILITY = {table: "canvas" | "global" | "history" | "none"}`);
+  a test fails when a table is unclassified (like
+  `test_every_gui_table_is_tracked`). `canvas` tables are covered by the
+  snapshot; `global` ones (pending constants, parameter value groups,
+  built-in functions, notes, palette) form a `globals` section; `history`
+  ones (`_node_wiring`, path-input renames/history) travel only with
+  history (Stage 7).
+- scistackplotdb saved plots/presets: own section, Stage 4 (separate
+  package, keyed by variable name, no canvas ids).
+- Tests: capture->apply round trip equals duplicate; export->import keeps
+  run-node settings, statements, hides, notes; existing duplicate/paste and
+  portability tests still pass; guard test.
 
 ## Stage 3: open the project without the GUI, without discovery
 

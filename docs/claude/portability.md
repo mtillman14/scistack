@@ -157,12 +157,12 @@ Status as of 2026-10-08.
 | E0 | Open the project without the GUI | 🔧 | No discovery needed (see plan Stage 3). Remove `portability_service`'s dependence on GUI process state (`scistack_gui.db.get_db_path()`, registry lookups). |
 | E1 | GUI button + CLI command | 🔧 | The GUI handler `export_pipeline` exists for one pipeline plus the ones it uses. No whole-project export, no CLI. |
 | E2 | Pre-export checks | ❌ | Nothing running; disconnected edges settled at export time (`gui-export-to-plain-python.md`). |
-| E3 | One list of what is exported | ❌ | Portable-tables declaration in each owner, modelled on `history.py`'s undoable tables. |
-| E4 | Nodes, edges, sub-pipelines, hidden ports, hypothesis | ✅ | `portability_service.export_pipeline` |
-| E5 | Node settings | 🔧 | Only for nodes that have never run; settings on run nodes are dropped. |
-| E6 | Other GUI state | ❌ | `_node_wiring`, intent statements other than edges, notes, parameter value groups, built-in function choices, PathInput rename history, `_variant_pin`, saved plots and presets. |
-| E7 | Hidden nodes/edges/combos | 🔧 | Left out on purpose; must be included when history is included. |
-| E8 | Positions | 🔧 | From `<db>.layout.json`; a store in the list. |
+| E3 | One list of what is exported | ✅ | Every GUI table classified canvas / global / history in its owner's `PORTABILITY`; guard `test_every_gui_table_is_classified` (Stage 2). |
+| E4 | Nodes, edges, sub-pipelines, hidden ports, hypothesis | ✅ | `services/canvas_snapshot.capture`, shared with duplicate/paste (Stage 2). |
+| E5 | Node settings | ✅ | Every intent statement, resolved in the source scope, for run and never-run nodes alike (Stage 2). |
+| E6 | Other GUI state | 🔧 | Notes, built-in function references, parameter value groups: ✅ (Stage 2). `_node_wiring`, PathInput rename history: history-only (Stage 7). `_variant_pin`, saved plots/presets: Stage 4. |
+| E7 | Hidden nodes/edges/combos | 🔧 | Captured (shared with duplicate) but not applied on a canvas-only import; applied with history (Stage 7). |
+| E8 | Positions | ✅ | In the snapshot. |
 | E9 | Parameters / Sweeps / PathInput values | 🔧 | Bundled by registry lookup. Replace with the entities file travelling in the wheel; check the `layout.json` constants palette as an owner. |
 | E10 | Project config | ❌ | `scistack.toml`. |
 | E11 | Code + entities file | ❌ | |
@@ -187,9 +187,9 @@ Status as of 2026-10-08.
 | I7 | PathInput roots | ❌ | Ask, write to the entities file. |
 | I8 | Schema choice + key map | ❌ | See "Schema on import". |
 | I9 | Recreate pipelines (reuse an identical one, fork one that differs) | ✅ | `_resolve_pipeline`, keyed on `pipeline_id`. |
-| I10 | Mint node IDs | 🔧 | Import writes its own; `ids.py` is the owner. |
-| I11 | Mint edge IDs | 🔧 | Import writes its own `edge_{uuid}`; `graph_builder.connection_id` is the owner. |
-| I12 | Restore the rest of the GUI state, with schema keys remapped | ❌ | Follows from E3/E6 and I8. |
+| I10 | Mint node IDs | ✅ | `ids.new_manual_node_id` (every Python site; the frontend mints its own). |
+| I11 | Mint edge IDs | ✅ | `ids.new_manual_edge_id` (a drawn edge's stored id is allocated; `connection_id` derives the connection's id for matching, a different concept). |
+| I12 | Restore the rest of the GUI state, with schema keys remapped | 🔧 | `canvas_snapshot.apply` (Stage 2) ✅; schema-key remap over the snapshot: Stage 6. |
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
 | I14 | Restore history / data | ❌ | New empty project + schema kept only; a verbatim copy. |
 | I15 | Check that every canvas node's code is found | 🔧 | `unresolved_labels` reports but doesn't block. Needs discovery; runs when the GUI opens the project, or on request from the CLI. |

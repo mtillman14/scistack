@@ -85,6 +85,28 @@ UNDOABLE_TABLES: tuple[str, ...] = (
     "_hypotheses",
 )
 
+#: How each table here travels when a project or pipeline is exported
+#: (docs/claude/portability.md; guard: `test_every_gui_table_is_classified`):
+#:
+#: * ``canvas`` -- captured per pipeline by ``services.canvas_snapshot`` (the
+#:   one owner of copying a canvas: duplicate, paste, export, import);
+#: * ``global`` -- project-wide rows exported beside the canvas, filtered to
+#:   what the exported nodes use, added on import only where absent;
+#: * ``history`` -- facts about past runs; they travel only with run history
+#:   (portability Stage 7), never with a canvas alone.
+PORTABILITY: dict[str, str] = {
+    "_pipeline_nodes": "canvas",
+    "_node_config": "canvas",
+    "_pipeline_builtin_functions": "global",
+    "_pipeline_parameter_value_groups": "global",
+    "_pipeline_path_input_history": "history",
+    "_pipeline_path_input_renames": "history",
+    "_pipeline_hidden_ports": "canvas",
+    "_pipelines": "canvas",
+    "_pipeline_uses": "canvas",
+    "_hypotheses": "canvas",
+}
+
 
 def _ensure_tables(db) -> None:
     """Create pipeline tables if they don't already exist, each with its

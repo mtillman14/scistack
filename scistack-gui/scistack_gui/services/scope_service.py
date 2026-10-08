@@ -192,8 +192,6 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
     (rare/unsupported wiring) — it still contributes to the interface via
     the mechanism above.
     """
-    import uuid
-
     from scistack_gui import ids
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store as ps
@@ -296,7 +294,7 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
             continue  # de-dupe: multiple original edges collapsing onto one port
         seen.add(key)
         ps.write_manual_edge(db, {
-            "id": f"edge_{uuid.uuid4().hex[:12]}",
+            "id": ids.new_manual_edge_id(),
             "source": source,
             "target": target,
             "sourceHandle": spec["sourceHandle"],
@@ -352,190 +350,76 @@ def _clone_nodes(
     possible for an explicit partial selection — a whole-scope copy has no
     such edges by construction, since every node is included).
 
+    One owner for the copy itself: ``services.canvas_snapshot`` (capture,
+    then apply), which export/import also use, so a duplicate and an
+    exported-then-imported pipeline cannot copy different things. What is
+    left here is what only a same-database copy needs: the anchor rule and
+    the source-side placement step below.
+
     Returns ``(old_id -> new_id map, nodes copied, edges copied)``.
     """
-    import uuid
-
     from scistack_gui import ids
     from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.domain import graph_builder
-    from scistack_gui.services.pipeline_service import get_pipeline_graph
+    from scistack_gui.services import canvas_snapshot
 
-    graph = get_pipeline_graph(db, source_pid)
-    manual_nodes = ps.get_manual_nodes(db, source_pid)  # config source
-    old_positions = layout_store.read_positions_by_scope().get(source_pid, {})
-    uses_by_id = {u["use_id"]: u for u in ps.get_pipeline_uses(db, source_pid)}
-    prefix_by_type = {
-        "functionNode": "fn",
-        "variableNode": "var",
-        "parameterNode": "param",
-        "pathInputNode": "pathInput",
-    }
-
-    node_id_set = None if node_ids is None else set(node_ids)
-    selected = [n for n in graph["nodes"] if node_id_set is None or n["id"] in node_id_set]
+    snap = canvas_snapshot.capture(db, [source_pid], node_ids)
 
     # anchor=None (duplicate_pipeline): keep each node's own position,
     # offset by a fixed amount. anchor=(x, y) (paste_nodes): translate the
     # WHOLE selection so its bounding-box top-left lands there, preserving
     # the copied nodes' relative layout to one another.
     if anchor is None:
-        translation = {"x": 40.0, "y": 40.0}
+        translation = (40.0, 40.0)
     else:
-        real_positions = [old_positions[n["id"]] for n in selected if n["id"] in old_positions]
-        min_x = min((p["x"] for p in real_positions), default=0.0)
-        min_y = min((p["y"] for p in real_positions), default=0.0)
-        translation = {"x": anchor[0] - min_x, "y": anchor[1] - min_y}
+        real = [(n.x, n.y) for n in snap.nodes if n.has_position]
+        min_x = min((x for x, _ in real), default=0.0)
+        min_y = min((y for _, y in real), default=0.0)
+        translation = (anchor[0] - min_x, anchor[1] - min_y)
 
-    old_to_new: dict[str, str] = {}
-    # Counts nodes solidified below with no prior real position, so each
-    # gets a distinct fallback instead of all landing on the same point.
+    old_to_new = canvas_snapshot.apply(
+        db, snap, {source_pid: target_pid}, translation=translation
+    )
+
+    # A node drawn from history may be a BARE canonical id relying on the
+    # implicit root default (never explicitly placed anywhere) rather than an
+    # explicit placement. Once the fresh copy independently graduates to its
+    # OWN placement in target_pid on the next graph build, a bare id's "no
+    # placement anywhere" fallback and a "moved away to another scope" state
+    # become indistinguishable from position data alone
+    # (domain.scope_filter._resolve_in_scope can't tell "copied" from
+    # "relocated") — the source's implicit default would silently disappear
+    # from its own canvas. Affirm the source's own explicit placement now,
+    # before that ambiguity can arise.
     unpositioned_solidified = 0
-
-    for node in selected:
-        old_id = node["id"]
-        node_type = node["type"]
-
-        if node_type == "pipelineNode":
-            # Submodule placement: fresh use_id, same child_pipeline_id,
-            # binding copied (the copy's binding becomes independently
-            # editable from here on — nothing special needed, it's just a
-            # normal column value).
-            use = uses_by_id.get(old_id)
-            if use is None:
-                continue  # defensive; shouldn't happen
-            pos = old_positions.get(old_id, {"x": 0.0, "y": 0.0})
-            result = add_pipeline_use(
-                target_pid, use["child_pipeline_id"], dict(use["binding"]),
-                pos["x"] + translation["x"], pos["y"] + translation["y"],
-            )
-            old_to_new[old_id] = result["use_id"]
+    for n in snap.nodes:
+        if n.manual or ids.parse_placement_id(n.node_id) is not None:
             continue
-
-        # Fresh node_id + config copied verbatim. Uses the FULL resolved
-        # graph (not just get_manual_nodes) so already-executed nodes are
-        # copied too — each gets its own node_id and, if its label matches
-        # real DB history, independently graduates to its own placement in
-        # target_pid on the next graph build.
-        label = manual_nodes.get(old_id, {}).get("label") or node.get("data", {}).get("label", "")
-        prefix = prefix_by_type.get(node_type, node_type)
-        new_id = f"{prefix}__{label}__{uuid.uuid4().hex[:8]}"
-        old_to_new[old_id] = new_id
-
-        ps.write_manual_node(db, new_id, node_type, label, target_pid)
-        config = manual_nodes.get(old_id, {}).get("config")
-        if config:
-            ps.update_node_config(db, new_id, config)
-        # Statements about the original (column selections, run options, the
-        # location) are COPIED — as resolved on the source canvas, written at
-        # the target's scope — so the duplicate owns them and configuring
-        # either can never reach the other. The line above copies only the
-        # legacy config column, which never held them.
-        from scistack_gui import intent_store
-
-        intent_store.copy_subject(
-            db, old_id, new_id, src_scope=source_pid, dst_scope=target_pid
-        )
-
-        real_pos = old_positions.get(old_id)
-        pos = real_pos or {"x": 0.0, "y": 0.0}
-        layout_store.write_node_position(
-            new_id, pos["x"] + translation["x"], pos["y"] + translation["y"], pipeline_id=target_pid
-        )
-
-        # old_id may be a BARE canonical id relying on the implicit root
-        # default (never explicitly placed anywhere) rather than an
-        # explicit placement. Once the fresh copy above independently
-        # graduates to its OWN placement in target_pid on the next graph
-        # build, a bare id's "no placement anywhere" fallback and a
-        # "moved away to another scope" state become indistinguishable
-        # from position data alone (domain.scope_filter._resolve_in_scope
-        # can't tell "copied" from "relocated") — the source's implicit
-        # default would silently disappear from its own canvas. Affirm the
-        # source's own explicit placement now, before that ambiguity can
-        # arise.
-        if old_id not in manual_nodes and ids.parse_placement_id(old_id) is None:
-            solidified_id = ids.placement_id(old_id, source_pid)
-            if real_pos is not None:
-                solidify_pos = real_pos
-            else:
-                # No saved position ever existed for old_id — the frontend
-                # (frontend/src/layout.ts) auto-arranges such nodes via
-                # dagre on every load. Writing a REAL saved position is
-                # still required (it's the only way to record "this
-                # canonical node is explicitly claimed by `source_pid`",
-                # avoiding the ambiguity above) but it must not be the
-                # same shared fallback for every node solidified here —
-                # the frontend treats any saved position as authoritative
-                # and stops auto-laying it out, so identical coordinates
-                # collapse every such node onto the same point (nodes
-                # appear to vanish, edges between them render as
-                # zero-length stubs). Spread them out instead.
-                solidify_pos = {
-                    "x": unpositioned_solidified * 60.0,
-                    "y": unpositioned_solidified * 60.0,
-                }
-                unpositioned_solidified += 1
-            logger.info(
-                "[_clone_nodes] solidifying %s -> %s at %r (had_real_pos=%s)",
-                old_id, solidified_id, solidify_pos, real_pos is not None,
-            )
-            layout_store.write_node_position(solidified_id, solidify_pos["x"], solidify_pos["y"], pipeline_id=source_pid)
-
-    # get_pipeline_graph is already scope-resolved (both endpoints belong
-    # to source_pid), so an edge is dropped here only when at least one
-    # endpoint wasn't part of the copied selection.
-    n_edges = 0
-    for e in graph["edges"]:
-        src, tgt = old_to_new.get(e["source"]), old_to_new.get(e["target"])
-        if src is None or tgt is None:
-            continue
-        ps.write_manual_edge(db, {
-            "id": f"edge_{uuid.uuid4().hex[:12]}",
-            "source": src,
-            "target": tgt,
-            "sourceHandle": e.get("sourceHandle"),
-            "targetHandle": e.get("targetHandle"),
-        })
-        n_edges += 1
-
-    # Hides come along. The copy is drawn from the source's VISIBLE graph, so a
-    # hidden history edge is not among the edges above, and once the copied
-    # nodes graduate onto their DB nodes the copy regenerates that history
-    # edge, visibly, because hides are per scope (scidb.log 2026-10-01 23:08:
-    # formulaNum disconnected in main, connected in "main copy 4"). A hide
-    # matches by the connection of its stored endpoints, which ignores
-    # placements, so it applies to the copy's nodes as written. A whole-scope
-    # copy takes every hide; a partial selection only those between two copied
-    # nodes.
-    copied_bare = {ids.strip_placement(n["id"]) for n in selected}
-    n_hides = 0
-    for hide in ps.list_hidden_edges(db, source_pid):
-        within = (
-            ids.strip_placement(hide.get("source") or "") in copied_bare
-            and ids.strip_placement(hide.get("target") or "") in copied_bare
-        )
-        if node_id_set is not None and not within:
-            continue
-        ps.hide_edge(
-            db,
-            hide["edge_id"],
-            hide.get("source") or "",
-            hide.get("target") or "",
-            hide.get("source_handle"),
-            hide.get("target_handle"),
-            target_pid,
-        )
-        n_hides += 1
-    if n_hides:
+        solidified_id = ids.placement_id(n.node_id, source_pid)
+        if n.has_position:
+            solidify_pos = {"x": n.x, "y": n.y}
+        else:
+            # No saved position ever existed — the frontend
+            # (frontend/src/layout.ts) auto-arranges such nodes via dagre on
+            # every load. Writing a REAL saved position is still required
+            # (the only way to record "this canonical node is explicitly
+            # claimed by `source_pid`") but it must not be one shared
+            # fallback for every node solidified here — the frontend treats
+            # any saved position as authoritative, so identical coordinates
+            # collapse every such node onto one point. Spread them out.
+            solidify_pos = {
+                "x": unpositioned_solidified * 60.0,
+                "y": unpositioned_solidified * 60.0,
+            }
+            unpositioned_solidified += 1
         logger.info(
-            "[_clone_nodes] %s -> %s: carried %d hidden edge(s) into the copy",
-            source_pid,
-            target_pid,
-            n_hides,
+            "[_clone_nodes] solidifying %s -> %s at %r (had_real_pos=%s)",
+            n.node_id, solidified_id, solidify_pos, n.has_position,
+        )
+        layout_store.write_node_position(
+            solidified_id, solidify_pos["x"], solidify_pos["y"], pipeline_id=source_pid
         )
 
+    n_edges = sum(1 for e in snap.edges if e.source in old_to_new and e.target in old_to_new)
     return old_to_new, len(old_to_new), n_edges
 
 

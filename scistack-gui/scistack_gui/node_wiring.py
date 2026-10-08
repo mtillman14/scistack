@@ -86,6 +86,10 @@ def _now() -> str:
 #: not undoable, and the conflict check keeps an undo from overwriting them.
 UNDOABLE_TABLES: tuple[str, ...] = ("_node_wiring",)
 
+#: Portability (see ``pipeline_store.PORTABILITY``): which recorded wiring a
+#: node has run as is a fact about run history, so it travels only with it.
+PORTABILITY: dict[str, str] = {"_node_wiring": "history"}
+
 
 def ensure_tables(db) -> None:
     """Create ``_node_wiring`` if absent.
