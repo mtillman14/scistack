@@ -131,31 +131,37 @@ minting). So the fix is ONE owner, not a per-table remap mechanism:
   run-node settings, statements, hides, notes; existing duplicate/paste and
   portability tests still pass; guard test.
 
-## Stage 3: open the project without the GUI, without discovery
+## Stage 3: open the project without the GUI — DONE 2026-10-08, tests pass
 
-Discovery exists because the GUI can't see what a script imports. Export
-and import don't need it:
+**Corrected while building it.** The original claim "export needs no
+discovery" was wrong: the canvas is built with the code registry (function
+signatures give nodes their ports, PathInput history is matched to
+declarations by template, Parameters come from source), so a capture
+without it is not the canvas the user sees. Export runs only the exporter's
+OWN code, so discovering is safe. The safety rule is about IMPORT, which
+must never run a bundle's code before it is trusted, and applying a canvas
+needs no registry.
 
-- Export reads stored state (tables, `layout.json`), builds the wheel from
-  `pyproject.toml`, and copies the entities file. None of that needs to know
-  which functions exist.
-- Import writes stored state, installs the wheel and writes files. Again,
-  no function lookup.
-- Skipping discovery also means **import never runs the bundle's code**.
-  Discovery imports user modules, and that would run code before (or
-  without) the trust prompt.
+- `bootstrap.open_or_create_project(discover=False)`: no registry load, no
+  stubs, no built-in replay, no pipeline seeding; the project root is still
+  resolved and pinned. One "open a project" sequence for the GUI's two entry
+  points and the terminal.
+- `scistack_gui/headless.py`: `open_for_export` (discover) and
+  `open_for_import` (no discovery; may create the database).
+- `portability_service.import_pipeline_document(discovered=False)`: applies
+  the canvas, constants, notes, built-in references, value groups; DEFERS
+  the two registry steps (materialising PathInputs/Sweeps into source,
+  checking labels) and reports them (`deferred`,
+  `unresolved_labels=None`). The explicit flag replaces reading registry
+  globals, which test fixtures do not reset.
+- Tests: `tests/test_headless.py` (a tripwire module proves import-mode
+  open runs no code; export-mode open does; a canvas imports without
+  discovery; HTTP and direct export give the same canvas).
 
-The one step that does need discovery is I15 ("does every canvas node's
-function exist?"). It runs when the GUI opens the imported project, which it
-does anyway, or from the CLI on request (`scistack import --check-code`, after
-the trust prompt).
-
-- `open_project_headless(root)`: opens the db and config only, no discovery.
-- Give `portability_service` the opened project explicitly instead of
-  reading GUI process state (`scistack_gui.db.get_db_path()`,
-  `registry.*`).
-- Test: export from the headless open equals export from a live GUI
-  session; an import test asserts no user module was imported.
+Found for Stage 4: importing a pipeline whose id is `main` into a project
+that already has an (empty) `main` compares contents and FORKS to
+"main (imported)". A whole-project import into a new project must apply
+`main` onto `main` instead.
 
 ## Stage 4: bundle format + options (scidb)
 

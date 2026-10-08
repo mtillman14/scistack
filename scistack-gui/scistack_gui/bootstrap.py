@@ -41,8 +41,17 @@ def open_or_create_project(
     project: Path | None = None,
     init_project_files: bool = True,
     entities_file: "str | Path | None" = None,
+    discover: bool = True,
 ) -> BootstrapResult:
     """Import pipeline code, then open (or create) ``db_path``.
+
+    ``discover=False`` opens the project WITHOUT importing or scanning any
+    code: no registry load, no language stubs, no built-in function replay,
+    no pipeline seeding from source. It is how an import opens the target
+    project (portability Stage 3): applying a canvas needs only the database
+    and the layout file, and an imported bundle's code must not run before
+    the user has trusted it. The project root is still resolved and pinned
+    (``scifor.pathinput.set_project_root``), as discovery would have done.
 
     If ``schema_keys`` is given and ``db_path`` does not exist yet, the
     database is created with those schema keys. Otherwise ``db_path`` must
@@ -123,7 +132,19 @@ def open_or_create_project(
     matlab_variables_loaded = 0
     loaded_config = None
 
-    if project:
+    if not discover:
+        from scifor.pathinput import set_project_root
+
+        from scistack_gui.config import resolve_project_root
+
+        root = resolve_project_root(project, db_path)
+        set_project_root(root)
+        logger.info(
+            "[bootstrap] discover=False: no code imported or scanned; project root "
+            "pinned to %s",
+            root,
+        )
+    elif project:
         from scistack_gui.config import load_config
 
         logger.info("[bootstrap] project mode: loading config from %s", project)
@@ -218,29 +239,30 @@ def open_or_create_project(
         logger.info("[bootstrap] opening existing database %s", db_path)
         db = init_db(db_path)
 
-    try:
-        from scistack_gui.services.builtin_function_service import (
-            replay_persisted_builtins,
-        )
-
-        replay_persisted_builtins(db)
-    except Exception:
-        logger.exception("[bootstrap] failed to restore builtin function references")
-        warnings.append("Failed to restore builtin function references.")
-
-    try:
-        from scistack_gui.pipeline_discovery import discover_and_seed_pipelines
-
-        pipeline_result = discover_and_seed_pipelines(db)
-        if pipeline_result["created"]:
-            logger.info(
-                "[bootstrap] seeded %d pipeline(s) from source: %s",
-                len(pipeline_result["created"]),
-                pipeline_result["created"],
+    if discover:
+        try:
+            from scistack_gui.services.builtin_function_service import (
+                replay_persisted_builtins,
             )
-    except Exception:
-        logger.exception("[bootstrap] failed to discover/seed pipelines from source")
-        warnings.append("Failed to discover pipelines defined in source.")
+
+            replay_persisted_builtins(db)
+        except Exception:
+            logger.exception("[bootstrap] failed to restore builtin function references")
+            warnings.append("Failed to restore builtin function references.")
+
+        try:
+            from scistack_gui.pipeline_discovery import discover_and_seed_pipelines
+
+            pipeline_result = discover_and_seed_pipelines(db)
+            if pipeline_result["created"]:
+                logger.info(
+                    "[bootstrap] seeded %d pipeline(s) from source: %s",
+                    len(pipeline_result["created"]),
+                    pipeline_result["created"],
+                )
+        except Exception:
+            logger.exception("[bootstrap] failed to discover/seed pipelines from source")
+            warnings.append("Failed to discover pipelines defined in source.")
 
     from scidb.log import Log
 

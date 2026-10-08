@@ -154,7 +154,7 @@ Status as of 2026-10-08.
 
 | # | Step | Status | Notes |
 |---|---|---|---|
-| E0 | Open the project without the GUI | 🔧 | No discovery needed (see plan Stage 3). Remove `portability_service`'s dependence on GUI process state (`scistack_gui.db.get_db_path()`, registry lookups). |
+| E0 | Open the project without the GUI | ✅ | `headless.open_for_export`: bootstrap WITH discovery (the canvas needs the registry; the code is the exporter's own) (Stage 3). |
 | E1 | GUI button + CLI command | 🔧 | The GUI handler `export_pipeline` exists for one pipeline plus the ones it uses. No whole-project export, no CLI. |
 | E2 | Pre-export checks | ❌ | Nothing running; disconnected edges settled at export time (`gui-export-to-plain-python.md`). |
 | E3 | One list of what is exported | ✅ | Every GUI table classified canvas / global / history in its owner's `PORTABILITY`; guard `test_every_gui_table_is_classified` (Stage 2). |
@@ -177,7 +177,7 @@ Status as of 2026-10-08.
 
 | # | Step | Status | Notes |
 |---|---|---|---|
-| I0 | Run without the GUI | 🔧 | Same as E0. |
+| I0 | Run without the GUI | ✅ | `headless.open_for_import`: bootstrap with `discover=False`; nothing imports user code (Stage 3). |
 | I1 | GUI button + CLI; new project or current project | 🔧 | The GUI imports into the open database only. |
 | I2 | Check the format version | ✅ | |
 | I3 | Ask the user to trust the bundle's code | ❌ | Must come before anything imports the bundle's code. |
@@ -192,7 +192,7 @@ Status as of 2026-10-08.
 | I12 | Restore the rest of the GUI state, with schema keys remapped | 🔧 | `canvas_snapshot.apply` (Stage 2) ✅; schema-key remap over the snapshot: Stage 6. |
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
 | I14 | Restore history / data | ❌ | New empty project + schema kept only; a verbatim copy. |
-| I15 | Check that every canvas node's code is found | 🔧 | `unresolved_labels` reports but doesn't block. Needs discovery; runs when the GUI opens the project, or on request from the CLI. |
+| I15 | Check that every canvas node's code is found | 🔧 | Needs discovery. A headless import (`discovered=False`) reports it unchecked (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`); the GUI checks on open. |
 | I16 | Same function identity from a wheel and from loose files | ❌ | Unverified; test it. |
 | I17 | Reproduction check | ❌ | Later: `scistack verify` re-runs against the recipient's own copy of the raw files (read, never copied) and compares content hashes with the imported history. |
 | I18 | Import report | 🔧 | A summary dict is returned; needs a report view, including everything the schema remap flagged. |

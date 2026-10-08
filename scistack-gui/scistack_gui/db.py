@@ -584,6 +584,35 @@ def create_db(db_path: Path, schema_keys: list[str]) -> DatabaseManager:
     return _db
 
 
+def close_db() -> "Path | None":
+    """Close the open database and forget it; return its path (or ``None``).
+
+    A GUI process opens one database for its lifetime (one process per
+    database), so it never needs this. A headless caller that opens a second
+    project in the same process does (``headless._open``): opening reads the
+    schema keys through a FRESH DuckDB connection (:func:`read_schema_keys`),
+    which DuckDB refuses while this process still holds one to the same file.
+    """
+    global _db, _db_path, _db_open, _db_refcount, _external_holder
+    with _db_lifecycle_lock:
+        path = _db_path
+        if _db is not None:
+            try:
+                _db.close()
+            except Exception:
+                logger.exception("[db] close_db: closing %s failed", path)
+        _db, _db_path, _db_open = None, None, False
+        _db_refcount, _external_holder = 0, None
+    try:
+        from scidb.database import clear_current_database
+
+        clear_current_database()
+    except Exception:
+        logger.exception("[db] close_db: clearing scidb's current database failed")
+    logger.info("[db] close_db: closed %s", path)
+    return path
+
+
 def is_loaded() -> bool:
     """Whether a database has been opened or created yet (via init_db/create_db)."""
     return _db is not None

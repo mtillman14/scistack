@@ -360,13 +360,21 @@ def _unresolved_labels(snap) -> list[str]:
     return sorted(unresolved)
 
 
-def import_pipeline_document(db, document: dict) -> dict:
+def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> dict:
     """Recreate an exported document in ``db``. Pipeline ids are preserved
     as the portable identity used for reuse/fork decisions — see module
     docstring's "Identity-based reuse"; node/edge/use ids are always fresh
     (``canvas_snapshot.apply``). Returns ``{"ok", "pipeline_id" (the
     resolved root), "reused": {...}, "unresolved_labels": [...],
-    "materialization_errors": [...]}``."""
+    "materialization_errors": [...], "deferred": {...}}``.
+
+    ``discovered=False`` (portability Stage 3: the target was opened with
+    ``bootstrap.open_or_create_project(discover=False)``) skips the two steps
+    that need the code registry -- adding missing PathInputs/Sweeps to the
+    target's source, and checking that every label resolves -- and reports
+    them as ``deferred`` / ``unresolved_labels=None`` instead. Everything else
+    (canvas, constants, notes, built-in references, value groups) needs only
+    the database and the layout file. Nothing here imports user code."""
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store as ps
     from scistack_gui.services import canvas_snapshot
@@ -386,11 +394,14 @@ def import_pipeline_document(db, document: dict) -> dict:
     # as a fallback discovery mechanism, so capturing it AFTER creating
     # nodes would make every freshly-imported constant name look like it
     # "already existed locally".
-    from scistack_gui import registry
-
     local_constant_names = set(layout_store.read_all_constant_names())
-    local_path_input_names = set(registry.get_path_inputs_registry())
-    local_sweep_names = set(registry.get_parameters_registry())
+    if discovered:
+        from scistack_gui import registry
+
+        local_path_input_names = set(registry.get_path_inputs_registry())
+        local_sweep_names = set(registry.get_parameters_registry())
+    else:
+        local_path_input_names, local_sweep_names = set(), set()
 
     # ALL pipelines, hidden included — matches create_pipeline's own
     # uniqueness check, so a name suffix decided here never turns out to
@@ -442,9 +453,13 @@ def import_pipeline_document(db, document: dict) -> dict:
     from scistack_gui.services.path_input_service import create_path_input
 
     materialization_errors: list[dict] = []
+    deferred: dict[str, list[str]] = {"path_inputs": [], "sweeps": []}
 
     reused_path_inputs = []
     for pi in document.get("path_inputs", []):
+        if not discovered:
+            deferred["path_inputs"].append(pi["name"])
+            continue
         if pi["name"] in local_path_input_names:
             reused_path_inputs.append(pi["name"])
             continue
@@ -461,6 +476,9 @@ def import_pipeline_document(db, document: dict) -> dict:
 
     reused_sweeps = []
     for sw in document.get("sweeps", []):
+        if not discovered:
+            deferred["sweeps"].append(sw["name"])
+            continue
         if sw["name"] in local_sweep_names:
             reused_sweeps.append(sw["name"])
             continue
@@ -496,7 +514,14 @@ def import_pipeline_document(db, document: dict) -> dict:
                 db, name, kind=group["kind"], spec=group["spec"], values=group["values"]
             )
 
-    unresolved = _unresolved_labels(snap)
+    unresolved = _unresolved_labels(snap) if discovered else None
+    if not discovered:
+        logger.info(
+            "[portability] import without discovery: deferred %d path input(s), "
+            "%d sweep(s); labels not checked",
+            len(deferred["path_inputs"]),
+            len(deferred["sweeps"]),
+        )
 
     logger.info(
         "[portability] import_pipeline_document: %d pipeline(s) (%d reused), "
@@ -505,7 +530,7 @@ def import_pipeline_document(db, document: dict) -> dict:
         "materialization error(s))",
         len(resolution), len(reused_pipelines), len(old_to_new), new_root_pid,
         len(reused_constants), len(reused_path_inputs), len(reused_sweeps),
-        n_notes, len(unresolved), len(materialization_errors),
+        n_notes, -1 if unresolved is None else len(unresolved), len(materialization_errors),
     )
     return {
         "ok": True,
@@ -518,4 +543,5 @@ def import_pipeline_document(db, document: dict) -> dict:
         },
         "unresolved_labels": unresolved,
         "materialization_errors": materialization_errors,
+        "deferred": deferred,
     }
