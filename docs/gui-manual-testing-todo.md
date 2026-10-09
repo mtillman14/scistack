@@ -11,6 +11,26 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzm. A graduated node without a saved position stays on its canvas — added 2026-10-09
+
+Fix in `domain/scope_filter.resolve_scope_view`: an edge naming a placement
+in this canvas places that node here. Reload the VS Code window.
+
+1. In a project where `RawSignal` (or any variable) has already run, add a
+   source-defined pipeline to your code:
+   `Pipeline("edge check")` plus one `for_each` step reading that variable.
+   Refresh. The new submodule **shows the variable node** wired into the
+   step. It used to show only the step, with the edge pointing at nothing.
+2. Drag that variable node somewhere and reload the window: it stays where
+   you put it.
+3. On the root canvas, a node that was already positioned keeps its position
+   when a twin of it graduates.
+4. `scidb.log`: `[scope_filter] <scope>: placed by their drawn edges ...` on
+   the first view. `... edge(s) point at a node not on this canvas` should
+   NOT appear; if it does, that line names the edge.
+
+---
+
 ## 0zzzl. ✓ verify: your re-run vs the exporter — added 2026-10-09
 
 New: **✓ verify** in the tab strip (beside ⇩ export project). Reload the

@@ -162,13 +162,45 @@ def resolve_scope_view(
             default_to_root=node_id not in unplaced_declared,
         )
 
+    # An edge endpoint naming a placement IN THIS SCOPE (``X::scope``) places
+    # X here. Graduation writes exactly that id into a drawn edge, and a
+    # manual node that had no saved position leaves no other placement record
+    # behind (positions are the membership record, and a position-less manual
+    # node -- pipeline_discovery seeds them -- has none to move). Without this
+    # the edge survived (its endpoint resolves within the scope) while the
+    # node did not: an edge to nothing (test_graph_edge_endpoints, 2026-10-09).
+    edge_placed: set[str] = set()
+    for e in edges:
+        for end in (e["source"], e["target"]):
+            parsed = parse_placement_id(end or "")
+            if parsed is not None and parsed[1] == scope_id:
+                edge_placed.add(end)
+
     id_map: dict[str, str] = {}
     kept_nodes = []
+    placed_by_edge = []
     for n in nodes:
         resolved = _resolve(n["id"])
+        if n["id"] not in manual_nodes and parse_placement_id(n["id"]) is None:
+            placed = placement_id(n["id"], scope_id)
+            if placed in edge_placed and resolved != placed:
+                if resolved is not None and resolved in positions_by_scope.get(scope_id, {}):
+                    # Positioned here under its bare id: the edge names the
+                    # same node by its placed spelling -- map, don't move it
+                    # (moving would orphan its saved position).
+                    id_map[placed] = resolved
+                else:
+                    resolved = placed
+                    placed_by_edge.append(placed)
         if resolved is not None:
             id_map[n["id"]] = resolved
             kept_nodes.append({**n, "id": resolved} if resolved != n["id"] else n)
+    if placed_by_edge:
+        logger.info(
+            "[scope_filter] %s: placed by their drawn edges (no saved position): %s",
+            scope_id,
+            placed_by_edge,
+        )
 
     kept_edges = []
     for e in edges:
@@ -180,6 +212,21 @@ def resolve_scope_view(
                 if (src, tgt) != (e["source"], e["target"])
                 else e
             )
+
+    # Diagnostic: an edge kept with an endpoint no kept node has is drawn by
+    # nothing (the canvas silently loses it). Say so, naming both ends.
+    kept_ids = {n["id"] for n in kept_nodes}
+    dangling = [
+        (e["source"], e["target"]) for e in kept_edges
+        if e["source"] not in kept_ids or e["target"] not in kept_ids
+    ]
+    if dangling:
+        logger.warning(
+            "[scope_filter] %s: %d edge(s) point at a node not on this canvas: %s",
+            scope_id,
+            len(dangling),
+            dangling[:5],
+        )
 
     # A FUNCTION node missing from a scope's view is what "the canvas lost my
     # nodes" looks like (scidb.log 2026-10-01 22:51, a duplicated hypothesis
