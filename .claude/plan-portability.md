@@ -607,47 +607,93 @@ load:
 re-seeds them from the installed library. A missing library is reported by
 the existing env check.
 
-### 10b. Share as library (generator)
+### 10b. Share as library (generator) — DONE 2026-10-08, tests pass
 
-**Owner of the package files:** `scidb/library.py:create_library(dest,
-name, *, modules, variables, pipelines_source, schema_keys, dependencies)`.
-It is a pure file writer, like `scidb.project.init_project`: it refuses a
-non-empty destination and returns a report.
+As built:
+- scidb: `library.create_library` / `entities_text`; `read_library`
+  gained `parameter_defaults` / `path_input_defaults`.
+- GUI: `services/library_share.py`; `library_service.placement_check` /
+  `declare_requirements`.
+- API: `library_placement_check` (replaces `suggest_library_key_map`),
+  `declare_library_requirements`, `share_library_defaults`,
+  `share_as_library`.
+- Front ends: `ShareLibraryButton.tsx`; the drop handler asks to declare;
+  `scistack library create`.
+- Tests: `scistack-gui/tests/test_library_share.py`, a requirements test in
+  `test_libraries.py`, `create_library` tests in
+  `scidb/tests/test_library.py`. GUI §0zzzi.
+- Not done: switching the source project over to the library; glue nodes
+  are refused.
 
-**GUI composition:** `services/library_service.share_as_library(db,
-pipeline_id, dest, name)`:
-- **Functions used:** the submodule's closure (the existing
-  `_closure_pipeline_ids`), Python and MATLAB.
-- **Modules copied verbatim:** each module defining a used function, plus
-  the transitive closure of the project modules it imports (AST).
-  Absolute imports of the project's own package are rewritten to the
-  library's. Anything unresolvable is reported, not guessed.
-- **MATLAB functions:** each `.m` file is copied into
-  `matlab/+<lib>/`, with its project-local helpers (calls to other project
-  `.m` functions it uses, found by the MATLAB parser). Calls between
-  copied functions are package-qualified (`filter_emg(...)` →
-  `<lib>.filter_emg(...)`) wherever the parser can locate them; the rest
-  are reported.
-- **Pipeline document:** `canvas_snapshot.capture` of the submodule, with
-  location selections stripped and function labels rewritten to `lib.fn`. A Parameter becomes a
-  binding default (`params`); a PathInput at the head becomes an input
-  port (a library carries no data layout).
-- **Dependencies:** the project's declared dependencies that the copied
-  modules import.
+User decision 2026-10-08, **Parameters and PathInputs = requirements +
+defaults:**
+- The library's entities file declares the Parameters and PathInputs its
+  pipeline uses, with the exporter's values / templates as DEFAULTS.
+  PathInputs carry no `root_folder`: that is the project's data layout.
+- They are never registered into a project (Stage 5 rule).
+- Runs resolve those nodes by name in the PROJECT's registry. So placing a
+  library pipeline lists the ones the project lacks, and offers "Declare
+  from library defaults", which writes them into the project's own entities
+  file (`parameter_service.create_parameter` /
+  `path_input_service.create_path_input`). Nothing new at run time.
 
-**Afterwards (optional, asked):**
-- "Switch this project to the library": once it is installed and listed,
-  the submodule's placements are replaced by the library pipeline.
-- The project's own copies of the functions stay (never delete), and the
-  report lists them.
-- Recorded names become `lib.fn`, so those steps show as not run until
-  re-run. Said in the dialog.
+**Owner of the package files:** `scidb.library.create_library(dest, name, *,
+files, documents, variables, parameters, path_inputs, schema_keys,
+dependencies)`. It is a pure writer:
+- writes `pyproject.toml` (hatchling, like `scidb.project`), the copied
+  code, the `pipelines/*.json` documents and the entities file with its
+  `[library]` table;
+- refuses a non-empty destination or an invalid name.
+
+**GUI composition:** `services/library_share.share_as_library(db,
+pipeline_id, dest, name)`.
+- **Closure:** the closure (`_closure_pipeline_ids`) is captured
+  (`canvas_snapshot.capture`). A library-owned pipeline inside it is
+  refused: another library's pipeline cannot be re-shipped.
+- **Python functions:**
+  - Each function label resolves through the registry.
+  - Another library's function, or a built-in library reference like
+    `pandas.read_csv`, keeps its label and becomes a dependency.
+  - The project's own function is copied with its module. The project-local
+    modules it imports are copied too (transitively, by AST). Own package
+    `pkg.a.b` → `<lib>/a/b.py`; a loose module `m` → `<lib>/m.py`.
+  - Imports are rewritten (`pkg.` → `<lib>.`; `import m` →
+    `from <lib> import m`).
+  - An unresolvable function is refused.
+- **MATLAB functions:**
+  - Each `.m` file goes to `matlab/+<lib>/` (a `+a/+b/` package keeps its
+    nesting under `+<lib>`), with the project-local helpers it calls
+    (found by name, transitively).
+  - Calls and `@handles` to copied functions are qualified as `<lib>.fn`.
+    Lines that are comments are left alone; anything unparseable is
+    reported.
+- **The document:**
+  - Function labels become `lib.fn`.
+  - Location selections (`schemaSelection`) are stripped; levels are kept.
+  - Variables come from the variable nodes. Parameters and PathInputs
+    (from the parameter and PathInput nodes) are written with their
+    registry values / templates as defaults.
+- **Schema keys:** the project's.
+- **Dependencies:** the distributions of the third-party modules the copied
+  Python imports (`importlib.metadata.packages_distributions`, stdlib
+  excluded), plus other libraries used.
+- **Report:** files, rewritten imports and calls, requirements, anything
+  refused or unresolved, and the install command
+  (`<python> -m pip install -e <dest>`).
+
+**Placing requirements:** `library_service.placement_check(db,
+pipeline_id)` = the key map suggestion plus the missing Parameters /
+PathInputs with their library defaults. `declare_library_requirements`
+writes the chosen ones. The drop handler asks before placing.
 
 **Front ends:**
-- CLI: `scistack library create --from-submodule NAME --into DIR
-  [--name LIB]`.
-- GUI: a submodule tab's menu → "Share as library…" (folder, name) →
-  report + install command.
+- CLI: `scistack library create --from-submodule NAME --into DIR [--name
+  LIB] [--db]` opens the project WITH discovery, like export.
+- GUI: a ⇪ button on a submodule row → a popover (library name, folder;
+  defaults from the `share_library_defaults` RPC) → the report.
+
+**Deferred to the end of 10b:** "switch this project to the library".
+
 
 ### 10c. Make my own copy
 

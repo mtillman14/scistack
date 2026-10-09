@@ -11,6 +11,41 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzi. Share a submodule as a library — added 2026-10-08
+
+New: a ⇪ button on each submodule row, plus placing a library pipeline now
+offers to declare the Parameters / PathInputs it needs. Both frontend
+bundles are rebuilt; reload the VS Code window.
+
+1. **Share:** on a submodule that uses one Python function, one MATLAB
+   function (one that calls another of your MATLAB functions), a Parameter
+   and a PathInput, press **⇪**.
+   - The suggested name comes from the submodule's name; the folder is
+     beside the project.
+   - Press Share. The report lists the functions as `lib.fn`, the defaults
+     shipped (your Parameter and PathInput), dependencies and warnings, and
+     ends with a `pip install -e` command.
+2. **Look at the folder:**
+   - `src/<lib>/` holds your Python module(s) with imports of your package
+     rewritten to `<lib>.`;
+   - `matlab/+<lib>/` holds both `.m` files, with the helper call written
+     `<lib>.helper(` and the `function` line unchanged;
+   - `pipelines/<name>.json` and `scistack_entities.toml` (Parameter value,
+     PathInput template WITHOUT your root folder, `[library] schema_keys`).
+3. **Refusals:** sharing into a non-empty folder, or with a name like
+   `json`, shows an error and writes nothing.
+4. **Use it elsewhere:** in a second project, run the install command, then
+   Libraries → **+** → the library name. Drag its pipeline onto the canvas.
+   You are asked to declare the Parameter and PathInput from the library's
+   defaults. Say yes: they appear in the sidebar, and the PathInput has no
+   root folder yet (set yours).
+5. Terminal: `scistack library create --from-submodule NAME --into DIR
+   [--name LIB]` produces the same folder.
+6. `scidb.log`: `[library_share] shared ...` with counts and
+   `[library_service] placement_check ...`.
+
+---
+
 ## 0zzzh. Libraries: list, place read-only, re-sync — added 2026-10-08
 
 New: a **Libraries** group at the bottom of the Submodules category, and

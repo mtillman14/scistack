@@ -605,13 +605,24 @@ export default function PipelineDAG() {
       // the Stage 6 owner), stored as the placement's binding.
       const bindingFor = async (): Promise<Record<string, unknown> | null> => {
         if (!library) return null
-        const s = await callBackend('suggest_library_key_map', { pipeline_id }) as {
+        const s = await callBackend('library_placement_check', { pipeline_id }) as {
           key_map: Record<string, string>; unmapped: string[]; library_keys: string[] | null
+          missing_parameters: { name: string }[]; missing_path_inputs: { name: string }[]
         }
         if (s.unmapped.length > 0 && !window.confirm(
           `'${name}' (library ${library}) iterates over ${s.unmapped.join(', ')}, which `
           + `your schema does not have. Place it anyway?`
         )) throw new Error('cancelled')
+        // Parameters / PathInputs resolve by name in THIS project: offer to
+        // declare the missing ones from the library's defaults.
+        const missing = [...s.missing_parameters, ...s.missing_path_inputs].map(m => m.name)
+        if (missing.length > 0 && window.confirm(
+          `'${name}' uses ${missing.join(', ')}, which this project does not declare. `
+          + `Declare them now from the library's defaults? (You can edit them afterwards; `
+          + `a PathInput's folder is yours to set.)`
+        )) {
+          await callBackend('declare_library_requirements', { pipeline_id, names: null })
+        }
         return Object.keys(s.key_map).length > 0 ? { key_map: s.key_map } : null
       }
       bindingFor()

@@ -29,6 +29,7 @@ import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from './sourceLocation'
 import LibrariesSection from './LibrariesSection'
+import ShareLibraryButton from './ShareLibraryButton'
 
 interface LoadError {
   source: string
@@ -630,6 +631,7 @@ export default function EditTab() {
                   <span style={{ flex: 1 }}>⧉ {p.name}</span>
                   {p.pipeline_id !== 'main' && (
                     <>
+                      <ShareLibraryButton pipelineId={p.pipeline_id} />
                       <button
                         style={styles.rowBtn}
                         title="Rename pipeline"

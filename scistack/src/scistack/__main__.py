@@ -6,7 +6,7 @@ Usage:
     scistack export [OUT] [--db DB] [--data] [--no-history]
     scistack import BUNDLE [--into DIR] [--schema ...] [--map OLD=NEW] ...
     scistack bundle-info BUNDLE
-    scistack library [list | add NAME | remove NAME]
+    scistack library [list | add NAME | remove NAME | create --from-submodule S --into DIR]
     scistack db <command> ...      # alias for the ``scidb`` CLI
 
 ``init`` is a thin front end over ``scidb.project.init_project``, the one

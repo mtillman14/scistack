@@ -411,3 +411,45 @@ def test_a_bundle_carries_library_pipelines_by_reference(library, tmp_path):
     owner = ps.library_owner(new, pid)
     assert owner is not None and owner["definition_hash"] == ""  # empty until synced
     assert pid in {u["child_pipeline_id"] for u in ps.get_pipeline_uses(new, "main")}
+
+
+def test_placing_lists_missing_requirements_and_declares_them_from_defaults(library, monkeypatch):
+    """A Parameter / PathInput the library pipeline uses but the project
+    does not declare is listed with the library's default; declaring writes
+    it through the sidebar's own services (a PathInput without a root)."""
+    from scistack_gui.services import library_service
+    from scistack_gui.services.library_service import placement_check, sync_libraries
+
+    lib_root, _, src = library
+    db = get_db()
+    ps.write_manual_node(db, "param__LIB_ONLY_T10__x1", "parameterNode", "LIB_ONLY_T10", src)
+    ps.write_manual_node(db, "pathInput__LibRaw_T10__x2", "pathInputNode", "LibRaw_T10", src)
+    _write_library(lib_root, {"preprocessing": _document(db, src)}, schema_keys=["participant", "session"])
+    ent = lib_root / LIB / "scistack_entities.toml"
+    ent.write_text(ent.read_text().replace(
+        "\n[library]",
+        '\n[parameters]\nLIB_ONLY_T10 = [3, 4]\n\n[path_inputs]\nLibRaw_T10 = ["{subject}/a.csv", "{subject}/b.csv"]\n\n[library]',
+    ))
+    sync_libraries(db)
+    pid = _root(_document(db, src))
+
+    check = placement_check(db, pid)
+    assert check["missing_parameters"] == [{"name": "LIB_ONLY_T10", "default": [3, 4]}]
+    assert check["missing_path_inputs"] == [
+        {"name": "LibRaw_T10", "default": ["{subject}/a.csv", "{subject}/b.csv"]}
+    ]
+
+    calls = []
+    monkeypatch.setattr(
+        "scistack_gui.services.parameter_service.create_parameter",
+        lambda name, values, *a, **k: calls.append(("param", name, values)) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        "scistack_gui.services.path_input_service.create_path_input",
+        lambda name, template, root, alts=None: calls.append(("pi", name, template, root, alts)) or {"ok": True},
+    )
+    out = library_service.declare_requirements(db, pid)
+    assert out == {"ok": True, "declared": ["LIB_ONLY_T10", "LibRaw_T10"], "failed": []}
+    assert ("param", "LIB_ONLY_T10", [3, 4]) in calls
+    assert ("pi", "LibRaw_T10", "{subject}/a.csv", None,
+            [{"template": "{subject}/b.csv", "root_folder": None}]) in calls

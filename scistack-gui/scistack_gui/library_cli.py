@@ -1,5 +1,5 @@
 """
-``scistack library list | add NAME | remove NAME``: the project's libraries
+``scistack library list | add NAME | remove NAME | create``: the project's libraries
 from the terminal (portability Stage 10a).
 
 The same owners as the GUI's Libraries list: ``config.add_package`` /
@@ -32,6 +32,15 @@ def add_library_subparsers(sub: argparse._SubParsersAction) -> None:
     add.add_argument("name", help="Its import name (e.g. gait_tools).")
     rm = cmds.add_parser("remove", help="Unlist a library (its pipelines stay on your canvases).")
     rm.add_argument("name")
+    create = cmds.add_parser(
+        "create",
+        help="Share a submodule as a new library package (code, pipeline, declarations).",
+    )
+    create.add_argument("--from-submodule", required=True, metavar="NAME_OR_ID",
+                        help="The submodule's name (or pipeline id when names repeat).")
+    create.add_argument("--into", required=True, type=Path, help="New, empty folder for the library.")
+    create.add_argument("--name", default=None, help="Library (import) name; default from the submodule's name.")
+    create.add_argument("--db", default=None, help="Project database (default: as scistack export finds it).")
     lib.set_defaults(_library_cmd=dispatch)
 
 
@@ -65,11 +74,63 @@ def _describe(project: Path) -> list[dict]:
     return out
 
 
+def _create(args: argparse.Namespace) -> dict:
+    """Open the project WITH discovery (the generator needs the registry,
+    as export does) and share the submodule."""
+    from scidb.inspect.cli import CLIError, resolve_db_path
+
+    from scistack_gui import pipeline_store as ps
+    from scistack_gui.headless import open_for_export
+    from scistack_gui.services.library_share import share_as_library, share_defaults
+
+    try:
+        db_path, _ = resolve_db_path(args.db)
+    except CLIError as e:
+        raise ValueError(str(e)) from e
+    db = open_for_export(db_path, project=args.project)
+    wanted = args.from_submodule
+    matches = [p for p in ps.list_all_pipelines(db) if wanted in (p["pipeline_id"], p["name"])]
+    if not matches:
+        raise ValueError(f"no submodule named {wanted!r}")
+    if len(matches) > 1:
+        raise ValueError(
+            f"{len(matches)} pipelines are named {wanted!r}; pass one of their ids: "
+            f"{[m['pipeline_id'] for m in matches]}"
+        )
+    pid = matches[0]["pipeline_id"]
+    name = args.name or share_defaults(db, pid)["name"]
+    return share_as_library(db, pid, args.into, name).to_dict()
+
+
 def dispatch(args: argparse.Namespace) -> int:
     from scistack_gui.config import add_package, remove_package
 
     project = (args.project or Path.cwd()).resolve()
     cmd = getattr(args, "library_command", None) or "list"
+    if cmd == "create":
+        try:
+            report = _create(args)
+        except (ValueError, OSError) as e:
+            if args.json:
+                print(json.dumps({"ok": False, "error": str(e)}))
+            else:
+                print(f"Error: {e}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps({"ok": True, "report": report}))
+            return 0
+        print(f"shared '{report['pipeline']}' as library {report['library']} at {report['dest']}")
+        print(f"  functions: {', '.join(report['functions'].values()) or '-'}")
+        for label in report["kept_labels"]:
+            print(f"  from another library: {label}")
+        for n in report["parameters"] + report["path_inputs"]:
+            print(f"  default for: {n}")
+        if report["dependencies"]:
+            print(f"  depends on: {', '.join(report['dependencies'])}")
+        for w in report["warnings"]:
+            print(f"  warning: {w}", file=sys.stderr)
+        print(f"install: {report['install']}")
+        return 0
     try:
         if cmd == "add":
             add_package(None, args.name, project=project)

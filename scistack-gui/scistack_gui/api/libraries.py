@@ -3,14 +3,17 @@ Libraries: list, add, remove, sync, and placing their pipelines
 (portability Stage 10a) -- the handler table for both transports.
 
     GET    /api/libraries                 list_libraries
-    GET    /api/libraries/key-map         suggest_library_key_map
+    GET    /api/libraries/placement-check library_placement_check -- key map + missing Parameters/PathInputs
+    POST   /api/libraries/declare         declare_library_requirements -- from the library's defaults
+    GET    /api/libraries/share-defaults  share_library_defaults
+    POST   /api/libraries/share           share_as_library -- a submodule -> a new library package
     POST   /api/libraries                 add_library     -- lists it in scistack.toml packages
     DELETE /api/libraries                 remove_library  -- unlists it (seeded pipelines stay)
     POST   /api/libraries/sync            sync_libraries  -- seed / re-sync now
 
 A library's pipeline is placed with the ordinary ``add_pipeline_use``
 (``api/scopes.py``), its binding's ``key_map`` taken from
-``suggest_library_key_map``. Nothing here installs anything: a listed name
+``library_placement_check``. Nothing here installs anything: a listed name
 that is not importable is reported with what to do.
 """
 
@@ -42,10 +45,45 @@ def _list_libraries(db) -> dict:
     return {"libraries": list_libraries(db)}
 
 
-def _suggest_key_map(db, req: LibraryPipelineRef) -> dict:
-    from scistack_gui.services.library_service import suggest_key_map
+class DeclareRequirements(BaseModel):
+    pipeline_id: str
+    #: None = every missing one.
+    names: list[str] | None = None
 
-    return suggest_key_map(db, req.pipeline_id)
+
+class ShareRequest(BaseModel):
+    pipeline_id: str
+    dest: str
+    name: str
+
+
+def _placement_check(db, req: LibraryPipelineRef) -> dict:
+    from scistack_gui.services.library_service import placement_check
+
+    return placement_check(db, req.pipeline_id)
+
+
+def _declare_requirements(db, req: DeclareRequirements) -> dict:
+    from scistack_gui.services.library_service import declare_requirements
+
+    return declare_requirements(db, req.pipeline_id, req.names)
+
+
+def _share_defaults(db, req: LibraryPipelineRef) -> dict:
+    from scistack_gui.services.library_share import share_defaults
+
+    return share_defaults(db, req.pipeline_id)
+
+
+def _share_as_library(db, req: ShareRequest) -> dict:
+    from pathlib import Path
+
+    from scistack_gui.services.library_share import share_as_library
+
+    dest = Path(req.dest).expanduser()
+    if not dest.is_absolute():
+        raise ValueError(f"the library folder must be an absolute path, got {req.dest!r}")
+    return share_as_library(db, req.pipeline_id, dest, req.name.strip()).to_dict()
 
 
 def _reload_and_sync(db) -> dict:
@@ -108,7 +146,10 @@ _BAD_REQUEST = {ValueError: 400, FileNotFoundError: 400}
 
 LIBRARY_HANDLERS: tuple[Handler, ...] = (
     Handler("list_libraries", "/libraries", None, _list_libraries, http_method="GET"),
-    Handler("suggest_library_key_map", "/libraries/key-map", LibraryPipelineRef, _suggest_key_map, http_method="GET", http_errors=_BAD_REQUEST),
+    Handler("library_placement_check", "/libraries/placement-check", LibraryPipelineRef, _placement_check, http_method="GET", http_errors=_BAD_REQUEST),
+    Handler("declare_library_requirements", "/libraries/declare", DeclareRequirements, _declare_requirements, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="declare library defaults"),
+    Handler("share_library_defaults", "/libraries/share-defaults", LibraryPipelineRef, _share_defaults, http_method="GET", http_errors=_BAD_REQUEST),
+    Handler("share_as_library", "/libraries/share", ShareRequest, _share_as_library, http_errors=_BAD_REQUEST, undoable=False),
     Handler("add_library", "/libraries", LibraryName, _add_library, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="add library"),
     Handler("remove_library", "/libraries", LibraryName, _remove_library, http_method="DELETE", body=False, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="remove library"),
     Handler("sync_libraries", "/libraries/sync", None, _sync_libraries, notify_dag_updated=True, undoable=False),

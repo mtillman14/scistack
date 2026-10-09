@@ -210,3 +210,104 @@ def suggest_key_map(db, pipeline_id: str) -> dict:
         "key_map": {k: v for k, v in mapping.items() if v is not None and v != k},
         "unmapped": sorted(k for k, v in mapping.items() if v is None),
     }
+
+
+def _requirements(db, pipeline_id: str) -> "tuple[dict, set[str], set[str]]":
+    """``(owner, parameter names, PathInput names)`` the library pipeline
+    *pipeline_id* (and the library pipelines it places) refers to. Read from
+    the seeded canvas: the nodes are the requirements."""
+    from scistack_gui import pipeline_store as ps
+
+    owner = ps.library_owner(db, pipeline_id)
+    if owner is None:
+        raise ValueError(f"{pipeline_id} is not a library pipeline")
+    todo, seen = [pipeline_id], set()
+    params: set[str] = set()
+    pis: set[str] = set()
+    while todo:
+        pid = todo.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        for meta in ps.get_manual_nodes(db, pid).values():
+            if meta["type"] == "parameterNode":
+                params.add(meta["label"])
+            elif meta["type"] == "pathInputNode":
+                pis.add(meta["label"])
+        todo += [u["child_pipeline_id"] for u in ps.get_pipeline_uses(db, pid)]
+    return owner, params, pis
+
+
+def placement_check(db, pipeline_id: str) -> dict:
+    """Everything placing library pipeline *pipeline_id* needs to ask: the
+    suggested key map (:func:`suggest_key_map`) and the Parameters /
+    PathInputs it uses that this project does not declare, with the
+    library's DEFAULTS (portability Stage 10b: the project declares its own;
+    runs resolve those nodes by name in the project's registry)."""
+    from scidb.library import read_library
+
+    from scistack_gui import registry
+
+    owner, params, pis = _requirements(db, pipeline_id)
+    info = read_library(owner["library"])
+    have_params = set(registry.get_parameters_registry())
+    have_pis = set(registry.get_path_inputs_registry())
+    missing_params = [
+        {"name": n, "default": info.parameter_defaults.get(n, [])}
+        for n in sorted(params - have_params)
+    ]
+    missing_pis = [
+        {"name": n, "default": info.path_input_defaults.get(n, [""])}
+        for n in sorted(pis - have_pis)
+    ]
+    out = {
+        **suggest_key_map(db, pipeline_id),
+        "library": owner["library"],
+        "missing_parameters": missing_params,
+        "missing_path_inputs": missing_pis,
+    }
+    logger.info(
+        "[library_service] placement_check %s (%s): missing parameters %s, path inputs %s",
+        pipeline_id,
+        owner["library"],
+        [p["name"] for p in missing_params],
+        [p["name"] for p in missing_pis],
+    )
+    return out
+
+
+def declare_requirements(db, pipeline_id: str, names: "list[str] | None" = None) -> dict:
+    """Write the library's defaults for the Parameters / PathInputs the
+    project lacks (all of them, or just *names*) into the PROJECT's own
+    entities file, through the same services the sidebar's "+" uses. A
+    PathInput gets the library's template(s) and no root folder: where the
+    raw files are is the project's to say."""
+    from scistack_gui.services.parameter_service import create_parameter
+    from scistack_gui.services.path_input_service import create_path_input
+
+    check = placement_check(db, pipeline_id)
+    wanted = None if names is None else set(names)
+    declared, failed = [], []
+    for p in check["missing_parameters"]:
+        if wanted is not None and p["name"] not in wanted:
+            continue
+        result = create_parameter(p["name"], list(p["default"]))
+        (declared if result.get("ok", True) else failed).append(
+            p["name"] if result.get("ok", True) else {"name": p["name"], "error": result.get("error")}
+        )
+    for p in check["missing_path_inputs"]:
+        if wanted is not None and p["name"] not in wanted:
+            continue
+        templates = list(p["default"]) or [""]
+        result = create_path_input(
+            p["name"], templates[0], None,
+            [{"template": t, "root_folder": None} for t in templates[1:]] or None,
+        )
+        (declared if result.get("ok", True) else failed).append(
+            p["name"] if result.get("ok", True) else {"name": p["name"], "error": result.get("error")}
+        )
+    logger.info(
+        "[library_service] declare_requirements %s: declared %s, failed %s",
+        pipeline_id, declared, failed,
+    )
+    return {"ok": not failed, "declared": declared, "failed": failed}

@@ -64,6 +64,10 @@ class LibraryInfo:
     pipelines: list[LibraryPipeline] = field(default_factory=list)
     #: The folder to put on the MATLAB path (holds ``+<lib>/``), or ``None``.
     matlab_dir: "Path | None" = None
+    #: Parameters its pipelines need, with DEFAULT values (never registered).
+    parameter_defaults: dict = field(default_factory=dict)
+    #: PathInputs its pipelines need, with DEFAULT templates (never registered).
+    path_input_defaults: dict = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
 
@@ -158,6 +162,22 @@ def matlab_dir(package: str) -> "Path | None":
     return None
 
 
+def _defaults(data: dict) -> "tuple[dict, dict]":
+    """The raw Parameter values and PathInput templates a library's entities
+    file declares -- read as DATA, never constructed (they are defaults a
+    project may copy, portability Stage 10b)."""
+    from .entities import PARAMETERS, PATH_INPUTS
+
+    params = {}
+    for name, raw in (data.get(PARAMETERS) or {}).items():
+        params[name] = list(raw) if isinstance(raw, list) else [raw]
+    pis = {}
+    for name, raw in (data.get(PATH_INPUTS) or {}).items():
+        arms = raw if isinstance(raw, list) else [raw]
+        pis[name] = [a if isinstance(a, str) else str(a.get("template", "")) for a in arms]
+    return params, pis
+
+
 def read_library(package: str) -> LibraryInfo:
     """Everything *package* offers as a library. A broken document or table
     is recorded in ``errors`` and skipped, never raised: one bad file must
@@ -181,8 +201,10 @@ def read_library(package: str) -> LibraryInfo:
         except ModuleNotFoundError:  # pragma: no cover - Python 3.10
             import tomli as tomllib
         try:
-            keys, errors = parse_library_table(tomllib.loads(entities.read_text("utf-8")))
+            data = tomllib.loads(entities.read_text("utf-8"))
+            keys, errors = parse_library_table(data)
             info.schema_keys = keys
+            info.parameter_defaults, info.path_input_defaults = _defaults(data)
             info.errors += [f"{DEFAULT_ENTITIES_FILENAME}: {e}" for e in errors]
         except Exception as e:  # invalid TOML: reported, never fatal
             info.errors.append(f"{DEFAULT_ENTITIES_FILENAME}: {e}")
@@ -218,3 +240,154 @@ def read_library(package: str) -> LibraryInfo:
     for e in info.errors:
         Log.warn(f"[library] {package}: {e}")
     return info
+
+
+# ---------------------------------------------------------------------------
+# Writing a new library (Share as library, portability Stage 10b)
+# ---------------------------------------------------------------------------
+
+_LIB_PYPROJECT = """\
+[project]
+name = "{name}"
+version = "{version}"
+description = "A SciStack library: shared pipelines and the code they run."
+requires-python = ">=3.10"
+dependencies = [
+{dependencies}]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{name}"]
+"""
+
+_LIB_INIT = '''"""{name}: a SciStack library.
+
+Its shared pipelines are in pipelines/ (one document each), its Variables
+and the Parameters / PathInputs its pipelines need (with defaults) in
+scistack_entities.toml, and its MATLAB functions, if any, in
+matlab/+{name}/. List it under `packages` in a project's scistack.toml to
+use it there.
+"""
+'''
+
+
+@dataclass
+class CreateReport:
+    root: Path
+    package: str
+    created: list[Path] = field(default_factory=list)
+
+
+def entities_text(
+    variables: list[str],
+    parameters: "dict[str, list]",
+    path_inputs: "dict[str, list[str]]",
+    schema_keys: "list[str] | None",
+) -> str:
+    """A library's entities file: its Variables, the Parameters / PathInputs
+    its pipelines need WITH DEFAULTS (never registered into a project:
+    portability Stage 5), and the ``[library]`` table. PathInputs carry
+    templates only -- a root folder is one project's data layout."""
+    from .entities import (
+        LIBRARY,
+        PARAMETERS,
+        PATH_INPUTS,
+        VARIABLES,
+        render_parameter_value,
+        render_path_input_value,
+        render_value,
+    )
+
+    lines = [
+        "# Declared by a SciStack library. Parameters and PathInputs here are",
+        "# DEFAULTS a project may copy into its own entities file; they are",
+        "# never registered into a project from here.",
+        f"{VARIABLES} = {render_value(sorted(set(variables)))}",
+        "",
+        f"[{PARAMETERS}]",
+    ]
+    for name in sorted(parameters):
+        lines.append(f"{name} = {render_parameter_value(list(parameters[name]))}")
+    lines += ["", f"[{PATH_INPUTS}]"]
+    for name in sorted(path_inputs):
+        templates = list(path_inputs[name]) or [""]
+        lines.append(
+            f"{name} = "
+            + render_path_input_value(templates[0], None, [{"template": t} for t in templates[1:]])
+        )
+    lines += ["", f"[{LIBRARY}]"]
+    if schema_keys:
+        lines.append(f"schema_keys = {render_value(list(schema_keys))}")
+    return "\n".join(lines) + "\n"
+
+
+def create_library(
+    dest: "Path | str",
+    name: str,
+    *,
+    files: "dict[str, bytes]",
+    documents: "list[dict]",
+    variables: "list[str]" = (),
+    parameters: "dict[str, list] | None" = None,
+    path_inputs: "dict[str, list[str]] | None" = None,
+    schema_keys: "list[str] | None" = None,
+    dependencies: "list[str]" = (),
+    version: str = "0.1.0",
+) -> CreateReport:
+    """Write a new library package at *dest* -- the one owner of its layout.
+
+    *files* are the package's code, keyed by path INSIDE the package
+    (``"filters.py"``, ``"matlab/+lib/lowpass.m"``); *documents* the pipeline
+    documents (:func:`make_document`). An ``__init__.py`` is written when
+    *files* has none. Refuses a non-empty *dest* (never overwrites) and an
+    invalid *name*; a path in *files* that would leave the package is
+    refused too."""
+    from .entities import DEFAULT_ENTITIES_FILENAME
+    from .project import validate_project_name
+
+    validate_project_name(name)
+    dest = Path(dest).resolve()
+    if dest.exists() and any(dest.iterdir()):
+        raise LibraryError(f"{dest} is not empty; choose a new or empty folder")
+    for doc in documents:
+        problems = validate_document(doc)
+        if problems:
+            raise LibraryError(f"pipeline document {doc.get('name')!r}: {'; '.join(problems)}")
+    names = [d["name"] for d in documents]
+    if len(set(names)) != len(names):
+        raise LibraryError(f"two pipeline documents share a name: {names}")
+
+    pkg = dest / "src" / name
+    report = CreateReport(root=dest, package=name)
+
+    def write(path: Path, data: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        report.created.append(path)
+
+    deps = "".join(f'    "{d}",\n' for d in sorted(set(dependencies)))
+    write(dest / "pyproject.toml",
+          _LIB_PYPROJECT.format(name=name, version=version, dependencies=deps).encode())
+    for rel, data in sorted(files.items()):
+        parts = rel.replace("\\", "/").split("/")
+        if rel.startswith("/") or ".." in parts or (len(rel) > 1 and rel[1] == ":"):
+            raise LibraryError(f"unsafe path for a library file: {rel!r}")
+        write(pkg / rel, data)
+    if "__init__.py" not in files:
+        write(pkg / "__init__.py", _LIB_INIT.format(name=name).encode())
+    for doc in documents:
+        write(pkg / PIPELINES_DIR / f"{doc['name']}.json", document_bytes(doc))
+    write(
+        pkg / DEFAULT_ENTITIES_FILENAME,
+        entities_text(list(variables), parameters or {}, path_inputs or {}, schema_keys).encode(),
+    )
+    Log.info(
+        f"[library] create_library {name} at {dest}: {len(report.created)} file(s), "
+        f"{len(documents)} pipeline(s), {len(list(variables))} variable(s), "
+        f"{len(parameters or {})} parameter default(s), {len(path_inputs or {})} PathInput "
+        f"default(s), deps {sorted(set(dependencies))}"
+    )
+    return report

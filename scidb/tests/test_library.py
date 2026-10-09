@@ -163,3 +163,66 @@ def test_a_config_write_is_seen_by_the_next_read(tmp_path):
         clear_project_root()
         schema_order.clear_cache()
         names.clear_cache()
+
+
+# --- writing a library (Stage 10b) -------------------------------------------
+
+
+def test_create_library_writes_the_layout_and_reads_back(tmp_path, monkeypatch):
+    from scidb.library import create_library
+
+    dest = tmp_path / "newlib"
+    report = create_library(
+        dest, "scidb_newlib_t10b",
+        files={"filters.py": b"def f(x):\n    return x\n",
+               "matlab/+scidb_newlib_t10b/lowpass.m": b"function y = lowpass(x)\ny = x;\nend\n"},
+        documents=[_doc("pre")],
+        variables=["B", "A", "A"],
+        parameters={"CUTOFF": [20], "WINDOWS": [1, 2]},
+        path_inputs={"Raw": ["{subject}/a.csv", "{subject}/b.csv"]},
+        schema_keys=["subject"],
+        dependencies=["numpy", "numpy"],
+    )
+    pkg = dest / "src" / "scidb_newlib_t10b"
+    assert (pkg / "__init__.py").is_file() and (pkg / "filters.py").is_file()
+    assert 'packages = ["src/scidb_newlib_t10b"]' in (dest / "pyproject.toml").read_text()
+    assert (dest / "pyproject.toml").read_text().count('"numpy"') == 1
+    assert len(report.created) == 6
+
+    monkeypatch.syspath_prepend(str(dest / "src"))
+    importlib.invalidate_caches()
+    try:
+        info = read_library("scidb_newlib_t10b")
+        assert info.schema_keys == ["subject"]
+        assert [p.name for p in info.pipelines] == ["pre"]
+        assert info.parameter_defaults == {"CUTOFF": [20], "WINDOWS": [1, 2]}
+        assert info.path_input_defaults == {"Raw": ["{subject}/a.csv", "{subject}/b.csv"]}
+        assert info.matlab_dir == pkg / "matlab"
+        assert info.errors == []
+    finally:
+        sys.modules.pop("scidb_newlib_t10b", None)
+
+
+def test_the_library_entities_file_parses_with_the_project_grammar(tmp_path):
+    path = tmp_path / "scistack_entities.toml"
+    path.write_text(library.entities_text(["VarT10bEnt"], {"P": [1]}, {"Raw": ["{subject}.csv"]}, ["subject"]))
+    loaded = entities.load(path)
+    assert loaded.errors == []
+    assert loaded.library_schema_keys == ["subject"]
+    assert set(loaded.parameters) == {"P"} and set(loaded.path_inputs) == {"Raw"}
+
+
+def test_create_library_refuses(tmp_path):
+    from scidb.library import create_library
+
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / "x").write_text("")
+    with pytest.raises(LibraryError, match="not empty"):
+        create_library(full, "okname", files={}, documents=[])
+    with pytest.raises(ValueError, match="Invalid project name"):
+        create_library(tmp_path / "a", "Bad-Name", files={}, documents=[])
+    with pytest.raises(LibraryError, match="unsafe"):
+        create_library(tmp_path / "b", "okname", files={"../evil.py": b""}, documents=[])
+    with pytest.raises(LibraryError, match="share a name"):
+        create_library(tmp_path / "c", "okname", files={}, documents=[_doc("x"), _doc("x")])
