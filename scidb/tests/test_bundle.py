@@ -554,3 +554,15 @@ def test_the_import_report_is_json(project, tmp_path):
     assert d["root"] == str((tmp_path / "copy").resolve())
     assert d["sections"]["path_inputs"]["rewritten"] == ["RAW"]
     report_db(report).close()
+
+
+def test_import_into_a_new_folder_inside_another_project(project, tmp_path):
+    """The target does not exist yet; its config lives INSIDE it, so the
+    exporter-side project around it (here: the source project itself) does
+    not make the import refuse (scifor.discovery.config_path_at)."""
+    root, _ = project
+    out = _export(project, tmp_path)
+    report = import_project(out, root / "nested_copy")
+    assert report.root == (root / "nested_copy").resolve()
+    assert (root / "nested_copy" / "scistack.toml").is_file()
+    report_db(report).close()

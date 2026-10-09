@@ -11,6 +11,47 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzh. Libraries: list, place read-only, re-sync — added 2026-10-08
+
+New: a **Libraries** group at the bottom of the Submodules category, and
+MATLAB `+package` folders are now discovered (`+gait/lowpass.m` is
+`gait.lowpass`). Both frontend bundles are rebuilt; reload the VS Code
+window.
+
+Backend setup (until Stage 10b can generate one):
+- Make a test library by hand: a folder `libsrc/gaitlib/` containing
+  `__init__.py`, `scistack_entities.toml` (`variables = [...]`, then
+  `[library]` / `schema_keys = ["subject"]`), and
+  `pipelines/preprocessing.json`.
+- For the JSON, export a submodule with today's pipeline JSON export, or ask
+  Claude for a snippet that writes one with `scidb.library.make_document`.
+- Run `pip install -e libsrc` (or put `libsrc` on PYTHONPATH).
+
+1. **Add:** Submodules → Libraries → **+** → `gaitlib`. The library
+   appears with a 🔒 row per shipped pipeline. A name that is not installed
+   shows the yellow install hint. `scistack.toml` gains
+   `packages = ["gaitlib"]`.
+2. **Place:** drag the 🔒 row onto the canvas. If the library's schema keys
+   differ from yours, a confirm names the keys you do not have.
+3. **Read-only:** click the row to look inside. Try adding a node there,
+   changing a node's settings, deleting a node, drawing an edge, renaming
+   the pipeline. Each is refused with "comes from the library 'gaitlib' and
+   is read-only… Make my own copy". Moving nodes still works.
+4. **Binding:** on the main canvas, editing the placed node's binding works.
+5. **Upgrade:** add a node to the library's JSON, then press Refresh. The
+   library's canvas shows it, and the placement on main is unchanged.
+   `scidb.log`: `[library_service] re-synced gaitlib/preprocessing` with
+   old → new hash.
+6. **MATLAB:** put `matlab/+gaitlib/lowpass.m` in the library. After
+   Refresh, the function palette lists `gaitlib.lowpass`. A run command
+   shows `@gaitlib.lowpass` and the addpath block has the library's
+   `matlab` folder.
+7. **Remove:** the × on the library. Its pipelines stay on your canvases.
+8. Terminal: `scistack library list`, `scistack library add NAME`,
+   `scistack library remove NAME`.
+
+---
+
 ## 0zzzg. Whole-project export + "Import Project Bundle…" — added 2026-10-08
 
 New: an **⇩ export project** button in the tab strip (beside ⇧ import), and a

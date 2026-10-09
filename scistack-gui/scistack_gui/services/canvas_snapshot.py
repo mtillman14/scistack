@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +292,8 @@ def apply(
     *,
     translation: "tuple[float, float]" = (0.0, 0.0),
     include_hides: bool = True,
+    node_id_for: "Callable[[NodeSnap], str] | None" = None,
+    use_id_for: "Callable[[UseSnap], str] | None" = None,
 ) -> dict[str, str]:
     """Write *snap* with fresh ids; return ``{old_id: new_id}``.
 
@@ -302,7 +304,10 @@ def apply(
     to the captured child id (a same-database paste places the SAME
     submodule). *translation* offsets every position. *include_hides* writes
     the hidden edges (meaningful only where the hidden connections exist,
-    i.e. in the same database).
+    i.e. in the same database). *node_id_for* / *use_id_for* give each node
+    / placed submodule a DERIVED id instead of a fresh one (a library
+    pipeline's re-sync must write the same ids every time:
+    ``ids.library_node_id`` / ``ids.library_use_id``).
     """
     from scidb.intent import SURFACE_STORE, Statement
 
@@ -319,7 +324,7 @@ def apply(
         target_pid = pipeline_map.get(n.pipeline_id)
         if target_pid is None:
             continue
-        new_id = ids.new_manual_node_id(n.node_type, n.label)
+        new_id = node_id_for(n) if node_id_for else ids.new_manual_node_id(n.node_type, n.label)
         old_to_new[n.node_id] = new_id
         ps.write_manual_node(db, new_id, n.node_type, n.label, target_pid)
         if n.config:
@@ -347,7 +352,9 @@ def apply(
         if parent is None:
             continue
         child = pipeline_map.get(u.child_pipeline_id, u.child_pipeline_id)
-        new_use = ps.add_pipeline_use(db, parent, child, dict(u.binding))
+        new_use = ps.add_pipeline_use(
+            db, parent, child, dict(u.binding), use_id=use_id_for(u) if use_id_for else None
+        )
         old_to_new[u.use_id] = new_use
         layout_store.write_node_position(new_use, u.x + dx, u.y + dy, pipeline_id=parent)
 

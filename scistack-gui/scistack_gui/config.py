@@ -521,6 +521,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
         raise ValueError("scistack.toml: packages must be a list of package names.")
     logger.debug("[config] Found %d packages: %s", len(packages), packages)
 
+    library_packages = list(packages)  # as listed: the project's libraries
     packages = _with_own_package(project_root, packages)
 
     # --- auto_discover ---
@@ -554,6 +555,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     matlab_sources = _resolve_glob_paths(
         project_root, matlab_section.get("sources", []), "matlab.sources"
     )
+    matlab_sources += _library_matlab_sources(project_root, library_packages)
     matlab_variable_dir: Path | None = None
     raw_mvd = matlab_section.get("variable_dir")
     if raw_mvd is not None:
@@ -592,12 +594,14 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     # Derive addpath from parent directories of all MATLAB file paths.
     logger.info("[config] Deriving MATLAB addpath from file locations")
     addpath_set: set[Path] = set()
+    from scistack_gui.matlab_parser import matlab_path_entry
+
     for p in matlab_functions:
-        addpath_set.add(p.parent)
+        addpath_set.add(matlab_path_entry(p))
     for p in matlab_variables:
-        addpath_set.add(p.parent)
+        addpath_set.add(matlab_path_entry(p))
     for p in matlab_sources:
-        addpath_set.add(p.parent)
+        addpath_set.add(matlab_path_entry(p))
     if matlab_variable_dir is not None:
         addpath_set.add(matlab_variable_dir)
     if matlab_entities_file is not None:
@@ -761,7 +765,7 @@ def _resolve_glob_paths(
             p = _config_path(project_root, entry)
             if p.is_dir():
                 # Recursively discover all .m files in the directory,
-                # pruning noise dirs and MATLAB private/@class/+package
+                # pruning noise dirs and MATLAB private/@class
                 # dirs the same way folder-scan mode does.
                 logger.debug("[config] Entry is a directory, searching for .m files")
                 found = _walk_source_files(p, ".m", matlab=True)
@@ -927,12 +931,12 @@ def _is_noise_dir(name: str) -> bool:
 
 def _is_matlab_skip_dir(name: str) -> bool:
     """MATLAB directory conventions that must never be swept in as if their
-    contents were standalone pipeline functions: ``private/`` helpers,
-    ``@ClassName/`` method files, and ``+package/`` namespace folders.
-    Proper support for the latter two is tracked as follow-on work — for
-    folder-scan discovery the safe default is to skip them entirely rather
-    than mis-register a class method or namespaced function."""
-    return name == "private" or name.startswith("@") or name.startswith("+")
+    contents were standalone pipeline functions: ``private/`` helpers and
+    ``@ClassName/`` method files. ``+package/`` folders ARE walked
+    (portability Stage 10): their functions are named ``pkg.fn``
+    (``matlab_parser.matlab_package_prefix``) and resolve through the folder
+    above the package (``matlab_parser.matlab_path_entry``)."""
+    return name == "private" or name.startswith("@")
 
 
 def _is_test_dir(name: str) -> bool:
@@ -1013,6 +1017,31 @@ def _without_own_package_files(project_root: Path, files: list, what: str) -> li
     return kept
 
 
+def _library_matlab_sources(project_root: Path, libraries: list) -> list[Path]:
+    """The ``.m`` files every listed library ships in its ``matlab/``
+    folder (``scidb.library.matlab_dir``, located without running the
+    package). They join ``matlab_sources``, so they are classified,
+    registered (functions in ``+<lib>/`` named ``lib.fn``) and put on the
+    MATLAB path (``matlab_parser.matlab_path_entry``: the ``matlab/``
+    folder itself) exactly like the project's own. Import step I6."""
+    from scidb.library import matlab_dir
+
+    own = _own_package_dir(project_root)
+    found: list[Path] = []
+    for name in libraries:
+        if not isinstance(name, str) or (own is not None and name == own[0]):
+            continue
+        folder = matlab_dir(name.split(".")[0])
+        if folder is None:
+            continue
+        files = _walk_source_files(folder, ".m", matlab=True)
+        logger.info(
+            "[config] library %s ships %d MATLAB file(s) in %s", name, len(files), folder
+        )
+        found += files
+    return found
+
+
 def _with_own_package(project_root: Path, packages: list) -> list:
     """*packages* plus the project's own package, if it is one.
 
@@ -1059,7 +1088,9 @@ def _folder_scan_config(root: Path) -> SciStackConfig:
         len(m_files),
     )
 
-    addpath = sorted({p.parent for p in m_files})
+    from scistack_gui.matlab_parser import matlab_path_entry
+
+    addpath = sorted({matlab_path_entry(p) for p in m_files})
 
     config = SciStackConfig(
         project_root=root,
@@ -1245,6 +1276,50 @@ def add_path(db_path: Path, new_path: Path) -> Path:
     )
     logger.info("[config] add_path: wrote %s (added %s)", target_path, new_str)
     return target_path
+
+
+_PACKAGE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*")
+
+
+def add_package(db_path: "Path | None", name: str, *, project: "Path | None" = None) -> Path:
+    """List *name* under ``packages`` in scistack.toml (making it a library
+    of this project: ``scidb.names.library_packages``), creating the file if
+    needed. Its import name, not its distribution name. Installing it is the
+    user's (SciStack never installs). Returns the file written. *project*
+    names the project folder outright (the terminal); otherwise it is
+    resolved as everywhere else (``resolve_project_root``)."""
+    name = str(name).strip()
+    if not _PACKAGE_NAME_RE.fullmatch(name):
+        raise ValueError(f"{name!r} is not a Python import name (e.g. gait_tools)")
+    project_root = resolve_project_root(project, db_path)
+    toml_path = locate_config_at(project_root) or project_root / "scistack.toml"
+    section = _load_raw_scistack_section(toml_path) if toml_path.is_file() else {}
+    packages = list(section.get("packages", []))
+    if name in packages:
+        logger.info("[config] add_package: %s already listed in %s", name, toml_path)
+        return toml_path
+    own = _own_package_dir(project_root)
+    if own is not None and own[0] == name:
+        raise ValueError(f"{name} is this project's own package, not a library")
+    _write_config(toml_path, {**section, "packages": [*packages, name]})
+    logger.info("[config] add_package: listed %s in %s", name, toml_path)
+    return toml_path
+
+
+def remove_package(db_path: "Path | None", name: str, *, project: "Path | None" = None) -> Path:
+    """Remove *name* from ``packages`` (the library stays installed; its
+    seeded pipelines stay on the canvas, reported as orphaned)."""
+    project_root = resolve_project_root(project, db_path)
+    toml_path = locate_config_at(project_root)
+    if toml_path is None:
+        raise FileNotFoundError(f"No scistack.toml at {project_root}; nothing to remove.")
+    section = _load_raw_scistack_section(toml_path)
+    packages = list(section.get("packages", []))
+    if name not in packages:
+        raise ValueError(f"{name} is not listed under packages in {toml_path}")
+    _write_config(toml_path, {**section, "packages": [p for p in packages if p != name]})
+    logger.info("[config] remove_package: unlisted %s in %s", name, toml_path)
+    return toml_path
 
 
 def remove_path(db_path: Path, path_to_remove: Path) -> Path:

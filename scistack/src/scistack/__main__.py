@@ -6,6 +6,7 @@ Usage:
     scistack export [OUT] [--db DB] [--data] [--no-history]
     scistack import BUNDLE [--into DIR] [--schema ...] [--map OLD=NEW] ...
     scistack bundle-info BUNDLE
+    scistack library [list | add NAME | remove NAME]
     scistack db <command> ...      # alias for the ``scidb`` CLI
 
 ``init`` is a thin front end over ``scidb.project.init_project``, the one
@@ -69,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
 
     add_bundle_subparsers(sub)
 
+    from scistack_gui.library_cli import add_library_subparsers
+
+    add_library_subparsers(sub)
+
     # --- db (alias for the scidb CLI; wiring lives in scidb.inspect.cli) ---
     try:
         from scidb.inspect.cli import add_db_subparser
@@ -84,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if getattr(args, "_bundle_cmd", None) is not None:
         return bundle_dispatch(args)
+
+    if getattr(args, "_library_cmd", None) is not None:
+        return args._library_cmd(args)
 
     if args.command == "db":
         dispatch = getattr(args, "_dispatch", None)

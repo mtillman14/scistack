@@ -96,7 +96,7 @@ class TestDiscoverAndSeedPipelines:
         discover_and_seed_pipelines(db)
 
         result = discover_and_seed_pipelines(db)
-        assert result == {"created": [], "skipped": []}
+        assert {k: result[k] for k in ("created", "skipped")} == {"created": [], "skipped": []}
 
     def test_existing_local_pipeline_is_skipped_not_overwritten(self, populated_db):
         """'Create once' — matches create_variable/create_path_input's
@@ -108,7 +108,7 @@ class TestDiscoverAndSeedPipelines:
         _register_step(pipe, _bandpass, {"signal": RawA, "low_hz": 20}, [FilteredA])
 
         result = discover_and_seed_pipelines(db)
-        assert result == {"created": [], "skipped": ["existing"]}
+        assert {k: result[k] for k in ("created", "skipped")} == {"created": [], "skipped": ["existing"]}
 
         pipelines = ps.list_pipelines(db)
         assert len([p for p in pipelines if p["name"] == "existing"]) == 1
@@ -126,7 +126,7 @@ class TestDiscoverAndSeedPipelines:
         _register_step(pipe, _bandpass, {"signal": RawA, "low_hz": 20}, [FilteredA])
 
         result = discover_and_seed_pipelines(db)
-        assert result == {"created": [], "skipped": []}
+        assert {k: result[k] for k in ("created", "skipped")} == {"created": [], "skipped": []}
         pipe.discard()
 
     def test_scalar_constant_wired_with_pending_value(self, populated_db):
@@ -264,7 +264,7 @@ class TestDiscoverAndSeedPipelines:
 
     def test_no_candidates_is_a_cheap_noop(self, populated_db):
         result = discover_and_seed_pipelines(populated_db)
-        assert result == {"created": [], "skipped": []}
+        assert {k: result[k] for k in ("created", "skipped")} == {"created": [], "skipped": []}
 
     def test_shared_variable_across_two_pipelines_gets_independent_nodes(
         self, populated_db

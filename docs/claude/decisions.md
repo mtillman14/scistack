@@ -8,6 +8,55 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-11 — "Make my own copy" replaces the library
+
+**Context.** A placed library submodule is read-only. A user who wants to
+change it needs an editable copy, and the project may still use other
+parts of the same library.
+
+**Decision (user).** Copying is all-or-nothing per library. The library's
+source goes to `src/<pkg>/<lib>/` (MATLAB: its `+<lib>/` folder into the
+project's MATLAB sources), EVERY placement of that library switches to the
+copy, and the library leaves `packages`. Function names stay `lib.fn`
+(`copied_libraries` in scistack.toml tells `scidb.names`; MATLAB keeps
+the name natively through the `+<lib>` folder), so history stays current.
+
+**Consequences.** One source per name, never two `lib.fn`s side by side.
+Copying one submodule of a big library copies all of it.
+
+---
+
+## D-2026-10-08-10 — A library's pipeline: shipped as a canvas document, seeded locked, re-synced
+
+**Context.** "Use" must keep a library submodule read-only on the canvas
+and follow library upgrades, for Python, MATLAB and mixed submodules alike.
+The GUI reads `.m` files statically and never runs MATLAB to discover
+anything.
+
+**Decision (user: seed/lock/re-sync over rendering live from source; MATLAB
+in scope).**
+- A library ships each shared pipeline as `<lib>/pipelines/<name>.json`, a
+  `canvas_snapshot` document (`scidb.library` owns the format). It is
+  language-neutral. MATLAB functions live in `<lib>/matlab/+<lib>/` and
+  are named `lib.fn` natively (`func2str`).
+- The document is seeded into the canvas tables as LIBRARY-OWNED
+  (`_library_pipelines`), with ids DERIVED from (library, pipeline, id in
+  the document), and is not a tab.
+- At each discovery pass, a changed `definition_hash` re-seeds the
+  pipeline's own canvas in place; placements and bindings on the project's
+  canvases are kept.
+- Edits are refused by ONE guard, `library_lock`, active only inside
+  undoable handlers (the undo system's definition of a user edit). Internal
+  writes such as graduation are never refused.
+
+**Consequences.**
+- Per-node location choices inside a used library are not possible; the
+  placement's `iterate` / `key_map` are.
+- A bundle carries library pipelines by reference. The recipient's first
+  open re-seeds them from their installed library.
+
+---
+
 ## D-2026-10-08-9 — One bundle CLI, run by the terminal and the extension alike
 
 **Context.** Bundles must work entirely headless and entirely in the GUI.

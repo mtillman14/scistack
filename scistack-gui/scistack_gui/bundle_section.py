@@ -39,11 +39,21 @@ class GuiSection:
         from scistack_gui.services import canvas_snapshot, portability_service
 
         db = ctx.db
-        pipelines = ps.list_pipelines(db)
+        # A LIBRARY's pipelines are not the project's to carry: their content
+        # comes from the installed library (re-seeded on the recipient's first
+        # open), so only which ones exist travels, for the placements on the
+        # project's canvases to point at (portability Stage 10a).
+        library_rows = [r for r in ps.list_library_pipelines(db) if not r["hidden"]]
+        library_ids = {r["pipeline_id"] for r in ps.list_library_pipelines(db)}
+        pipelines = [p for p in ps.list_pipelines(db) if p["pipeline_id"] not in library_ids]
         pipeline_ids = [p["pipeline_id"] for p in pipelines]
         snap = canvas_snapshot.capture(db, pipeline_ids)
         payload = {
             "gui_format": GUI_FORMAT,
+            "library_pipelines": [
+                {k: r[k] for k in ("pipeline_id", "name", "library", "pipeline_name", "doc_pipeline_id")}
+                for r in library_rows
+            ],
             "pipelines": [
                 {
                     "pipeline_id": p["pipeline_id"],
@@ -56,8 +66,10 @@ class GuiSection:
             **portability_service.export_globals(db, snap, pipeline_ids),
         }
         logger.info(
-            "[bundle_section] gui export: %d pipeline(s); canvas %s",
+            "[bundle_section] gui export: %d pipeline(s); %d library pipeline(s) by "
+            "reference; canvas %s",
             len(pipelines),
+            len(library_rows),
             snap.describe(),
         )
         files = {GUI_FILE: json.dumps(payload, indent=2, default=str).encode("utf-8")}
@@ -99,6 +111,24 @@ class GuiSection:
             resolution[pid] = pid
             portability_service.apply_hypothesis(db, pid, p.get("hypothesis"))
 
+        # Library pipelines arrive EMPTY, owned, with no definition hash: the
+        # first open with discovery finds the hash differs and seeds their
+        # content from the installed library (services/library_service). The
+        # import itself runs no code, so it cannot read the library here.
+        from scistack_gui import library_lock
+
+        library_placeholders = []
+        with library_lock.library_writes():
+            for row in payload.get("library_pipelines") or []:
+                pid = row["pipeline_id"]
+                if pid not in existing:
+                    ps.create_pipeline(db, row["name"], pipeline_id=pid)
+                ps.set_library_owner(
+                    db, pid, row["library"], row["pipeline_name"], row["doc_pipeline_id"], ""
+                )
+                resolution[pid] = pid
+                library_placeholders.append(f"{row['library']}/{row['pipeline_name']}")
+
         snap = canvas_snapshot.CanvasSnapshot.from_dict(payload.get("canvas") or {})
         # Into the recipient's schema when it differs (portability Stage 6).
         snap = canvas_snapshot.remap_schema_keys(snap, ctx.key_map, ctx.map_report)
@@ -111,6 +141,7 @@ class GuiSection:
             "pipelines": len(resolution),
             "ids_written": len(old_to_new),
             "hides_applied": has_history,
+            "library_pipelines": sorted(set(library_placeholders)),
             **globals_report,
         }
         logger.info("[bundle_section] gui import: %s", report)

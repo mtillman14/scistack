@@ -148,6 +148,36 @@ class MatlabFunctionInfo:
     language: str = "matlab"
 
 
+def matlab_package_prefix(path: "Path | str") -> str:
+    """The MATLAB package a function file is in: ``"a.b"`` for
+    ``.../+a/+b/f.m``, ``""`` outside any ``+package`` folder.
+
+    The one owner of a MATLAB function's qualified name. It is what MATLAB
+    itself calls the function (``func2str(@a.b.f)`` is ``"a.b.f"``, the name
+    scimatlab records a run under), and it matches the Python rule for a
+    library function (``lib.fn``, ``scidb.names``): a SciStack library's
+    MATLAB code lives in ``matlab/+<lib>/`` (portability Stage 10)."""
+    parts = []
+    for parent in Path(path).parents:
+        if parent.name.startswith("+") and len(parent.name) > 1:
+            parts.append(parent.name[1:])
+        else:
+            break
+    return ".".join(reversed(parts))
+
+
+def matlab_path_entry(path: "Path | str") -> Path:
+    """The folder that must be on MATLAB's path for *path* to resolve: its
+    own folder, or the folder ABOVE its outermost ``+package`` (MATLAB
+    refuses a ``+package`` folder on the path itself). The one owner of
+    the addpath entry for a ``.m`` file (``config``'s explicit and
+    folder-scan modes both ask)."""
+    p = Path(path).parent
+    while p.name.startswith("+") and len(p.name) > 1:
+        p = p.parent
+    return p
+
+
 def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
     """Parse a MATLAB function file and extract its signature.
 
@@ -196,8 +226,12 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
         logger.debug("[matlab_parser] No function declaration found in %s", path)
         return None
 
-    # Group 3 is always the function name.
+    # Group 3 is always the function name; inside +package folders MATLAB
+    # (and so the recorded name) qualifies it by the package.
     fn_name = m.group(3)
+    prefix = matlab_package_prefix(path)
+    if prefix:
+        fn_name = f"{prefix}.{fn_name}"
     logger.debug("[matlab_parser] Found function: %s", fn_name)
     # Group 4 is the parameter list.
     raw_params = m.group(4).strip()

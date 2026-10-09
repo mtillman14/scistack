@@ -112,7 +112,15 @@ def ensure_tables(db) -> None:
 
 
 def put_statements(db, statements) -> int:
-    """Upsert statements. Returns how many rows were written."""
+    """Upsert statements. Returns how many rows were written. Refused inside
+    a library-owned pipeline during a user edit (``library_lock``)."""
+    from scistack_gui import library_lock
+
+    statements = list(statements)
+    for st in statements:
+        library_lock.check_statement(
+            db, st.subject_kind, st.subject_ref, st.scope, st.value, f"setting {st.aspect}"
+        )
     rows = [
         (
             st.subject_kind,
@@ -224,8 +232,38 @@ def load_statements(
     return out
 
 
+def _check_deletion(db, where: str, params: list, what: str) -> None:
+    """Refuse deleting statements inside a library-owned pipeline (during a
+    user edit): read the rows the DELETE would remove and check each."""
+    from scistack_gui import library_lock
+
+    if not library_lock._active():
+        return
+    for kind, ref, scope, value_json in _duck(db)._fetchall(
+        f"SELECT subject_kind, subject_ref, scope, value_json FROM _intent WHERE {where}", params
+    ):
+        try:
+            value = json.loads(value_json) if value_json else None
+        except (TypeError, ValueError):
+            value = None
+        library_lock.check_statement(db, kind, ref, scope, value, what)
+
+
+def delete_scope(db, scope: str) -> int:
+    """Every statement made at *scope* (a library pipeline's re-sync clears
+    its canvas before re-seeding it). Returns the count."""
+    _check_deletion(db, "scope = ?", [scope], "clearing the canvas")
+    before = _duck(db)._fetchone("SELECT count(*) FROM _intent WHERE scope = ?", [scope])
+    _duck(db)._execute("DELETE FROM _intent WHERE scope = ?", [scope])
+    return int(before[0]) if before else 0
+
+
 def clear_aspect(db, subject_ref: str, aspect: str, scope: str = GLOBAL_SCOPE) -> int:
     """Delete one subject's statements for one aspect in one scope."""
+    _check_deletion(
+        db, "subject_ref = ? AND aspect = ? AND scope = ?", [subject_ref, aspect, scope],
+        f"clearing {aspect}",
+    )
     before = _duck(db)._fetchone(
         "SELECT count(*) FROM _intent WHERE subject_ref = ? AND aspect = ? AND scope = ?",
         [subject_ref, aspect, scope],
@@ -271,6 +309,7 @@ def delete_statements(
         clauses.append("subject_ref LIKE ?")
         params.append(ref_prefix.replace("%", "\\%") + "%")
     where = " AND ".join(clauses)
+    _check_deletion(db, where, params, f"removing {aspect}")
     before = _duck(db)._fetchone(f"SELECT count(*) FROM _intent WHERE {where}", params)
     _duck(db)._execute(f"DELETE FROM _intent WHERE {where}", params)
     return int(before[0]) if before else 0

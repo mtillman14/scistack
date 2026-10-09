@@ -66,13 +66,26 @@ def discover_and_seed_pipelines(db) -> dict:
     re-process, so a later call only ever sees pipelines a subsequent
     import pass just registered.
 
-    Returns ``{"created": [name, ...], "skipped": [name, ...]}``.
+    Also seeds or re-syncs every listed LIBRARY's pipelines
+    (``services/library_service.sync_libraries``, portability Stage 10):
+    the one entry point for "put the pipelines code defines on the canvas".
+
+    Returns ``{"created": [name, ...], "skipped": [name, ...], "libraries":
+    sync report}``.
     """
     from scidb.pipeline import all_pipelines
 
+    from scistack_gui.services.library_service import sync_libraries
+
+    try:
+        libraries = sync_libraries(db)
+    except Exception as e:  # never let a library stop the project's own seeding
+        logger.exception("[pipeline_discovery] library sync failed")
+        libraries = {"errors": [str(e)]}
+
     candidates = [p for p in all_pipelines() if p.db is None]
     if not candidates:
-        return {"created": [], "skipped": []}
+        return {"created": [], "skipped": [], "libraries": libraries}
 
     logger.info(
         "[pipeline_discovery] discover_and_seed_pipelines: %d candidate(s): %s",
@@ -110,7 +123,7 @@ def discover_and_seed_pipelines(db) -> dict:
             "seeding failed): %s",
             skipped,
         )
-    return {"created": created, "skipped": skipped}
+    return {"created": created, "skipped": skipped, "libraries": libraries}
 
 
 def _seed_pipeline_recursive(

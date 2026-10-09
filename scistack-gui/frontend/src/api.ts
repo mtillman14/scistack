@@ -277,6 +277,12 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     export_pipeline:        { path: (p) => `/api/pipelines/${encodeURIComponent(p.pipeline_id as string)}/export` },
     import_pipeline:        { path: '/api/pipelines/import', method: 'POST', body: true },
     export_pipeline_code:   { path: (p) => `/api/pipelines/${encodeURIComponent(p.pipeline_id as string)}/export-code` },
+    // Libraries (.claude/plan-portability.md Stage 10a).
+    list_libraries:          { path: '/api/libraries' },
+    suggest_library_key_map: { path: (p) => `/api/libraries/key-map?pipeline_id=${encodeURIComponent(p.pipeline_id as string)}` },
+    add_library:             { path: '/api/libraries', method: 'POST', body: true },
+    remove_library:          { path: (p) => `/api/libraries?name=${encodeURIComponent(p.name as string)}`, method: 'DELETE' },
+    sync_libraries:          { path: '/api/libraries/sync', method: 'POST' },
     // Whole-project bundles (.claude/plan-portability.md Stage 8).
     get_export_options:     { path: '/api/bundles/export-options' },
     export_project_bundle:  { path: '/api/bundles/export', method: 'POST', body: true },

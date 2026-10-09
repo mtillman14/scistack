@@ -780,3 +780,19 @@ class TestResolveConfigPath:
         assert is_windows_absolute("\\\\server\\share")
         assert not is_windows_absolute("src\\e.toml")
         assert not is_windows_absolute("/opt/shared")
+
+
+def test_config_path_at_a_folder_that_does_not_exist_yet(tmp_path):
+    """A folder about to become a project has its config INSIDE it, never in
+    its parent -- even when the parent is itself a project (a bundle import
+    or `scistack init` into a new subfolder). An existing file still means
+    its folder."""
+    from scifor.discovery import CONFIG_FILENAME, config_path_at
+
+    (tmp_path / CONFIG_FILENAME).write_text("")
+    new = tmp_path / "copy"
+    assert config_path_at(new) == new / CONFIG_FILENAME
+    assert config_path_at(tmp_path) == tmp_path / CONFIG_FILENAME
+    db = tmp_path / "study.duckdb"
+    db.write_text("")
+    assert config_path_at(db) == tmp_path / CONFIG_FILENAME

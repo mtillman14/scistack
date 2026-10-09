@@ -596,21 +596,41 @@ export default function PipelineDAG() {
     // Pipeline dragged from the sidebar → place a pipeline USE in this scope.
     const rawPipeline = e.dataTransfer.getData('application/scistack-pipeline')
     if (rawPipeline) {
-      const { pipeline_id, name } = JSON.parse(rawPipeline) as { pipeline_id: string; name: string }
+      const { pipeline_id, name, library } = JSON.parse(rawPipeline) as {
+        pipeline_id: string; name: string; library?: string
+      }
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-      callBackend('add_pipeline_use', {
-        parent_pipeline_id: currentScope,
-        child_pipeline_id: pipeline_id,
-        binding: null,
-        x: position.x,
-        y: position.y,
-      })
+      // A LIBRARY pipeline is written in the library's own schema: place it
+      // through the key map the backend suggests (scidb.schema_map.KeyMap,
+      // the Stage 6 owner), stored as the placement's binding.
+      const bindingFor = async (): Promise<Record<string, unknown> | null> => {
+        if (!library) return null
+        const s = await callBackend('suggest_library_key_map', { pipeline_id }) as {
+          key_map: Record<string, string>; unmapped: string[]; library_keys: string[] | null
+        }
+        if (s.unmapped.length > 0 && !window.confirm(
+          `'${name}' (library ${library}) iterates over ${s.unmapped.join(', ')}, which `
+          + `your schema does not have. Place it anyway?`
+        )) throw new Error('cancelled')
+        return Object.keys(s.key_map).length > 0 ? { key_map: s.key_map } : null
+      }
+      bindingFor()
+        .then(binding => callBackend('add_pipeline_use', {
+          parent_pipeline_id: currentScope,
+          child_pipeline_id: pipeline_id,
+          binding,
+          x: position.x,
+          y: position.y,
+        }))
         .then(res => {
           const { use_id } = res as { use_id: string }
           pendingCenterRef.current.set(use_id, position)
           bumpGraph()
         })
-        .catch(err => window.alert(`Could not place pipeline '${name}': ${(err as Error).message}`))
+        .catch(err => {
+          if ((err as Error).message === 'cancelled') return
+          window.alert(`Could not place pipeline '${name}': ${(err as Error).message}`)
+        })
       return
     }
 

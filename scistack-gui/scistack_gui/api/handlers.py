@@ -165,13 +165,17 @@ class Handler:
         if self.params is not None:
             args.append(req)
         kwargs = {"transport": transport} if self.wants_transport else {}
+        from scistack_gui import library_lock
+
+        # An undoable handler IS a user edit (the undo system's own
+        # definition): library-owned pipelines refuse it (library_lock).
         if self.undoable and change:
             with history.recording(
                 change["id"], label=change.get("label") or self.label, method=self.name
-            ):
+            ), library_lock.user_edit(self.name):
                 result = self.call(*args, **kwargs)
         elif self.undoable:
-            with history.exclusive():
+            with history.exclusive(), library_lock.user_edit(self.name):
                 result = self.call(*args, **kwargs)
         else:
             if change:

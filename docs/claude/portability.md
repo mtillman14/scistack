@@ -243,7 +243,7 @@ Status as of 2026-10-08.
 | E12 | Wheel + resolved versions + environment | 🔧 | Environment ✅ (`scidb.bundle` env section: Python, platform, every distribution's version, MATLAB if already loaded; Stage 5). Wheels: Stage 10 (libraries only). |
 | E13 | Run history | ✅ | `history` section (default on): provenance tables + `_schema` + exclusions, variant pins, tombstones, via `scidb.table_copy` (DDL + Parquet) (Stage 7). |
 | E14 | Derived variable data | ✅ | `data` section (opt-in, requires history): every variable table with its DDL and view, `_record_save`, variable metadata (Stage 7). |
-| E15 | Subset / anonymize subjects | ❌ | Later. |
+| E15 | Subset of locations | ❌ | Stage 9b: `ExportOptions.locations` (a `LocationFilter`), owner `scidb.subset`. Anonymizing was DROPPED (user, 2026-10-08): subject codes are normally pseudonyms already, real identifiers belong upstream of the raw files, data content would not be covered, and pseudonyms would defeat `verify`. |
 | E16 | Manifest, format version, `.scistack` archive | ✅ | `scidb/bundle.py`: manifest with per-file SHA-256, plain zip, `ExportOptions` as the one owner of defaults (Stage 4). |
 | E17 | Plain-script export | ✅ | `code_export_service.py`. |
 
@@ -257,7 +257,7 @@ Status as of 2026-10-08.
 | I3 | Ask the user to trust the bundle's code | ✅ | Import itself runs no code. Trust is asked before the first thing that does: `--check-code` needs `--trust` or a yes; the extension's modal "Trust and Open" before opening the new project (Stage 8). |
 | I4 | Create the project folder (`init`) | ✅ | `scidb.project.init_project`, the one owner (Stage 1); `import_project` calls it after writing the bundle's config. |
 | I5 | Install the wheel + dependencies | 🔧 | Code arrives as SOURCE (a copy, before init). Declared dependencies are compared with the exporter's versions and the `pip install` command is reported; nothing is installed automatically (Stage 5). |
-| I6 | MATLAB paths for the installed `.m` files | ❌ | `scimatlab`. |
+| I6 | MATLAB paths for the installed `.m` files | ✅ | An installed library's `matlab/` folder (`scidb.library.matlab_dir`, found without running the package) joins `matlab_sources` and the MATLAB path; `+package` folders are walked and named `pkg.fn` (`matlab_parser.matlab_package_prefix` / `matlab_path_entry`) (Stage 10a). |
 | I7 | PathInput roots | ✅ | `import_project(path_roots={name: folder})` rewrites each PathInput's `root_folder` in the new project's entities TOML; a root left as the exporter's, or given for an unknown name, is reported. PathInputs declared in Python source are not rewritten (Stage 6). |
 | I8 | Schema choice + key map | ✅ | `scidb/schema_map.KeyMap` (auto by name + overrides), applied by each section to its own data: config tables, PathInput templates, node levels and location selections, submodule bindings, saved plots; dropped/flagged references reported (Stage 6). |
 | I9 | Recreate pipelines (reuse an identical one, fork one that differs) | ✅ | `_resolve_pipeline`, keyed on `pipeline_id`. |
@@ -268,7 +268,7 @@ Status as of 2026-10-08.
 | I14 | Restore history / data | ✅ | History + data + same schema: loaded live, verbatim, and the GUI tables verbatim too. History without data, or another schema: archived under `.scistack/archive/<export time>/`; exclusions still go live when the schema was kept. `import_history=False` declines it (Stage 7). |
 | I15 | Check that every canvas node's code is found | ✅ | The import itself runs no code (`discovered=False`): it reports the check as not done (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`). After trust, `headless.check_code` (`scistack import --check-code`) lists every canvas node whose code is missing; the GUI checks on open (Stage 8). |
 | I16 | Same function identity from a wheel and from loose files | ✅ | Moot for a bundle import: the code stays source in `src/<pkg>/`, the exporter's own layout. Revisit for libraries (Stage 10). |
-| I17 | Reproduction check | ❌ | Later: `scistack verify` re-runs against the recipient's own copy of the raw files (read, never copied) and compares content hashes with the imported history. |
+| I17 | Reproduction check | ❌ | Stage 9a: `scidb verify` / `scistack verify` COMPARES (never runs code) the recipient's live history after their own run with the exporter's archived history, matched by a content-free structural key; reports reproduced / differs at source / differs downstream / code changed / not run / new. |
 | I18 | Import report | ✅ | `ImportReport.to_dict`; printed by the CLI, shown as a Markdown document by the extension, including everything the schema remap flagged and the history outcome (Stage 8). |
 
 ## Open questions

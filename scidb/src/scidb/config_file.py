@@ -192,4 +192,20 @@ def write(path: "Path | str", section: dict) -> Path:
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
     Log.info(f"[config_file] wrote {path} (keys: {sorted((section or {}).keys())})")
+    _forget_cached_reads()
     return path
+
+
+def _forget_cached_reads() -> None:
+    """Every reader that caches what scistack.toml says, told it changed.
+
+    The readers cache for a few seconds (``schema_order.locate_config``,
+    including "no config here"; ``names.library_packages``), so without this
+    a write followed at once by a read -- listing a library and seeding it in
+    the same request -- saw the OLD answer. This module is the only writer,
+    so it is the one place to invalidate."""
+    from . import names, schema_order
+
+    schema_order.clear_cache()
+    names.clear_cache()
+    Log.debug("[config_file] cleared cached config reads (schema_order, names)")

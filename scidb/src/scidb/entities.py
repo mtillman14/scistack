@@ -34,6 +34,14 @@ The format::
     EMG_FILE = "{subject}/{session}_emg.csv"
     RAW_FILE = { template = "{subject}/raw.csv", root_folder = "/data/raw" }
 
+    [library]                                  # only in a LIBRARY's file
+    schema_keys = ["subject", "session"]       # its own schema vocabulary
+
+The ``[library]`` table is what makes a package's entities file a
+library's (portability Stage 10): ``schema_keys`` names the vocabulary its
+shared pipelines are written in, so placing one into a project with other
+keys can suggest a key map (``scidb.schema_map.KeyMap.auto``).
+
 Rules worth stating once, because they are what make the format
 unambiguous:
 
@@ -97,6 +105,10 @@ VARIABLES = "variables"
 SECTIONS = (PARAMETERS, PATH_INPUTS)
 """The two table sections. Variables are a top-level array, not a table --
 they have no value to carry."""
+
+LIBRARY = "library"
+"""The library table: ``schema_keys`` (see the module docstring). Not one of
+``SECTIONS``: it declares no entities and the GUI never writes it."""
 
 DEFAULT_ENTITIES_FILENAME = "scistack_entities.toml"
 DEFAULT_ENTITIES_RELPATH = Path("src") / DEFAULT_ENTITIES_FILENAME
@@ -163,6 +175,9 @@ class EntitiesFile:
     path_inputs: dict[str, Any] = field(default_factory=dict)
     lines: dict[str, int] = field(default_factory=dict)
     errors: list[EntityError] = field(default_factory=list)
+    #: ``[library] schema_keys``, or ``None`` when the file has no
+    #: ``[library]`` table (a project's own file).
+    library_schema_keys: "list[str] | None" = None
 
     def names(self) -> list[str]:
         """Every successfully-declared name, in section order."""
@@ -228,6 +243,7 @@ def load(path: "Path | str") -> EntitiesFile:
     _load_variables(data, text, result)
     _load_parameters(data, result)
     _load_path_inputs(data, result)
+    _load_library(data, result)
 
     Log.info(
         "[entities] Loaded %s: %d variable(s), %d parameter(s), "
@@ -337,6 +353,46 @@ def _make_variable_class(name: str) -> type:
     return type(BaseVariable)(
         name, (BaseVariable,), {"__module__": __name__, "_declared_only": True}
     )
+
+
+def parse_library_table(data: dict) -> "tuple[list[str] | None, list[str]]":
+    """``[library] schema_keys = [...]`` from parsed TOML *data*:
+    ``(schema_keys or None, [error, ...])``. A list of distinct, non-empty
+    strings; any other key in the table is an error (a typo would otherwise
+    silently mean "no schema keys"). Side-effect free: ``scidb.library``
+    reads an installed library's table without constructing its Variables."""
+    section = data.get(LIBRARY)
+    if section is None:
+        return None, []
+    if not isinstance(section, dict):
+        return None, [f"[{LIBRARY}] must be a table"]
+    errors = []
+    unknown = sorted(set(section) - {"schema_keys"})
+    if unknown:
+        errors.append(
+            f"[{LIBRARY}] unknown key(s) {', '.join(unknown)}; it accepts schema_keys"
+        )
+    keys = section.get("schema_keys")
+    if keys is None:
+        return None, errors
+    if (
+        not isinstance(keys, list)
+        or not all(isinstance(k, str) and k.strip() for k in keys)
+        or len({k.strip() for k in keys}) != len(keys)
+    ):
+        errors.append(f"[{LIBRARY}] schema_keys must be a list of distinct, non-empty key names")
+        return None, errors
+    return [k.strip() for k in keys], errors
+
+
+def _load_library(data: dict, result: EntitiesFile) -> None:
+    keys, errors = parse_library_table(data)
+    line = result.lines.get(LIBRARY, 0)
+    for message in errors:
+        result.errors.append(EntityError(LIBRARY, line, message))
+    if keys is not None:
+        result.library_schema_keys = keys
+        Log.debug("[entities] library schema keys %s", keys)
 
 
 def _load_parameters(data: dict, result: EntitiesFile) -> None:

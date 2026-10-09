@@ -121,10 +121,16 @@ def config_path_at(root: Path) -> Path:
     it exists yet. The one spelling of that location: readers and the GUI's
     writer both start here, so they cannot pick different files.
 
-    *root* may be a file (its folder is used) or a directory.
+    *root* may be an existing file (its folder is used) or a directory --
+    including one that does not exist YET: a folder about to become a
+    project (``scistack init new_dir``, a bundle import into a new folder)
+    has its config inside it, never in its parent. Treating every
+    non-directory as a file used to send that lookup to the PARENT's
+    scistack.toml, so creating a project inside another one was refused or
+    read the wrong config.
     """
     root = Path(os.path.abspath(str(root)))
-    search_dir = root if root.is_dir() else root.parent
+    search_dir = root.parent if root.is_file() else root
     return search_dir / CONFIG_FILENAME
 
 

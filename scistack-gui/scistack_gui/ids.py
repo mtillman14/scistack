@@ -303,3 +303,38 @@ def new_manual_edge_id() -> str:
     import uuid
 
     return f"edge_{uuid.uuid4().hex[:12]}"
+
+
+# ---------------------------------------------------------------------------
+# Library-owned pipelines (portability Stage 10)
+# ---------------------------------------------------------------------------
+#
+# A library's pipeline is seeded from its document and RE-seeded when the
+# library changes (services/library_service.py). Its ids are DERIVED from
+# (library, pipeline, the id inside the document), never random, so a re-sync
+# writes the same ids: placements, positions and node state stay attached.
+# Same shapes as the minted ones, so nothing downstream can tell them apart.
+
+
+def _library_digest(*parts: str, n: int) -> str:
+    import hashlib
+
+    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:n]
+
+
+def library_pipeline_id(library: str, pipeline: str, doc_pipeline_id: str) -> str:
+    """``pipe_{12 hex}`` for one pipeline of a library's document."""
+    return f"pipe_{_library_digest(library, pipeline, doc_pipeline_id, n=12)}"
+
+
+def library_node_id(
+    library: str, pipeline: str, doc_node_id: str, node_type: str, label: str
+) -> BareNodeId:
+    """``{prefix}__{label}__{8 hex}``, like :func:`new_manual_node_id`."""
+    prefix = MANUAL_NODE_PREFIX.get(node_type, node_type)
+    return BareNodeId(f"{prefix}__{label}__{_library_digest(library, pipeline, doc_node_id, n=8)}")
+
+
+def library_use_id(library: str, pipeline: str, doc_use_id: str) -> str:
+    """``use_{12 hex}`` for a submodule placed INSIDE a library pipeline."""
+    return f"use_{_library_digest(library, pipeline, doc_use_id, n=12)}"

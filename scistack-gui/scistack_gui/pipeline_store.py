@@ -13,6 +13,9 @@ Tables created in the user's .duckdb file:
     _pipeline_uses  (use_id, parent_pipeline_id, child_pipeline_id, binding_json)
     _hypotheses     (pipeline_id, research_question, hypothesis_statement,
                       evidence_for, evidence_against)
+    _library_pipelines (pipeline_id, library, pipeline_name, doc_pipeline_id,
+                        definition_hash) -- which pipelines a LIBRARY owns
+                        (portability Stage 10; services/library_service)
 
 These tables are created lazily on first access so they are always present
 regardless of whether init_db() or configure_database() was used to open the DB.
@@ -58,6 +61,7 @@ import json
 import logging
 import uuid
 
+from scistack_gui import library_lock as _library_lock
 from scistack_gui.ids import ROOT_SCOPE
 
 logger = logging.getLogger(__name__)
@@ -83,6 +87,7 @@ UNDOABLE_TABLES: tuple[str, ...] = (
     "_pipelines",
     "_pipeline_uses",
     "_hypotheses",
+    "_library_pipelines",
 )
 
 #: How each table here travels when a project or pipeline is exported
@@ -105,7 +110,28 @@ PORTABILITY: dict[str, str] = {
     "_pipelines": "canvas",
     "_pipeline_uses": "canvas",
     "_hypotheses": "canvas",
+    # Re-derived from the installed library on import (re-seeded), or copied
+    # verbatim with the rest of the GUI tables when history goes live.
+    "_library_pipelines": "canvas",
 }
+
+#: The writes here that bypass the intent store and so must check the
+#: library lock themselves (``library_lock``; the intent store's own writes
+#: are checked at its choke point). Guard test:
+#: ``test_every_guarded_write_checks_the_lock``.
+GUARDED_WRITES: tuple[str, ...] = (
+    "write_manual_node",
+    "update_node_config",
+    "delete_node",
+    "move_pipeline_use_parent",
+    "move_node_scope",
+    "add_pipeline_use",
+    "remove_pipeline_use",
+    "update_use_binding",
+    "rename_pipeline",
+    "hide_port",
+    "unhide_port",
+)
 
 
 def _ensure_tables(db) -> None:
@@ -281,6 +307,17 @@ def _ensure_tables(db) -> None:
         [ROOT_SCOPE],
     )
 
+    # --- Library-owned pipelines (portability Stage 10) ---
+    _duck(db)._execute("""
+        CREATE TABLE IF NOT EXISTS _library_pipelines (
+            pipeline_id     VARCHAR PRIMARY KEY,
+            library         VARCHAR NOT NULL,
+            pipeline_name   VARCHAR NOT NULL,
+            doc_pipeline_id VARCHAR NOT NULL,
+            definition_hash VARCHAR NOT NULL
+        )
+    """)
+
     # The intent store (`_intent`): one table, one shape, for every
     # statement about runs. See docs/claude/intent-and-fact.md and
     # scistack_gui/intent_store.py.
@@ -408,6 +445,10 @@ def write_manual_node(
         pipeline_id,
     )
     _ensure_tables(db)
+    from scistack_gui import library_lock
+
+    library_lock.check_scope(db, pipeline_id, "adding a node")
+    library_lock.check_node(db, node_id, "changing a node")
     logger.info("[pipeline_store] Upserting node into _pipeline_nodes table")
     _upsert_node(db, node_id, node_type, label, pipeline_id)
     logger.info("[pipeline_store] Node written to DuckDB successfully")
@@ -425,6 +466,9 @@ def update_node_config(db, node_id: str, config: dict) -> None:
     rebuild. See docs/claude/gui-run-options-flow.md.
     """
     _ensure_tables(db)
+    from scistack_gui import library_lock
+
+    library_lock.check_node(db, node_id, "changing a node's settings")
     logger.info(
         "[pipeline_store] update_node_config (node_id=%r, keys=%s)",
         node_id,
@@ -531,6 +575,9 @@ def get_node_configs(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
 
 def delete_node(db, node_id: str) -> None:
     logger.info("[pipeline_store] delete_node called (node_id=%r)", node_id)
+    from scistack_gui import library_lock
+
+    library_lock.check_node(db, node_id, "removing a node")
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [node_id])
     logger.info("[pipeline_store] Node deleted from _pipeline_nodes table")
 
@@ -547,6 +594,10 @@ def move_pipeline_use_parent(db, use_id: str, new_parent_pipeline_id: str) -> No
     inconsistent: present in the new scope's node list but still rendered
     as a use of the old parent.
     """
+    from scistack_gui import library_lock
+
+    library_lock.check_scope(db, _use_parent(db, use_id), "moving a submodule out")
+    library_lock.check_scope(db, new_parent_pipeline_id, "moving a submodule in")
     _duck(db)._execute(
         "UPDATE _pipeline_uses SET parent_pipeline_id = ? WHERE use_id = ?",
         [new_parent_pipeline_id, use_id],
@@ -560,12 +611,17 @@ def move_node_scope(db, node_id: str, new_pipeline_id: str) -> None:
     DB-derived node whose scope is entirely position-based — the caller
     also moves its saved position, which is what actually re-scopes it).
     """
+    from scistack_gui import library_lock
+
+    library_lock.check_node(db, node_id, "moving a node out")
+    library_lock.check_scope(db, new_pipeline_id, "moving a node in")
     _duck(db)._execute(
         "UPDATE _pipeline_nodes SET pipeline_id = ? WHERE node_id = ?",
         [new_pipeline_id, node_id],
     )
 
 
+@_library_lock.internal
 def rename_edge_endpoints(db, old_id: str, new_id: str) -> None:
     """Rewrite any manual edges referencing old_id to point to new_id
     instead of becoming dangling — shared by graduation and by re-keying
@@ -576,6 +632,7 @@ def rename_edge_endpoints(db, old_id: str, new_id: str) -> None:
     intent_store.rename_edge_endpoints(db, old_id, new_id)
 
 
+@_library_lock.internal
 def migrate_node_config(db, old_id: str, new_id: str) -> dict:
     """Move a node's saved settings from *old_id* to *new_id* — the third
     thing graduation has to carry across, beside position and edges.
@@ -656,6 +713,7 @@ def migrate_node_config(db, old_id: str, new_id: str) -> dict:
     return {"moved": sorted(merged), "replaced": replaced}
 
 
+@_library_lock.internal
 def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     """Remove the manual node entry for old_id (the DB-derived node takes over).
 
@@ -684,6 +742,7 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     rename_edge_endpoints(db, old_id, new_id)
 
 
+@_library_lock.internal
 def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None) -> dict:
     """Move every piece of DB-held GUI state keyed by the canonical node id
     *old_bare* — at EVERY placement — onto *new_bare*, keeping each
@@ -756,6 +815,7 @@ def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None
     return counts
 
 
+@_library_lock.internal
 def relabel_manual_nodes(db, node_type: str, old_label: str, new_label: str) -> int:
     """Rewrite the label of manual rows of *node_type* still labelled
     *old_label* — the ungraduated ``{prefix}__{label}__{rand}`` rows
@@ -931,6 +991,9 @@ def rename_pipeline(db, pipeline_id: str, name: str) -> None:
     """Rename any pipeline scope, including the root — 'main' is just the
     default hypothesis, not a special scratch scope (see module docstring)."""
     _ensure_tables(db)
+    from scistack_gui import library_lock
+
+    library_lock.check_scope(db, pipeline_id, "renaming")
     name = str(name).strip()
     if not name:
         raise ValueError("pipeline name must be non-empty")
@@ -1060,16 +1123,25 @@ def _uses_reachable(db, start_id: str) -> set:
 
 
 def add_pipeline_use(
-    db, parent_pipeline_id: str, child_pipeline_id: str, binding: "dict | None" = None
+    db,
+    parent_pipeline_id: str,
+    child_pipeline_id: str,
+    binding: "dict | None" = None,
+    *,
+    use_id: "str | None" = None,
 ) -> str:
     """Place ``child`` as a pipeline NODE on ``parent``'s canvas.
 
     One _pipeline_uses row + one canvas node whose node_id IS the use_id
     (same child twice = two nodes; bindings live on the use edge — G1).
     Rejects cycles at creation (mirrors scidb's PipelineCycleError).
-    Returns the use_id.
+    Returns the use_id. *use_id*: a derived id instead of a fresh one (a
+    library pipeline's own submodules, ``ids.library_use_id``).
     """
     _ensure_tables(db)
+    from scistack_gui import library_lock
+
+    library_lock.check_scope(db, parent_pipeline_id, "placing a submodule")
     known = {p["pipeline_id"] for p in list_pipelines(db)}
     for pid in (parent_pipeline_id, child_pipeline_id):
         if pid not in known:
@@ -1081,7 +1153,7 @@ def add_pipeline_use(
             f"placing this pipeline would create a dependency cycle "
             f"('{child_pipeline_id}' already reaches '{parent_pipeline_id}')"
         )
-    use_id = f"use_{uuid.uuid4().hex[:12]}"
+    use_id = use_id or f"use_{uuid.uuid4().hex[:12]}"
     _duck(db)._execute(
         "INSERT INTO _pipeline_uses "
         "(use_id, parent_pipeline_id, child_pipeline_id, binding_json) "
@@ -1106,12 +1178,22 @@ def add_pipeline_use(
 def remove_pipeline_use(db, use_id: str) -> None:
     """Remove a pipeline node: the use row, its canvas node, its edges."""
     _ensure_tables(db)
+    from scistack_gui import library_lock
+
+    library_lock.check_scope(db, _use_parent(db, use_id), "removing a submodule")
     _duck(db)._execute("DELETE FROM _pipeline_uses WHERE use_id = ?", [use_id])
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [use_id])
     from scistack_gui import intent_store
 
     intent_store.delete_edges_touching(db, use_id)
     logger.info("[pipeline_store] remove_pipeline_use: %s", use_id)
+
+
+def _use_parent(db, use_id: str) -> "str | None":
+    row = _duck(db)._fetchone(
+        "SELECT parent_pipeline_id FROM _pipeline_uses WHERE use_id = ?", [use_id]
+    )
+    return row[0] if row else None
 
 
 def get_pipeline_uses(db, parent_pipeline_id: "str | None" = None) -> list[dict]:
@@ -1155,6 +1237,11 @@ def update_use_binding(db, use_id: str, binding: dict) -> None:
         raise ValueError(
             f"unknown binding key(s) {sorted(unknown)} — allowed: {sorted(allowed)}"
         )
+    from scistack_gui import library_lock
+
+    # The binding of a placement ON the project's canvas is the project's to
+    # set; only a submodule placed INSIDE a library pipeline is refused.
+    library_lock.check_scope(db, _use_parent(db, use_id), "changing a submodule binding")
     _duck(db)._execute(
         "UPDATE _pipeline_uses SET binding_json = ? WHERE use_id = ?",
         [json.dumps(binding), use_id],
@@ -1749,6 +1836,9 @@ def hide_port(db, pipeline_id: str, direction: str, var_type: str) -> None:
         var_type,
     )
     _ensure_tables(db)
+    from scistack_gui import library_lock
+
+    library_lock.check_scope(db, pipeline_id, "hiding a port")
     _duck(db)._execute(
         "INSERT INTO _pipeline_hidden_ports (pipeline_id, direction, var_type) "
         "VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
@@ -1764,6 +1854,9 @@ def unhide_port(db, pipeline_id: str, direction: str, var_type: str) -> None:
         direction,
         var_type,
     )
+    from scistack_gui import library_lock
+
+    library_lock.check_scope(db, pipeline_id, "showing a port")
     _duck(db)._execute(
         "DELETE FROM _pipeline_hidden_ports "
         "WHERE pipeline_id = ? AND direction = ? AND var_type = ?",
@@ -1816,3 +1909,128 @@ def _upsert_node(
         "label = excluded.label, pipeline_id = excluded.pipeline_id",
         [node_id, node_type, label, pipeline_id],
     )
+
+
+# ---------------------------------------------------------------------------
+# Library-owned pipelines (portability Stage 10; services/library_service)
+# ---------------------------------------------------------------------------
+
+
+def library_owner(db, pipeline_id: str) -> "dict | None":
+    """``{"library", "pipeline_name", "doc_pipeline_id", "definition_hash"}``
+    when *pipeline_id* is owned by a library, else ``None``."""
+    _ensure_tables(db)
+    row = _duck(db)._fetchone(
+        "SELECT library, pipeline_name, doc_pipeline_id, definition_hash "
+        "FROM _library_pipelines WHERE pipeline_id = ?",
+        [pipeline_id],
+    )
+    if row is None:
+        return None
+    return {
+        "library": row[0],
+        "pipeline_name": row[1],
+        "doc_pipeline_id": row[2],
+        "definition_hash": row[3],
+    }
+
+
+def list_library_pipelines(db) -> list[dict]:
+    """Every library-owned pipeline: ``[{"pipeline_id", "name", "library",
+    "pipeline_name", "doc_pipeline_id", "definition_hash", "hidden"}]``."""
+    _ensure_tables(db)
+    rows = _duck(db)._fetchall(
+        "SELECT l.pipeline_id, p.name, l.library, l.pipeline_name, l.doc_pipeline_id, "
+        "l.definition_hash, p.hidden FROM _library_pipelines l "
+        "JOIN _pipelines p ON p.pipeline_id = l.pipeline_id "
+        "ORDER BY l.library, l.pipeline_name, p.name"
+    )
+    return [
+        {
+            "pipeline_id": r[0],
+            "name": r[1],
+            "library": r[2],
+            "pipeline_name": r[3],
+            "doc_pipeline_id": r[4],
+            "definition_hash": r[5],
+            "hidden": bool(r[6]),
+        }
+        for r in rows
+    ]
+
+
+def set_library_owner(
+    db, pipeline_id: str, library: str, pipeline_name: str, doc_pipeline_id: str,
+    definition_hash: str,
+) -> None:
+    """Record that *library*'s *pipeline_name* owns *pipeline_id*."""
+    _ensure_tables(db)
+    _duck(db)._execute(
+        "INSERT INTO _library_pipelines "
+        "(pipeline_id, library, pipeline_name, doc_pipeline_id, definition_hash) "
+        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (pipeline_id) DO UPDATE SET "
+        "library = excluded.library, pipeline_name = excluded.pipeline_name, "
+        "doc_pipeline_id = excluded.doc_pipeline_id, "
+        "definition_hash = excluded.definition_hash",
+        [pipeline_id, library, pipeline_name, doc_pipeline_id, definition_hash],
+    )
+
+
+def release_library_owner(db, pipeline_id: str) -> None:
+    """*pipeline_id* is no longer library-owned (Make my own copy, 10c): it
+    becomes an ordinary, editable pipeline. Its content is untouched."""
+    _ensure_tables(db)
+    _duck(db)._execute("DELETE FROM _library_pipelines WHERE pipeline_id = ?", [pipeline_id])
+    logger.info("[pipeline_store] release_library_owner: %s is editable now", pipeline_id)
+
+
+def clear_pipeline_content(db, pipeline_id: str) -> dict:
+    """Empty one pipeline's OWN canvas -- its nodes (and their settings and
+    drawn edges), the submodules placed in it, every statement made at its
+    scope, its hidden ports -- keeping the pipeline row and every placement
+    OF it elsewhere. A library pipeline's re-sync, which then re-seeds it
+    (``services/library_service``). Never a user-facing operation."""
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    node_ids = [
+        r[0]
+        for r in _duck(db)._fetchall(
+            "SELECT node_id FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id]
+        )
+    ]
+    use_ids = [
+        r[0]
+        for r in _duck(db)._fetchall(
+            "SELECT use_id FROM _pipeline_uses WHERE parent_pipeline_id = ?", [pipeline_id]
+        )
+    ]
+    # Edges by their endpoints' CANVAS, not by this pipeline's manual rows: a
+    # seeded node that graduated onto its history twin has no manual row any
+    # more, and its edges name the placed id (`bare::pipeline_id`).
+    from scidb.intent import ASPECT_WIRING, SUBJECT_EDGE
+
+    n_edges = 0
+    for st in intent_store.load_statements(db, aspect=ASPECT_WIRING, subject_kind=SUBJECT_EDGE):
+        v = st.value or {}
+        ends = [v.get("source") or "", v.get("target") or ""]
+        if any(e in use_ids or intent_store.scope_of_node(db, e) == pipeline_id for e in ends if e):
+            n_edges += intent_store.delete_manual_edge(db, st.subject_ref)
+    for nid in node_ids:
+        _duck(db)._execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
+    n_statements = intent_store.delete_scope(db, pipeline_id)
+    _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id])
+    _duck(db)._execute(
+        "DELETE FROM _pipeline_uses WHERE parent_pipeline_id = ?", [pipeline_id]
+    )
+    _duck(db)._execute(
+        "DELETE FROM _pipeline_hidden_ports WHERE pipeline_id = ?", [pipeline_id]
+    )
+    out = {
+        "nodes": len(node_ids),
+        "uses": len(use_ids),
+        "edges": n_edges,
+        "statements": n_statements,
+    }
+    logger.info("[pipeline_store] clear_pipeline_content %s: %s", pipeline_id, out)
+    return out

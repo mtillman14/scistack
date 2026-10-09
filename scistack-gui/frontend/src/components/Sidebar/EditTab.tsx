@@ -28,6 +28,7 @@ import type { SidebarItemKind, SidebarSelectedItem } from '../../context/Sidebar
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from './sourceLocation'
+import LibrariesSection from './LibrariesSection'
 
 interface LoadError {
   source: string
@@ -173,6 +174,7 @@ export default function EditTab() {
   const { currentScope, jumpTo, renameInPath, bumpGraph, graphVersion } = useScope()
   const [pipelines, setPipelines] = useState<PipelineInfo[]>([])
   const [hypothesisIds, setHypothesisIds] = useState<Set<string>>(new Set())
+  const [libraryPipelineIds, setLibraryPipelineIds] = useState<Set<string>>(new Set())
   const [hiddenPipelines, setHiddenPipelines] = useState<HiddenPipelineInfo[]>([])
   const [showHiddenPipelines, setShowHiddenPipelines] = useState(false)
   const [addingPipe, setAddingPipe] = useState(false)
@@ -589,7 +591,7 @@ export default function EditTab() {
               </button>
             }
           >
-            {pipelines.filter(p => !hypothesisIds.has(p.pipeline_id)).map(p => (
+            {pipelines.filter(p => !hypothesisIds.has(p.pipeline_id) && !libraryPipelineIds.has(p.pipeline_id)).map(p => (
               renamingPid === p.pipeline_id ? (
                 <input
                   key={p.pipeline_id}
@@ -700,6 +702,14 @@ export default function EditTab() {
                 </div>
               )
             })()}
+            <LibrariesSection
+              currentScope={currentScope}
+              onLibraryPipelineIds={setLibraryPipelineIds}
+              onOpen={(pid, name) => {
+                jumpTo(pid, name)
+                selectListItem('submodule', pid, name)
+              }}
+            />
           </Section>
         )}
         {activeTab === 'function' && (

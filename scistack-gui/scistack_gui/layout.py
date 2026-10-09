@@ -24,6 +24,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from scistack_gui import history, pipeline_store
+from scistack_gui import library_lock as _library_lock
 from scistack_gui.ids import ROOT_SCOPE
 from scistack_gui.db import get_db, get_db_path
 
@@ -426,6 +427,11 @@ def delete_node(node_id: str) -> None:
 
     logger.info("[layout] delete_node called (node_id=%r)", node_id)
     db = get_db()
+    # Refuse BEFORE the position is removed: a refused delete inside a
+    # library pipeline must leave the node exactly where it was.
+    from scistack_gui import library_lock
+
+    library_lock.check_node(db, node_id, "removing a node")
     # Resolve scope BEFORE removing the position — node_scope's fallback
     # for a bare (not placement-qualified) id scans saved positions.
     manual_nodes = pipeline_store.get_manual_nodes(db)
@@ -561,6 +567,7 @@ def rebase_node_positions(
     return moved
 
 
+@_library_lock.internal
 def graduate_manual_node(old_id: str, new_id: str, take_old_position: bool = False) -> None:
     """Transfer position from a manual node to a DB-derived node ID and
     remove the manual entry. Scope-aware: the new id stays on whichever

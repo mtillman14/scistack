@@ -336,30 +336,403 @@ Originally planned:
 - Test: a headless round trip and a GUI-handler round trip of the same
   project produce identical results.
 
-## Stage 9 (later): verify, subset/anonymize
+## Stage 9: verify + subset — PLANNED 2026-10-08, DEFERRED until after Stage 10 (user). On return: add a numeric tolerance compare when the bundle carries data; subset is optional (no concrete need yet).
 
-- `scistack verify`: re-run against the recipient's own raw files, compare
-  content hashes with the imported history, report records that differ.
-- Subset/anonymize exports (E15).
+User decisions 2026-10-08:
+- `verify` COMPARES only. The user runs the pipeline as usual (GUI Run or
+  their scripts) on their own raw files; verify never executes code.
+- Anonymize DROPPED. Subject codes are normally pseudonyms already, real
+  identifiers belong upstream of the raw files, values inside the data would
+  not be covered, and pseudonyms would defeat `verify`. Revisit only for a
+  concrete requirement (a journal or a data-use agreement). Subset stays.
+
+### 9a. `verify`: the exporter's history vs your re-run
+
+**Owner: `scidb/verify.py`.**
+- Inputs: the live database, and the exporter's history from either:
+  - an archive folder (default: the newest under `.scistack/archive/`), or
+  - `--against <archive folder | bundle.scistack>`.
+- History imported LIVE (bundle with data) is the exporter's own, so there
+  is nothing to compare in place. Verify a fresh project against the bundle
+  file instead; the error message says so.
+- The archive side is read from its Parquet files into a separate in-memory
+  DuckDB connection, never into the live database.
+
+**Structural key** (one owner, `structural_key`). It is content-free, so
+records line up across the two histories even where upstream content differs:
+- record = (type, schema_version, location, key of the producing invocation).
+  The location is the non-null schema columns of its `_schema` row.
+- invocation = (function_name, function_hash, as_table, distribute,
+  across_variants, sorted bindings).
+- binding = (param, selector, then one of: constant content_hash, PathInput
+  name, or the input record's KEY).
+- `__save__` (direct saves): only its constant kwargs.
+- Exporter locations are renamed through the import's key map. A dropped key
+  makes those records "not comparable" (reported, not guessed).
+
+**Classes, for each non-excluded exporter variable record:**
+- reproduced: same key, same content_hash;
+- differs at source: same key, different content; every variable input reproduced;
+- differs downstream: same key, different content, and an input differs;
+  names the first divergence upstream;
+- code changed: the key matches except function_hash;
+- not run: no live record with the key;
+- new: live records with no exporter key, listed separately.
+
+When the exporter's bundle was a subset (9b), live records outside it are
+ignored. When one side has several records for a key, the newest
+(`created_at`) is compared and the count of older ones is reported.
+
+**Recorded at import (prerequisite):** `import.json` in the archive folder,
+holding the exporter's schema keys, the key map, the manifest's options
+(including any subset) and `exported_at`.
+
+**Report:** counts per (function, variable) and class; first divergences
+with location and both content hashes; `--json`. Exit codes: 0 all
+reproduced, 2 differences, 1 error.
+
+**Logging:** INFO counts per class; timings for load / keys / compare
+(diagnostics for big histories).
+
+**Front ends:**
+- `scidb verify [--db] [--against] [--json]`, a read-only inspect command in
+  `scidb.inspect.cli`. `scistack verify` mounts the same handler.
+- GUI: an RPC `verify_reproduction` that runs in the session process (a
+  separate process cannot open the locked database) and a "✓ verify"
+  popover in the tab strip. It lets you choose an archive and shows the
+  summary and the first divergences.
+- `docs/gui-manual-testing-todo.md` entry.
+
+**Tests (scidb), on a small pipeline exported without data, imported (so
+the history is archived), then re-run:**
+- all reproduced;
+- a changed raw value → differs at source at that location, downstream below it;
+- an edited function → code changed;
+- a location not re-run → not run;
+- an extra subject → new;
+- a schema renamed via the key map → still matched;
+- a dropped key → not comparable;
+- duplicate keys → the newest is compared;
+- the archive is never loaded into the live database.
+
+### 9b. Subset export
+
+**Owner: `scidb/subset.py: Subset`,** built from a `scifor.LocationFilter`
+(the one meaning of a location selection). It has one method per shape,
+like `KeyMap`; each section applies it to its own data and reports what
+was removed.
+
+**`ExportOptions.locations`:** the `LocationFilter` dict, or None for
+everything. It is recorded in the manifest.
+
+**History + data rule:**
+- A variable record is kept iff its location matches AND all its variable
+  inputs are kept (transitive). So an aggregate computed over removed
+  locations is dropped and reported; its value describes data the recipient
+  will not have.
+- Constant and PathInput records are kept when a kept invocation uses them.
+- An invocation is kept iff its inputs are kept and at least one output is.
+- A run is kept iff it keeps at least one invocation.
+- `__scidb_schema_overrides` rows are filtered by location.
+- Variant pins and tombstones are kept (they are per variable, not per
+  location). Checked in implementation.
+- Data tables and `_record_save` are filtered by kept record_id.
+- Mechanism: `table_copy.dump(..., keep=...)` filters rows through TEMP
+  tables of kept ids in the exporter's own connection, dropped afterwards.
+
+**Config, canvas and plots:** values outside the subset are removed from
+the `[schema_keys]` level lists, node location selections and per-level
+plot settings (colours, reference level). It is reported.
+
+**Front ends:**
+- CLI: `scistack export --only KEY=V1,V2` (repeatable; ANDed across keys;
+  becomes `exclude_levels` of the complement, using the database's values)
+  and `--exclude KEY=V1,V2`.
+- GUI: the existing schema-location picker in the export popover, which
+  yields the `LocationFilter` dict directly.
+
+**Tests:**
+- an aggregate over a removed subject is dropped;
+- constants are kept;
+- data rows are filtered;
+- config levels and node selections are filtered;
+- a subset bundle with data imports live and is consistent (every kept
+  invocation's inputs exist);
+- verify against a subset bundle ignores live records outside it.
+
+### Order
+9a core (`import.json`, `scidb.verify`, tests) → 9a CLI → 9a GUI →
+9b core (Subset, table_copy keep, history/data) → 9b config/canvas/plots →
+9b CLI/GUI → docs (portability.md E15 + I17, decisions D-2026-10-08-10,
+manual testing doc).
 
 
-## Stage 10: share a submodule as a library; use or copy it
+## Stage 10: share a submodule as a library; use or copy it — PLANNED 2026-10-08, awaiting approval
 
-- "Share as library" on a submodule tab: generate a package from it (the
-  functions it uses, their declarations, the submodule as a source-defined
-  `scidb.Pipeline`, written by the existing code export), optionally built
-  as a wheel. The source project can switch to the library.
-- "Add library" + place its submodule: read-only on the canvas, functions
-  qualified (5a), placed through the Stage 6 key map when schemas differ,
-  chained to other submodules by name or by port bindings.
-- "Make my own copy" when the user tries to edit a library submodule: copy
-  into `src/<pkg>/<lib>/` (functions qualified by the subpackage, 5a), like
-  Duplicate.
-- Optional wheelhouse for archives (`pip wheel -w`).
+Taken BEFORE Stage 9 (user, 2026-10-08).
+
+User decisions 2026-10-08:
+- **Use = seed, lock, re-sync.** A library's pipeline is seeded into the
+  canvas tables like today's source pipelines, but owned by the library:
+  - every structural edit is refused, and "Make my own copy" is offered;
+  - when the installed library's definition changes, it is re-seeded in
+    place with stable node ids.
+  - Rejected: rendering live from source, which would need a second,
+    virtual kind of pipeline in the graph builder, the run compiler and
+    node state.
+- **Copy replaces the library.** "Make my own copy" copies the library's
+  source to `src/<pkg>/<lib>/`, and EVERY placement of that library in
+  this project switches to the copy:
+  - function names stay `lib.fn`;
+  - the library leaves `packages`;
+  - one source per name; copying is all-or-nothing per library.
+
+Scope: Python, MATLAB and mixed submodules (user, 2026-10-08: MATLAB is an
+important part). MATLAB fits the naming rule natively:
+- `func2str(@lib.fn)` is `lib.fn`, so a MATLAB library is a `+<lib>/`
+  folder and its functions are recorded as `lib.fn` without help;
+- the GUI's run commands already emit `@<name>`.
+SciStack still never installs anything itself: it shows (or, in VS Code,
+offers to run in a terminal) the `pip install` command.
+
+**Library pipeline format = canvas snapshot documents** (revised
+2026-10-08, replacing `pipelines.py`):
+- Each shared submodule ships as `src/<lib>/pipelines/<name>.json`, a
+  `canvas_snapshot` document (the Stage 2 owner of copying a canvas). It is
+  language-neutral, so Python, MATLAB and mixed submodules all work.
+- Re-sync hashes the document.
+- Script users generate a `.py` / `.m` from it with the existing code
+  export.
+- Hand-written Python `scidb.Pipeline`s inside a library are still
+  discovered (today's path). Both kinds become library-owned pipelines
+  through the SAME seed/lock owner.
+
+### 10a. Library format, loading, placing (use) — DONE 2026-10-08, tests pass
+
+As built:
+- **scidb:** `scidb/library.py` (document format, `read_library`,
+  `matlab_dir`); `entities.parse_library_table`.
+- **MATLAB:** `matlab_parser.matlab_package_prefix` / `matlab_path_entry`;
+  `config._library_matlab_sources`.
+- **Store:** `pipeline_store._library_pipelines`, `GUARDED_WRITES`,
+  `library_owner` / `set_library_owner` / `release_library_owner` /
+  `clear_pipeline_content`.
+- **Ids and lock:** `ids.library_*_id`; `library_lock`, marked as a user
+  edit in `Handler.invoke`; `intent_store` guards plus `delete_scope`.
+- **Seeding:** `canvas_snapshot.apply(node_id_for, use_id_for)`;
+  `services/library_service` (sync, list, `suggest_key_map`), called from
+  `pipeline_discovery.discover_and_seed_pipelines`.
+- **Front ends:** `api/libraries.py`; `config.add_package` /
+  `remove_package`; `library_cli` mounted by `scistack`; `bundle_section`
+  carries library pipelines by reference; frontend `LibrariesSection.tsx`
+  and the key-map step in the drop handler.
+- **Tests:** `scidb/tests/test_library.py`,
+  `scistack-gui/tests/test_libraries.py`; `test_config` package test.
+- **Docs:** D-2026-10-08-10/11, GUI §0zzzh.
+
+Known gaps: hand-written Python `scidb.Pipeline`s inside a library are
+still seeded the old way (editable, create-once), not as library-owned.
+Libraries found only through entry points are not scanned for MATLAB. The
+bundle key map renames the child side of a library placement's `key_map`
+as if it were the exporter's vocabulary.
+
+**What a library is on disk:** an ordinary package, which can live in its
+own git repo:
+- `pyproject.toml` (name, version, dependencies);
+- `src/<lib>/` holding the copied Python function modules, `pipelines/`
+  and `scistack_entities.toml`;
+- `src/<lib>/matlab/+<lib>/` for MATLAB functions (package data, like
+  scimatlab's own `+scidb/`);
+- in `pipelines/`, one snapshot document `<name>.json` per shared submodule;
+- in `scistack_entities.toml`, the Variables the pipelines use, plus a new
+  `[library]` table with `schema_keys = [...]`, the library's native
+  vocabulary for the key map. The grammar owner is `scidb.entities`.
+
+**Library pipelines are iteration-free.** A snapshot carries no location
+selections (the generator strips them), and generated scripts use `key=[]`
+("every value"). The project's concrete subject lists never enter a
+library. The project chooses values through the placement binding's
+`iterate`, and its schema through `key_map`.
+
+**MATLAB discovery and path:**
+- `+package` folders are discovered, no longer skipped
+  (`config._is_matlab_skip_dir`). A function in `+a/+b/f.m` is named
+  `a.b.f`, which is what `func2str` records.
+- Each installed library's `matlab/` folder is added to the MATLAB path the
+  GUI builds (`matlab_addpath`), and its functions are registered (I6).
+
+**Loading:**
+- For each library in `packages`, `registry` reads
+  `<lib>/pipelines/*.json` through `importlib.resources`, and notes which
+  hand-written `Pipeline`s the package registered.
+- `pipeline_discovery` seeds both as LIBRARY-OWNED pipelines; a snapshot
+  through `canvas_snapshot.apply`.
+- A new table `_library_pipelines(pipeline_id, library, pipeline_name,
+  definition_hash)` (CREATE IF NOT EXISTS: no migration), classified in
+  `PORTABILITY`.
+- Library-owned pipelines are not tabs. They appear in the sidebar's
+  Libraries list, which is new, to place into a scope.
+
+**Re-sync:** `definition_hash` is the SHA-256 of the snapshot document
+(or the hand-written `Pipeline`'s step signatures). When it changes at
+load:
+- nodes and edges are replaced, with deterministic ids derived from
+  (library, pipeline, the node's id in the document);
+- placements and their bindings are kept;
+- logged at INFO with the old and new hash.
+
+**Lock (one owner):** `pipeline_store.assert_editable(db, pipeline_id)`.
+- Every store-level write of nodes, edges, node config or hidden state
+  calls it, guarded by a test like the existing table-classification guard.
+- It raises `LibraryPipelineReadOnly`; handlers turn that into a reply the
+  frontend shows as "This submodule comes from library X. [Make my own copy]".
+- What the project still sets: the placement binding (`key_map`, `params`,
+  `iterate`) and dataset exclusions.
+
+**Placing:**
+- Placing a library pipeline is `add_pipeline_use` (the existing machinery).
+- When the library's `schema_keys` differ from the project's, the placement
+  dialog suggests a key map with `scidb.schema_map.KeyMap.auto` (Stage 6)
+  and stores it as the binding's `key_map`.
+- Chaining across libraries works by matching variable names, or by port
+  bindings / glue (existing).
+
+**Adding a library:**
+- The Paths popup gains a Libraries list: add or remove a package name in
+  `scistack.toml` `packages`, through `scidb.config_file`.
+- `scistack library add NAME` is the CLI twin.
+- An uninstalled name is reported with the pip command to install it.
+
+**Bundles:** the GUI section marks library-owned pipelines. Import
+re-seeds them from the installed library. A missing library is reported by
+the existing env check.
+
+### 10b. Share as library (generator)
+
+**Owner of the package files:** `scidb/library.py:create_library(dest,
+name, *, modules, variables, pipelines_source, schema_keys, dependencies)`.
+It is a pure file writer, like `scidb.project.init_project`: it refuses a
+non-empty destination and returns a report.
+
+**GUI composition:** `services/library_service.share_as_library(db,
+pipeline_id, dest, name)`:
+- **Functions used:** the submodule's closure (the existing
+  `_closure_pipeline_ids`), Python and MATLAB.
+- **Modules copied verbatim:** each module defining a used function, plus
+  the transitive closure of the project modules it imports (AST).
+  Absolute imports of the project's own package are rewritten to the
+  library's. Anything unresolvable is reported, not guessed.
+- **MATLAB functions:** each `.m` file is copied into
+  `matlab/+<lib>/`, with its project-local helpers (calls to other project
+  `.m` functions it uses, found by the MATLAB parser). Calls between
+  copied functions are package-qualified (`filter_emg(...)` →
+  `<lib>.filter_emg(...)`) wherever the parser can locate them; the rest
+  are reported.
+- **Pipeline document:** `canvas_snapshot.capture` of the submodule, with
+  location selections stripped and function labels rewritten to `lib.fn`. A Parameter becomes a
+  binding default (`params`); a PathInput at the head becomes an input
+  port (a library carries no data layout).
+- **Dependencies:** the project's declared dependencies that the copied
+  modules import.
+
+**Afterwards (optional, asked):**
+- "Switch this project to the library": once it is installed and listed,
+  the submodule's placements are replaced by the library pipeline.
+- The project's own copies of the functions stay (never delete), and the
+  report lists them.
+- Recorded names become `lib.fn`, so those steps show as not run until
+  re-run. Said in the dialog.
+
+**Front ends:**
+- CLI: `scistack library create --from-submodule NAME --into DIR
+  [--name LIB]`.
+- GUI: a submodule tab's menu → "Share as library…" (folder, name) →
+  report + install command.
+
+### 10c. Make my own copy
+
+- Offered when an edit hits `LibraryPipelineReadOnly`, and from the
+  Libraries list.
+- The installed library's source is copied into `src/<pkg>/<lib>/`
+  (`importlib.resources` / the distribution's files). There is a refusal if
+  that folder exists.
+- `scistack.toml` gets `copied_libraries = ["<lib>"]` and loses `<lib>`
+  from `packages`.
+- **Names:** `scidb.names` (the one owner) qualifies a function from
+  `<pkg>.<lib>.*` as `<lib>.fn` when `<lib>` is in `copied_libraries`. So
+  history and canvas labels do not change, and nothing re-runs that was
+  current.
+- Every library-owned pipeline of `<lib>` becomes an ordinary editable
+  pipeline: its `_library_pipelines` rows are removed (this is a status
+  change, not deleted data); ids, placements and bindings are kept.
+- The import paths inside the copied modules are rewritten from `<lib>.` to
+  `<pkg>.<lib>.`, with the same rewriter as 10b.
+- MATLAB: `matlab/+<lib>/` is copied into the project's MATLAB sources.
+  Names stay `lib.fn` natively, and no rewrite is needed.
+
+### 10d. Wheels and the wheelhouse
+
+- `scistack library build DIR` runs `pip wheel --no-deps -w DIR/dist DIR`
+  (`sys.executable -m pip`).
+- `ExportOptions.include_wheelhouse` gets its flag `--wheelhouse` (added to
+  `EXPORT_FLAGS`, so it is also a GUI checkbox). The bundle's `wheelhouse/`
+  section holds a wheel per library in `packages`, built from its installed
+  distribution (an editable install builds from its source path).
+- Import writes them to `.scistack/wheelhouse/`, and the report gives
+  `pip install --no-index --find-links .scistack/wheelhouse <libs>`.
+- Nothing is installed automatically.
+
+### Logging and diagnostics
+- `[library]` INFO lines: what was copied, rewritten and refused; seed and
+  re-sync with hashes.
+- Every `LibraryPipelineReadOnly` refusal names the handler and the library.
+
+### Tests
+- **10a:**
+  - an entities `[library]` table parses;
+  - a library package's snapshot document (and a hand-written `Pipeline`)
+    seeds as library-owned and is not a tab;
+  - MATLAB `+lib/f.m` is discovered as `lib.f`, an installed library's
+    `matlab/` lands in the addpath list, and a run command emits
+    `@lib.f`;
+  - every store write path refuses inside it (guard test);
+  - a binding edit is allowed;
+  - a changed definition re-seeds with stable ids and keeps placements;
+  - placing it into another schema suggests and stores a key map, and a run
+    compiles with it;
+  - the bundle round trip re-seeds from the installed library.
+- **10b:**
+  - the generated package installs from source in a temp dir (importable
+    via `sys.path`, never pip in tests);
+  - its pipeline seeds back into the same canvas shape (labels, edges,
+    ports) as the source submodule;
+  - iterables are `[]`;
+  - a project-internal import is rewritten;
+  - a MATLAB function is copied into `matlab/+<lib>/` and its call to a
+    copied helper is qualified;
+  - a mixed Python + MATLAB submodule round-trips;
+  - a non-empty destination is refused.
+- **10c:**
+  - the copy lands in `src/<pkg>/<lib>/`;
+  - names stay `lib.fn` (`scidb.names` tests);
+  - pipelines become editable with the same ids;
+  - `packages` / `copied_libraries` are updated;
+  - an existing folder is refused.
+- **10d:**
+  - `--wheelhouse` default from `ExportOptions`;
+  - the bundle carries the wheels;
+  - the import report gives the install command (pip is mocked in tests).
+
+### Order
+10a (format + loading + lock + placing) → 10b (generator, CLI, GUI) →
+10c (copy) → 10d (wheels). Each sub-stage gets its decision record
+(D-2026-10-08-10 use = seed/lock/re-sync, -11 copy replaces), its
+`docs/gui-manual-testing-todo.md` entry and a `docs/claude/portability.md`
+update.
 
 ## Order and dependencies
 
-0 → 1 → 2 → 3 → 4 → {5, 6, 7} → 8 → 9; 10 after 5, 6 and 8.
+0 → 1 → 2 → 3 → 4 → {5, 6, 7} → 8 → 10 → 9 (user, 2026-10-08: Stage 10 before Stage 9).
 Stages 5–7 are independent of each other once 4 lands; 6 needs Stage 2's
 schema-key remap hooks.
 

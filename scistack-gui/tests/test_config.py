@@ -436,7 +436,7 @@ def test_matlab_sources_key_populates_matlab_sources_unified(tmp_path):
 
 def test_matlab_sources_directory_excludes_noise_and_skip_dirs(tmp_path):
     """[matlab] sources directory entries should prune noise dirs and
-    MATLAB private/@class/+package dirs, same as folder-scan mode."""
+    MATLAB private/@class dirs, same as folder-scan mode."""
     toml_file = tmp_path / "scistack.toml"
     toml_file.write_text('[matlab]\nsources = ["mixed"]')
 
@@ -761,18 +761,40 @@ def test_folder_scan_excludes_noise_directories(tmp_path):
     assert config.matlab_sources == []
 
 
-def test_folder_scan_matlab_excludes_private_class_and_package_dirs(tmp_path):
-    """private/, @ClassName/, and +package/ folders are skipped during
-    folder-scan — sweeping them in would mis-register class methods or
-    namespaced functions as standalone top-level functions."""
+def test_folder_scan_matlab_excludes_private_and_class_dirs(tmp_path):
+    """private/ and @ClassName/ folders are skipped during folder-scan —
+    sweeping them in would mis-register helpers and class methods as
+    standalone top-level functions."""
     (tmp_path / "public.m").write_text("function y = public(x)\ny=x;\nend\n")
-    for skip_dir in ("private", "@MyClass", "+mypkg"):
+    for skip_dir in ("private", "@MyClass"):
         d = tmp_path / skip_dir
         d.mkdir()
         (d / "hidden.m").write_text("function y = hidden(x)\ny=x;\nend\n")
 
     config = load_config(None, tmp_path / "dummy.duckdb")
     assert [p.name for p in config.matlab_sources] == ["public.m"]
+
+
+def test_folder_scan_walks_package_dirs_with_the_path_above_them(tmp_path):
+    """+package/ folders ARE walked (portability Stage 10): a function in
+    +a/+b/ is named a.b.f, and the MATLAB path holds the folder ABOVE the
+    outermost package (MATLAB refuses a +package folder on its path). A
+    private/ folder inside a package is still skipped."""
+    from scistack_gui.matlab_parser import parse_matlab_function
+
+    (tmp_path / "public.m").write_text("function y = public(x)\ny=x;\nend\n")
+    inner = tmp_path / "lib" / "+gait" / "+filters"
+    inner.mkdir(parents=True)
+    (inner / "lowpass.m").write_text("function y = lowpass(x)\ny=x;\nend\n")
+    (inner / "private").mkdir()
+    (inner / "private" / "helper.m").write_text("function y = helper(x)\ny=x;\nend\n")
+
+    config = load_config(None, tmp_path / "dummy.duckdb")
+    assert sorted(p.name for p in config.matlab_sources) == ["lowpass.m", "public.m"]
+    assert (tmp_path / "lib") in config.matlab_addpath
+    assert not any(p.name.startswith("+") for p in config.matlab_addpath)
+    info = parse_matlab_function(inner / "lowpass.m")
+    assert info.name == "gait.filters.lowpass"
 
 
 def test_folder_scan_excludes_test_dirs_and_test_named_files(tmp_path):
