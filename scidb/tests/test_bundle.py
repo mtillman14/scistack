@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 import zipfile
+from pathlib import Path
 
+import numpy as np
 import pytest
 
 import scifor as _scifor
-from scidb import bundle
+from scidb import BaseVariable, bundle, for_each, table_copy
 from scidb.bundle import BundleError, ExportOptions, export_project, import_project, read_bundle
 from scidb.project import init_project
 
@@ -75,10 +77,13 @@ class TestExport:
         with zipfile.ZipFile(out) as zf:
             names = set(zf.namelist())
             manifest = json.loads(zf.read("manifest.json"))
-        assert names == {
+        assert {
             "manifest.json", "config/scistack.toml", "env/environment.json",
-            "fake/a.txt", "fake/sub/b.json",
-        }
+            "fake/a.txt", "fake/sub/b.json", "history/tables.json",
+            "history/_record.parquet", "history/_invocation.parquet",
+        } <= names
+        # History is on by default (Stage 7); derived data is opt-in.
+        assert not any(n.startswith("data/") for n in names)
         assert manifest["format_version"] == bundle.FORMAT_VERSION
         assert manifest["project"] == {
             "package": "gait",
@@ -88,7 +93,7 @@ class TestExport:
             "root": project[0].resolve().as_posix(),
         }
         assert manifest["options"] == ExportOptions().to_dict()
-        assert set(manifest["sections"]) == {"config", "env", "fake"}
+        assert set(manifest["sections"]) == {"config", "env", "history", "fake"}
 
     def test_the_provider_sees_the_project(self, project, tmp_path):
         section = FakeSection()
@@ -366,3 +371,137 @@ def test_a_key_map_off_the_recipient_schema_is_refused(project, tmp_path):
     with pytest.raises(BundleError, match="recipient"):
         import_project(out, tmp_path / "copy", schema_keys=["participant"],
                        key_map={"subject": "patient"})
+
+
+# ---------------------------------------------------------------------------
+# Stage 7: history and data
+# ---------------------------------------------------------------------------
+
+
+class BundleRaw(BaseVariable):
+    pass
+
+
+class BundleOut(BaseVariable):
+    pass
+
+
+def _double(x):
+    return x * 2
+
+
+def _with_history(project):
+    """A saved input, a run, and an exclusion in the source project."""
+    from scidb.exclusions import exclude_schema
+
+    root, db = project
+    BundleRaw.save(np.array([1.0, 2.0]), subject="S01", session="1")
+    BundleRaw.save(np.array([3.0]), subject="S02", session="1")
+    for_each(_double, {"x": BundleRaw}, [BundleOut], subject=["S01", "S02"], session=["1"])
+    exclude_schema("bad recording", db=db, subject="S03")
+    return root, db
+
+
+def _count(db, table):
+    return db._duck._fetchone(f'SELECT count(*) FROM "{table}"')[0]
+
+
+def test_table_copy_keeps_rows_keys_and_views(tmp_path):
+    from scidb import configure_database
+    from scidb.database import clear_current_database
+
+    a = configure_database(tmp_path / "a.duckdb", SCHEMA)
+    a._duck._execute("CREATE TABLE t_copy (k VARCHAR PRIMARY KEY, v DOUBLE[])")
+    a._duck._execute("INSERT INTO t_copy VALUES ('x', [1.0, 2.0]), ('y', [])")
+    a._duck._execute("CREATE VIEW t_view AS SELECT k FROM t_copy")
+    files = table_copy.dump(a._duck, ["t_copy", "missing_table"], ["t_view"])
+    a.close()
+
+    b = configure_database(tmp_path / "b.duckdb", SCHEMA)
+    try:
+        out = table_copy.load(b._duck, files)
+        assert out["tables"] == {"t_copy": 2}
+        assert b._duck._fetchall("SELECT k, v FROM t_copy ORDER BY k") == [
+            ("x", [1.0, 2.0]), ("y", []),
+        ]
+        assert b._duck._fetchall("SELECT k FROM t_view ORDER BY k") == [("x",), ("y",)]
+        with pytest.raises(Exception):  # the primary key survived the copy
+            b._duck._execute("INSERT INTO t_copy VALUES ('x', [])")
+    finally:
+        b.close()
+        clear_current_database()
+
+
+def test_history_without_data_is_archived_not_loaded(project, tmp_path):
+    root, db = _with_history(project)
+    out = _export(project, tmp_path)
+    db.close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    hist = report.sections["history"]
+    assert hist["live"] is False
+    archive = Path(hist["archived"])
+    assert (archive / "tables.json").exists() and (archive / "_record.parquet").exists()
+    assert archive.is_relative_to((tmp_path / "copy").resolve() / ".scistack" / "archive")
+    target = report_db(report)
+    assert _count(target, "_record") == 0  # the live database stays consistent
+    # Dataset intent governs a re-run, so the exclusion is live.
+    assert hist["intent_loaded"] == ["__scidb_schema_overrides"]
+    assert _count(target, "__scidb_schema_overrides") >= 1
+    target.close()
+
+
+def test_data_with_history_loads_live_and_verbatim(project, tmp_path):
+    root, db = _with_history(project)
+    source_records = _count(db, "_record")
+    out = _export(project, tmp_path, options=ExportOptions(include_data=True))
+    db.close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    assert report.sections["history"]["live"] is True
+    target = report_db(report)
+    assert _count(target, "_record") == source_records
+    loaded = BundleOut.load(subject="S01", session="1")
+    assert np.array_equal(np.asarray(loaded.data), np.array([2.0, 4.0]))
+    target.close()
+
+
+def test_data_is_not_imported_into_another_schema(project, tmp_path):
+    root, db = _with_history(project)
+    out = _export(project, tmp_path, options=ExportOptions(include_data=True))
+    db.close()
+
+    report = import_project(out, tmp_path / "copy", schema_keys=["participant", "visit"],
+                            key_map={"subject": "participant", "session": "visit"})
+
+    hist = report.sections["history"]
+    assert hist["live"] is False
+    assert "schema changed" in hist["data"]
+    assert hist["intent_loaded"] == []  # its keys are the exporter's
+    assert hist["archived"]
+    report_db(report).close()
+
+
+def test_data_without_history_is_refused(project, tmp_path):
+    with pytest.raises(BundleError, match="needs its history"):
+        _export(project, tmp_path, options=ExportOptions(include_history=False, include_data=True))
+
+
+def test_history_can_be_declined_at_import(project, tmp_path):
+    _with_history(project)
+    out = _export(project, tmp_path)
+    project[1].close()
+    report = import_project(out, tmp_path / "copy", import_history=False)
+    assert report.sections["history"]["archived"] is None
+    assert not (tmp_path / "copy" / ".scistack" / "archive").exists()
+    assert any("opted out" in w for w in report.warnings)
+    report_db(report).close()
+
+
+def report_db(report):
+    """The target database the default opener left current."""
+    from scidb.database import get_database
+
+    return get_database()

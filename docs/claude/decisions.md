@@ -8,6 +8,27 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-8 — History without its data is an archive, not live
+
+**Context.** A bundle's history is on by default and its data is opt-in, so
+the common bundle carries history without data. Loaded into the live
+database, it would describe records with no rows behind them: some node
+states would show "done" for things that cannot be loaded.
+
+**Decision (user).** The live database only ever holds history together
+with its data. History + data + same schema: both loaded verbatim
+(`scidb.table_copy`: DDL from DuckDB's catalog + Parquet rows + views, so
+primary keys and views survive), and the GUI tables travel verbatim too
+(node ids, `_node_wiring`, hides, layout file). Otherwise the history is
+archived under `.scistack/archive/<export time>/` for audit and
+`scistack verify`; dataset intent (exclusions) still goes live when the
+schema was kept. Data without history is refused at export.
+
+**Consequences.** A default import shows a "not run" canvas with the
+exporter's history available but inert; re-running regenerates the data.
+
+---
+
 ## D-2026-10-08-7 — One key map for importing into another schema
 
 **Context.** A bundle may be imported into a project with a different

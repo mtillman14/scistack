@@ -273,15 +273,24 @@ declared in Python source are not rewritten; refusing history/data into a
 changed schema is Stage 7; the dialogs that collect the schema, key map and
 roots are Stage 8.
 
-## Stage 7: history and data sections
+## Stage 7: history and data sections — DONE 2026-10-08, tests pass
 
-- Export: the provenance tables + `_schema` + `_function_source` to Parquet;
-  data opt-in (the variable tables + `_record_save`).
-- Import: only into a new, empty project with the exporter's schema kept.
-  Verbatim copy, no deduplication. Refuse otherwise with a clear message.
-  Import-time opt-out for history (default on when present).
-- Tests: export → import reproduces every table row-for-row; refusing a
-  non-empty target; refusing a changed schema.
+As built (D-2026-10-08-8, user decision: history without data is an archive):
+- `scidb/table_copy.py`: dump/load tables between databases (DDL from
+  `duckdb_tables()`, rows as Parquet, views from `duckdb_views()`); load
+  empties an existing table and inserts the shared columns.
+- `scidb.bundle`: `history` section (`HISTORY_TABLES`: provenance + `_schema`
+  + exclusions, variant pins, tombstones; default on) and `data` section
+  (variable tables, `_record_save`, variable metadata, views; opt-in, refused
+  without history). Import: history + data + same schema -> live verbatim
+  (`ImportContext.history_live`); otherwise archived under
+  `.scistack/archive/<export time>/`, exclusions (`INTENT_TABLES`) live when
+  the schema was kept; `import_history=False` declines it.
+- GUI section verbatim mode (with data): every GUI table
+  (`table_portability()`) and the layout file copied exactly; the snapshot
+  path otherwise.
+- Tests: Stage 7 block in `scidb/tests/test_bundle.py`; two tests at the end
+  of `scistack-gui/tests/test_bundle_project.py`.
 
 ## Stage 8: CLI + GUI front ends
 

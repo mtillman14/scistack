@@ -154,6 +154,19 @@ History is also a choice at import time (default on when present). For reuse
 on new data with the same schema, the recipient can decline it so their
 database holds only their own results.
 
+**The live database only ever holds history together with its data**
+(decided 2026-10-08). History whose data is not there would say records
+exist that cannot be loaded, and some views would show nodes as done. So:
+
+| Bundle carries | Schema | Result |
+|---|---|---|
+| history + data | kept | both loaded LIVE, verbatim; the GUI tables and layout file are copied verbatim too, so the canvas is identical down to node ids |
+| history only (the default) | kept | history ARCHIVED read-only under `.scistack/archive/<export time>/` (the bundle's Parquet files + README) for audit and `scistack verify`; exclusions go live (they govern a re-run); the canvas starts "not run" |
+| history (+ data) | changed | history archived; data not imported; nothing schema-keyed goes live |
+
+Data without history is refused at export. A re-run never skips because of
+archived history: the skip gate requires a save event, which is data.
+
 ## Reusing code: copies, libraries, and names
 
 Decided with the user 2026-10-08.
@@ -222,14 +235,14 @@ Status as of 2026-10-08.
 | E4 | Nodes, edges, sub-pipelines, hidden ports, hypothesis | ✅ | `services/canvas_snapshot.capture`, shared with duplicate/paste (Stage 2). |
 | E5 | Node settings | ✅ | Every intent statement, resolved in the source scope, for run and never-run nodes alike (Stage 2). |
 | E6 | Other GUI state | 🔧 | Notes, built-in function references, parameter value groups: ✅ (Stage 2). `_node_wiring`, PathInput rename history: history-only (Stage 7). `_variant_pin`, saved plots/presets: Stage 4. |
-| E7 | Hidden nodes/edges/combos | 🔧 | Captured (shared with duplicate) but not applied on a canvas-only import; applied with history (Stage 7). |
+| E7 | Hidden nodes/edges/combos | ✅ | Snapshot path: captured, applied only with live history. Verbatim path (history + data live): every GUI table copied exactly (Stage 7). |
 | E8 | Positions | ✅ | In the snapshot. |
 | E9 | Parameters / Sweeps / PathInput values | 🔧 | Bundled by registry lookup. Replace with the entities file travelling in the wheel; check the `layout.json` constants palette as an owner. |
 | E10 | Project config | 🔧 | `scistack.toml` is the bundle's `config` section (scidb). Copied verbatim; absolute first-write seeds still need Stage 6. |
 | E11 | Code + entities file | ✅ | `bundle_section.CodeSection`: the files discovery loads (the config loader's list), `pyproject.toml`, the own package with its data; code from outside the root is listed, not copied (Stage 5). |
 | E12 | Wheel + resolved versions + environment | 🔧 | Environment ✅ (`scidb.bundle` env section: Python, platform, every distribution's version, MATLAB if already loaded; Stage 5). Wheels: Stage 10 (libraries only). |
-| E13 | Run history | ❌ | Default on. Requires user ID removed first. |
-| E14 | Derived variable data | ❌ | Opt-in. Only `scidb/csv_export.py` exists. |
+| E13 | Run history | ✅ | `history` section (default on): provenance tables + `_schema` + exclusions, variant pins, tombstones, via `scidb.table_copy` (DDL + Parquet) (Stage 7). |
+| E14 | Derived variable data | ✅ | `data` section (opt-in, requires history): every variable table with its DDL and view, `_record_save`, variable metadata (Stage 7). |
 | E15 | Subset / anonymize subjects | ❌ | Later. |
 | E16 | Manifest, format version, `.scistack` archive | ✅ | `scidb/bundle.py`: manifest with per-file SHA-256, plain zip, `ExportOptions` as the one owner of defaults (Stage 4). |
 | E17 | Plain-script export | ✅ | `code_export_service.py`. |
@@ -252,7 +265,7 @@ Status as of 2026-10-08.
 | I11 | Mint edge IDs | ✅ | `ids.new_manual_edge_id` (a drawn edge's stored id is allocated; `connection_id` derives the connection's id for matching, a different concept). |
 | I12 | Restore the rest of the GUI state, with schema keys remapped | ✅ | `canvas_snapshot.apply` + `remap_schema_keys` (Stages 2, 6). |
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
-| I14 | Restore history / data | ❌ | New empty project + schema kept only; a verbatim copy. |
+| I14 | Restore history / data | ✅ | History + data + same schema: loaded live, verbatim, and the GUI tables verbatim too. History without data, or another schema: archived under `.scistack/archive/<export time>/`; exclusions still go live when the schema was kept. `import_history=False` declines it (Stage 7). |
 | I15 | Check that every canvas node's code is found | 🔧 | Needs discovery. A headless import (`discovered=False`) reports it unchecked (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`); the GUI checks on open. |
 | I16 | Same function identity from a wheel and from loose files | ✅ | Moot for a bundle import: the code stays source in `src/<pkg>/`, the exporter's own layout. Revisit for libraries (Stage 10). |
 | I17 | Reproduction check | ❌ | Later: `scistack verify` re-runs against the recipient's own copy of the raw files (read, never copied) and compares content hashes with the imported history. |

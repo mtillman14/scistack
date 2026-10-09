@@ -230,3 +230,42 @@ def test_a_canvas_lands_in_the_recipients_schema(client, tmp_path):
     assert config["schemaSelection"]["exclude_levels"] == {"participant": ["S02"]}
     flagged = report.sections["schema"]["flagged"]
     assert any("custom_proc" in where for where, _ in flagged)
+
+
+# ---------------------------------------------------------------------------
+# Stage 7: history + data live -> the GUI tables travel verbatim
+# ---------------------------------------------------------------------------
+
+
+def test_with_data_the_canvas_is_identical_down_to_node_ids(client, tmp_path):
+    from scidb.bundle import ExportOptions, export_project
+
+    from scistack_gui.headless import bundle_providers, import_project_bundle
+    from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+    _build_source(client)
+    source = get_pipeline_graph(get_db(), "main")
+    source_ids = {n["id"] for n in source["nodes"]}
+    source_edges = {(e["source"], e["target"]) for e in source["edges"]}
+    out = export_project(
+        tmp_path, get_db(), tmp_path / "out" / "study",
+        options=ExportOptions(include_data=True), providers=bundle_providers(),
+    )
+
+    report = import_project_bundle(out, tmp_path / "copy")
+
+    assert report.sections["history"]["live"] is True
+    assert report.sections["gui"]["mode"] == "verbatim"
+    target = get_pipeline_graph(get_db(), "main")
+    assert {n["id"] for n in target["nodes"]} == source_ids
+    assert {(e["source"], e["target"]) for e in target["edges"]} == source_edges
+
+
+def test_without_data_the_canvas_is_rebuilt_from_the_snapshot(client, tmp_path):
+    from scistack_gui.headless import import_project_bundle
+
+    _build_source(client)
+    out = _export(tmp_path)  # default: history archived, no data
+    report = import_project_bundle(out, tmp_path / "copy")
+    assert report.sections["history"]["live"] is False
+    assert report.sections["gui"].get("mode") != "verbatim"

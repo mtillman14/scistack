@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -59,6 +60,34 @@ ENV_FILE = "environment.json"
 #: after, with ``ctx.db`` open.
 PHASE_FILES = "files"
 PHASE_DATABASE = "database"
+
+HISTORY_SECTION = "history"
+DATA_SECTION = "data"
+
+#: What ran, when, with what: the provenance graph and its schema rows, plus
+#: the dataset intent that refers to them (exclusions, variant pins,
+#: deletion tombstones). Never who (D-2026-10-08-1).
+HISTORY_TABLES = (
+    "_schema",
+    "_record",
+    "_constant",
+    "_invocation",
+    "_function_source",
+    "_invocation_input",
+    "_invocation_output",
+    "_run",
+    "_run_invocation",
+    "_variant_pin",
+    "_variant_tombstone",
+    "__scidb_schema_overrides",
+)
+
+#: Rows that are dataset INTENT rather than facts: they govern a re-run, so
+#: they go live even when the rest of the history is only archived.
+INTENT_TABLES = ("__scidb_schema_overrides",)
+
+#: Where an archived (not loaded) history lands in the new project.
+ARCHIVE_DIR = ".scistack/archive"
 
 
 class BundleError(ValueError):
@@ -105,6 +134,9 @@ class ImportContext:
     key_map: Any = None
     #: Collects what each remap dropped or flagged (``schema_map.MapReport``).
     map_report: Any = None
+    #: Whether the bundle's history AND data went into the live database
+    #: (verbatim). The GUI section then copies its tables verbatim too.
+    history_live: bool = False
 
 
 class SectionProvider(Protocol):
@@ -264,6 +296,27 @@ def check_environment(root: Path, env: dict) -> dict:
     return report
 
 
+def _data_tables(duck) -> list[str]:
+    """The derived data: every variable's table (``_registered_types``), the
+    save events, and the variable metadata tables."""
+    tables = ["_registered_types", "_variables", "_variable_groups", "_record_save"]
+    try:
+        tables += [r[0] for r in duck._fetchall("SELECT table_name FROM _registered_types")]
+    except Exception as e:  # no variable was ever saved
+        Log.info(f"[bundle] no _registered_types ({e}); no variable tables")
+    return tables
+
+
+def _views(duck) -> list[str]:
+    """Every user view (scidb's per-variable views over the data)."""
+    return [
+        r[0]
+        for r in duck._fetchall(
+            "SELECT view_name FROM duckdb_views() WHERE schema_name = 'main' AND NOT internal"
+        )
+    ]
+
+
 def export_project(
     root: "Path | str",
     db,
@@ -285,11 +338,24 @@ def export_project(
     package = own[0] if own else read_project_name(root)
     Log.info(f"[bundle] export_project: root={root} -> {out_path} options={options.to_dict()}")
 
+    if options.include_data and not options.include_history:
+        raise BundleError(
+            "derived data needs its history: data without the record of what "
+            "produced it cannot be loaded consistently (include_history=True)"
+        )
     ctx = ExportContext(root=root, db=db, options=options, package=package)
     sections: dict[str, dict[str, bytes]] = {
         CONFIG_SECTION: _config_section(root),
         ENV_SECTION: _env_section(),
     }
+    from . import table_copy
+
+    if options.include_history:
+        sections[HISTORY_SECTION] = table_copy.dump(db._duck, list(HISTORY_TABLES))
+    if options.include_data:
+        sections[DATA_SECTION] = table_copy.dump(
+            db._duck, _data_tables(db._duck), _views(db._duck)
+        )
     for provider in providers or []:
         if provider.name in sections:
             raise BundleError(f"two sections named {provider.name!r}")
@@ -512,6 +578,83 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
     return out
 
 
+def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
+                             manifest: dict, report) -> bool:
+    """Put the bundle's history (and data) where it belongs; return whether
+    they went LIVE.
+
+    The live database only ever holds history TOGETHER with its data, both
+    verbatim (decided 2026-10-08): history whose data is not here would say
+    records exist that cannot be loaded. So:
+
+    * data + history, schema kept, history wanted -> both loaded live;
+    * history without data (the default bundle), or into another schema ->
+      the history is ARCHIVED under ``.scistack/archive/<export time>/`` as
+      the bundle's own Parquet files, for audit and ``scistack verify``;
+      its dataset intent (``INTENT_TABLES``: exclusions) still goes live
+      when the schema was kept, because it governs a re-run;
+    * data into another schema -> not imported (it describes a dataset with
+      a different shape), reported.
+    """
+    from . import table_copy
+
+    history = bundle.sections.get(HISTORY_SECTION)
+    data = bundle.sections.get(DATA_SECTION)
+    out: dict = {"live": False, "archived": None, "intent_loaded": [], "data": None}
+    if history is None and data is None:
+        return False
+    if not import_history:
+        out["data"] = "not imported (history opted out)" if data else None
+        report.sections[HISTORY_SECTION] = out
+        report.warnings.append("the bundle's run history was not imported (opted out)")
+        return False
+
+    if data is not None and history is not None and kmap.is_identity:
+        out["history"] = table_copy.load(db._duck, history)
+        out["data"] = table_copy.load(db._duck, data)
+        out["live"] = True
+        report.sections[HISTORY_SECTION] = out
+        Log.info("[bundle] history and data loaded live (verbatim)")
+        return True
+
+    if data is not None:
+        out["data"] = (
+            "not imported: the schema changed, and the data describes a dataset of "
+            "the exporter's shape"
+        )
+        report.warnings.append(f"derived data {out['data']}")
+    if history is not None:
+        stamp = re.sub(r"[^0-9A-Za-z]+", "-", str(manifest.get("exported_at") or "export")).strip("-")
+        archive = root / ARCHIVE_DIR / stamp
+        archive.mkdir(parents=True, exist_ok=True)
+        for rel, blob in history.items():
+            (archive / rel).write_bytes(blob)
+        (archive / "README.txt").write_text(
+            "Run history exported with this project, kept read-only for audit and\n"
+            "`scistack verify`. It is NOT in the live database: its derived data\n"
+            "was not in the bundle (or the schema changed), and the live database\n"
+            "only holds history together with its data. tables.json lists the\n"
+            "tables; each <table>.parquet holds its rows.\n",
+            encoding="utf-8",
+        )
+        out["archived"] = str(archive)
+        if kmap.is_identity:
+            spec = json.loads(history[table_copy.TABLES_FILE])
+            intent = [t for t in INTENT_TABLES if t in spec.get("tables", {})]
+            if intent:
+                subset = {
+                    table_copy.TABLES_FILE: json.dumps(
+                        {"tables": {t: spec["tables"][t] for t in intent}, "views": {}}
+                    ).encode("utf-8"),
+                    **{f"{t}.parquet": history[f"{t}.parquet"] for t in intent},
+                }
+                table_copy.load(db._duck, subset)
+                out["intent_loaded"] = intent
+        Log.info(f"[bundle] history archived at {archive}; intent loaded {out['intent_loaded']}")
+    report.sections[HISTORY_SECTION] = out
+    return False
+
+
 def _default_open_db(db_path: Path, schema_keys: list[str]):
     from . import configure_database
 
@@ -526,6 +669,7 @@ def import_project(
     schema_keys: "list[str] | None" = None,
     key_map: "dict[str, str | None] | None" = None,
     path_roots: "dict[str, str] | None" = None,
+    import_history: bool = True,
     open_db: "Callable[[Path, list[str]], Any] | None" = None,
 ) -> ImportReport:
     """Make a NEW project at *target_root* from the bundle.
@@ -580,7 +724,7 @@ def import_project(
         report.created.append(config_path_at(root))
 
     by_name = {p.name: p for p in providers or []}
-    builtin = {CONFIG_SECTION, ENV_SECTION}
+    builtin = {CONFIG_SECTION, ENV_SECTION, HISTORY_SECTION, DATA_SECTION}
     for name, files in bundle.sections.items():
         if name not in builtin and name not in by_name:
             msg = f"section {name!r} ({len(files)} file(s)) has no importer here; not imported"
@@ -619,8 +763,12 @@ def import_project(
     db = (open_db or _default_open_db)(db_path, keys)
     report.created.append(db_path)
 
+    history_live = _import_history_and_data(
+        bundle, db, root, kmap, import_history, manifest, report
+    )
     _run(PHASE_DATABASE, ImportContext(root=root, db=db, db_path=db_path, schema_keys=keys,
-                                       manifest=manifest, key_map=kmap, map_report=map_report))
+                                       manifest=manifest, key_map=kmap, map_report=map_report,
+                                       history_live=history_live))
     report.sections["schema"] = {
         "exporter": list(project.get("schema_keys") or []),
         "recipient": keys,

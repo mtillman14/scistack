@@ -60,7 +60,10 @@ class GuiSection:
             len(pipelines),
             snap.describe(),
         )
-        return {GUI_FILE: json.dumps(payload, indent=2, default=str).encode("utf-8")}
+        files = {GUI_FILE: json.dumps(payload, indent=2, default=str).encode("utf-8")}
+        if getattr(ctx.options, "include_data", False):
+            files.update(_verbatim_export(db))
+        return files
 
     def import_(self, ctx, files: "dict[str, bytes]") -> dict:
         """Write the canvas into the NEW project. ``ctx.db`` was opened by the
@@ -77,6 +80,8 @@ class GuiSection:
                 f"gui section format {payload.get('gui_format')!r}; this SciStack "
                 f"reads {GUI_FORMAT}"
             )
+        if getattr(ctx, "history_live", False) and VERBATIM_PREFIX + "tables.json" in files:
+            return _verbatim_import(ctx.db, files)
         db = ctx.db
         local = portability_service.local_global_names(db, discovered=False)
         existing = {p["pipeline_id"]: p["name"] for p in ps.list_all_pipelines(db)}
@@ -219,3 +224,53 @@ class CodeSection:
         report = {"files": written, "external": external}
         logger.info("[bundle_section] code import: %s", report)
         return report
+
+
+# ---------------------------------------------------------------------------
+# Verbatim mode: with the history and data live (portability Stage 7)
+# ---------------------------------------------------------------------------
+
+#: Inside the gui section: the GUI tables and layout file, copied exactly.
+VERBATIM_PREFIX = "verbatim/"
+LAYOUT_FILE = "layout.json"
+
+
+def _verbatim_export(db) -> "dict[str, bytes]":
+    """Every GUI table (``canvas_snapshot.table_portability``: canvas, global
+    and history-tied alike) and the layout file, exactly as they are. Only
+    meaningful where the run history goes live too: history-derived nodes
+    keep their ids, ``_node_wiring`` keeps them attached to their history,
+    and hidden edges hide connections that exist."""
+    from scidb import table_copy
+
+    from scistack_gui import layout as layout_store
+    from scistack_gui.services.canvas_snapshot import table_portability
+
+    files = {
+        VERBATIM_PREFIX + rel: blob
+        for rel, blob in table_copy.dump(db._duck, sorted(table_portability())).items()
+    }
+    layout = layout_store._layout_path()
+    if layout.is_file():
+        files[VERBATIM_PREFIX + LAYOUT_FILE] = layout.read_bytes()
+    logger.info("[bundle_section] gui verbatim export: %d file(s)", len(files))
+    return files
+
+
+def _verbatim_import(db, files: "dict[str, bytes]") -> dict:
+    from scidb import table_copy
+
+    from scistack_gui import layout as layout_store
+
+    tables = {
+        rel[len(VERBATIM_PREFIX):]: blob
+        for rel, blob in files.items()
+        if rel.startswith(VERBATIM_PREFIX) and rel != VERBATIM_PREFIX + LAYOUT_FILE
+    }
+    loaded = table_copy.load(db._duck, tables)
+    layout_bytes = files.get(VERBATIM_PREFIX + LAYOUT_FILE)
+    if layout_bytes is not None:
+        layout_store._layout_path().write_bytes(layout_bytes)
+    report = {"mode": "verbatim", "tables": loaded["tables"], "layout": layout_bytes is not None}
+    logger.info("[bundle_section] gui verbatim import: %s", report)
+    return report
