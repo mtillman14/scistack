@@ -762,6 +762,28 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
     return False
 
 
+#: What an import records about where the project came from (scidb.verify
+#: reads the key map from it, with or without an archived history).
+IMPORT_RECORD = "import.json"
+
+
+def _write_import_record(root: Path, bundle_path, manifest: dict, keys: list[str], kmap) -> None:
+    from .environment import STATE_DIR
+
+    state = root / STATE_DIR
+    state.mkdir(parents=True, exist_ok=True)
+    record = {
+        "bundle": Path(bundle_path).name,
+        "exported_at": manifest.get("exported_at"),
+        "exporter_schema_keys": list((manifest.get("project") or {}).get("schema_keys") or []),
+        "schema_keys": list(keys),
+        "key_map": kmap.as_dict(),
+        "options": manifest.get("options") or {},
+    }
+    (state / IMPORT_RECORD).write_text(json.dumps(record, indent=2), encoding="utf-8")
+    Log.info(f"[bundle] import record: {state / IMPORT_RECORD}")
+
+
 def _default_open_db(db_path: Path, schema_keys: list[str]):
     from . import configure_database
 
@@ -822,6 +844,7 @@ def import_project(
 
     # Config first, so init fills in only what the bundle did not carry.
     root.mkdir(parents=True, exist_ok=True)
+    _write_import_record(root, bundle_path, manifest, keys, kmap)
     config_files = bundle.sections.get(CONFIG_SECTION, {})
     if "scistack.toml" in config_files:
         _write_config(

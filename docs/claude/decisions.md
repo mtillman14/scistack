@@ -8,6 +8,33 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-09-2 — verify compares, never runs; matches by a content-free key
+
+**Context.** A recipient needs to know whether re-running the shared code
+on their own copy of the raw files reproduces the exporter's results, and
+where it first stops doing so.
+
+**Decision (user: compare only; tolerance when data travels).**
+- `scidb.verify` compares the live history with the exporter's: the newest
+  archive, or a bundle file. The exporter's side is loaded into a separate
+  in-memory DuckDB.
+- Records match by a STRUCTURAL key: type, schema_version, location
+  (renamed through `.scistack/import.json`'s key map), and the producing
+  call (function name and hash, run options, its bindings by their inputs'
+  keys). So everything below a difference still finds its counterpart.
+- Classes: reproduced / within_tolerance / differs_at_source /
+  differs_downstream / code_changed / not_run / not_comparable; plus `new`.
+- Values are compared within `rtol` / `atol` only when the exporter's DATA
+  is available (a bundle exported with data); otherwise exact.
+- Front ends: `scidb verify` (exit 2 on differences; `scistack verify` is
+  an alias), and a ✓ verify popover running in the GUI's own process.
+
+**Consequences.** A bundle imported WITH data has no separate history to
+compare against. The tolerance workflow is: import into a fresh project
+`--no-history`, re-run, then `verify --against` the bundle.
+
+---
+
 ## D-2026-10-09-1 — An import installs what is missing, after trust, all or nothing
 
 **Context.** A recipient expects an imported project's packages and

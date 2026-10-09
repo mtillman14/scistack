@@ -290,6 +290,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     // Whole-project bundles (.claude/plan-portability.md Stage 8).
     get_export_options:     { path: '/api/bundles/export-options' },
     export_project_bundle:  { path: '/api/bundles/export', method: 'POST', body: true },
+    verify_reproduction:    { path: '/api/bundles/verify', method: 'POST', body: true },
     paste_nodes:            { path: (p) => `/api/pipelines/${encodeURIComponent(p.pipeline_id as string)}/paste-nodes`, method: 'POST', body: true },
     add_pipeline_use:       { path: (p) => `/api/pipelines/${encodeURIComponent(p.parent_pipeline_id as string)}/uses`, method: 'POST', body: true },
     remove_pipeline_use:    { path: (p) => `/api/pipeline-uses/${encodeURIComponent(p.use_id as string)}`, method: 'DELETE' },

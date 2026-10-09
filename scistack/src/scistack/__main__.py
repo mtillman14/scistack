@@ -8,6 +8,7 @@ Usage:
     scistack bundle-info BUNDLE
     scistack library [list | add NAME | remove NAME | create ... | copy NAME | build DIR]
     scistack install [PROJECT]    # what an imported project needs (after trust)
+    scistack verify [--against X] # = scidb verify: your re-run vs the exporter's history
     scistack db <command> ...      # alias for the ``scidb`` CLI
 
 ``init`` is a thin front end over ``scidb.project.init_project``, the one
@@ -28,6 +29,13 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["verify"]:
+        # One implementation: the read-only scidb CLI owns verify.
+        from scidb.inspect.cli import main as scidb_main
+
+        return scidb_main(argv)
+
     parser = argparse.ArgumentParser(
         prog="scistack",
         description="SciStack project tooling.",

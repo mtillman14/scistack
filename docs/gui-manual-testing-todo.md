@@ -11,6 +11,33 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzl. ✓ verify: your re-run vs the exporter — added 2026-10-09
+
+New: **✓ verify** in the tab strip (beside ⇩ export project). Reload the
+VS Code window.
+
+1. **Exact (archive):** in project A run a small pipeline and export it
+   (history, no data). Import it into B. Re-run the same pipeline in B on
+   the same raw files. ✓ verify → Verify: "Everything reproduced", with a
+   count of reproduced records and "exact comparison".
+2. **A different raw file:** change one subject's raw file in B and re-run.
+   Verify shows "Differences found", one first divergence naming that
+   subject's raw variable, and the downstream records as differs
+   downstream.
+3. **Edited function:** change a function body in B (same result) and
+   re-run. Verify lists "code changed: <fn>".
+4. **Tolerance:** export A WITH data. Import into C with history declined.
+   Re-run in C, then verify with the bundle path in "Against". It says
+   "values compared within rtol=…". Identical inputs come back as
+   reproduced; a tiny numeric change comes back as within tolerance.
+5. **Nothing to compare:** in a project imported with data (history live),
+   Verify with "Against" blank explains to verify against the bundle
+   instead.
+6. Terminal: `scidb verify --json` (or `scistack verify`). Exit code 0
+   when everything reproduced, 2 otherwise.
+
+---
+
 ## 0zzzk. Install on import; the wheelhouse — added 2026-10-09
 
 New:

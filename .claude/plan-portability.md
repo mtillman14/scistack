@@ -336,7 +336,37 @@ Originally planned:
 - Test: a headless round trip and a GUI-handler round trip of the same
   project produce identical results.
 
-## Stage 9: verify + subset — PLANNED 2026-10-08, DEFERRED until after Stage 10 (user). On return: add a numeric tolerance compare when the bundle carries data; subset is optional (no concrete need yet).
+## Stage 9: verify (+ tolerance); subset deferred — 9a DONE 2026-10-09, tests pass
+
+As built:
+- **scidb:** `scidb/verify.py`; `.scistack/import.json` on every import
+  (`bundle._write_import_record`); the `scidb verify` command
+  (`inspect/cli._cmd_verify`; dispatch honours a handler's exit code);
+  the `scistack verify` alias.
+- **GUI:** the `verify_reproduction` handler (`api/bundles.py`);
+  `VerifyButton.tsx`.
+- **Tests:** `scidb/tests/test_verify.py`. Docs: D-2026-10-09-2;
+  GUI §0zzzl.
+
+Built now (user, 2026-10-09): 9a verify, with a numeric tolerance when the
+exporter's data is available. 9b subset stays deferred (no concrete need).
+
+**Tolerance (added to 9a):**
+- The exporter's data exists only in a bundle file: archives hold history
+  only, and a bundle imported with its data goes live. So the tolerance
+  workflow is: export WITH data; import into a fresh project
+  `--no-history`; run the pipeline on your own raw files; then
+  `verify --against the.scistack`.
+- A record whose content hash differs, and whose data rows both sides have,
+  is compared value by value (`rtol` / `atol`, defaults 1e-6 / 1e-12,
+  flags `--rtol` / `--atol`). Rows go in stored order; numbers and arrays
+  element-wise; anything else must be equal. Within tolerance → class
+  `within_tolerance`.
+- Without exporter data the comparison is exact, and the report says so.
+
+**Recorded at import (always, not only with an archive):**
+`.scistack/import.json` holds the exporter's schema keys, the key map, the
+manifest's options and `exported_at`. Verify reads the key map from it.
 
 User decisions 2026-10-08:
 - `verify` COMPARES only. The user runs the pipeline as usual (GUI Run or

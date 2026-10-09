@@ -182,6 +182,41 @@ def _emit_json(result) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _cmd_verify(insp: Inspector, args) -> None:
+    """Compare this database's history with the exporter's (scidb.verify).
+    Exit code 0 when everything reproduced (within tolerance), 2 when
+    anything differs, did not run, or is not comparable."""
+    from scidb.verify import verify
+
+    root = Path(args.project) if args.project else Path(str(insp._db.dataset_db_path)).parent
+    report = verify(insp._db, root=root, against=args.against, rtol=args.rtol, atol=args.atol)
+    args._exit_code = 0 if report.ok else 2
+    if args.json:
+        _emit_json(report)  # its own to_dict (adds "ok")
+        return
+    print(f"verified against {report.against}")
+    print(
+        f"  values compared within rtol={report.rtol:g}, atol={report.atol:g}"
+        if report.data else "  exact comparison (the exporter's data is not available: "
+        "export WITH data and verify --against the bundle for a tolerance)"
+    )
+    for c, n in report.counts.items():
+        if n:
+            print(f"  {c:20s} {n}")
+    if report.new:
+        print(f"  {'new (yours only)':20s} {report.new}")
+    for e in report.first_divergences:
+        where = ", ".join(f"{k}={v}" for k, v in sorted(e["location"].items())) or "dataset"
+        diff = f", max |diff| {e['max_abs_diff']:.3g}" if e.get("compared_values") else ""
+        print(f"  first divergence: {e['function']} -> {e['type']} at {where}{diff}")
+    for fn in report.code_changed:
+        print(f"  code changed: {fn}")
+    for e in report.not_run[:10]:
+        where = ", ".join(f"{k}={v}" for k, v in sorted(e["location"].items())) or "dataset"
+        print(f"  not run: {e['function']} -> {e['type']} at {where}")
+    print("OK: everything reproduced" if report.ok else "DIFFERENCES found (exit code 2)")
+
+
 def _cmd_status(insp: Inspector, args) -> None:
     overview = insp.overview()
     if args.json:
@@ -740,6 +775,23 @@ def _add_commands(
     )
     p.set_defaults(_handler=_cmd_status)
 
+    from scidb.verify import DEFAULT_ATOL, DEFAULT_RTOL
+
+    p = sub.add_parser(
+        "verify",
+        parents=[parent],
+        help="Compare your re-run with the exporter's history (never runs code).",
+    )
+    p.add_argument("--against", default=None,
+                   help="An archived history folder or a .scistack bundle (default: the newest "
+                   "archive under .scistack/archive/).")
+    p.add_argument("--project", default=None, help="Project folder (default: the database's folder).")
+    p.add_argument("--rtol", type=float, default=DEFAULT_RTOL,
+                   help=f"Relative tolerance when the exporter's data is available (default {DEFAULT_RTOL:g}).")
+    p.add_argument("--atol", type=float, default=DEFAULT_ATOL,
+                   help=f"Absolute tolerance (default {DEFAULT_ATOL:g}).")
+    p.set_defaults(_handler=_cmd_verify)
+
     p = sub.add_parser(
         "vars", parents=[parent], help="List variable types, or detail for one."
     )
@@ -1222,7 +1274,8 @@ def dispatch(args: argparse.Namespace) -> int:
         else:
             with Inspector.open(db_path) as insp:
                 handler(insp, args)
-        return 0
+        # A handler may choose the exit code (verify: 2 = differences found).
+        return getattr(args, "_exit_code", 0)
     except (CLIError, DatabaseLockedError) as e:
         print(f"Error: {e}", file=sys.stderr)
         Log.error(f"scidb cli failed: {type(e).__name__}: {e}")
