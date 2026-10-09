@@ -144,6 +144,18 @@ function formatImportReport(r) {
   out.push("");
   return out.join("\n");
 }
+function buildInstallArgs(root) {
+  return ["-m", BUNDLE_CLI_MODULE, "install", root, "--yes", "--json"];
+}
+function describeInstall(r) {
+  if (r.status === "installed")
+    return `installed ${r.installed.join(", ")}`;
+  if (r.status === "nothing")
+    return "nothing to install";
+  const conflicts = r.conflicts.length ? ` Conflicts: ${r.conflicts.join("; ")}.` : "";
+  const manual = r.command ? ` To install by hand: ${r.command}` : "";
+  return `install ${r.status}: ${r.reason}.${conflicts}${manual}`;
+}
 
 // src/session.ts
 var path4 = __toESM(require("path"));
@@ -2664,13 +2676,34 @@ async function importProjectBundle(log, openProject) {
     content: formatImportReport(report)
   });
   await vscode5.window.showTextDocument(doc, { preview: false });
+  const INSTALL = "Trust, Install and Open";
+  const OPEN = "Trust and Open";
   const open = await vscode5.window.showWarningMessage(
-    `Imported "${report.package}" into ${report.root}. Opening it loads the bundle's code, which runs its Python module-level code. Only open code you trust.`,
+    `Imported "${report.package}" into ${report.root}. Opening it loads the bundle's code, which runs its Python module-level code. Installing what it needs runs those packages' code too (only missing packages; on any conflict nothing is installed). Only continue if you trust it.`,
     { modal: true },
-    "Trust and Open"
+    INSTALL,
+    OPEN
   );
-  if (open !== "Trust and Open")
+  if (open !== INSTALL && open !== OPEN)
     return;
+  if (open === INSTALL) {
+    const answer2 = await vscode5.window.withProgress(
+      { location: vscode5.ProgressLocation.Notification, title: `Installing what ${report.package} needs\u2026` },
+      async () => parseCliJson(
+        await runCli(python, buildInstallArgs(report.root), void 0, log)
+      )
+    );
+    if (!answer2.ok) {
+      vscode5.window.showWarningMessage(`SciStack: install did not run: ${answer2.error}`);
+    } else {
+      const msg = describeInstall(answer2.install);
+      if (answer2.install.status === "installed" || answer2.install.status === "nothing") {
+        vscode5.window.showInformationMessage(`SciStack: ${msg}`);
+      } else {
+        vscode5.window.showWarningMessage(`SciStack: ${msg}`);
+      }
+    }
+  }
   const folders = vscode5.workspace.workspaceFolders ?? [];
   if (!folders.some((f) => path5.resolve(f.uri.fsPath) === path5.resolve(report.root))) {
     vscode5.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode5.Uri.file(report.root) });

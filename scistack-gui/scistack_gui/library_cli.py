@@ -41,6 +41,9 @@ def add_library_subparsers(sub: argparse._SubParsersAction) -> None:
     create.add_argument("--into", required=True, type=Path, help="New, empty folder for the library.")
     create.add_argument("--name", default=None, help="Library (import) name; default from the submodule's name.")
     create.add_argument("--db", default=None, help="Project database (default: as scistack export finds it).")
+    build = cmds.add_parser("build", help="Build a library folder into a wheel (pip wheel, no deps).")
+    build.add_argument("folder", type=Path, help="The library folder (holds pyproject.toml).")
+    build.add_argument("--out", type=Path, default=None, help="Where the wheel goes (default: FOLDER/dist).")
     copy = cmds.add_parser(
         "copy",
         help="Make my own copy: copy a library into this project; its pipelines become editable.",
@@ -113,6 +116,22 @@ def dispatch(args: argparse.Namespace) -> int:
 
     project = (args.project or Path.cwd()).resolve()
     cmd = getattr(args, "library_command", None) or "list"
+    if cmd == "build":
+        from scidb.environment import build_wheel
+
+        try:
+            wheel = build_wheel(args.folder, args.out or (args.folder / "dist"))
+        except (RuntimeError, OSError) as e:
+            if args.json:
+                print(json.dumps({"ok": False, "error": str(e)}))
+            else:
+                print(f"Error: {e}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps({"ok": True, "wheel": str(wheel)}))
+        else:
+            print(f"built {wheel}")
+        return 0
     if cmd == "copy":
         from scidb.inspect.cli import CLIError, resolve_db_path
 

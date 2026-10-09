@@ -63,6 +63,10 @@ PHASE_DATABASE = "database"
 
 HISTORY_SECTION = "history"
 DATA_SECTION = "data"
+#: Opt-in (``ExportOptions.include_wheelhouse``): a wheel of each library the
+#: project lists, so an import can install them offline (scidb.environment).
+WHEELHOUSE_SECTION = "wheelhouse"
+WHEELHOUSE_INDEX = "wheelhouse.json"
 
 #: What ran, when, with what: the provenance graph and its schema rows, plus
 #: the dataset intent that refers to them (exclusions, variant pins,
@@ -226,6 +230,7 @@ def _env_section() -> "dict[str, bytes]":
         except Exception:  # pragma: no cover - defensive
             matlab = "loaded"
     env = {
+        "libraries": _library_distributions(),
         "python": platform.python_version(),
         "implementation": platform.python_implementation(),
         "platform": platform.platform(),
@@ -234,6 +239,60 @@ def _env_section() -> "dict[str, bytes]":
         "distributions": dict(sorted(dists.items())),
     }
     return {ENV_FILE: json.dumps(env, indent=2).encode("utf-8")}
+
+
+def _library_distributions() -> dict:
+    """``{import name: {"distribution", "version"}}`` for every library the
+    project lists, so a recipient can install a missing one by its
+    DISTRIBUTION name (a library's import name need not match it).
+    ``distribution`` is None for a library no installed distribution
+    provides (it is on sys.path by other means)."""
+    import importlib.metadata
+
+    from .names import library_packages
+
+    try:
+        mapping = importlib.metadata.packages_distributions()
+    except Exception:  # pragma: no cover - very old importlib.metadata
+        mapping = {}
+    out = {}
+    for lib in sorted(library_packages()):
+        dists = mapping.get(lib) or []
+        dist = dists[0] if dists else None
+        version = None
+        if dist:
+            try:
+                version = importlib.metadata.version(dist)
+            except importlib.metadata.PackageNotFoundError:
+                version = None
+        out[lib] = {"distribution": dist, "version": version}
+    return out
+
+
+def _wheelhouse_section() -> "dict[str, bytes]":
+    """A wheel of every listed library (``scidb.environment.library_wheel``),
+    plus an index naming the ones that could not be built and why -- a
+    missing wheel never fails the export."""
+    import tempfile
+
+    from .environment import library_wheel
+    from .names import library_packages
+
+    files: dict[str, bytes] = {}
+    built, missing = [], []
+    with tempfile.TemporaryDirectory() as tmp:
+        for lib in sorted(library_packages()):
+            try:
+                wheel = library_wheel(lib, Path(tmp))
+            except Exception as e:  # reported, never fatal
+                missing.append({"library": lib, "reason": str(e)})
+                Log.warn(f"[bundle] wheelhouse: no wheel for {lib}: {e}")
+                continue
+            files[wheel.name] = wheel.read_bytes()
+            built.append({"library": lib, "wheel": wheel.name})
+    files[WHEELHOUSE_INDEX] = json.dumps({"built": built, "missing": missing}, indent=2).encode()
+    Log.info(f"[bundle] wheelhouse: {len(built)} wheel(s), {len(missing)} missing")
+    return files
 
 
 def _canonical_dist(name: str) -> str:
@@ -256,7 +315,10 @@ def check_environment(root: Path, env: dict) -> dict:
     with what is installed here, using the versions the exporter ran.
 
     Returns ``{"python": {"exported", "here"}, "missing": [...],
-    "different": [{"name", "exported", "here"}], "install": "pip ..." | None}``.
+    "different": [{"name", "exported", "here"}], "install": "pip ..." | None,
+    "missing_libraries": [...], "missing_requirements": [...]}``. The last is what
+    an install would add (``scidb.environment``): MISSING packages only, at the
+    exporter's version, libraries by their distribution name.
     Nothing is installed: SciStack does not manage environments.
     """
     import importlib.metadata
@@ -296,10 +358,30 @@ def check_environment(root: Path, env: dict) -> dict:
         else:
             continue
         pins.append(f"{name}=={then}" if then else name)
+    # What an install would add: the MISSING ones only, at the exporter's
+    # version when known (a version that differs is reported, never changed:
+    # scidb.environment). Libraries by their distribution name.
+    missing_requirements = [
+        f"{name}=={exported[name]}" if exported.get(name) else name for name in missing
+    ]
+    import importlib.util
+
+    missing_libraries = []
+    for lib, info in sorted((env.get("libraries") or {}).items()):
+        if importlib.util.find_spec(lib) is not None:
+            continue
+        dist, ver = (info or {}).get("distribution"), (info or {}).get("version")
+        missing_libraries.append(lib)
+        if dist:
+            req = f"{dist}=={ver}" if ver else dist
+            if _canonical_dist(dist) not in {_canonical_dist(m.split("==")[0]) for m in missing_requirements}:
+                missing_requirements.append(req)
     report = {
         "python": {"exported": env.get("python"), "here": platform.python_version()},
         "missing": missing,
         "different": different,
+        "missing_libraries": missing_libraries,
+        "missing_requirements": missing_requirements,
         "install": ("pip install " + " ".join(f'"{p}"' for p in pins)) if pins else None,
     }
     Log.info(
@@ -369,6 +451,8 @@ def export_project(
         sections[DATA_SECTION] = table_copy.dump(
             db._duck, _data_tables(db._duck), _views(db._duck)
         )
+    if options.include_wheelhouse:
+        sections[WHEELHOUSE_SECTION] = _wheelhouse_section()
     for provider in providers or []:
         if provider.name in sections:
             raise BundleError(f"two sections named {provider.name!r}")
@@ -747,7 +831,7 @@ def import_project(
         report.created.append(config_path_at(root))
 
     by_name = {p.name: p for p in providers or []}
-    builtin = {CONFIG_SECTION, ENV_SECTION, HISTORY_SECTION, DATA_SECTION}
+    builtin = {CONFIG_SECTION, ENV_SECTION, HISTORY_SECTION, DATA_SECTION, WHEELHOUSE_SECTION}
     for name, files in bundle.sections.items():
         if name not in builtin and name not in by_name:
             msg = f"section {name!r} ({len(files)} file(s)) has no importer here; not imported"
@@ -769,7 +853,14 @@ def import_project(
     report.sections["path_inputs"] = _rewrite_path_inputs(root, kmap, path_roots or {}, map_report)
 
     env_files = bundle.sections.get(ENV_SECTION, {})
+    from .environment import ENVIRONMENT_FILE, STATE_DIR, WHEELHOUSE_DIR
+
     if ENV_FILE in env_files:
+        # Kept with the project: the install (after trust, a separate step:
+        # scidb.environment.install_project_requirements) reads it from here.
+        state = root / STATE_DIR
+        state.mkdir(parents=True, exist_ok=True)
+        (state / ENVIRONMENT_FILE).write_bytes(env_files[ENV_FILE])
         env_report = check_environment(root, json.loads(env_files[ENV_FILE]))
         report.sections[ENV_SECTION] = env_report
         if env_report["install"]:
@@ -777,6 +868,20 @@ def import_project(
                 f"dependencies missing or at another version than the exporter's: "
                 f"{env_report['install']}"
             )
+
+    wheels = bundle.sections.get(WHEELHOUSE_SECTION, {})
+    if wheels:
+        house = root / STATE_DIR / WHEELHOUSE_DIR
+        house.mkdir(parents=True, exist_ok=True)
+        for rel, blob in wheels.items():
+            (house / rel).write_bytes(blob)
+        index = json.loads(wheels.get(WHEELHOUSE_INDEX, b"{}"))
+        report.sections[WHEELHOUSE_SECTION] = {
+            "dir": str(house),
+            "wheels": sorted(k for k in wheels if k.endswith(".whl")),
+            "missing": index.get("missing", []),
+        }
+        Log.info(f"[bundle] wheelhouse written to {house}: {report.sections[WHEELHOUSE_SECTION]}")
 
     init = init_project(root, name=project.get("package") or None)
     report.package = init.package

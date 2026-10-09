@@ -172,7 +172,7 @@ def test_the_gui_handler_honours_options_and_refuses_unknown_ones(client, pinned
     assert "history" not in sections
 
     bad = client.post("/api/bundles/export", json={
-        "out_path": str(pinned_root / "x.scistack"), "options": {"include_wheelhouse": True},
+        "out_path": str(pinned_root / "x.scistack"), "options": {"include_everything": True},
     })
     assert bad.status_code == 400 and "unknown export option" in bad.text
     rel = client.post("/api/bundles/export", json={"out_path": "relative.scistack"})

@@ -734,7 +734,25 @@ Originally planned:
 - MATLAB: `matlab/+<lib>/` is copied into the project's MATLAB sources.
   Names stay `lib.fn` natively, and no rewrite is needed.
 
-### 10d. Wheels and the wheelhouse
+### 10d. Wheels and the wheelhouse; install after trust — DONE 2026-10-09, tests pass
+
+As built:
+- **scidb:** `scidb/environment.py` (`install_missing`, `plan_install`,
+  `install_project_requirements`, `build_wheel`, `library_wheel`, `_pip`).
+- **Bundle:** the env section records `libraries`
+  (import name → distribution, version); `check_environment` gains
+  `missing_requirements` / `missing_libraries`; the `wheelhouse` section
+  (`wheelhouse.json` index); import keeps `.scistack/environment.json` and
+  `.scistack/wheelhouse/`.
+- **CLI:** `--wheelhouse` in `EXPORT_FLAGS` (so also a GUI checkbox);
+  `scistack import --trust [--no-install]`, `scistack install [PROJECT]
+  [--yes]`, `scistack library build`.
+- **Extension:** "Trust, Install and Open" (`buildInstallArgs`,
+  `describeInstall`).
+- **Tests:** `scidb/tests/test_environment.py`, the wheelhouse tests in
+  `scidb/tests/test_bundle.py`, and `bundleImportCore.test.ts`.
+- **Docs:** D-2026-10-09-1; GUI §0zzzk.
+
 
 - `scistack library build DIR` runs `pip wheel --no-deps -w DIR/dist DIR`
   (`sys.executable -m pip`).
@@ -744,7 +762,31 @@ Originally planned:
   distribution (an editable install builds from its source path).
 - Import writes them to `.scistack/wheelhouse/`, and the report gives
   `pip install --no-index --find-links .scistack/wheelhouse <libs>`.
-- Nothing is installed automatically.
+- **Install after trust (user, 2026-10-09; supersedes "nothing is installed
+  automatically").** Importing installs what the project needs, but only
+  after the user trusts the bundle:
+  - GUI: "Trust, install and open"; CLI: `--trust` or a yes at the prompt.
+  - Never the project's own package, which is discovered as source.
+- **What is installed:** the declared dependencies plus the listed
+  libraries, only those MISSING. A version that differs from the
+  exporter's is reported and never changed.
+- **The install, one owner** (`scidb.environment.install_missing`):
+  1. **Check first.** `pip install --dry-run --report` resolves the whole
+     tree. If ANY resolved package would upgrade, downgrade or replace an
+     installed one, or touch SciStack's own distributions, nothing is
+     installed and the conflicts are listed.
+  2. **Install exactly that.** The resolved list goes in pinned, with
+     `--no-deps`, so pip cannot re-resolve differently between check and
+     install. Dependencies like pytorch ARE installed: they are in the list.
+  3. **Roll back on failure.** Pip is not transactional, but everything
+     installed was new, so it is uninstalled again and the environment is as
+     it was.
+  4. **Only in a virtual or conda environment.** A system Python is never
+     installed into; the report says why.
+  5. **The source:** the bundle's wheelhouse when it has one (`--no-index
+     --find-links`), else the package index.
+- **The import never depends on the install.** A stopped or failed install
+  is reported with the command to finish by hand, and the import goes on.
 
 ### Logging and diagnostics
 - `[library]` INFO lines: what was copied, rewritten and refused; seed and

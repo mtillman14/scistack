@@ -11,6 +11,37 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzk. Install on import; the wheelhouse — added 2026-10-09
+
+New:
+- the export popover has a third checkbox, **Wheelhouse** (off by default);
+- the import's trust prompt offers **Trust, Install and Open**.
+
+Reload the VS Code window. Test in a **virtual environment**; a system
+Python is never installed into.
+
+1. **Export with a wheelhouse** from a project that lists a library you
+   installed from a folder (`pip install -e`). `scidb.log` shows
+   `[environment] wheel for <lib>: building from its source`.
+   `scistack bundle-info` lists a `wheelhouse` section.
+2. **Import into a fresh venv** where the library and one dependency are
+   missing. Choose **Trust, Install and Open**.
+   - A progress notification, then "installed …" listing the library (from
+     the wheelhouse) and the dependency.
+   - The project opens and the library's functions are found.
+3. **Conflict:** in a venv where a dependency is installed at a DIFFERENT
+   version than a missing package needs, import again with install. The
+   warning says "install stopped" and lists the conflict. `pip list` shows
+   the environment unchanged, and the project still opens.
+4. **Trust and Open** (without install) opens without installing.
+   `scistack install <folder>` later does the same check and install from
+   the terminal (it asks to trust; `--yes` skips the question).
+5. Terminal: `scistack import X.scistack --trust` installs after the
+   import; `--trust --no-install` does not. `scistack library build DIR`
+   writes `DIR/dist/*.whl`.
+
+---
+
 ## 0zzzj. Make my own copy of a library — added 2026-10-08
 
 New: a ✎ on each library in Submodules → Libraries. The read-only refusal

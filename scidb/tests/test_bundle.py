@@ -566,3 +566,41 @@ def test_import_into_a_new_folder_inside_another_project(project, tmp_path):
     assert report.root == (root / "nested_copy").resolve()
     assert (root / "nested_copy" / "scistack.toml").is_file()
     report_db(report).close()
+
+
+# ---------------------------------------------------------------------------
+# Stage 10d: the wheelhouse and the recorded environment travel
+# ---------------------------------------------------------------------------
+
+
+def test_a_wheelhouse_travels_and_the_environment_is_kept(project, tmp_path, monkeypatch):
+    from scidb import environment, names
+
+    def fake_wheel(package, out_dir):
+        if package == "brokenlib":
+            raise RuntimeError("not installed as a distribution")
+        path = Path(out_dir) / f"{package}-1.0-py3-none-any.whl"
+        path.write_bytes(b"wheel bytes")
+        return path
+
+    monkeypatch.setattr(names, "library_packages", lambda: frozenset({"gaitlib", "brokenlib"}))
+    monkeypatch.setattr(environment, "library_wheel", fake_wheel)
+    out = _export(project, tmp_path, options=ExportOptions(include_wheelhouse=True))
+    bundle_read = read_bundle(out)
+    house = bundle_read.sections["wheelhouse"]
+    assert house["gaitlib-1.0-py3-none-any.whl"] == b"wheel bytes"
+    index = json.loads(house["wheelhouse.json"])
+    assert index["missing"][0]["library"] == "brokenlib"
+
+    report = import_project(out, tmp_path / "copy")
+    target = tmp_path / "copy" / ".scistack"
+    assert (target / "wheelhouse" / "gaitlib-1.0-py3-none-any.whl").read_bytes() == b"wheel bytes"
+    assert (target / "environment.json").is_file()
+    assert report.sections["wheelhouse"]["wheels"] == ["gaitlib-1.0-py3-none-any.whl"]
+    assert "missing_requirements" in report.sections["env"]
+    report_db(report).close()
+
+
+def test_without_the_option_there_is_no_wheelhouse(project, tmp_path):
+    out = _export(project, tmp_path)
+    assert "wheelhouse" not in read_bundle(out).sections

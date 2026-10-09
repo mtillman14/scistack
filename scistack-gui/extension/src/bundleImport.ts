@@ -20,8 +20,11 @@ import * as vscode from 'vscode';
 import {
   BundleInfo,
   ImportReport,
+  InstallResult,
   buildImportArgs,
   buildInfoArgs,
+  buildInstallArgs,
+  describeInstall,
   formatImportReport,
   keysNeedingAChoice,
   parseCliJson,
@@ -182,13 +185,37 @@ export async function importProjectBundle(
   });
   await vscode.window.showTextDocument(doc, { preview: false });
 
+  const INSTALL = 'Trust, Install and Open';
+  const OPEN = 'Trust and Open';
   const open = await vscode.window.showWarningMessage(
     `Imported "${report.package}" into ${report.root}. Opening it loads the bundle's code, `
-    + 'which runs its Python module-level code. Only open code you trust.',
+    + 'which runs its Python module-level code. Installing what it needs runs those '
+    + "packages' code too (only missing packages; on any conflict nothing is installed). "
+    + 'Only continue if you trust it.',
     { modal: true },
-    'Trust and Open',
+    INSTALL,
+    OPEN,
   );
-  if (open !== 'Trust and Open') return;
+  if (open !== INSTALL && open !== OPEN) return;
+
+  if (open === INSTALL) {
+    const answer = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Installing what ${report.package} needs…` },
+      async () => parseCliJson<{ install: InstallResult }>(
+        await runCli(python, buildInstallArgs(report.root), undefined, log),
+      ),
+    );
+    if (!answer.ok) {
+      vscode.window.showWarningMessage(`SciStack: install did not run: ${answer.error}`);
+    } else {
+      const msg = describeInstall(answer.install);
+      if (answer.install.status === 'installed' || answer.install.status === 'nothing') {
+        vscode.window.showInformationMessage(`SciStack: ${msg}`);
+      } else {
+        vscode.window.showWarningMessage(`SciStack: ${msg}`);
+      }
+    }
+  }
 
   // The project root is the innermost workspace folder holding the database
   // (sessionCore.projectRootForDb), so the new folder joins the workspace

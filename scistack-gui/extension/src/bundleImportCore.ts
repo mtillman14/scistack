@@ -165,3 +165,26 @@ export function formatImportReport(r: ImportReport): string {
   out.push('');
   return out.join('\n');
 }
+
+/** `install --json`'s `install` (scidb.environment.InstallReport.to_dict). */
+export interface InstallResult {
+  status: 'installed' | 'nothing' | 'stopped' | 'failed' | 'skipped';
+  requirements: string[];
+  installed: string[];
+  conflicts: string[];
+  reason: string;
+  command: string;
+}
+
+export function buildInstallArgs(root: string): string[] {
+  return ['-m', BUNDLE_CLI_MODULE, 'install', root, '--yes', '--json'];
+}
+
+/** One line for a notification; the full detail is in the output channel. */
+export function describeInstall(r: InstallResult): string {
+  if (r.status === 'installed') return `installed ${r.installed.join(', ')}`;
+  if (r.status === 'nothing') return 'nothing to install';
+  const conflicts = r.conflicts.length ? ` Conflicts: ${r.conflicts.join('; ')}.` : '';
+  const manual = r.command ? ` To install by hand: ${r.command}` : '';
+  return `install ${r.status}: ${r.reason}.${conflicts}${manual}`;
+}

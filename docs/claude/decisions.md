@@ -8,6 +8,37 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-09-1 — An import installs what is missing, after trust, all or nothing
+
+**Context.** A recipient expects an imported project's packages and
+libraries to be installed. But an import runs no code before trust, and
+installing into someone's environment can break it.
+
+**Decision (user).**
+- Installing happens only after the user trusts the bundle: the GUI's
+  "Trust, Install and Open", or `scistack import --trust` /
+  `scistack install`.
+- Only MISSING packages are installed: declared dependencies and libraries,
+  at the exporter's versions. A version that differs is reported and never
+  changed.
+- A full check comes first (`pip install --dry-run --report` resolves the
+  whole tree). ANY resolved package that is already installed, or that is
+  SciStack's own, stops everything, and nothing changes.
+- The checked list is installed pinned with `--no-deps`, so the install
+  is exactly what was checked; dependencies are in that list.
+- A failed install is rolled back by uninstalling what went in (all of it
+  was new).
+- Never into a system Python.
+- The import itself never depends on the install.
+- One owner: `scidb.environment`; every pip call goes through `_pip`.
+
+**Consequences.** Supersedes "nothing is installed automatically"
+(Stages 5 and 8). A recipient whose environment already has a dependency at
+another version gets no automatic install, but a list of exactly what
+conflicts and the command to run.
+
+---
+
 ## D-2026-10-08-11 — "Make my own copy" replaces the library
 
 **Context.** A placed library submodule is read-only. A user who wants to

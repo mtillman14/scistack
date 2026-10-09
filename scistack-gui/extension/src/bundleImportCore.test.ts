@@ -94,3 +94,16 @@ test('the report names the folder, the history outcome and what to review', () =
   assert.ok(md.includes("root_folder is still the exporter's"));
   assert.ok(md.includes('imported into another schema'));
 });
+
+test('install args and the one-line description', async () => {
+  const { buildInstallArgs, describeInstall } = await import('./bundleImportCore');
+  assert.deepStrictEqual(buildInstallArgs('/p/x'), ['-m', BUNDLE_CLI_MODULE, 'install', '/p/x', '--yes', '--json']);
+  const base = { requirements: [], installed: [], conflicts: [], reason: '', command: '' };
+  assert.strictEqual(describeInstall({ ...base, status: 'nothing' }), 'nothing to install');
+  assert.strictEqual(describeInstall({ ...base, status: 'installed', installed: ['a==1'] }), 'installed a==1');
+  const stopped = describeInstall({
+    ...base, status: 'stopped', reason: 'would change packages', conflicts: ['numpy: installed 2, would install 1'],
+    command: 'pip install x',
+  });
+  assert.ok(stopped.includes('stopped') && stopped.includes('numpy') && stopped.includes('pip install x'));
+});

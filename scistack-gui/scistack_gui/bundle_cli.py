@@ -34,6 +34,10 @@ from pathlib import Path
 EXPORT_FLAGS = {
     "include_history": ("history", "History: what was run, on which inputs, with which code"),
     "include_data": ("data", "Data: every saved result (can be large)"),
+    "include_wheelhouse": (
+        "wheelhouse",
+        "Wheelhouse: a wheel of each library the project uses, so it installs without being published",
+    ),
 }
 
 
@@ -149,7 +153,13 @@ def add_bundle_subparsers(sub: argparse._SubParsersAction) -> None:
     imp.add_argument(
         "--trust",
         action="store_true",
-        help="Trust the bundle's code (allows --check-code without asking).",
+        help="Trust the bundle's code: install what the project needs that is missing "
+        "(all or nothing, after a full check) and allow --check-code without asking.",
+    )
+    imp.add_argument(
+        "--no-install",
+        action="store_true",
+        help="With --trust, do not install anything (run 'scistack install' later).",
     )
     imp.add_argument("--json", action="store_true", help="Print the report as JSON.")
     imp.set_defaults(_bundle_cmd=_cmd_import)
@@ -162,6 +172,18 @@ def add_bundle_subparsers(sub: argparse._SubParsersAction) -> None:
     info.add_argument("bundle", type=Path)
     info.add_argument("--json", action="store_true", help="Print the result as JSON.")
     info.set_defaults(_bundle_cmd=_cmd_info)
+
+    inst = sub.add_parser(
+        "install",
+        help="Install what an imported project needs that this environment lacks "
+        "(only missing packages; stops without changing anything on any conflict).",
+    )
+    inst.add_argument("project", nargs="?", type=Path, default=None,
+                      help="The project folder (default: the current directory).")
+    inst.add_argument("--yes", action="store_true",
+                      help="Trust the project's packages without asking (installing runs their code).")
+    inst.add_argument("--json", action="store_true", help="Print the result as JSON.")
+    inst.set_defaults(_bundle_cmd=_cmd_install)
 
 
 def dispatch(args: argparse.Namespace) -> int:
@@ -274,10 +296,55 @@ def _cmd_import(args: argparse.Namespace) -> dict:
         path_roots=path_roots or None,
         import_history=args.import_history,
     )
+    installed = None
+    if args.trust and not args.no_install:
+        from scidb.environment import install_project_requirements
+
+        installed = install_project_requirements(report.root).to_dict()
     checked = check_code(report.db_path, project=report.root) if args.check_code else None
     if not args.json:
         _print_import_report(report, checked)
-    return {"report": report.to_dict(), "check_code": checked}
+        _print_install(installed, report.root, trusted=args.trust)
+    return {"report": report.to_dict(), "check_code": checked, "install": installed}
+
+
+def _print_install(installed: "dict | None", root, *, trusted: bool) -> None:
+    if installed is None:
+        if not trusted:
+            print(f"Nothing installed. Once you trust it: scistack install \"{root}\"")
+        return
+    status = installed["status"]
+    if status == "installed":
+        print(f"  installed: {', '.join(installed['installed'])}")
+    elif status == "nothing":
+        print("  install: nothing missing")
+    else:
+        print(f"  install {status}: {installed['reason']}", file=sys.stderr)
+        for c in installed["conflicts"]:
+            print(f"    conflict: {c}", file=sys.stderr)
+        if installed["command"]:
+            print(f"  to install by hand: {installed['command']}", file=sys.stderr)
+
+
+def _cmd_install(args: argparse.Namespace) -> dict:
+    from scidb.environment import install_project_requirements
+
+    root = (args.project or Path.cwd()).resolve()
+    if not args.yes and not _confirm_trust_install(root):
+        raise BundleCLIError("installing runs the packages' code; pass --yes to allow it")
+    installed = install_project_requirements(root).to_dict()
+    if not args.json:
+        _print_install(installed, root, trusted=True)
+    return {"install": installed}
+
+
+def _confirm_trust_install(root: Path) -> bool:
+    if not sys.stdin.isatty():
+        return False
+    answer = input(
+        f"Installing what {root.name} needs runs those packages' code. Trust them? [y/N] "
+    )
+    return answer.strip().lower() in ("y", "yes")
 
 
 def _print_import_report(report, checked: "dict | None") -> None:
