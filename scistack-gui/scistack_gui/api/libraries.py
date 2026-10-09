@@ -7,6 +7,7 @@ Libraries: list, add, remove, sync, and placing their pipelines
     POST   /api/libraries/declare         declare_library_requirements -- from the library's defaults
     GET    /api/libraries/share-defaults  share_library_defaults
     POST   /api/libraries/share           share_as_library -- a submodule -> a new library package
+    POST   /api/libraries/copy            make_library_copy -- the library becomes project code (10c)
     POST   /api/libraries                 add_library     -- lists it in scistack.toml packages
     DELETE /api/libraries                 remove_library  -- unlists it (seeded pipelines stay)
     POST   /api/libraries/sync            sync_libraries  -- seed / re-sync now
@@ -136,6 +137,14 @@ def _remove_library(db, req: LibraryName) -> dict:
     return {"ok": True, "sync": sync, "libraries": list_libraries(db)}
 
 
+def _make_copy(db, req: LibraryName) -> dict:
+    from scistack_gui.services.library_copy import make_own_copy
+    from scistack_gui.services.library_service import list_libraries
+
+    report = make_own_copy(db, req.name).to_dict()
+    return {"ok": True, "report": report, "libraries": list_libraries(db)}
+
+
 def _sync_libraries(db) -> dict:
     from scistack_gui.services.library_service import sync_libraries
 
@@ -152,6 +161,8 @@ LIBRARY_HANDLERS: tuple[Handler, ...] = (
     Handler("share_as_library", "/libraries/share", ShareRequest, _share_as_library, http_errors=_BAD_REQUEST, undoable=False),
     Handler("add_library", "/libraries", LibraryName, _add_library, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="add library"),
     Handler("remove_library", "/libraries", LibraryName, _remove_library, http_method="DELETE", body=False, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="remove library"),
+    # Not undoable: it writes a whole source tree; the report lists every file.
+    Handler("make_library_copy", "/libraries/copy", LibraryName, _make_copy, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=False),
     Handler("sync_libraries", "/libraries/sync", None, _sync_libraries, notify_dag_updated=True, undoable=False),
 )
 

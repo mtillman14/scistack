@@ -234,3 +234,89 @@ def test_the_cli_create_command(project, tmp_path, capsys):
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["ok"] and out["report"]["library"] == LIB
     assert (tmp_path / "cli_out" / "src" / LIB / "pipelines" / "emg.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Make my own copy (Stage 10c)
+# ---------------------------------------------------------------------------
+
+
+def _shared_and_listed(project, tmp_path, monkeypatch):
+    from scistack_gui.config import add_package
+    from scistack_gui.services.library_service import sync_libraries
+
+    root, db, pid = project
+    _share(project, tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path / "out" / "src"))
+    importlib.invalidate_caches()
+    add_package(None, LIB, project=root)
+    sync_libraries(db)
+    lib_pid = next(r["pipeline_id"] for r in ps.list_library_pipelines(db) if r["library"] == LIB)
+    return root, db, lib_pid
+
+
+def test_make_own_copy_rehomes_the_code_and_releases_the_pipelines(project, tmp_path, monkeypatch):
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover
+        import tomli as tomllib
+
+    from scistack_gui.services.library_copy import make_own_copy
+
+    root, db, lib_pid = _shared_and_listed(project, tmp_path, monkeypatch)
+    nodes_before = ps.get_manual_nodes(db, lib_pid)
+
+    report = make_own_copy(db, LIB)
+
+    copied = root / "src" / PKG / LIB
+    steps = (copied / "steps.py").read_text()
+    assert f"from {PKG}.{LIB}.util import scale" in steps
+    assert not (copied / "pipelines").exists() and not (copied / "matlab").exists()
+    assert (root / "matlab" / f"+{LIB}" / "envelope_t10b.m").is_file()
+    assert report.matlab_dir == str(root / "matlab" / f"+{LIB}")
+
+    config = tomllib.loads((root / "scistack.toml").read_text())
+    assert LIB not in config.get("packages", [])
+    assert config["copied_libraries"] == [LIB]
+
+    assert ps.library_owner(db, lib_pid) is None  # editable now
+    assert ps.get_manual_nodes(db, lib_pid) == nodes_before  # same ids, same content
+    assert report.released_pipelines == ["emg"]
+
+
+def test_a_copied_librarys_functions_keep_their_names(project, tmp_path, monkeypatch):
+    from scidb.names import function_name
+
+    from scistack_gui import matlab_registry, registry
+    from scistack_gui.services.library_copy import make_own_copy
+
+    root, db, _ = _shared_and_listed(project, tmp_path, monkeypatch)
+    make_own_copy(db, LIB)
+
+    fn = registry.lookup_function(f"{LIB}.filter_emg")
+    assert fn is not None
+    assert getattr(fn, "__module__", "").startswith(f"{PKG}.{LIB}.")
+    assert function_name(fn) == f"{LIB}.filter_emg"
+    assert matlab_registry.is_matlab_function(f"{LIB}.envelope_t10b")
+
+
+def test_edits_are_allowed_after_the_copy(project, tmp_path, monkeypatch):
+    from scistack_gui import library_lock
+    from scistack_gui.services.library_copy import make_own_copy
+
+    root, db, lib_pid = _shared_and_listed(project, tmp_path, monkeypatch)
+    make_own_copy(db, LIB)
+    with library_lock.user_edit("rename_pipeline"):
+        ps.rename_pipeline(db, lib_pid, "my emg")
+    assert ps.get_pipeline(db, lib_pid)["name"] == "my emg"
+
+
+def test_copy_refusals(project, tmp_path, monkeypatch):
+    from scistack_gui.services.library_copy import CopyRefused, make_own_copy
+
+    root, db, _ = _shared_and_listed(project, tmp_path, monkeypatch)
+    with pytest.raises(CopyRefused, match="not a library"):
+        make_own_copy(db, "json")
+    (root / "src" / PKG / LIB).mkdir()
+    with pytest.raises(CopyRefused, match="already exists"):
+        make_own_copy(db, LIB)

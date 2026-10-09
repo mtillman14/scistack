@@ -695,7 +695,25 @@ writes the chosen ones. The drop handler asks before placing.
 **Deferred to the end of 10b:** "switch this project to the library".
 
 
-### 10c. Make my own copy
+### 10c. Make my own copy — DONE 2026-10-09, tests pass
+
+As built:
+- **Naming:** `scidb.names.copied_libraries` / `library_of` (the
+  `copied_libraries` key).
+- **Rewriting:** `scistack_gui/code_rewrite.rewrite_imports` (the one
+  owner; `library_share` now uses it).
+- **Service and config:** `services/library_copy.make_own_copy`;
+  `config.mark_library_copied`.
+- **Front ends:** the `make_library_copy` handler; ✎ in
+  `LibrariesSection`; `scistack library copy`. The lock message names
+  them.
+- **Tests:** `tests/test_library_share.py` (10c part),
+  `tests/test_code_rewrite.py`, and `scidb/tests/test_names.py`. GUI
+  §0zzzj.
+- **Not undoable:** it writes a whole source tree; the report lists every
+  file.
+
+Originally planned:
 
 - Offered when an edit hits `LibraryPipelineReadOnly`, and from the
   Libraries list.

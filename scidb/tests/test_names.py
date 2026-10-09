@@ -136,3 +136,27 @@ class TestVariableMerge:
         newer = _var("MergeF", "my_analysis", project[1], schema_version=2)
         assert BaseVariable._all_subclasses["MergeF"] is newer
         assert "MergeF" not in BaseVariable.definition_conflicts()
+
+
+def test_a_copied_library_keeps_its_names(tmp_path):
+    """Make my own copy (Stage 10c): the library's source now lives at
+    <pkg>/<lib>/ and its functions are still recorded as <lib>.fn; the rest
+    of the project's own package stays bare."""
+    from scifor.pathinput import clear_project_root, set_project_root
+
+    from scidb import schema_order
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "myproj"\nversion = "0.1.0"\n')
+    (tmp_path / "src" / "myproj" / "gaitlib").mkdir(parents=True)
+    (tmp_path / "scistack.toml").write_text('copied_libraries = ["gaitlib"]\n')
+    set_project_root(tmp_path)
+    names.clear_cache()
+    schema_order.clear_cache()
+    try:
+        assert names.function_name(_fn("myproj.gaitlib.filters", "lowpass")) == "gaitlib.lowpass"
+        assert names.function_name(_fn("myproj.steps", "speed")) == "speed"
+        assert names.function_name(_fn("myproj.othersub.x", "f")) == "f"
+    finally:
+        clear_project_root()
+        names.clear_cache()
+        schema_order.clear_cache()

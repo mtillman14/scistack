@@ -181,56 +181,15 @@ class _PythonPlan:
         return out
 
     def _rewrite(self, m: _PyModule, report: ShareReport) -> str:
-        text = m.path.read_text(encoding="utf-8")
-        tree = ast.parse(text)
-        edits: list[tuple[int, int, int, int, str]] = []
-        for node in ast.walk(tree):
-            src = None
-            if isinstance(node, ast.Import):
-                src = self._rewrite_import(node, report, m)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0:
-                if node.module and node.module in self.modules:
-                    src = ast.unparse(ast.ImportFrom(
-                        module=self.modules[node.module].target, names=node.names, level=0
-                    ))
-            if src is not None:
-                report.rewritten_imports.append(f"{m.name}: {ast.unparse(node)} -> {src}")
-                edits.append((node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, src))
-        lines = text.splitlines(keepends=True)
-        for l0, c0, l1, c1, src in sorted(edits, reverse=True):
-            first, last = lines[l0 - 1], lines[l1 - 1]
-            lines[l0 - 1 : l1] = [first[:c0] + src + last[c1:]]
-        return "".join(lines)
+        from scistack_gui.code_rewrite import rewrite_imports
 
-    def _rewrite_import(self, node: ast.Import, report: ShareReport, m: _PyModule) -> "str | None":
-        changed = False
-        stmts: list[str] = []
-        kept: list[ast.alias] = []
-        for a in node.names:
-            if a.name not in self.modules:
-                kept.append(a)
-                continue
-            changed = True
-            target = self.modules[a.name].target
-            head, _, last = target.rpartition(".")
-            if "." not in a.name:
-                # `import m [as k]` binds m (or k): keep the binding.
-                stmts.append(f"from {head} import {last}" + (f" as {a.asname}" if a.asname else ""))
-            elif a.asname:
-                stmts.append(f"import {target} as {a.asname}")
-            else:
-                stmts.append(f"import {target}")
-                report.warnings.append(
-                    f"{m.name}: 'import {a.name}' became 'import {target}'; code that "
-                    f"refers to '{a.name.split('.')[0]}.…' must be updated by hand"
-                )
-        if not changed:
-            return None
-        if kept:
-            stmts.insert(0, "import " + ", ".join(
-                a.name + (f" as {a.asname}" if a.asname else "") for a in kept
-            ))
-        return "; ".join(stmts)
+        def resolve(name: str):
+            return self.modules[name].target if name in self.modules else None
+
+        result = rewrite_imports(m.path.read_text(encoding="utf-8"), resolve, where=m.name)
+        report.rewritten_imports += result.changes
+        report.warnings += result.warnings
+        return result.text
 
 
 def _absolute(node: ast.ImportFrom, package: str) -> "str | None":

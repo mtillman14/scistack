@@ -47,7 +47,8 @@ class LibraryPipelineReadOnly(ValueError):
         self.what = what
         super().__init__(
             f"'{pipeline}' comes from the library '{library}' and is read-only "
-            f"({what} refused). Use 'Make my own copy' to edit it in this project."
+            f"({what} refused). To edit it in this project, use Make my own copy "
+            f"(Submodules → Libraries → ✎, or `scistack library copy {library}`)."
         )
 
 

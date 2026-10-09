@@ -11,6 +11,31 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzj. Make my own copy of a library — added 2026-10-08
+
+New: a ✎ on each library in Submodules → Libraries. The read-only refusal
+message now names it. Both frontend bundles are rebuilt; reload the VS Code
+window.
+
+1. With a library from §0zzzh/§0zzzi placed on your canvas, press **✎** on
+   the library and confirm. The yellow line reports the files copied and
+   which pipelines are editable now.
+2. **Files:**
+   - `src/<your package>/<lib>/` holds the library's Python, with its
+     imports of `<lib>` now `<your package>.<lib>`;
+   - `matlab/+<lib>/` holds its MATLAB files;
+   - `scistack.toml` no longer lists it under `packages`, and has
+     `copied_libraries = ["<lib>"]`.
+3. **Names unchanged:** the canvas still shows `<lib>.fn`, and nodes that
+   had run still show as run (history current).
+4. **Editable:** inside the (former) library pipeline, add a node, change a
+   setting, rename it. All work now.
+5. The library row is gone from Libraries. Pressing ✎ again is impossible;
+   `scistack library copy <lib>` says it is not a library of this project.
+6. `scidb.log`: `[library_copy] <lib> copied into ...`.
+
+---
+
 ## 0zzzi. Share a submodule as a library — added 2026-10-08
 
 New: a ⇪ button on each submodule row, plus placing a library pipeline now

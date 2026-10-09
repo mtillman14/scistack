@@ -286,6 +286,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     add_library:             { path: '/api/libraries', method: 'POST', body: true },
     remove_library:          { path: (p) => `/api/libraries?name=${encodeURIComponent(p.name as string)}`, method: 'DELETE' },
     sync_libraries:          { path: '/api/libraries/sync', method: 'POST' },
+    make_library_copy:       { path: '/api/libraries/copy', method: 'POST', body: true },
     // Whole-project bundles (.claude/plan-portability.md Stage 8).
     get_export_options:     { path: '/api/bundles/export-options' },
     export_project_bundle:  { path: '/api/bundles/export', method: 'POST', body: true },

@@ -85,6 +85,26 @@ export default function LibrariesSection({ currentScope, onLibraryPipelineIds, o
       .catch(err => setError((err as Error).message))
   }
 
+  const makeCopy = (name: string) => {
+    if (!window.confirm(
+      `Make your own copy of '${name}'? Its code is copied into this project, every `
+      + `placement of it switches to the copy (names stay ${name}.fn, so history stays `
+      + `current), its pipelines become editable, and it is no longer a library here.`
+    )) return
+    callBackend('make_library_copy', { name })
+      .then(d => {
+        const r = d as { libraries: LibraryRow[]; report: { files: string[]; warnings: string[]; released_pipelines: string[] } }
+        apply(r.libraries)
+        setError('')
+        setHint(
+          `Copied ${name}: ${r.report.files.length} file(s); editable now: `
+          + `${r.report.released_pipelines.join(', ') || 'no pipelines'}.`
+          + (r.report.warnings.length ? ` Warnings: ${r.report.warnings.join('; ')}` : '')
+        )
+      })
+      .catch(err => setError((err as Error).message))
+  }
+
   const onDragStart = (e: React.DragEvent, lib: LibraryRow, p: LibraryPipelineRow) => {
     e.dataTransfer.setData(
       'application/scistack-pipeline',
@@ -124,6 +144,9 @@ export default function LibrariesSection({ currentScope, onLibraryPipelineIds, o
             <span style={{ flex: 1 }} title={lib.schema_keys ? `schema: ${lib.schema_keys.join(', ')}` : 'declares no schema keys'}>
               📦 {lib.library}{lib.matlab ? ' (MATLAB)' : ''}
             </span>
+            <button style={styles.rowBtn} onClick={() => makeCopy(lib.library)} title="Make my own copy (edit it in this project)">
+              ✎
+            </button>
             <button style={styles.rowBtn} onClick={() => remove(lib.library)} title="Stop using this library">
               ×
             </button>

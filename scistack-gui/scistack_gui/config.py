@@ -1306,6 +1306,25 @@ def add_package(db_path: "Path | None", name: str, *, project: "Path | None" = N
     return toml_path
 
 
+def mark_library_copied(db_path: "Path | None", name: str, *, project: "Path | None" = None) -> Path:
+    """*name* was copied into the project's own package (Make my own copy,
+    portability Stage 10c): unlist it from ``packages`` and list it under
+    ``copied_libraries`` (``scidb.names.COPIED_LIBRARIES_KEY``), which keeps
+    its functions named ``<name>.fn``. One write."""
+    from scidb.names import COPIED_LIBRARIES_KEY
+
+    project_root = resolve_project_root(project, db_path)
+    toml_path = locate_config_at(project_root) or project_root / "scistack.toml"
+    section = _load_raw_scistack_section(toml_path) if toml_path.is_file() else {}
+    packages = [p for p in section.get("packages", []) if p != name]
+    copied = list(section.get(COPIED_LIBRARIES_KEY, []))
+    if name not in copied:
+        copied.append(name)
+    _write_config(toml_path, {**section, "packages": packages, COPIED_LIBRARIES_KEY: copied})
+    logger.info("[config] mark_library_copied: %s copied into %s", name, toml_path)
+    return toml_path
+
+
 def remove_package(db_path: "Path | None", name: str, *, project: "Path | None" = None) -> Path:
     """Remove *name* from ``packages`` (the library stays installed; its
     seeded pipelines stay on the canvas, reported as orphaned)."""

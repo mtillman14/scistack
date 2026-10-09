@@ -41,6 +41,12 @@ def add_library_subparsers(sub: argparse._SubParsersAction) -> None:
     create.add_argument("--into", required=True, type=Path, help="New, empty folder for the library.")
     create.add_argument("--name", default=None, help="Library (import) name; default from the submodule's name.")
     create.add_argument("--db", default=None, help="Project database (default: as scistack export finds it).")
+    copy = cmds.add_parser(
+        "copy",
+        help="Make my own copy: copy a library into this project; its pipelines become editable.",
+    )
+    copy.add_argument("name")
+    copy.add_argument("--db", default=None, help="Project database (default: as scistack export finds it).")
     lib.set_defaults(_library_cmd=dispatch)
 
 
@@ -107,6 +113,35 @@ def dispatch(args: argparse.Namespace) -> int:
 
     project = (args.project or Path.cwd()).resolve()
     cmd = getattr(args, "library_command", None) or "list"
+    if cmd == "copy":
+        from scidb.inspect.cli import CLIError, resolve_db_path
+
+        from scistack_gui.headless import open_for_export
+        from scistack_gui.services.library_copy import make_own_copy
+
+        try:
+            db_path, _ = resolve_db_path(args.db)
+            db = open_for_export(db_path, project=args.project)
+            report = make_own_copy(db, args.name).to_dict()
+        except (CLIError, ValueError, OSError) as e:
+            if args.json:
+                print(json.dumps({"ok": False, "error": str(e)}))
+            else:
+                print(f"Error: {e}", file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps({"ok": True, "report": report}))
+            return 0
+        print(f"copied {args.name} into {report['python_dir']}")
+        if report["matlab_dir"]:
+            print(f"  MATLAB: {report['matlab_dir']}")
+        print(f"  {len(report['files'])} file(s); editable now: "
+              f"{', '.join(report['released_pipelines']) or 'no pipelines'}")
+        for v in report["declared_variables"]:
+            print(f"  declared Variable {v}")
+        for w in report["warnings"]:
+            print(f"  warning: {w}", file=sys.stderr)
+        return 0
     if cmd == "create":
         try:
             report = _create(args)
