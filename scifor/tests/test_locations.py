@@ -348,3 +348,16 @@ class TestThroughForEach:
         assert "2 iterations" in caplog.text
         assert "filtered out before iteration" in caplog.text
         assert "locations=1 prefix(es)" in caplog.text
+
+
+def test_without_keys_drops_whole_prefixes_and_exclusions():
+    """An import into a schema with no counterpart for a key removes every
+    part of a selection that names it (scidb.schema_map.KeyMap.locations)."""
+    lf = LocationFilter.build(
+        include=[[("subject", "S01"), ("session", "BL")], [("trial", "1")]],
+        exclude_levels={"session": ["FU"], "trial": ["3"]},
+    )
+    out = lf.without_keys({"session"})
+    assert out.include == ((("trial", "1"),),)
+    assert out.exclude_levels == (("trial", ("3",)),)
+    assert lf.without_keys(()) is lf

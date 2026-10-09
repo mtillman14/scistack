@@ -100,6 +100,11 @@ class ImportContext:
     db_path: Path
     schema_keys: list[str]
     manifest: dict
+    #: Exporter schema key -> recipient key (``scidb.schema_map.KeyMap``);
+    #: identity when the schema was kept. Each section remaps its own data.
+    key_map: Any = None
+    #: Collects what each remap dropped or flagged (``schema_map.MapReport``).
+    map_report: Any = None
 
 
 class SectionProvider(Protocol):
@@ -300,6 +305,9 @@ def export_project(
             "package": package,
             "database": Path(str(db.dataset_db_path)).name,
             "schema_keys": list(db.dataset_schema_keys),
+            # Lets import turn the exporter's absolute in-project config paths
+            # back into relative ones (the GUI's first-write seeds).
+            "root": root.as_posix(),
         },
         "options": options.to_dict(),
         "sections": {
@@ -375,6 +383,135 @@ def read_bundle(path: "Path | str") -> Bundle:
 # ---------------------------------------------------------------------------
 
 
+def _toml_loads(text: str) -> dict:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+        import tomli as tomllib
+    return tomllib.loads(text)
+
+
+def _relative_to_exporter(value: Any, exporter_root: "str | None") -> Any:
+    """An absolute path inside the exporter's project, made relative (``.``
+    for the root itself); anything else unchanged. The GUI's first-write
+    seeds were absolute, which named the exporter's folders on every other
+    machine (Stage 1 notes)."""
+    if not exporter_root or not isinstance(value, str):
+        return value
+    norm = value.replace("\\", "/").rstrip("/")
+    er = exporter_root.replace("\\", "/").rstrip("/")
+    if norm == er:
+        return "."
+    if norm.startswith(er + "/"):
+        return norm[len(er) + 1:]
+    return value
+
+
+def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
+    """Write the bundle's ``scistack.toml`` into the new project: in-project
+    absolute paths made relative, schema-keyed tables (``[schema_keys]``,
+    ``[aliases]``, ``[colors]``) remapped. Unchanged -> the bytes verbatim
+    (comments kept); changed -> through ``config_file`` (every key kept)."""
+    from . import config_file
+
+    section = _toml_loads(data.decode("utf-8"))
+    new = json.loads(json.dumps(section, default=str))
+
+    def rel(v):
+        return _relative_to_exporter(v, exporter_root)
+
+    if isinstance(new.get("modules"), list):
+        new["modules"] = list(dict.fromkeys(rel(m) for m in new["modules"]))
+    for key in ("entities_file", "glue_dir", "variable_file"):
+        if key in new:
+            new[key] = rel(new[key])
+    matlab = new.get("matlab")
+    if isinstance(matlab, dict):
+        for key in ("functions", "variables", "sources"):
+            if isinstance(matlab.get(key), list):
+                matlab[key] = list(dict.fromkeys(rel(m) for m in matlab[key]))
+        for key in ("variable_dir", "entities_file"):
+            if key in matlab:
+                matlab[key] = rel(matlab[key])
+    for table in ("schema_keys", "aliases", "colors"):
+        if table in new:
+            new[table] = kmap.table(new[table], f"scistack.toml [{table}]", report)
+
+    if new == json.loads(json.dumps(section, default=str)):
+        path.write_bytes(data)
+        Log.info(f"[bundle] config written verbatim: {path}")
+    else:
+        config_file.write(path, new)
+        Log.info(f"[bundle] config written with paths made relative / keys remapped: {path}")
+
+
+def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report) -> dict:
+    """The PathInputs the new project's entities TOML declares: template
+    placeholders renamed through *kmap*; ``root_folder`` set from
+    *path_roots* (``{name: folder}``, the recipient's copy of the raw data,
+    which is never touched). A PathInput that keeps the exporter's
+    ``root_folder`` is reported, as is a root given for an unknown name.
+    PathInputs declared in Python source cannot be rewritten here and keep
+    their templates."""
+    from scifor.discovery import project_config_at, read_scistack_section
+
+    from .entities import (
+        PATH_INPUTS,
+        render_path_input_value,
+        resolve_entities_path,
+        upsert_entry,
+    )
+
+    out = {"rewritten": [], "roots_unchanged": [], "unknown_roots": []}
+    config = project_config_at(root)
+    path = resolve_entities_path(root, read_scistack_section(config)) if config else None
+    if path is None or not Path(path).is_file():
+        out["unknown_roots"] = sorted(path_roots)
+        return out
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    declared = _toml_loads(text).get(PATH_INPUTS) or {}
+
+    for name, raw in declared.items():
+        raw_arms = raw if isinstance(raw, list) else [raw]
+        arms = [
+            {"template": a, "root_folder": None} if isinstance(a, str) else
+            {"template": a.get("template", ""), "root_folder": a.get("root_folder")}
+            for a in raw_arms
+        ]
+        where = f"PathInput {name}"
+        new_arms = [
+            {
+                "template": kmap.template(a["template"], where, report),
+                "root_folder": path_roots.get(name, a["root_folder"]),
+            }
+            for a in arms
+        ]
+        if new_arms != arms:
+            first, rest = new_arms[0], new_arms[1:]
+            text = upsert_entry(
+                text, PATH_INPUTS, name,
+                render_path_input_value(first["template"], first["root_folder"], rest),
+            )
+            out["rewritten"].append(name)
+        if name not in path_roots:
+            roots = sorted({a["root_folder"] for a in arms if a["root_folder"]})
+            if roots:
+                out["roots_unchanged"].append({"name": name, "root_folder": roots})
+                report.flagged.append(
+                    (where, f"root_folder is still the exporter's {roots}; give your own")
+                )
+    out["unknown_roots"] = sorted(set(path_roots) - set(declared))
+    if out["rewritten"]:
+        path.write_text(text, encoding="utf-8")
+    Log.info(
+        f"[bundle] PathInputs: {len(out['rewritten'])} rewritten, "
+        f"{len(out['roots_unchanged'])} keep the exporter's root, "
+        f"{len(out['unknown_roots'])} root(s) given for unknown names"
+    )
+    return out
+
+
 def _default_open_db(db_path: Path, schema_keys: list[str]):
     from . import configure_database
 
@@ -387,6 +524,8 @@ def import_project(
     *,
     providers: "list[SectionProvider] | None" = None,
     schema_keys: "list[str] | None" = None,
+    key_map: "dict[str, str | None] | None" = None,
+    path_roots: "dict[str, str] | None" = None,
     open_db: "Callable[[Path, list[str]], Any] | None" = None,
 ) -> ImportReport:
     """Make a NEW project at *target_root* from the bundle.
@@ -408,6 +547,13 @@ def import_project(
     keys = list(schema_keys or project.get("schema_keys") or [])
     if not keys:
         raise BundleError("no schema keys: the bundle records none and none were given")
+    from .schema_map import KeyMap, MapReport
+
+    try:
+        kmap = KeyMap.auto(list(project.get("schema_keys") or []), keys, key_map)
+    except ValueError as e:
+        raise BundleError(str(e)) from e
+    map_report = MapReport()
     db_name = project.get("database") or f"{project.get('package') or 'project'}.duckdb"
     db_path = root / db_name
 
@@ -427,7 +573,10 @@ def import_project(
     root.mkdir(parents=True, exist_ok=True)
     config_files = bundle.sections.get(CONFIG_SECTION, {})
     if "scistack.toml" in config_files:
-        config_path_at(root).write_bytes(config_files["scistack.toml"])
+        _write_config(
+            config_path_at(root), config_files["scistack.toml"], kmap, project.get("root"),
+            map_report,
+        )
         report.created.append(config_path_at(root))
 
     by_name = {p.name: p for p in providers or []}
@@ -449,7 +598,8 @@ def import_project(
     # Files: the code, before init, so the new project's package IS the
     # exporter's (a copy) and init only fills in what is missing.
     _run(PHASE_FILES, ImportContext(root=root, db=None, db_path=db_path, schema_keys=keys,
-                                    manifest=manifest))
+                                    manifest=manifest, key_map=kmap, map_report=map_report))
+    report.sections["path_inputs"] = _rewrite_path_inputs(root, kmap, path_roots or {}, map_report)
 
     env_files = bundle.sections.get(ENV_SECTION, {})
     if ENV_FILE in env_files:
@@ -470,7 +620,19 @@ def import_project(
     report.created.append(db_path)
 
     _run(PHASE_DATABASE, ImportContext(root=root, db=db, db_path=db_path, schema_keys=keys,
-                                       manifest=manifest))
+                                       manifest=manifest, key_map=kmap, map_report=map_report))
+    report.sections["schema"] = {
+        "exporter": list(project.get("schema_keys") or []),
+        "recipient": keys,
+        "key_map": kmap.as_dict(),
+        **map_report.to_dict(),
+    }
+    if not kmap.is_identity:
+        report.warnings.append(
+            f"imported into another schema ({kmap.describe()}): "
+            f"{len(map_report.dropped)} reference(s) dropped, "
+            f"{len(map_report.flagged)} flagged for review"
+        )
 
     for w in report.warnings:
         Log.warn(f"[bundle] import: {w}")

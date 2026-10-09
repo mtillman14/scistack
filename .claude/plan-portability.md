@@ -246,23 +246,32 @@ foreach, CallSite, StepSpec, node state, the GUI registry and code export);
 which files are code). Tests: `scidb/tests/test_names.py`, `test_bundle.py`,
 `scistack-gui/tests/test_library_names.py`, `test_bundle_project.py`.
 
-## Stage 6: schema choice + PathInput roots on import
+## Stage 6: schema choice + PathInput roots on import — DONE 2026-10-08, tests pass
 
-- Schema choice (I8): propose the exporter's schema; accept, or enter your
-  own. One key map (exporter key → recipient key | none), auto-matched by
-  name. Applied by the Stage 2 walker through each store's schema-key remap.
-  Unmapped keys are cleared and flagged in the report. Where filters are
-  kept and flagged for review. PathInput template placeholders are renamed
-  through the map.
-- With the recipient's own schema: history and data sections are not
-  imported (enforced in `import_project`, logged, reported).
-- PathInput roots (I7): show each PathInput's exported `root_folder`, ask
-  for the recipient's location, and write it to the entities file. Never
-  read, copy or hash raw files. CLI: `--path-root NAME=/path`.
-- Tests: kept schema imports untouched; renamed key remaps node level,
-  template placeholders and plot roles; dropped key clears and flags; new
-  schema refuses the history section; root change doesn't change any
-  record ID.
+As built (D-2026-10-08-7):
+- `scidb/schema_map.py`: `KeyMap.auto(exporter, recipient, overrides)` and
+  one renaming per shape (`level`, `locations`, `template`, `table`,
+  `exact_strings`), reporting into a `MapReport` (dropped / flagged).
+  `scifor.locations.LocationFilter.without_keys` added beside `renamed`.
+- `scidb.bundle.import_project(schema_keys, key_map, path_roots)`: config
+  tables remapped and the exporter's absolute in-project paths made
+  relative (manifest now records the exporter's root); PathInput templates
+  and `root_folder`s rewritten in the new project's entities TOML; a
+  `schema` and a `path_inputs` entry in the report.
+- GUI section: `canvas_snapshot.remap_schema_keys` (node location
+  statements, submodule bindings) before apply. Plots section: exact-key
+  renaming of each envelope, flagged.
+- `headless.import_project_bundle(schema_keys, key_map, path_roots)`.
+- Tests: `scidb/tests/test_schema_map.py`, Stage 6 block in
+  `test_bundle.py`, `scifor/tests/test_locations.py`
+  (`without_keys`), `scistack-gui/tests/test_bundle_project.py`,
+  `scistackplotdb/tests/test_saved_plots.py`.
+
+Not done here: the GUI's first-write seeding still writes absolute paths
+(import now relativises them, which is what portability needed); PathInputs
+declared in Python source are not rewritten; refusing history/data into a
+changed schema is Stage 7; the dialogs that collect the schema, key map and
+roots are Stage 8.
 
 ## Stage 7: history and data sections
 

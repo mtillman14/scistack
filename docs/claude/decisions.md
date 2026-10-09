@@ -8,6 +8,32 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-7 — One key map for importing into another schema
+
+**Context.** A bundle may be imported into a project with a different
+schema (portability.md "Schema on import"). Schema keys are named by many
+stores: config tables, PathInput templates, a node's iteration level and
+location selection, submodule bindings, saved plot specs.
+
+**Decision.** `scidb/schema_map.KeyMap` is the one map (exporter key ->
+recipient key or `None`, matched by name, overridden by the user, refused if
+it does not land on the recipient's schema) and owns the renaming of each
+SHAPE (level, location selection via `LocationFilter.renamed`/`without_keys`,
+template placeholders, keyed tables, exact strings). Each bundle section
+applies it to its own data before writing and reports what it dropped or
+flagged (`MapReport`); there is no second list of key-bearing places. Values
+are never translated: a location selection, a binding's iteration values
+and a plot spec the map touched are FLAGGED. Dropping a node's last level
+key leaves it unset (the schema-level default rule decides). The exporter's
+project root travels in the manifest so import makes its absolute
+in-project config paths relative.
+
+**Consequences.** PathInputs declared in Python source keep their templates
+(only the entities TOML is rewritten). History and data are not imported
+into a changed schema (Stage 7 enforces it).
+
+---
+
 ## D-2026-10-08-6 — Names across packages: qualified library functions, merged Variables
 
 **Context.** Once projects use libraries (and a bundle's code arrives in a

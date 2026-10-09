@@ -245,12 +245,12 @@ Status as of 2026-10-08.
 | I4 | Create the project folder (`init`) | ✅ | `scidb.project.init_project`, the one owner (Stage 1); `import_project` calls it after writing the bundle's config. |
 | I5 | Install the wheel + dependencies | 🔧 | Code arrives as SOURCE (a copy, before init). Declared dependencies are compared with the exporter's versions and the `pip install` command is reported; nothing is installed automatically (Stage 5). |
 | I6 | MATLAB paths for the installed `.m` files | ❌ | `scimatlab`. |
-| I7 | PathInput roots | ❌ | Ask, write to the entities file. |
-| I8 | Schema choice + key map | ❌ | See "Schema on import". |
+| I7 | PathInput roots | ✅ | `import_project(path_roots={name: folder})` rewrites each PathInput's `root_folder` in the new project's entities TOML; a root left as the exporter's, or given for an unknown name, is reported. PathInputs declared in Python source are not rewritten (Stage 6). |
+| I8 | Schema choice + key map | ✅ | `scidb/schema_map.KeyMap` (auto by name + overrides), applied by each section to its own data: config tables, PathInput templates, node levels and location selections, submodule bindings, saved plots; dropped/flagged references reported (Stage 6). |
 | I9 | Recreate pipelines (reuse an identical one, fork one that differs) | ✅ | `_resolve_pipeline`, keyed on `pipeline_id`. |
 | I10 | Mint node IDs | ✅ | `ids.new_manual_node_id` (every Python site; the frontend mints its own). |
 | I11 | Mint edge IDs | ✅ | `ids.new_manual_edge_id` (a drawn edge's stored id is allocated; `connection_id` derives the connection's id for matching, a different concept). |
-| I12 | Restore the rest of the GUI state, with schema keys remapped | 🔧 | `canvas_snapshot.apply` (Stage 2) ✅; schema-key remap over the snapshot: Stage 6. |
+| I12 | Restore the rest of the GUI state, with schema keys remapped | ✅ | `canvas_snapshot.apply` + `remap_schema_keys` (Stages 2, 6). |
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
 | I14 | Restore history / data | ❌ | New empty project + schema kept only; a verbatim copy. |
 | I15 | Check that every canvas node's code is found | 🔧 | Needs discovery. A headless import (`discovered=False`) reports it unchecked (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`); the GUI checks on open. |

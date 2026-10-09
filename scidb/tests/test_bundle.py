@@ -84,6 +84,8 @@ class TestExport:
             "package": "gait",
             "database": "gait.duckdb",
             "schema_keys": SCHEMA,
+            # Stage 6: lets import make the exporter's absolute config paths relative.
+            "root": project[0].resolve().as_posix(),
         }
         assert manifest["options"] == ExportOptions().to_dict()
         assert set(manifest["sections"]) == {"config", "env", "fake"}
@@ -277,3 +279,90 @@ def test_unsafe_paths_are_refused(project, tmp_path, bad):
     out = _export(project, tmp_path, providers=[FakeSection({bad: b"x"})])
     with pytest.raises(BundleError, match="unsafe path"):
         read_bundle(out)
+
+
+# ---------------------------------------------------------------------------
+# Stage 6: another schema, PathInput roots, relative config paths
+# ---------------------------------------------------------------------------
+
+ENTITIES = (
+    'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+    'RAW = { template = "{subject}/{session}.csv", root_folder = "/exporter/data" }\n'
+    'NOTES = "{subject}.txt"\n'
+)
+
+
+class EntitiesSection(CodeLikeSection):
+    def export(self, ctx):
+        return {"src/gait/scistack_entities.toml": ENTITIES.encode()}
+
+
+def _export_with_config(project, tmp_path):
+    root, db = project
+    (root / "scistack.toml").write_text(
+        f'modules = ["{root.resolve().as_posix()}", "{root.resolve().as_posix()}/scripts"]\n'
+        'entities_file = "src/gait/scistack_entities.toml"\n\n'
+        '[schema_keys]\nsession = ["BL", "FU"]\n\n'
+        '[aliases.session]\nname = "Session"\n'
+    )
+    out = _export(project, tmp_path, providers=[EntitiesSection()])
+    db.close()
+    return out
+
+
+def test_into_another_schema_remaps_config_and_path_inputs(project, tmp_path):
+    out = _export_with_config(project, tmp_path)
+    target = tmp_path / "copy"
+
+    report = import_project(
+        out, target,
+        providers=[EntitiesSection()],
+        schema_keys=["participant", "visit"],
+        key_map={"subject": "participant", "session": "visit"},
+        path_roots={"RAW": "/mine/raw", "NOPE": "/x"},
+    )
+
+    config = bundle._toml_loads((target / "scistack.toml").read_text())
+    assert config["schema_keys"] == {"visit": ["BL", "FU"]}
+    assert config["aliases"] == {"visit": {"name": "Session"}}
+    # The exporter's absolute in-project paths are relative now.
+    assert config["modules"] == [".", "scripts"]
+
+    entities = bundle._toml_loads((target / "src/gait/scistack_entities.toml").read_text())
+    assert entities["path_inputs"]["RAW"] == {
+        "template": "{participant}/{visit}.csv", "root_folder": "/mine/raw",
+    }
+    assert entities["path_inputs"]["NOTES"] == "{participant}.txt"
+
+    pi = report.sections["path_inputs"]
+    assert set(pi["rewritten"]) == {"RAW", "NOTES"}
+    assert pi["unknown_roots"] == ["NOPE"]
+    schema = report.sections["schema"]
+    assert schema["recipient"] == ["participant", "visit"]
+    assert schema["key_map"] == {"subject": "participant", "session": "visit"}
+    assert any("another schema" in w for w in report.warnings)
+
+
+def test_a_kept_root_folder_is_reported(project, tmp_path):
+    out = _export_with_config(project, tmp_path)
+    report = import_project(out, tmp_path / "copy", providers=[EntitiesSection()])
+    pi = report.sections["path_inputs"]
+    assert pi["roots_unchanged"] == [{"name": "RAW", "root_folder": ["/exporter/data"]}]
+    assert report.sections["schema"]["flagged"]
+
+
+def test_the_same_schema_keeps_config_bytes(project, tmp_path):
+    root, db = project
+    original = (root / "scistack.toml").read_bytes()
+    out = _export(project, tmp_path)
+    db.close()
+    import_project(out, tmp_path / "copy")
+    assert (tmp_path / "copy" / "scistack.toml").read_bytes() == original
+
+
+def test_a_key_map_off_the_recipient_schema_is_refused(project, tmp_path):
+    out = _export(project, tmp_path)
+    project[1].close()
+    with pytest.raises(BundleError, match="recipient"):
+        import_project(out, tmp_path / "copy", schema_keys=["participant"],
+                       key_map={"subject": "patient"})

@@ -95,6 +95,8 @@ class GuiSection:
             portability_service.apply_hypothesis(db, pid, p.get("hypothesis"))
 
         snap = canvas_snapshot.CanvasSnapshot.from_dict(payload.get("canvas") or {})
+        # Into the recipient's schema when it differs (portability Stage 6).
+        snap = canvas_snapshot.remap_schema_keys(snap, ctx.key_map, ctx.map_report)
         has_history = "history" in (ctx.manifest.get("sections") or {})
         old_to_new = canvas_snapshot.apply(db, snap, resolution, include_hides=has_history)
         globals_report = portability_service.apply_globals(

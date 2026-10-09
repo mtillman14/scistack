@@ -469,3 +469,73 @@ def table_portability() -> dict[str, str]:
     for module in (pipeline_store, intent_store, node_wiring):
         out.update(module.PORTABILITY)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Into another schema (portability Stage 6)
+# ---------------------------------------------------------------------------
+
+
+def remap_schema_keys(snap: CanvasSnapshot, key_map, report) -> CanvasSnapshot:
+    """*snap* with every schema key renamed through *key_map*
+    (``scidb.schema_map.KeyMap``) -- a pure function over the data, applied
+    before :func:`apply`, so the canvas lands in the recipient's schema.
+
+    Two places name schema keys: a node's location statement (its stated
+    iteration level and its location selection) and a placed submodule's
+    binding (``key_map`` both sides, since child and parent are both
+    exporter pipelines, and the ``iterate`` overrides keyed by key). What the map drops or flags goes to
+    *report* (``schema_map.MapReport``).
+    """
+    from dataclasses import replace
+
+    from scidb.intent import ASPECT_SCHEMA_LOCATION
+
+    if key_map is None or key_map.is_identity:
+        return snap
+
+    nodes = []
+    for n in snap.nodes:
+        statements = []
+        for s in n.statements:
+            if s.get("aspect") == ASPECT_SCHEMA_LOCATION and isinstance(s.get("value"), dict):
+                value = dict(s["value"])
+                where = f"node {n.label} ({n.pipeline_id})"
+                if "schemaLevel" in value:
+                    value["schemaLevel"] = key_map.level(value["schemaLevel"], where, report)
+                if value.get("schemaSelection"):
+                    value["schemaSelection"] = key_map.locations(
+                        value["schemaSelection"], where, report
+                    )
+                s = {**s, "value": value}
+            statements.append(s)
+        nodes.append(replace(n, statements=statements))
+
+    uses = []
+    for u in snap.uses:
+        binding = dict(u.binding or {})
+        where = f"submodule use {u.use_id} ({u.parent_pipeline_id})"
+        if binding.get("key_map"):
+            mapped = {}
+            for child_key, parent_key in binding["key_map"].items():
+                c, p = key_map.key(child_key), key_map.key(parent_key)
+                if c is None or p is None:
+                    report.dropped.append((where, f"{child_key}->{parent_key}"))
+                    continue
+                mapped[c] = p
+            binding["key_map"] = mapped
+        if binding.get("iterate"):
+            # {key: values}: keys renamed; the values are the exporter's data.
+            before = set(binding["iterate"])
+            binding["iterate"] = key_map.table(binding["iterate"], where, report) or {}
+            if any(key_map.key(k) != k for k in before):
+                report.flagged.append(
+                    (where, "iteration-value overrides name the exporter's levels; review them")
+                )
+        uses.append(replace(u, binding=binding))
+
+    out = replace(snap, nodes=nodes, uses=uses)
+    logger.info(
+        "[canvas_snapshot] remapped into another schema (%s)", key_map.describe()
+    )
+    return out

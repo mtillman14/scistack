@@ -220,6 +220,24 @@ class LocationFilter:
             ),
         )
 
+    def without_keys(self, keys: "Iterable[str]") -> "LocationFilter":
+        """The same selection with every part naming one of *keys* removed:
+        an ``include`` prefix that mentions one is dropped whole (its later
+        steps only mean something under it), an ``exclude_levels`` entry is
+        dropped. What an import does for a schema key the recipient's schema
+        has no counterpart for (``scidb.schema_map.KeyMap``)."""
+        gone = set(keys)
+        if not gone:
+            return self
+        return LocationFilter(
+            include=tuple(
+                prefix for prefix in self.include if not any(k in gone for k, _ in prefix)
+            ),
+            exclude_levels=tuple(
+                (k, values) for k, values in self.exclude_levels if k not in gone
+            ),
+        )
+
     # ---- the rule --------------------------------------------------------
 
     def is_empty(self) -> bool:

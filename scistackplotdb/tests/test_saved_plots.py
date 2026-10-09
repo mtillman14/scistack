@@ -348,3 +348,30 @@ def test_the_plots_section_copies_every_row_and_version(db, tmp_path):
         assert STORE.load_rows(other, before) == 0
     finally:
         other.close()
+
+
+def test_a_saved_plot_moves_into_another_schema(db, tmp_path):
+    """Portability Stage 6: every exact mention of an exporter key in a spec
+    is renamed, and the plot is flagged for review."""
+    from types import SimpleNamespace
+
+    from scidb import configure_database
+    from scidb.schema_map import KeyMap, MapReport
+
+    from scistackplotdb.bundle_section import PlotsSection
+
+    saved = save_plot(db, "StepLength", "Fig 3", _spec(), VIEW)
+    files = PlotsSection().export(SimpleNamespace(db=db))
+
+    km = KeyMap.auto(["subject", "session", "trial"], ["participant", "visit", "trial"],
+                     {"subject": "participant", "session": "visit"})
+    report = MapReport()
+    other = configure_database(tmp_path / "other.duckdb", ["participant", "visit", "trial"])
+    try:
+        PlotsSection().import_(SimpleNamespace(db=other, key_map=km, map_report=report), files)
+        spec = load_saved_plot(other, saved.plot_id).spec
+        assert set(spec.roles) == {"visit", "participant", "trial"}
+        assert spec.groups == ["visit"]
+        assert any("Fig 3" in where for where, _ in report.flagged)
+    finally:
+        other.close()

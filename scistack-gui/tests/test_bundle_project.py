@@ -193,3 +193,40 @@ def test_the_code_is_copied_byte_for_byte_and_never_imported(tmp_path):
     assert new == [], f"import loaded code from the new project: {new}"
     # The environment check compared the declared dependencies.
     assert "missing" in report.sections["env"]
+
+
+# ---------------------------------------------------------------------------
+# Stage 6: into another schema
+# ---------------------------------------------------------------------------
+
+
+def test_a_canvas_lands_in_the_recipients_schema(client, tmp_path):
+    from scistack_gui.headless import import_project_bundle
+
+    client.put("/api/layout/m_fn", json={
+        "x": 0, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": "main",
+    })
+    client.put("/api/layout/m_fn/config", json={"config": {
+        "schemaSelection": {"exclude_levels": {"subject": ["S02"]}},
+        "schemaLevel": ["session"],
+    }})
+    exporter_keys = list(get_db().dataset_schema_keys)
+    assert {"subject", "session"} <= set(exporter_keys)
+    out = _export(tmp_path)
+
+    recipient = ["participant" if k == "subject" else "visit" if k == "session" else k
+                 for k in exporter_keys]
+    report = import_project_bundle(
+        out, tmp_path / "copy",
+        schema_keys=recipient,
+        key_map={"subject": "participant", "session": "visit"},
+    )
+    db = get_db()
+    assert list(db.dataset_schema_keys) == recipient
+
+    fn = _node_by_label(db, "main", "custom_proc")
+    config = ps.get_node_config(db, fn)
+    assert config["schemaLevel"] == ["visit"]
+    assert config["schemaSelection"]["exclude_levels"] == {"participant": ["S02"]}
+    flagged = report.sections["schema"]["flagged"]
+    assert any("custom_proc" in where for where, _ in flagged)
